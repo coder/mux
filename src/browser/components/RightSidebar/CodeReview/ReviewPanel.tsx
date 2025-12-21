@@ -29,6 +29,7 @@ import { ReviewControls } from "./ReviewControls";
 import { FileTree } from "./FileTree";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useReviewState } from "@/browser/hooks/useReviewState";
+import { useReviewRefreshController } from "@/browser/hooks/useReviewRefreshController";
 import { parseDiff, extractAllHunks, buildGitDiffCommand } from "@/common/utils/git/diffParser";
 import { getReviewSearchStateKey } from "@/common/constants/storage";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/ui/tooltip";
@@ -126,22 +127,6 @@ function makeReviewPanelCacheKey(params: {
 }
 
 type ExecuteBashResult = Awaited<ReturnType<APIClient["workspace"]["executeBash"]>>;
-
-/** Debounce delay for auto-refresh after tool completion */
-const TOOL_REFRESH_DEBOUNCE_MS = 3000;
-
-function getOriginBranchForFetch(diffBase: string): string | null {
-  const trimmed = diffBase.trim();
-  if (!trimmed.startsWith("origin/")) return null;
-
-  const branch = trimmed.slice("origin/".length);
-
-  // Avoid shell injection; diffBase is user-controlled.
-  if (!/^[0-9A-Za-z._/-]+$/.test(branch)) return null;
-
-  return branch;
-}
-
 type ExecuteBashSuccess = Extract<ExecuteBashResult, { success: true }>;
 
 async function executeWorkspaceBashAndCache<T extends ReviewPanelCacheValue>(params: {
@@ -243,146 +228,32 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     [diffState]
   );
 
-  // Track whether refresh is in-flight (for origin/* fetch)
-  const isRefreshingRef = useRef(false);
-
-  // Track user interaction with review notes (pause auto-refresh while focused)
-  const isUserInteractingRef = useRef(false);
-  const pendingRefreshRef = useRef(false);
-
-  // Save scroll position before refresh to restore after
-  const savedScrollTopRef = useRef<number | null>(null);
-
   const [filters, setFilters] = useState<ReviewFiltersType>({
     showReadHunks: showReadHunks,
     diffBase: diffBase,
     includeUncommitted: includeUncommitted,
   });
 
-  // Auto-refresh on file-modifying tool completions (debounced 3s).
-  // Respects user interaction - if user is focused on review input, queues refresh for after blur.
-  useEffect(() => {
-    if (!api || isCreating) return;
-
-    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-
-    const performRefresh = () => {
-      // Skip if document not visible (user switched tabs/windows)
-      if (document.hidden) return;
-
-      // Skip if user is actively entering a review note
-      if (isUserInteractingRef.current) {
-        pendingRefreshRef.current = true;
-        return;
-      }
-
-      // Skip if already refreshing (for origin/* bases with fetch)
-      if (isRefreshingRef.current) return;
-
-      // Save scroll position before refresh
-      savedScrollTopRef.current = scrollContainerRef.current?.scrollTop ?? null;
-
-      const originBranch = getOriginBranchForFetch(filters.diffBase);
-      if (originBranch) {
-        // Remote base: fetch before refreshing diff
-        isRefreshingRef.current = true;
-        api.workspace
-          .executeBash({
-            workspaceId,
-            script: `git fetch origin ${originBranch} --quiet || true`,
-            options: { timeout_secs: 30 },
-          })
-          .catch((err) => {
-            console.debug("ReviewPanel origin fetch failed", err);
-          })
-          .finally(() => {
-            isRefreshingRef.current = false;
-            setRefreshTrigger((prev) => prev + 1);
-          });
-      } else {
-        // Local base: just refresh diff
-        setRefreshTrigger((prev) => prev + 1);
-      }
-    };
-
-    const scheduleRefresh = () => {
-      if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(performRefresh, TOOL_REFRESH_DEBOUNCE_MS);
-    };
-
-    // Subscribe to file-modifying tool completions for this workspace
-    const unsubscribe = workspaceStore.subscribeFileModifyingTool(workspaceId, scheduleRefresh);
-
-    return () => {
-      unsubscribe();
-      if (debounceTimer) clearTimeout(debounceTimer);
-    };
-  }, [api, workspaceId, filters.diffBase, isCreating]);
-
-  // Sync panel focus with interaction tracking; fire pending refresh on blur
-  useEffect(() => {
-    isUserInteractingRef.current = isPanelFocused;
-
-    // When user stops interacting, fire any pending refresh
-    if (!isPanelFocused && pendingRefreshRef.current) {
-      pendingRefreshRef.current = false;
-      handleRefreshRef.current();
-    }
-  }, [isPanelFocused]);
-
-  // Restore scroll position after auto-refresh completes
-  useEffect(() => {
-    if (
-      diffState.status === "loaded" &&
-      savedScrollTopRef.current !== null &&
-      scrollContainerRef.current
-    ) {
-      scrollContainerRef.current.scrollTop = savedScrollTopRef.current;
-      savedScrollTopRef.current = null;
-    }
-  }, [diffState.status]);
-
-  // Focus panel when focusTrigger changes (preserves current hunk selection)
-
-  const handleRefreshRef = useRef<() => void>(() => {
-    console.debug("ReviewPanel handleRefreshRef called before init");
+  // Centralized refresh controller - handles debouncing, visibility, interaction pausing
+  const refreshController = useReviewRefreshController({
+    workspaceId,
+    api,
+    isCreating,
+    diffBase: filters.diffBase,
+    onRefresh: () => setRefreshTrigger((prev) => prev + 1),
+    scrollContainerRef,
   });
-  handleRefreshRef.current = () => {
-    if (!api || isCreating) return;
-
-    // Skip if already refreshing (for origin/* bases with fetch)
-    if (isRefreshingRef.current) {
-      setRefreshTrigger((prev) => prev + 1);
-      return;
-    }
-
-    const originBranch = getOriginBranchForFetch(filters.diffBase);
-    if (originBranch) {
-      isRefreshingRef.current = true;
-
-      api.workspace
-        .executeBash({
-          workspaceId,
-          script: `git fetch origin ${originBranch} --quiet || true`,
-          options: { timeout_secs: 30 },
-        })
-        .catch((err) => {
-          console.debug("ReviewPanel origin fetch failed", err);
-        })
-        .finally(() => {
-          isRefreshingRef.current = false;
-          setRefreshTrigger((prev) => prev + 1);
-        });
-
-      return;
-    }
-
-    setRefreshTrigger((prev) => prev + 1);
-  };
 
   const handleRefresh = () => {
-    handleRefreshRef.current();
+    refreshController.requestManualRefresh();
   };
+
+  // Sync panel focus with interaction tracking (pauses auto-refresh while user is focused)
+  useEffect(() => {
+    refreshController.setInteracting(isPanelFocused);
+  }, [isPanelFocused, refreshController]);
+
+  // Focus panel when focusTrigger changes (preserves current hunk selection)
   useEffect(() => {
     if (focusTrigger && focusTrigger > 0) {
       panelRef.current?.focus();
@@ -896,7 +767,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (matchesKeybind(e, KEYBINDS.REFRESH_REVIEW)) {
         e.preventDefault();
-        handleRefreshRef.current();
+        refreshController.requestManualRefresh();
       } else if (matchesKeybind(e, KEYBINDS.FOCUS_REVIEW_SEARCH)) {
         e.preventDefault();
         searchInputRef.current?.focus();
@@ -905,7 +776,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [refreshController]);
 
   // Show loading state while workspace is being created
   if (isCreating) {
