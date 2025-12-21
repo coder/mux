@@ -308,6 +308,9 @@ export class CompactionHandler {
       "assistant",
       summary,
       {
+        // Ensures the UI can later delete/replace the summary message (e.g., on /clear).
+        // replaceHistory() will normalize sequences starting at 0.
+        historySequence: 0,
         timestamp,
         compacted: isIdleCompaction ? "idle" : "user",
         model: metadata.model,
@@ -318,6 +321,17 @@ export class CompactionHandler {
       }
     );
 
+    // Emit delete events based on the history we used for compaction.
+    //
+    // Why not rely on HistoryService.replaceHistory()'s deleted sequences?
+    // - The UI currently has these messages in memory (from streaming), so this is the
+    //   authoritative list to clear from the transcript.
+    // - It avoids edge cases where chat.jsonl parsing skips a malformed trailing line,
+    //   resulting in an empty deletedSequences list and a non-updating UI.
+    const deletedSequences = messages
+      .map((msg) => msg.metadata?.historySequence ?? -1)
+      .filter((s) => s >= 0);
+
     // Atomically replace history with the single summary message.
     // This avoids the "delete then crash" failure mode.
     const replaceResult = await this.historyService.replaceHistory(this.workspaceId, [
@@ -326,7 +340,6 @@ export class CompactionHandler {
     if (!replaceResult.success) {
       return Err(`Failed to replace history: ${replaceResult.error}`);
     }
-    const deletedSequences = replaceResult.data;
 
     // Set flag to trigger post-compaction attachment injection on next turn
     this.postCompactionAttachmentsPending = true;

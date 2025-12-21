@@ -78,9 +78,9 @@ const createMockEmitter = (): { emitter: EventEmitter; events: EmittedEvent[] } 
 };
 
 /** Helper: create a normal user message (not compaction) */
-const createNormalUserMessage = (id = "msg-1"): MuxMessage =>
+const createNormalUserMessage = (id = "msg-1", historySequence = 0): MuxMessage =>
   createMuxMessage(id, "user", "Hello, how are you?", {
-    historySequence: 0,
+    historySequence,
     muxMetadata: { type: "normal" },
   });
 
@@ -289,8 +289,15 @@ describe("CompactionHandler", () => {
 
     it("should emit delete event for old messages", async () => {
       setActiveOperation("op-1");
-      mockHistoryService.mockGetHistory(Ok([createNormalUserMessage()]));
-      mockHistoryService.mockReplaceHistory(Ok([0, 1, 2, 3]));
+      mockHistoryService.mockGetHistory(
+        Ok([
+          createNormalUserMessage("msg-0", 0),
+          createNormalUserMessage("msg-1", 1),
+          createNormalUserMessage("msg-2", 2),
+          createNormalUserMessage("msg-3", 3),
+        ])
+      );
+      mockHistoryService.mockReplaceHistory(Ok([]));
 
       const event = createStreamEndEvent(createValidSummary());
       await handler.handleCompletion(event);
@@ -525,8 +532,14 @@ describe("CompactionHandler", () => {
 
     it("should emit DeleteMessage with correct type and historySequences array", async () => {
       setActiveOperation("op-1");
-      mockHistoryService.mockGetHistory(Ok([createNormalUserMessage()]));
-      mockHistoryService.mockReplaceHistory(Ok([5, 10, 15]));
+      mockHistoryService.mockGetHistory(
+        Ok([
+          createNormalUserMessage("msg-5", 5),
+          createNormalUserMessage("msg-10", 10),
+          createNormalUserMessage("msg-15", 15),
+        ])
+      );
+      mockHistoryService.mockReplaceHistory(Ok([]));
 
       const event = createStreamEndEvent(createValidSummary());
       await handler.handleCompletion(event);

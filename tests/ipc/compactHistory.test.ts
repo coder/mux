@@ -10,7 +10,6 @@
  * - Seeds history via HistoryService (test-only) to avoid extra API calls
  */
 
-import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import { shouldRunIntegrationTests, validateApiKeys } from "./setup";
 import {
   createSharedRepo,
@@ -40,22 +39,6 @@ function getTextFromMessageParts(message: {
       .map((part) => part.text ?? "")
       .join("") ?? ""
   );
-}
-
-async function waitForMatchingEvent(
-  collector: { getEvents: () => WorkspaceChatMessage[] },
-  predicate: (event: WorkspaceChatMessage) => boolean,
-  timeoutMs: number
-): Promise<WorkspaceChatMessage | null> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    const match = collector.getEvents().find(predicate);
-    if (match) {
-      return match;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-  return null;
 }
 
 describeIntegration("compactHistory integration tests", () => {
@@ -115,67 +98,49 @@ describeIntegration("compactHistory integration tests", () => {
         }
 
         // Wait for compaction stream to start + end.
-        const compactionStreamStart = await collector.waitForEvent("stream-start", 20000);
+        const compactionStreamStart = await collector.waitForEventN("stream-start", 1, 20000);
         expect(compactionStreamStart).not.toBeNull();
         const compactionMessageId = (compactionStreamStart as { messageId: string }).messageId;
 
-        const compactionStreamEnd = await waitForMatchingEvent(
-          collector,
-          (e) =>
-            e.type === "stream-end" &&
-            (e as { messageId?: string }).messageId === compactionMessageId,
-          45000
-        );
+        const compactionStreamEnd = await collector.waitForEventN("stream-end", 1, 45000);
         expect(compactionStreamEnd).not.toBeNull();
+        expect((compactionStreamEnd as { messageId: string }).messageId).toBe(compactionMessageId);
         expect((compactionStreamEnd as { metadata: { model?: string } }).metadata.model).toBe(
           haiku
         );
 
         // Compaction should emit delete + summary message.
-        const deleteEvent = await waitForMatchingEvent(
-          collector,
-          (e) => e.type === "delete",
-          10000
-        );
+        const deleteEvent = await collector.waitForEvent("delete", 10000);
         expect(deleteEvent).not.toBeNull();
 
-        const summaryMessage = await waitForMatchingEvent(
-          collector,
-          (e) => e.type === "message" && e.role === "assistant" && Boolean(e.metadata?.compacted),
-          10000
-        );
-        expect(summaryMessage).not.toBeNull();
+        const summaryMessage = collector
+          .getEvents()
+          .find(
+            (e) => e.type === "message" && e.role === "assistant" && Boolean(e.metadata?.compacted)
+          );
+        expect(summaryMessage).toBeDefined();
 
         // Continue message should be persisted as a user message and then streamed.
-        const continueUserMessage = await waitForMatchingEvent(
-          collector,
-          (e) =>
-            e.type === "message" &&
-            e.role === "user" &&
-            getTextFromMessageParts(e) === continueText,
-          20000
-        );
-        expect(continueUserMessage).not.toBeNull();
-
-        const continueStreamStart = await waitForMatchingEvent(
-          collector,
-          (e) =>
-            e.type === "stream-start" &&
-            (e as { messageId?: string }).messageId !== compactionMessageId &&
-            (e as { metadata?: { model?: string } }).metadata?.model === haiku,
-          20000
-        );
+        // We expect a second stream-start for the follow-up message.
+        const continueStreamStart = await collector.waitForEventN("stream-start", 2, 20000);
         expect(continueStreamStart).not.toBeNull();
 
         const continueMessageId = (continueStreamStart as { messageId: string }).messageId;
-        const continueStreamEnd = await waitForMatchingEvent(
-          collector,
-          (e) =>
-            e.type === "stream-end" &&
-            (e as { messageId?: string }).messageId === continueMessageId,
-          45000
-        );
+        expect(continueMessageId).not.toBe(compactionMessageId);
+
+        const continueUserMessage = collector
+          .getEvents()
+          .find(
+            (e) =>
+              e.type === "message" &&
+              e.role === "user" &&
+              getTextFromMessageParts(e) === continueText
+          );
+        expect(continueUserMessage).toBeDefined();
+
+        const continueStreamEnd = await collector.waitForEventN("stream-end", 2, 45000);
         expect(continueStreamEnd).not.toBeNull();
+        expect((continueStreamEnd as { messageId: string }).messageId).toBe(continueMessageId);
 
         // Verify persisted history:
         // - seeded messages were removed
