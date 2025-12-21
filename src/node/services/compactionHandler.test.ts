@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, mock } from "bun:test";
-import { CompactionHandler } from "./compactionHandler";
+import { CompactionHandler, type ActiveCompactionOperation } from "./compactionHandler";
 import type { HistoryService } from "./historyService";
 import type { PartialService } from "./partialService";
 import type { EventEmitter } from "events";
@@ -22,30 +22,26 @@ interface ChatEventData {
 
 const createMockHistoryService = () => {
   let getHistoryResult: Result<MuxMessage[], string> = Ok([]);
-  let clearHistoryResult: Result<number[], string> = Ok([]);
-  let appendToHistoryResult: Result<void, string> = Ok(undefined);
+  let replaceHistoryResult: Result<number[], string> = Ok([]);
 
   const getHistory = mock((_) => Promise.resolve(getHistoryResult));
-  const clearHistory = mock((_) => Promise.resolve(clearHistoryResult));
-  const appendToHistory = mock((_, __) => Promise.resolve(appendToHistoryResult));
+  const replaceHistory = mock((_, __) => Promise.resolve(replaceHistoryResult));
+
+  // Unused in compaction tests, but kept for interface compatibility
   const updateHistory = mock(() => Promise.resolve(Ok(undefined)));
   const truncateAfterMessage = mock(() => Promise.resolve(Ok(undefined)));
 
   return {
     getHistory,
-    clearHistory,
-    appendToHistory,
+    replaceHistory,
     updateHistory,
     truncateAfterMessage,
     // Allow setting mock return values
     mockGetHistory: (result: Result<MuxMessage[], string>) => {
       getHistoryResult = result;
     },
-    mockClearHistory: (result: Result<number[], string>) => {
-      clearHistoryResult = result;
-    },
-    mockAppendToHistory: (result: Result<void, string>) => {
-      appendToHistoryResult = result;
+    mockReplaceHistory: (result: Result<number[], string>) => {
+      replaceHistoryResult = result;
     },
   };
 };
@@ -81,11 +77,20 @@ const createMockEmitter = (): { emitter: EventEmitter; events: EmittedEvent[] } 
   return { emitter: emitter as EventEmitter, events };
 };
 
-const createCompactionRequest = (id = "req-1"): MuxMessage =>
-  createMuxMessage(id, "user", "Please summarize the conversation", {
+/** Helper: create a normal user message (not compaction) */
+const createNormalUserMessage = (id = "msg-1"): MuxMessage =>
+  createMuxMessage(id, "user", "Hello, how are you?", {
     historySequence: 0,
-    muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
+    muxMetadata: { type: "normal" },
   });
+
+/** Helper: create a valid long summary (>=50 words) */
+const createValidSummary = (): string =>
+  "This is a comprehensive summary of the conversation. The user wanted to build a feature for their application. " +
+  "We discussed the requirements and architecture. Key decisions included using TypeScript for type safety, " +
+  "implementing a control-plane pattern for reliability, and adding validation for data integrity. " +
+  "The implementation is now complete with proper error handling and tests. " +
+  "Next steps involve deployment and monitoring of the new feature in production.";
 
 const createStreamEndEvent = (
   summary: string,
@@ -106,12 +111,11 @@ const createStreamEndEvent = (
 // DRY helper to set up successful compaction scenario
 const setupSuccessfulCompaction = (
   mockHistoryService: ReturnType<typeof createMockHistoryService>,
-  messages: MuxMessage[] = [createCompactionRequest()],
-  clearedSequences?: number[]
+  messages: MuxMessage[] = [createNormalUserMessage()],
+  deletedSequences?: number[]
 ) => {
   mockHistoryService.mockGetHistory(Ok(messages));
-  mockHistoryService.mockClearHistory(Ok(clearedSequences ?? messages.map((_, i) => i)));
-  mockHistoryService.mockAppendToHistory(Ok(undefined));
+  mockHistoryService.mockReplaceHistory(Ok(deletedSequences ?? messages.map((_, i) => i)));
 };
 
 describe("CompactionHandler", () => {
@@ -122,6 +126,8 @@ describe("CompactionHandler", () => {
   let telemetryCapture: ReturnType<typeof mock>;
   let telemetryService: TelemetryService;
   let emittedEvents: EmittedEvent[];
+  let activeOperation: ActiveCompactionOperation | null;
+  let clearActiveOperationCalled: boolean;
   const workspaceId = "test-workspace";
 
   beforeEach(() => {
@@ -137,44 +143,60 @@ describe("CompactionHandler", () => {
     mockHistoryService = createMockHistoryService();
     mockPartialService = createMockPartialService();
 
+    // Default: no active compaction operation
+    activeOperation = null;
+    clearActiveOperationCalled = false;
+
     handler = new CompactionHandler({
       workspaceId,
       historyService: mockHistoryService as unknown as HistoryService,
       telemetryService,
       partialService: mockPartialService as unknown as PartialService,
       emitter: mockEmitter,
+      getActiveCompactionOperation: () => activeOperation,
+      clearActiveCompactionOperation: () => {
+        clearActiveOperationCalled = true;
+        activeOperation = null;
+      },
     });
   });
 
-  describe("handleCompletion() - Normal Compaction Flow", () => {
-    it("should return false when no compaction request found", async () => {
-      const normalMsg = createMuxMessage("msg1", "user", "Hello", {
-        historySequence: 0,
-        muxMetadata: { type: "normal" },
-      });
-      mockHistoryService.mockGetHistory(Ok([normalMsg]));
+  /** Helper to set an active compaction operation */
 
-      const event = createStreamEndEvent("Summary");
+  const getReplaceHistoryCalls = (): Array<[string, MuxMessage[]]> => {
+    return mockHistoryService.replaceHistory.mock.calls as unknown as Array<[string, MuxMessage[]]>;
+  };
+
+  const getReplacedMessage = (): MuxMessage => {
+    const calls = getReplaceHistoryCalls();
+    const [, messages] = calls[0];
+    return messages[0];
+  };
+  const setActiveOperation = (
+    operationId: string,
+    source: "user" | "force-compaction" | "idle-compaction" = "user"
+  ) => {
+    activeOperation = { operationId, source };
+  };
+
+  describe("handleCompletion() - Control-plane Compaction", () => {
+    it("should return false when no active compaction operation", async () => {
+      // No active operation set
+      const msg = createNormalUserMessage();
+      mockHistoryService.mockGetHistory(Ok([msg]));
+
+      const event = createStreamEndEvent(createValidSummary());
       const result = await handler.handleCompletion(event);
 
       expect(result).toBe(false);
-      expect(mockHistoryService.clearHistory.mock.calls).toHaveLength(0);
-    });
-
-    it("should return false when historyService fails", async () => {
-      mockHistoryService.mockGetHistory(Err("Database error"));
-
-      const event = createStreamEndEvent("Summary");
-      const result = await handler.handleCompletion(event);
-
-      expect(result).toBe(false);
+      expect(mockHistoryService.replaceHistory.mock.calls).toHaveLength(0);
     });
 
     it("should capture compaction_completed telemetry on successful compaction", async () => {
-      const compactionReq = createCompactionRequest();
-      setupSuccessfulCompaction(mockHistoryService, [compactionReq]);
+      setActiveOperation("op-1");
+      setupSuccessfulCompaction(mockHistoryService, [createNormalUserMessage()]);
 
-      const event = createStreamEndEvent("Summary", {
+      const event = createStreamEndEvent(createValidSummary(), {
         duration: 1500,
         // Prefer contextUsage (context size) over total usage.
         contextUsage: { inputTokens: 1000, outputTokens: 333, totalTokens: undefined },
@@ -202,102 +224,62 @@ describe("CompactionHandler", () => {
     });
 
     it("should return true when successful", async () => {
-      const compactionReq = createCompactionRequest();
-      mockHistoryService.mockGetHistory(Ok([compactionReq]));
-      mockHistoryService.mockClearHistory(Ok([0]));
-      mockHistoryService.mockAppendToHistory(Ok(undefined));
+      setActiveOperation("op-1");
+      setupSuccessfulCompaction(mockHistoryService, [createNormalUserMessage()]);
 
-      const event = createStreamEndEvent("Complete summary");
+      const event = createStreamEndEvent(createValidSummary());
       const result = await handler.handleCompletion(event);
 
       expect(result).toBe(true);
+      expect(clearActiveOperationCalled).toBe(true);
     });
 
-    it("should join multiple text parts from event.parts", async () => {
-      const compactionReq = createCompactionRequest();
-      setupSuccessfulCompaction(mockHistoryService, [compactionReq]);
+    it("should extract and store summary text from event.parts", async () => {
+      setActiveOperation("op-1");
+      setupSuccessfulCompaction(mockHistoryService, [createNormalUserMessage()]);
 
-      // Create event with multiple text parts
-      const event: StreamEndEvent = {
-        type: "stream-end",
-        workspaceId: "test-workspace",
-        messageId: "msg-id",
-        parts: [
-          { type: "text", text: "Part 1 " },
-          { type: "text", text: "Part 2 " },
-          { type: "text", text: "Part 3" },
-        ],
-        metadata: {
-          model: "claude-3-5-sonnet-20241022",
-          usage: { inputTokens: 100, outputTokens: 50, totalTokens: undefined },
-          duration: 1500,
-        },
-      };
+      const validSummary = createValidSummary();
+      const event = createStreamEndEvent(validSummary);
       await handler.handleCompletion(event);
 
-      const appendedMsg = mockHistoryService.appendToHistory.mock.calls[0][1] as MuxMessage;
-      expect((appendedMsg.parts[0] as { type: "text"; text: string }).text).toBe(
-        "Part 1 Part 2 Part 3"
-      );
-    });
-
-    it("should extract summary text from event.parts", async () => {
-      const compactionReq = createCompactionRequest();
-      mockHistoryService.mockGetHistory(Ok([compactionReq]));
-      mockHistoryService.mockClearHistory(Ok([0]));
-      mockHistoryService.mockAppendToHistory(Ok(undefined));
-
-      const event = createStreamEndEvent("This is the summary");
-      await handler.handleCompletion(event);
-
-      const appendedMsg = mockHistoryService.appendToHistory.mock.calls[0][1] as MuxMessage;
-      expect((appendedMsg.parts[0] as { type: "text"; text: string }).text).toBe(
-        "This is the summary"
-      );
+      const replacedMsg = getReplacedMessage();
+      expect((replacedMsg.parts[0] as { type: "text"; text: string }).text).toBe(validSummary);
     });
 
     it("should delete partial.json before clearing history (race condition fix)", async () => {
-      const compactionReq = createCompactionRequest();
-      mockHistoryService.mockGetHistory(Ok([compactionReq]));
-      mockHistoryService.mockClearHistory(Ok([0]));
-      mockHistoryService.mockAppendToHistory(Ok(undefined));
+      setActiveOperation("op-1");
+      setupSuccessfulCompaction(mockHistoryService, [createNormalUserMessage()]);
 
-      const event = createStreamEndEvent("Summary");
+      const event = createStreamEndEvent(createValidSummary());
       await handler.handleCompletion(event);
 
       // deletePartial should be called once before clearHistory
       expect(mockPartialService.deletePartial.mock.calls).toHaveLength(1);
       expect(mockPartialService.deletePartial.mock.calls[0][0]).toBe(workspaceId);
-
-      // Verify deletePartial was called (we can't easily verify order without more complex mocking,
-      // but the important thing is that it IS called during compaction)
     });
 
-    it("should call clearHistory() and appendToHistory()", async () => {
-      const compactionReq = createCompactionRequest();
-      mockHistoryService.mockGetHistory(Ok([compactionReq]));
-      mockHistoryService.mockClearHistory(Ok([0]));
-      mockHistoryService.mockAppendToHistory(Ok(undefined));
+    it("should call replaceHistory()", async () => {
+      setActiveOperation("op-1");
+      setupSuccessfulCompaction(mockHistoryService, [createNormalUserMessage()]);
 
-      const event = createStreamEndEvent("Summary");
+      const validSummary = createValidSummary();
+      const event = createStreamEndEvent(validSummary);
       await handler.handleCompletion(event);
 
-      expect(mockHistoryService.clearHistory.mock.calls).toHaveLength(1);
-      expect(mockHistoryService.clearHistory.mock.calls[0][0]).toBe(workspaceId);
-      expect(mockHistoryService.appendToHistory.mock.calls).toHaveLength(1);
-      expect(mockHistoryService.appendToHistory.mock.calls[0][0]).toBe(workspaceId);
-      const appendedMsg = mockHistoryService.appendToHistory.mock.calls[0][1] as MuxMessage;
-      expect(appendedMsg.role).toBe("assistant");
-      expect((appendedMsg.parts[0] as { type: "text"; text: string }).text).toBe("Summary");
+      const calls = getReplaceHistoryCalls();
+      expect(calls).toHaveLength(1);
+      expect(calls[0][0]).toBe(workspaceId);
+      const replacedMsg = getReplacedMessage();
+      expect(replacedMsg.role).toBe("assistant");
+      expect((replacedMsg.parts[0] as { type: "text"; text: string }).text).toBe(validSummary);
     });
 
     it("should emit delete event for old messages", async () => {
-      const compactionReq = createCompactionRequest();
-      mockHistoryService.mockGetHistory(Ok([compactionReq]));
-      mockHistoryService.mockClearHistory(Ok([0, 1, 2, 3]));
-      mockHistoryService.mockAppendToHistory(Ok(undefined));
+      setActiveOperation("op-1");
+      mockHistoryService.mockGetHistory(Ok([createNormalUserMessage()]));
+      mockHistoryService.mockReplaceHistory(Ok([0, 1, 2, 3]));
 
-      const event = createStreamEndEvent("Summary");
+      const event = createStreamEndEvent(createValidSummary());
       await handler.handleCompletion(event);
 
       const deleteEvent = emittedEvents.find(
@@ -309,13 +291,11 @@ describe("CompactionHandler", () => {
     });
 
     it("should emit summary message with complete metadata", async () => {
-      const compactionReq = createCompactionRequest();
-      mockHistoryService.mockGetHistory(Ok([compactionReq]));
-      mockHistoryService.mockClearHistory(Ok([0]));
-      mockHistoryService.mockAppendToHistory(Ok(undefined));
+      setActiveOperation("op-1");
+      setupSuccessfulCompaction(mockHistoryService, [createNormalUserMessage()]);
 
       const usage = { inputTokens: 200, outputTokens: 100, totalTokens: 300 };
-      const event = createStreamEndEvent("Summary", {
+      const event = createStreamEndEvent(createValidSummary(), {
         model: "claude-3-5-sonnet-20241022",
         usage,
         duration: 2000,
@@ -342,12 +322,10 @@ describe("CompactionHandler", () => {
     });
 
     it("should emit stream-end event to frontend", async () => {
-      const compactionReq = createCompactionRequest();
-      mockHistoryService.mockGetHistory(Ok([compactionReq]));
-      mockHistoryService.mockClearHistory(Ok([0]));
-      mockHistoryService.mockAppendToHistory(Ok(undefined));
+      setActiveOperation("op-1");
+      setupSuccessfulCompaction(mockHistoryService, [createNormalUserMessage()]);
 
-      const event = createStreamEndEvent("Summary", { duration: 1234 });
+      const event = createStreamEndEvent(createValidSummary(), { duration: 1234 });
       await handler.handleCompletion(event);
 
       const streamEndEvent = emittedEvents.find((_e) => _e.data.message === event);
@@ -358,57 +336,96 @@ describe("CompactionHandler", () => {
     });
 
     it("should set compacted in summary metadata", async () => {
-      const compactionReq = createCompactionRequest();
-      mockHistoryService.mockGetHistory(Ok([compactionReq]));
-      mockHistoryService.mockClearHistory(Ok([0]));
-      mockHistoryService.mockAppendToHistory(Ok(undefined));
+      setActiveOperation("op-1");
+      setupSuccessfulCompaction(mockHistoryService, [createNormalUserMessage()]);
 
-      const event = createStreamEndEvent("Summary");
+      const event = createStreamEndEvent(createValidSummary());
       await handler.handleCompletion(event);
 
-      const appendedMsg = mockHistoryService.appendToHistory.mock.calls[0][1] as MuxMessage;
-      expect(appendedMsg.metadata?.compacted).toBe("user");
+      const replacedMsg = getReplacedMessage();
+      expect(replacedMsg.metadata?.compacted).toBe("user");
+    });
+  });
+
+  describe("handleCompletion() - Summary Validation", () => {
+    it("should reject empty summary and not clear history", async () => {
+      setActiveOperation("op-1");
+      mockHistoryService.mockGetHistory(Ok([createNormalUserMessage()]));
+
+      const event = createStreamEndEvent("");
+      const result = await handler.handleCompletion(event);
+
+      expect(result).toBe(true); // Still returns true (was a compaction attempt)
+      expect(mockHistoryService.replaceHistory.mock.calls).toHaveLength(0);
+      expect(clearActiveOperationCalled).toBe(true);
+    });
+
+    it("should reject summary that is too short (<50 words)", async () => {
+      setActiveOperation("op-1");
+      mockHistoryService.mockGetHistory(Ok([createNormalUserMessage()]));
+
+      // Only ~10 words
+      const event = createStreamEndEvent(
+        "This is a very short summary that won't pass validation."
+      );
+      const result = await handler.handleCompletion(event);
+
+      expect(result).toBe(true);
+      expect(mockHistoryService.replaceHistory.mock.calls).toHaveLength(0);
+      expect(clearActiveOperationCalled).toBe(true);
+    });
+
+    it("should accept summary at minimum word count", async () => {
+      setActiveOperation("op-1");
+      setupSuccessfulCompaction(mockHistoryService, [createNormalUserMessage()]);
+
+      // Exactly 50 words
+      const fiftyWords = Array(50).fill("word").join(" ");
+      const event = createStreamEndEvent(fiftyWords);
+      const result = await handler.handleCompletion(event);
+
+      expect(result).toBe(true);
+      expect(mockHistoryService.replaceHistory.mock.calls).toHaveLength(1);
     });
   });
 
   describe("handleCompletion() - Deduplication", () => {
-    it("should track processed compaction-request IDs", async () => {
-      const compactionReq = createCompactionRequest("req-unique");
-      mockHistoryService.mockGetHistory(Ok([compactionReq]));
-      mockHistoryService.mockClearHistory(Ok([0]));
-      mockHistoryService.mockAppendToHistory(Ok(undefined));
+    it("should track processed operation IDs", async () => {
+      setActiveOperation("op-unique");
+      setupSuccessfulCompaction(mockHistoryService, [createNormalUserMessage()], [0]);
 
-      const event = createStreamEndEvent("Summary");
+      const event = createStreamEndEvent(createValidSummary());
       await handler.handleCompletion(event);
 
-      expect(mockHistoryService.clearHistory.mock.calls).toHaveLength(1);
+      expect(mockHistoryService.replaceHistory.mock.calls).toHaveLength(1);
     });
 
-    it("should return true without re-processing when same request ID seen twice", async () => {
-      const compactionReq = createCompactionRequest("req-dupe");
-      mockHistoryService.mockGetHistory(Ok([compactionReq]));
-      mockHistoryService.mockClearHistory(Ok([0]));
-      mockHistoryService.mockAppendToHistory(Ok(undefined));
+    it("should return true without re-processing when same operation ID seen twice", async () => {
+      setActiveOperation("op-dupe");
+      setupSuccessfulCompaction(mockHistoryService, [createNormalUserMessage()], [0]);
 
-      const event = createStreamEndEvent("Summary");
+      const event = createStreamEndEvent(createValidSummary());
       const result1 = await handler.handleCompletion(event);
+
+      // Re-set operation since it was cleared
+      setActiveOperation("op-dupe");
       const result2 = await handler.handleCompletion(event);
 
       expect(result1).toBe(true);
       expect(result2).toBe(true);
-      expect(mockHistoryService.clearHistory.mock.calls).toHaveLength(1);
+      expect(mockHistoryService.replaceHistory.mock.calls).toHaveLength(1);
     });
 
     it("should not emit duplicate events", async () => {
-      const compactionReq = createCompactionRequest("req-dupe-2");
-      mockHistoryService.mockGetHistory(Ok([compactionReq]));
-      mockHistoryService.mockClearHistory(Ok([0]));
-      mockHistoryService.mockAppendToHistory(Ok(undefined));
+      setActiveOperation("op-dupe-2");
+      setupSuccessfulCompaction(mockHistoryService, [createNormalUserMessage()], [0]);
 
-      const event = createStreamEndEvent("Summary");
+      const event = createStreamEndEvent(createValidSummary());
       await handler.handleCompletion(event);
       const eventCountAfterFirst = emittedEvents.length;
 
+      // Re-set operation since it was cleared
+      setActiveOperation("op-dupe-2");
       await handler.handleCompletion(event);
       const eventCountAfterSecond = emittedEvents.length;
 
@@ -416,77 +433,74 @@ describe("CompactionHandler", () => {
     });
 
     it("should not clear history twice", async () => {
-      const compactionReq = createCompactionRequest("req-dupe-3");
-      mockHistoryService.mockGetHistory(Ok([compactionReq]));
-      mockHistoryService.mockClearHistory(Ok([0]));
-      mockHistoryService.mockAppendToHistory(Ok(undefined));
+      setActiveOperation("op-dupe-3");
+      setupSuccessfulCompaction(mockHistoryService, [createNormalUserMessage()], [0]);
 
-      const event = createStreamEndEvent("Summary");
-      await handler.handleCompletion(event);
+      const event = createStreamEndEvent(createValidSummary());
       await handler.handleCompletion(event);
 
-      expect(mockHistoryService.clearHistory.mock.calls).toHaveLength(1);
-      expect(mockHistoryService.appendToHistory.mock.calls).toHaveLength(1);
+      // Re-set operation since it was cleared
+      setActiveOperation("op-dupe-3");
+      await handler.handleCompletion(event);
+
+      expect(mockHistoryService.replaceHistory.mock.calls).toHaveLength(1);
     });
   });
 
   describe("Error Handling", () => {
-    it("should return false when clearHistory() fails", async () => {
-      const compactionReq = createCompactionRequest();
-      mockHistoryService.mockGetHistory(Ok([compactionReq]));
-      mockHistoryService.mockClearHistory(Err("Clear failed"));
+    it("should return true but not replace history when replaceHistory() fails", async () => {
+      setActiveOperation("op-1");
+      mockHistoryService.mockGetHistory(Ok([createNormalUserMessage()]));
+      mockHistoryService.mockReplaceHistory(Err("Replace failed"));
 
-      const event = createStreamEndEvent("Summary");
+      const event = createStreamEndEvent(createValidSummary());
       const result = await handler.handleCompletion(event);
 
-      expect(result).toBe(false);
-      expect(mockHistoryService.appendToHistory.mock.calls).toHaveLength(0);
-    });
+      // Returns true because it was a compaction attempt (even though it failed)
+      expect(result).toBe(true);
+      expect(mockHistoryService.replaceHistory.mock.calls).toHaveLength(1);
+      expect(clearActiveOperationCalled).toBe(true);
 
-    it("should return false when appendToHistory() fails", async () => {
-      const compactionReq = createCompactionRequest();
-      mockHistoryService.mockGetHistory(Ok([compactionReq]));
-      mockHistoryService.mockClearHistory(Ok([0]));
-      mockHistoryService.mockAppendToHistory(Err("Append failed"));
-
-      const event = createStreamEndEvent("Summary");
-      const result = await handler.handleCompletion(event);
-
-      expect(result).toBe(false);
+      // Should not emit summary/delete events on failure
+      const summaryEvent = emittedEvents.find((_e) => {
+        const m = _e.data.message as MuxMessage | undefined;
+        return m?.role === "assistant" && m?.parts !== undefined;
+      });
+      expect(summaryEvent).toBeUndefined();
     });
 
     it("should log errors but not throw", async () => {
-      const compactionReq = createCompactionRequest();
-      mockHistoryService.mockGetHistory(Ok([compactionReq]));
-      mockHistoryService.mockClearHistory(Err("Database corruption"));
+      setActiveOperation("op-1");
+      mockHistoryService.mockGetHistory(Ok([createNormalUserMessage()]));
+      mockHistoryService.mockReplaceHistory(Err("Database corruption"));
 
-      const event = createStreamEndEvent("Summary");
+      const event = createStreamEndEvent(createValidSummary());
 
       // Should not throw
       const result = await handler.handleCompletion(event);
-      expect(result).toBe(false);
+      expect(result).toBe(true);
     });
 
-    it("should not emit events when compaction fails mid-process", async () => {
-      const compactionReq = createCompactionRequest();
-      mockHistoryService.mockGetHistory(Ok([compactionReq]));
-      mockHistoryService.mockClearHistory(Err("Clear failed"));
+    it("should emit stream-end even when compaction fails", async () => {
+      setActiveOperation("op-1");
+      mockHistoryService.mockGetHistory(Ok([createNormalUserMessage()]));
+      mockHistoryService.mockReplaceHistory(Err("Replace failed"));
 
-      const event = createStreamEndEvent("Summary");
+      const event = createStreamEndEvent(createValidSummary());
       await handler.handleCompletion(event);
 
-      expect(emittedEvents).toHaveLength(0);
+      // stream-end should be emitted so UI updates
+      const streamEndEvent = emittedEvents.find((_e) => _e.data.message === event);
+      expect(streamEndEvent).toBeDefined();
     });
   });
 
   describe("Event Emission", () => {
     it("should include workspaceId in all chat-event emissions", async () => {
-      const compactionReq = createCompactionRequest();
-      mockHistoryService.mockGetHistory(Ok([compactionReq]));
-      mockHistoryService.mockClearHistory(Ok([0]));
-      mockHistoryService.mockAppendToHistory(Ok(undefined));
+      setActiveOperation("op-1");
+      setupSuccessfulCompaction(mockHistoryService, [createNormalUserMessage()]);
 
-      const event = createStreamEndEvent("Summary");
+      const event = createStreamEndEvent(createValidSummary());
       await handler.handleCompletion(event);
 
       const chatEvents = emittedEvents.filter((e) => e.event === "chat-event");
@@ -497,12 +511,11 @@ describe("CompactionHandler", () => {
     });
 
     it("should emit DeleteMessage with correct type and historySequences array", async () => {
-      const compactionReq = createCompactionRequest();
-      mockHistoryService.mockGetHistory(Ok([compactionReq]));
-      mockHistoryService.mockClearHistory(Ok([5, 10, 15]));
-      mockHistoryService.mockAppendToHistory(Ok(undefined));
+      setActiveOperation("op-1");
+      mockHistoryService.mockGetHistory(Ok([createNormalUserMessage()]));
+      mockHistoryService.mockReplaceHistory(Ok([5, 10, 15]));
 
-      const event = createStreamEndEvent("Summary");
+      const event = createStreamEndEvent(createValidSummary());
       await handler.handleCompletion(event);
 
       const deleteEvent = emittedEvents.find(
@@ -515,12 +528,11 @@ describe("CompactionHandler", () => {
     });
 
     it("should emit summary message with proper MuxMessage structure", async () => {
-      const compactionReq = createCompactionRequest();
-      mockHistoryService.mockGetHistory(Ok([compactionReq]));
-      mockHistoryService.mockClearHistory(Ok([0]));
-      mockHistoryService.mockAppendToHistory(Ok(undefined));
+      setActiveOperation("op-1");
+      setupSuccessfulCompaction(mockHistoryService, [createNormalUserMessage()]);
 
-      const event = createStreamEndEvent("Summary text");
+      const validSummary = createValidSummary();
+      const event = createStreamEndEvent(validSummary);
       await handler.handleCompletion(event);
 
       const summaryEvent = emittedEvents.find((_e) => {
@@ -532,7 +544,7 @@ describe("CompactionHandler", () => {
       expect(summaryMsg).toMatchObject({
         id: expect.stringContaining("summary-") as string,
         role: "assistant",
-        parts: [{ type: "text", text: "Summary text" }],
+        parts: [{ type: "text", text: validSummary }],
         metadata: expect.objectContaining({
           compacted: "user",
           muxMetadata: { type: "normal" },
@@ -541,12 +553,10 @@ describe("CompactionHandler", () => {
     });
 
     it("should forward stream events (stream-end, stream-abort) correctly", async () => {
-      const compactionReq = createCompactionRequest();
-      mockHistoryService.mockGetHistory(Ok([compactionReq]));
-      mockHistoryService.mockClearHistory(Ok([0]));
-      mockHistoryService.mockAppendToHistory(Ok(undefined));
+      setActiveOperation("op-1");
+      setupSuccessfulCompaction(mockHistoryService, [createNormalUserMessage()]);
 
-      const event = createStreamEndEvent("Summary", { customField: "test" });
+      const event = createStreamEndEvent(createValidSummary(), { customField: "test" });
       await handler.handleCompletion(event);
 
       const streamEndEvent = emittedEvents.find((_e) => _e.data.message === event);
@@ -563,21 +573,12 @@ describe("CompactionHandler", () => {
         timestamp: originalTimestamp,
         historySequence: 0,
       });
-      const idleCompactionReq = createMuxMessage("req-1", "user", "Summarize", {
-        historySequence: 1,
-        muxMetadata: {
-          type: "compaction-request",
-          source: "idle-compaction",
-          rawCommand: "/compact",
-          parsed: {},
-        },
-      });
 
-      mockHistoryService.mockGetHistory(Ok([userMessage, idleCompactionReq]));
-      mockHistoryService.mockClearHistory(Ok([0, 1]));
-      mockHistoryService.mockAppendToHistory(Ok(undefined));
+      setActiveOperation("op-idle", "idle-compaction");
+      mockHistoryService.mockGetHistory(Ok([userMessage]));
+      mockHistoryService.mockReplaceHistory(Ok([0]));
 
-      const event = createStreamEndEvent("Summary");
+      const event = createStreamEndEvent(createValidSummary());
       await handler.handleCompletion(event);
 
       const summaryEvent = emittedEvents.find((_e) => {
@@ -597,21 +598,12 @@ describe("CompactionHandler", () => {
         compacted: "user",
         historySequence: 0,
       });
-      const idleCompactionReq = createMuxMessage("req-1", "user", "Summarize", {
-        historySequence: 1,
-        muxMetadata: {
-          type: "compaction-request",
-          source: "idle-compaction",
-          rawCommand: "/compact",
-          parsed: {},
-        },
-      });
 
-      mockHistoryService.mockGetHistory(Ok([compactedMessage, idleCompactionReq]));
-      mockHistoryService.mockClearHistory(Ok([0, 1]));
-      mockHistoryService.mockAppendToHistory(Ok(undefined));
+      setActiveOperation("op-idle", "idle-compaction");
+      mockHistoryService.mockGetHistory(Ok([compactedMessage]));
+      mockHistoryService.mockReplaceHistory(Ok([0]));
 
-      const event = createStreamEndEvent("Summary");
+      const event = createStreamEndEvent(createValidSummary());
       await handler.handleCompletion(event);
 
       const summaryEvent = emittedEvents.find((_e) => {
@@ -635,21 +627,12 @@ describe("CompactionHandler", () => {
         timestamp: newerUserTimestamp,
         historySequence: 1,
       });
-      const idleCompactionReq = createMuxMessage("req-1", "user", "Summarize", {
-        historySequence: 2,
-        muxMetadata: {
-          type: "compaction-request",
-          source: "idle-compaction",
-          rawCommand: "/compact",
-          parsed: {},
-        },
-      });
 
-      mockHistoryService.mockGetHistory(Ok([compactedMessage, userMessage, idleCompactionReq]));
-      mockHistoryService.mockClearHistory(Ok([0, 1, 2]));
-      mockHistoryService.mockAppendToHistory(Ok(undefined));
+      setActiveOperation("op-idle", "idle-compaction");
+      mockHistoryService.mockGetHistory(Ok([compactedMessage, userMessage]));
+      mockHistoryService.mockReplaceHistory(Ok([0, 1]));
 
-      const event = createStreamEndEvent("Summary");
+      const event = createStreamEndEvent(createValidSummary());
       await handler.handleCompletion(event);
 
       const summaryEvent = emittedEvents.find((_e) => {
@@ -662,57 +645,20 @@ describe("CompactionHandler", () => {
       expect(summaryMsg.metadata?.timestamp).toBe(newerUserTimestamp);
     });
 
-    it("should skip compaction-request message when finding timestamp to preserve", async () => {
-      const originalTimestamp = Date.now() - 3600 * 1000; // 1 hour ago - the real user message
-      const freshTimestamp = Date.now(); // The compaction request has a fresh timestamp
-      const userMessage = createMuxMessage("user-1", "user", "Hello", {
-        timestamp: originalTimestamp,
-        historySequence: 0,
-      });
-      // Idle compaction request WITH a timestamp (as happens in production)
-      const idleCompactionReq = createMuxMessage("req-1", "user", "Summarize", {
-        timestamp: freshTimestamp,
-        historySequence: 1,
-        muxMetadata: {
-          type: "compaction-request",
-          source: "idle-compaction",
-          rawCommand: "/compact",
-          parsed: {},
-        },
-      });
-
-      mockHistoryService.mockGetHistory(Ok([userMessage, idleCompactionReq]));
-      mockHistoryService.mockClearHistory(Ok([0, 1]));
-      mockHistoryService.mockAppendToHistory(Ok(undefined));
-
-      const event = createStreamEndEvent("Summary");
-      await handler.handleCompletion(event);
-
-      const summaryEvent = emittedEvents.find((_e) => {
-        const m = _e.data.message as MuxMessage | undefined;
-        return m?.role === "assistant" && m?.metadata?.compacted;
-      });
-      expect(summaryEvent).toBeDefined();
-      const summaryMsg = summaryEvent?.data.message as MuxMessage;
-      // Should use the OLD user message timestamp, NOT the fresh compaction request timestamp
-      expect(summaryMsg.metadata?.timestamp).toBe(originalTimestamp);
-      expect(summaryMsg.metadata?.compacted).toBe("idle");
-    });
-
-    it("should use current time for non-idle compaction", async () => {
+    it("should use current time for non-idle compaction (user source)", async () => {
       const oldTimestamp = Date.now() - 3600 * 1000; // 1 hour ago
       const userMessage = createMuxMessage("user-1", "user", "Hello", {
         timestamp: oldTimestamp,
         historySequence: 0,
       });
-      // Regular compaction (not idle)
-      const compactionReq = createCompactionRequest();
-      mockHistoryService.mockGetHistory(Ok([userMessage, compactionReq]));
-      mockHistoryService.mockClearHistory(Ok([0, 1]));
-      mockHistoryService.mockAppendToHistory(Ok(undefined));
+
+      // Regular compaction (not idle) - uses "user" source
+      setActiveOperation("op-user", "user");
+      mockHistoryService.mockGetHistory(Ok([userMessage]));
+      mockHistoryService.mockReplaceHistory(Ok([0]));
 
       const beforeTime = Date.now();
-      const event = createStreamEndEvent("Summary");
+      const event = createStreamEndEvent(createValidSummary());
       await handler.handleCompletion(event);
       const afterTime = Date.now();
 

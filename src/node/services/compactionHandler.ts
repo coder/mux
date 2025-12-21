@@ -3,7 +3,7 @@ import type { HistoryService } from "./historyService";
 import type { PartialService } from "./partialService";
 
 import type { StreamEndEvent } from "@/common/types/stream";
-import type { WorkspaceChatMessage, DeleteMessage } from "@/common/orpc/types";
+import type { WorkspaceChatMessage, DeleteMessage, ImagePart } from "@/common/orpc/types";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
@@ -18,6 +18,21 @@ import {
 } from "@/common/utils/messages/extractEditedFiles";
 import { computeRecencyFromMessages } from "@/common/utils/recency";
 
+/** Minimum word count for a valid compaction summary */
+const MIN_SUMMARY_WORDS = 50;
+
+/** Active compaction operation tracked via session state (control-plane) */
+export interface ActiveCompactionOperation {
+  operationId: string;
+  source: "user" | "force-compaction" | "idle-compaction";
+  continueMessage?: {
+    text: string;
+    imageParts?: ImagePart[];
+    model?: string;
+    mode?: "exec" | "plan";
+  };
+}
+
 interface CompactionHandlerOptions {
   workspaceId: string;
   historyService: HistoryService;
@@ -26,15 +41,24 @@ interface CompactionHandlerOptions {
   emitter: EventEmitter;
   /** Called when compaction completes successfully (e.g., to clear idle compaction pending state) */
   onCompactionComplete?: () => void;
+  /** Get active compaction operation from session state (control-plane) */
+  getActiveCompactionOperation: () => ActiveCompactionOperation | null;
+  /** Clear active compaction operation after completion */
+  clearActiveCompactionOperation: () => void;
 }
 
 /**
  * Handles history compaction for agent sessions
  *
  * Responsible for:
- * - Detecting compaction requests in stream events
- * - Replacing chat history with compacted summaries
+ * - Detecting compaction operations via session state
+ * - Replacing chat history with compacted summaries (only on successful completion)
  * - Preserving cumulative usage across compactions
+ *
+ * IMPORTANT: History is only replaced when:
+ * 1. An active compaction operation exists in session state
+ * 2. The stream completed successfully (stream-end, not stream-abort/error)
+ * 3. The summary text is valid (non-empty, meets minimum length)
  */
 export class CompactionHandler {
   private readonly workspaceId: string;
@@ -44,6 +68,8 @@ export class CompactionHandler {
   private readonly emitter: EventEmitter;
   private readonly processedCompactionRequestIds: Set<string> = new Set<string>();
   private readonly onCompactionComplete?: () => void;
+  private readonly getActiveCompactionOperation: () => ActiveCompactionOperation | null;
+  private readonly clearActiveCompactionOperation: () => void;
 
   /** Flag indicating post-compaction attachments should be generated on next turn */
   private postCompactionAttachmentsPending = false;
@@ -57,6 +83,8 @@ export class CompactionHandler {
     this.telemetryService = options.telemetryService;
     this.emitter = options.emitter;
     this.onCompactionComplete = options.onCompactionComplete;
+    this.getActiveCompactionOperation = options.getActiveCompactionOperation;
+    this.clearActiveCompactionOperation = options.clearActiveCompactionOperation;
   }
 
   /**
@@ -86,55 +114,113 @@ export class CompactionHandler {
   }
 
   /**
-   * Handle compaction stream completion
+   * Handle compaction stream completion.
    *
-   * Detects when a compaction stream finishes, extracts the summary,
-   * and performs history replacement atomically.
+   * Only processes compaction if there's an active operation in session state.
+   * This ensures compaction can only be triggered via the control-plane
+   * (compactHistory endpoint), not by user messages with special metadata.
+   *
+   * @returns true if this was a compaction stream, false otherwise
    */
   async handleCompletion(event: StreamEndEvent): Promise<boolean> {
-    // Check if the last user message is a compaction-request
-    const historyResult = await this.historyService.getHistory(this.workspaceId);
-    if (!historyResult.success) {
+    const activeOperation = this.getActiveCompactionOperation();
+    if (!activeOperation) {
+      // No active compaction - this is a normal stream completion
       return false;
     }
 
-    const messages = historyResult.data;
-    const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
-    const isCompaction = lastUserMsg?.metadata?.muxMetadata?.type === "compaction-request";
-
-    if (!isCompaction || !lastUserMsg) {
-      return false;
-    }
-
-    // Dedupe: If we've already processed this compaction-request, skip
-    if (this.processedCompactionRequestIds.has(lastUserMsg.id)) {
+    // Dedupe by operationId (prevents double-processing on reconnect)
+    if (this.processedCompactionRequestIds.has(activeOperation.operationId)) {
+      log.debug("Skipping already-processed compaction operation", {
+        operationId: activeOperation.operationId,
+      });
       return true;
     }
 
+    // Extract summary text from stream parts
     const summary = event.parts
       .filter((part): part is { type: "text"; text: string } => part.type === "text")
       .map((part) => part.text)
       .join("");
 
-    // Check if this was an idle-compaction (auto-triggered due to inactivity)
-    const muxMeta = lastUserMsg.metadata?.muxMetadata;
-    const isIdleCompaction =
-      muxMeta?.type === "compaction-request" && muxMeta.source === "idle-compaction";
+    // Validate summary before replacing history
+    const validationResult = this.validateSummary(summary);
+    if (!validationResult.valid) {
+      log.error("Compaction summary validation failed:", {
+        operationId: activeOperation.operationId,
+        reason: validationResult.reason,
+        summaryLength: summary.length,
+      });
+      this.clearActiveCompactionOperation();
+      // Emit stream-end so UI updates, but history remains unchanged
+      this.emitChatEvent(event);
+      return true;
+    }
+
+    // Get current history for compaction
+    const historyResult = await this.historyService.getHistory(this.workspaceId);
+    if (!historyResult.success) {
+      log.error("Failed to get history for compaction:", historyResult.error);
+      this.clearActiveCompactionOperation();
+      this.emitChatEvent(event);
+      return true;
+    }
 
     // Mark as processed before performing compaction
-    this.processedCompactionRequestIds.add(lastUserMsg.id);
+    this.processedCompactionRequestIds.add(activeOperation.operationId);
 
+    const isIdleCompaction = activeOperation.source === "idle-compaction";
     const result = await this.performCompaction(
       summary,
       event.metadata,
-      messages,
+      historyResult.data,
       isIdleCompaction
     );
+
     if (!result.success) {
-      log.error("Compaction failed:", result.error);
-      return false;
+      log.error("Compaction failed:", {
+        operationId: activeOperation.operationId,
+        error: result.error,
+      });
+      this.clearActiveCompactionOperation();
+      this.emitChatEvent(event);
+      return true;
     }
 
+    // Success - capture telemetry and notify
+    this.captureCompactionTelemetry(event, isIdleCompaction ? "idle" : "manual");
+    this.clearActiveCompactionOperation();
+    this.onCompactionComplete?.();
+
+    // Emit stream-end so UI knows compaction completed
+    this.emitChatEvent(event);
+    return true;
+  }
+
+  /**
+   * Validate that a summary is suitable for replacing history.
+   * Prevents data loss from empty or truncated summaries.
+   */
+  private validateSummary(summary: string): { valid: true } | { valid: false; reason: string } {
+    if (!summary || summary.trim().length === 0) {
+      return { valid: false, reason: "Summary is empty" };
+    }
+
+    const wordCount = summary.trim().split(/\s+/).length;
+    if (wordCount < MIN_SUMMARY_WORDS) {
+      return {
+        valid: false,
+        reason: `Summary too short: ${wordCount} words (minimum: ${MIN_SUMMARY_WORDS})`,
+      };
+    }
+
+    return { valid: true };
+  }
+
+  /**
+   * Capture telemetry for compaction completion
+   */
+  private captureCompactionTelemetry(event: StreamEndEvent, source: "idle" | "manual"): void {
     const durationSecs =
       typeof event.metadata.duration === "number" ? event.metadata.duration / 1000 : 0;
     const inputTokens =
@@ -149,16 +235,9 @@ export class CompactionHandler {
         duration_b2: roundToBase2(durationSecs),
         input_tokens_b2: roundToBase2(inputTokens ?? 0),
         output_tokens_b2: roundToBase2(outputTokens ?? 0),
-        compaction_source: isIdleCompaction ? "idle" : "manual",
+        compaction_source: source,
       },
     });
-
-    // Notify that compaction completed (clears idle compaction pending state)
-    this.onCompactionComplete?.();
-
-    // Emit stream-end to frontend so UI knows compaction is complete
-    this.emitChatEvent(event);
-    return true;
   }
 
   /**
@@ -197,13 +276,6 @@ export class CompactionHandler {
     // Extract diffs BEFORE clearing history (they'll be gone after clear)
     this.cachedFileDiffs = extractEditedFileDiffs(messages);
 
-    // Clear entire history and get deleted sequences
-    const clearResult = await this.historyService.clearHistory(this.workspaceId);
-    if (!clearResult.success) {
-      return Err(`Failed to clear history: ${clearResult.error}`);
-    }
-    const deletedSequences = clearResult.data;
-
     // For idle compaction, preserve the original recency timestamp so the workspace
     // doesn't appear "recently used" in the sidebar. Use the shared recency utility
     // to ensure consistency with how the sidebar computes recency.
@@ -237,14 +309,15 @@ export class CompactionHandler {
       }
     );
 
-    // Append summary to history
-    const appendResult = await this.historyService.appendToHistory(
-      this.workspaceId,
-      summaryMessage
-    );
-    if (!appendResult.success) {
-      return Err(`Failed to append summary: ${appendResult.error}`);
+    // Atomically replace history with the single summary message.
+    // This avoids the "delete then crash" failure mode.
+    const replaceResult = await this.historyService.replaceHistory(this.workspaceId, [
+      summaryMessage,
+    ]);
+    if (!replaceResult.success) {
+      return Err(`Failed to replace history: ${replaceResult.error}`);
     }
+    const deletedSequences = replaceResult.data;
 
     // Set flag to trigger post-compaction attachment injection on next turn
     this.postCompactionAttachmentsPending = true;

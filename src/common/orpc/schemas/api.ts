@@ -332,6 +332,45 @@ export const workspace = {
     }),
     output: ResultSchema(z.void(), z.string()),
   },
+  /**
+   * Compact history: control-plane endpoint for compaction.
+   * Atomically interrupts any active stream (if requested) and starts compaction.
+   * Returns immediately after compaction starts; completion is signaled via chat-event.
+   */
+  compactHistory: {
+    input: z.object({
+      workspaceId: z.string(),
+      /** Model to use for compaction (defaults to workspace's current model) */
+      model: z.string().optional(),
+      /** Max output tokens for compaction summary */
+      maxOutputTokens: z.number().optional(),
+      /** Message to auto-send after compaction completes */
+      continueMessage: z
+        .object({
+          text: z.string(),
+          imageParts: z.array(ImagePartSchema).optional(),
+          model: z.string().optional(),
+          mode: z.enum(["exec", "plan"]).optional(),
+        })
+        .optional(),
+      /** Source of the compaction request for telemetry/behavior */
+      source: z.enum(["user", "force-compaction", "idle-compaction"]).optional(),
+      /** How to handle an active stream: none (fail if streaming), graceful (wait), abandonPartial (abort) */
+      interrupt: z.enum(["none", "graceful", "abandonPartial"]).optional(),
+      /** Send message options (model, thinking level, etc.) for compaction stream */
+      sendMessageOptions: SendMessageOptionsSchema.omit({
+        editMessageId: true,
+        muxMetadata: true,
+      }).optional(),
+    }),
+    output: ResultSchema(
+      z.object({
+        /** Unique ID for this compaction operation (can be used to correlate events) */
+        operationId: z.string(),
+      }),
+      SendMessageErrorSchema
+    ),
+  },
   replaceChatHistory: {
     input: z.object({
       workspaceId: z.string(),

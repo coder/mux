@@ -40,6 +40,11 @@ import { TURNS_BETWEEN_ATTACHMENTS } from "@/common/constants/attachments";
 import { extractEditedFileDiffs } from "@/common/utils/messages/extractEditedFiles";
 import { isValidModelFormat } from "@/common/utils/ai/models";
 import { modeToToolPolicy } from "@/common/utils/ui/modeUtils";
+import {
+  buildCompactionPrompt,
+  DEFAULT_COMPACTION_WORD_TARGET,
+  WORDS_TO_TOKENS_RATIO,
+} from "@/common/constants/ui";
 
 /**
  * Tracked file state for detecting external edits.
@@ -142,6 +147,21 @@ export class AgentSession {
    */
   private postCompactionContextEnabled = false;
 
+  /**
+   * Active compaction operation (control-plane initiated).
+   * Used by CompactionHandler to detect compaction completion instead of scanning history.
+   */
+  private activeCompactionOperation: {
+    operationId: string;
+    source: "user" | "force-compaction" | "idle-compaction";
+    continueMessage?: {
+      text: string;
+      imageParts?: ImagePart[];
+      model?: string;
+      mode?: "exec" | "plan";
+    };
+  } | null = null;
+
   constructor(options: AgentSessionOptions) {
     assert(options, "AgentSession requires options");
     const {
@@ -178,6 +198,10 @@ export class AgentSession {
       partialService: this.partialService,
       emitter: this.emitter,
       onCompactionComplete,
+      getActiveCompactionOperation: () => this.activeCompactionOperation,
+      clearActiveCompactionOperation: () => {
+        this.activeCompactionOperation = null;
+      },
     });
 
     this.attachAiListeners();
@@ -574,6 +598,180 @@ export class AgentSession {
     }
 
     return this.streamWithHistory(model, options);
+  }
+
+  /**
+   * Start a compaction operation (control-plane initiated).
+   * Unlike sendMessage with muxMetadata, this does not persist a user message.
+   * Compaction completion is detected via session state, not history scanning.
+   */
+  async startCompaction(options: {
+    operationId: string;
+    model?: string;
+    maxOutputTokens?: number;
+    continueMessage?: {
+      text: string;
+      imageParts?: ImagePart[];
+      model?: string;
+      mode?: "exec" | "plan";
+    };
+    source: "user" | "force-compaction" | "idle-compaction";
+    sendMessageOptions?: Omit<SendMessageOptions, "editMessageId" | "muxMetadata">;
+  }): Promise<Result<void, SendMessageError>> {
+    this.assertNotDisposed("startCompaction");
+
+    // Validate model if provided
+    const model = options.model ?? options.sendMessageOptions?.model;
+    if (!model || model.trim().length === 0) {
+      return Err(
+        createUnknownSendMessageError("No model specified for compaction. Please select a model.")
+      );
+    }
+    if (!isValidModelFormat(model)) {
+      return Err({
+        type: "invalid_model_string",
+        message: `Invalid model string format: "${model}". Expected "provider:model-id"`,
+      });
+    }
+
+    // Set active compaction operation (used by CompactionHandler)
+    this.activeCompactionOperation = {
+      operationId: options.operationId,
+      source: options.source,
+      continueMessage: options.continueMessage,
+    };
+
+    // Clean up background processes (they won't be in the summary)
+    await this.backgroundProcessManager.cleanup(this.workspaceId);
+
+    if (this.disposed) {
+      this.activeCompactionOperation = null;
+      return Ok(undefined);
+    }
+
+    // Queue continue message if provided
+    if (options.continueMessage) {
+      const { finalText, metadata } = prepareUserMessageForSend(options.continueMessage);
+      const continueMode = options.continueMessage.mode ?? "exec";
+      const sanitizedOptions: Omit<
+        SendMessageOptions,
+        "muxMetadata" | "mode" | "editMessageId" | "imageParts" | "maxOutputTokens"
+      > & {
+        imageParts?: typeof options.continueMessage.imageParts;
+        muxMetadata?: typeof metadata;
+      } = {
+        model: options.continueMessage.model ?? model,
+        thinkingLevel: options.sendMessageOptions?.thinkingLevel,
+        toolPolicy: modeToToolPolicy(continueMode),
+        additionalSystemInstructions: options.sendMessageOptions?.additionalSystemInstructions,
+        providerOptions: options.sendMessageOptions?.providerOptions,
+        experiments: options.sendMessageOptions?.experiments,
+      };
+
+      if (options.continueMessage.imageParts?.length) {
+        sanitizedOptions.imageParts = options.continueMessage.imageParts;
+      }
+      if (metadata) {
+        sanitizedOptions.muxMetadata = metadata;
+      }
+
+      this.messageQueue.add(finalText, sanitizedOptions);
+      this.emitQueuedMessageChanged();
+    }
+
+    // Build compaction prompt
+    const targetWords = options.maxOutputTokens
+      ? Math.round(options.maxOutputTokens / WORDS_TO_TOKENS_RATIO)
+      : DEFAULT_COMPACTION_WORD_TARGET;
+    let compactionPrompt = buildCompactionPrompt(targetWords);
+
+    // If there's a non-default continue message, add context
+    if (options.continueMessage && options.continueMessage.text.trim() !== "Continue") {
+      compactionPrompt += `\n\nThe user wants to continue with: ${options.continueMessage.text}`;
+    }
+
+    // Commit any pending partial
+    const commitResult = await this.partialService.commitToHistory(this.workspaceId);
+    if (!commitResult.success) {
+      this.activeCompactionOperation = null;
+      return Err(createUnknownSendMessageError(commitResult.error));
+    }
+
+    // Get history for compaction
+    const historyResult = await this.historyService.getHistory(this.workspaceId);
+    if (!historyResult.success) {
+      this.activeCompactionOperation = null;
+      return Err(createUnknownSendMessageError(historyResult.error));
+    }
+
+    if (historyResult.data.length === 0) {
+      this.activeCompactionOperation = null;
+      return Err(createUnknownSendMessageError("Cannot compact: workspace history is empty."));
+    }
+
+    // Build compaction messages (history + compaction prompt as user message)
+    // Tool policy for compaction: disable all tools
+    const disableAllTools = [{ regex_match: ".*", action: "disable" as const }];
+
+    const compactionUserMessage = createMuxMessage(
+      `compact-prompt-${options.operationId}`,
+      "user",
+      compactionPrompt,
+      {
+        timestamp: Date.now(),
+        toolPolicy: disableAllTools,
+      }
+    );
+
+    const compactionMessages = [...historyResult.data, compactionUserMessage];
+
+    // Enforce thinking policy
+    const effectiveThinkingLevel = options.sendMessageOptions?.thinkingLevel
+      ? enforceThinkingPolicy(model, options.sendMessageOptions.thinkingLevel)
+      : undefined;
+
+    // Stream compaction (no history persistence for the prompt message)
+    return this.aiService.streamMessage(
+      compactionMessages,
+      this.workspaceId,
+      model,
+      effectiveThinkingLevel,
+      disableAllTools,
+      undefined,
+      undefined,
+      options.maxOutputTokens,
+      options.sendMessageOptions?.providerOptions,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      options.sendMessageOptions?.experiments
+    );
+  }
+
+  /**
+   * Get the active compaction operation, if any.
+   * Used by CompactionHandler to detect compaction completion.
+   */
+  getActiveCompactionOperation(): {
+    operationId: string;
+    source: "user" | "force-compaction" | "idle-compaction";
+    continueMessage?: {
+      text: string;
+      imageParts?: ImagePart[];
+      model?: string;
+      mode?: "exec" | "plan";
+    };
+  } | null {
+    return this.activeCompactionOperation;
+  }
+
+  /**
+   * Clear the active compaction operation.
+   * Called by CompactionHandler after compaction completes.
+   */
+  clearActiveCompactionOperation(): void {
+    this.activeCompactionOperation = null;
   }
 
   async interruptStream(options?: {

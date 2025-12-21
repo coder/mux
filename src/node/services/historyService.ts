@@ -422,6 +422,60 @@ export class HistoryService {
     });
   }
 
+  /**
+   * Atomically replace the entire chat history with the provided messages.
+   *
+   * This is the preferred primitive for compaction: it guarantees we never delete history
+   * and then crash before writing the replacement. The underlying write is atomic.
+   *
+   * @returns Result containing array of deleted historySequence numbers
+   */
+  async replaceHistory(
+    workspaceId: string,
+    newMessages: MuxMessage[]
+  ): Promise<Result<number[], string>> {
+    return this.fileLocks.withLock(workspaceId, async () => {
+      try {
+        const historyPath = this.getChatHistoryPath(workspaceId);
+        const workspaceDir = this.config.getSessionDir(workspaceId);
+        await fs.mkdir(workspaceDir, { recursive: true });
+
+        const historyResult = await this.getHistory(workspaceId);
+        const deletedSequences = historyResult.success
+          ? historyResult.data
+              .map((msg) => msg.metadata?.historySequence ?? -1)
+              .filter((s) => s >= 0)
+          : [];
+
+        // Normalize sequence numbers to start at 0
+        const normalizedMessages = newMessages.map((msg, index) => {
+          return {
+            ...msg,
+            metadata: {
+              ...(msg.metadata ?? {}),
+              historySequence: index,
+            },
+          };
+        });
+
+        const historyEntries = normalizedMessages
+          .map((msg) => JSON.stringify({ ...msg, workspaceId }) + "\n")
+          .join("");
+
+        // Atomic write prevents corruption if app crashes mid-write.
+        // If historyEntries is empty, this creates/overwrites the file with an empty payload.
+        await writeFileAtomic(historyPath, historyEntries);
+
+        // Update sequence counter to continue from the end
+        this.sequenceCounters.set(workspaceId, normalizedMessages.length);
+
+        return Ok(deletedSequences);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return Err(`Failed to replace history: ${message}`);
+      }
+    });
+  }
   async clearHistory(workspaceId: string): Promise<Result<number[], string>> {
     const result = await this.truncateHistory(workspaceId, 1.0);
     if (!result.success) {

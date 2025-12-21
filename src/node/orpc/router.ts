@@ -755,6 +755,23 @@ export const router = (authToken?: string) => {
           }
           return { success: true, data: undefined };
         }),
+      compactHistory: t
+        .input(schemas.workspace.compactHistory.input)
+        .output(schemas.workspace.compactHistory.output)
+        .handler(async ({ context, input }) => {
+          const result = await context.workspaceService.compactHistory(input.workspaceId, {
+            model: input.model,
+            maxOutputTokens: input.maxOutputTokens,
+            continueMessage: input.continueMessage,
+            source: input.source,
+            interrupt: input.interrupt,
+            sendMessageOptions: input.sendMessageOptions,
+          });
+          if (!result.success) {
+            return { success: false, error: result.error };
+          }
+          return { success: true, data: result.data };
+        }),
       replaceChatHistory: t
         .input(schemas.workspace.replaceChatHistory.input)
         .output(schemas.workspace.replaceChatHistory.output)
