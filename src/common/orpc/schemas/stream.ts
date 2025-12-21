@@ -322,7 +322,7 @@ export const WorkspaceChatMessageSchema = z.discriminatedUnion("type", [
   UsageDeltaEventSchema,
   QueuedMessageChangedEventSchema,
   RestoreToInputEventSchema,
-  // Idle compaction notification
+  // Compaction notifications
   IdleCompactionNeededEventSchema,
   // Init events
   ...WorkspaceInitEventSchema.def.options,

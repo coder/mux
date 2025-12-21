@@ -1887,16 +1887,15 @@ export class WorkspaceService extends EventEmitter {
     }
 
     try {
-      const clearResult = await this.historyService.clearHistory(workspaceId);
-      if (!clearResult.success) {
-        return Err(`Failed to clear history: ${clearResult.error}`);
+      // Atomically replace history (crash-safe: no window where history is deleted but summary not written)
+      const replaceResult = await this.historyService.replaceHistoryWithSummary(
+        workspaceId,
+        summaryMessage
+      );
+      if (!replaceResult.success) {
+        return Err(`Failed to replace history: ${replaceResult.error}`);
       }
-      const deletedSequences = clearResult.data;
-
-      const appendResult = await this.historyService.appendToHistory(workspaceId, summaryMessage);
-      if (!appendResult.success) {
-        return Err(`Failed to append summary message: ${appendResult.error}`);
-      }
+      const { deletedSequences } = replaceResult.data;
 
       // Emit through the session so ORPC subscriptions receive the events
       const session = this.sessions.get(workspaceId);
