@@ -6,8 +6,30 @@ interface Size {
 }
 
 /**
- * Observes an element's size changes using ResizeObserver with throttling
- * to prevent excessive re-renders during continuous resize operations.
+ * Observes an element's size changes using ResizeObserver with RAF throttling.
+ *
+ * Use this hook when you need to track an element's dimensions reactively.
+ * Updates are throttled to one per animation frame and rounded to prevent
+ * sub-pixel re-renders.
+ *
+ * **When to use this vs raw ResizeObserver:**
+ * - Use this hook when you need the size as React state
+ * - Use raw ResizeObserver when you need to trigger side effects (e.g., auto-scroll)
+ *   but wrap layout reads in requestAnimationFrame to avoid forced reflows
+ *
+ * @see useOverflowDetection - For detecting content overflow (scrollHeight > clientHeight)
+ *
+ * @example
+ * ```tsx
+ * const ref = useRef<HTMLDivElement>(null);
+ * const size = useResizeObserver(ref);
+ *
+ * return (
+ *   <div ref={ref}>
+ *     {size && `${size.width}x${size.height}`}
+ *   </div>
+ * );
+ * ```
  */
 export function useResizeObserver(ref: RefObject<HTMLElement>): Size | null {
   const [size, setSize] = useState<Size | null>(null);

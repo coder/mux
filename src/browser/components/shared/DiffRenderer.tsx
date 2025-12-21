@@ -7,6 +7,7 @@
 import React, { useEffect, useState } from "react";
 import { cn } from "@/common/lib/utils";
 import { getLanguageFromPath } from "@/common/utils/git/languageDetector";
+import { useOverflowDetection } from "@/browser/hooks/useOverflowDetection";
 import { MessageSquare } from "lucide-react";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { groupDiffLines } from "@/browser/utils/highlighting/diffChunking";
@@ -126,6 +127,31 @@ interface LineNumberWidths {
   newWidthCh: number;
 }
 
+/**
+ * Calculate minimum column widths needed to display line numbers.
+ * Works with any iterable of lines that have old/new line number properties.
+ */
+function calculateLineNumberWidths(
+  lines: Iterable<{ oldLineNum: number | null; newLineNum: number | null }>
+): LineNumberWidths {
+  let oldWidthCh = 0;
+  let newWidthCh = 0;
+
+  for (const line of lines) {
+    if (line.oldLineNum !== null) {
+      oldWidthCh = Math.max(oldWidthCh, String(line.oldLineNum).length);
+    }
+    if (line.newLineNum !== null) {
+      newWidthCh = Math.max(newWidthCh, String(line.newLineNum).length);
+    }
+  }
+
+  return {
+    oldWidthCh: Math.max(2, oldWidthCh), // Minimum 2 chars for alignment
+    newWidthCh: Math.max(2, newWidthCh),
+  };
+}
+
 // Shared line gutter component (line numbers)
 interface DiffLineGutterProps {
   type: DiffLineType;
@@ -242,7 +268,6 @@ export const DiffContainer: React.FC<
   const resolvedMaxHeight = maxHeight ?? "400px";
   const [isExpanded, setIsExpanded] = React.useState(false);
   const contentRef = React.useRef<HTMLDivElement>(null);
-  const [isOverflowing, setIsOverflowing] = React.useState(false);
   const clampContent = resolvedMaxHeight !== "none" && !isExpanded;
 
   React.useEffect(() => {
@@ -251,29 +276,8 @@ export const DiffContainer: React.FC<
     }
   }, [maxHeight]);
 
-  React.useEffect(() => {
-    const element = contentRef.current;
-    if (!element) {
-      return;
-    }
-
-    const updateOverflowState = () => {
-      setIsOverflowing(element.scrollHeight > element.clientHeight + 1);
-    };
-
-    updateOverflowState();
-
-    let resizeObserver: ResizeObserver | null = null;
-    if (typeof ResizeObserver !== "undefined") {
-      resizeObserver = new ResizeObserver(updateOverflowState);
-      resizeObserver.observe(element);
-    }
-
-    return () => {
-      resizeObserver?.disconnect();
-    };
-  }, [resolvedMaxHeight, clampContent]);
-
+  // Use RAF-throttled overflow detection to avoid forced reflows during React commit
+  const isOverflowing = useOverflowDetection(contentRef, { enabled: clampContent });
   const showOverflowControls = clampContent && isOverflowing;
 
   // Calculate gutter width to match DiffLineGutter layout:
@@ -504,25 +508,14 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
     if (!showLineNumbers || !highlightedChunks) {
       return { oldWidthCh: 2, newWidthCh: 2 };
     }
-
-    let oldWidthCh = 0;
-    let newWidthCh = 0;
-
-    for (const chunk of highlightedChunks) {
-      for (const line of chunk.lines) {
-        if (line.oldLineNumber !== null) {
-          oldWidthCh = Math.max(oldWidthCh, String(line.oldLineNumber).length);
-        }
-        if (line.newLineNumber !== null) {
-          newWidthCh = Math.max(newWidthCh, String(line.newLineNumber).length);
-        }
-      }
-    }
-
-    return {
-      oldWidthCh: Math.max(2, oldWidthCh),
-      newWidthCh: Math.max(2, newWidthCh),
-    };
+    // Flatten chunks and map HighlightedLine property names to common interface
+    const lines = highlightedChunks.flatMap((chunk) =>
+      chunk.lines.map((line) => ({
+        oldLineNum: line.oldLineNumber,
+        newLineNum: line.newLineNumber,
+      }))
+    );
+    return calculateLineNumberWidths(lines);
   }, [highlightedChunks, showLineNumbers]);
 
   // Show loading state while highlighting
@@ -870,28 +863,11 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
       }));
     }, [lineData, searchConfig]);
 
-    const lineNumberWidths = React.useMemo(() => {
-      if (!showLineNumbers) {
-        return { oldWidthCh: 2, newWidthCh: 2 };
-      }
-
-      let oldWidthCh = 0;
-      let newWidthCh = 0;
-
-      for (const line of lineData) {
-        if (line.oldLineNum !== null) {
-          oldWidthCh = Math.max(oldWidthCh, String(line.oldLineNum).length);
-        }
-        if (line.newLineNum !== null) {
-          newWidthCh = Math.max(newWidthCh, String(line.newLineNum).length);
-        }
-      }
-
-      return {
-        oldWidthCh: Math.max(2, oldWidthCh),
-        newWidthCh: Math.max(2, newWidthCh),
-      };
-    }, [lineData, showLineNumbers]);
+    const lineNumberWidths = React.useMemo(
+      () =>
+        showLineNumbers ? calculateLineNumberWidths(lineData) : { oldWidthCh: 2, newWidthCh: 2 },
+      [lineData, showLineNumbers]
+    );
 
     const startDragSelection = React.useCallback(
       (lineIndex: number, shiftKey: boolean) => {
