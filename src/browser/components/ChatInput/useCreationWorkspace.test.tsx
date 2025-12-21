@@ -1,6 +1,9 @@
 import type { APIClient } from "@/browser/contexts/API";
 import type { DraftWorkspaceSettings } from "@/browser/hooks/useDraftWorkspaceSettings";
 import {
+  getDraftAutoGenerateKey,
+  getDraftNameKey,
+  getDraftRuntimeKey,
   getInputKey,
   getInputImagesKey,
   getModelKey,
@@ -489,13 +492,15 @@ describe("useCreationWorkspace", () => {
     expect(readPersistedStateCalls).toContainEqual([projectModeKey, null]);
 
     const modeKey = getModeKey(TEST_WORKSPACE_ID);
-    const pendingScopeId = getPendingScopeId(TEST_PROJECT_PATH);
-    const pendingInputKey = getInputKey(pendingScopeId);
-    const pendingImagesKey = getInputImagesKey(pendingScopeId);
     expect(updatePersistedStateCalls).toContainEqual([modeKey, "plan"]);
-    // Thinking is workspace-scoped, but this test doesn't set a project-scoped thinking preference.
-    expect(updatePersistedStateCalls).toContainEqual([pendingInputKey, ""]);
-    expect(updatePersistedStateCalls).toContainEqual([pendingImagesKey, undefined]);
+
+    // Draft state is cleared via clearCreationDraftStorage() which uses localStorage directly
+    const pendingScopeId = getPendingScopeId(TEST_PROJECT_PATH);
+    expect(localStorage.getItem(getInputKey(pendingScopeId))).toBeNull();
+    expect(localStorage.getItem(getInputImagesKey(pendingScopeId))).toBeNull();
+    expect(localStorage.getItem(getDraftRuntimeKey(TEST_PROJECT_PATH))).toBeNull();
+    expect(localStorage.getItem(getDraftNameKey(TEST_PROJECT_PATH))).toBeNull();
+    expect(localStorage.getItem(getDraftAutoGenerateKey(TEST_PROJECT_PATH))).toBeNull();
   });
 
   test("handleSend surfaces backend errors and resets state", async () => {
