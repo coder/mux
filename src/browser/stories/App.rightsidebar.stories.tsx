@@ -227,6 +227,7 @@ export const StatsTabIdle: AppStory = {
           workspaceId: "ws-stats-idle",
           workspaceName: "feature/stats",
           projectName: "my-app",
+          statsTabEnabled: true,
           messages: [
             createUserMessage("msg-1", "Help me with something", { historySequence: 1 }),
             createAssistantMessage("msg-2", "Sure, I can help with that.", { historySequence: 2 }),
