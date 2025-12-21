@@ -31,9 +31,8 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
   const [processingIds, setProcessingIds] = React.useState<Set<string>>(new Set());
   const [deleteConfirmId, setDeleteConfirmId] = React.useState<string | null>(null);
 
-  const archivedWorkspaces = workspaces.filter((w) => w.archived);
-
-  if (archivedWorkspaces.length === 0) {
+  // workspaces prop should already be filtered to archived only
+  if (workspaces.length === 0) {
     return null;
   }
 
@@ -43,7 +42,7 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
       const result = await unarchiveWorkspace(workspaceId);
       if (result.success) {
         // Select the workspace after unarchiving
-        const workspace = archivedWorkspaces.find((w) => w.id === workspaceId);
+        const workspace = workspaces.find((w) => w.id === workspaceId);
         if (workspace) {
           setSelectedWorkspace({
             workspaceId: workspace.id,
@@ -86,7 +85,7 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
       >
         <ArchiveIcon className="text-muted h-4 w-4" />
         <span className="text-foreground flex-1 font-medium">
-          Archived Workspaces ({archivedWorkspaces.length})
+          Archived Workspaces ({workspaces.length})
         </span>
         {expanded ? (
           <ChevronDown className="text-muted h-4 w-4" />
@@ -97,7 +96,7 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
 
       {expanded && (
         <div className="border-border border-t">
-          {archivedWorkspaces.map((workspace) => {
+          {workspaces.map((workspace) => {
             const isProcessing = processingIds.has(workspace.id);
             const isDeleting = deleteConfirmId === workspace.id;
             const displayTitle = workspace.title ?? workspace.name;
