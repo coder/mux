@@ -174,12 +174,25 @@ describe("CompactionHandler", () => {
   };
   const setActiveOperation = (
     operationId: string,
-    source: "user" | "force-compaction" | "idle-compaction" = "user"
+    source: "user" | "force-compaction" | "idle-compaction" = "user",
+    streamMessageId: string | null = "msg-id"
   ) => {
-    activeOperation = { operationId, source };
+    activeOperation = { operationId, streamMessageId, source };
   };
 
   describe("handleCompletion() - Control-plane Compaction", () => {
+    it("should ignore stream-end events that do not match the compaction stream messageId", async () => {
+      // Active operation, but bound to a different stream
+      setActiveOperation("op-1", "user", "different-message-id");
+      setupSuccessfulCompaction(mockHistoryService, [createNormalUserMessage()]);
+
+      const event = createStreamEndEvent(createValidSummary());
+      const result = await handler.handleCompletion(event);
+
+      // Not treated as compaction
+      expect(result).toBe(false);
+      expect(mockHistoryService.replaceHistory.mock.calls).toHaveLength(0);
+    });
     it("should return false when no active compaction operation", async () => {
       // No active operation set
       const msg = createNormalUserMessage();

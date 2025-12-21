@@ -153,6 +153,8 @@ export class AgentSession {
    */
   private activeCompactionOperation: {
     operationId: string;
+    /** Stream messageId for the compaction summary stream (set from stream-start) */
+    streamMessageId: string | null;
     source: "user" | "force-compaction" | "idle-compaction";
     continueMessage?: {
       text: string;
@@ -637,6 +639,7 @@ export class AgentSession {
     // Set active compaction operation (used by CompactionHandler)
     this.activeCompactionOperation = {
       operationId: options.operationId,
+      streamMessageId: null,
       source: options.source,
       continueMessage: options.continueMessage,
     };
@@ -755,6 +758,7 @@ export class AgentSession {
    */
   getActiveCompactionOperation(): {
     operationId: string;
+    streamMessageId: string | null;
     source: "user" | "force-compaction" | "idle-compaction";
     continueMessage?: {
       text: string;
@@ -887,7 +891,16 @@ export class AgentSession {
       this.aiService.on(event, wrapped as never);
     };
 
-    forward("stream-start", (payload) => this.emitChatEvent(payload));
+    forward("stream-start", (payload) => {
+      // Bind the active compaction operation to the specific stream messageId.
+      // This prevents unrelated streams from being misinterpreted as compaction.
+      const activeOperation = this.activeCompactionOperation;
+      if (activeOperation?.streamMessageId === null && payload.type === "stream-start") {
+        activeOperation.streamMessageId = payload.messageId;
+      }
+
+      this.emitChatEvent(payload);
+    });
     forward("stream-delta", (payload) => this.emitChatEvent(payload));
     forward("tool-call-start", (payload) => this.emitChatEvent(payload));
     forward("bash-output", (payload) => this.emitChatEvent(payload));
@@ -912,7 +925,18 @@ export class AgentSession {
     forward("reasoning-delta", (payload) => this.emitChatEvent(payload));
     forward("reasoning-end", (payload) => this.emitChatEvent(payload));
     forward("usage-delta", (payload) => this.emitChatEvent(payload));
-    forward("stream-abort", (payload) => this.emitChatEvent(payload));
+    forward("stream-abort", (payload) => {
+      // If the compaction stream was aborted, clear the active compaction operation so
+      // subsequent stream-end events cannot replace history.
+      if (
+        this.activeCompactionOperation &&
+        payload.type === "stream-abort" &&
+        this.activeCompactionOperation.streamMessageId === payload.messageId
+      ) {
+        this.activeCompactionOperation = null;
+      }
+      this.emitChatEvent(payload);
+    });
 
     forward("stream-end", async (payload) => {
       const handled = await this.compactionHandler.handleCompletion(payload as StreamEndEvent);
@@ -943,6 +967,15 @@ export class AgentSession {
         error: string;
         errorType?: string;
       };
+      // If the compaction stream errored, clear the active compaction operation so
+      // subsequent stream-end events cannot replace history.
+      if (
+        this.activeCompactionOperation &&
+        this.activeCompactionOperation.streamMessageId === data.messageId
+      ) {
+        this.activeCompactionOperation = null;
+      }
+
       const streamError: StreamErrorMessage = {
         type: "stream-error",
         messageId: data.messageId,

@@ -24,6 +24,8 @@ const MIN_SUMMARY_WORDS = 50;
 /** Active compaction operation tracked via session state (control-plane) */
 export interface ActiveCompactionOperation {
   operationId: string;
+  /** Stream messageId for the compaction summary stream (set from stream-start) */
+  streamMessageId: string | null;
   source: "user" | "force-compaction" | "idle-compaction";
   continueMessage?: {
     text: string;
@@ -126,6 +128,13 @@ export class CompactionHandler {
     const activeOperation = this.getActiveCompactionOperation();
     if (!activeOperation) {
       // No active compaction - this is a normal stream completion
+      return false;
+    }
+
+    // Only treat this stream-end as compaction if it belongs to the compaction stream.
+    // This prevents unrelated stream-end events (e.g., a previous stream finishing after a
+    // graceful stop) from replacing history.
+    if (activeOperation.streamMessageId !== event.messageId) {
       return false;
     }
 
