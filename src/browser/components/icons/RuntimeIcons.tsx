@@ -73,3 +73,28 @@ export function LocalIcon({ size = 10, className }: IconProps) {
     </svg>
   );
 }
+
+/** Container/box icon for Docker runtime */
+export function DockerIcon({ size = 10, className }: IconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-label="Docker Runtime"
+      className={className}
+    >
+      {/* Container box with stacked layers */}
+      <rect x="2" y="6" width="12" height="8" rx="1" />
+      <line x1="2" y1="10" x2="14" y2="10" />
+      <line x1="5" y1="3" x2="5" y2="6" />
+      <line x1="8" y1="2" x2="8" y2="6" />
+      <line x1="11" y1="3" x2="11" y2="6" />
+    </svg>
+  );
+}

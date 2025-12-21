@@ -47,46 +47,59 @@ When the user asks you to remember something:
 /**
  * Build environment context XML block describing the workspace.
  * @param workspacePath - Workspace directory path
- * @param runtimeType - Runtime type: "local", "worktree", or "ssh"
+ * @param runtimeType - Runtime type (local, worktree, ssh, docker)
  */
-function buildEnvironmentContext(
-  workspacePath: string,
-  runtimeType: "local" | "worktree" | "ssh"
-): string {
-  if (runtimeType === "local") {
-    // Local runtime works directly in project directory - may or may not be git
-    return `
-<environment>
-You are working in a directory at ${workspacePath}
+function buildEnvironmentContext(workspacePath: string, runtimeType: RuntimeMode): string {
+  // Common lines shared across git-based runtimes
+  const gitCommonLines = [
+    "- This IS a git repository - run git commands directly (no cd needed)",
+    "- Tools run here automatically",
+    "- You are meant to do your work isolated from the user and other agents",
+  ];
 
-- Tools run here automatically
-- You are meant to do your work isolated from the user and other agents
-</environment>
-`;
+  let description: string;
+  let lines: string[];
+
+  switch (runtimeType) {
+    case RUNTIME_MODE.LOCAL:
+      // Local runtime works directly in project directory - may or may not be git
+      description = `You are working in a directory at ${workspacePath}`;
+      lines = [
+        "- Tools run here automatically",
+        "- You are meant to do your work isolated from the user and other agents",
+      ];
+      break;
+
+    case RUNTIME_MODE.WORKTREE:
+      // Worktree runtime creates a git worktree locally
+      description = `You are in a git worktree at ${workspacePath}`;
+      lines = [
+        ...gitCommonLines,
+        "- Do not modify or visit other worktrees (especially the main project) without explicit user intent",
+      ];
+      break;
+
+    case RUNTIME_MODE.SSH:
+      // SSH runtime clones the repository on a remote host
+      description = `You are in a clone of a git repository at ${workspacePath}`;
+      lines = gitCommonLines;
+      break;
+
+    case RUNTIME_MODE.DOCKER:
+      // Docker runtime runs in an isolated container
+      description = `You are in a clone of a git repository at ${workspacePath} inside a Docker container`;
+      lines = gitCommonLines;
+      break;
+
+    default:
+      assertNever(runtimeType, `Unknown runtime type: ${String(runtimeType)}`);
   }
 
-  if (runtimeType === "ssh") {
-    // SSH runtime clones the repository on a remote host
-    return `
-<environment>
-You are in a clone of a git repository at ${workspacePath}
-
-- This IS a git repository - run git commands directly (no cd needed)
-- Tools run here automatically
-- You are meant to do your work isolated from the user and other agents
-</environment>
-`;
-  }
-
-  // Worktree runtime creates a git worktree locally
   return `
 <environment>
-You are in a git worktree at ${workspacePath}
+${description}
 
-- This IS a git repository - run git commands directly (no cd needed)
-- Tools run here automatically
-- Do not modify or visit other worktrees (especially the main project) without explicit user intent
-- You are meant to do your work isolated from the user and other agents
+${lines.join("\n")}
 </environment>
 `;
 }
