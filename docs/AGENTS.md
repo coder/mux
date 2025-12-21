@@ -69,6 +69,12 @@ gh pr view <number> --json mergeable,mergeStateStatus | jq '.'
 - Use `git mv` to retain history when moving files.
 - Never kill the running mux process; rely on `make typecheck` + targeted `bun test path/to/file.test.ts` for validation (run `make test` only when necessary; it can be slow).
 
+## Self-Healing & Crash Resilience
+
+- Prefer **self-healing** behavior: if corrupted or invalid data exists in persisted state (e.g., `chat.jsonl`), the system should sanitize or filter it at load/request time rather than failing permanently.
+- Never let a single malformed line in history brick a workspace—apply defensive filtering in request-building paths so the user can continue working.
+- When streaming crashes, any incomplete state committed to disk should either be repairable on next load or excluded from provider requests to avoid API validation errors.
+
 ## Testing Doctrine
 
 Two types of tests are preferred:
