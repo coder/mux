@@ -29,6 +29,7 @@ import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { isExperimentEnabled } from "@/browser/hooks/useExperiments";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import { isWorkspaceArchived } from "@/common/utils/archive";
 
 /**
  * Seed per-workspace localStorage from backend workspace metadata.
@@ -186,12 +187,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       const metadataMap = new Map<string, FrontendWorkspaceMetadata>();
       for (const metadata of metadataList) {
         // Skip archived workspaces - they should not be tracked by the app
-        // Archived = archivedAt exists and is more recent than unarchivedAt
-        const isArchived =
-          metadata.archivedAt &&
-          (!metadata.unarchivedAt ||
-            new Date(metadata.archivedAt).getTime() > new Date(metadata.unarchivedAt).getTime());
-        if (isArchived) continue;
+        if (isWorkspaceArchived(metadata.archivedAt, metadata.unarchivedAt)) continue;
         ensureCreatedAt(metadata);
         // Use stable workspace ID as key (not path, which can change)
         seedWorkspaceLocalStorageFromBackend(metadata);

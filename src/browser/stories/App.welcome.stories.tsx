@@ -72,72 +72,58 @@ export const CreateWorkspaceMultipleProjects: AppStory = {
 
 /** Helper to generate archived workspaces with varied dates for timeline grouping */
 function generateArchivedWorkspaces(projectPath: string, projectName: string) {
-  const DAY = 86400000;
+  const MINUTE = 60000;
   const HOUR = 3600000;
-  // Generate enough workspaces to show: search bar (>3), bulk selection, timeline grouping
-  return [
-    // Today
-    createArchivedWorkspace({
-      id: "archived-1",
-      name: "feature/new-ui",
+  const DAY = 86400000;
+
+  // Intentionally large set to exercise ProjectPage scrolling + bulk selection UX.
+  // Keep timestamps deterministic (based on NOW constant).
+  const result = Array.from({ length: 34 }, (_, i) => {
+    const n = i + 1;
+
+    // Mix timeframes:
+    // - first ~6: today (minutes/hours)
+    // - next ~8: last week
+    // - next ~10: last month
+    // - remaining: older (spans multiple month/year buckets)
+    let archivedDeltaMs: number;
+    if (n <= 3) {
+      archivedDeltaMs = n * 15 * MINUTE;
+    } else if (n <= 6) {
+      archivedDeltaMs = n * 2 * HOUR;
+    } else if (n <= 14) {
+      archivedDeltaMs = n * DAY;
+    } else if (n <= 24) {
+      archivedDeltaMs = n * 3 * DAY;
+    } else {
+      // Older: jump further back to create multiple month/year group headers
+      archivedDeltaMs = (n - 10) * 15 * DAY;
+    }
+
+    const kind = n % 6;
+    const name =
+      kind === 0
+        ? `feature/batch-${n}`
+        : kind === 1
+          ? `bugfix/issue-${n}`
+          : kind === 2
+            ? `refactor/cleanup-${n}`
+            : kind === 3
+              ? `chore/deps-${n}`
+              : kind === 4
+                ? `feature/ui-${n}`
+                : `bugfix/regression-${n}`;
+
+    return createArchivedWorkspace({
+      id: `archived-${n}`,
+      name,
       projectName,
       projectPath,
-      archivedAt: new Date(NOW - 2 * HOUR).toISOString(),
-    }),
-    createArchivedWorkspace({
-      id: "archived-2",
-      name: "bugfix/login-issue",
-      projectName,
-      projectPath,
-      archivedAt: new Date(NOW - 5 * HOUR).toISOString(),
-    }),
-    // Yesterday
-    createArchivedWorkspace({
-      id: "archived-3",
-      name: "feature/dark-mode",
-      projectName,
-      projectPath,
-      archivedAt: new Date(NOW - DAY - 3 * HOUR).toISOString(),
-    }),
-    // This week
-    createArchivedWorkspace({
-      id: "archived-4",
-      name: "refactor/cleanup",
-      projectName,
-      projectPath,
-      archivedAt: new Date(NOW - 3 * DAY).toISOString(),
-    }),
-    createArchivedWorkspace({
-      id: "archived-5",
-      name: "feature/api-v2",
-      projectName,
-      projectPath,
-      archivedAt: new Date(NOW - 5 * DAY).toISOString(),
-    }),
-    // This month
-    createArchivedWorkspace({
-      id: "archived-6",
-      name: "bugfix/memory-leak",
-      projectName,
-      projectPath,
-      archivedAt: new Date(NOW - 12 * DAY).toISOString(),
-    }),
-    // Older
-    createArchivedWorkspace({
-      id: "archived-7",
-      name: "feature/notifications",
-      projectName,
-      projectPath,
-      archivedAt: new Date(NOW - 45 * DAY).toISOString(),
-    }),
-    createArchivedWorkspace({
-      id: "archived-8",
-      name: "refactor/database",
-      projectName,
-      projectPath,
-      archivedAt: new Date(NOW - 60 * DAY).toISOString(),
-    }),
-  ];
+      archivedAt: new Date(NOW - archivedDeltaMs).toISOString(),
+    });
+  });
+
+  return result;
 }
 
 /**

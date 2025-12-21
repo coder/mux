@@ -25,6 +25,7 @@ import {
   normalizeSubagentAiDefaults,
   normalizeTaskSettings,
 } from "@/common/types/tasks";
+import { isWorkspaceArchived } from "@/common/utils/archive";
 
 export const router = (authToken?: string) => {
   const t = os.$context<ORPCContext>().use(createAuthMiddleware(authToken));
@@ -586,17 +587,12 @@ export const router = (authToken?: string) => {
           const allWorkspaces = await context.workspaceService.list({
             includePostCompaction: input?.includePostCompaction,
           });
-          // Filter by archived status (derived from timestamps)
-          const isArchived = (w: (typeof allWorkspaces)[0]) => {
-            if (!w.archivedAt) return false;
-            if (!w.unarchivedAt) return true;
-            return new Date(w.archivedAt).getTime() > new Date(w.unarchivedAt).getTime();
-          };
+          // Filter by archived status (derived from timestamps via shared utility)
           if (input?.archived) {
-            return allWorkspaces.filter(isArchived);
+            return allWorkspaces.filter((w) => isWorkspaceArchived(w.archivedAt, w.unarchivedAt));
           }
           // Default: return non-archived workspaces
-          return allWorkspaces.filter((w) => !isArchived(w));
+          return allWorkspaces.filter((w) => !isWorkspaceArchived(w.archivedAt, w.unarchivedAt));
         }),
       create: t
         .input(schemas.workspace.create.input)

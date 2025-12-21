@@ -33,7 +33,9 @@ interface BulkOperationState {
 }
 
 /** Group workspaces by time period for timeline display */
-function groupByTimePeriod(workspaces: FrontendWorkspaceMetadata[]): Map<string, FrontendWorkspaceMetadata[]> {
+function groupByTimePeriod(
+  workspaces: FrontendWorkspaceMetadata[]
+): Map<string, FrontendWorkspaceMetadata[]> {
   const groups = new Map<string, FrontendWorkspaceMetadata[]>();
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -76,7 +78,9 @@ function groupByTimePeriod(workspaces: FrontendWorkspaceMetadata[]): Map<string,
 }
 
 /** Flatten grouped workspaces back to ordered array for index-based selection */
-function flattenGrouped(grouped: Map<string, FrontendWorkspaceMetadata[]>): FrontendWorkspaceMetadata[] {
+function flattenGrouped(
+  grouped: Map<string, FrontendWorkspaceMetadata[]>
+): FrontendWorkspaceMetadata[] {
   const result: FrontendWorkspaceMetadata[] = [];
   for (const workspaces of grouped.values()) {
     result.push(...workspaces);
@@ -258,17 +262,13 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
     for (let i = 0; i < idsToRestore.length; i++) {
       const id = idsToRestore[i];
       const ws = workspaces.find((w) => w.id === id);
-      setBulkOperation((prev) =>
-        prev ? { ...prev, current: ws?.title ?? ws?.name ?? id } : prev
-      );
+      setBulkOperation((prev) => (prev ? { ...prev, current: ws?.title ?? ws?.name ?? id } : prev));
 
       try {
         await unarchiveWorkspace(id);
-      } catch (err) {
+      } catch {
         setBulkOperation((prev) =>
-          prev
-            ? { ...prev, errors: [...prev.errors, `Failed to restore ${ws?.name ?? id}`] }
-            : prev
+          prev ? { ...prev, errors: [...prev.errors, `Failed to restore ${ws?.name ?? id}`] } : prev
         );
       }
 
@@ -294,17 +294,13 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
     for (let i = 0; i < idsToDelete.length; i++) {
       const id = idsToDelete[i];
       const ws = workspaces.find((w) => w.id === id);
-      setBulkOperation((prev) =>
-        prev ? { ...prev, current: ws?.title ?? ws?.name ?? id } : prev
-      );
+      setBulkOperation((prev) => (prev ? { ...prev, current: ws?.title ?? ws?.name ?? id } : prev));
 
       try {
         await removeWorkspace(id, { force: true });
-      } catch (err) {
+      } catch {
         setBulkOperation((prev) =>
-          prev
-            ? { ...prev, errors: [...prev.errors, `Failed to delete ${ws?.name ?? id}`] }
-            : prev
+          prev ? { ...prev, errors: [...prev.errors, `Failed to delete ${ws?.name ?? id}`] } : prev
         );
       }
 
@@ -444,13 +440,13 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
               />
               {workspaces.length > 3 && (
                 <div className="relative flex-1">
-                  <Search className="text-muted pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2" />
+                  <Search className="text-muted pointer-events-none absolute top-1/2 left-2 h-4 w-4 -translate-y-1/2" />
                   <input
                     type="text"
                     placeholder="Search archived workspaces..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="bg-bg-dark placeholder:text-muted text-foreground w-full rounded border border-transparent py-1.5 pl-8 pr-3 text-sm focus:border-border-light focus:outline-none"
+                    className="bg-bg-dark placeholder:text-muted text-foreground focus:border-border-light w-full rounded border border-transparent py-1.5 pr-3 pl-8 text-sm focus:outline-none"
                   />
                 </div>
               )}
@@ -461,7 +457,7 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
           <div>
             {filteredWorkspaces.length === 0 ? (
               <div className="text-muted px-4 py-6 text-center text-sm">
-                No workspaces match "{searchQuery}"
+                No workspaces match {`"${searchQuery}"`}
               </div>
             ) : (
               Array.from(groupedWorkspaces.entries()).map(([period, periodWorkspaces]) => (
@@ -490,7 +486,7 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
                           type="checkbox"
                           checked={isSelected}
                           onClick={(e) => handleCheckboxClick(workspace.id, e)}
-                          onChange={() => {}} // Controlled by onClick for shift-click support
+                          onChange={() => undefined} // Controlled by onClick for shift-click support
                           className="h-4 w-4 rounded border-gray-600 bg-transparent"
                           aria-label={`Select ${displayTitle}`}
                         />
