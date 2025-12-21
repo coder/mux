@@ -22,7 +22,8 @@
     "development"
   ],
   "activationEvents": [
-    "onCommand:mux.openWorkspace"
+    "onCommand:mux.openWorkspace",
+    "onCommand:mux.configureConnection"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -30,8 +31,34 @@
       {
         "command": "mux.openWorkspace",
         "title": "mux: Open Workspace"
+      },
+      {
+        "command": "mux.configureConnection",
+        "title": "mux: Configure Connection"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "mux",
+      "properties": {
+        "mux.connectionMode": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "server-only",
+            "file-only"
+          ],
+          "default": "auto",
+          "scope": "machine",
+          "description": "How the mux VS Code extension connects to mux (prefer server, require server, or use local files)."
+        },
+        "mux.serverUrl": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Override the mux server URL (leave empty to auto-discover). Example: http://127.0.0.1:3000"
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "bun run compile",
@@ -54,3 +81,4 @@
   "license": "AGPL-3.0-only",
   "packageManager": "bun@1.1.42"
 }
+
