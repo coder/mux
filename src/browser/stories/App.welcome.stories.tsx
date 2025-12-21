@@ -70,58 +70,58 @@ export const CreateWorkspaceMultipleProjects: AppStory = {
   ),
 };
 
+/** Helper to generate archived workspaces for bulk operation stories */
+function generateArchivedWorkspaces(count: number, projectPath: string, projectName: string) {
+  const DAY = 86400000;
+  const names = [
+    "feature/new-ui",
+    "bugfix/login-issue",
+    "feature/dark-mode",
+    "refactor/cleanup",
+    "feature/api-v2",
+    "bugfix/memory-leak",
+    "feature/notifications",
+    "refactor/database",
+    "feature/search",
+    "bugfix/auth-flow",
+  ];
+  return Array.from({ length: count }, (_, i) =>
+    createArchivedWorkspace({
+      id: `archived-${i + 1}`,
+      name: names[i % names.length],
+      projectName,
+      projectPath,
+      archivedAt: new Date(NOW - (i + 1) * DAY).toISOString(),
+    })
+  );
+}
+
 /** Creation view with archived workspaces - shows timeline grouped archived section */
 export const CreateWorkspaceWithArchived: AppStory = {
-  render: () => {
-    // Use stable timestamp for deterministic visual tests
-    const DAY = 86400000;
-    return (
-      <AppWithMocks
-        setup={() => {
-          expandProjects(["/Users/dev/my-project"]);
-          return createMockORPCClient({
-            projects: new Map([projectWithNoWorkspaces("/Users/dev/my-project")]),
-            workspaces: [
-              // Recent (shows relative time in timeline)
-              createArchivedWorkspace({
-                id: "archived-1",
-                name: "feature/new-ui",
-                projectName: "my-project",
-                projectPath: "/Users/dev/my-project",
-                archivedAt: new Date(NOW - 2 * 3600000).toISOString(),
-              }),
-              createArchivedWorkspace({
-                id: "archived-2",
-                name: "bugfix/login-issue",
-                projectName: "my-project",
-                projectPath: "/Users/dev/my-project",
-                archivedAt: new Date(NOW - DAY - 3600000).toISOString(),
-              }),
-              createArchivedWorkspace({
-                id: "archived-3",
-                name: "feature/dark-mode",
-                projectName: "my-project",
-                projectPath: "/Users/dev/my-project",
-                archivedAt: new Date(NOW - 3 * DAY).toISOString(),
-              }),
-              createArchivedWorkspace({
-                id: "archived-4",
-                name: "refactor/cleanup",
-                projectName: "my-project",
-                projectPath: "/Users/dev/my-project",
-                archivedAt: new Date(NOW - 5 * DAY).toISOString(),
-              }),
-              createArchivedWorkspace({
-                id: "archived-5",
-                name: "feature/api-v2",
-                projectName: "my-project",
-                projectPath: "/Users/dev/my-project",
-                archivedAt: new Date(NOW - 15 * DAY).toISOString(),
-              }),
-            ],
-          });
-        }}
-      />
-    );
-  },
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        expandProjects(["/Users/dev/my-project"]);
+        return createMockORPCClient({
+          projects: new Map([projectWithNoWorkspaces("/Users/dev/my-project")]),
+          workspaces: generateArchivedWorkspaces(5, "/Users/dev/my-project", "my-project"),
+        });
+      }}
+    />
+  ),
+};
+
+/** Archived workspaces with bulk selection - click checkboxes to select multiple */
+export const ArchivedWorkspacesBulkSelection: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        expandProjects(["/Users/dev/my-project"]);
+        return createMockORPCClient({
+          projects: new Map([projectWithNoWorkspaces("/Users/dev/my-project")]),
+          workspaces: generateArchivedWorkspaces(8, "/Users/dev/my-project", "my-project"),
+        });
+      }}
+    />
+  ),
 };
