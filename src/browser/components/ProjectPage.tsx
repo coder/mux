@@ -62,9 +62,14 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
     <ModeProvider projectPath={projectPath}>
       <ProviderOptionsProvider>
         <ThinkingProvider projectPath={projectPath}>
+          <ConnectionStatusIndicator />
           <div className="flex h-full flex-col">
-            {/* Main content area */}
-            <div className="flex-1 overflow-y-auto">
+            {/* Scrollable content area with centered chat input */}
+            <div className="flex flex-1 flex-col overflow-y-auto">
+              {/* Spacer to push content toward center when no archived workspaces */}
+              <div className="flex-1" />
+
+              {/* Main content container */}
               <div className="mx-auto w-full max-w-3xl px-5 py-8">
                 {/* Archived workspaces section */}
                 {archivedWorkspaces.length > 0 && (
@@ -81,20 +86,22 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
                     }}
                   />
                 )}
-              </div>
-            </div>
 
-            {/* Chat input pinned to bottom */}
-            <div className="shrink-0">
-              <ConnectionStatusIndicator />
-              <ChatInput
-                variant="creation"
-                projectPath={projectPath}
-                projectName={projectName}
-                onProviderConfig={onProviderConfig}
-                onReady={handleChatReady}
-                onWorkspaceCreated={onWorkspaceCreated}
-              />
+                {/* Chat input for creating new workspace */}
+                <div className={archivedWorkspaces.length > 0 ? "mt-8" : ""}>
+                  <ChatInput
+                    variant="creation"
+                    projectPath={projectPath}
+                    projectName={projectName}
+                    onProviderConfig={onProviderConfig}
+                    onReady={handleChatReady}
+                    onWorkspaceCreated={onWorkspaceCreated}
+                  />
+                </div>
+              </div>
+
+              {/* Spacer to push content toward center */}
+              <div className="flex-1" />
             </div>
           </div>
         </ThinkingProvider>
