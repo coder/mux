@@ -201,6 +201,10 @@ export const ReasoningDeltaEventSchema = z.object({
   delta: z.string(),
   tokens: z.number().meta({ description: "Token count for this delta" }),
   timestamp: z.number().meta({ description: "When delta was received (Date.now())" }),
+  signature: z
+    .string()
+    .optional()
+    .meta({ description: "Anthropic thinking block signature for replay" }),
 });
 
 export const ReasoningEndEventSchema = z.object({

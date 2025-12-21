@@ -146,6 +146,24 @@ export interface MuxReasoningPart {
   type: "reasoning";
   text: string;
   timestamp?: number;
+  /**
+   * Anthropic thinking block signature for replay.
+   * Required to send reasoning back to Anthropic - the API validates signatures
+   * to ensure thinking blocks haven't been tampered with. Reasoning without
+   * signatures will be stripped before sending to avoid "empty content" errors.
+   */
+  signature?: string;
+  /**
+   * Provider options for SDK compatibility.
+   * When converting to ModelMessages via the SDK's convertToModelMessages,
+   * this is passed through. For Anthropic thinking blocks, this should contain
+   * { anthropic: { signature } } to allow reasoning replay.
+   */
+  providerOptions?: {
+    anthropic?: {
+      signature?: string;
+    };
+  };
 }
 
 // File/Image part type for multimodal messages (matches AI SDK FileUIPart)

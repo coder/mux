@@ -491,6 +491,62 @@ function filterReasoningOnlyMessages(messages: ModelMessage[]): ModelMessage[] {
 }
 
 /**
+ * Strip Anthropic reasoning parts that lack a valid signature.
+ *
+ * Anthropic's Extended Thinking API requires thinking blocks to include a signature
+ * for replay. The Vercel AI SDK's Anthropic provider only sends reasoning parts to
+ * the API if they have providerOptions.anthropic.signature. Reasoning parts we create
+ * (placeholders) or from history (where we didn't capture the signature) will be
+ * silently dropped by the SDK.
+ *
+ * If all parts of an assistant message are unsigned reasoning, the SDK drops them all,
+ * leaving an empty message that Anthropic rejects with:
+ * "all messages must have non-empty content except for the optional final assistant message"
+ *
+ * This function removes unsigned reasoning upfront and filters resulting empty messages.
+ *
+ * NOTE: This is Anthropic-specific. Other providers (e.g., OpenAI) handle reasoning
+ * differently and don't require signatures.
+ */
+function stripUnsignedAnthropicReasoning(messages: ModelMessage[]): ModelMessage[] {
+  const stripped = messages.map((msg) => {
+    if (msg.role !== "assistant") {
+      return msg;
+    }
+
+    const assistantMsg = msg;
+    if (typeof assistantMsg.content === "string") {
+      return msg;
+    }
+
+    // Filter out reasoning parts without anthropic.signature in providerOptions
+    const content = assistantMsg.content.filter((part) => {
+      if (part.type !== "reasoning") {
+        return true;
+      }
+      // Check for anthropic.signature in providerOptions
+      const anthropicMeta = (part.providerOptions as { anthropic?: { signature?: string } })
+        ?.anthropic;
+      return anthropicMeta?.signature != null;
+    });
+
+    const result: typeof assistantMsg = { ...assistantMsg, content };
+    return result;
+  });
+
+  // Filter out messages that became empty after stripping reasoning
+  return stripped.filter((msg) => {
+    if (msg.role !== "assistant") {
+      return true;
+    }
+    if (typeof msg.content === "string") {
+      return msg.content.length > 0;
+    }
+    return msg.content.length > 0;
+  });
+}
+
+/**
  * Coalesce consecutive parts of the same type within each message.
  * Streaming creates many individual text/reasoning parts; merge them for easier debugging.
  * Also reduces JSON overhead when sending messages to the API.
@@ -539,7 +595,6 @@ function coalesceConsecutiveParts(messages: ModelMessage[]): ModelMessage[] {
     };
   });
 }
-
 /**
  * Merge consecutive user messages with newline separators.
  * When filtering removes assistant messages, we can end up with consecutive user messages.
@@ -637,9 +692,10 @@ function ensureAnthropicThinkingBeforeToolCalls(messages: ModelMessage[]): Model
     }
 
     // Anthropic extended thinking requires tool-use assistant messages to start with a thinking block.
-    // If we still have no reasoning available, insert an empty reasoning part as a minimal placeholder.
+    // If we still have no reasoning available, insert a minimal placeholder reasoning part.
+    // NOTE: The text cannot be empty - Anthropic API rejects empty content.
     if (reasoningParts.length === 0) {
-      reasoningParts = [{ type: "reasoning" as const, text: "" }];
+      reasoningParts = [{ type: "reasoning" as const, text: "..." }];
     }
 
     result.push({
@@ -668,7 +724,7 @@ function ensureAnthropicThinkingBeforeToolCalls(messages: ModelMessage[]): Model
       result[i] = {
         ...assistantMsg,
         content: [
-          { type: "reasoning" as const, text: "" },
+          { type: "reasoning" as const, text: "..." },
           { type: "text" as const, text },
         ],
       };
@@ -685,7 +741,7 @@ function ensureAnthropicThinkingBeforeToolCalls(messages: ModelMessage[]): Model
 
     result[i] = {
       ...assistantMsg,
-      content: [{ type: "reasoning" as const, text: "" }, ...content],
+      content: [{ type: "reasoning" as const, text: "..." }, ...content],
     };
     break;
   }
@@ -730,7 +786,9 @@ export function transformModelMessages(
     // Anthropic: When extended thinking is enabled, preserve reasoning-only messages and ensure
     // tool-call messages start with reasoning. When it's disabled, filter reasoning-only messages.
     if (options?.anthropicThinkingEnabled) {
-      reasoningHandled = ensureAnthropicThinkingBeforeToolCalls(split);
+      // First strip reasoning without signatures (SDK will drop them anyway, causing empty messages)
+      const signedReasoning = stripUnsignedAnthropicReasoning(split);
+      reasoningHandled = ensureAnthropicThinkingBeforeToolCalls(signedReasoning);
     } else {
       reasoningHandled = filterReasoningOnlyMessages(split);
     }

@@ -49,6 +49,13 @@ globalThis.AI_SDK_LOG_WARNINGS = false;
 interface ReasoningDeltaPart {
   type: "reasoning-delta";
   text?: string;
+  delta?: string;
+  providerMetadata?: {
+    anthropic?: {
+      signature?: string;
+      redactedData?: string;
+    };
+  };
 }
 
 // Branded types for compile-time safety
@@ -480,6 +487,7 @@ export class StreamManager extends EventEmitter {
         delta: part.text,
         tokens,
         timestamp,
+        signature: part.signature,
       });
     } else if (part.type === "dynamic-tool") {
       const inputText = JSON.stringify(part.input);
@@ -926,18 +934,45 @@ export class StreamManager extends EventEmitter {
 
           case "reasoning-delta": {
             // Both Anthropic and OpenAI use reasoning-delta for streaming reasoning content
-            const delta = (part as ReasoningDeltaPart).text ?? "";
+            const reasoningPart = part as ReasoningDeltaPart;
+            const delta = reasoningPart.text ?? reasoningPart.delta ?? "";
+            const signature = reasoningPart.providerMetadata?.anthropic?.signature;
+
+            // Signature deltas come separately with empty text - attach to last reasoning part
+            if (signature && !delta) {
+              const lastPart = streamInfo.parts.at(-1);
+              if (lastPart?.type === "reasoning") {
+                lastPart.signature = signature;
+                // Also set providerOptions for SDK compatibility when converting to ModelMessages
+                lastPart.providerOptions = { anthropic: { signature } };
+                // Emit signature update event
+                this.emit("reasoning-delta", {
+                  type: "reasoning-delta",
+                  workspaceId: workspaceId as string,
+                  messageId: streamInfo.messageId,
+                  delta: "",
+                  tokens: 0,
+                  timestamp: Date.now(),
+                  signature,
+                });
+                void this.schedulePartialWrite(workspaceId, streamInfo);
+              }
+              break;
+            }
 
             // Append each delta as a new part (merging happens at display time)
-            const reasoningPart = {
+            // Include providerOptions for SDK compatibility when converting to ModelMessages
+            const newPart = {
               type: "reasoning" as const,
               text: delta,
               timestamp: Date.now(),
+              signature, // May be undefined, will be filled by subsequent signature delta
+              providerOptions: signature ? { anthropic: { signature } } : undefined,
             };
-            streamInfo.parts.push(reasoningPart);
+            streamInfo.parts.push(newPart);
 
             // Emit using shared logic (ensures replay consistency)
-            await this.emitPartAsEvent(workspaceId, streamInfo.messageId, reasoningPart);
+            await this.emitPartAsEvent(workspaceId, streamInfo.messageId, newPart);
 
             void this.schedulePartialWrite(workspaceId, streamInfo);
             break;

@@ -254,12 +254,27 @@ export function createChatEventProcessor(): ChatEventProcessor {
 
       const lastPart = message.parts.at(-1);
       if (lastPart?.type === "reasoning") {
-        lastPart.text += event.delta;
+        // Signature updates come with empty delta - just update the signature
+        if (event.signature && !event.delta) {
+          lastPart.signature = event.signature;
+          lastPart.providerOptions = { anthropic: { signature: event.signature } };
+        } else {
+          lastPart.text += event.delta;
+          // Also capture signature if present with text
+          if (event.signature) {
+            lastPart.signature = event.signature;
+            lastPart.providerOptions = { anthropic: { signature: event.signature } };
+          }
+        }
       } else {
         message.parts.push({
           type: "reasoning",
           text: event.delta,
           timestamp: event.timestamp,
+          signature: event.signature,
+          providerOptions: event.signature
+            ? { anthropic: { signature: event.signature } }
+            : undefined,
         });
       }
       return;
