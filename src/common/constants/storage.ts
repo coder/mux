@@ -340,10 +340,20 @@ const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string>
 ];
 
 /**
+ * Get the localStorage key for cached plan content for a workspace
+ * Stores: { content: string; path: string } - used for optimistic rendering
+ * Format: "planContent:{workspaceId}"
+ */
+export function getPlanContentKey(workspaceId: string): string {
+  return `planContent:${workspaceId}`;
+}
+
+/**
  * Additional ephemeral keys to delete on workspace removal (not copied on fork)
  */
 const EPHEMERAL_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string> = [
   getCancelledCompactionKey,
+  getPlanContentKey, // Cache only, no need to preserve on fork
 ];
 
 /**

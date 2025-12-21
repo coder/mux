@@ -25,6 +25,8 @@ import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { usePopoverError } from "@/browser/hooks/usePopoverError";
 import { PopoverError } from "../PopoverError";
+import { getPlanContentKey } from "@/common/constants/storage";
+import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 
 /**
  * Check if the result is a successful file-based propose_plan result.
@@ -124,9 +126,15 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   const runtimeConfig = workspaceId ? workspaceMetadata.get(workspaceId)?.runtimeConfig : undefined;
 
   // Fresh content from disk for the latest plan (external edit detection)
-  // Skip for ephemeral previews which already have fresh content
-  const [freshContent, setFreshContent] = useState<string | null>(null);
-  const [freshPath, setFreshPath] = useState<string | null>(null);
+  // Initialize from localStorage cache for instant render (no flash on reload)
+  const cacheKey = workspaceId ? getPlanContentKey(workspaceId) : "";
+  const cached =
+    workspaceId && isLatest && !isEphemeralPreview
+      ? readPersistedState<{ content: string; path: string } | null>(cacheKey, null)
+      : null;
+
+  const [freshContent, setFreshContent] = useState<string | null>(cached?.content ?? null);
+  const [freshPath, setFreshPath] = useState<string | null>(cached?.path ?? null);
 
   // Fetch fresh plan content for the latest plan
   // Re-fetches on mount and when window regains focus (after user edits in external editor)
@@ -139,9 +147,11 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
         if (res.success) {
           setFreshContent(res.data.content);
           setFreshPath(res.data.path);
+          // Update cache for next load (optimistic rendering)
+          updatePersistedState(cacheKey, { content: res.data.content, path: res.data.path });
         }
       } catch {
-        // Fetch failed, use cached content from result
+        // Fetch failed, keep cached/existing content
       }
     };
 
@@ -157,7 +167,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     return () => {
       window.removeEventListener("focus", handleFocus);
     };
-  }, [api, workspaceId, isLatest, isEphemeralPreview]);
+  }, [api, workspaceId, isLatest, isEphemeralPreview, cacheKey]);
 
   // Determine plan content and title based on result type
   // For ephemeral previews, use direct content/path props
