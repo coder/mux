@@ -2,11 +2,10 @@ import React from "react";
 import { cn } from "@/common/lib/utils";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
-import { Trash2, ChevronDown, ChevronRight, Search } from "lucide-react";
+import { Trash2, Search } from "lucide-react";
 import { ArchiveIcon, ArchiveRestoreIcon } from "./icons/ArchiveIcon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { RuntimeBadge } from "./RuntimeBadge";
-import { usePersistedState } from "@/browser/hooks/usePersistedState";
 
 interface ArchivedWorkspacesProps {
   projectPath: string;
@@ -70,7 +69,6 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
   onWorkspacesChanged,
 }) => {
   const { unarchiveWorkspace, removeWorkspace, setSelectedWorkspace } = useWorkspaceContext();
-  const [expanded, setExpanded] = usePersistedState("archivedWorkspacesExpanded", true);
   const [searchQuery, setSearchQuery] = React.useState("");
   const [processingIds, setProcessingIds] = React.useState<Set<string>>(new Set());
   const [deleteConfirmId, setDeleteConfirmId] = React.useState<string | null>(null);
@@ -136,140 +134,131 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
 
   return (
     <div className="border-border rounded-lg border">
-      <button
-        onClick={() => setExpanded((prev) => !prev)}
-        className="hover:bg-hover flex w-full items-center gap-2 rounded-t-lg px-4 py-3 text-left transition-colors"
-      >
+      {/* Header - not collapsible */}
+      <div className="flex items-center gap-2 px-4 py-3">
         <ArchiveIcon className="text-muted h-4 w-4" />
         <span className="text-foreground flex-1 font-medium">
           Archived Workspaces ({workspaces.length})
         </span>
-        {expanded ? (
-          <ChevronDown className="text-muted h-4 w-4" />
-        ) : (
-          <ChevronRight className="text-muted h-4 w-4" />
-        )}
-      </button>
+      </div>
 
-      {expanded && (
-        <div className="border-border border-t">
-          {/* Search input */}
-          {workspaces.length > 3 && (
-            <div className="border-border border-b px-4 py-2">
-              <div className="relative">
-                <Search className="text-muted pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2" />
-                <input
-                  type="text"
-                  placeholder="Search archived workspaces..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="bg-bg-dark placeholder:text-muted text-foreground w-full rounded border border-transparent py-1.5 pl-8 pr-3 text-sm focus:border-border-light focus:outline-none"
-                />
-              </div>
+      <div className="border-border border-t">
+        {/* Search input */}
+        {workspaces.length > 3 && (
+          <div className="border-border border-b px-4 py-2">
+            <div className="relative">
+              <Search className="text-muted pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2" />
+              <input
+                type="text"
+                placeholder="Search archived workspaces..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="bg-bg-dark placeholder:text-muted text-foreground w-full rounded border border-transparent py-1.5 pl-8 pr-3 text-sm focus:border-border-light focus:outline-none"
+              />
             </div>
-          )}
+          </div>
+        )}
 
-          {/* Timeline grouped list - no inner scroll, parent handles overflow */}
-          <div>
-            {filteredWorkspaces.length === 0 ? (
-              <div className="text-muted px-4 py-6 text-center text-sm">
-                No workspaces match "{searchQuery}"
-              </div>
-            ) : (
-              Array.from(groupedWorkspaces.entries()).map(([period, periodWorkspaces]) => (
-                <div key={period}>
-                  {/* Period header */}
-                  <div className="bg-bg-dark text-muted px-4 py-1.5 text-xs font-medium">
-                    {period}
-                  </div>
-                  {/* Workspaces in this period */}
-                  {periodWorkspaces.map((workspace) => {
-                    const isProcessing = processingIds.has(workspace.id);
-                    const isDeleting = deleteConfirmId === workspace.id;
-                    const displayTitle = workspace.title ?? workspace.name;
+        {/* Timeline grouped list */}
+        <div>
+          {filteredWorkspaces.length === 0 ? (
+            <div className="text-muted px-4 py-6 text-center text-sm">
+              No workspaces match "{searchQuery}"
+            </div>
+          ) : (
+            Array.from(groupedWorkspaces.entries()).map(([period, periodWorkspaces]) => (
+              <div key={period}>
+                {/* Period header */}
+                <div className="bg-bg-dark text-muted px-4 py-1.5 text-xs font-medium">
+                  {period}
+                </div>
+                {/* Workspaces in this period */}
+                {periodWorkspaces.map((workspace) => {
+                  const isProcessing = processingIds.has(workspace.id);
+                  const isDeleting = deleteConfirmId === workspace.id;
+                  const displayTitle = workspace.title ?? workspace.name;
 
-                    return (
-                      <div
-                        key={workspace.id}
-                        className={cn(
-                          "border-border flex items-center gap-3 border-b px-4 py-2.5 last:border-b-0",
-                          isProcessing && "opacity-50"
-                        )}
-                      >
-                        <RuntimeBadge runtimeConfig={workspace.runtimeConfig} isWorking={false} />
-                        <div className="min-w-0 flex-1">
-                          <div className="text-foreground truncate text-sm font-medium">
-                            {displayTitle}
-                          </div>
-                          {workspace.archivedAt && (
-                            <div className="text-muted text-xs">
-                              {new Date(workspace.archivedAt).toLocaleString(undefined, {
-                                month: "short",
-                                day: "numeric",
-                                hour: "numeric",
-                                minute: "2-digit",
-                              })}
-                            </div>
-                          )}
+                  return (
+                    <div
+                      key={workspace.id}
+                      className={cn(
+                        "border-border flex items-center gap-3 border-b px-4 py-2.5 last:border-b-0",
+                        isProcessing && "opacity-50"
+                      )}
+                    >
+                      <RuntimeBadge runtimeConfig={workspace.runtimeConfig} isWorking={false} />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-foreground truncate text-sm font-medium">
+                          {displayTitle}
                         </div>
-
-                        {isDeleting ? (
-                          <div className="flex items-center gap-2">
-                            <span className="text-muted text-xs">Delete?</span>
-                            <button
-                              onClick={() => void handleDelete(workspace.id)}
-                              disabled={isProcessing}
-                              className="rounded bg-red-600 px-2 py-1 text-xs text-white hover:bg-red-700 disabled:opacity-50"
-                            >
-                              Yes
-                            </button>
-                            <button
-                              onClick={() => setDeleteConfirmId(null)}
-                              disabled={isProcessing}
-                              className="text-muted hover:text-foreground text-xs disabled:opacity-50"
-                            >
-                              No
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-1">
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <button
-                                  onClick={() => void handleUnarchive(workspace.id)}
-                                  disabled={isProcessing}
-                                  className="text-muted hover:text-foreground rounded p-1.5 transition-colors hover:bg-white/10 disabled:opacity-50"
-                                  aria-label={`Restore workspace ${displayTitle}`}
-                                >
-                                  <ArchiveRestoreIcon className="h-4 w-4" />
-                                </button>
-                              </TooltipTrigger>
-                              <TooltipContent>Restore to sidebar</TooltipContent>
-                            </Tooltip>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <button
-                                  onClick={() => setDeleteConfirmId(workspace.id)}
-                                  disabled={isProcessing}
-                                  className="text-muted rounded p-1.5 transition-colors hover:bg-white/10 hover:text-red-400 disabled:opacity-50"
-                                  aria-label={`Delete workspace ${displayTitle}`}
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </button>
-                              </TooltipTrigger>
-                              <TooltipContent>Delete permanently</TooltipContent>
-                            </Tooltip>
+                        {workspace.archivedAt && (
+                          <div className="text-muted text-xs">
+                            {new Date(workspace.archivedAt).toLocaleString(undefined, {
+                              month: "short",
+                              day: "numeric",
+                              hour: "numeric",
+                              minute: "2-digit",
+                            })}
                           </div>
                         )}
                       </div>
-                    );
-                  })}
-                </div>
-              ))
-            )}
-          </div>
+
+                      {isDeleting ? (
+                        <div className="flex items-center gap-2">
+                          <span className="text-muted text-xs">Delete?</span>
+                          <button
+                            onClick={() => void handleDelete(workspace.id)}
+                            disabled={isProcessing}
+                            className="rounded bg-red-600 px-2 py-1 text-xs text-white hover:bg-red-700 disabled:opacity-50"
+                          >
+                            Yes
+                          </button>
+                          <button
+                            onClick={() => setDeleteConfirmId(null)}
+                            disabled={isProcessing}
+                            className="text-muted hover:text-foreground text-xs disabled:opacity-50"
+                          >
+                            No
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1">
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <button
+                                onClick={() => void handleUnarchive(workspace.id)}
+                                disabled={isProcessing}
+                                className="text-muted hover:text-foreground rounded p-1.5 transition-colors hover:bg-white/10 disabled:opacity-50"
+                                aria-label={`Restore workspace ${displayTitle}`}
+                              >
+                                <ArchiveRestoreIcon className="h-4 w-4" />
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent>Restore to sidebar</TooltipContent>
+                          </Tooltip>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <button
+                                onClick={() => setDeleteConfirmId(workspace.id)}
+                                disabled={isProcessing}
+                                className="text-muted rounded p-1.5 transition-colors hover:bg-white/10 hover:text-red-400 disabled:opacity-50"
+                                aria-label={`Delete workspace ${displayTitle}`}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent>Delete permanently</TooltipContent>
+                          </Tooltip>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ))
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 };
