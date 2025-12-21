@@ -259,102 +259,28 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     includeUncommitted: includeUncommitted,
   });
 
-  // Auto-refresh on file-modifying tool completions (debounced 3s).
-  // Respects user interaction - if user is focused on review input, queues refresh for after blur.
-  useEffect(() => {
-    if (!api || isCreating) return;
-
-    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-
-    const performRefresh = () => {
-      // Skip if document not visible (user switched tabs/windows)
-      if (document.hidden) return;
-
-      // Skip if user is actively entering a review note
-      if (isUserInteractingRef.current) {
-        pendingRefreshRef.current = true;
-        return;
-      }
-
-      // Skip if already refreshing (for origin/* bases with fetch)
-      if (isRefreshingRef.current) return;
-
-      // Save scroll position before refresh
-      savedScrollTopRef.current = scrollContainerRef.current?.scrollTop ?? null;
-
-      const originBranch = getOriginBranchForFetch(filters.diffBase);
-      if (originBranch) {
-        // Remote base: fetch before refreshing diff
-        isRefreshingRef.current = true;
-        api.workspace
-          .executeBash({
-            workspaceId,
-            script: `git fetch origin ${originBranch} --quiet || true`,
-            options: { timeout_secs: 30 },
-          })
-          .catch((err) => {
-            console.debug("ReviewPanel origin fetch failed", err);
-          })
-          .finally(() => {
-            isRefreshingRef.current = false;
-            setRefreshTrigger((prev) => prev + 1);
-          });
-      } else {
-        // Local base: just refresh diff
-        setRefreshTrigger((prev) => prev + 1);
-      }
-    };
-
-    const scheduleRefresh = () => {
-      if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(performRefresh, TOOL_REFRESH_DEBOUNCE_MS);
-    };
-
-    // Subscribe to file-modifying tool completions for this workspace
-    const unsubscribe = workspaceStore.subscribeFileModifyingTool(workspaceId, scheduleRefresh);
-
-    return () => {
-      unsubscribe();
-      if (debounceTimer) clearTimeout(debounceTimer);
-    };
-  }, [api, workspaceId, filters.diffBase, isCreating]);
-
-  // Sync panel focus with interaction tracking; fire pending refresh on blur
-  useEffect(() => {
-    isUserInteractingRef.current = isPanelFocused;
-
-    // When user stops interacting, fire any pending refresh
-    if (!isPanelFocused && pendingRefreshRef.current) {
-      pendingRefreshRef.current = false;
-      handleRefreshRef.current();
-    }
-  }, [isPanelFocused]);
-
-  // Restore scroll position after auto-refresh completes
-  useEffect(() => {
-    if (
-      diffState.status === "loaded" &&
-      savedScrollTopRef.current !== null &&
-      scrollContainerRef.current
-    ) {
-      scrollContainerRef.current.scrollTop = savedScrollTopRef.current;
-      savedScrollTopRef.current = null;
-    }
-  }, [diffState.status]);
-
-  // Focus panel when focusTrigger changes (preserves current hunk selection)
-
+  // Stable refresh handler via ref - always reads latest state at execution time.
+  // This avoids stale closure issues when debounced timers fire.
   const handleRefreshRef = useRef<() => void>(() => {
     console.debug("ReviewPanel handleRefreshRef called before init");
   });
   handleRefreshRef.current = () => {
     if (!api || isCreating) return;
 
-    // Skip if already refreshing (for origin/* bases with fetch)
-    if (isRefreshingRef.current) {
-      setRefreshTrigger((prev) => prev + 1);
+    // Skip if document not visible (user switched tabs/windows)
+    if (document.hidden) return;
+
+    // Skip if user is actively entering a review note
+    if (isUserInteractingRef.current) {
+      pendingRefreshRef.current = true;
       return;
     }
+
+    // Skip if already refreshing (for origin/* bases with fetch)
+    if (isRefreshingRef.current) return;
+
+    // Save scroll position before refresh
+    savedScrollTopRef.current = scrollContainerRef.current?.scrollTop ?? null;
 
     const originBranch = getOriginBranchForFetch(filters.diffBase);
     if (originBranch) {
@@ -383,6 +309,61 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   const handleRefresh = () => {
     handleRefreshRef.current();
   };
+
+  // Debounce timer ref - lives outside effect to prevent stale closure issues.
+  // Using a ref allows cleanup from any code path without closure capture.
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Auto-refresh on file-modifying tool completions (debounced 3s).
+  // Respects user interaction - if user is focused on review input, queues refresh for after blur.
+  useEffect(() => {
+    if (!api || isCreating) return;
+
+    const scheduleRefresh = () => {
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+      // Call through ref to get latest state at execution time
+      debounceTimerRef.current = setTimeout(() => {
+        debounceTimerRef.current = null;
+        handleRefreshRef.current();
+      }, TOOL_REFRESH_DEBOUNCE_MS);
+    };
+
+    // Subscribe to file-modifying tool completions for this workspace
+    const unsubscribe = workspaceStore.subscribeFileModifyingTool(workspaceId, scheduleRefresh);
+
+    return () => {
+      unsubscribe();
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
+      }
+    };
+  }, [api, workspaceId, isCreating]);
+
+  // Sync panel focus with interaction tracking; fire pending refresh on blur
+  useEffect(() => {
+    isUserInteractingRef.current = isPanelFocused;
+
+    // When user stops interacting, fire any pending refresh
+    if (!isPanelFocused && pendingRefreshRef.current) {
+      pendingRefreshRef.current = false;
+      handleRefreshRef.current();
+    }
+  }, [isPanelFocused]);
+
+  // Restore scroll position after auto-refresh completes
+  useEffect(() => {
+    if (
+      diffState.status === "loaded" &&
+      savedScrollTopRef.current !== null &&
+      scrollContainerRef.current
+    ) {
+      scrollContainerRef.current.scrollTop = savedScrollTopRef.current;
+      savedScrollTopRef.current = null;
+    }
+  }, [diffState.status]);
+
+  // Focus panel when focusTrigger changes (preserves current hunk selection)
   useEffect(() => {
     if (focusTrigger && focusTrigger > 0) {
       panelRef.current?.focus();
