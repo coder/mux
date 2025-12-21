@@ -248,12 +248,12 @@ export const LargeDiff: AppStory = {
 };
 
 /**
- * Project removal error popover.
+ * Project removal disabled state.
  *
- * Shows the error popup when attempting to remove a project that has active workspaces.
- * The play function hovers the project and clicks the remove button to trigger the error.
+ * Verifies that the "Remove project" button is disabled when workspaces exist.
+ * The button is aria-disabled and styled as not-allowed, preventing the backend call.
  */
-export const ProjectRemovalError: AppStory = {
+export const ProjectRemovalDisabled: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() => {
@@ -268,11 +268,6 @@ export const ProjectRemovalError: AppStory = {
         return createMockORPCClient({
           projects: groupWorkspacesByProject(workspaces),
           workspaces,
-          onProjectRemove: () => ({
-            success: false,
-            error:
-              "Cannot remove project with active workspaces. Please remove all 2 workspace(s) first.",
-          }),
         });
       }}
     />
@@ -297,14 +292,12 @@ export const ProjectRemovalError: AppStory = {
     // Small delay for hover state to apply
     await new Promise((r) => setTimeout(r, 100));
 
-    // Click the remove button
-    await userEvent.click(removeButton);
-
-    // Wait for the error popover to appear
+    // Verify the button is disabled (aria-disabled="true")
     await waitFor(
       () => {
-        const errorPopover = document.querySelector('[role="alert"]');
-        if (!errorPopover) throw new Error("Error popover not found");
+        if (removeButton.getAttribute("aria-disabled") !== "true") {
+          throw new Error("Remove button should be aria-disabled when workspaces exist");
+        }
       },
       { timeout: 2000 }
     );

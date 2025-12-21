@@ -87,6 +87,7 @@ function ensureCreatedAt(metadata: FrontendWorkspaceMetadata): void {
 export interface WorkspaceContext {
   // Workspace data
   workspaceMetadata: Map<string, FrontendWorkspaceMetadata>;
+  archivedCountByProject: Map<string, number>;
   loading: boolean;
 
   // Workspace operations
@@ -161,6 +162,9 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   );
   const [loading, setLoading] = useState(true);
   const [pendingNewWorkspaceProject, setPendingNewWorkspaceProject] = useState<string | null>(null);
+  const [archivedCountByProject, setArchivedCountByProject] = useState<Map<string, number>>(
+    new Map()
+  );
 
   // Manage selected workspace internally with localStorage persistence
   const [selectedWorkspace, setSelectedWorkspace] = usePersistedState<WorkspaceSelection | null>(
@@ -179,7 +183,11 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     if (!api) return false; // Return false to indicate metadata wasn't loaded
     try {
       const includePostCompaction = isExperimentEnabled(EXPERIMENT_IDS.POST_COMPACTION_CONTEXT);
-      const metadataList = await api.workspace.list({ includePostCompaction });
+      // Fetch active and archived workspaces in parallel
+      const [metadataList, archivedList] = await Promise.all([
+        api.workspace.list({ includePostCompaction }),
+        api.workspace.list({ archived: true }),
+      ]);
       console.log(
         "[WorkspaceContext] Loaded metadata list:",
         metadataList.map((m) => ({ id: m.id, name: m.name, title: m.title }))
@@ -194,10 +202,19 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         metadataMap.set(metadata.id, metadata);
       }
       setWorkspaceMetadata(metadataMap);
+
+      // Compute archived counts by project
+      const archivedCounts = new Map<string, number>();
+      for (const ws of archivedList) {
+        archivedCounts.set(ws.projectPath, (archivedCounts.get(ws.projectPath) ?? 0) + 1);
+      }
+      setArchivedCountByProject(archivedCounts);
+
       return true; // Return true to indicate metadata was loaded
     } catch (error) {
       console.error("Failed to load workspace metadata:", error);
       setWorkspaceMetadata(new Map());
+      setArchivedCountByProject(new Map());
       return true; // Still return true - we tried to load, just got empty result
     }
   }, [setWorkspaceMetadata, api]);
@@ -607,6 +624,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   const value = useMemo<WorkspaceContext>(
     () => ({
       workspaceMetadata,
+      archivedCountByProject,
       loading,
       createWorkspace,
       removeWorkspace,
@@ -624,6 +642,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     }),
     [
       workspaceMetadata,
+      archivedCountByProject,
       loading,
       createWorkspace,
       removeWorkspace,
