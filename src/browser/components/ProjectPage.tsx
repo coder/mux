@@ -69,35 +69,35 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
               {/* Spacer to push content toward center when no archived workspaces */}
               <div className="flex-1" />
 
-              {/* Main content container */}
+              {/* Main content container - horizontally centered */}
               <div className="mx-auto w-full max-w-3xl px-5 py-8">
+                {/* Chat input for creating new workspace */}
+                <ChatInput
+                  variant="creation"
+                  projectPath={projectPath}
+                  projectName={projectName}
+                  onProviderConfig={onProviderConfig}
+                  onReady={handleChatReady}
+                  onWorkspaceCreated={onWorkspaceCreated}
+                />
+
                 {/* Archived workspaces section */}
                 {archivedWorkspaces.length > 0 && (
-                  <ArchivedWorkspaces
-                    projectPath={projectPath}
-                    projectName={projectName}
-                    workspaces={archivedWorkspaces}
-                    onWorkspacesChanged={() => {
-                      // Refresh archived list after unarchive/delete
-                      if (!api) return;
-                      void api.workspace.list({ archivedOnly: true }).then((all) => {
-                        setArchivedWorkspaces(all.filter((w) => w.projectPath === projectPath));
-                      });
-                    }}
-                  />
+                  <div className="mt-8">
+                    <ArchivedWorkspaces
+                      projectPath={projectPath}
+                      projectName={projectName}
+                      workspaces={archivedWorkspaces}
+                      onWorkspacesChanged={() => {
+                        // Refresh archived list after unarchive/delete
+                        if (!api) return;
+                        void api.workspace.list({ archivedOnly: true }).then((all) => {
+                          setArchivedWorkspaces(all.filter((w) => w.projectPath === projectPath));
+                        });
+                      }}
+                    />
+                  </div>
                 )}
-
-                {/* Chat input for creating new workspace */}
-                <div className={archivedWorkspaces.length > 0 ? "mt-8" : ""}>
-                  <ChatInput
-                    variant="creation"
-                    projectPath={projectPath}
-                    projectName={projectName}
-                    onProviderConfig={onProviderConfig}
-                    onReady={handleChatReady}
-                    onWorkspaceCreated={onWorkspaceCreated}
-                  />
-                </div>
               </div>
 
               {/* Spacer to push content toward center */}
