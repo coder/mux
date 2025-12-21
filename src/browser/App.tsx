@@ -57,10 +57,6 @@ import { getWorkspaceSidebarKey } from "./utils/workspace";
 
 const THINKING_LEVELS: ThinkingLevel[] = ["off", "low", "medium", "high", "xhigh"];
 
-function isStorybookIframe(): boolean {
-  return typeof window !== "undefined" && window.location.pathname.endsWith("iframe.html");
-}
-
 function AppInner() {
   // Get workspace state from context
   const {
@@ -139,21 +135,10 @@ function AppInner() {
   // Auto-resume interrupted streams on app startup and when failures occur
   useResumeManager();
 
-  // Sync selectedWorkspace with URL hash
+  // Update window title based on selected workspace
+  // URL syncing is now handled by RouterContext
   useEffect(() => {
-    // Storybook's test runner treats hash updates as navigations and will retry play tests.
-    // The hash deep-linking isn't needed in Storybook, so skip it there.
-    const shouldSyncHash = !isStorybookIframe();
-
     if (selectedWorkspace) {
-      // Update URL with workspace ID
-      if (shouldSyncHash) {
-        const newHash = `#workspace=${encodeURIComponent(selectedWorkspace.workspaceId)}`;
-        if (window.location.hash !== newHash) {
-          window.history.replaceState(null, "", newHash);
-        }
-      }
-
       // Update window title with workspace title (or name for legacy workspaces)
       const metadata = workspaceMetadata.get(selectedWorkspace.workspaceId);
       const workspaceTitle = metadata?.title ?? metadata?.name ?? selectedWorkspace.workspaceId;
@@ -162,29 +147,26 @@ function AppInner() {
       document.title = title;
       void api?.window.setTitle({ title });
     } else {
-      // Clear hash when no workspace selected
-      if (shouldSyncHash && window.location.hash) {
-        window.history.replaceState(null, "", window.location.pathname);
-      }
       // Set document.title locally for browser mode, call backend for Electron
       document.title = "mux";
       void api?.window.setTitle({ title: "mux" });
     }
   }, [selectedWorkspace, workspaceMetadata, api]);
+
   // Validate selected workspace exists and has all required fields
+  // Note: workspace validity is now primarily handled by RouterContext deriving
+  // selectedWorkspace from URL + metadata. This effect handles edge cases like
+  // stale localStorage or missing fields in legacy workspaces.
   useEffect(() => {
     if (selectedWorkspace) {
       const metadata = workspaceMetadata.get(selectedWorkspace.workspaceId);
 
       if (!metadata) {
-        // Workspace was deleted
+        // Workspace was deleted - navigate home (clears selection)
         console.warn(
           `Workspace ${selectedWorkspace.workspaceId} no longer exists, clearing selection`
         );
         setSelectedWorkspace(null);
-        if (!isStorybookIframe() && window.location.hash) {
-          window.history.replaceState(null, "", window.location.pathname);
-        }
       } else if (!selectedWorkspace.namedWorkspacePath && metadata.namedWorkspacePath) {
         // Old localStorage entry missing namedWorkspacePath - update it once
         console.log(`Updating workspace ${selectedWorkspace.workspaceId} with missing fields`);

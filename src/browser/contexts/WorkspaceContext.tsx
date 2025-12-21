@@ -20,16 +20,13 @@ import {
   SELECTED_WORKSPACE_KEY,
 } from "@/common/constants/storage";
 import { useAPI } from "@/browser/contexts/API";
-import {
-  readPersistedState,
-  updatePersistedState,
-  usePersistedState,
-} from "@/browser/hooks/usePersistedState";
+import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { isExperimentEnabled } from "@/browser/hooks/useExperiments";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { isWorkspaceArchived } from "@/common/utils/archive";
+import { useRouter } from "@/browser/contexts/RouterContext";
 
 /**
  * Seed per-workspace localStorage from backend workspace metadata.
@@ -139,6 +136,14 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   const { api } = useAPI();
   // Get project refresh function from ProjectContext
   const { refreshProjects } = useProjectContext();
+  // Get router navigation functions and current route state
+  const {
+    navigateToWorkspace,
+    navigateToProject,
+    navigateToHome,
+    currentWorkspaceId,
+    currentProjectPath,
+  } = useRouter();
 
   const workspaceStore = useWorkspaceStoreRaw();
   const [workspaceMetadata, setWorkspaceMetadataState] = useState<
@@ -160,12 +165,33 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     [workspaceStore]
   );
   const [loading, setLoading] = useState(true);
-  const [pendingNewWorkspaceProject, setPendingNewWorkspaceProject] = useState<string | null>(null);
 
-  // Manage selected workspace internally with localStorage persistence
-  const [selectedWorkspace, setSelectedWorkspace] = usePersistedState<WorkspaceSelection | null>(
-    SELECTED_WORKSPACE_KEY,
-    null
+  // pendingNewWorkspaceProject is derived from currentProjectPath in URL
+  const pendingNewWorkspaceProject = currentProjectPath;
+
+  // selectedWorkspace is derived from currentWorkspaceId in URL + workspaceMetadata
+  const selectedWorkspace = useMemo(() => {
+    if (!currentWorkspaceId) return null;
+    const metadata = workspaceMetadata.get(currentWorkspaceId);
+    if (!metadata) return null;
+    return toWorkspaceSelection(metadata);
+  }, [currentWorkspaceId, workspaceMetadata]);
+
+  // setSelectedWorkspace navigates to the workspace URL (or clears if null)
+  const setSelectedWorkspace = useCallback(
+    (update: SetStateAction<WorkspaceSelection | null>) => {
+      // Handle functional updates by resolving against current value
+      const newValue = typeof update === "function" ? update(selectedWorkspace) : update;
+      if (newValue) {
+        navigateToWorkspace(newValue.workspaceId);
+        // Persist to localStorage for next session
+        updatePersistedState(SELECTED_WORKSPACE_KEY, newValue);
+      } else {
+        navigateToHome();
+        updatePersistedState(SELECTED_WORKSPACE_KEY, null);
+      }
+    },
+    [selectedWorkspace, navigateToWorkspace, navigateToHome]
   );
 
   // Used by async subscription handlers to safely access the most recent metadata map
@@ -217,40 +243,8 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     })();
   }, [loadWorkspaceMetadata, refreshProjects]);
 
-  // Restore workspace from URL hash (overrides localStorage)
-  // Runs once after metadata is loaded
-  useEffect(() => {
-    if (loading) return;
-
-    const hash = window.location.hash;
-    if (hash.startsWith("#workspace=")) {
-      const workspaceId = decodeURIComponent(hash.substring("#workspace=".length));
-
-      // Find workspace in metadata
-      const metadata = workspaceMetadata.get(workspaceId);
-
-      if (metadata) {
-        // Restore from hash (overrides localStorage)
-        setSelectedWorkspace(toWorkspaceSelection(metadata));
-      }
-    } else if (hash.length > 1) {
-      // Try to interpret hash as project path (for direct deep linking)
-      // e.g. #/Users/me/project or #/launch-project
-      const projectPath = decodeURIComponent(hash.substring(1));
-
-      // Find first workspace with this project path
-      const projectWorkspaces = Array.from(workspaceMetadata.values()).filter(
-        (meta) => meta.projectPath === projectPath
-      );
-
-      if (projectWorkspaces.length > 0) {
-        const metadata = projectWorkspaces[0];
-        setSelectedWorkspace(toWorkspaceSelection(metadata));
-      }
-    }
-    // Only run once when loading finishes
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading]);
+  // URL restoration is now handled by RouterContext which parses the URL on load
+  // and provides currentWorkspaceId/currentProjectPath that we derive state from.
 
   // Check for launch project from server (for --add-project flag)
   // This only applies in server mode, runs after metadata loads
@@ -594,15 +588,14 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
   const beginWorkspaceCreation = useCallback(
     (projectPath: string) => {
-      setPendingNewWorkspaceProject(projectPath);
-      setSelectedWorkspace(null);
+      navigateToProject(projectPath);
     },
-    [setSelectedWorkspace]
+    [navigateToProject]
   );
 
   const clearPendingWorkspaceCreation = useCallback(() => {
-    setPendingNewWorkspaceProject(null);
-  }, []);
+    navigateToHome();
+  }, [navigateToHome]);
 
   const value = useMemo<WorkspaceContext>(
     () => ({

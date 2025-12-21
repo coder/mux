@@ -7,6 +7,7 @@ import { useGitStatusStoreRaw } from "../stores/GitStatusStore";
 import { ProjectProvider, useProjectContext } from "../contexts/ProjectContext";
 import { APIProvider, useAPI, type APIClient } from "@/browser/contexts/API";
 import { WorkspaceProvider, useWorkspaceContext } from "../contexts/WorkspaceContext";
+import { RouterProvider } from "../contexts/RouterContext";
 
 interface AppLoaderProps {
   /** Optional pre-created ORPC api?. If provided, skips internal connection setup. */
@@ -19,7 +20,8 @@ interface AppLoaderProps {
  * 2. Sync stores with loaded data
  * 3. Only render App when everything is ready
  *
- * WorkspaceContext handles workspace selection restoration (localStorage, URL hash, launch project).
+ * WorkspaceContext handles workspace selection restoration from URL.
+ * RouterProvider must wrap WorkspaceProvider since workspace state is derived from URL.
  * WorkspaceProvider must be nested inside ProjectProvider so it can call useProjectContext().
  * This ensures App.tsx can assume stores are always synced and removes
  * the need for conditional guards in effects.
@@ -27,11 +29,13 @@ interface AppLoaderProps {
 export function AppLoader(props: AppLoaderProps) {
   return (
     <APIProvider client={props.client}>
-      <ProjectProvider>
-        <WorkspaceProvider>
-          <AppLoaderInner />
-        </WorkspaceProvider>
-      </ProjectProvider>
+      <RouterProvider>
+        <ProjectProvider>
+          <WorkspaceProvider>
+            <AppLoaderInner />
+          </WorkspaceProvider>
+        </ProjectProvider>
+      </RouterProvider>
     </APIProvider>
   );
 }

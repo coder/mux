@@ -5,6 +5,7 @@ import { GlobalWindow } from "happy-dom";
 import type { WorkspaceContext } from "./WorkspaceContext";
 import { WorkspaceProvider, useWorkspaceContext } from "./WorkspaceContext";
 import { ProjectProvider } from "@/browser/contexts/ProjectContext";
+import { RouterProvider } from "@/browser/contexts/RouterContext";
 import { useWorkspaceStoreRaw as getWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import {
   SELECTED_WORKSPACE_KEY,
@@ -409,6 +410,18 @@ describe("WorkspaceContext", () => {
 
   test("beginWorkspaceCreation clears selection and tracks pending state", async () => {
     createMockAPI({
+      workspace: {
+        list: () =>
+          Promise.resolve([
+            createWorkspaceMetadata({
+              id: "ws-existing",
+              projectPath: "/existing",
+              projectName: "existing",
+              name: "main",
+              namedWorkspacePath: "/existing-main",
+            }),
+          ]),
+      },
       localStorage: {
         selectedWorkspace: JSON.stringify({
           workspaceId: "ws-existing",
@@ -464,6 +477,18 @@ describe("WorkspaceContext", () => {
 
   test("selectedWorkspace restores from localStorage on mount", async () => {
     createMockAPI({
+      workspace: {
+        list: () =>
+          Promise.resolve([
+            createWorkspaceMetadata({
+              id: "ws-restore",
+              projectPath: "/restore",
+              projectName: "restore",
+              name: "main",
+              namedWorkspacePath: "/restore-main",
+            }),
+          ]),
+      },
       localStorage: {
         selectedWorkspace: JSON.stringify({
           workspaceId: "ws-restore",
@@ -479,18 +504,13 @@ describe("WorkspaceContext", () => {
     await waitFor(() => expect(ctx().selectedWorkspace?.workspaceId).toBe("ws-restore"));
   });
 
-  test("launch project takes precedence over localStorage selection", async () => {
+  test("launch project auto-selects workspace when no URL hash", async () => {
+    // With the new router, URL takes precedence. When there's no URL hash,
+    // and localStorage has no saved workspace, the launch project kicks in.
     createMockAPI({
       workspace: {
         list: () =>
           Promise.resolve([
-            createWorkspaceMetadata({
-              id: "ws-existing",
-              projectPath: "/existing",
-              projectName: "existing",
-              name: "main",
-              namedWorkspacePath: "/existing-main",
-            }),
             createWorkspaceMetadata({
               id: "ws-launch",
               projectPath: "/launch-project",
@@ -503,18 +523,10 @@ describe("WorkspaceContext", () => {
       projects: {
         list: () => Promise.resolve([]),
       },
-      localStorage: {
-        selectedWorkspace: JSON.stringify({
-          workspaceId: "ws-existing",
-          projectPath: "/existing",
-          projectName: "existing",
-          namedWorkspacePath: "/existing-main",
-        }),
-      },
       server: {
         getLaunchProject: () => Promise.resolve("/launch-project"),
       },
-      locationHash: "#/launch-project", // Simulate launch project via URL hash
+      // No locationHash, no localStorage - so launch project should kick in
     });
 
     const ctx = await setup();
@@ -685,13 +697,15 @@ async function setup() {
     return null;
   }
 
-  // WorkspaceProvider needs ProjectProvider to call useProjectContext
+  // WorkspaceProvider needs RouterProvider and ProjectProvider
   render(
-    <ProjectProvider>
-      <WorkspaceProvider>
-        <ContextCapture />
-      </WorkspaceProvider>
-    </ProjectProvider>
+    <RouterProvider>
+      <ProjectProvider>
+        <WorkspaceProvider>
+          <ContextCapture />
+        </WorkspaceProvider>
+      </ProjectProvider>
+    </RouterProvider>
   );
 
   // Inject client immediately to handle race conditions where effects run before store update
