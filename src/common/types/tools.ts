@@ -17,6 +17,9 @@ import type {
   FileEditReplaceStringToolResultSchema,
   FileReadToolResultSchema,
   TaskToolResultSchema,
+  TaskAwaitToolResultSchema,
+  TaskListToolResultSchema,
+  TaskTerminateToolResultSchema,
   TOOL_DEFINITIONS,
   WebFetchToolResultSchema,
 } from "@/common/utils/tools/toolDefinitions";
@@ -158,6 +161,27 @@ export type TaskToolArgs = z.infer<typeof TOOL_DEFINITIONS.task.schema>;
 export type TaskToolSuccessResult = z.infer<typeof TaskToolResultSchema>;
 
 export type TaskToolResult = TaskToolSuccessResult | ToolErrorResult;
+
+// Task Await Tool Types
+export type TaskAwaitToolArgs = z.infer<typeof TOOL_DEFINITIONS.task_await.schema>;
+
+export type TaskAwaitToolSuccessResult = z.infer<typeof TaskAwaitToolResultSchema>;
+
+export type TaskAwaitToolResult = TaskAwaitToolSuccessResult | ToolErrorResult;
+
+// Task List Tool Types
+export type TaskListToolArgs = z.infer<typeof TOOL_DEFINITIONS.task_list.schema>;
+
+export type TaskListToolSuccessResult = z.infer<typeof TaskListToolResultSchema>;
+
+export type TaskListToolResult = TaskListToolSuccessResult | ToolErrorResult;
+
+// Task Terminate Tool Types
+export type TaskTerminateToolArgs = z.infer<typeof TOOL_DEFINITIONS.task_terminate.schema>;
+
+export type TaskTerminateToolSuccessResult = z.infer<typeof TaskTerminateToolResultSchema>;
+
+export type TaskTerminateToolResult = TaskTerminateToolSuccessResult | ToolErrorResult;
 
 // Agent Report Tool Types
 export type AgentReportToolArgs = z.infer<typeof TOOL_DEFINITIONS.agent_report.schema>;

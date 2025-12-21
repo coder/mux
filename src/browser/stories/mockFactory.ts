@@ -693,3 +693,212 @@ export function createStreamingChatHandler(opts: {
     return () => clearInterval(intervalId);
   };
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TASK TOOL FACTORIES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** Create a task tool call (spawn sub-agent) - background/queued */
+export function createTaskTool(
+  toolCallId: string,
+  opts: {
+    subagent_type: "explore" | "exec";
+    prompt: string;
+    description?: string;
+    run_in_background?: boolean;
+    taskId: string;
+    status: "queued" | "running";
+  }
+): MuxPart {
+  return {
+    type: "dynamic-tool",
+    toolCallId,
+    toolName: "task",
+    state: "output-available",
+    input: {
+      subagent_type: opts.subagent_type,
+      prompt: opts.prompt,
+      description: opts.description,
+      run_in_background: opts.run_in_background ?? false,
+    },
+    output: {
+      status: opts.status,
+      taskId: opts.taskId,
+    },
+  };
+}
+
+/** Create a completed task tool call with report */
+export function createCompletedTaskTool(
+  toolCallId: string,
+  opts: {
+    subagent_type: "explore" | "exec";
+    prompt: string;
+    description?: string;
+    taskId?: string;
+    reportMarkdown: string;
+    title?: string;
+  }
+): MuxPart {
+  return {
+    type: "dynamic-tool",
+    toolCallId,
+    toolName: "task",
+    state: "output-available",
+    input: {
+      subagent_type: opts.subagent_type,
+      prompt: opts.prompt,
+      description: opts.description,
+      run_in_background: false,
+    },
+    output: {
+      status: "completed",
+      taskId: opts.taskId,
+      reportMarkdown: opts.reportMarkdown,
+      title: opts.title,
+    },
+  };
+}
+
+/** Create a pending task tool call (executing) */
+export function createPendingTaskTool(
+  toolCallId: string,
+  opts: {
+    subagent_type: "explore" | "exec";
+    prompt: string;
+    description?: string;
+    run_in_background?: boolean;
+  }
+): MuxPart {
+  return {
+    type: "dynamic-tool",
+    toolCallId,
+    toolName: "task",
+    state: "input-available",
+    input: {
+      subagent_type: opts.subagent_type,
+      prompt: opts.prompt,
+      description: opts.description,
+      run_in_background: opts.run_in_background ?? false,
+    },
+  };
+}
+
+/** Create a task_await tool call */
+export function createTaskAwaitTool(
+  toolCallId: string,
+  opts: {
+    task_ids?: string[];
+    timeout_secs?: number;
+    results: Array<{
+      taskId: string;
+      status: "completed" | "queued" | "running" | "awaiting_report" | "not_found" | "error";
+      reportMarkdown?: string;
+      title?: string;
+      error?: string;
+    }>;
+  }
+): MuxPart {
+  return {
+    type: "dynamic-tool",
+    toolCallId,
+    toolName: "task_await",
+    state: "output-available",
+    input: {
+      task_ids: opts.task_ids,
+      timeout_secs: opts.timeout_secs,
+    },
+    output: {
+      results: opts.results.map((r) => {
+        if (r.status === "completed") {
+          return {
+            status: "completed" as const,
+            taskId: r.taskId,
+            reportMarkdown: r.reportMarkdown ?? "",
+            title: r.title,
+          };
+        }
+        if (r.status === "error") {
+          return {
+            status: "error" as const,
+            taskId: r.taskId,
+            error: r.error ?? "Unknown error",
+          };
+        }
+        return {
+          status: r.status,
+          taskId: r.taskId,
+        };
+      }),
+    },
+  };
+}
+
+/** Create a task_list tool call */
+export function createTaskListTool(
+  toolCallId: string,
+  opts: {
+    statuses?: Array<"queued" | "running" | "awaiting_report" | "reported">;
+    tasks: Array<{
+      taskId: string;
+      status: "queued" | "running" | "awaiting_report" | "reported";
+      parentWorkspaceId: string;
+      agentType?: string;
+      title?: string;
+      depth: number;
+    }>;
+  }
+): MuxPart {
+  return {
+    type: "dynamic-tool",
+    toolCallId,
+    toolName: "task_list",
+    state: "output-available",
+    input: { statuses: opts.statuses },
+    output: { tasks: opts.tasks },
+  };
+}
+
+/** Create a task_terminate tool call */
+export function createTaskTerminateTool(
+  toolCallId: string,
+  opts: {
+    task_ids: string[];
+    results: Array<{
+      taskId: string;
+      status: "terminated" | "not_found" | "invalid_scope" | "error";
+      terminatedTaskIds?: string[];
+      error?: string;
+    }>;
+  }
+): MuxPart {
+  return {
+    type: "dynamic-tool",
+    toolCallId,
+    toolName: "task_terminate",
+    state: "output-available",
+    input: { task_ids: opts.task_ids },
+    output: {
+      results: opts.results.map((r) => {
+        if (r.status === "terminated") {
+          return {
+            status: "terminated" as const,
+            taskId: r.taskId,
+            terminatedTaskIds: r.terminatedTaskIds ?? [r.taskId],
+          };
+        }
+        if (r.status === "error") {
+          return {
+            status: "error" as const,
+            taskId: r.taskId,
+            error: r.error ?? "Unknown error",
+          };
+        }
+        return {
+          status: r.status,
+          taskId: r.taskId,
+        };
+      }),
+    },
+  };
+}

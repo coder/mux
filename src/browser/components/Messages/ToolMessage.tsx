@@ -14,6 +14,12 @@ import { BashBackgroundListToolCall } from "../tools/BashBackgroundListToolCall"
 import { BashBackgroundTerminateToolCall } from "../tools/BashBackgroundTerminateToolCall";
 import { BashOutputToolCall } from "../tools/BashOutputToolCall";
 import { CodeExecutionToolCall } from "../tools/CodeExecutionToolCall";
+import {
+  TaskToolCall,
+  TaskAwaitToolCall,
+  TaskListToolCall,
+  TaskTerminateToolCall,
+} from "../tools/TaskToolCall";
 import type {
   BashToolArgs,
   BashToolResult,
@@ -41,6 +47,14 @@ import type {
   StatusSetToolResult,
   WebFetchToolArgs,
   WebFetchToolResult,
+  TaskToolArgs,
+  TaskToolSuccessResult,
+  TaskAwaitToolArgs,
+  TaskAwaitToolSuccessResult,
+  TaskListToolArgs,
+  TaskListToolSuccessResult,
+  TaskTerminateToolArgs,
+  TaskTerminateToolSuccessResult,
 } from "@/common/types/tools";
 import type { ReviewNoteData } from "@/common/types/review";
 import type { BashOutputGroupInfo } from "@/browser/utils/messages/messageUtils";
@@ -144,6 +158,26 @@ interface CodeExecutionToolArgs {
 function isCodeExecutionTool(toolName: string, args: unknown): args is CodeExecutionToolArgs {
   if (toolName !== "code_execution") return false;
   return TOOL_DEFINITIONS.code_execution.schema.safeParse(args).success;
+}
+
+function isTaskTool(toolName: string, args: unknown): args is TaskToolArgs {
+  if (toolName !== "task") return false;
+  return TOOL_DEFINITIONS.task.schema.safeParse(args).success;
+}
+
+function isTaskAwaitTool(toolName: string, args: unknown): args is TaskAwaitToolArgs {
+  if (toolName !== "task_await") return false;
+  return TOOL_DEFINITIONS.task_await.schema.safeParse(args).success;
+}
+
+function isTaskListTool(toolName: string, args: unknown): args is TaskListToolArgs {
+  if (toolName !== "task_list") return false;
+  return TOOL_DEFINITIONS.task_list.schema.safeParse(args).success;
+}
+
+function isTaskTerminateTool(toolName: string, args: unknown): args is TaskTerminateToolArgs {
+  if (toolName !== "task_terminate") return false;
+  return TOOL_DEFINITIONS.task_terminate.schema.safeParse(args).success;
 }
 
 export const ToolMessage: React.FC<ToolMessageProps> = ({
@@ -349,6 +383,54 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
           result={message.result as Parameters<typeof CodeExecutionToolCall>[0]["result"]}
           status={message.status}
           nestedCalls={message.nestedCalls}
+        />
+      </div>
+    );
+  }
+
+  if (isTaskTool(message.toolName, message.args)) {
+    return (
+      <div className={className}>
+        <TaskToolCall
+          args={message.args}
+          result={message.result as TaskToolSuccessResult | undefined}
+          status={message.status}
+        />
+      </div>
+    );
+  }
+
+  if (isTaskAwaitTool(message.toolName, message.args)) {
+    return (
+      <div className={className}>
+        <TaskAwaitToolCall
+          args={message.args}
+          result={message.result as TaskAwaitToolSuccessResult | undefined}
+          status={message.status}
+        />
+      </div>
+    );
+  }
+
+  if (isTaskListTool(message.toolName, message.args)) {
+    return (
+      <div className={className}>
+        <TaskListToolCall
+          args={message.args}
+          result={message.result as TaskListToolSuccessResult | undefined}
+          status={message.status}
+        />
+      </div>
+    );
+  }
+
+  if (isTaskTerminateTool(message.toolName, message.args)) {
+    return (
+      <div className={className}>
+        <TaskTerminateToolCall
+          args={message.args}
+          result={message.result as TaskTerminateToolSuccessResult | undefined}
+          status={message.status}
         />
       </div>
     );

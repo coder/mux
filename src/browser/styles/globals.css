@@ -133,6 +133,18 @@
     --color-token-cached: hsl(0 0% 50%);
     --color-token-cache-create: hsl(140 20% 55%);
 
+    /* Task/subagent surfaces - teal/cyan theme for parallel work */
+    --color-task-mode: hsl(175 60% 42%);
+    --color-task-mode-light: hsl(175 60% 55%);
+    --surface-task-gradient: linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--color-task-mode), transparent 92%) 0%,
+      color-mix(in srgb, var(--color-task-mode), transparent 95%) 100%
+    );
+    --surface-task-border: color-mix(in srgb, var(--color-task-mode), transparent 70%);
+    --surface-task-border-strong: color-mix(in srgb, var(--color-task-mode), transparent 55%);
+    --surface-task-divider: color-mix(in srgb, var(--color-task-mode), transparent 80%);
+
     /* Plan surfaces */
     --surface-plan-gradient: linear-gradient(
       135deg,
@@ -1199,6 +1211,15 @@ body,
 @utility border-dashed-warning {
   border-style: dashed;
   border-color: var(--border-warning-dashed);
+}
+
+@utility task-surface {
+  background: var(--surface-task-gradient);
+  border: 1px solid var(--surface-task-border);
+}
+
+@utility task-divider {
+  border-color: var(--surface-task-divider);
 }
 code {
   font-family: var(--font-monospace);
