@@ -1,9 +1,13 @@
-import { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import { useRef, useCallback, useEffect, useMemo } from "react";
 import { useAPI } from "@/browser/contexts/API";
 import { useGateway, formatAsGatewayModel } from "@/browser/hooks/useGatewayModels";
 import { getKnownModel } from "@/common/constants/knownModels";
+import { getDraftNameKey, getDraftAutoGenerateKey } from "@/common/constants/storage";
+import { usePersistedState } from "@/browser/hooks/usePersistedState";
 
 export interface UseWorkspaceNameOptions {
+  /** Project path for persisting draft state */
+  projectPath: string;
   /** The user's message to generate a name for */
   message: string;
   /** Debounce delay in milliseconds (default: 500) */
@@ -54,7 +58,7 @@ export interface UseWorkspaceNameReturn extends WorkspaceNameState {
 const PREFERRED_NAME_MODELS = [getKnownModel("HAIKU").id, getKnownModel("GPT_MINI").id];
 
 export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspaceNameReturn {
-  const { message, debounceMs = 500, fallbackModel } = options;
+  const { projectPath, message, debounceMs = 500, fallbackModel } = options;
   const { api } = useAPI();
   // Use global gateway availability (configured + enabled), not per-model toggles.
   // Name generation uses utility models (Haiku, GPT-Mini) that users don't explicitly
@@ -70,13 +74,24 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
     return models;
   }, [gatewayConfigured]);
 
-  // Generated identity (name + title) from AI
-  const [generatedIdentity, setGeneratedIdentity] = useState<WorkspaceIdentity | null>(null);
-  // Manual name (user-editable during creation)
-  const [manualName, setManualName] = useState("");
-  const [autoGenerate, setAutoGenerate] = useState(true);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // Generated identity (name + title) from AI - not persisted since it's regenerated from message
+  const [generatedIdentity, setGeneratedIdentity] = usePersistedState<WorkspaceIdentity | null>(
+    getDraftNameKey(projectPath),
+    null,
+    { listener: true }
+  );
+  // Manual name persisted together with generated identity in the same key
+  // When autoGenerate is off, we store the manual name in generatedIdentity.name
+  const [autoGenerate, setAutoGenerate] = usePersistedState<boolean>(
+    getDraftAutoGenerateKey(projectPath),
+    true,
+    { listener: true }
+  );
+  const [isGenerating, setIsGenerating] = usePersistedState<boolean>(
+    `isGenerating:${projectPath}`,
+    false
+  );
+  const [error, setError] = usePersistedState<string | null>(`nameError:${projectPath}`, null);
 
   // Track the message that was used for the last successful generation
   const lastGeneratedForRef = useRef<string>("");
@@ -93,9 +108,9 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
     requestId: number;
   } | null>(null);
 
-  // Name shown in CreationControls UI: generated name when auto, manual when not
-  const name = autoGenerate ? (generatedIdentity?.name ?? "") : manualName;
-  // Title is only shown when auto-generation is enabled (manual mode doesn't have generated title)
+  // Name shown in CreationControls UI: always from generatedIdentity (which stores both auto and manual)
+  const name = generatedIdentity?.name ?? "";
+  // Title is only available when auto-generation is enabled
   const title = autoGenerate ? (generatedIdentity?.title ?? null) : null;
 
   // Cancel any pending generation and resolve waiters with null
@@ -114,7 +129,7 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
       generationPromiseRef.current = null;
       setIsGenerating(false);
     }
-  }, []);
+  }, [setIsGenerating]);
 
   const generateIdentity = useCallback(
     async (forMessage: string): Promise<WorkspaceIdentity | null> => {
@@ -181,7 +196,7 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
         }
       }
     },
-    [api, preferredModels, fallbackModel]
+    [api, preferredModels, fallbackModel, setError, setGeneratedIdentity, setIsGenerating]
   );
 
   // Debounced generation effect
@@ -230,27 +245,31 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
         // Switching to auto: reset so debounced generation will trigger
         lastGeneratedForRef.current = "";
         setError(null);
-      } else {
-        // Switching to manual: copy generated name as starting point for editing
-        if (generatedIdentity?.name) {
-          setManualName(generatedIdentity.name);
-        }
       }
+      // When switching to manual, the current name is already in generatedIdentity
       setAutoGenerate(enabled);
     },
-    [generatedIdentity]
+    [setAutoGenerate, setError]
   );
 
-  const setNameManual = useCallback((newName: string) => {
-    setManualName(newName);
-    // Clear error when user starts typing
-    setError(null);
-  }, []);
+  const setNameManual = useCallback(
+    (newName: string) => {
+      // Store manual name in generatedIdentity (preserving any existing title)
+      setGeneratedIdentity((prev) => ({
+        name: newName,
+        title: prev?.title ?? newName,
+      }));
+      // Clear error when user starts typing
+      setError(null);
+    },
+    [setGeneratedIdentity, setError]
+  );
 
   const waitForGeneration = useCallback(async (): Promise<WorkspaceIdentity | null> => {
     // If auto-generate is off, user has provided a manual name
     // Use that name directly with a generated title from the message
     if (!autoGenerate) {
+      const manualName = generatedIdentity?.name ?? "";
       if (!manualName.trim()) {
         setError("Please enter a workspace name");
         return null;
@@ -297,7 +316,7 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
     }
 
     return null;
-  }, [autoGenerate, manualName, generatedIdentity, message, generateIdentity]);
+  }, [autoGenerate, generatedIdentity, message, generateIdentity, setError]);
 
   return useMemo(
     () => ({

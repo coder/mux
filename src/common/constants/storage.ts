@@ -141,6 +141,36 @@ export function getRuntimeKey(projectPath: string): string {
 }
 
 /**
+ * Get the localStorage key for the draft runtime selection for a project
+ * Stores the currently selected runtime during workspace creation (may differ from default).
+ * Cleared when workspace is created.
+ * Format: "draftRuntime:{projectPath}"
+ */
+export function getDraftRuntimeKey(projectPath: string): string {
+  return `draftRuntime:${projectPath}`;
+}
+
+/**
+ * Get the localStorage key for the draft workspace name for a project.
+ * Stores the manually entered or auto-generated name during workspace creation.
+ * Cleared when workspace is created.
+ * Format: "draftName:{projectPath}"
+ */
+export function getDraftNameKey(projectPath: string): string {
+  return `draftName:${projectPath}`;
+}
+
+/**
+ * Get the localStorage key for the draft auto-generate toggle for a project.
+ * Stores whether auto-generation is enabled during workspace creation.
+ * Cleared when workspace is created.
+ * Format: "draftAutoGenerate:{projectPath}"
+ */
+export function getDraftAutoGenerateKey(projectPath: string): string {
+  return `draftAutoGenerate:${projectPath}`;
+}
+
+/**
  * Get the localStorage key for trunk branch preference for a project
  * Stores the last used trunk branch when creating a workspace
  * Format: "trunkBranch:{projectPath}"
@@ -384,4 +414,30 @@ export function deleteWorkspaceStorage(workspaceId: string): void {
 export function migrateWorkspaceStorage(oldWorkspaceId: string, newWorkspaceId: string): void {
   copyWorkspaceStorage(oldWorkspaceId, newWorkspaceId);
   deleteWorkspaceStorage(oldWorkspaceId);
+}
+
+/**
+ * Key functions for draft state during workspace creation.
+ * These are cleared when a workspace is successfully created.
+ */
+const DRAFT_KEY_FUNCTIONS: Array<(projectPath: string) => string> = [
+  getDraftRuntimeKey,
+  getDraftNameKey,
+  getDraftAutoGenerateKey,
+];
+
+/**
+ * Clear all draft state for workspace creation.
+ * Called after a workspace is successfully created.
+ */
+export function clearCreationDraftStorage(projectPath: string): void {
+  // Clear project-scoped draft keys
+  for (const getKey of DRAFT_KEY_FUNCTIONS) {
+    localStorage.removeItem(getKey(projectPath));
+  }
+
+  // Clear pending-scoped input keys
+  const pendingScopeId = getPendingScopeId(projectPath);
+  localStorage.removeItem(getInputKey(pendingScopeId));
+  localStorage.removeItem(getInputImagesKey(pendingScopeId));
 }
