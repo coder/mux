@@ -31,51 +31,27 @@ void mock.module("@/browser/stores/WorkspaceStore", () => ({
 void mock.module("@/browser/hooks/useSendMessageOptions", () => ({
   buildSendMessageOptions: () => ({
     model: "test-model",
-    gateway: "anthropic",
+    thinkingLevel: undefined,
+    providerOptions: undefined,
+    experiments: undefined,
   }),
 }));
 
-// Mock executeCompaction - tracks calls and can be configured per test
-let executeCompactionCalls: Array<{
-  api: unknown;
-  workspaceId: string;
-  sendMessageOptions: unknown;
-  source: string;
-}> = [];
-let executeCompactionResult: { success: true } | { success: false; error: string } = {
+// Mock workspace.compactHistory - tracks calls and can be configured per test
+let compactHistoryResolver: ((value: unknown) => void) | null = null;
+let compactHistoryResult:
+  | { success: true; data: { operationId: string } }
+  | { success: false; error: unknown } = {
   success: true,
+  data: { operationId: "op-1" },
 };
-let executeCompactionResolver:
-  | ((value: { success: true } | { success: false; error: string }) => void)
-  | null = null;
-
-void mock.module("@/browser/utils/chatCommands", () => ({
-  executeCompaction: (opts: {
-    api: unknown;
-    workspaceId: string;
-    sendMessageOptions: unknown;
-    source: string;
-  }) => {
-    executeCompactionCalls.push(opts);
-    if (executeCompactionResolver) {
-      // Return a promise that hangs until manually resolved
-      return new Promise((resolve) => {
-        const savedResolver = executeCompactionResolver;
-        executeCompactionResolver = (val) => {
-          savedResolver?.(val);
-          resolve(val);
-        };
-      });
-    }
-    return Promise.resolve(executeCompactionResult);
-  },
-}));
 
 // Import after mocks are set up
 import { useIdleCompactionHandler } from "./useIdleCompactionHandler";
 
 describe("useIdleCompactionHandler", () => {
   let mockApi: object;
+  let compactHistoryMock: ReturnType<typeof mock>;
   let unsubscribeCalled: boolean;
 
   beforeEach(() => {
@@ -83,16 +59,29 @@ describe("useIdleCompactionHandler", () => {
     globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
     globalThis.document = globalThis.window.document;
 
-    mockApi = { workspace: { sendMessage: mock() } };
+    compactHistoryMock = mock((_args: unknown) => {
+      if (compactHistoryResolver) {
+        // Return a promise that hangs until manually resolved
+        return new Promise((resolve) => {
+          const savedResolver = compactHistoryResolver;
+          compactHistoryResolver = (val) => {
+            savedResolver?.(val);
+            resolve(val);
+          };
+        });
+      }
+      return Promise.resolve(compactHistoryResult);
+    });
+
+    mockApi = { workspace: { compactHistory: compactHistoryMock } };
     unsubscribeCalled = false;
     mockUnsubscribe = () => {
       unsubscribeCalled = true;
     };
     capturedCallback = null;
     onIdleCompactionNeededCallCount = 0;
-    executeCompactionCalls = [];
-    executeCompactionResult = { success: true };
-    executeCompactionResolver = null;
+    compactHistoryResult = { success: true, data: { operationId: "op-1" } };
+    compactHistoryResolver = null;
   });
 
   afterEach(() => {
@@ -122,7 +111,7 @@ describe("useIdleCompactionHandler", () => {
     expect(onIdleCompactionNeededCallCount).toBe(0);
   });
 
-  test("calls executeCompaction when event received", async () => {
+  test("calls workspace.compactHistory when event received", async () => {
     renderHook(() => useIdleCompactionHandler({ api: mockApi as never }));
 
     expect(capturedCallback).not.toBeNull();
@@ -130,20 +119,25 @@ describe("useIdleCompactionHandler", () => {
 
     // Wait for async execution
     await Promise.resolve();
+    await Promise.resolve(); // Extra tick for .then()
 
-    expect(executeCompactionCalls).toHaveLength(1);
-    expect(executeCompactionCalls[0]).toEqual({
-      api: mockApi,
+    expect(compactHistoryMock.mock.calls).toHaveLength(1);
+    expect(compactHistoryMock.mock.calls[0][0]).toEqual({
       workspaceId: "workspace-123",
-      sendMessageOptions: { model: "test-model", gateway: "anthropic" },
       source: "idle-compaction",
+      sendMessageOptions: {
+        model: "test-model",
+        thinkingLevel: undefined,
+        providerOptions: undefined,
+        experiments: undefined,
+      },
     });
   });
 
   test("prevents duplicate triggers for same workspace while in-flight", async () => {
-    // Make executeCompaction hang until we resolve it - this no-op will be replaced when promise is created
+    // Make compactHistory hang until we resolve it - this no-op will be replaced when promise is created
     // eslint-disable-next-line @typescript-eslint/no-empty-function
-    executeCompactionResolver = () => {};
+    compactHistoryResolver = () => {};
 
     renderHook(() => useIdleCompactionHandler({ api: mockApi as never }));
 
@@ -156,11 +150,12 @@ describe("useIdleCompactionHandler", () => {
     await Promise.resolve();
 
     // Should only have called once
-    expect(executeCompactionCalls).toHaveLength(1);
+    expect(compactHistoryMock.mock.calls).toHaveLength(1);
 
     // Resolve the first compaction
-    executeCompactionResolver({ success: true });
+    compactHistoryResolver({ success: true, data: { operationId: "op-1" } });
     await Promise.resolve();
+    await Promise.resolve(); // Extra tick for .finally()
   });
 
   test("allows different workspaces to compact simultaneously", async () => {
@@ -170,7 +165,7 @@ describe("useIdleCompactionHandler", () => {
     capturedCallback!("workspace-2");
     await Promise.resolve();
 
-    expect(executeCompactionCalls).toHaveLength(2);
+    expect(compactHistoryMock.mock.calls).toHaveLength(2);
   });
 
   test("clears workspace from triggered set after success", async () => {
@@ -181,18 +176,19 @@ describe("useIdleCompactionHandler", () => {
     await Promise.resolve();
     await Promise.resolve(); // Extra tick for .then()
 
-    expect(executeCompactionCalls).toHaveLength(1);
+    expect(compactHistoryMock.mock.calls).toHaveLength(1);
+    await Promise.resolve(); // Extra tick for .finally()
 
     // Should be able to trigger again after completion
     capturedCallback!("workspace-123");
     await Promise.resolve();
 
-    expect(executeCompactionCalls).toHaveLength(2);
+    expect(compactHistoryMock.mock.calls).toHaveLength(2);
   });
 
   test("clears workspace from triggered set after failure", async () => {
     // Make first call fail
-    executeCompactionResult = { success: false, error: "test error" };
+    compactHistoryResult = { success: false, error: "test error" };
 
     // Suppress console.error for this test
     const originalError = console.error;
@@ -205,13 +201,14 @@ describe("useIdleCompactionHandler", () => {
     await Promise.resolve();
     await Promise.resolve(); // Extra tick for .then()
 
-    expect(executeCompactionCalls).toHaveLength(1);
+    expect(compactHistoryMock.mock.calls).toHaveLength(1);
+    await Promise.resolve(); // Extra tick for .finally()
 
     // Should be able to trigger again after failure
     capturedCallback!("workspace-123");
     await Promise.resolve();
 
-    expect(executeCompactionCalls).toHaveLength(2);
+    expect(compactHistoryMock.mock.calls).toHaveLength(2);
 
     console.error = originalError;
   });
