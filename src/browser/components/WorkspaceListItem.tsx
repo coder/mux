@@ -154,26 +154,27 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
         data-workspace-path={namedWorkspacePath}
         data-workspace-id={workspaceId}
       >
+        {/* Archive button - vertically centered against entire item */}
+        {!isCreating && !isEditing && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                className="text-muted hover:text-foreground inline-flex shrink-0 cursor-pointer items-center self-center border-none bg-transparent p-0 opacity-0 transition-colors duration-200"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void onArchiveWorkspace(workspaceId, e.currentTarget);
+                }}
+                aria-label={`Archive workspace ${displayTitle}`}
+                data-workspace-id={workspaceId}
+              >
+                <ArchiveIcon className="h-3 w-3" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent align="start">Archive workspace</TooltipContent>
+          </Tooltip>
+        )}
         <div className="flex min-w-0 flex-1 flex-col gap-1">
-          <div className="grid min-w-0 grid-cols-[auto_auto_1fr_auto] items-center gap-1.5">
-            {!isCreating && !isEditing && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    className="text-muted hover:text-foreground inline-flex cursor-pointer items-center border-none bg-transparent p-0 opacity-0 transition-colors duration-200"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void onArchiveWorkspace(workspaceId, e.currentTarget);
-                    }}
-                    aria-label={`Archive workspace ${displayTitle}`}
-                    data-workspace-id={workspaceId}
-                  >
-                    <ArchiveIcon className="h-3 w-3" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent align="start">Archive workspace</TooltipContent>
-              </Tooltip>
-            )}
+          <div className="grid min-w-0 grid-cols-[auto_1fr_auto] items-center gap-1.5">
             <RuntimeBadge runtimeConfig={metadata.runtimeConfig} isWorking={isWorking} />
             {isEditing ? (
               <input
@@ -225,7 +226,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
             )}
           </div>
           {!isCreating && (
-            <div className="ml-[18px] min-w-0">
+            <div className="min-w-0">
               {isArchiving ? (
                 <div className="text-muted flex min-w-0 items-center gap-1.5 text-xs">
                   <span className="-mt-0.5 shrink-0 text-[10px]">📦</span>
