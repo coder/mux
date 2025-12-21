@@ -1099,6 +1099,16 @@ export class AgentSession {
       return;
     }
 
+    // If a compaction operation is active, do NOT auto-send queued messages.
+    //
+    // Why: if an earlier stream (the one we interrupted to start compaction) emits a late
+    // stream-end/tool-call-end event, it can trigger sendQueuedMessages() while compaction is
+    // still streaming. That can cause the queued continue message to be sent too early and
+    // then wiped by the compaction history replacement.
+    if (this.activeCompactionOperation) {
+      return;
+    }
+
     // Clear the queued message flag (even if queue is empty, to handle race conditions)
     this.backgroundProcessManager.setMessageQueued(this.workspaceId, false);
 

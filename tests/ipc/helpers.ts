@@ -591,6 +591,36 @@ export async function cleanupTempGitRepo(repoPath: string): Promise<void> {
 }
 
 /**
+ * Seed a workspace history with explicit messages.
+ *
+ * Test-only: uses HistoryService directly to populate chat.jsonl without making API calls.
+ * Real application code should NEVER bypass IPC like this.
+ */
+export async function seedHistoryMessages(
+  workspaceId: string,
+  config: { getSessionDir: (id: string) => string },
+  messages: Array<{ id?: string; role: "user" | "assistant"; content: string }>
+): Promise<string[]> {
+  // HistoryService only needs getSessionDir, so we can cast the partial config.
+  const historyService = new HistoryService(config as any);
+
+  const ids: string[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    const entry = messages[i];
+    const id = entry.id ?? `seed-msg-${i}`;
+    ids.push(id);
+
+    const message = createMuxMessage(id, entry.role, entry.content, {});
+    const result = await historyService.appendToHistory(workspaceId, message);
+    if (!result.success) {
+      throw new Error(`Failed to append history message ${i} (${id}): ${result.error}`);
+    }
+  }
+
+  return ids;
+}
+
+/**
  * Build large conversation history to test context limits
  *
  * This is a test-only utility that uses HistoryService directly to quickly
