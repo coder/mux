@@ -918,6 +918,7 @@ export class WorkspaceService extends EventEmitter {
    * Archive a workspace. Archived workspaces are hidden from the main sidebar
    * but can be viewed on the project page. Safe and reversible.
    */
+
   async archive(workspaceId: string): Promise<Result<void>> {
     try {
       const workspace = this.config.findWorkspace(workspaceId);
@@ -925,6 +926,18 @@ export class WorkspaceService extends EventEmitter {
         return Err("Workspace not found");
       }
       const { projectPath, workspacePath } = workspace;
+
+      // Archiving removes the workspace from the sidebar; ensure we don't leave a stream running
+      // "headless" with no obvious UI affordance to interrupt it.
+      if (this.aiService.isStreaming(workspaceId)) {
+        const stopResult = await this.interruptStream(workspaceId);
+        if (!stopResult.success) {
+          log.debug("Failed to stop stream during workspace archive", {
+            workspaceId,
+            error: stopResult.error,
+          });
+        }
+      }
 
       await this.config.editConfig((config) => {
         const projectConfig = config.projects.get(projectPath);
