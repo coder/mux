@@ -171,6 +171,24 @@ export function getDraftAutoGenerateKey(projectPath: string): string {
 }
 
 /**
+ * Get the localStorage key for the draft name generation loading state.
+ * Ephemeral UI state cleared when workspace is created.
+ * Format: "draftNameGenerating:{projectPath}"
+ */
+export function getDraftNameGeneratingKey(projectPath: string): string {
+  return `draftNameGenerating:${projectPath}`;
+}
+
+/**
+ * Get the localStorage key for the draft name generation error.
+ * Ephemeral UI state cleared when workspace is created.
+ * Format: "draftNameError:{projectPath}"
+ */
+export function getDraftNameErrorKey(projectPath: string): string {
+  return `draftNameError:${projectPath}`;
+}
+
+/**
  * Get the localStorage key for trunk branch preference for a project
  * Stores the last used trunk branch when creating a workspace
  * Format: "trunkBranch:{projectPath}"
@@ -427,6 +445,8 @@ export function getCreationDraftKeys(projectPath: string): string[] {
     getDraftRuntimeKey(projectPath),
     getDraftNameKey(projectPath),
     getDraftAutoGenerateKey(projectPath),
+    getDraftNameGeneratingKey(projectPath),
+    getDraftNameErrorKey(projectPath),
     // Pending-scoped input keys
     getInputKey(pendingScopeId),
     getInputImagesKey(pendingScopeId),

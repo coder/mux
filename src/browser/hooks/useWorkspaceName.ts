@@ -2,7 +2,12 @@ import { useRef, useCallback, useEffect, useMemo } from "react";
 import { useAPI } from "@/browser/contexts/API";
 import { useGateway, formatAsGatewayModel } from "@/browser/hooks/useGatewayModels";
 import { getKnownModel } from "@/common/constants/knownModels";
-import { getDraftNameKey, getDraftAutoGenerateKey } from "@/common/constants/storage";
+import {
+  getDraftNameKey,
+  getDraftAutoGenerateKey,
+  getDraftNameGeneratingKey,
+  getDraftNameErrorKey,
+} from "@/common/constants/storage";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 
 export interface UseWorkspaceNameOptions {
@@ -88,10 +93,13 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
     { listener: true }
   );
   const [isGenerating, setIsGenerating] = usePersistedState<boolean>(
-    `isGenerating:${projectPath}`,
+    getDraftNameGeneratingKey(projectPath),
     false
   );
-  const [error, setError] = usePersistedState<string | null>(`nameError:${projectPath}`, null);
+  const [error, setError] = usePersistedState<string | null>(
+    getDraftNameErrorKey(projectPath),
+    null
+  );
 
   // Track the message that was used for the last successful generation
   const lastGeneratedForRef = useRef<string>("");

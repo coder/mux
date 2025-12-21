@@ -3,6 +3,8 @@ import type { DraftWorkspaceSettings } from "@/browser/hooks/useDraftWorkspaceSe
 import {
   getDraftAutoGenerateKey,
   getDraftNameKey,
+  getDraftNameGeneratingKey,
+  getDraftNameErrorKey,
   getDraftRuntimeKey,
   getInputKey,
   getInputImagesKey,
@@ -511,6 +513,14 @@ describe("useCreationWorkspace", () => {
     ]);
     expect(updatePersistedStateCalls).toContainEqual([
       getDraftAutoGenerateKey(TEST_PROJECT_PATH),
+      undefined,
+    ]);
+    expect(updatePersistedStateCalls).toContainEqual([
+      getDraftNameGeneratingKey(TEST_PROJECT_PATH),
+      undefined,
+    ]);
+    expect(updatePersistedStateCalls).toContainEqual([
+      getDraftNameErrorKey(TEST_PROJECT_PATH),
       undefined,
     ]);
   });
