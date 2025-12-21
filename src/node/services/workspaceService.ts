@@ -959,6 +959,33 @@ export class WorkspaceService extends EventEmitter {
     return { model, thinkingLevel };
   }
 
+  /**
+   * Best-effort persist AI settings from send/resume options.
+   * Skips compaction requests which use a different model intentionally.
+   */
+  private async maybePersistAISettingsFromOptions(
+    workspaceId: string,
+    options: SendMessageOptions | undefined,
+    context: "send" | "resume"
+  ): Promise<void> {
+    // Skip for compaction - it may use a different model and shouldn't override user preference
+    const isCompaction = options?.mode === "compact";
+    if (isCompaction) return;
+
+    const extractedSettings = this.extractWorkspaceAISettingsFromSendOptions(options);
+    if (!extractedSettings) return;
+
+    const persistResult = await this.persistWorkspaceAISettings(workspaceId, extractedSettings, {
+      emitMetadata: false,
+    });
+    if (!persistResult.success) {
+      log.debug(`Failed to persist workspace AI settings from ${context} options`, {
+        workspaceId,
+        error: persistResult.error,
+      });
+    }
+  }
+
   private async persistWorkspaceAISettings(
     workspaceId: string,
     aiSettings: WorkspaceAISettings,
@@ -1275,23 +1302,7 @@ export class WorkspaceService extends EventEmitter {
             };
 
       // Persist last-used model + thinking level for cross-device consistency.
-      // Best-effort: failures should not block sending.
-      const extractedSettings = this.extractWorkspaceAISettingsFromSendOptions(resolvedOptions);
-      if (extractedSettings) {
-        const persistResult = await this.persistWorkspaceAISettings(
-          workspaceId,
-          extractedSettings,
-          {
-            emitMetadata: false,
-          }
-        );
-        if (!persistResult.success) {
-          log.debug("Failed to persist workspace AI settings from send options", {
-            workspaceId,
-            error: persistResult.error,
-          });
-        }
-      }
+      await this.maybePersistAISettingsFromOptions(workspaceId, resolvedOptions, "send");
 
       if (this.aiService.isStreaming(workspaceId) && !resolvedOptions?.editMessageId) {
         const pendingAskUserQuestion = askUserQuestionManager.getLatestPending(workspaceId);
@@ -1405,23 +1416,7 @@ export class WorkspaceService extends EventEmitter {
       const session = this.getOrCreateSession(workspaceId);
 
       // Persist last-used model + thinking level for cross-device consistency.
-      // Best-effort: failures should not block resuming.
-      const extractedSettings = this.extractWorkspaceAISettingsFromSendOptions(options);
-      if (extractedSettings) {
-        const persistResult = await this.persistWorkspaceAISettings(
-          workspaceId,
-          extractedSettings,
-          {
-            emitMetadata: false,
-          }
-        );
-        if (!persistResult.success) {
-          log.debug("Failed to persist workspace AI settings from resume options", {
-            workspaceId,
-            error: persistResult.error,
-          });
-        }
-      }
+      await this.maybePersistAISettingsFromOptions(workspaceId, options, "resume");
 
       const result = await session.resumeStream(options);
       if (!result.success) {
