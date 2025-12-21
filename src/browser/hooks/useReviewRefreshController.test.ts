@@ -59,7 +59,9 @@ describe("useReviewRefreshController design", () => {
 
   test("visibility contract: hidden tab queues refresh for later", () => {
     // Contract: When document.hidden is true, refresh is queued.
-    // When visibilitychange fires and document.hidden becomes false, queued refresh executes.
+    // When visibilitychange fires or window.focus fires (and document is visible),
+    // queued refresh executes. Uses both events since visibilitychange alone is
+    // unreliable in Electron when app is behind other windows or on different desktop.
     // This prevents wasted git operations when user isn't looking.
     expect(true).toBe(true);
   });

@@ -238,17 +238,23 @@ export function useReviewRefreshController(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, workspaceId, isCreating]);
 
-  // Handle visibility changes - flush pending refresh when tab becomes visible
+  // Handle visibility/focus changes - flush pending refresh when user returns.
+  // Uses both visibilitychange (for browser tab hidden state) and window focus
+  // (for Electron app focus) since visibilitychange alone is unreliable in Electron
+  // when the app is behind other windows or on a different desktop/space.
   useEffect(() => {
-    const handleVisibilityChange = () => {
+    const handleReturn = () => {
+      // Only flush if document is actually visible
       if (!document.hidden) {
         flushPending("hidden");
       }
     };
 
-    document.addEventListener("visibilitychange", handleVisibilityChange);
+    document.addEventListener("visibilitychange", handleReturn);
+    window.addEventListener("focus", handleReturn);
     return () => {
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      document.removeEventListener("visibilitychange", handleReturn);
+      window.removeEventListener("focus", handleReturn);
     };
     // flushPending is stable (only uses refs internally)
     // eslint-disable-next-line react-hooks/exhaustive-deps
