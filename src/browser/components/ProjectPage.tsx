@@ -65,13 +65,8 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
           <ConnectionStatusIndicator />
           {/* Scrollable content area */}
           <div className="min-h-0 flex-1 overflow-y-auto">
-            {/*
-              IMPORTANT: Keep vertical centering off the scroll container.
-              When a flex scroll container uses justify-center and content becomes tall,
-              browsers can end up with a scroll origin that makes the top feel "cut off".
-            */}
-            <div className="flex min-h-full flex-col items-center justify-center gap-6 p-4">
-              {/* Chat input card */}
+            {/* Top section: centers ChatInput in top portion of viewport */}
+            <div className="flex min-h-[50vh] flex-col items-center justify-center p-4">
               <ChatInput
                 variant="creation"
                 projectPath={projectPath}
@@ -80,8 +75,10 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
                 onReady={handleChatReady}
                 onWorkspaceCreated={onWorkspaceCreated}
               />
-              {/* Archived workspaces below chat */}
-              {archivedWorkspaces.length > 0 && (
+            </div>
+            {/* Archived workspaces: separate section below centered area */}
+            {archivedWorkspaces.length > 0 && (
+              <div className="flex justify-center px-4 pb-4">
                 <div className="w-full max-w-3xl">
                   <ArchivedWorkspaces
                     projectPath={projectPath}
@@ -96,8 +93,8 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
                     }}
                   />
                 </div>
-              )}
-            </div>
+              </div>
+            )}
           </div>
         </ThinkingProvider>
       </ProviderOptionsProvider>
