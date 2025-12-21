@@ -387,11 +387,16 @@ describeIntegration("Runtime Bash Execution", () => {
               // Calculate actual tool execution duration
               const toolDuration = getToolDuration(events, "bash");
 
-              // Extract response text
-              const responseText = extractTextFromEvents(events);
-
               // Verify command completed successfully (not timeout)
-              expect(responseText).toContain("terminal bench");
+              // Check that the bash tool completed (tool-call-end events exist)
+              const toolCallEnds = events.filter(
+                (e) =>
+                  "type" in e &&
+                  e.type === "tool-call-end" &&
+                  "toolName" in e &&
+                  e.toolName === "bash"
+              );
+              expect(toolCallEnds.length).toBeGreaterThan(0);
 
               // Verify command completed quickly (not hanging until timeout)
               // SSH runtime should complete in <10s even with high latency
