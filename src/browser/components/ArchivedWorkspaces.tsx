@@ -2,6 +2,7 @@ import React from "react";
 import { cn } from "@/common/lib/utils";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
+import { useAPI } from "@/browser/contexts/API";
 import { Trash2, Search } from "lucide-react";
 import { ArchiveIcon, ArchiveRestoreIcon } from "./icons/ArchiveIcon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
@@ -16,6 +17,15 @@ import {
 } from "@/browser/components/ui/dialog";
 import { ForceDeleteModal } from "./ForceDeleteModal";
 import { Button } from "@/browser/components/ui/button";
+import type { z } from "zod";
+import type { SessionUsageFileSchema } from "@/common/orpc/schemas/chatStats";
+import {
+  sumUsageHistory,
+  getTotalCost,
+  formatCostWithDollar,
+} from "@/common/utils/tokens/usageAggregator";
+
+type SessionUsageFile = z.infer<typeof SessionUsageFileSchema>;
 
 interface ArchivedWorkspacesProps {
   projectPath: string;
@@ -88,6 +98,38 @@ function flattenGrouped(
   }
   return result;
 }
+
+/** Calculate total cost from a SessionUsageFile by summing all model usages */
+function getSessionTotalCost(usage: SessionUsageFile | undefined): number | undefined {
+  if (!usage) return undefined;
+  const aggregated = sumUsageHistory(Object.values(usage.byModel));
+  return getTotalCost(aggregated);
+}
+
+/** Cost badge component with size variants for different scopes */
+const CostBadge: React.FC<{
+  cost: number | undefined;
+  size?: "sm" | "md" | "lg";
+  className?: string;
+}> = ({ cost, size = "md", className }) => {
+  if (cost === undefined) return null;
+  const sizeStyles = {
+    sm: "px-1 py-0.5 text-[10px]",
+    md: "px-1.5 py-0.5 text-xs",
+    lg: "px-2 py-0.5 text-sm",
+  };
+  return (
+    <span
+      className={cn(
+        "text-muted inline-flex items-center rounded bg-white/5 tabular-nums",
+        sizeStyles[size],
+        className
+      )}
+    >
+      {formatCostWithDollar(cost)}
+    </span>
+  );
+};
 
 /** Progress modal for bulk operations */
 const BulkProgressModal: React.FC<{
@@ -163,6 +205,7 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
   onWorkspacesChanged,
 }) => {
   const { unarchiveWorkspace, removeWorkspace, setSelectedWorkspace } = useWorkspaceContext();
+  const { api } = useAPI();
   const [searchQuery, setSearchQuery] = React.useState("");
   const [processingIds, setProcessingIds] = React.useState<Set<string>>(new Set());
   const [forceDeleteModal, setForceDeleteModal] = React.useState<{
@@ -176,10 +219,22 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
   const [bulkOperation, setBulkOperation] = React.useState<BulkOperationState | null>(null);
   const [bulkDeleteConfirm, setBulkDeleteConfirm] = React.useState(false);
 
-  // workspaces prop should already be filtered to archived only
-  if (workspaces.length === 0) {
-    return null;
-  }
+  // Cost data for workspaces
+  const [usageByWorkspace, setUsageByWorkspace] = React.useState<
+    Record<string, SessionUsageFile | undefined>
+  >({});
+
+  // Fetch costs for all workspaces on mount or when workspaces change
+  React.useEffect(() => {
+    if (!api || workspaces.length === 0) return;
+    const workspaceIds = workspaces.map((w) => w.id);
+    api.workspace
+      .getSessionUsageBatch({ workspaceIds })
+      .then(setUsageByWorkspace)
+      .catch(() => {
+        // Silently fail - costs are optional
+      });
+  }, [api, workspaces]);
 
   // Filter workspaces by search query (frontend-only)
   const filteredWorkspaces = searchQuery.trim()
@@ -194,6 +249,42 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
   // Group filtered workspaces by time period
   const groupedWorkspaces = groupByTimePeriod(filteredWorkspaces);
   const flatWorkspaces = flattenGrouped(groupedWorkspaces);
+
+  // Calculate total cost and per-period costs
+  const totalCost = React.useMemo(() => {
+    let sum = 0;
+    let hasCost = false;
+    for (const ws of workspaces) {
+      const cost = getSessionTotalCost(usageByWorkspace[ws.id]);
+      if (cost !== undefined) {
+        sum += cost;
+        hasCost = true;
+      }
+    }
+    return hasCost ? sum : undefined;
+  }, [workspaces, usageByWorkspace]);
+
+  const periodCosts = React.useMemo(() => {
+    const costs = new Map<string, number | undefined>();
+    for (const [period, periodWorkspaces] of groupedWorkspaces) {
+      let sum = 0;
+      let hasCost = false;
+      for (const ws of periodWorkspaces) {
+        const cost = getSessionTotalCost(usageByWorkspace[ws.id]);
+        if (cost !== undefined) {
+          sum += cost;
+          hasCost = true;
+        }
+      }
+      costs.set(period, hasCost ? sum : undefined);
+    }
+    return costs;
+  }, [groupedWorkspaces, usageByWorkspace]);
+
+  // workspaces prop should already be filtered to archived only
+  if (workspaces.length === 0) {
+    return null;
+  }
 
   // Handle checkbox click with shift-click range selection
   const handleCheckboxClick = (workspaceId: string, event: React.MouseEvent) => {
@@ -417,9 +508,11 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
         {/* Header with bulk actions */}
         <div className="flex items-center gap-2 px-4 py-3">
           <ArchiveIcon className="text-muted h-4 w-4" />
-          <span className="text-foreground flex-1 font-medium">
+          <span className="text-foreground font-medium">
             Archived Workspaces ({workspaces.length})
           </span>
+          <CostBadge cost={totalCost} size="lg" />
+          <span className="flex-1" />
           {hasSelection && (
             <div className="flex items-center gap-2">
               <span className="text-muted text-xs">{selectedIds.size} selected</span>
@@ -513,8 +606,9 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
               Array.from(groupedWorkspaces.entries()).map(([period, periodWorkspaces]) => (
                 <div key={period}>
                   {/* Period header */}
-                  <div className="bg-bg-dark text-muted px-4 py-1.5 text-xs font-medium">
-                    {period}
+                  <div className="bg-bg-dark text-muted flex items-center gap-2 px-4 py-1.5 text-xs font-medium">
+                    <span>{period}</span>
+                    <CostBadge cost={periodCosts.get(period)} />
                   </div>
                   {/* Workspaces in this period */}
                   {periodWorkspaces.map((workspace) => {
@@ -544,18 +638,23 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
                           <div className="text-foreground truncate text-sm font-medium">
                             {displayTitle}
                           </div>
-                          {workspace.archivedAt && (
-                            <div className="text-muted text-xs">
-                              {new Date(workspace.archivedAt).toLocaleString(undefined, {
-                                month: "short",
-                                day: "numeric",
-                                hour: "numeric",
-                                minute: "2-digit",
-                              })}
-                            </div>
-                          )}
+                          <div className="flex items-center gap-2">
+                            {workspace.archivedAt && (
+                              <span className="text-muted text-xs">
+                                {new Date(workspace.archivedAt).toLocaleString(undefined, {
+                                  month: "short",
+                                  day: "numeric",
+                                  hour: "numeric",
+                                  minute: "2-digit",
+                                })}
+                              </span>
+                            )}
+                            <CostBadge
+                              cost={getSessionTotalCost(usageByWorkspace[workspace.id])}
+                              size="sm"
+                            />
+                          </div>
                         </div>
-
                         <div className="flex items-center gap-1">
                           <Tooltip>
                             <TooltipTrigger asChild>

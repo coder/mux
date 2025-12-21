@@ -110,6 +110,30 @@ export class SessionUsageService {
   }
 
   /**
+   * Batch fetch session usage for multiple workspaces.
+   * Optimized for displaying costs in archived workspaces list.
+   */
+  async getSessionUsageBatch(
+    workspaceIds: string[]
+  ): Promise<Record<string, SessionUsageFile | undefined>> {
+    const results: Record<string, SessionUsageFile | undefined> = {};
+    // Read files in parallel without rebuilding from messages (archived workspaces
+    // should already have session-usage.json; skip rebuild to keep batch fast)
+    await Promise.all(
+      workspaceIds.map(async (workspaceId) => {
+        try {
+          const filePath = this.getFilePath(workspaceId);
+          const data = await fs.readFile(filePath, "utf-8");
+          results[workspaceId] = JSON.parse(data) as SessionUsageFile;
+        } catch {
+          results[workspaceId] = undefined;
+        }
+      })
+    );
+    return results;
+  }
+
+  /**
    * Rebuild session usage from messages (for migration/recovery).
    * Internal version - called within lock.
    */

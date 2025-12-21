@@ -362,6 +362,13 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         },
       },
       getSessionUsage: async (input: { workspaceId: string }) => sessionUsage.get(input.workspaceId),
+      getSessionUsageBatch: async (input: { workspaceIds: string[] }) => {
+        const result: Record<string, MockSessionUsage | undefined> = {};
+        for (const id of input.workspaceIds) {
+          result[id] = sessionUsage.get(id);
+        }
+        return result;
+      },
       mcp: {
         get: async (input: { workspaceId: string }) => mcpOverrides.get(input.workspaceId) ?? {},
         set: async () => ({ success: true, data: undefined }),

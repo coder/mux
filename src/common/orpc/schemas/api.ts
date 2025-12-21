@@ -472,6 +472,11 @@ export const workspace = {
     input: z.object({ workspaceId: z.string() }),
     output: SessionUsageFileSchema.optional(),
   },
+  /** Batch fetch session usage for multiple workspaces (for archived workspaces cost display) */
+  getSessionUsageBatch: {
+    input: z.object({ workspaceIds: z.array(z.string()) }),
+    output: z.record(z.string(), SessionUsageFileSchema.optional()),
+  },
   /** Per-workspace MCP configuration (overrides project-level mcp.jsonc) */
   mcp: {
     get: {

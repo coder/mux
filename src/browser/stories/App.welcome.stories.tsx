@@ -3,10 +3,33 @@
  */
 
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
-import { createMockORPCClient } from "../../../.storybook/mocks/orpc";
+import { createMockORPCClient, type MockSessionUsage } from "../../../.storybook/mocks/orpc";
 import { expandProjects } from "./storyHelpers";
 import { createArchivedWorkspace, NOW } from "./mockFactory";
 import type { ProjectConfig } from "@/node/config";
+
+/** Helper to create session usage data with a specific total cost */
+function createSessionUsage(cost: number): MockSessionUsage {
+  // Distribute cost across components realistically
+  const inputCost = cost * 0.55;
+  const outputCost = cost * 0.25;
+  const cachedCost = cost * 0.15;
+  const reasoningCost = cost * 0.05;
+
+  return {
+    byModel: {
+      "claude-sonnet-4-20250514": {
+        input: { tokens: Math.round(inputCost * 2000), cost_usd: inputCost },
+        cached: { tokens: Math.round(cachedCost * 2000), cost_usd: cachedCost },
+        cacheCreate: { tokens: 0, cost_usd: 0 },
+        output: { tokens: Math.round(outputCost * 500), cost_usd: outputCost },
+        reasoning: { tokens: Math.round(reasoningCost * 1000), cost_usd: reasoningCost },
+        model: "claude-sonnet-4-20250514",
+      },
+    },
+    version: 1,
+  };
+}
 
 export default {
   ...appMeta,
@@ -76,9 +99,12 @@ function generateArchivedWorkspaces(projectPath: string, projectName: string) {
   const HOUR = 3600000;
   const DAY = 86400000;
 
+  const workspaces: Array<ReturnType<typeof createArchivedWorkspace>> = [];
+  const sessionUsage = new Map<string, MockSessionUsage>();
+
   // Intentionally large set to exercise ProjectPage scrolling + bulk selection UX.
   // Keep timestamps deterministic (based on NOW constant).
-  const result = Array.from({ length: 34 }, (_, i) => {
+  for (let i = 0; i < 34; i++) {
     const n = i + 1;
 
     // Mix timeframes:
@@ -114,21 +140,32 @@ function generateArchivedWorkspaces(projectPath: string, projectName: string) {
                 ? `feature/ui-${n}`
                 : `bugfix/regression-${n}`;
 
-    return createArchivedWorkspace({
-      id: `archived-${n}`,
-      name,
-      projectName,
-      projectPath,
-      archivedAt: new Date(NOW - archivedDeltaMs).toISOString(),
-    });
-  });
+    const id = `archived-${n}`;
+    workspaces.push(
+      createArchivedWorkspace({
+        id,
+        name,
+        projectName,
+        projectPath,
+        archivedAt: new Date(NOW - archivedDeltaMs).toISOString(),
+      })
+    );
 
-  return result;
+    // Generate varied costs: some cheap ($0.05-$0.50), some expensive ($1-$5)
+    // Skip some workspaces to show missing cost data
+    if (n % 4 !== 0) {
+      const baseCost = n % 3 === 0 ? 1.5 + (n % 7) * 0.5 : 0.1 + (n % 5) * 0.08;
+      sessionUsage.set(id, createSessionUsage(baseCost));
+    }
+  }
+
+  return { workspaces, sessionUsage };
 }
 
 /**
  * Project page with archived workspaces - demonstrates:
  * - Timeline grouping (Today, Yesterday, This Week, etc.)
+ * - Cost display per workspace, per time bucket, and total
  * - Search bar (visible with >3 workspaces)
  * - Bulk selection with checkboxes
  * - Select all checkbox
@@ -139,9 +176,14 @@ export const ProjectPageWithArchivedWorkspaces: AppStory = {
     <AppWithMocks
       setup={() => {
         expandProjects(["/Users/dev/my-project"]);
+        const { workspaces, sessionUsage } = generateArchivedWorkspaces(
+          "/Users/dev/my-project",
+          "my-project"
+        );
         return createMockORPCClient({
           projects: new Map([projectWithNoWorkspaces("/Users/dev/my-project")]),
-          workspaces: generateArchivedWorkspaces("/Users/dev/my-project", "my-project"),
+          workspaces,
+          sessionUsage,
         });
       }}
     />

@@ -78,3 +78,33 @@ export function sumUsageHistory(usageHistory: ChatUsageDisplay[]): ChatUsageDisp
 
   return sum;
 }
+
+/**
+ * Calculate total cost from a ChatUsageDisplay object.
+ * Returns undefined if no cost data is available.
+ */
+export function getTotalCost(usage: ChatUsageDisplay | undefined): number | undefined {
+  if (!usage) return undefined;
+  const components = ["input", "cached", "cacheCreate", "output", "reasoning"] as const;
+  let total = 0;
+  let hasAnyCost = false;
+  for (const key of components) {
+    const cost = usage[key].cost_usd;
+    if (cost !== undefined) {
+      total += cost;
+      hasAnyCost = true;
+    }
+  }
+  return hasAnyCost ? total : undefined;
+}
+
+/**
+ * Format cost for display with dollar sign.
+ * Returns "~$0.00" for very small values, "$X.XX" otherwise.
+ */
+export function formatCostWithDollar(cost: number | undefined): string {
+  if (cost === undefined) return "";
+  if (cost === 0) return "$0.00";
+  if (cost < 0.01) return "~$0.00";
+  return `$${cost.toFixed(2)}`;
+}

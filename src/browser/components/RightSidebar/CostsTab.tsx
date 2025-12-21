@@ -1,7 +1,11 @@
 import React from "react";
 import { useWorkspaceUsage, useWorkspaceConsumers } from "@/browser/stores/WorkspaceStore";
 import { getModelStats } from "@/common/utils/tokens/modelStats";
-import { sumUsageHistory, type ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
+import {
+  sumUsageHistory,
+  formatCostWithDollar,
+  type ChatUsageDisplay,
+} from "@/common/utils/tokens/usageAggregator";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { ToggleGroup, type ToggleOption } from "../ToggleGroup";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
@@ -19,22 +23,6 @@ import { PostCompactionSection } from "./PostCompactionSection";
 import { usePostCompactionState } from "@/browser/hooks/usePostCompactionState";
 import { useExperimentValue } from "@/browser/contexts/ExperimentsContext";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
-
-// Format cost display - show "??" if undefined, "<$0.01" for very small values, otherwise fixed precision
-const formatCost = (cost: number | undefined): string => {
-  if (cost === undefined) return "??";
-  if (cost === 0) return "0.00";
-  if (cost >= 0.01) return cost.toFixed(2);
-  // For values < 0.01, show as "<$0.01" (without $ prefix when used)
-  return "<0.01";
-};
-
-// Format cost with dollar sign
-const formatCostWithDollar = (cost: number | undefined): string => {
-  if (cost === undefined) return "??";
-  if (cost > 0 && cost < 0.01) return "~$0.00";
-  return `$${formatCost(cost)}`;
-};
 
 /**
  * Calculate cost with elevated pricing for 1M context (200k-1M tokens)
