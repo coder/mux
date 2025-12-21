@@ -5,9 +5,9 @@ import assert from "node:assert";
 import { createClient } from "mux/common/orpc/client";
 import type { AppRouter } from "mux/node/orpc/router";
 
-export type ORPCClient = RouterClient<AppRouter>;
+export type ApiClient = RouterClient<AppRouter>;
 
-export interface VscodeOrpcClientConfig {
+export interface ApiClientConfig {
   baseUrl: string;
   authToken?: string | undefined;
 }
@@ -25,7 +25,7 @@ function normalizeBaseUrl(baseUrl: string): string {
   return parsed.toString().replace(/\/$/, "");
 }
 
-export function createVscodeORPCClient(config: VscodeOrpcClientConfig): ORPCClient {
+export function createApiClient(config: ApiClientConfig): ApiClient {
   assert(typeof config.baseUrl === "string", "baseUrl must be a string");
 
   const normalizedBaseUrl = normalizeBaseUrl(config.baseUrl);

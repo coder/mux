@@ -3,7 +3,7 @@ import type { FrontendWorkspaceMetadata, WorkspaceActivitySnapshot } from "mux/c
 import { type ExtensionMetadata, readExtensionMetadata } from "mux/node/utils/extensionMetadata";
 import { createRuntime } from "mux/node/runtime/runtimeFactory";
 
-import type { ORPCClient } from "./orpc/client";
+import type { ApiClient } from "./api/client";
 
 /**
  * Workspace with extension metadata for display in VS Code extension.
@@ -44,7 +44,7 @@ export async function getAllWorkspacesFromFiles(): Promise<WorkspaceWithContext[
   return enrichAndSort(workspaces, extensionMeta);
 }
 
-export async function getAllWorkspacesFromOrpc(client: ORPCClient): Promise<WorkspaceWithContext[]> {
+export async function getAllWorkspacesFromApi(client: ApiClient): Promise<WorkspaceWithContext[]> {
   const workspaces = await client.workspace.list();
   const activityById: Record<string, WorkspaceActivitySnapshot> = await client.workspace.activity.list();
 

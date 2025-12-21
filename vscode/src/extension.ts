@@ -2,26 +2,26 @@ import * as vscode from "vscode";
 
 import { formatRelativeTime } from "mux/browser/utils/ui/dateTime";
 
-import { getAllWorkspacesFromFiles, getAllWorkspacesFromOrpc, WorkspaceWithContext } from "./muxConfig";
-import { checkAuth, checkServerReachable } from "./orpc/connectionCheck";
-import { createVscodeORPCClient } from "./orpc/client";
+import { getAllWorkspacesFromFiles, getAllWorkspacesFromApi, WorkspaceWithContext } from "./muxConfig";
+import { checkAuth, checkServerReachable } from "./api/connectionCheck";
+import { createApiClient } from "./api/client";
 import {
   clearAuthTokenOverride,
   discoverServerConfig,
   getConnectionModeSetting,
   storeAuthTokenOverride,
   type ConnectionMode,
-} from "./orpc/discovery";
+} from "./api/discovery";
 import { openWorkspace } from "./workspaceOpener";
 
-let sessionPreferredMode: "orpc" | "file" | null = null;
+let sessionPreferredMode: "api" | "file" | null = null;
 let didShowFallbackPrompt = false;
 
 const ACTION_FIX_CONNECTION_CONFIG = "Fix connection config";
 const ACTION_USE_LOCAL_FILES = "Use local file access";
 const ACTION_CANCEL = "Cancel";
 
-type OrpcConnectionFailure =
+type ApiConnectionFailure =
   | { kind: "unreachable"; baseUrl: string; error: string }
   | { kind: "unauthorized"; baseUrl: string; error: string }
   | { kind: "error"; baseUrl: string; error: string };
@@ -30,7 +30,7 @@ function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function describeFailure(failure: OrpcConnectionFailure): string {
+function describeFailure(failure: ApiConnectionFailure): string {
   switch (failure.kind) {
     case "unreachable":
       return `mux server is not reachable at ${failure.baseUrl}`;
@@ -41,19 +41,19 @@ function describeFailure(failure: OrpcConnectionFailure): string {
   }
 }
 
-function getWarningSuffix(failure: OrpcConnectionFailure): string {
+function getWarningSuffix(failure: ApiConnectionFailure): string {
   if (failure.kind === "unauthorized") {
     return "Using local file access while mux is running can cause inconsistencies.";
   }
   return "Using local file access can cause inconsistencies.";
 }
 
-async function tryGetWorkspacesFromOrpc(
+async function tryGetWorkspacesFromApi(
   context: vscode.ExtensionContext
-): Promise<{ workspaces: WorkspaceWithContext[] } | { failure: OrpcConnectionFailure }> {
+): Promise<{ workspaces: WorkspaceWithContext[] } | { failure: ApiConnectionFailure }> {
   try {
     const discovery = await discoverServerConfig(context);
-    const client = createVscodeORPCClient({ baseUrl: discovery.baseUrl, authToken: discovery.authToken });
+    const client = createApiClient({ baseUrl: discovery.baseUrl, authToken: discovery.authToken });
 
     const reachable = await checkServerReachable(discovery.baseUrl);
     if (reachable.status !== "ok") {
@@ -86,7 +86,7 @@ async function tryGetWorkspacesFromOrpc(
       };
     }
 
-    const workspaces = await getAllWorkspacesFromOrpc(client);
+    const workspaces = await getAllWorkspacesFromApi(client);
     return { workspaces };
   } catch (error) {
     return {
@@ -109,13 +109,13 @@ async function getWorkspacesForCommand(
     return getAllWorkspacesFromFiles();
   }
 
-  const orpcResult = await tryGetWorkspacesFromOrpc(context);
-  if ("workspaces" in orpcResult) {
-    sessionPreferredMode = "orpc";
-    return orpcResult.workspaces;
+  const apiResult = await tryGetWorkspacesFromApi(context);
+  if ("workspaces" in apiResult) {
+    sessionPreferredMode = "api";
+    return apiResult.workspaces;
   }
 
-  const failure = orpcResult.failure;
+  const failure = apiResult.failure;
 
   if (modeSetting === "server-only") {
     const selection = await vscode.window.showErrorMessage(
@@ -159,9 +159,9 @@ async function getWorkspacesForCommand(
 
   await configureConnectionCommand(context);
 
-  const retry = await tryGetWorkspacesFromOrpc(context);
+  const retry = await tryGetWorkspacesFromApi(context);
   if ("workspaces" in retry) {
-    sessionPreferredMode = "orpc";
+    sessionPreferredMode = "api";
     return retry.workspaces;
   }
 

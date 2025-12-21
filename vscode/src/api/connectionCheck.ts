@@ -1,6 +1,6 @@
 import assert from "node:assert";
 
-import type { ORPCClient } from "./client";
+import type { ApiClient } from "./client";
 
 export type ServerReachabilityResult =
   | { status: "ok" }
@@ -99,14 +99,14 @@ export async function checkServerReachable(
 }
 
 export async function checkAuth(
-  client: ORPCClient,
+  client: ApiClient,
   options?: { timeoutMs?: number }
 ): Promise<AuthCheckResult> {
   const timeoutMs = options?.timeoutMs ?? 1_000;
 
   try {
     // Used both as an auth check and a basic liveness check.
-    await promiseWithTimeout(client.general.ping("vscode"), timeoutMs, "oRPC ping");
+    await promiseWithTimeout(client.general.ping("vscode"), timeoutMs, "API ping");
     return { status: "ok" };
   } catch (error) {
     if (isUnauthorizedError(error)) {
