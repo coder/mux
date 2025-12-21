@@ -169,8 +169,8 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
             </div>
           )}
 
-          {/* Timeline grouped list */}
-          <div className="max-h-80 overflow-y-auto">
+          {/* Timeline grouped list - no inner scroll, parent handles overflow */}
+          <div>
             {filteredWorkspaces.length === 0 ? (
               <div className="text-muted px-4 py-6 text-center text-sm">
                 No workspaces match "{searchQuery}"
@@ -179,7 +179,7 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
               Array.from(groupedWorkspaces.entries()).map(([period, periodWorkspaces]) => (
                 <div key={period}>
                   {/* Period header */}
-                  <div className="bg-bg-dark/50 text-muted sticky top-0 px-4 py-1.5 text-xs font-medium">
+                  <div className="bg-bg-dark text-muted px-4 py-1.5 text-xs font-medium">
                     {period}
                   </div>
                   {/* Workspaces in this period */}
