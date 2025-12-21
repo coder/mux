@@ -63,10 +63,8 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
       <ProviderOptionsProvider>
         <ThinkingProvider projectPath={projectPath}>
           <ConnectionStatusIndicator />
-          {/* Scrollable flex column: chat centered, archived at bottom with min gap */}
-          <div className="flex h-full flex-1 flex-col items-center gap-6 overflow-y-auto p-4">
-            {/* Spacer pushes chat toward center */}
-            <div className="min-h-0 flex-1" />
+          {/* Scrollable content area */}
+          <div className="flex h-full flex-1 flex-col items-center justify-center gap-6 overflow-y-auto p-4">
             {/* Chat input card */}
             <ChatInput
               variant="creation"
@@ -76,11 +74,9 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
               onReady={handleChatReady}
               onWorkspaceCreated={onWorkspaceCreated}
             />
-            {/* Spacer between chat and archived - shrinks but gap-6 ensures min spacing */}
-            <div className="min-h-0 flex-1" />
-            {/* Archived workspaces at bottom */}
+            {/* Archived workspaces below chat */}
             {archivedWorkspaces.length > 0 && (
-              <div className="w-full max-w-3xl shrink-0">
+              <div className="w-full max-w-3xl">
                 <ArchivedWorkspaces
                   projectPath={projectPath}
                   projectName={projectName}
