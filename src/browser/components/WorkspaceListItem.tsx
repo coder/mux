@@ -22,13 +22,13 @@ export interface WorkspaceListItemProps {
   projectPath: string;
   projectName: string;
   isSelected: boolean;
-  isDeleting?: boolean;
+  isArchiving?: boolean;
   depth?: number;
   /** @deprecated No longer used since status dot was removed, kept for API compatibility */
   lastReadTimestamp?: number;
   // Event handlers
   onSelectWorkspace: (selection: WorkspaceSelection) => void;
-  onRemoveWorkspace: (workspaceId: string, button: HTMLElement) => Promise<void>;
+  onArchiveWorkspace: (workspaceId: string, button: HTMLElement) => Promise<void>;
   /** @deprecated No longer used since status dot was removed, kept for API compatibility */
   onToggleUnread?: (workspaceId: string) => void;
 }
@@ -38,17 +38,17 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
   projectPath,
   projectName,
   isSelected,
-  isDeleting,
+  isArchiving,
   depth,
   lastReadTimestamp: _lastReadTimestamp,
   onSelectWorkspace,
-  onRemoveWorkspace,
+  onArchiveWorkspace,
   onToggleUnread: _onToggleUnread,
 }) => {
   // Destructure metadata for convenience
   const { id: workspaceId, namedWorkspacePath, status } = metadata;
   const isCreating = status === "creating";
-  const isDisabled = isCreating || isDeleting;
+  const isDisabled = isCreating || isArchiving;
   const gitStatus = useGitStatus(workspaceId);
 
   // Get title edit context (renamed from rename context since we now edit titles, not names)
@@ -115,7 +115,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
             ? "cursor-default opacity-70"
             : "cursor-pointer hover:bg-hover [&:hover_button]:opacity-100",
           isSelected && !isDisabled && "bg-hover border-l-blue-400",
-          isDeleting && "pointer-events-none"
+          isArchiving && "pointer-events-none"
         )}
         style={{ paddingLeft }}
         onClick={() => {
@@ -145,8 +145,8 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
         aria-label={
           isCreating
             ? `Creating workspace ${displayTitle}`
-            : isDeleting
-              ? `Deleting workspace ${displayTitle}`
+            : isArchiving
+              ? `Archiving workspace ${displayTitle}`
               : `Select workspace ${displayTitle}`
         }
         aria-disabled={isDisabled}
@@ -162,15 +162,15 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
                     className="text-muted hover:text-foreground inline-flex cursor-pointer items-center border-none bg-transparent p-0 text-base leading-none opacity-0 transition-colors duration-200"
                     onClick={(e) => {
                       e.stopPropagation();
-                      void onRemoveWorkspace(workspaceId, e.currentTarget);
+                      void onArchiveWorkspace(workspaceId, e.currentTarget);
                     }}
-                    aria-label={`Remove workspace ${displayTitle}`}
+                    aria-label={`Archive workspace ${displayTitle}`}
                     data-workspace-id={workspaceId}
                   >
                     ×
                   </button>
                 </TooltipTrigger>
-                <TooltipContent align="start">Remove workspace</TooltipContent>
+                <TooltipContent align="start">Archive workspace</TooltipContent>
               </Tooltip>
             )}
             <RuntimeBadge runtimeConfig={metadata.runtimeConfig} isWorking={isWorking} />
@@ -225,10 +225,10 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
           </div>
           {!isCreating && (
             <div className="ml-[18px] min-w-0">
-              {isDeleting ? (
+              {isArchiving ? (
                 <div className="text-muted flex min-w-0 items-center gap-1.5 text-xs">
-                  <span className="-mt-0.5 shrink-0 text-[10px]">🗑️</span>
-                  <span className="min-w-0 truncate">Deleting...</span>
+                  <span className="-mt-0.5 shrink-0 text-[10px]">📦</span>
+                  <span className="min-w-0 truncate">Archiving...</span>
                 </div>
               ) : (
                 <WorkspaceStatusIndicator workspaceId={workspaceId} />

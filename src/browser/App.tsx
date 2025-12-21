@@ -48,6 +48,7 @@ import { getRuntimeTypeForTelemetry } from "@/common/telemetry";
 import { useStartWorkspaceCreation, getFirstProjectPath } from "./hooks/useStartWorkspaceCreation";
 import { useAPI } from "@/browser/contexts/API";
 import { AuthTokenModal } from "@/browser/components/AuthTokenModal";
+import { ArchivedWorkspaces } from "@/browser/components/ArchivedWorkspaces";
 
 import { SettingsProvider, useSettings } from "./contexts/SettingsContext";
 import { SettingsModal } from "./components/Settings/SettingsModal";
@@ -710,16 +711,35 @@ function AppInner() {
               })()
             ) : (
               <div
-                className="[&_p]:text-muted [&_h2]:text-foreground mx-auto w-full max-w-3xl text-center [&_h2]:mb-4 [&_h2]:font-bold [&_h2]:tracking-tight [&_p]:leading-[1.6]"
+                className="mx-auto w-full max-w-3xl"
                 style={{
                   padding: "clamp(40px, 10vh, 100px) 20px",
                   fontSize: "clamp(14px, 2vw, 16px)",
                 }}
               >
-                <h2 style={{ fontSize: "clamp(24px, 5vw, 36px)", letterSpacing: "-1px" }}>
-                  Welcome to Mux
-                </h2>
-                <p>Select a workspace from the sidebar or add a new one to get started.</p>
+                <div className="[&_p]:text-muted [&_h2]:text-foreground text-center [&_h2]:mb-4 [&_h2]:font-bold [&_h2]:tracking-tight [&_p]:leading-[1.6]">
+                  <h2 style={{ fontSize: "clamp(24px, 5vw, 36px)", letterSpacing: "-1px" }}>
+                    Welcome to Mux
+                  </h2>
+                  <p>Select a workspace from the sidebar or add a new one to get started.</p>
+                </div>
+                {/* Show archived workspaces for each project */}
+                {Array.from(sortedWorkspacesByProject.entries()).map(
+                  ([projectPath, workspaces]) => {
+                    const archivedWorkspaces = workspaces.filter((w) => w.archived);
+                    if (archivedWorkspaces.length === 0) return null;
+                    const projectName =
+                      projectPath.split("/").pop() ?? projectPath.split("\\").pop() ?? "Project";
+                    return (
+                      <ArchivedWorkspaces
+                        key={projectPath}
+                        projectPath={projectPath}
+                        projectName={projectName}
+                        workspaces={workspaces}
+                      />
+                    );
+                  }
+                )}
               </div>
             )}
           </div>

@@ -632,6 +632,18 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           return context.workspaceService.updateAISettings(input.workspaceId, input.aiSettings);
         }),
+      archive: t
+        .input(schemas.workspace.archive.input)
+        .output(schemas.workspace.archive.output)
+        .handler(async ({ context, input }) => {
+          return context.workspaceService.archive(input.workspaceId);
+        }),
+      unarchive: t
+        .input(schemas.workspace.unarchive.input)
+        .output(schemas.workspace.unarchive.output)
+        .handler(async ({ context, input }) => {
+          return context.workspaceService.unarchive(input.workspaceId);
+        }),
       fork: t
         .input(schemas.workspace.fork.input)
         .output(schemas.workspace.fork.output)

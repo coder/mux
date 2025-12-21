@@ -64,6 +64,13 @@ export const WorkspaceMetadataSchema = z.object({
     description:
       "Workspace creation status. 'creating' = pending setup (ephemeral, not persisted). Absent = ready.",
   }),
+  archived: z.boolean().optional().meta({
+    description:
+      "When true, workspace is archived. Archived workspaces are hidden from main sidebar but visible on project page.",
+  }),
+  archivedAt: z.string().optional().meta({
+    description: "ISO 8601 timestamp when workspace was archived",
+  }),
 });
 
 export const FrontendWorkspaceMetadataSchema = WorkspaceMetadataSchema.extend({

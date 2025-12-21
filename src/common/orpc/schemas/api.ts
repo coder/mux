@@ -260,6 +260,14 @@ export const workspace = {
     }),
     output: ResultSchema(z.void(), z.string()),
   },
+  archive: {
+    input: z.object({ workspaceId: z.string() }),
+    output: ResultSchema(z.void(), z.string()),
+  },
+  unarchive: {
+    input: z.object({ workspaceId: z.string() }),
+    output: ResultSchema(z.void(), z.string()),
+  },
   fork: {
     input: z.object({ sourceWorkspaceId: z.string(), newName: z.string() }),
     output: z.discriminatedUnion("success", [

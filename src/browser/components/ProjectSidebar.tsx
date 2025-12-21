@@ -23,7 +23,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { SidebarCollapseButton } from "./ui/SidebarCollapseButton";
 import SecretsModal from "./SecretsModal";
 import type { Secret } from "@/common/types/secrets";
-import { ForceDeleteModal } from "./ForceDeleteModal";
+
 import { WorkspaceListItem, type WorkspaceSelection } from "./WorkspaceListItem";
 import { RenameProvider } from "@/browser/contexts/WorkspaceRenameContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
@@ -197,7 +197,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const {
     selectedWorkspace,
     setSelectedWorkspace: onSelectWorkspace,
-    removeWorkspace: onRemoveWorkspace,
+    archiveWorkspace: onArchiveWorkspace,
     renameWorkspace: onRenameWorkspace,
     beginWorkspaceCreation: onAddWorkspace,
   } = useWorkspaceContext();
@@ -253,20 +253,14 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const [expandedOldWorkspaces, setExpandedOldWorkspaces] = usePersistedState<
     Record<string, boolean>
   >("expandedOldWorkspaces", {});
-  const [deletingWorkspaceIds, setDeletingWorkspaceIds] = useState<Set<string>>(new Set());
-  const workspaceRemoveError = usePopoverError();
+  const [archivingWorkspaceIds, setArchivingWorkspaceIds] = useState<Set<string>>(new Set());
+  const workspaceArchiveError = usePopoverError();
   const projectRemoveError = usePopoverError();
   const [secretsModalState, setSecretsModalState] = useState<{
     isOpen: boolean;
     projectPath: string;
     projectName: string;
     secrets: Secret[];
-  } | null>(null);
-  const [forceDeleteModal, setForceDeleteModal] = useState<{
-    isOpen: boolean;
-    workspaceId: string;
-    error: string;
-    anchor: { top: number; left: number } | null;
   } | null>(null);
 
   const getProjectName = (path: string) => {
@@ -300,40 +294,32 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     }));
   };
 
-  const handleRemoveWorkspace = useCallback(
+  const handleArchiveWorkspace = useCallback(
     async (workspaceId: string, buttonElement: HTMLElement) => {
-      // Mark workspace as being deleted for UI feedback
-      setDeletingWorkspaceIds((prev) => new Set(prev).add(workspaceId));
+      // Mark workspace as being archived for UI feedback
+      setArchivingWorkspaceIds((prev) => new Set(prev).add(workspaceId));
 
       try {
-        const result = await onRemoveWorkspace(workspaceId);
+        const result = await onArchiveWorkspace(workspaceId);
         if (!result.success) {
-          const error = result.error ?? "Failed to remove workspace";
+          const error = result.error ?? "Failed to archive workspace";
           const rect = buttonElement.getBoundingClientRect();
           const anchor = {
             top: rect.top + window.scrollY,
-            left: rect.right + 10, // 10px to the right of button
+            left: rect.right + 10,
           };
-
-          // Show force delete modal on any error to handle all cases
-          // (uncommitted changes, submodules, etc.)
-          setForceDeleteModal({
-            isOpen: true,
-            workspaceId,
-            error,
-            anchor,
-          });
+          workspaceArchiveError.showError(workspaceId, error, anchor);
         }
       } finally {
-        // Clear deleting state (workspace removed or error shown)
-        setDeletingWorkspaceIds((prev) => {
+        // Clear archiving state
+        setArchivingWorkspaceIds((prev) => {
           const next = new Set(prev);
           next.delete(workspaceId);
           return next;
         });
       }
     },
-    [onRemoveWorkspace]
+    [onArchiveWorkspace, workspaceArchiveError]
   );
 
   const handleOpenSecrets = async (projectPath: string) => {
@@ -344,33 +330,6 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       projectName: getProjectName(projectPath),
       secrets,
     });
-  };
-
-  const handleForceDelete = async (workspaceId: string) => {
-    const modalState = forceDeleteModal;
-    // Close modal immediately to show that action is in progress
-    setForceDeleteModal(null);
-
-    // Mark workspace as being deleted for UI feedback
-    setDeletingWorkspaceIds((prev) => new Set(prev).add(workspaceId));
-
-    try {
-      // Use the same state update logic as regular removal
-      const result = await onRemoveWorkspace(workspaceId, { force: true });
-      if (!result.success) {
-        const errorMessage = result.error ?? "Failed to remove workspace";
-        console.error("Force delete failed:", result.error);
-
-        workspaceRemoveError.showError(workspaceId, errorMessage, modalState?.anchor ?? undefined);
-      }
-    } finally {
-      // Clear deleting state
-      setDeletingWorkspaceIds((prev) => {
-        const next = new Set(prev);
-        next.delete(workspaceId);
-        return next;
-      });
-    }
   };
 
   const handleSaveSecrets = async (secrets: Secret[]) => {
@@ -608,8 +567,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             className="pt-1"
                           >
                             {(() => {
-                              const allWorkspaces =
-                                sortedWorkspacesByProject.get(projectPath) ?? [];
+                              // Filter out archived workspaces from the sidebar
+                              const allWorkspaces = (
+                                sortedWorkspacesByProject.get(projectPath) ?? []
+                              ).filter((w) => !w.archived);
                               const depthByWorkspaceId = computeWorkspaceDepthMap(allWorkspaces);
                               const { recent, buckets } = partitionWorkspacesByAge(
                                 allWorkspaces,
@@ -623,10 +584,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   projectPath={projectPath}
                                   projectName={projectName}
                                   isSelected={selectedWorkspace?.workspaceId === metadata.id}
-                                  isDeleting={deletingWorkspaceIds.has(metadata.id)}
+                                  isArchiving={archivingWorkspaceIds.has(metadata.id)}
                                   lastReadTimestamp={lastReadTimestamps[metadata.id] ?? 0}
                                   onSelectWorkspace={handleSelectWorkspace}
-                                  onRemoveWorkspace={handleRemoveWorkspace}
+                                  onArchiveWorkspace={handleArchiveWorkspace}
                                   onToggleUnread={_onToggleUnread}
                                   depth={depthByWorkspaceId[metadata.id] ?? 0}
                                 />
@@ -734,19 +695,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
               onSave={handleSaveSecrets}
             />
           )}
-          {forceDeleteModal && (
-            <ForceDeleteModal
-              isOpen={forceDeleteModal.isOpen}
-              workspaceId={forceDeleteModal.workspaceId}
-              error={forceDeleteModal.error}
-              onClose={() => setForceDeleteModal(null)}
-              onForceDelete={handleForceDelete}
-            />
-          )}
           <PopoverError
-            error={workspaceRemoveError.error}
-            prefix="Failed to remove workspace"
-            onDismiss={workspaceRemoveError.clearError}
+            error={workspaceArchiveError.error}
+            prefix="Failed to archive workspace"
+            onDismiss={workspaceArchiveError.clearError}
           />
           <PopoverError
             error={projectRemoveError.error}
