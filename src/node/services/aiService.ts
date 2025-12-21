@@ -1202,11 +1202,26 @@ export class AIService extends EventEmitter {
       // Convert MuxMessage to ModelMessage format using Vercel AI SDK utility
       // Type assertion needed because MuxMessage has custom tool parts for interrupted tools
       // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument
-      const modelMessages = convertToModelMessages(sanitizedMessages as any, {
+      const rawModelMessages = convertToModelMessages(sanitizedMessages as any, {
         // Drop unfinished tool calls (input-streaming/input-available) so downstream
         // transforms only see tool calls that actually produced outputs.
         ignoreIncompleteToolCalls: true,
       });
+
+      // Self-healing: Filter out any empty ModelMessages that could brick the request.
+      // The SDK's ignoreIncompleteToolCalls can drop all parts from a message, leaving
+      // an assistant with empty content array. The API rejects these with "all messages
+      // must have non-empty content except for the optional final assistant message".
+      const modelMessages = rawModelMessages.filter((msg) => {
+        if (msg.role !== "assistant") return true;
+        if (typeof msg.content === "string") return msg.content.length > 0;
+        return Array.isArray(msg.content) && msg.content.length > 0;
+      });
+      if (modelMessages.length < rawModelMessages.length) {
+        log.debug(
+          `Self-healing: Filtered ${rawModelMessages.length - modelMessages.length} empty ModelMessage(s)`
+        );
+      }
       log.debug_obj(`${workspaceId}/2_model_messages.json`, modelMessages);
 
       // Apply ModelMessage transforms based on provider requirements
