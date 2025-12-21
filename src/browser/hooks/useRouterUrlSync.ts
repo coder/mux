@@ -23,15 +23,17 @@ export function parseInitialUrl(): string {
     return `/project?path=${encodeURIComponent(projectPath)}`;
   }
 
-  // If URL is at root (dev server), about:blank (tests), or file:// path (packaged Electron),
-  // check localStorage for saved workspace from previous session
+  // If URL is at root (dev server), about:blank (tests), file:// path (packaged Electron),
+  // or iframe.html (Storybook), check localStorage for saved workspace from previous session
   const isRootOrFileUrl =
     pathname === "/" ||
     pathname === "" ||
     pathname === "blank" ||
     pathname.endsWith("index.html") ||
-    pathname.endsWith(".html");
-  if (isRootOrFileUrl && !search) {
+    pathname.endsWith("iframe.html");
+  // For iframe.html (Storybook), ignore search params when checking for root URL
+  const effectiveSearch = pathname.endsWith("iframe.html") ? "" : search;
+  if (isRootOrFileUrl && !effectiveSearch) {
     const savedWorkspace = readPersistedState<WorkspaceSelection | null>(
       SELECTED_WORKSPACE_KEY,
       null
