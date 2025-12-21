@@ -640,7 +640,6 @@ export class SSHRuntime implements Runtime {
       initLogger.logStep(`Creating git bundle...`);
 
       await new Promise<void>((resolve, reject) => {
-        // Check if aborted before spawning
         if (abortSignal?.aborted) {
           reject(new Error("Bundle creation aborted"));
           return;
@@ -933,18 +932,48 @@ export class SSHRuntime implements Runtime {
     const { projectPath, branchName, trunkBranch, workspacePath, initLogger, abortSignal } = params;
 
     try {
-      // 1. Sync project to remote (opportunistic rsync with scp fallback)
+      // 1. Sync project to remote with retry for transient SSH failures
+      // Errors like "pack-objects died" occur when SSH drops mid-transfer
       initLogger.logStep("Syncing project files to remote...");
-      try {
-        await this.syncProjectToRemote(projectPath, workspacePath, initLogger, abortSignal);
-      } catch (error) {
-        const errorMsg = getErrorMessage(error);
-        initLogger.logStderr(`Failed to sync project: ${errorMsg}`);
-        initLogger.logComplete(-1);
-        return {
-          success: false,
-          error: `Failed to sync project: ${errorMsg}`,
-        };
+      const maxSyncAttempts = 3;
+      for (let attempt = 1; attempt <= maxSyncAttempts; attempt++) {
+        try {
+          await this.syncProjectToRemote(projectPath, workspacePath, initLogger, abortSignal);
+          break;
+        } catch (error) {
+          const errorMsg = getErrorMessage(error);
+          const isRetryable =
+            errorMsg.includes("pack-objects died") ||
+            errorMsg.includes("Connection reset") ||
+            errorMsg.includes("Connection closed") ||
+            errorMsg.includes("Broken pipe");
+
+          if (!isRetryable || attempt === maxSyncAttempts) {
+            initLogger.logStderr(`Failed to sync project: ${errorMsg}`);
+            initLogger.logComplete(-1);
+            return {
+              success: false,
+              error: `Failed to sync project: ${errorMsg}`,
+            };
+          }
+
+          // Clean up partial remote state before retry
+          log.info(`Sync failed (attempt ${attempt}/${maxSyncAttempts}), will retry: ${errorMsg}`);
+          try {
+            const rmStream = await this.exec(`rm -rf ${shescape.quote(workspacePath)}`, {
+              cwd: "~",
+              timeout: 30,
+            });
+            await rmStream.exitCode;
+          } catch {
+            // Ignore cleanup errors
+          }
+
+          initLogger.logStep(
+            `Sync failed, retrying (attempt ${attempt + 1}/${maxSyncAttempts})...`
+          );
+          await new Promise((r) => setTimeout(r, attempt * 1000));
+        }
       }
       initLogger.logStep("Files synced successfully");
 
