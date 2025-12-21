@@ -734,21 +734,31 @@ export class AgentSession {
       : undefined;
 
     // Stream compaction (no history persistence for the prompt message)
+    const abortSignal = undefined;
+    const additionalSystemInstructions = undefined;
+    const maxOutputTokens = options.maxOutputTokens;
+    const muxProviderOptions = options.sendMessageOptions?.providerOptions;
+    const mode = undefined;
+    const recordFileState = undefined;
+    const changedFileAttachments = undefined;
+    const postCompactionAttachments = undefined;
+    const experiments = options.sendMessageOptions?.experiments;
+
     return this.aiService.streamMessage(
       compactionMessages,
       this.workspaceId,
       model,
       effectiveThinkingLevel,
       disableAllTools,
-      undefined,
-      undefined,
-      options.maxOutputTokens,
-      options.sendMessageOptions?.providerOptions,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      options.sendMessageOptions?.experiments
+      abortSignal,
+      additionalSystemInstructions,
+      maxOutputTokens,
+      muxProviderOptions,
+      mode,
+      recordFileState,
+      changedFileAttachments,
+      postCompactionAttachments,
+      experiments
     );
   }
 
