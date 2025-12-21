@@ -72,9 +72,9 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
             onReady={handleChatReady}
             onWorkspaceCreated={onWorkspaceCreated}
           />
-          {/* Archived workspaces fixed at bottom */}
+          {/* Archived workspaces pinned to bottom, horizontally centered */}
           {archivedWorkspaces.length > 0 && (
-            <div className="absolute inset-x-0 bottom-0 mx-auto w-full max-w-3xl px-5 pb-4">
+            <div className="absolute bottom-4 left-1/2 w-full max-w-3xl -translate-x-1/2 px-4">
               <ArchivedWorkspaces
                 projectPath={projectPath}
                 projectName={projectName}
