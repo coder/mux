@@ -166,6 +166,7 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
   const [lastClickedId, setLastClickedId] = React.useState<string | null>(null);
   const [bulkOperation, setBulkOperation] = React.useState<BulkOperationState | null>(null);
+  const [bulkDeleteConfirm, setBulkDeleteConfirm] = React.useState(false);
 
   // workspaces prop should already be filtered to archived only
   if (workspaces.length === 0) {
@@ -219,6 +220,7 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
     });
 
     setLastClickedId(workspaceId);
+    setBulkDeleteConfirm(false); // Clear confirmation when selection changes
   };
 
   // Select/deselect all filtered workspaces
@@ -239,6 +241,7 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
       // Select all filtered
       setSelectedIds((prev) => new Set([...prev, ...allFilteredIds]));
     }
+    setBulkDeleteConfirm(false); // Clear confirmation when selection changes
   };
 
   // Bulk restore
@@ -276,8 +279,9 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
     onWorkspacesChanged?.();
   };
 
-  // Bulk delete (always force: true)
+  // Bulk delete (always force: true) - requires confirmation
   const handleBulkDelete = async () => {
+    setBulkDeleteConfirm(false);
     const idsToDelete = Array.from(selectedIds);
     setBulkOperation({
       type: "delete",
@@ -373,36 +377,56 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
           {hasSelection && (
             <div className="flex items-center gap-2">
               <span className="text-muted text-xs">{selectedIds.size} selected</span>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={() => void handleBulkRestore()}
-                    className="text-muted hover:text-foreground rounded p-1 transition-colors hover:bg-white/10"
-                    aria-label="Restore selected"
-                  >
-                    <ArchiveRestoreIcon className="h-4 w-4" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent>Restore selected</TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
+              {bulkDeleteConfirm ? (
+                <>
+                  <span className="text-muted text-xs">Delete permanently?</span>
                   <button
                     onClick={() => void handleBulkDelete()}
-                    className="text-muted rounded p-1 transition-colors hover:bg-white/10 hover:text-red-400"
-                    aria-label="Delete selected"
+                    className="rounded bg-red-600 px-2 py-0.5 text-xs text-white hover:bg-red-700"
                   >
-                    <Trash2 className="h-4 w-4" />
+                    Yes, delete {selectedIds.size}
                   </button>
-                </TooltipTrigger>
-                <TooltipContent>Delete selected permanently</TooltipContent>
-              </Tooltip>
-              <button
-                onClick={() => setSelectedIds(new Set())}
-                className="text-muted hover:text-foreground ml-1 text-xs"
-              >
-                Clear
-              </button>
+                  <button
+                    onClick={() => setBulkDeleteConfirm(false)}
+                    className="text-muted hover:text-foreground text-xs"
+                  >
+                    Cancel
+                  </button>
+                </>
+              ) : (
+                <>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={() => void handleBulkRestore()}
+                        className="text-muted hover:text-foreground rounded p-1 transition-colors hover:bg-white/10"
+                        aria-label="Restore selected"
+                      >
+                        <ArchiveRestoreIcon className="h-4 w-4" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>Restore selected</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={() => setBulkDeleteConfirm(true)}
+                        className="text-muted rounded p-1 transition-colors hover:bg-white/10 hover:text-red-400"
+                        aria-label="Delete selected"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>Delete selected permanently</TooltipContent>
+                  </Tooltip>
+                  <button
+                    onClick={() => setSelectedIds(new Set())}
+                    className="text-muted hover:text-foreground ml-1 text-xs"
+                  >
+                    Clear
+                  </button>
+                </>
+              )}
             </div>
           )}
         </div>
