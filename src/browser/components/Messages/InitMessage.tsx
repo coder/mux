@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useRef } from "react";
 import { cn } from "@/common/lib/utils";
 import type { DisplayedMessage } from "@/common/types/message";
 import { Loader2, Wrench, CheckCircle2, AlertCircle } from "lucide-react";
@@ -22,6 +22,14 @@ export const InitMessage = React.memo<InitMessageProps>(({ message, className })
   const isError = message.status === "error";
   const isRunning = message.status === "running";
   const isSuccess = message.status === "success";
+  const preRef = useRef<HTMLPreElement>(null);
+
+  // Auto-scroll to bottom while running
+  useEffect(() => {
+    if (isRunning && preRef.current) {
+      preRef.current.scrollTop = preRef.current.scrollHeight;
+    }
+  }, [isRunning, message.lines.length]);
 
   const durationText =
     message.durationMs !== null ? ` in ${formatDuration(message.durationMs)}` : "";
@@ -65,20 +73,16 @@ export const InitMessage = React.memo<InitMessageProps>(({ message, className })
       </div>
       <div className="text-muted mt-1 truncate font-mono text-[11px]">{message.hookPath}</div>
       {message.lines.length > 0 && (
-        <div
+        <pre
+          ref={preRef}
           className={cn(
-            "m-0 mt-2.5 flex max-h-[120px] flex-col-reverse overflow-auto rounded-sm",
-            "bg-black/30 px-2 py-1.5 font-mono text-[11px] leading-relaxed",
+            "m-0 mt-2.5 max-h-[120px] overflow-auto rounded-sm",
+            "bg-black/30 px-2 py-1.5 font-mono text-[11px] leading-relaxed whitespace-pre-wrap",
             isError ? "text-danger-soft" : "text-light"
           )}
         >
-          {/* flex-col-reverse with reversed array auto-scrolls to bottom */}
-          {message.lines.toReversed().map((line, i) => (
-            <div key={i} className="whitespace-pre-wrap">
-              {line}
-            </div>
-          ))}
-        </div>
+          {message.lines.join("\n")}
+        </pre>
       )}
     </div>
   );
