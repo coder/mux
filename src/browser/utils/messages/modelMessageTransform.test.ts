@@ -152,7 +152,7 @@ describe("modelMessageTransform", () => {
       expect(lastAssistant).toBeTruthy();
       expect(Array.isArray(lastAssistant?.content)).toBe(true);
       if (Array.isArray(lastAssistant?.content)) {
-        expect(lastAssistant.content[0]).toEqual({ type: "reasoning", text: "" });
+        expect(lastAssistant.content[0]).toEqual({ type: "reasoning", text: "..." });
       }
     });
     it("should keep text-only messages unchanged", () => {
