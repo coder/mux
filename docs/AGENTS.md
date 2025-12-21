@@ -35,8 +35,8 @@ gh pr view <number> --json mergeable,mergeStateStatus | jq '.'
 - Never enable auto-merge or merge at all unless the user explicitly says "merge it".
 - Do not enable auto-squash or auto-merge on Pull Requests unless explicit permission is given.
 - PR descriptions: include only information a busy reviewer cannot infer; focus on implementation nuances or validation steps.
-- Title prefixes: `perf|refactor|fix|feat|ci|bench`, e.g., `🤖 fix: handle workspace rename edge cases`.
-- Use `ci:` for testing-only changes (test helpers, flaky test fixes, CI config).
+- Title prefixes: `perf|refactor|fix|feat|ci|tests|bench`, e.g., `🤖 fix: handle workspace rename edge cases`.
+- Use `tests:` for test-only changes (test helpers, flaky test fixes, storybook). Use `ci:` for CI config changes.
 
 ## Repo Reference
 
@@ -90,6 +90,7 @@ Avoid mock-heavy tests that verify implementation details rather than behavior. 
 - **Only** add full-app stories (`App.*.stories.tsx`). Do not add isolated component stories, even for small UI changes (they are not used/accepted in this repo).
 - Use play functions with `@storybook/test` utilities (`within`, `userEvent`, `waitFor`) to interact with the UI and set up the desired visual state. Do not add props to production components solely for storybook convenience.
 - Keep story data deterministic: avoid `Math.random()`, `Date.now()`, or other non-deterministic values in story setup. Pass explicit values when ordering or timing matters for visual stability.
+- **Scroll stabilization:** After async operations that change element sizes (Shiki highlighting, Mermaid rendering, tool expansion), wait for `useAutoScroll`'s ResizeObserver RAF to complete. Use double-RAF: `await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))`.
 
 ### TDD Expectations
 

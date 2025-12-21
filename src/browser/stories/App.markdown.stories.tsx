@@ -262,6 +262,10 @@ export const CodeBlocks: AppStory = {
       { timeout: 5000 }
     );
 
+    // Highlighting changes code block height, triggering ResizeObserver → coalesced RAF scroll.
+    // Wait 2 RAFs: one for the coalesced scroll to fire, one for layout to settle.
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
     const url = "https://github.com/coder/mux/pull/new/chat-autocomplete-b24r";
     const container = await waitFor(
       () => {
