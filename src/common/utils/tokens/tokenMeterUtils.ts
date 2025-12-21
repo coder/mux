@@ -64,11 +64,15 @@ export function calculateTokenMeterData(
   const modelStats = getModelStats(model);
   const maxTokens = use1M && supports1MContext(model) ? 1_000_000 : modelStats?.max_input_tokens;
 
-  // Context tokens: input + cached + output + reasoning
-  // Note: cacheCreate is NOT added here - it's a billing concept for tokens written
-  // to cache, not additional context. Those tokens are already counted in input/cached.
+  // Total tokens used in the request.
+  // For Anthropic prompt caching, cacheCreate tokens are reported separately but still
+  // count toward total input tokens for the request.
   const totalUsed =
-    usage.input.tokens + usage.cached.tokens + usage.output.tokens + usage.reasoning.tokens;
+    usage.input.tokens +
+    usage.cached.tokens +
+    usage.cacheCreate.tokens +
+    usage.output.tokens +
+    usage.reasoning.tokens;
 
   const toPercentage = (tokens: number) => {
     if (verticalProportions) {

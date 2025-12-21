@@ -126,13 +126,13 @@ describe("checkAutoCompaction", () => {
       expect(result.shouldShowWarning).toBe(false);
     });
 
-    test("excludes cacheCreate from context calculation (billing-only concept)", () => {
-      // cacheCreate tokens are written to cache but don't consume context window.
-      // They're already counted in input/cached tokens.
+    test("includes cacheCreate in context calculation (prompt caching)", () => {
+      // For Anthropic prompt caching, cacheCreate tokens represent cached prefix tokens.
+      // They are still part of the request's total input tokens and count toward context.
       const usageEntry = {
         input: { tokens: 10_000 },
         cached: { tokens: 5_000 },
-        cacheCreate: { tokens: 2_000 }, // Should NOT be counted in context
+        cacheCreate: { tokens: 2_000 },
         output: { tokens: 3_000 },
         reasoning: { tokens: 1_000 },
         model: KNOWN_MODELS.SONNET.id,
@@ -144,8 +144,8 @@ describe("checkAutoCompaction", () => {
 
       const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
 
-      // Context: 10k + 5k + 3k + 1k = 19k tokens = 9.5% (cacheCreate excluded)
-      expect(result.usagePercentage).toBe(9.5);
+      // Total: 10k + 5k + 2k + 3k + 1k = 21k tokens = 10.5%
+      expect(result.usagePercentage).toBe(10.5);
     });
   });
 

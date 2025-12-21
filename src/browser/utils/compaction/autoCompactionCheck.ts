@@ -24,11 +24,15 @@ import {
   FORCE_COMPACTION_BUFFER_PERCENT,
 } from "@/common/constants/ui";
 
-/** Sum tokens that count toward context window (excludes cacheCreate which is billing-only) */
-function getTotalContextTokens(usage: ChatUsageDisplay): number {
-  // cacheCreate is NOT added - it's a billing concept for tokens written to cache,
-  // not additional context. Those tokens are already counted in input/cached.
-  return usage.input.tokens + usage.cached.tokens + usage.output.tokens + usage.reasoning.tokens;
+/** Sum all token components from a ChatUsageDisplay */
+function getTotalTokens(usage: ChatUsageDisplay): number {
+  return (
+    usage.input.tokens +
+    usage.cached.tokens +
+    usage.cacheCreate.tokens +
+    usage.output.tokens +
+    usage.reasoning.tokens
+  );
 }
 
 export interface AutoCompactionCheckResult {
@@ -96,9 +100,7 @@ export function checkAutoCompaction(
   const currentUsage = usage.liveUsage ?? lastUsage;
 
   // Usage percentage from current context (live when streaming, otherwise last completed)
-  const usagePercentage = currentUsage
-    ? (getTotalContextTokens(currentUsage) / maxTokens) * 100
-    : 0;
+  const usagePercentage = currentUsage ? (getTotalTokens(currentUsage) / maxTokens) * 100 : 0;
 
   // Force-compact when usage exceeds threshold + buffer
   const forceCompactThreshold = thresholdPercentage + FORCE_COMPACTION_BUFFER_PERCENT;
@@ -106,7 +108,7 @@ export function checkAutoCompaction(
 
   // Warning uses max of last completed and current (live when streaming)
   // This ensures warning shows when live usage spikes above threshold mid-stream
-  const lastUsagePercentage = lastUsage ? (getTotalContextTokens(lastUsage) / maxTokens) * 100 : 0;
+  const lastUsagePercentage = lastUsage ? (getTotalTokens(lastUsage) / maxTokens) * 100 : 0;
   const shouldShowWarning =
     Math.max(lastUsagePercentage, usagePercentage) >= thresholdPercentage - warningAdvancePercent;
 

@@ -1168,10 +1168,13 @@ export class WorkspaceStore {
       return;
     }
 
-    // Normal real-time path: bump usage and schedule calculation
-    if (metadata?.usage) {
-      this.usageStore.bump(workspaceId);
-    }
+    // Normal real-time path: always bump usage.
+    //
+    // Even if total usage is missing (e.g. provider doesn't return it or it timed out),
+    // we still need to recompute usage snapshots to:
+    // - Clear liveUsage once the active stream ends
+    // - Pick up lastContextUsage changes from merged message metadata
+    this.usageStore.bump(workspaceId);
 
     // Always schedule consumer calculation (tool calls, text, etc. need tokenization)
     // Even streams without usage metadata need token counts recalculated
