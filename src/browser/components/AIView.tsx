@@ -231,7 +231,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
     void api.workspace.compactHistory({
       workspaceId,
       source: "force-compaction",
-      interrupt: "abandonPartial",
+      interrupt: "abort",
       continueMessage: { text: "Continue" },
       sendMessageOptions: {
         model: pendingSendOptions.model,

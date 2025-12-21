@@ -355,8 +355,8 @@ export const workspace = {
         .optional(),
       /** Source of the compaction request for telemetry/behavior */
       source: z.enum(["user", "force-compaction", "idle-compaction"]).optional(),
-      /** How to handle an active stream: none (fail if streaming), graceful (wait), abandonPartial (abort) */
-      interrupt: z.enum(["none", "graceful", "abandonPartial"]).optional(),
+      /** How to handle an active stream: none (fail if streaming), graceful (wait), abort (interrupt immediately) */
+      interrupt: z.enum(["none", "graceful", "abort"]).optional(),
       /** Send message options (model, thinking level, etc.) for compaction stream */
       sendMessageOptions: SendMessageOptionsSchema.omit({
         editMessageId: true,

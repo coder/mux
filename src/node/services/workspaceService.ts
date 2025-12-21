@@ -1894,7 +1894,7 @@ export class WorkspaceService extends EventEmitter {
         mode?: "exec" | "plan";
       };
       source?: "user" | "force-compaction" | "idle-compaction";
-      interrupt?: "none" | "graceful" | "abandonPartial";
+      interrupt?: "none" | "graceful" | "abort";
       sendMessageOptions?: Omit<SendMessageOptions, "editMessageId" | "muxMetadata">;
     }
   ): Promise<Result<{ operationId: string }, SendMessageError>> {
@@ -1943,9 +1943,11 @@ export class WorkspaceService extends EventEmitter {
             // Wait for stream to complete (soft interrupt)
             await session.interruptStream({ soft: true });
             break;
-          case "abandonPartial":
-            // Abort immediately
-            await session.interruptStream({ abandonPartial: true });
+          case "abort":
+            // Interrupt immediately.
+            // NOTE: We intentionally preserve any streamed partial output.
+            // startCompaction() will commit partial.json to history before building the compaction prompt.
+            await session.interruptStream();
             break;
         }
       }

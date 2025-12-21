@@ -721,8 +721,9 @@ export async function executeCompaction(
     maxOutputTokens: options.maxOutputTokens,
     continueMessage,
     source,
-    // For edits, we need to interrupt and abandon partial
-    interrupt: options.editMessageId ? "abandonPartial" : undefined,
+    // For edits, interrupt any active stream before compacting.
+    // We preserve partial output; compaction will commit partial.json before summarizing.
+    interrupt: options.editMessageId ? "abort" : undefined,
     sendMessageOptions: {
       model: options.sendMessageOptions.model,
       thinkingLevel: options.sendMessageOptions.thinkingLevel,
