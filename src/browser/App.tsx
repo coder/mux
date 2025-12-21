@@ -17,17 +17,12 @@ import { buildSortedWorkspacesByProject } from "./utils/ui/workspaceFiltering";
 import { useResumeManager } from "./hooks/useResumeManager";
 import { useUnreadTracking } from "./hooks/useUnreadTracking";
 import { useWorkspaceStoreRaw, useWorkspaceRecency } from "./stores/WorkspaceStore";
-import { ChatInput } from "./components/ChatInput/index";
-import type { ChatInputAPI } from "./components/ChatInput/types";
 
 import { useStableReference, compareMaps } from "./hooks/useStableReference";
 import { CommandRegistryProvider, useCommandRegistry } from "./contexts/CommandRegistryContext";
 import { useOpenTerminal } from "./hooks/useOpenTerminal";
 import type { CommandAction } from "./contexts/CommandRegistryContext";
-import { ModeProvider } from "./contexts/ModeContext";
-import { ProviderOptionsProvider } from "./contexts/ProviderOptionsContext";
 import { ThemeProvider, useTheme, type ThemeMode } from "./contexts/ThemeContext";
-import { ThinkingProvider } from "./contexts/ThinkingContext";
 import { CommandPalette } from "./components/CommandPalette";
 import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sources";
 
@@ -48,13 +43,12 @@ import { getRuntimeTypeForTelemetry } from "@/common/telemetry";
 import { useStartWorkspaceCreation, getFirstProjectPath } from "./hooks/useStartWorkspaceCreation";
 import { useAPI } from "@/browser/contexts/API";
 import { AuthTokenModal } from "@/browser/components/AuthTokenModal";
-import { ArchivedWorkspaces } from "@/browser/components/ArchivedWorkspaces";
+import { ProjectPage } from "@/browser/components/ProjectPage";
 
 import { SettingsProvider, useSettings } from "./contexts/SettingsContext";
 import { SettingsModal } from "./components/Settings/SettingsModal";
 import { SplashScreenProvider } from "./components/splashScreens/SplashScreenProvider";
 import { TutorialProvider } from "./contexts/TutorialContext";
-import { ConnectionStatusIndicator } from "./components/ConnectionStatusIndicator";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { useFeatureFlags } from "./contexts/FeatureFlagsContext";
 import { FeatureFlagsProvider } from "./contexts/FeatureFlagsContext";
@@ -103,25 +97,16 @@ function AppInner() {
   const isMobile = typeof window !== "undefined" && window.innerWidth <= 768;
   const [sidebarCollapsed, setSidebarCollapsed] = usePersistedState("sidebarCollapsed", isMobile);
   const defaultProjectPath = getFirstProjectPath(projects);
-  const creationChatInputRef = useRef<ChatInputAPI | null>(null);
   const creationProjectPath = !selectedWorkspace
     ? (pendingNewWorkspaceProject ?? (projects.size === 1 ? defaultProjectPath : null))
     : null;
-  const handleCreationChatReady = useCallback((api: ChatInputAPI) => {
-    creationChatInputRef.current = api;
-    api.focus();
-  }, []);
 
   const startWorkspaceCreation = useStartWorkspaceCreation({
     projects,
     beginWorkspaceCreation,
   });
 
-  useEffect(() => {
-    if (creationProjectPath) {
-      creationChatInputRef.current?.focus();
-    }
-  }, [creationProjectPath]);
+  // ProjectPage handles its own focus when mounted
 
   const handleToggleSidebar = useCallback(() => {
     setSidebarCollapsed((prev) => !prev);
@@ -503,12 +488,6 @@ function AppInner() {
       } else if (matchesKeybind(e, KEYBINDS.OPEN_SETTINGS)) {
         e.preventDefault();
         openSettings();
-      } else if (matchesKeybind(e, KEYBINDS.FOCUS_CHAT)) {
-        // Focus creation chat when on new chat page (no workspace selected)
-        if (creationProjectPath && creationChatInputRef.current) {
-          e.preventDefault();
-          creationChatInputRef.current.focus();
-        }
       }
     };
 
@@ -661,85 +640,57 @@ function AppInner() {
                 const projectPath = creationProjectPath;
                 const projectName =
                   projectPath.split("/").pop() ?? projectPath.split("\\").pop() ?? "Project";
+                const projectWorkspaces = sortedWorkspacesByProject.get(projectPath) ?? [];
                 return (
-                  <ModeProvider projectPath={projectPath}>
-                    <ProviderOptionsProvider>
-                      <ThinkingProvider projectPath={projectPath}>
-                        <ConnectionStatusIndicator />
-                        <ChatInput
-                          variant="creation"
-                          projectPath={projectPath}
-                          projectName={projectName}
-                          onProviderConfig={handleProviderConfig}
-                          onReady={handleCreationChatReady}
-                          onWorkspaceCreated={(metadata) => {
-                            // IMPORTANT: Add workspace to store FIRST (synchronous) to ensure
-                            // the store knows about it before React processes the state updates.
-                            // This prevents race conditions where the UI tries to access the
-                            // workspace before the store has created its aggregator.
-                            workspaceStore.addWorkspace(metadata);
+                  <ProjectPage
+                    projectPath={projectPath}
+                    projectName={projectName}
+                    workspaces={projectWorkspaces}
+                    onProviderConfig={handleProviderConfig}
+                    onWorkspaceCreated={(metadata) => {
+                      // IMPORTANT: Add workspace to store FIRST (synchronous) to ensure
+                      // the store knows about it before React processes the state updates.
+                      // This prevents race conditions where the UI tries to access the
+                      // workspace before the store has created its aggregator.
+                      workspaceStore.addWorkspace(metadata);
 
-                            // Add to workspace metadata map (triggers React state update)
-                            setWorkspaceMetadata((prev) =>
-                              new Map(prev).set(metadata.id, metadata)
-                            );
+                      // Add to workspace metadata map (triggers React state update)
+                      setWorkspaceMetadata((prev) => new Map(prev).set(metadata.id, metadata));
 
-                            // Only switch to new workspace if user hasn't selected another one
-                            // during the creation process (selectedWorkspace was null when creation started)
-                            setSelectedWorkspace((current) => {
-                              if (current !== null) {
-                                // User has already selected another workspace - don't override
-                                return current;
-                              }
-                              return toWorkspaceSelection(metadata);
-                            });
+                      // Only switch to new workspace if user hasn't selected another one
+                      // during the creation process (selectedWorkspace was null when creation started)
+                      setSelectedWorkspace((current) => {
+                        if (current !== null) {
+                          // User has already selected another workspace - don't override
+                          return current;
+                        }
+                        return toWorkspaceSelection(metadata);
+                      });
 
-                            // Track telemetry
-                            telemetry.workspaceCreated(
-                              metadata.id,
-                              getRuntimeTypeForTelemetry(metadata.runtimeConfig)
-                            );
+                      // Track telemetry
+                      telemetry.workspaceCreated(
+                        metadata.id,
+                        getRuntimeTypeForTelemetry(metadata.runtimeConfig)
+                      );
 
-                            // Clear pending state
-                            clearPendingWorkspaceCreation();
-                          }}
-                        />
-                      </ThinkingProvider>
-                    </ProviderOptionsProvider>
-                  </ModeProvider>
+                      // Clear pending state
+                      clearPendingWorkspaceCreation();
+                    }}
+                  />
                 );
               })()
             ) : (
               <div
-                className="mx-auto w-full max-w-3xl"
+                className="[&_p]:text-muted [&_h2]:text-foreground mx-auto w-full max-w-3xl text-center [&_h2]:mb-4 [&_h2]:font-bold [&_h2]:tracking-tight [&_p]:leading-[1.6]"
                 style={{
                   padding: "clamp(40px, 10vh, 100px) 20px",
                   fontSize: "clamp(14px, 2vw, 16px)",
                 }}
               >
-                <div className="[&_p]:text-muted [&_h2]:text-foreground text-center [&_h2]:mb-4 [&_h2]:font-bold [&_h2]:tracking-tight [&_p]:leading-[1.6]">
-                  <h2 style={{ fontSize: "clamp(24px, 5vw, 36px)", letterSpacing: "-1px" }}>
-                    Welcome to Mux
-                  </h2>
-                  <p>Select a workspace from the sidebar or add a new one to get started.</p>
-                </div>
-                {/* Show archived workspaces for each project */}
-                {Array.from(sortedWorkspacesByProject.entries()).map(
-                  ([projectPath, workspaces]) => {
-                    const archivedWorkspaces = workspaces.filter((w) => w.archived);
-                    if (archivedWorkspaces.length === 0) return null;
-                    const projectName =
-                      projectPath.split("/").pop() ?? projectPath.split("\\").pop() ?? "Project";
-                    return (
-                      <ArchivedWorkspaces
-                        key={projectPath}
-                        projectPath={projectPath}
-                        projectName={projectName}
-                        workspaces={workspaces}
-                      />
-                    );
-                  }
-                )}
+                <h2 style={{ fontSize: "clamp(24px, 5vw, 36px)", letterSpacing: "-1px" }}>
+                  Welcome to Mux
+                </h2>
+                <p>Select a workspace from the sidebar or add a new one to get started.</p>
               </div>
             )}
           </div>
