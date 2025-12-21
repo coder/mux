@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { useLocation, useNavigate, type NavigateFunction } from "react-router-dom";
 import { readPersistedState } from "./usePersistedState";
 import { SELECTED_WORKSPACE_KEY } from "@/common/constants/storage";
@@ -49,16 +49,21 @@ export function parseInitialUrl(): string {
  * Syncs React Router's MemoryRouter state with the browser URL.
  * Uses replaceState to update URL without adding to history.
  *
- * This enables proper URLs while working with Electron's file:// protocol
- * in production, which doesn't support HTML5 pushState.
+ * In browser/server mode, this enables proper URLs that survive refresh.
+ * In Electron (file:// protocol), we skip URL sync since it would break page reload.
  */
 export function useRouterUrlSync(): void {
   const location = useLocation();
-  const initialSyncDone = useRef(false);
 
   useEffect(() => {
     // Skip sync in Storybook iframe to avoid test runner issues
     if (typeof window !== "undefined" && window.location.pathname.endsWith("iframe.html")) {
+      return;
+    }
+
+    // Skip sync in Electron (file:// protocol) - updating URL would break page reload
+    // since Electron would try to load /workspace/abc as a file instead of index.html
+    if (window.location.protocol === "file:") {
       return;
     }
 
@@ -70,8 +75,6 @@ export function useRouterUrlSync(): void {
     if (url !== currentUrl) {
       window.history.replaceState(null, "", url);
     }
-
-    initialSyncDone.current = true;
   }, [location.pathname, location.search]);
 }
 
