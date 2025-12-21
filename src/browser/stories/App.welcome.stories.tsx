@@ -5,7 +5,7 @@
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { createMockORPCClient } from "../../../.storybook/mocks/orpc";
 import { expandProjects } from "./storyHelpers";
-import { createArchivedWorkspace } from "./mockFactory";
+import { createArchivedWorkspace, NOW } from "./mockFactory";
 import type { ProjectConfig } from "@/node/config";
 
 export default {
@@ -70,30 +70,58 @@ export const CreateWorkspaceMultipleProjects: AppStory = {
   ),
 };
 
-/** Creation view with archived workspaces - shows archived section at bottom */
+/** Creation view with archived workspaces - shows timeline grouped archived section */
 export const CreateWorkspaceWithArchived: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() => {
-        expandProjects(["/Users/dev/my-project"]);
-        return createMockORPCClient({
-          projects: new Map([projectWithNoWorkspaces("/Users/dev/my-project")]),
-          workspaces: [
-            createArchivedWorkspace({
-              id: "archived-1",
-              name: "feature/old-feature",
-              projectName: "my-project",
-              projectPath: "/Users/dev/my-project",
-            }),
-            createArchivedWorkspace({
-              id: "archived-2",
-              name: "bugfix/resolved-issue",
-              projectName: "my-project",
-              projectPath: "/Users/dev/my-project",
-            }),
-          ],
-        });
-      }}
-    />
-  ),
+  render: () => {
+    // Use stable timestamp for deterministic visual tests
+    const DAY = 86400000;
+    return (
+      <AppWithMocks
+        setup={() => {
+          expandProjects(["/Users/dev/my-project"]);
+          return createMockORPCClient({
+            projects: new Map([projectWithNoWorkspaces("/Users/dev/my-project")]),
+            workspaces: [
+              // Recent (shows relative time in timeline)
+              createArchivedWorkspace({
+                id: "archived-1",
+                name: "feature/new-ui",
+                projectName: "my-project",
+                projectPath: "/Users/dev/my-project",
+                archivedAt: new Date(NOW - 2 * 3600000).toISOString(),
+              }),
+              createArchivedWorkspace({
+                id: "archived-2",
+                name: "bugfix/login-issue",
+                projectName: "my-project",
+                projectPath: "/Users/dev/my-project",
+                archivedAt: new Date(NOW - DAY - 3600000).toISOString(),
+              }),
+              createArchivedWorkspace({
+                id: "archived-3",
+                name: "feature/dark-mode",
+                projectName: "my-project",
+                projectPath: "/Users/dev/my-project",
+                archivedAt: new Date(NOW - 3 * DAY).toISOString(),
+              }),
+              createArchivedWorkspace({
+                id: "archived-4",
+                name: "refactor/cleanup",
+                projectName: "my-project",
+                projectPath: "/Users/dev/my-project",
+                archivedAt: new Date(NOW - 5 * DAY).toISOString(),
+              }),
+              createArchivedWorkspace({
+                id: "archived-5",
+                name: "feature/api-v2",
+                projectName: "my-project",
+                projectPath: "/Users/dev/my-project",
+                archivedAt: new Date(NOW - 15 * DAY).toISOString(),
+              }),
+            ],
+          });
+        }}
+      />
+    );
+  },
 };

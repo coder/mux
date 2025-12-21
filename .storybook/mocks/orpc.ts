@@ -251,8 +251,8 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       },
     },
     workspace: {
-      list: async (input?: { archivedOnly?: boolean }) => {
-        if (input?.archivedOnly) {
+      list: async (input?: { archived?: boolean }) => {
+        if (input?.archived) {
           return workspaces.filter((w) => w.archived);
         }
         return workspaces.filter((w) => !w.archived);

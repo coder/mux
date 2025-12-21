@@ -37,7 +37,7 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
 
     const loadArchived = async () => {
       try {
-        const allArchived = await api.workspace.list({ archivedOnly: true });
+        const allArchived = await api.workspace.list({ archived: true });
         if (cancelled) return;
         // Filter to just this project's archived workspaces
         const projectArchived = allArchived.filter((w) => w.projectPath === projectPath);
@@ -63,32 +63,39 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
       <ProviderOptionsProvider>
         <ThinkingProvider projectPath={projectPath}>
           <ConnectionStatusIndicator />
-          {/* ChatInput with variant="creation" provides its own centered layout */}
-          <ChatInput
-            variant="creation"
-            projectPath={projectPath}
-            projectName={projectName}
-            onProviderConfig={onProviderConfig}
-            onReady={handleChatReady}
-            onWorkspaceCreated={onWorkspaceCreated}
-          />
-          {/* Archived workspaces pinned to bottom, horizontally centered */}
-          {archivedWorkspaces.length > 0 && (
-            <div className="absolute bottom-4 left-1/2 w-full max-w-3xl -translate-x-1/2 px-4">
-              <ArchivedWorkspaces
-                projectPath={projectPath}
-                projectName={projectName}
-                workspaces={archivedWorkspaces}
-                onWorkspacesChanged={() => {
-                  // Refresh archived list after unarchive/delete
-                  if (!api) return;
-                  void api.workspace.list({ archivedOnly: true }).then((all) => {
-                    setArchivedWorkspaces(all.filter((w) => w.projectPath === projectPath));
-                  });
-                }}
-              />
-            </div>
-          )}
+          {/* Scrollable flex column: chat centered, archived at bottom */}
+          <div className="flex h-full flex-1 flex-col items-center overflow-y-auto p-4">
+            {/* Spacer pushes chat toward center */}
+            <div className="flex-1" />
+            {/* Chat input card */}
+            <ChatInput
+              variant="creation"
+              projectPath={projectPath}
+              projectName={projectName}
+              onProviderConfig={onProviderConfig}
+              onReady={handleChatReady}
+              onWorkspaceCreated={onWorkspaceCreated}
+            />
+            {/* Spacer between chat and archived */}
+            <div className="flex-1" />
+            {/* Archived workspaces at bottom */}
+            {archivedWorkspaces.length > 0 && (
+              <div className="w-full max-w-3xl">
+                <ArchivedWorkspaces
+                  projectPath={projectPath}
+                  projectName={projectName}
+                  workspaces={archivedWorkspaces}
+                  onWorkspacesChanged={() => {
+                    // Refresh archived list after unarchive/delete
+                    if (!api) return;
+                    void api.workspace.list({ archived: true }).then((all) => {
+                      setArchivedWorkspaces(all.filter((w) => w.projectPath === projectPath));
+                    });
+                  }}
+                />
+              </div>
+            )}
+          </div>
         </ThinkingProvider>
       </ProviderOptionsProvider>
     </ModeProvider>

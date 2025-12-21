@@ -1515,12 +1515,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     return `Type a message... (${hints.join(", ")})`;
   })();
 
-  // Wrapper for creation variant to enable full-height flex layout with vertical centering
-  const Wrapper = variant === "creation" ? "div" : React.Fragment;
-  const wrapperProps =
-    variant === "creation"
-      ? { className: "relative flex h-full flex-1 flex-col items-center justify-center p-4" }
-      : {};
+  // No wrapper needed - parent controls layout for both variants
+  const Wrapper = React.Fragment;
+  const wrapperProps = {};
 
   return (
     <Wrapper {...wrapperProps}>

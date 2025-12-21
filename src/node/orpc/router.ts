@@ -587,7 +587,7 @@ export const router = (authToken?: string) => {
             includePostCompaction: input?.includePostCompaction,
           });
           // Filter by archived status
-          if (input?.archivedOnly) {
+          if (input?.archived) {
             return allWorkspaces.filter((w) => w.archived);
           }
           // Default: return non-archived workspaces
