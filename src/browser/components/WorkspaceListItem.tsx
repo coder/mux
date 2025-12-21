@@ -9,6 +9,7 @@ import { RuntimeBadge } from "./RuntimeBadge";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
 import { Shimmer } from "./ai-elements/shimmer";
+import { ArchiveIcon } from "./icons/ArchiveIcon";
 
 export interface WorkspaceSelection {
   projectPath: string;
@@ -159,7 +160,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
-                    className="text-muted hover:text-foreground inline-flex cursor-pointer items-center border-none bg-transparent p-0 text-base leading-none opacity-0 transition-colors duration-200"
+                    className="text-muted hover:text-foreground inline-flex cursor-pointer items-center border-none bg-transparent p-0 opacity-0 transition-colors duration-200"
                     onClick={(e) => {
                       e.stopPropagation();
                       void onArchiveWorkspace(workspaceId, e.currentTarget);
@@ -167,7 +168,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
                     aria-label={`Archive workspace ${displayTitle}`}
                     data-workspace-id={workspaceId}
                   >
-                    ×
+                    <ArchiveIcon className="h-3.5 w-3.5" />
                   </button>
                 </TooltipTrigger>
                 <TooltipContent align="start">Archive workspace</TooltipContent>
