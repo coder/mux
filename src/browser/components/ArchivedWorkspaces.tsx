@@ -14,6 +14,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/browser/components/ui/dialog";
+import { ForceDeleteModal } from "./ForceDeleteModal";
 import { Button } from "@/browser/components/ui/button";
 
 interface ArchivedWorkspacesProps {
@@ -164,7 +165,10 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
   const { unarchiveWorkspace, removeWorkspace, setSelectedWorkspace } = useWorkspaceContext();
   const [searchQuery, setSearchQuery] = React.useState("");
   const [processingIds, setProcessingIds] = React.useState<Set<string>>(new Set());
-  const [deleteConfirmId, setDeleteConfirmId] = React.useState<string | null>(null);
+  const [forceDeleteModal, setForceDeleteModal] = React.useState<{
+    workspaceId: string;
+    error: string;
+  } | null>(null);
 
   // Bulk selection state
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
@@ -265,7 +269,20 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
       setBulkOperation((prev) => (prev ? { ...prev, current: ws?.title ?? ws?.name ?? id } : prev));
 
       try {
-        await unarchiveWorkspace(id);
+        const result = await unarchiveWorkspace(id);
+        if (!result.success) {
+          setBulkOperation((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  errors: [
+                    ...prev.errors,
+                    `Failed to restore ${ws?.name ?? id}${result.error ? `: ${result.error}` : ""}`,
+                  ],
+                }
+              : prev
+          );
+        }
       } catch {
         setBulkOperation((prev) =>
           prev ? { ...prev, errors: [...prev.errors, `Failed to restore ${ws?.name ?? id}`] } : prev
@@ -297,7 +314,20 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
       setBulkOperation((prev) => (prev ? { ...prev, current: ws?.title ?? ws?.name ?? id } : prev));
 
       try {
-        await removeWorkspace(id, { force: true });
+        const result = await removeWorkspace(id, { force: true });
+        if (!result.success) {
+          setBulkOperation((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  errors: [
+                    ...prev.errors,
+                    `Failed to delete ${ws?.name ?? id}${result.error ? `: ${result.error}` : ""}`,
+                  ],
+                }
+              : prev
+          );
+        }
       } catch {
         setBulkOperation((prev) =>
           prev ? { ...prev, errors: [...prev.errors, `Failed to delete ${ws?.name ?? id}`] } : prev
@@ -339,10 +369,16 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
 
   const handleDelete = async (workspaceId: string) => {
     setProcessingIds((prev) => new Set(prev).add(workspaceId));
-    setDeleteConfirmId(null);
     try {
-      await removeWorkspace(workspaceId, { force: true });
-      onWorkspacesChanged?.();
+      const result = await removeWorkspace(workspaceId);
+      if (result.success) {
+        onWorkspacesChanged?.();
+      } else {
+        setForceDeleteModal({
+          workspaceId,
+          error: result.error ?? "Failed to remove workspace",
+        });
+      }
     } finally {
       setProcessingIds((prev) => {
         const next = new Set(prev);
@@ -359,6 +395,20 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
   return (
     <>
       {/* Bulk operation progress modal */}
+
+      <ForceDeleteModal
+        isOpen={forceDeleteModal !== null}
+        workspaceId={forceDeleteModal?.workspaceId ?? ""}
+        error={forceDeleteModal?.error ?? ""}
+        onClose={() => setForceDeleteModal(null)}
+        onForceDelete={async (workspaceId) => {
+          const result = await removeWorkspace(workspaceId, { force: true });
+          if (!result.success) {
+            throw new Error(result.error ?? "Force delete failed");
+          }
+          onWorkspacesChanged?.();
+        }}
+      />
       {bulkOperation && (
         <BulkProgressModal operation={bulkOperation} onClose={() => setBulkOperation(null)} />
       )}
@@ -469,7 +519,6 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
                   {/* Workspaces in this period */}
                   {periodWorkspaces.map((workspace) => {
                     const isProcessing = processingIds.has(workspace.id);
-                    const isDeleting = deleteConfirmId === workspace.id;
                     const isSelected = selectedIds.has(workspace.id);
                     const displayTitle = workspace.title ?? workspace.name;
 
@@ -507,54 +556,34 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
                           )}
                         </div>
 
-                        {isDeleting ? (
-                          <div className="flex items-center gap-2">
-                            <span className="text-muted text-xs">Delete?</span>
-                            <button
-                              onClick={() => void handleDelete(workspace.id)}
-                              disabled={isProcessing}
-                              className="rounded bg-red-600 px-2 py-1 text-xs text-white hover:bg-red-700 disabled:opacity-50"
-                            >
-                              Yes
-                            </button>
-                            <button
-                              onClick={() => setDeleteConfirmId(null)}
-                              disabled={isProcessing}
-                              className="text-muted hover:text-foreground text-xs disabled:opacity-50"
-                            >
-                              No
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-1">
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <button
-                                  onClick={() => void handleUnarchive(workspace.id)}
-                                  disabled={isProcessing}
-                                  className="text-muted hover:text-foreground rounded p-1.5 transition-colors hover:bg-white/10 disabled:opacity-50"
-                                  aria-label={`Restore workspace ${displayTitle}`}
-                                >
-                                  <ArchiveRestoreIcon className="h-4 w-4" />
-                                </button>
-                              </TooltipTrigger>
-                              <TooltipContent>Restore to sidebar</TooltipContent>
-                            </Tooltip>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <button
-                                  onClick={() => setDeleteConfirmId(workspace.id)}
-                                  disabled={isProcessing}
-                                  className="text-muted rounded p-1.5 transition-colors hover:bg-white/10 hover:text-red-400 disabled:opacity-50"
-                                  aria-label={`Delete workspace ${displayTitle}`}
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </button>
-                              </TooltipTrigger>
-                              <TooltipContent>Delete permanently</TooltipContent>
-                            </Tooltip>
-                          </div>
-                        )}
+                        <div className="flex items-center gap-1">
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <button
+                                onClick={() => void handleUnarchive(workspace.id)}
+                                disabled={isProcessing}
+                                className="text-muted hover:text-foreground rounded p-1.5 transition-colors hover:bg-white/10 disabled:opacity-50"
+                                aria-label={`Restore workspace ${displayTitle}`}
+                              >
+                                <ArchiveRestoreIcon className="h-4 w-4" />
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent>Restore to sidebar</TooltipContent>
+                          </Tooltip>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <button
+                                onClick={() => void handleDelete(workspace.id)}
+                                disabled={isProcessing}
+                                className="text-muted rounded p-1.5 transition-colors hover:bg-white/10 hover:text-red-400 disabled:opacity-50"
+                                aria-label={`Delete workspace ${displayTitle}`}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent>Delete permanently</TooltipContent>
+                          </Tooltip>
+                        </div>
                       </div>
                     );
                   })}
