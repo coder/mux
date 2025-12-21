@@ -26,11 +26,11 @@ export function useAutoScroll() {
   const autoScrollRef = useRef<boolean>(true);
   // Track the ResizeObserver so we can disconnect it when the element unmounts
   const observerRef = useRef<ResizeObserver | null>(null);
+  // Track pending RAF to coalesce rapid resize events
+  const rafIdRef = useRef<number | null>(null);
 
   // Sync ref with state to ensure callbacks always have latest value
   autoScrollRef.current = autoScroll;
-  // Track pending RAF to coalesce rapid resize events
-  const rafIdRef = useRef<number | null>(null);
 
   // Callback ref for the inner content wrapper - sets up ResizeObserver when element mounts.
   // ResizeObserver fires when the content size changes (Shiki highlighting, Mermaid, images, etc.),
@@ -52,10 +52,10 @@ export function useAutoScroll() {
       // Skip if auto-scroll is disabled (user scrolled up)
       if (!autoScrollRef.current || !contentRef.current) return;
 
-      // Defer layout read to next frame to avoid forcing synchronous layout
-      // during React's commit phase (which can cause 50-85ms layout thrashing)
-      if (rafIdRef.current !== null) return; // Coalesce rapid calls
-      rafIdRef.current = requestAnimationFrame(() => {
+      // Coalesce all resize events in a frame into one scroll operation.
+      // Without this, rapid resize events (Shiki highlighting, etc.) cause
+      // multiple scrolls per frame with slightly different scrollHeight values.
+      rafIdRef.current ??= requestAnimationFrame(() => {
         rafIdRef.current = null;
         if (autoScrollRef.current && contentRef.current) {
           contentRef.current.scrollTop = contentRef.current.scrollHeight;

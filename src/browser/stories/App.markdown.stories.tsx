@@ -5,18 +5,7 @@
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { STABLE_TIMESTAMP, createUserMessage, createAssistantMessage } from "./mockFactory";
 import { expect, waitFor } from "@storybook/test";
-
-async function waitForChatMessagesLoaded(canvasElement: HTMLElement): Promise<void> {
-  await waitFor(
-    () => {
-      const messageWindow = canvasElement.querySelector('[data-testid="message-window"]');
-      if (!messageWindow || messageWindow.getAttribute("data-loaded") !== "true") {
-        throw new Error("Messages not loaded yet");
-      }
-    },
-    { timeout: 5000 }
-  );
-}
+import { waitForChatMessagesLoaded } from "./storyPlayHelpers";
 
 import { setupSimpleChatStory } from "./storyHelpers";
 
@@ -272,14 +261,6 @@ export const CodeBlocks: AppStory = {
       },
       { timeout: 5000 }
     );
-
-    // Scroll to bottom and wait a frame for ResizeObserver to settle.
-    // Shiki highlighting can trigger useAutoScroll's ResizeObserver, causing scroll jitter.
-    const scrollContainer = canvasElement.querySelector('[data-testid="message-window"]');
-    if (scrollContainer) {
-      scrollContainer.scrollTop = scrollContainer.scrollHeight;
-      await new Promise((r) => requestAnimationFrame(r));
-    }
 
     const url = "https://github.com/coder/mux/pull/new/chat-autocomplete-b24r";
     const container = await waitFor(
