@@ -671,7 +671,7 @@ export function prepareCompactionMessage(options: CompactionOptions): {
 
   const metadata: MuxFrontendMetadata = {
     type: "compaction-request",
-    rawCommand: formatCompactionCommand(options),
+    rawCommand: formatCompactionCommandLine(options),
     parsed: compactData,
     ...(options.source === "idle-compaction" && {
       source: options.source,
@@ -719,18 +719,18 @@ export async function executeCompaction(
 }
 
 /**
- * Format compaction command string for display
+ * Format compaction command *line* for display.
+ *
+ * Intentionally excludes the multiline continue payload; that content is stored in
+ * `muxMetadata.parsed.continueMessage` and is shown/edited separately.
  */
-function formatCompactionCommand(options: CompactionOptions): string {
+function formatCompactionCommandLine(options: CompactionOptions): string {
   let cmd = "/compact";
   if (options.maxOutputTokens) {
     cmd += ` -t ${options.maxOutputTokens}`;
   }
   if (options.model) {
     cmd += ` -m ${options.model}`;
-  }
-  if (options.continueMessage) {
-    cmd += `\n${options.continueMessage.text}`;
   }
   return cmd;
 }

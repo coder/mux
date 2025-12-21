@@ -29,6 +29,7 @@ import {
   shouldShowInterruptedBarrier,
   mergeConsecutiveStreamErrors,
   computeBashOutputGroupInfo,
+  getEditableUserMessageText,
 } from "@/browser/utils/messages/messageUtils";
 import { BashOutputCollapsedIndicator } from "./tools/BashOutputCollapsedIndicator";
 import { hasInterruptedStream } from "@/browser/utils/messages/retryEligibility";
@@ -357,7 +358,10 @@ const AIViewInner: React.FC<AIViewProps> = ({
       return;
     }
 
-    setEditingMessage({ id: lastUserMessage.historyId, content: lastUserMessage.content });
+    setEditingMessage({
+      id: lastUserMessage.historyId,
+      content: getEditableUserMessageText(lastUserMessage),
+    });
     setAutoScroll(false); // Show jump-to-bottom indicator
 
     // Scroll to the message being edited

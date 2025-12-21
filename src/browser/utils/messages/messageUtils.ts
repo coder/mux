@@ -1,5 +1,21 @@
 import type { DisplayedMessage } from "@/common/types/message";
 import type { BashOutputToolArgs } from "@/common/types/tools";
+import { buildCompactionEditText } from "@/browser/utils/compaction/format";
+
+/**
+ * Returns the text that should be placed into the ChatInput when editing a user message.
+ *
+ * For /compact requests, this reconstructs the full multiline command by appending the
+ * continue message to the stored single-line rawCommand.
+ */
+export function getEditableUserMessageText(
+  message: Extract<DisplayedMessage, { type: "user" }>
+): string {
+  if (message.compactionRequest) {
+    return buildCompactionEditText(message.compactionRequest);
+  }
+  return message.content;
+}
 
 /**
  * Type guard to check if a message is a bash_output tool call with valid args
