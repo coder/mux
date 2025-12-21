@@ -44,7 +44,12 @@ const AgentStatusSchema = z.object({
 });
 
 type AgentStatus = z.infer<typeof AgentStatusSchema>;
-const MAX_DISPLAYED_MESSAGES = 128;
+
+// Default number of messages to display in the DOM for performance
+// Full history is still maintained internally for token counting and stats
+const DEFAULT_DISPLAY_LIMIT = 128;
+// How many additional messages to show when loading more
+const DISPLAY_LIMIT_INCREMENT = 64;
 
 interface StreamingContext {
   /** Backend timestamp when stream started (Date.now()) */
@@ -193,6 +198,9 @@ export class StreamingMessageAggregator {
 
   // Workspace ID for localStorage persistence
   private readonly workspaceId: string | undefined;
+
+  // Dynamic display limit for DOM performance (can be increased via expandDisplayLimit)
+  private displayLimit = DEFAULT_DISPLAY_LIMIT;
 
   // Workspace init hook state (ephemeral, not persisted to history)
   private initState: {
@@ -1656,9 +1664,9 @@ export class StreamingMessageAggregator {
 
       // Limit to last N messages for DOM performance
       // Full history is still maintained internally for token counting
-      if (displayedMessages.length > MAX_DISPLAYED_MESSAGES) {
-        const hiddenCount = displayedMessages.length - MAX_DISPLAYED_MESSAGES;
-        const slicedMessages = displayedMessages.slice(-MAX_DISPLAYED_MESSAGES);
+      if (displayedMessages.length > this.displayLimit) {
+        const hiddenCount = displayedMessages.length - this.displayLimit;
+        const slicedMessages = displayedMessages.slice(-this.displayLimit);
 
         // Add history-hidden indicator as the first message
         const historyHiddenMessage: DisplayedMessage = {
@@ -1675,6 +1683,35 @@ export class StreamingMessageAggregator {
       this.cachedDisplayedMessages = displayedMessages;
     }
     return this.cachedDisplayedMessages;
+  }
+
+  /**
+   * Expand the display limit to show more historical messages.
+   * Returns the new display limit, or null if all messages are already visible.
+   */
+  expandDisplayLimit(): number | null {
+    const allMessages = this.getAllMessages();
+    const totalDisplayed = this.getDisplayedMessages().length;
+    // Check if we're already showing all messages (no history-hidden indicator)
+    const hasHidden =
+      totalDisplayed > 0 && this.getDisplayedMessages()[0].type === "history-hidden";
+    if (!hasHidden) {
+      return null; // Nothing more to load
+    }
+    // Increase limit by increment
+    this.displayLimit += DISPLAY_LIMIT_INCREMENT;
+    // Invalidate cache so next getDisplayedMessages() uses new limit
+    this.cachedDisplayedMessages = null;
+    // Return new limit (capped at total message count for clarity)
+    return Math.min(this.displayLimit, allMessages.length);
+  }
+
+  /**
+   * Check if there are hidden messages that can be loaded.
+   */
+  hasHiddenMessages(): boolean {
+    const displayed = this.getDisplayedMessages();
+    return displayed.length > 0 && displayed[0].type === "history-hidden";
   }
 
   /**

@@ -49,6 +49,7 @@ import {
   useWorkspaceAggregator,
   useWorkspaceUsage,
   useWorkspaceStatsSnapshot,
+  workspaceStore,
 } from "@/browser/stores/WorkspaceStore";
 import { WorkspaceHeader } from "./WorkspaceHeader";
 import { getModelName } from "@/common/utils/ai/models";
@@ -258,6 +259,14 @@ const AIViewInner: React.FC<AIViewProps> = ({
   // Vim mode state - needed for keybind selection (Ctrl+C in vim, Esc otherwise)
   const [vimEnabled] = usePersistedState<boolean>(VIM_ENABLED_KEY, false, { listener: true });
 
+  // Load more history when user scrolls to top
+  // Use ref + useCallback pattern to avoid recreating useAutoScroll options on every render
+  // eslint-disable-next-line @typescript-eslint/no-empty-function
+  const handleLoadMoreHistoryRef = useRef<() => void>(() => {});
+  const onScrollNearTop = useCallback(() => {
+    handleLoadMoreHistoryRef.current();
+  }, []);
+
   // Use auto-scroll hook for scroll management
   const {
     contentRef,
@@ -268,7 +277,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
     jumpToBottom,
     handleScroll,
     markUserInteraction,
-  } = useAutoScroll();
+  } = useAutoScroll({ onScrollNearTop });
 
   // ChatInput API for focus management
   const chatInputAPI = useRef<ChatInputAPI | null>(null);
@@ -415,6 +424,29 @@ const AIViewInner: React.FC<AIViewProps> = ({
     },
     [api]
   );
+
+  // Load more history when user scrolls to top or clicks the hidden history button
+  const handleLoadMoreHistory = useCallback(() => {
+    // Capture scroll position before loading more messages
+    const scrollContainer = chatAreaRef.current;
+    const scrollHeightBefore = scrollContainer?.scrollHeight ?? 0;
+    const scrollTopBefore = scrollContainer?.scrollTop ?? 0;
+
+    const loaded = workspaceStore.expandDisplayLimit(workspaceId);
+
+    // Restore scroll position after new messages are rendered
+    if (loaded && scrollContainer) {
+      // Use requestAnimationFrame to wait for DOM update
+      requestAnimationFrame(() => {
+        const scrollHeightAfter = scrollContainer.scrollHeight;
+        const heightDiff = scrollHeightAfter - scrollHeightBefore;
+        scrollContainer.scrollTop = scrollTopBefore + heightDiff;
+      });
+    }
+  }, [workspaceId]);
+
+  // Keep ref in sync for scroll-triggered loading
+  handleLoadMoreHistoryRef.current = handleLoadMoreHistory;
 
   const openTerminal = useOpenTerminal();
   const handleOpenTerminal = useCallback(() => {
@@ -672,6 +704,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
                             foregroundBashToolCallIds={foregroundToolCallIds}
                             onSendBashToBackground={handleSendBashToBackground}
                             bashOutputGroup={bashOutputGroup}
+                            onLoadMoreHistory={handleLoadMoreHistory}
                           />
                         </div>
                         {/* Show collapsed indicator after the first item in a bash_output group */}

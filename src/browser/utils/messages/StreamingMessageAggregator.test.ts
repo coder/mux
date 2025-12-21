@@ -925,4 +925,112 @@ describe("StreamingMessageAggregator", () => {
       }
     });
   });
+
+  describe("expandDisplayLimit", () => {
+    test("should return null when no messages are hidden", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      // Add a few messages (less than default 128 limit)
+      aggregator.handleMessage({
+        type: "message",
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Hello" }],
+        metadata: { timestamp: Date.now(), historySequence: 1 },
+      });
+
+      aggregator.handleMessage({
+        type: "message",
+        id: "assistant-1",
+        role: "assistant",
+        parts: [{ type: "text", text: "Hi!" }],
+        metadata: { timestamp: Date.now(), historySequence: 2 },
+      });
+
+      // No messages hidden, should return null
+      expect(aggregator.expandDisplayLimit()).toBeNull();
+    });
+
+    test("should expand limit and reveal hidden messages", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      // Add more messages than the default 128 limit
+      // Each assistant message can have multiple displayed parts, so be careful with count
+      for (let i = 0; i < 150; i++) {
+        aggregator.handleMessage({
+          type: "message",
+          id: `user-${i}`,
+          role: "user",
+          parts: [{ type: "text", text: `Message ${i}` }],
+          metadata: { timestamp: Date.now(), historySequence: i * 2 },
+        });
+        aggregator.handleMessage({
+          type: "message",
+          id: `assistant-${i}`,
+          role: "assistant",
+          parts: [{ type: "text", text: `Response ${i}` }],
+          metadata: { timestamp: Date.now(), historySequence: i * 2 + 1 },
+        });
+      }
+
+      const messagesBeforeExpand = aggregator.getDisplayedMessages();
+      // Should have history-hidden indicator as first message
+      expect(messagesBeforeExpand[0].type).toBe("history-hidden");
+      const hiddenCountBefore =
+        messagesBeforeExpand[0].type === "history-hidden" ? messagesBeforeExpand[0].hiddenCount : 0;
+      expect(hiddenCountBefore).toBeGreaterThan(0);
+
+      // Expand the limit
+      const newLimit = aggregator.expandDisplayLimit();
+      expect(newLimit).not.toBeNull();
+      expect(newLimit).toBeGreaterThan(128);
+
+      const messagesAfterExpand = aggregator.getDisplayedMessages();
+      // Should still have hidden messages but fewer
+      if (messagesAfterExpand[0].type === "history-hidden") {
+        expect(messagesAfterExpand[0].hiddenCount).toBeLessThan(hiddenCountBefore);
+      }
+    });
+
+    test("hasHiddenMessages returns true when messages are truncated", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      // Add more messages than the default limit
+      for (let i = 0; i < 150; i++) {
+        aggregator.handleMessage({
+          type: "message",
+          id: `user-${i}`,
+          role: "user",
+          parts: [{ type: "text", text: `Message ${i}` }],
+          metadata: { timestamp: Date.now(), historySequence: i * 2 },
+        });
+        aggregator.handleMessage({
+          type: "message",
+          id: `assistant-${i}`,
+          role: "assistant",
+          parts: [{ type: "text", text: `Response ${i}` }],
+          metadata: { timestamp: Date.now(), historySequence: i * 2 + 1 },
+        });
+      }
+
+      expect(aggregator.hasHiddenMessages()).toBe(true);
+    });
+
+    test("hasHiddenMessages returns false when all messages are visible", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      // Add just a few messages
+      for (let i = 0; i < 3; i++) {
+        aggregator.handleMessage({
+          type: "message",
+          id: `user-${i}`,
+          role: "user",
+          parts: [{ type: "text", text: `Message ${i}` }],
+          metadata: { timestamp: Date.now(), historySequence: i * 2 },
+        });
+      }
+
+      expect(aggregator.hasHiddenMessages()).toBe(false);
+    });
+  });
 });

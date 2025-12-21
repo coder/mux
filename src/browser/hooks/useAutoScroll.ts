@@ -1,5 +1,10 @@
 import { useRef, useState, useCallback } from "react";
 
+interface UseAutoScrollOptions {
+  /** Callback when user scrolls near the top of the container */
+  onScrollNearTop?: () => void;
+}
+
 /**
  * Hook to manage auto-scrolling behavior for a scrollable container.
  *
@@ -17,7 +22,7 @@ import { useRef, useState, useCallback } from "react";
  * Auto-scroll is disabled when:
  * - User scrolls up
  */
-export function useAutoScroll() {
+export function useAutoScroll(options: UseAutoScrollOptions = {}) {
   const [autoScroll, setAutoScroll] = useState(true);
   const contentRef = useRef<HTMLDivElement>(null);
   const lastScrollTopRef = useRef<number>(0);
@@ -94,38 +99,46 @@ export function useAutoScroll() {
     }
   }, []);
 
-  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
-    const element = e.currentTarget;
-    const currentScrollTop = element.scrollTop;
-    const threshold = 100;
-    const isAtBottom = element.scrollHeight - currentScrollTop - element.clientHeight < threshold;
+  const handleScroll = useCallback(
+    (e: React.UIEvent<HTMLDivElement>) => {
+      const element = e.currentTarget;
+      const currentScrollTop = element.scrollTop;
+      const threshold = 100;
+      const isAtBottom = element.scrollHeight - currentScrollTop - element.clientHeight < threshold;
 
-    // Only process user-initiated scrolls (within 100ms of interaction)
-    const isUserScroll = Date.now() - lastUserInteractionRef.current < 100;
+      // Only process user-initiated scrolls (within 100ms of interaction)
+      const isUserScroll = Date.now() - lastUserInteractionRef.current < 100;
 
-    if (!isUserScroll) {
+      if (!isUserScroll) {
+        lastScrollTopRef.current = currentScrollTop;
+        return; // Ignore programmatic scrolls
+      }
+
+      // Detect scroll direction
+      const isScrollingUp = currentScrollTop < lastScrollTopRef.current;
+      const isScrollingDown = currentScrollTop > lastScrollTopRef.current;
+
+      if (isScrollingUp) {
+        // Always disable auto-scroll when scrolling up
+        setAutoScroll(false);
+        autoScrollRef.current = false;
+
+        // Notify when scrolled near the top (for loading more history)
+        if (currentScrollTop < threshold && options.onScrollNearTop) {
+          options.onScrollNearTop();
+        }
+      } else if (isScrollingDown && isAtBottom) {
+        // Only enable auto-scroll if scrolling down AND reached the bottom
+        setAutoScroll(true);
+        autoScrollRef.current = true;
+      }
+      // If scrolling down but not at bottom, auto-scroll remains disabled
+
+      // Update last scroll position
       lastScrollTopRef.current = currentScrollTop;
-      return; // Ignore programmatic scrolls
-    }
-
-    // Detect scroll direction
-    const isScrollingUp = currentScrollTop < lastScrollTopRef.current;
-    const isScrollingDown = currentScrollTop > lastScrollTopRef.current;
-
-    if (isScrollingUp) {
-      // Always disable auto-scroll when scrolling up
-      setAutoScroll(false);
-      autoScrollRef.current = false;
-    } else if (isScrollingDown && isAtBottom) {
-      // Only enable auto-scroll if scrolling down AND reached the bottom
-      setAutoScroll(true);
-      autoScrollRef.current = true;
-    }
-    // If scrolling down but not at bottom, auto-scroll remains disabled
-
-    // Update last scroll position
-    lastScrollTopRef.current = currentScrollTop;
-  }, []);
+    },
+    [options]
+  );
 
   const markUserInteraction = useCallback(() => {
     lastUserInteractionRef.current = Date.now();

@@ -29,6 +29,8 @@ interface MessageRendererProps {
   onSendBashToBackground?: (toolCallId: string) => void;
   /** Optional bash_output grouping info (computed at render-time) */
   bashOutputGroup?: BashOutputGroupInfo;
+  /** Callback to load more hidden history messages */
+  onLoadMoreHistory?: () => void;
 }
 
 // Memoized to prevent unnecessary re-renders when parent (AIView) updates
@@ -44,6 +46,7 @@ export const MessageRenderer = React.memo<MessageRendererProps>(
     foregroundBashToolCallIds,
     onSendBashToBackground,
     bashOutputGroup,
+    onLoadMoreHistory,
   }) => {
     // Route based on message type
     switch (message.type) {
@@ -83,7 +86,13 @@ export const MessageRenderer = React.memo<MessageRendererProps>(
       case "stream-error":
         return <StreamErrorMessage message={message} className={className} />;
       case "history-hidden":
-        return <HistoryHiddenMessage message={message} className={className} />;
+        return (
+          <HistoryHiddenMessage
+            message={message}
+            className={className}
+            onLoadMore={onLoadMoreHistory}
+          />
+        );
       case "workspace-init":
         return <InitMessage message={message} className={className} />;
       case "plan-display":

@@ -989,6 +989,22 @@ export class WorkspaceStore {
     return this.aggregators.get(workspaceId);
   }
 
+  /**
+   * Expand the display limit to show more historical messages.
+   * Returns true if more messages were loaded, false if all are already visible.
+   */
+  expandDisplayLimit(workspaceId: string): boolean {
+    const aggregator = this.aggregators.get(workspaceId);
+    if (!aggregator) return false;
+
+    const result = aggregator.expandDisplayLimit();
+    if (result !== null) {
+      this.states.bump(workspaceId);
+      return true;
+    }
+    return false;
+  }
+
   getWorkspaceStatsSnapshot(workspaceId: string): WorkspaceStatsSnapshot | null {
     return this.statsStore.get(workspaceId, () => {
       return this.workspaceStats.get(workspaceId) ?? null;
@@ -1772,6 +1788,7 @@ export const workspaceStore = {
     getStoreInstance().getFileModifyingToolMs(workspaceId),
   clearFileModifyingToolMs: (workspaceId: string) =>
     getStoreInstance().clearFileModifyingToolMs(workspaceId),
+  expandDisplayLimit: (workspaceId: string) => getStoreInstance().expandDisplayLimit(workspaceId),
 };
 
 /**
