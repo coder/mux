@@ -242,13 +242,58 @@ function createInitialChatTransientState(): WorkspaceChatTransientState {
 const ON_CHAT_RETRY_BASE_MS = 250;
 const ON_CHAT_RETRY_MAX_MS = 5000;
 
-type IteratorValidationFailedError = Error & { code: "EVENT_ITERATOR_VALIDATION_FAILED" };
+interface ValidationIssue {
+  path?: Array<string | number>;
+  message?: string;
+}
+
+type IteratorValidationFailedError = Error & {
+  code: "EVENT_ITERATOR_VALIDATION_FAILED";
+  cause?: {
+    issues?: ValidationIssue[];
+    data?: unknown;
+  };
+};
 
 function isIteratorValidationFailed(error: unknown): error is IteratorValidationFailedError {
   return (
     error instanceof Error &&
     (error as { code?: unknown }).code === "EVENT_ITERATOR_VALIDATION_FAILED"
   );
+}
+
+/**
+ * Extract a human-readable summary from an iterator validation error.
+ * ORPC wraps Zod issues in error.cause with { issues: [...], data: ... }
+ */
+function formatValidationError(error: IteratorValidationFailedError): string {
+  const cause = error.cause;
+  if (!cause) {
+    return "Unknown validation error (no cause)";
+  }
+
+  const issues = cause.issues ?? [];
+  if (issues.length === 0) {
+    return `Unknown validation error (no issues). Data: ${JSON.stringify(cause.data)}`;
+  }
+
+  // Format issues like: "type: Invalid discriminator value" or "metadata.usage.inputTokens: Expected number"
+  const issuesSummary = issues
+    .slice(0, 3) // Limit to first 3 issues
+    .map((issue) => {
+      const path = issue.path?.join(".") ?? "(root)";
+      const message = issue.message ?? "Unknown issue";
+      return `${path}: ${message}`;
+    })
+    .join("; ");
+
+  const moreCount = issues.length > 3 ? ` (+${issues.length - 3} more)` : "";
+
+  // Include the event type if available
+  const data = cause.data as { type?: string } | undefined;
+  const eventType = data?.type ? ` [event: ${data.type}]` : "";
+
+  return `${issuesSummary}${moreCount}${eventType}`;
 }
 
 function calculateOnChatBackoffMs(attempt: number): number {
@@ -1243,15 +1288,22 @@ export class WorkspaceStore {
           return;
         }
 
-        // EVENT_ITERATOR_VALIDATION_FAILED with ErrorEvent cause happens when:
-        // - The workspace was removed on server side (iterator ends with error)
-        // - Connection dropped (WebSocket/MessagePort error)
-        // Only suppress if workspace no longer exists (was removed during the race)
-        if (isIteratorValidationFailed(error) && !this.isWorkspaceSubscribed(workspaceId)) {
-          return;
+        // EVENT_ITERATOR_VALIDATION_FAILED can happen when:
+        // 1. Schema validation fails (event doesn't match WorkspaceChatMessageSchema)
+        // 2. Workspace was removed on server side (iterator ends with error)
+        // 3. Connection dropped (WebSocket/MessagePort error)
+        if (isIteratorValidationFailed(error)) {
+          // Only suppress if workspace no longer exists (was removed during the race)
+          if (!this.isWorkspaceSubscribed(workspaceId)) {
+            return;
+          }
+          // Log with detailed validation info for debugging schema mismatches
+          console.error(
+            `[WorkspaceStore] Event validation failed for ${workspaceId}: ${formatValidationError(error)}`
+          );
+        } else {
+          console.error(`[WorkspaceStore] Error in onChat subscription for ${workspaceId}:`, error);
         }
-
-        console.error(`[WorkspaceStore] Error in onChat subscription for ${workspaceId}:`, error);
       }
 
       const delayMs = calculateOnChatBackoffMs(attempt);
