@@ -989,6 +989,19 @@ export class WorkspaceStore {
     return this.aggregators.get(workspaceId);
   }
 
+  /**
+   * Mark the current active stream as "interrupting" (transient state).
+   * Call this before invoking interruptStream so the UI shows "interrupting..."
+   * immediately, avoiding a visual flash when the backend confirmation arrives.
+   */
+  setInterrupting(workspaceId: string): void {
+    const aggregator = this.aggregators.get(workspaceId);
+    if (aggregator) {
+      aggregator.setInterrupting();
+      this.states.bump(workspaceId);
+    }
+  }
+
   getWorkspaceStatsSnapshot(workspaceId: string): WorkspaceStatsSnapshot | null {
     return this.statsStore.get(workspaceId, () => {
       return this.workspaceStats.get(workspaceId) ?? null;

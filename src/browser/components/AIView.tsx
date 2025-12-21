@@ -42,16 +42,16 @@ import { useAutoScroll } from "@/browser/hooks/useAutoScroll";
 import { useOpenTerminal } from "@/browser/hooks/useOpenTerminal";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
-import { useFeatureFlags } from "@/browser/contexts/FeatureFlagsContext";
+
 import { useThinking } from "@/browser/contexts/ThinkingContext";
 import {
   useWorkspaceState,
   useWorkspaceAggregator,
   useWorkspaceUsage,
-  useWorkspaceStatsSnapshot,
+  useWorkspaceStoreRaw,
 } from "@/browser/stores/WorkspaceStore";
 import { WorkspaceHeader } from "./WorkspaceHeader";
-import { getModelName } from "@/common/utils/ai/models";
+
 import type { DisplayedMessage } from "@/common/types/message";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { getRuntimeTypeForTelemetry } from "@/common/telemetry";
@@ -133,10 +133,8 @@ const AIViewInner: React.FC<AIViewProps> = ({
   const startResize =
     selectedRightTab === "review" ? reviewSidebar.startResize : costsSidebar.startResize;
 
-  const statsSnapshot = useWorkspaceStatsSnapshot(workspaceId);
-  const { statsTabState } = useFeatureFlags();
-  const statsEnabled = Boolean(statsTabState?.enabled);
   const workspaceState = useWorkspaceState(workspaceId);
+  const storeRaw = useWorkspaceStoreRaw();
   const meta = workspaceMetadata.get(workspaceId);
   const isQueuedAgentTask = Boolean(meta?.parentWorkspaceId) && meta?.taskStatus === "queued";
   const queuedAgentTaskPrompt =
@@ -186,8 +184,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
   useEffect(() => {
     workspaceStateRef.current = workspaceState;
   }, [workspaceState]);
-  const { messages, canInterrupt, isCompacting, awaitingUserQuestion, loading, currentModel } =
-    workspaceState;
+  const { messages, canInterrupt, isCompacting, loading } = workspaceState;
 
   // Apply message transformations:
   // 1. Merge consecutive identical stream errors
@@ -208,9 +205,6 @@ const AIViewInner: React.FC<AIViewProps> = ({
     hasActiveStream || transformedMessages.length !== deferredTransformedMessages.length
       ? transformedMessages
       : deferredTransformedMessages;
-
-  // Get active stream message ID for token counting
-  const activeStreamMessageId = aggregator?.getActiveStreamMessageId();
 
   const autoCompactionResult = useMemo(
     () => checkAutoCompaction(workspaceUsage, pendingModel, use1M, autoCompactionThreshold / 100),
@@ -325,11 +319,13 @@ const AIViewInner: React.FC<AIViewProps> = ({
   // Handler for sending queued message immediately (interrupt + send)
   const handleSendQueuedImmediately = useCallback(async () => {
     if (!workspaceState?.queuedMessage || !workspaceState.canInterrupt) return;
+    // Set "interrupting" state immediately so UI shows "interrupting..." without flash
+    storeRaw.setInterrupting(workspaceId);
     await api?.workspace.interruptStream({
       workspaceId,
       options: { sendQueuedImmediately: true },
     });
-  }, [api, workspaceId, workspaceState?.queuedMessage, workspaceState?.canInterrupt]);
+  }, [api, workspaceId, workspaceState?.queuedMessage, workspaceState?.canInterrupt, storeRaw]);
 
   const handleEditLastUserMessage = useCallback(async () => {
     const current = workspaceStateRef.current;
@@ -703,44 +699,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
                 </>
               )}
               <PinnedTodoList workspaceId={workspaceId} />
-              {canInterrupt && (
-                <StreamingBarrier
-                  statusText={
-                    awaitingUserQuestion
-                      ? "Awaiting your input..."
-                      : isCompacting
-                        ? currentModel
-                          ? `${getModelName(currentModel)} compacting...`
-                          : "compacting..."
-                        : currentModel
-                          ? `${getModelName(currentModel)} streaming...`
-                          : "streaming..."
-                  }
-                  cancelText={
-                    awaitingUserQuestion
-                      ? "type a message to respond"
-                      : `hit ${formatKeybind(vimEnabled ? KEYBINDS.INTERRUPT_STREAM_VIM : KEYBINDS.INTERRUPT_STREAM_NORMAL)} to cancel`
-                  }
-                  tokenCount={
-                    awaitingUserQuestion
-                      ? undefined
-                      : activeStreamMessageId
-                        ? statsEnabled && statsSnapshot?.active?.messageId === activeStreamMessageId
-                          ? statsSnapshot.active.liveTokenCount
-                          : aggregator?.getStreamingTokenCount(activeStreamMessageId)
-                        : undefined
-                  }
-                  tps={
-                    awaitingUserQuestion
-                      ? undefined
-                      : activeStreamMessageId
-                        ? statsEnabled && statsSnapshot?.active?.messageId === activeStreamMessageId
-                          ? statsSnapshot.active.liveTPS
-                          : aggregator?.getStreamingTPS(activeStreamMessageId)
-                        : undefined
-                  }
-                />
-              )}
+              <StreamingBarrier workspaceId={workspaceId} />
               {shouldShowQueuedAgentTaskPrompt && (
                 <QueuedMessage
                   message={{
