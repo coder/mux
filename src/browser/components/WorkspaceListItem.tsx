@@ -168,7 +168,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
                     aria-label={`Archive workspace ${displayTitle}`}
                     data-workspace-id={workspaceId}
                   >
-                    <ArchiveIcon className="h-3.5 w-3.5" />
+                    <ArchiveIcon className="h-3 w-3" />
                   </button>
                 </TooltipTrigger>
                 <TooltipContent align="start">Archive workspace</TooltipContent>
