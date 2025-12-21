@@ -2,10 +2,19 @@ import React from "react";
 import { cn } from "@/common/lib/utils";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
-import { Trash2, Search, X } from "lucide-react";
+import { Trash2, Search } from "lucide-react";
 import { ArchiveIcon, ArchiveRestoreIcon } from "./icons/ArchiveIcon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { RuntimeBadge } from "./RuntimeBadge";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/browser/components/ui/dialog";
+import { Button } from "@/browser/components/ui/button";
 
 interface ArchivedWorkspacesProps {
   projectPath: string;
@@ -86,21 +95,28 @@ const BulkProgressModal: React.FC<{
   const actionPast = operation.type === "restore" ? "restored" : "deleted";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="bg-bg-dark border-border w-full max-w-md rounded-lg border p-6 shadow-xl">
-        <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-foreground text-lg font-semibold">
-            {isComplete ? "Complete" : `${actionVerb} Workspaces`}
-          </h3>
-          {isComplete && (
-            <button onClick={onClose} className="text-muted hover:text-foreground">
-              <X className="h-5 w-5" />
-            </button>
-          )}
-        </div>
+    <Dialog open onOpenChange={(open) => !open && isComplete && onClose()}>
+      <DialogContent maxWidth="400px" showCloseButton={isComplete}>
+        <DialogHeader>
+          <DialogTitle>{isComplete ? "Complete" : `${actionVerb} Workspaces`}</DialogTitle>
+          <DialogDescription>
+            {isComplete ? (
+              <>
+                Successfully {actionPast} {operation.completed} workspace
+                {operation.completed !== 1 && "s"}
+                {operation.errors.length > 0 && ` (${operation.errors.length} failed)`}
+              </>
+            ) : (
+              <>
+                {operation.completed} of {operation.total} complete
+                {operation.current && <> — {operation.current}</>}
+              </>
+            )}
+          </DialogDescription>
+        </DialogHeader>
 
         {/* Progress bar */}
-        <div className="bg-separator mb-2 h-2 overflow-hidden rounded-full">
+        <div className="bg-separator h-2 overflow-hidden rounded-full">
           <div
             className={cn(
               "h-full transition-all duration-300",
@@ -110,26 +126,9 @@ const BulkProgressModal: React.FC<{
           />
         </div>
 
-        <div className="text-muted mb-4 text-sm">
-          {isComplete ? (
-            <>
-              Successfully {actionPast} {operation.completed} workspace
-              {operation.completed !== 1 && "s"}
-              {operation.errors.length > 0 && ` (${operation.errors.length} failed)`}
-            </>
-          ) : (
-            <>
-              {operation.completed} of {operation.total} complete
-              {operation.current && (
-                <span className="text-foreground ml-1">— {operation.current}</span>
-              )}
-            </>
-          )}
-        </div>
-
         {/* Errors */}
         {operation.errors.length > 0 && (
-          <div className="mb-4 max-h-32 overflow-y-auto rounded bg-red-500/10 p-2 text-xs text-red-400">
+          <div className="max-h-32 overflow-y-auto rounded bg-red-500/10 p-2 text-xs text-red-400">
             {operation.errors.map((err, i) => (
               <div key={i}>{err}</div>
             ))}
@@ -137,15 +136,14 @@ const BulkProgressModal: React.FC<{
         )}
 
         {isComplete && (
-          <button
-            onClick={onClose}
-            className="bg-separator hover:bg-hover text-foreground w-full rounded px-4 py-2 text-sm font-medium transition-colors"
-          >
-            Done
-          </button>
+          <DialogFooter className="justify-center">
+            <Button variant="secondary" onClick={onClose} className="w-full">
+              Done
+            </Button>
+          </DialogFooter>
         )}
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 };
 
