@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import App from "../App";
+import { AuthTokenModal } from "./AuthTokenModal";
 import { LoadingScreen } from "./LoadingScreen";
 import { useWorkspaceStoreRaw } from "../stores/WorkspaceStore";
 import { useGitStatusStoreRaw } from "../stores/GitStatusStore";
@@ -42,7 +43,8 @@ export function AppLoader(props: AppLoaderProps) {
 function AppLoaderInner() {
   const workspaceContext = useWorkspaceContext();
   const projectContext = useProjectContext();
-  const { api } = useAPI();
+  const apiState = useAPI();
+  const api = apiState.api;
 
   // Get store instances
   const workspaceStore = useWorkspaceStoreRaw();
@@ -72,6 +74,11 @@ function AppLoaderInner() {
     gitStatusStore,
     api,
   ]);
+
+  // If we're in browser mode and auth is required, show the token prompt before any data loads.
+  if (apiState.status === "auth_required") {
+    return <AuthTokenModal isOpen={true} onSubmit={apiState.authenticate} error={apiState.error} />;
+  }
 
   // Show loading screen until both projects and workspaces are loaded and stores synced
   if (projectContext.loading || workspaceContext.loading || !storesSynced) {
