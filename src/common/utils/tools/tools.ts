@@ -131,6 +131,8 @@ export async function getToolsForModel(
   // Wrap them to handle init waiting centrally instead of in each tool
   const runtimeTools: Record<string, Tool> = {
     file_read: wrap(createFileReadTool(config)),
+    agent_skill_read: wrap(createAgentSkillReadTool(config)),
+    agent_skill_read_file: wrap(createAgentSkillReadFileTool(config)),
     file_edit_replace_string: wrap(createFileEditReplaceStringTool(config)),
     file_edit_insert: wrap(createFileEditInsertTool(config)),
     // DISABLED: file_edit_replace_lines - causes models (particularly GPT-5-Codex)
@@ -147,8 +149,6 @@ export async function getToolsForModel(
   // Non-runtime tools execute immediately (no init wait needed)
   const nonRuntimeTools: Record<string, Tool> = {
     ...(config.mode === "plan" ? { ask_user_question: createAskUserQuestionTool(config) } : {}),
-    agent_skill_read: createAgentSkillReadTool(config),
-    agent_skill_read_file: createAgentSkillReadFileTool(config),
     propose_plan: createProposePlanTool(config),
     task: createTaskTool(config),
     task_await: createTaskAwaitTool(config),

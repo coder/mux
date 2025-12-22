@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { describe, expect, test } from "bun:test";
 
 import { SkillNameSchema } from "@/common/orpc/schemas";
+import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import { DisposableTempDir } from "@/node/services/tempDir";
 import { discoverAgentSkills, readAgentSkill } from "./agentSkillsService";
 
@@ -32,8 +33,9 @@ describe("agentSkillsService", () => {
     await writeSkill(globalSkillsRoot, "bar", "global only");
 
     const roots = { projectRoot: projectSkillsRoot, globalRoot: globalSkillsRoot };
+    const runtime = new LocalRuntime(project.path);
 
-    const skills = await discoverAgentSkills(project.path, { roots });
+    const skills = await discoverAgentSkills(runtime, project.path, { roots });
 
     expect(skills.map((s) => s.name)).toEqual(["bar", "foo"]);
 
@@ -58,9 +60,10 @@ describe("agentSkillsService", () => {
     await writeSkill(projectSkillsRoot, "foo", "from project");
 
     const roots = { projectRoot: projectSkillsRoot, globalRoot: globalSkillsRoot };
+    const runtime = new LocalRuntime(project.path);
 
     const name = SkillNameSchema.parse("foo");
-    const resolved = await readAgentSkill(project.path, name, { roots });
+    const resolved = await readAgentSkill(runtime, project.path, name, { roots });
 
     expect(resolved.package.scope).toBe("project");
     expect(resolved.package.frontmatter.description).toBe("from project");

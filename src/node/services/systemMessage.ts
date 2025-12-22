@@ -118,9 +118,9 @@ You are in a git worktree at ${workspacePath}
  * Note: We only expose server names, not commands, to avoid leaking secrets.
  */
 
-async function buildAgentSkillsContext(projectPath: string): Promise<string> {
+async function buildAgentSkillsContext(runtime: Runtime, workspacePath: string): Promise<string> {
   try {
-    const skills = await discoverAgentSkills(projectPath);
+    const skills = await discoverAgentSkills(runtime, workspacePath);
     if (skills.length === 0) return "";
 
     const MAX_SKILLS = 50;
@@ -148,7 +148,7 @@ async function buildAgentSkillsContext(projectPath: string): Promise<string> {
 
     return `\n\n<agent-skills>\n${lines.join("\n")}\n</agent-skills>`;
   } catch (error) {
-    log.warn("Failed to build agent skills context", { projectPath, error });
+    log.warn("Failed to build agent skills context", { workspacePath, error });
     return "";
   }
 }
@@ -313,7 +313,7 @@ export async function buildSystemMessage(
   }
 
   // Add agent skills context (if any)
-  systemMessage += await buildAgentSkillsContext(metadata.projectPath);
+  systemMessage += await buildAgentSkillsContext(runtime, workspacePath);
 
   if (options?.variant === "agent") {
     const agentPrompt = options.agentSystemPrompt?.trim();

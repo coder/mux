@@ -19,11 +19,11 @@ export const createAgentSkillReadTool: ToolFactory = (config: ToolConfiguration)
     description: TOOL_DEFINITIONS.agent_skill_read.description,
     inputSchema: TOOL_DEFINITIONS.agent_skill_read.schema,
     execute: async ({ name }): Promise<AgentSkillReadToolResult> => {
-      const projectPath = config.muxEnv?.MUX_PROJECT_PATH;
-      if (!projectPath) {
+      const workspacePath = config.cwd;
+      if (!workspacePath) {
         return {
           success: false,
-          error: "MUX_PROJECT_PATH is not available; cannot resolve agent skills roots.",
+          error: "Tool misconfigured: cwd is required.",
         };
       }
 
@@ -37,7 +37,7 @@ export const createAgentSkillReadTool: ToolFactory = (config: ToolConfiguration)
       }
 
       try {
-        const resolved = await readAgentSkill(projectPath, parsedName.data);
+        const resolved = await readAgentSkill(config.runtime, workspacePath, parsedName.data);
         return {
           success: true,
           skill: resolved.package,

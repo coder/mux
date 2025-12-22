@@ -1,6 +1,3 @@
-import * as fs from "node:fs/promises";
-import * as path from "node:path";
-
 import { tool } from "ai";
 
 import type { AgentSkillReadFileToolResult } from "@/common/types/tools";
@@ -12,14 +9,11 @@ import {
   resolveAgentSkillFilePath,
 } from "@/node/services/agentSkills/agentSkillsService";
 import { validateFileSize } from "@/node/services/tools/fileCommon";
+import { RuntimeError } from "@/node/runtime/Runtime";
+import { readFileString } from "@/node/utils/runtime/helpers";
 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function isPathTraversal(root: string, candidate: string): boolean {
-  const rel = path.relative(root, candidate);
-  return rel.startsWith("..") || path.isAbsolute(rel);
 }
 
 /**
@@ -31,39 +25,30 @@ export const createAgentSkillReadFileTool: ToolFactory = (config: ToolConfigurat
     description: TOOL_DEFINITIONS.agent_skill_read_file.description,
     inputSchema: TOOL_DEFINITIONS.agent_skill_read_file.schema,
     execute: async ({ name, filePath, offset, limit }): Promise<AgentSkillReadFileToolResult> => {
+      const workspacePath = config.cwd;
+      if (!workspacePath) {
+        return {
+          success: false,
+          error: "Tool misconfigured: cwd is required.",
+        };
+      }
+
+      // Defensive: validate again even though inputSchema should guarantee shape.
+      const parsedName = SkillNameSchema.safeParse(name);
+      if (!parsedName.success) {
+        return {
+          success: false,
+          error: parsedName.error.message,
+        };
+      }
+
       try {
-        const projectPath = config.muxEnv?.MUX_PROJECT_PATH;
-        if (!projectPath) {
-          return {
-            success: false,
-            error: "MUX_PROJECT_PATH is not available; cannot resolve agent skills roots.",
-          };
-        }
-
-        // Defensive: validate again even though inputSchema should guarantee shape.
-        const parsedName = SkillNameSchema.safeParse(name);
-        if (!parsedName.success) {
-          return {
-            success: false,
-            error: parsedName.error.message,
-          };
-        }
-
-        const resolvedSkill = await readAgentSkill(projectPath, parsedName.data);
-        const unsafeTargetPath = resolveAgentSkillFilePath(resolvedSkill.skillDir, filePath);
-
-        // Resolve symlinks and ensure the final target stays inside the skill directory.
-        const [realSkillDir, realTargetPath] = await Promise.all([
-          fs.realpath(resolvedSkill.skillDir),
-          fs.realpath(unsafeTargetPath),
-        ]);
-
-        if (isPathTraversal(realSkillDir, realTargetPath)) {
-          return {
-            success: false,
-            error: `Invalid filePath (path traversal): ${filePath}`,
-          };
-        }
+        const resolvedSkill = await readAgentSkill(config.runtime, workspacePath, parsedName.data);
+        const targetPath = resolveAgentSkillFilePath(
+          config.runtime,
+          resolvedSkill.skillDir,
+          filePath
+        );
 
         if (offset !== undefined && offset < 1) {
           return {
@@ -72,19 +57,27 @@ export const createAgentSkillReadFileTool: ToolFactory = (config: ToolConfigurat
           };
         }
 
-        const stat = await fs.stat(realTargetPath);
-        if (stat.isDirectory()) {
+        let stat;
+        try {
+          stat = await config.runtime.stat(targetPath);
+        } catch (err) {
+          if (err instanceof RuntimeError) {
+            return {
+              success: false,
+              error: err.message,
+            };
+          }
+          throw err;
+        }
+
+        if (stat.isDirectory) {
           return {
             success: false,
             error: `Path is a directory, not a file: ${filePath}`,
           };
         }
 
-        const sizeValidation = validateFileSize({
-          size: stat.size,
-          modifiedTime: stat.mtime,
-          isDirectory: false,
-        });
+        const sizeValidation = validateFileSize(stat);
         if (sizeValidation) {
           return {
             success: false,
@@ -92,7 +85,19 @@ export const createAgentSkillReadFileTool: ToolFactory = (config: ToolConfigurat
           };
         }
 
-        const fullContent = await fs.readFile(realTargetPath, "utf-8");
+        let fullContent: string;
+        try {
+          fullContent = await readFileString(config.runtime, targetPath);
+        } catch (err) {
+          if (err instanceof RuntimeError) {
+            return {
+              success: false,
+              error: err.message,
+            };
+          }
+          throw err;
+        }
+
         const lines = fullContent === "" ? [] : fullContent.split("\n");
 
         if (offset !== undefined && offset > lines.length) {
@@ -149,27 +154,11 @@ export const createAgentSkillReadFileTool: ToolFactory = (config: ToolConfigurat
         return {
           success: true,
           file_size: stat.size,
-          modifiedTime: stat.mtime.toISOString(),
+          modifiedTime: stat.modifiedTime.toISOString(),
           lines_read: numberedLines.length,
           content: numberedLines.join("\n"),
         };
       } catch (error) {
-        if (error && typeof error === "object" && "code" in error) {
-          const code = (error as { code?: string }).code;
-          if (code === "ENOENT") {
-            return {
-              success: false,
-              error: `File not found: ${filePath}`,
-            };
-          }
-          if (code === "EACCES") {
-            return {
-              success: false,
-              error: `Permission denied: ${filePath}`,
-            };
-          }
-        }
-
         return {
           success: false,
           error: `Failed to read file: ${formatError(error)}`,

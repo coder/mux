@@ -23,7 +23,10 @@ Mux discovers skills from two roots:
 
 If a skill exists in both locations, **project-local overrides global**.
 
-<Info>Mux reads skills from the machine running mux (even if the workspace runtime is SSH).</Info>
+<Info>
+  Mux reads skills using the active workspace runtime. For SSH workspaces, skills are read from the
+  remote host.
+</Info>
 
 ## Skill layout
 
