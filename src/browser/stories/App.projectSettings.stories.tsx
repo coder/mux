@@ -186,6 +186,60 @@ export const ProjectSettingsEmpty: AppStory = {
   },
 };
 
+/** Project settings - adding a remote server shows the headers table editor */
+export const ProjectSettingsAddRemoteServerHeaders: AppStory = {
+  render: () => <AppWithMocks setup={() => setupMCPStory({})} />,
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await openProjectSettings(canvasElement);
+
+    const body = within(canvasElement.ownerDocument.body);
+
+    const addServerSummary = await body.findByText(/^Add server$/i);
+    await userEvent.click(addServerSummary);
+
+    // Switch the transport to HTTP to reveal the headers editor.
+    const transportLabel = await body.findByText("Transport");
+    const transportContainer = transportLabel.closest("div");
+    await expect(transportContainer).not.toBeNull();
+
+    const transportSelect = within(transportContainer as HTMLElement).getByRole("combobox");
+    await userEvent.click(transportSelect);
+
+    const httpOption = await body.findByRole("option", { name: /HTTP \(Streamable\)/i });
+    await userEvent.click(httpOption);
+
+    const headersLabel = await body.findByText(/HTTP headers \(optional\)/i);
+    headersLabel.scrollIntoView({ block: "center" });
+
+    // Configure a secret-backed Authorization header.
+    const addHeaderButton = await body.findByRole("button", { name: /\+ Add header/i });
+    await userEvent.click(addHeaderButton);
+
+    const headerNameInputs = body.getAllByPlaceholderText("Authorization");
+    await userEvent.type(headerNameInputs[0], "Authorization");
+
+    const secretToggles = body.getAllByRole("button", { name: "Secret" });
+    await userEvent.click(secretToggles[0]);
+
+    const secretValueInput = await body.findByPlaceholderText("MCP_TOKEN");
+    await userEvent.type(secretValueInput, "MCP_TOKEN");
+
+    // Add a second plain-text header.
+    await userEvent.click(addHeaderButton);
+
+    const headerNameInputsAfterSecond = body.getAllByPlaceholderText("Authorization");
+    await userEvent.type(headerNameInputsAfterSecond[1], "X-Env");
+
+    const textValueInput = await body.findByPlaceholderText("value");
+    await userEvent.type(textValueInput, "prod");
+
+    await expect(body.findByDisplayValue("Authorization")).resolves.toBeInTheDocument();
+    await expect(body.findByDisplayValue("MCP_TOKEN")).resolves.toBeInTheDocument();
+    await expect(body.findByDisplayValue("X-Env")).resolves.toBeInTheDocument();
+    await expect(body.findByDisplayValue("prod")).resolves.toBeInTheDocument();
+  },
+};
+
 /** Project settings with MCP servers configured (all enabled) */
 export const ProjectSettingsWithServers: AppStory = {
   render: () => (
