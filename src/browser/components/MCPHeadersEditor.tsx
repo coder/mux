@@ -1,4 +1,6 @@
 import React, { useId } from "react";
+import { ChevronDown } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/browser/components/ui/popover";
 import { ToggleGroup, ToggleGroupItem } from "@/browser/components/ui/toggle-group";
 import {
   createMCPHeaderRow,
@@ -12,6 +14,10 @@ export const MCPHeadersEditor: React.FC<{
   secretKeys: string[];
   disabled?: boolean;
 }> = (props) => {
+  const [openSecretPickerRowId, setOpenSecretPickerRowId] = React.useState<string | null>(null);
+  const sortedSecretKeys = props.secretKeys
+    .slice()
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
   const datalistId = useId();
   const { validation } = mcpHeaderRowsToRecord(props.rows, {
     knownSecretKeys: new Set(props.secretKeys),
@@ -23,6 +29,9 @@ export const MCPHeadersEditor: React.FC<{
 
   const removeRow = (id: string) => {
     props.onChange(props.rows.filter((row) => row.id !== id));
+    if (openSecretPickerRowId === id) {
+      setOpenSecretPickerRowId(null);
+    }
   };
 
   const updateRow = (id: string, patch: Partial<Omit<MCPHeaderRow, "id">>) => {
@@ -64,7 +73,7 @@ export const MCPHeadersEditor: React.FC<{
                 placeholder="Authorization"
                 disabled={props.disabled}
                 spellCheck={false}
-                className="bg-modal-bg border-border-medium focus:border-accent placeholder:text-dim w-full rounded border px-2.5 py-1.5 font-mono text-[13px] text-white focus:outline-none disabled:opacity-50"
+                className="bg-modal-bg border-border-medium focus:border-accent placeholder:text-dim text-foreground w-full rounded border px-2.5 py-1.5 font-mono text-[13px] focus:outline-none disabled:opacity-50"
               />
 
               <ToggleGroup
@@ -74,7 +83,12 @@ export const MCPHeadersEditor: React.FC<{
                   if (value !== "text" && value !== "secret") {
                     return;
                   }
+
                   updateRow(row.id, { kind: value });
+
+                  if (value !== "secret" && openSecretPickerRowId === row.id) {
+                    setOpenSecretPickerRowId(null);
+                  }
                 }}
                 size="sm"
                 disabled={props.disabled}
@@ -88,16 +102,59 @@ export const MCPHeadersEditor: React.FC<{
               </ToggleGroup>
 
               {row.kind === "secret" ? (
-                <input
-                  type="text"
-                  list={datalistId}
-                  value={row.value}
-                  onChange={(e) => updateRow(row.id, { value: e.target.value })}
-                  placeholder="MCP_TOKEN"
-                  disabled={props.disabled}
-                  spellCheck={false}
-                  className="bg-modal-bg border-border-medium focus:border-accent placeholder:text-dim w-full rounded border px-2.5 py-1.5 font-mono text-[13px] text-white focus:outline-none disabled:opacity-50"
-                />
+                <div className="flex items-stretch gap-1">
+                  <input
+                    type="text"
+                    list={datalistId}
+                    value={row.value}
+                    onChange={(e) => updateRow(row.id, { value: e.target.value })}
+                    placeholder="MCP_TOKEN"
+                    disabled={props.disabled}
+                    spellCheck={false}
+                    className="bg-modal-bg border-border-medium focus:border-accent placeholder:text-dim text-foreground w-full flex-1 rounded border px-2.5 py-1.5 font-mono text-[13px] focus:outline-none disabled:opacity-50"
+                  />
+
+                  {sortedSecretKeys.length > 0 && (
+                    <Popover
+                      open={openSecretPickerRowId === row.id}
+                      onOpenChange={(open) => setOpenSecretPickerRowId(open ? row.id : null)}
+                    >
+                      <PopoverTrigger asChild>
+                        <button
+                          type="button"
+                          aria-label="Choose secret"
+                          title="Choose secret"
+                          disabled={props.disabled}
+                          className="bg-modal-bg border-border-medium focus:border-accent hover:bg-hover text-muted hover:text-foreground flex cursor-pointer items-center justify-center rounded border px-2.5 py-1.5 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          <ChevronDown className="h-4 w-4" />
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent align="end" sideOffset={4} className="p-1">
+                        <div className="max-h-48 overflow-auto">
+                          {(row.value.trim() === ""
+                            ? sortedSecretKeys
+                            : sortedSecretKeys.filter((key) =>
+                                key.toLowerCase().includes(row.value.trim().toLowerCase())
+                              )
+                          ).map((key) => (
+                            <button
+                              key={key}
+                              type="button"
+                              onClick={() => {
+                                updateRow(row.id, { value: key });
+                                setOpenSecretPickerRowId(null);
+                              }}
+                              className="hover:bg-hover text-foreground w-full cursor-pointer rounded px-2 py-1 text-left font-mono text-xs"
+                            >
+                              {key}
+                            </button>
+                          ))}
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                  )}
+                </div>
               ) : (
                 <input
                   type="text"
@@ -106,7 +163,7 @@ export const MCPHeadersEditor: React.FC<{
                   placeholder="value"
                   disabled={props.disabled}
                   spellCheck={false}
-                  className="bg-modal-bg border-border-medium focus:border-accent placeholder:text-dim w-full rounded border px-2.5 py-1.5 font-mono text-[13px] text-white focus:outline-none disabled:opacity-50"
+                  className="bg-modal-bg border-border-medium focus:border-accent placeholder:text-dim text-foreground w-full rounded border px-2.5 py-1.5 font-mono text-[13px] focus:outline-none disabled:opacity-50"
                 />
               )}
 
@@ -125,7 +182,7 @@ export const MCPHeadersEditor: React.FC<{
       )}
 
       <datalist id={datalistId}>
-        {props.secretKeys.map((key) => (
+        {sortedSecretKeys.map((key) => (
           <option key={key} value={key} />
         ))}
       </datalist>

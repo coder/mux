@@ -11,6 +11,7 @@ import type {
   ProvidersConfigMap,
   WorkspaceStatsSnapshot,
 } from "@/common/orpc/types";
+import type { Secret } from "@/common/types/secrets";
 import type { ChatStats } from "@/common/types/chatStats";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import {
@@ -87,6 +88,8 @@ export interface MockORPCClientOptions {
   /** Session usage data per workspace (for Costs tab) */
   workspaceStatsSnapshots?: Map<string, WorkspaceStatsSnapshot>;
   statsTabVariant?: "control" | "stats";
+  /** Project secrets per project */
+  projectSecrets?: Map<string, Secret[]>;
   sessionUsage?: Map<string, MockSessionUsage>;
   /** MCP server configuration per project */
   mcpServers?: Map<
@@ -132,6 +135,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     sessionUsage = new Map(),
     workspaceStatsSnapshots = new Map<string, WorkspaceStatsSnapshot>(),
     statsTabVariant = "control",
+    projectSecrets = new Map<string, Secret[]>(),
     mcpServers = new Map(),
     mcpOverrides = new Map(),
     mcpTestResults = new Map(),
@@ -229,8 +233,12 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         return { success: true, data: undefined };
       },
       secrets: {
-        get: async () => [],
-        update: async () => ({ success: true, data: undefined }),
+        get: async (input: { projectPath: string }) =>
+          projectSecrets.get(input.projectPath) ?? [],
+        update: async (input: { projectPath: string; secrets: Secret[] }) => {
+          projectSecrets.set(input.projectPath, input.secrets);
+          return { success: true, data: undefined };
+        },
       },
       mcp: {
         list: async (input: { projectPath: string }) => mcpServers.get(input.projectPath) ?? {},

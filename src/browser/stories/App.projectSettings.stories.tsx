@@ -9,6 +9,7 @@
  * Uses play functions to navigate to settings and interact with the UI.
  */
 
+import type { Secret } from "@/common/types/secrets";
 import type { APIClient } from "@/browser/contexts/API";
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { createWorkspace, groupWorkspacesByProject } from "./mockFactory";
@@ -69,6 +70,8 @@ interface MCPStoryOptions {
   };
   /** Test results for each server (tools available) */
   testResults?: Record<string, string[]>;
+  /** Project secrets (used for secret-backed MCP header dropdowns) */
+  secrets?: Secret[];
   /** Pre-cache test results in localStorage */
   preCacheTools?: boolean;
 }
@@ -124,6 +127,10 @@ function setupMCPStory(options: MCPStoryOptions = {}): APIClient {
     mcpOverrides.set(workspaceId, options.workspaceOverrides);
   }
 
+  const projectSecrets = new Map<string, Secret[]>();
+  if (options.secrets) {
+    projectSecrets.set(projectPath, options.secrets);
+  }
   const mcpTestResults = new Map<string, { success: true; tools: string[] }>();
   if (options.testResults) {
     for (const [serverName, tools] of Object.entries(options.testResults)) {
@@ -134,6 +141,7 @@ function setupMCPStory(options: MCPStoryOptions = {}): APIClient {
   return createMockORPCClient({
     projects: groupWorkspacesByProject(workspaces),
     workspaces,
+    projectSecrets,
     mcpServers,
     mcpOverrides,
     mcpTestResults,
@@ -188,7 +196,18 @@ export const ProjectSettingsEmpty: AppStory = {
 
 /** Project settings - adding a remote server shows the headers table editor */
 export const ProjectSettingsAddRemoteServerHeaders: AppStory = {
-  render: () => <AppWithMocks setup={() => setupMCPStory({})} />,
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupMCPStory({
+          secrets: [
+            { key: "MCP_TOKEN", value: "abc123" },
+            { key: "MCP_TOKEN_DEV", value: "def456" },
+          ],
+        })
+      }
+    />
+  ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     await openProjectSettings(canvasElement);
 
@@ -220,6 +239,10 @@ export const ProjectSettingsAddRemoteServerHeaders: AppStory = {
 
     const secretToggles = body.getAllByRole("radio", { name: "Secret" });
     await userEvent.click(secretToggles[0]);
+
+    await expect(
+      body.findByRole("button", { name: /Choose secret/i })
+    ).resolves.toBeInTheDocument();
 
     const secretValueInput = await body.findByPlaceholderText("MCP_TOKEN");
     await userEvent.type(secretValueInput, "MCP_TOKEN");
