@@ -29,6 +29,15 @@ gh pr view <number> --json mergeable,mergeStateStatus | jq '.'
 ./scripts/wait_pr_checks.sh <pr_number>
 ```
 
+- When posting multi-line comments with `gh` (e.g., `@codex review`), **do not** rely on `\n` escapes inside quoted `--body` strings (they will be sent as literal text). Prefer `--body-file -` with a heredoc to preserve real newlines:
+
+```bash
+gh pr comment <pr_number> --body-file - <<'EOF'
+@codex review
+
+<message>
+EOF
+```
 - If Codex left review comments and you addressed them, push your fixes and then comment `@codex review` to re-request review. After that, re-run `./scripts/wait_pr_checks.sh <pr_number>` and `./scripts/check_codex_comments.sh <pr_number>`.
 - Generally run `wait_pr_checks` after submitting a PR to ensure CI passes.
 - Status decoding: `mergeable=MERGEABLE` clean; `CONFLICTING` needs resolution. `mergeStateStatus=CLEAN` ready, `BLOCKED` waiting for CI, `BEHIND` rebase, `DIRTY` conflicts.
