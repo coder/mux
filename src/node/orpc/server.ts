@@ -12,7 +12,7 @@ import * as path from "path";
 import { WebSocketServer } from "ws";
 import { RPCHandler } from "@orpc/server/node";
 import { RPCHandler as ORPCWebSocketServerHandler } from "@orpc/server/ws";
-import { onError } from "@orpc/server";
+import { ORPCError, onError } from "@orpc/server";
 import { OpenAPIGenerator } from "@orpc/openapi";
 import { OpenAPIHandler } from "@orpc/openapi/node";
 import { ZodToJsonSchemaConverter } from "@orpc/zod/zod4";
@@ -99,7 +99,16 @@ export async function createOrpcServer({
   serveStatic = false,
   // From dist/node/orpc/, go up 2 levels to reach dist/ where index.html lives
   staticDir = path.join(__dirname, "../.."),
-  onOrpcError = (error) => log.error("ORPC Error:", error),
+  onOrpcError = (error) => {
+    // Auth failures are expected in browser mode while the user enters the token.
+    // Avoid spamming error logs with stack traces on every unauthenticated request.
+    if (error instanceof ORPCError && error.code === "UNAUTHORIZED") {
+      log.debug("ORPC unauthorized request");
+      return;
+    }
+
+    log.error("ORPC Error:", error);
+  },
   router: existingRouter,
 }: OrpcServerOptions): Promise<OrpcServer> {
   // Express app setup
