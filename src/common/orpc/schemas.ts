@@ -113,6 +113,7 @@ export {
 
 // API router schemas
 export {
+  ApiServerStatusSchema,
   AWSCredentialStatusSchema,
   config,
   debug,

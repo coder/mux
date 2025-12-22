@@ -3,7 +3,7 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import * as os from "os";
 import * as net from "net";
-import { ServerService } from "./serverService";
+import { ServerService, computeNetworkBaseUrls } from "./serverService";
 import type { ORPCContext } from "@/node/orpc/context";
 import { ServerLockDataSchema } from "./serverLockfile";
 
@@ -177,5 +177,103 @@ describe("ServerService.startServer", () => {
     } finally {
       await service.stopServer();
     }
+  });
+});
+
+describe("computeNetworkBaseUrls", () => {
+  test("returns empty for loopback binds", () => {
+    expect(computeNetworkBaseUrls({ bindHost: "127.0.0.1", port: 3000 })).toEqual([]);
+    expect(computeNetworkBaseUrls({ bindHost: "localhost", port: 3000 })).toEqual([]);
+    expect(computeNetworkBaseUrls({ bindHost: "::1", port: 3000 })).toEqual([]);
+  });
+
+  test("expands 0.0.0.0 to all non-internal IPv4 interfaces", () => {
+    const networkInterfaces: ReturnType<typeof os.networkInterfaces> = {
+      lo0: [
+        {
+          address: "127.0.0.1",
+          netmask: "255.0.0.0",
+          family: "IPv4",
+          mac: "00:00:00:00:00:00",
+          internal: true,
+          cidr: "127.0.0.1/8",
+        },
+      ],
+      en0: [
+        {
+          address: "192.168.1.10",
+          netmask: "255.255.255.0",
+          family: "IPv4",
+          mac: "aa:bb:cc:dd:ee:ff",
+          internal: false,
+          cidr: "192.168.1.10/24",
+        },
+      ],
+      tailscale0: [
+        {
+          address: "100.64.0.2",
+          netmask: "255.192.0.0",
+          family: "IPv4",
+          mac: "aa:bb:cc:dd:ee:01",
+          internal: false,
+          cidr: "100.64.0.2/10",
+        },
+      ],
+      docker0: [
+        {
+          address: "169.254.1.2",
+          netmask: "255.255.0.0",
+          family: "IPv4",
+          mac: "aa:bb:cc:dd:ee:02",
+          internal: false,
+          cidr: "169.254.1.2/16",
+        },
+      ],
+    };
+
+    expect(
+      computeNetworkBaseUrls({
+        bindHost: "0.0.0.0",
+        port: 3000,
+        networkInterfaces,
+      })
+    ).toEqual(["http://100.64.0.2:3000", "http://192.168.1.10:3000"]);
+  });
+
+  test("formats IPv6 URLs with brackets", () => {
+    const networkInterfaces: ReturnType<typeof os.networkInterfaces> = {
+      en0: [
+        {
+          address: "fd7a:115c:a1e0::1",
+          netmask: "ffff:ffff:ffff:ffff::",
+          family: "IPv6",
+          mac: "aa:bb:cc:dd:ee:ff",
+          internal: false,
+          cidr: "fd7a:115c:a1e0::1/64",
+          scopeid: 0,
+        },
+        {
+          address: "fe80::1",
+          netmask: "ffff:ffff:ffff:ffff::",
+          family: "IPv6",
+          mac: "aa:bb:cc:dd:ee:ff",
+          internal: false,
+          cidr: "fe80::1/64",
+          scopeid: 0,
+        },
+      ],
+    };
+
+    expect(
+      computeNetworkBaseUrls({
+        bindHost: "::",
+        port: 3000,
+        networkInterfaces,
+      })
+    ).toEqual(["http://[fd7a:115c:a1e0::1]:3000"]);
+
+    expect(computeNetworkBaseUrls({ bindHost: "2001:db8::1", port: 3000 })).toEqual([
+      "http://[2001:db8::1]:3000",
+    ]);
   });
 });

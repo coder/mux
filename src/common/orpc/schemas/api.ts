@@ -595,6 +595,24 @@ export const terminal = {
 };
 
 // Server
+
+export const ApiServerStatusSchema = z.object({
+  running: z.boolean(),
+  /** Base URL that is always connectable from the local machine (loopback for wildcard binds). */
+  baseUrl: z.string().nullable(),
+  /** The host/interface the server is actually bound to. */
+  bindHost: z.string().nullable(),
+  /** The port the server is listening on. */
+  port: z.number().int().min(0).max(65535).nullable(),
+  /** Additional base URLs that may be reachable from other devices (LAN/VPN). */
+  networkBaseUrls: z.array(z.url()),
+  /** Auth token required for HTTP/WS API access. */
+  token: z.string().nullable(),
+  /** Configured bind host from ~/.mux/config.json (if set). */
+  configuredBindHost: z.string().nullable(),
+  /** Configured port from ~/.mux/config.json (if set). */
+  configuredPort: z.number().int().min(0).max(65535).nullable(),
+});
 export const server = {
   getLaunchProject: {
     input: z.void(),
@@ -607,6 +625,17 @@ export const server = {
   setSshHost: {
     input: z.object({ sshHost: z.string().nullable() }),
     output: z.void(),
+  },
+  getApiServerStatus: {
+    input: z.void(),
+    output: ApiServerStatusSchema,
+  },
+  setApiServerSettings: {
+    input: z.object({
+      bindHost: z.string().nullable(),
+      port: z.number().int().min(0).max(65535).nullable(),
+    }),
+    output: ApiServerStatusSchema,
   },
 };
 

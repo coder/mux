@@ -309,6 +309,9 @@ async function loadServices(): Promise<void> {
   // Generate auth token (use env var or random per-session)
   const authToken = process.env.MUX_SERVER_AUTH_TOKEN ?? randomBytes(32).toString("hex");
 
+  // Store auth token so the API server can be restarted via Settings.
+  services.serverService.setApiAuthToken(authToken);
+
   // Single router instance with auth middleware - used for both MessagePort and HTTP/WS
   const orpcRouter = router(authToken);
 
@@ -366,12 +369,29 @@ async function loadServices(): Promise<void> {
       console.log(`[${timestamp()}] API server already running at ${existing.baseUrl}, skipping`);
     } else {
       try {
-        const port = process.env.MUX_SERVER_PORT ? parseInt(process.env.MUX_SERVER_PORT, 10) : 0;
+        const loadedConfig = config.loadConfigOrDefault();
+        const configuredBindHost =
+          typeof loadedConfig.apiServerBindHost === "string" &&
+          loadedConfig.apiServerBindHost.trim()
+            ? loadedConfig.apiServerBindHost.trim()
+            : undefined;
+        const configuredPort = loadedConfig.apiServerPort;
+
+        const envPortRaw = process.env.MUX_SERVER_PORT
+          ? Number.parseInt(process.env.MUX_SERVER_PORT, 10)
+          : undefined;
+        const envPort =
+          envPortRaw !== undefined && Number.isFinite(envPortRaw) ? envPortRaw : undefined;
+
+        const port = envPort ?? configuredPort ?? 0;
+        const host = configuredBindHost ?? "127.0.0.1";
+
         const serverInfo = await services.serverService.startServer({
           muxHome: config.rootDir,
           context: orpcContext,
           router: orpcRouter,
           authToken,
+          host,
           port,
         });
         console.log(`[${timestamp()}] API server started at ${serverInfo.baseUrl}`);

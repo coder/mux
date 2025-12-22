@@ -100,6 +100,114 @@ export const router = (authToken?: string) => {
             serverSshHost: input.sshHost ?? undefined,
           }));
         }),
+      getApiServerStatus: t
+        .input(schemas.server.getApiServerStatus.input)
+        .output(schemas.server.getApiServerStatus.output)
+        .handler(({ context }) => {
+          const config = context.config.loadConfigOrDefault();
+          const configuredBindHost = config.apiServerBindHost ?? null;
+          const configuredPort = config.apiServerPort ?? null;
+
+          const info = context.serverService.getServerInfo();
+
+          return {
+            running: info !== null,
+            baseUrl: info?.baseUrl ?? null,
+            bindHost: info?.bindHost ?? null,
+            port: info?.port ?? null,
+            networkBaseUrls: info?.networkBaseUrls ?? [],
+            token: info?.token ?? null,
+            configuredBindHost,
+            configuredPort,
+          };
+        }),
+      setApiServerSettings: t
+        .input(schemas.server.setApiServerSettings.input)
+        .output(schemas.server.setApiServerSettings.output)
+        .handler(async ({ context, input }) => {
+          const prevConfig = context.config.loadConfigOrDefault();
+          const prevBindHost = prevConfig.apiServerBindHost;
+          const prevPort = prevConfig.apiServerPort;
+          const wasRunning = context.serverService.isServerRunning();
+
+          const bindHost = input.bindHost?.trim() ? input.bindHost.trim() : undefined;
+          const port = input.port === null || input.port === 0 ? undefined : input.port;
+
+          if (wasRunning) {
+            await context.serverService.stopServer();
+          }
+
+          await context.config.editConfig((config) => {
+            config.apiServerBindHost = bindHost;
+            config.apiServerPort = port;
+            return config;
+          });
+
+          if (process.env.MUX_NO_API_SERVER !== "1") {
+            const authToken = context.serverService.getApiAuthToken();
+            if (!authToken) {
+              throw new Error("API server auth token not initialized");
+            }
+
+            const envPort = process.env.MUX_SERVER_PORT
+              ? Number.parseInt(process.env.MUX_SERVER_PORT, 10)
+              : undefined;
+            const portToUse = envPort ?? port ?? 0;
+            const hostToUse = bindHost ?? "127.0.0.1";
+
+            try {
+              await context.serverService.startServer({
+                muxHome: context.config.rootDir,
+                context,
+                authToken,
+                host: hostToUse,
+                port: portToUse,
+              });
+            } catch (error) {
+              await context.config.editConfig((config) => {
+                config.apiServerBindHost = prevBindHost;
+                config.apiServerPort = prevPort;
+                return config;
+              });
+
+              if (wasRunning) {
+                const portToRestore = envPort ?? prevPort ?? 0;
+                const hostToRestore = prevBindHost ?? "127.0.0.1";
+
+                try {
+                  await context.serverService.startServer({
+                    muxHome: context.config.rootDir,
+                    context,
+                    authToken,
+                    host: hostToRestore,
+                    port: portToRestore,
+                  });
+                } catch {
+                  // Best effort - we'll surface the original error.
+                }
+              }
+
+              throw error;
+            }
+          }
+
+          const nextConfig = context.config.loadConfigOrDefault();
+          const configuredBindHost = nextConfig.apiServerBindHost ?? null;
+          const configuredPort = nextConfig.apiServerPort ?? null;
+
+          const info = context.serverService.getServerInfo();
+
+          return {
+            running: info !== null,
+            baseUrl: info?.baseUrl ?? null,
+            bindHost: info?.bindHost ?? null,
+            port: info?.port ?? null,
+            networkBaseUrls: info?.networkBaseUrls ?? [],
+            token: info?.token ?? null,
+            configuredBindHost,
+            configuredPort,
+          };
+        }),
     },
     features: {
       getStatsTabState: t
