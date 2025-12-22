@@ -103,3 +103,17 @@ agent_skill_read_file({ name: "my-skill", filePath: "references/template.md" });
 
 - There is no `/skill` command or UI activation flow yet; skills are loaded on-demand via tools.
 - `allowed-tools` is not enforced by mux (it is tolerated in frontmatter, but ignored).
+
+## Further reading
+
+- [Agent Skills overview](https://agentskills.io/home)
+- [What are skills?](https://agentskills.io/what-are-skills) (progressive disclosure)
+- [Agent Skills specification](https://agentskills.io/specification)
+  - [Directory structure](https://agentskills.io/specification#directory-structure)
+  - [`SKILL.md` format](https://agentskills.io/specification#skill-md-format)
+  - [Frontmatter fields](https://agentskills.io/specification#frontmatter-required)
+  - [Optional directories](https://agentskills.io/specification#optional-directories)
+  - [Progressive disclosure](https://agentskills.io/specification#progressive-disclosure)
+- [Integrate skills into your agent](https://agentskills.io/integrate-skills) (tool-based vs filesystem-based)
+- [Example skills (GitHub)](https://github.com/anthropics/skills)
+- [skills-ref validation library (GitHub)](https://github.com/agentskills/agentskills/tree/main/skills-ref)
