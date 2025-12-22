@@ -1,0 +1,102 @@
+---
+title: Agent Skills
+description: Share reusable workflows and references with skills
+---
+
+## Overview
+
+Agent Skills are reusable, file-based “playbooks” that you can share across projects or keep project-local.
+
+Mux follows the Agent Skills specification and exposes skills to models in two steps:
+
+1. **Index in the system prompt**: mux lists available skills (name + description).
+2. **Tool-based loading**: the agent calls tools to load a full skill when needed.
+
+This keeps the system prompt small while still making skills discoverable.
+
+## Where skills live
+
+Mux discovers skills from two roots:
+
+- **Project-local**: `<projectRoot>/.mux/skills/<skill-name>/SKILL.md`
+- **Global**: `~/.mux/skills/<skill-name>/SKILL.md`
+
+If a skill exists in both locations, **project-local overrides global**.
+
+<Info>Mux reads skills from the machine running mux (even if the workspace runtime is SSH).</Info>
+
+## Skill layout
+
+A skill is a directory named after the skill:
+
+```text
+.mux/skills/
+  my-skill/
+    SKILL.md
+    references/
+      ...
+```
+
+Skill directory names must match `^[a-z0-9]+(?:-[a-z0-9]+)*$` (1–64 chars).
+
+## `SKILL.md` format
+
+`SKILL.md` must start with YAML frontmatter delimited by `---` on its own line.
+Mux enforces a 1MB maximum file size for `SKILL.md`.
+
+Required fields:
+
+- `name`: must match the directory name
+- `description`: short summary shown in mux’s skills index
+
+Optional fields:
+
+- `license`
+- `compatibility`
+- `metadata` (string key/value map)
+
+Mux ignores unknown frontmatter keys (for example `allowed-tools`).
+
+Example:
+
+```md
+---
+name: my-skill
+description: Build and validate a release branch.
+license: MIT
+metadata:
+  owner: platform
+---
+
+# My Skill
+
+1. Do the thing...
+```
+
+## Using skills in mux
+
+Mux injects an `<agent-skills>` block into the system prompt listing the available skills.
+
+To load a skill, the agent calls:
+
+```ts
+agent_skill_read({ name: "my-skill" });
+```
+
+If your skill references additional files (cheatsheets, templates, etc.), the agent can read them with:
+
+```ts
+agent_skill_read_file({ name: "my-skill", filePath: "references/template.md" });
+```
+
+`agent_skill_read_file` supports `offset` / `limit` (like `file_read`) and rejects absolute paths and `..` traversal.
+
+<Info>
+  `agent_skill_read_file` uses the same output limits as `file_read` (roughly 16KB per call,
+  numbered lines). Files are limited to 1MB. Read large files in chunks with `offset`/`limit`.
+</Info>
+
+## Current limitations
+
+- There is no `/skill` command or UI activation flow yet; skills are loaded on-demand via tools.
+- `allowed-tools` is not enforced by mux (it is tolerated in frontmatter, but ignored).

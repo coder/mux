@@ -55,6 +55,7 @@
               },
               "context-management",
               "instruction-files",
+              "agent-skills",
               "mcp-servers",
               {
                 "group": "Project Secrets",
