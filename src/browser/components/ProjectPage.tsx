@@ -53,8 +53,17 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
     };
   }, [api, projectPath]);
 
+  const didAutoFocusRef = useRef(false);
   const handleChatReady = useCallback((api: ChatInputAPI) => {
     chatInputRef.current = api;
+
+    // Auto-focus the prompt once when entering the creation screen.
+    // Defensive: avoid re-focusing on unrelated re-renders (e.g. workspace list updates),
+    // which can move the user's caret.
+    if (didAutoFocusRef.current) {
+      return;
+    }
+    didAutoFocusRef.current = true;
     api.focus();
   }, []);
 

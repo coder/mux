@@ -506,10 +506,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     [setImageAttachments]
   );
 
+  const onReady = props.onReady;
+
   // Provide API to parent via callback
   useEffect(() => {
-    if (props.onReady) {
-      props.onReady({
+    if (onReady) {
+      onReady({
         focus: focusMessageInput,
         restoreText,
         appendText,
@@ -517,15 +519,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         restoreImages,
       });
     }
-  }, [
-    props.onReady,
-    focusMessageInput,
-    restoreText,
-    appendText,
-    prependText,
-    restoreImages,
-    props,
-  ]);
+  }, [onReady, focusMessageInput, restoreText, appendText, prependText, restoreImages]);
 
   useEffect(() => {
     const handleGlobalKeyDown = (event: KeyboardEvent) => {
