@@ -53,9 +53,10 @@ export interface CachedMCPTestResult {
 /**
  * Per-workspace MCP overrides.
  *
- * Stored in ~/.mux/config.json under each workspace entry.
- * Allows workspaces to override project-level server enabled/disabled state
- * and restrict tool allowlists.
+ * Stored per-workspace in <workspace>/.mux/mcp.local.jsonc (workspace-local and intended to be gitignored).
+ *
+ * Legacy note: older mux versions stored these overrides in ~/.mux/config.json under each workspace entry.
+ * Newer versions migrate those values into the workspace-local file on first read/write.
  */
 export interface WorkspaceMCPOverrides {
   /**

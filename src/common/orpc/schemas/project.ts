@@ -58,7 +58,8 @@ export const WorkspaceConfigSchema = z.object({
       "Trunk branch used to create/init this agent task workspace (used for restart-safe init on queued tasks).",
   }),
   mcp: WorkspaceMCPOverridesSchema.optional().meta({
-    description: "Per-workspace MCP overrides (disabled servers, tool allowlists)",
+    description:
+      "LEGACY: Per-workspace MCP overrides (migrated to <workspace>/.mux/mcp.local.jsonc)",
   }),
   archivedAt: z.string().optional().meta({
     description:

@@ -640,65 +640,6 @@ export class Config {
   }
 
   /**
-   * Get MCP overrides for a workspace.
-   * Returns undefined if workspace not found or no overrides set.
-   */
-  getWorkspaceMCPOverrides(workspaceId: string): Workspace["mcp"] | undefined {
-    const config = this.loadConfigOrDefault();
-    for (const [_projectPath, projectConfig] of config.projects) {
-      const workspace = projectConfig.workspaces.find((w) => w.id === workspaceId);
-      if (workspace) {
-        return workspace.mcp;
-      }
-    }
-    return undefined;
-  }
-
-  /**
-   * Set MCP overrides for a workspace.
-   * @throws Error if workspace not found
-   */
-  async setWorkspaceMCPOverrides(workspaceId: string, overrides: Workspace["mcp"]): Promise<void> {
-    await this.editConfig((config) => {
-      for (const [_projectPath, projectConfig] of config.projects) {
-        const workspace = projectConfig.workspaces.find((w) => w.id === workspaceId);
-        if (workspace) {
-          // Normalize: remove empty arrays to keep config clean
-          const normalized = overrides
-            ? {
-                disabledServers:
-                  overrides.disabledServers && overrides.disabledServers.length > 0
-                    ? [...new Set(overrides.disabledServers)] // De-duplicate
-                    : undefined,
-                enabledServers:
-                  overrides.enabledServers && overrides.enabledServers.length > 0
-                    ? [...new Set(overrides.enabledServers)] // De-duplicate
-                    : undefined,
-                toolAllowlist:
-                  overrides.toolAllowlist && Object.keys(overrides.toolAllowlist).length > 0
-                    ? overrides.toolAllowlist
-                    : undefined,
-              }
-            : undefined;
-
-          // Remove mcp field entirely if no overrides
-          if (
-            !normalized?.disabledServers &&
-            !normalized?.enabledServers &&
-            !normalized?.toolAllowlist
-          ) {
-            delete workspace.mcp;
-          } else {
-            workspace.mcp = normalized;
-          }
-          return config;
-        }
-      }
-      throw new Error(`Workspace ${workspaceId} not found in config`);
-    });
-  }
-
-  /**
    * Load providers configuration from JSONC file
    * Supports comments in JSONC format
    */

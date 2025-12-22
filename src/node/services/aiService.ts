@@ -47,7 +47,9 @@ import { buildSystemMessage, readToolInstructions } from "./systemMessage";
 import { getTokenizerForModel } from "@/node/utils/main/tokenizer";
 import type { TelemetryService } from "@/node/services/telemetryService";
 import { getRuntimeTypeForTelemetry, roundToBase2 } from "@/common/telemetry/utils";
+import type { WorkspaceMCPOverrides } from "@/common/types/mcp";
 import type { MCPServerManager, MCPWorkspaceStats } from "@/node/services/mcpServerManager";
+import { WorkspaceMcpOverridesService } from "./workspaceMcpOverridesService";
 import type { TaskService } from "@/node/services/taskService";
 import { buildProviderOptions } from "@/common/utils/ai/providerOptions";
 import type { ThinkingLevel } from "@/common/types/thinking";
@@ -380,6 +382,7 @@ export class AIService extends EventEmitter {
   private readonly historyService: HistoryService;
   private readonly partialService: PartialService;
   private readonly config: Config;
+  private readonly workspaceMcpOverridesService: WorkspaceMcpOverridesService;
   private mcpServerManager?: MCPServerManager;
   private telemetryService?: TelemetryService;
   private readonly initStateManager: InitStateManager;
@@ -394,12 +397,15 @@ export class AIService extends EventEmitter {
     partialService: PartialService,
     initStateManager: InitStateManager,
     backgroundProcessManager?: BackgroundProcessManager,
-    sessionUsageService?: SessionUsageService
+    sessionUsageService?: SessionUsageService,
+    workspaceMcpOverridesService?: WorkspaceMcpOverridesService
   ) {
     super();
     // Increase max listeners to accommodate multiple concurrent workspace listeners
     // Each workspace subscribes to stream events, and we expect >10 concurrent workspaces
     this.setMaxListeners(50);
+    this.workspaceMcpOverridesService =
+      workspaceMcpOverridesService ?? new WorkspaceMcpOverridesService(config);
     this.config = config;
     this.historyService = historyService;
     this.partialService = partialService;
@@ -1128,7 +1134,18 @@ export class AIService extends EventEmitter {
         : runtime.getWorkspacePath(metadata.projectPath, metadata.name);
 
       // Fetch workspace MCP overrides (for filtering servers and tools)
-      const mcpOverrides = this.config.getWorkspaceMCPOverrides(workspaceId);
+      // NOTE: Stored in <workspace>/.mux/mcp.local.jsonc (not ~/.mux/config.json).
+      let mcpOverrides: WorkspaceMCPOverrides | undefined;
+      try {
+        mcpOverrides =
+          await this.workspaceMcpOverridesService.getOverridesForWorkspace(workspaceId);
+      } catch (error) {
+        log.warn("[MCP] Failed to load workspace MCP overrides; continuing without overrides", {
+          workspaceId,
+          error,
+        });
+        mcpOverrides = undefined;
+      }
 
       // Fetch MCP server config for system prompt (before building message)
       // Pass overrides to filter out disabled servers

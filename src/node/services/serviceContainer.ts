@@ -35,6 +35,7 @@ import { SessionTimingService } from "@/node/services/sessionTimingService";
 import { ExperimentsService } from "@/node/services/experimentsService";
 import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import { MCPConfigService } from "@/node/services/mcpConfigService";
+import { WorkspaceMcpOverridesService } from "@/node/services/workspaceMcpOverridesService";
 import { MCPServerManager } from "@/node/services/mcpServerManager";
 import { SessionUsageService } from "@/node/services/sessionUsageService";
 import { IdleCompactionService } from "@/node/services/idleCompactionService";
@@ -64,6 +65,7 @@ export class ServiceContainer {
   public readonly menuEventService: MenuEventService;
   public readonly voiceService: VoiceService;
   public readonly mcpConfigService: MCPConfigService;
+  public readonly workspaceMcpOverridesService: WorkspaceMcpOverridesService;
   public readonly mcpServerManager: MCPServerManager;
   public readonly telemetryService: TelemetryService;
   public readonly featureFlagService: FeatureFlagService;
@@ -82,6 +84,7 @@ export class ServiceContainer {
     this.partialService = new PartialService(config, this.historyService);
     this.projectService = new ProjectService(config);
     this.initStateManager = new InitStateManager(config);
+    this.workspaceMcpOverridesService = new WorkspaceMcpOverridesService(config);
     this.mcpConfigService = new MCPConfigService();
     this.extensionMetadata = new ExtensionMetadataService(
       path.join(config.rootDir, "extensionMetadata.json")
@@ -97,7 +100,8 @@ export class ServiceContainer {
       this.partialService,
       this.initStateManager,
       this.backgroundProcessManager,
-      this.sessionUsageService
+      this.sessionUsageService,
+      this.workspaceMcpOverridesService
     );
     this.aiService.setMCPServerManager(this.mcpServerManager);
     this.workspaceService = new WorkspaceService(

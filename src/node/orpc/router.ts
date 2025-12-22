@@ -1234,17 +1234,25 @@ export const router = (authToken?: string) => {
         get: t
           .input(schemas.workspace.mcp.get.input)
           .output(schemas.workspace.mcp.get.output)
-          .handler(({ context, input }) => {
-            const overrides = context.config.getWorkspaceMCPOverrides(input.workspaceId);
-            // Return empty object if no overrides (matches schema default)
-            return overrides ?? {};
+          .handler(async ({ context, input }) => {
+            try {
+              return await context.workspaceMcpOverridesService.getOverridesForWorkspace(
+                input.workspaceId
+              );
+            } catch {
+              // Defensive: overrides must never brick workspace UI.
+              return {};
+            }
           }),
         set: t
           .input(schemas.workspace.mcp.set.input)
           .output(schemas.workspace.mcp.set.output)
           .handler(async ({ context, input }) => {
             try {
-              await context.config.setWorkspaceMCPOverrides(input.workspaceId, input.overrides);
+              await context.workspaceMcpOverridesService.setOverridesForWorkspace(
+                input.workspaceId,
+                input.overrides
+              );
               return { success: true, data: undefined };
             } catch (error) {
               const message = error instanceof Error ? error.message : String(error);
