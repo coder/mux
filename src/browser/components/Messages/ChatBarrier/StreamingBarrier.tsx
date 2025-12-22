@@ -4,12 +4,7 @@ import { getModelName } from "@/common/utils/ai/models";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { VIM_ENABLED_KEY, getModelKey } from "@/common/constants/storage";
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
-import {
-  useWorkspaceState,
-  useWorkspaceAggregator,
-  useWorkspaceStatsSnapshot,
-} from "@/browser/stores/WorkspaceStore";
-import { useFeatureFlags } from "@/browser/contexts/FeatureFlagsContext";
+import { useWorkspaceState, useWorkspaceAggregator } from "@/browser/stores/WorkspaceStore";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 
 type StreamingPhase =
@@ -32,9 +27,6 @@ interface StreamingBarrierProps {
 export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({ workspaceId, className }) => {
   const workspaceState = useWorkspaceState(workspaceId);
   const aggregator = useWorkspaceAggregator(workspaceId);
-  const statsSnapshot = useWorkspaceStatsSnapshot(workspaceId);
-  const { statsTabState } = useFeatureFlags();
-  const statsEnabled = Boolean(statsTabState?.enabled);
 
   const { canInterrupt, isCompacting, awaitingUserQuestion, currentModel, pendingStreamStartTime } =
     workspaceState;
@@ -51,6 +43,13 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({ workspaceId,
     if (isCompacting) return "compacting";
     return "streaming";
   })();
+
+  // Only show token count during active streaming/compacting
+  const showTokenCount = phase === "streaming" || phase === "compacting";
+
+  // Get live streaming stats from workspace state (updated on each stream-delta)
+  const tokenCount = showTokenCount ? workspaceState.streamingTokenCount : undefined;
+  const tps = showTokenCount ? workspaceState.streamingTPS : undefined;
 
   // Nothing to show
   if (!phase) return null;
@@ -94,24 +93,6 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({ workspaceId,
         return `hit ${formatKeybind(vimEnabled ? KEYBINDS.INTERRUPT_STREAM_VIM : KEYBINDS.INTERRUPT_STREAM_NORMAL)} to cancel`;
     }
   })();
-
-  // Only show token count during active streaming/compacting
-  const showTokenCount = phase === "streaming" || phase === "compacting";
-
-  // Get token stats from aggregator or stats snapshot
-  const activeStreamMessageId = aggregator?.getActiveStreamMessageId();
-  const tokenCount =
-    showTokenCount && activeStreamMessageId
-      ? statsEnabled && statsSnapshot?.active?.messageId === activeStreamMessageId
-        ? statsSnapshot.active.liveTokenCount
-        : aggregator?.getStreamingTokenCount(activeStreamMessageId)
-      : undefined;
-  const tps =
-    showTokenCount && activeStreamMessageId
-      ? statsEnabled && statsSnapshot?.active?.messageId === activeStreamMessageId
-        ? statsSnapshot.active.liveTPS
-        : aggregator?.getStreamingTPS(activeStreamMessageId)
-      : undefined;
 
   return (
     <div className={`flex items-center justify-between gap-4 ${className ?? ""}`}>

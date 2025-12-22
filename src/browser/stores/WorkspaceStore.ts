@@ -53,6 +53,9 @@ export interface WorkspaceState {
   todos: TodoItem[];
   agentStatus: { emoji: string; message: string; url?: string } | undefined;
   pendingStreamStartTime: number | null;
+  // Live streaming stats (updated on each stream-delta)
+  streamingTokenCount: number | undefined;
+  streamingTPS: number | undefined;
 }
 
 /**
@@ -821,6 +824,15 @@ export class WorkspaceStore {
       const messages = aggregator.getAllMessages();
       const metadata = this.workspaceMetadata.get(workspaceId);
 
+      // Live streaming stats
+      const activeStreamMessageId = aggregator.getActiveStreamMessageId();
+      const streamingTokenCount = activeStreamMessageId
+        ? aggregator.getStreamingTokenCount(activeStreamMessageId)
+        : undefined;
+      const streamingTPS = activeStreamMessageId
+        ? aggregator.getStreamingTPS(activeStreamMessageId)
+        : undefined;
+
       return {
         name: metadata?.name ?? workspaceId, // Fall back to ID if metadata missing
         messages: aggregator.getDisplayedMessages(),
@@ -835,6 +847,8 @@ export class WorkspaceStore {
         todos: aggregator.getCurrentTodos(),
         agentStatus: aggregator.getAgentStatus(),
         pendingStreamStartTime: aggregator.getPendingStreamStartTime(),
+        streamingTokenCount,
+        streamingTPS,
       };
     });
   }
