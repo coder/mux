@@ -4,7 +4,7 @@
  * ReviewPanel uses SelectableDiffRenderer for interactive line selection.
  */
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { cn } from "@/common/lib/utils";
 import { getLanguageFromPath } from "@/common/utils/git/languageDetector";
 import { useOverflowDetection } from "@/browser/hooks/useOverflowDetection";
@@ -13,6 +13,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { groupDiffLines } from "@/browser/utils/highlighting/diffChunking";
 import { useTheme, type ThemeMode } from "@/browser/contexts/ThemeContext";
 import {
+  escapeHtml,
   highlightDiffChunk,
   type HighlightedChunk,
 } from "@/browser/utils/highlighting/highlightDiffChunk";
@@ -404,14 +405,28 @@ function getDiffCacheKey(
   return `${contentHash}:${oldStart}:${newStart}:${language}:${themeMode}`;
 }
 
+/** Synchronous plain-text chunks for instant rendering (no "Processing..." flash) */
+function createPlainTextChunks(
+  content: string,
+  oldStart: number,
+  newStart: number
+): HighlightedChunk[] {
+  const lines = splitDiffLines(content);
+  return groupDiffLines(lines, oldStart, newStart).map((chunk) => ({
+    type: chunk.type,
+    lines: chunk.lines.map((line, i) => ({
+      html: escapeHtml(line),
+      oldLineNumber: chunk.oldLineNumbers[i],
+      newLineNumber: chunk.newLineNumbers[i],
+      originalIndex: chunk.startIndex + i,
+    })),
+    usedFallback: true,
+  }));
+}
+
 /**
- * Hook to pre-process and highlight diff content in chunks.
- * Results are cached at the module level for synchronous cache hits,
- * eliminating "Processing" flash when re-rendering the same diff.
- *
- * When language="text" (highlighting disabled), keeps existing highlighted
- * chunks rather than downgrading to plain text. This prevents flicker when
- * hunks scroll out of viewport (enableHighlighting=false).
+ * Hook to highlight diff content. Returns plain-text immediately, then upgrades
+ * to syntax-highlighted when ready. Never returns null (no loading flash).
  */
 function useHighlightedDiff(
   content: string,
@@ -419,60 +434,51 @@ function useHighlightedDiff(
   oldStart: number,
   newStart: number,
   themeMode: ThemeMode
-): HighlightedChunk[] | null {
+): HighlightedChunk[] {
   const cacheKey = getDiffCacheKey(content, language, oldStart, newStart, themeMode);
   const cachedResult = highlightedDiffCache.get(cacheKey);
 
-  // State for async highlighting results (initialized from cache if available)
-  const [chunks, setChunks] = useState<HighlightedChunk[] | null>(cachedResult ?? null);
-  // Track if we've highlighted this content with real syntax (not plain text)
+  // Sync fallback: plain-text chunks for instant render
+  const plainText = useMemo(
+    () => createPlainTextChunks(content, oldStart, newStart),
+    [content, oldStart, newStart]
+  );
+
+  const [chunks, setChunks] = useState<HighlightedChunk[]>(cachedResult ?? plainText);
   const hasRealHighlightRef = React.useRef(false);
 
   useEffect(() => {
-    // Already in cache - sync state and skip async work
     const cached = highlightedDiffCache.get(cacheKey);
     if (cached) {
       setChunks(cached);
-      if (language !== "text") {
-        hasRealHighlightRef.current = true;
-      }
+      if (language !== "text") hasRealHighlightRef.current = true;
       return;
     }
 
-    // When highlighting is disabled (language="text") but we've already
-    // highlighted with real syntax, keep showing that version
-    if (language === "text" && hasRealHighlightRef.current) {
-      return;
-    }
+    // Keep syntax-highlighted version when toggling to language="text"
+    if (language === "text" && hasRealHighlightRef.current) return;
 
-    // Reset to loading state for new uncached content
-    setChunks(null);
+    // Show plain-text immediately, then upgrade async
+    setChunks(plainText);
 
     let cancelled = false;
-
-    async function highlight() {
+    void (async () => {
       const lines = splitDiffLines(content);
       const diffChunks = groupDiffLines(lines, oldStart, newStart);
       const highlighted = await Promise.all(
         diffChunks.map((chunk) => highlightDiffChunk(chunk, language, themeMode))
       );
-
       if (!cancelled) {
         highlightedDiffCache.set(cacheKey, highlighted);
         setChunks(highlighted);
-        if (language !== "text") {
-          hasRealHighlightRef.current = true;
-        }
+        if (language !== "text") hasRealHighlightRef.current = true;
       }
-    }
-
-    void highlight();
+    })();
     return () => {
       cancelled = true;
     };
-  }, [cacheKey, content, language, oldStart, newStart, themeMode]);
+  }, [cacheKey, content, language, oldStart, newStart, themeMode, plainText]);
 
-  // Return cached result directly if available (sync path), else state (async path)
   return cachedResult ?? chunks;
 }
 
@@ -517,15 +523,6 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
     );
     return calculateLineNumberWidths(lines);
   }, [highlightedChunks, showLineNumbers]);
-
-  // Show loading state while highlighting
-  if (!highlightedChunks) {
-    return (
-      <DiffContainer fontSize={fontSize} maxHeight={maxHeight} className={className}>
-        <div style={{ opacity: 0.5, padding: "8px" }}>Processing...</div>
-      </DiffContainer>
-    );
-  }
 
   // Get first and last line types for padding background colors
   const firstLineType = highlightedChunks[0]?.type;
@@ -825,8 +822,6 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     // Build lineData from highlighted chunks (memoized to prevent repeated parsing)
     // Includes raw content for review note submission
     const lineData = React.useMemo(() => {
-      if (!highlightedChunks) return [];
-
       const data: Array<{
         index: number;
         type: DiffLineType;
@@ -933,15 +928,6 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
       const [start, end] = [selection.startIndex, selection.endIndex].sort((a, b) => a - b);
       return index >= start && index <= end;
     };
-
-    // Show loading state while highlighting
-    if (!highlightedChunks || highlightedLineData.length === 0) {
-      return (
-        <DiffContainer fontSize={fontSize} maxHeight={maxHeight} className={className}>
-          <div style={{ opacity: 0.5, padding: "8px" }}>Processing...</div>
-        </DiffContainer>
-      );
-    }
 
     // Get first and last line types for padding background colors
     const firstLineType = highlightedLineData[0]?.type;
