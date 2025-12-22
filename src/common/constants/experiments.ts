@@ -53,19 +53,19 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     userOverridable: true,
     showInSettings: true,
   },
+  [EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING_EXCLUSIVE]: {
+    id: EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING_EXCLUSIVE,
+    name: "PTC Exclusive Mode",
+    description: "Replace all tools with code_execution (forces PTC usage)",
+    enabledByDefault: false,
+    userOverridable: true,
+    showInSettings: true,
+  },
   [EXPERIMENT_IDS.CONFIGURABLE_BIND_URL]: {
     id: EXPERIMENT_IDS.CONFIGURABLE_BIND_URL,
     name: "Expose API server on LAN/VPN",
     description:
       "Allow mux to listen on a non-localhost address so other devices on your LAN/VPN can connect. Anyone on your network with the auth token can access your mux API. HTTP only; use only on trusted networks (Tailscale recommended).",
-    enabledByDefault: false,
-    userOverridable: true,
-    showInSettings: true,
-  },
-  [EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING_EXCLUSIVE]: {
-    id: EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING_EXCLUSIVE,
-    name: "PTC Exclusive Mode",
-    description: "Replace all tools with code_execution (forces PTC usage)",
     enabledByDefault: false,
     userOverridable: true,
     showInSettings: true,
