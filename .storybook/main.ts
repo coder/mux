@@ -22,7 +22,9 @@ const config: StorybookConfig = {
       // Prevent Vite from discovering new deps mid-test and forcing a full reload (test-storybook
       // interprets reloads as navigations and flakes). Keep this list minimal.
       optimizeDeps: {
-        include: ["@radix-ui/react-checkbox"],
+        // Storybook test runs can flake if Vite decides to prebundle newly-discovered deps mid-run,
+        // because the preview reload is interpreted as a navigation.
+        include: ["@radix-ui/react-checkbox", "shiki"],
       },
     });
   },

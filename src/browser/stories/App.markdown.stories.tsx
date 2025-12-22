@@ -252,14 +252,21 @@ export const CodeBlocks: AppStory = {
         if (candidates.length < 3) {
           throw new Error(`Expected 3 code-block-wrappers, found ${candidates.length}`);
         }
-        // Each must have highlighted spans (Shiki wraps tokens in spans)
+        // Each wrapper must have switched from plain <code> rendering to Shiki HTML.
+        // Don't rely on nested <span> tokens because plaintext highlighting may not emit them.
         for (const wrapper of candidates) {
-          if (!wrapper.querySelector(".code-line span")) {
-            throw new Error("Not all code blocks highlighted yet");
+          const lines = Array.from(wrapper.querySelectorAll(".code-line"));
+          if (lines.length === 0) {
+            throw new Error("Code lines not rendered yet");
+          }
+          for (const line of lines) {
+            if (line.querySelector("code")) {
+              throw new Error("Not all code blocks highlighted yet");
+            }
           }
         }
       },
-      { timeout: 5000 }
+      { timeout: 15000 }
     );
 
     // Highlighting changes code block height, triggering ResizeObserver → coalesced RAF scroll.
