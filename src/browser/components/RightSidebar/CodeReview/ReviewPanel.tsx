@@ -45,6 +45,7 @@ import { applyFrontendFilters } from "@/browser/utils/review/filterHunks";
 import { cn } from "@/common/lib/utils";
 import { useAPI, type APIClient } from "@/browser/contexts/API";
 import { workspaceStore } from "@/browser/stores/WorkspaceStore";
+import { invalidateGitStatus } from "@/browser/stores/GitStatusStore";
 
 /** Stats reported to parent for tab display */
 interface ReviewPanelStats {
@@ -242,6 +243,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     diffBase: filters.diffBase,
     onRefresh: () => setRefreshTrigger((prev) => prev + 1),
     scrollContainerRef,
+    onGitStatusRefresh: () => invalidateGitStatus(workspaceId),
   });
 
   const handleRefresh = () => {

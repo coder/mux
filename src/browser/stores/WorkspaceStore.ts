@@ -1536,11 +1536,25 @@ export class WorkspaceStore {
   }
 
   /**
-   * Subscribe to file-modifying tool completions for a workspace.
-   * Used by ReviewPanel to trigger diff refresh.
+   * Subscribe to file-modifying tool completions.
+   * @param listener Called with workspaceId when a file-modifying tool completes
+   * @param workspaceId If provided, only notify for this workspace
    */
-  subscribeFileModifyingTool(workspaceId: string, listener: () => void): () => void {
-    return this.fileModifyingToolSubs.subscribeKey(workspaceId, listener);
+  subscribeFileModifyingTool(
+    listener: (workspaceId: string) => void,
+    workspaceId?: string
+  ): () => void {
+    if (workspaceId) {
+      // Per-workspace: wrap listener to match subscribeKey signature
+      return this.fileModifyingToolSubs.subscribeKey(workspaceId, () => listener(workspaceId));
+    }
+    // All workspaces: subscribe to global notifications
+    return this.fileModifyingToolSubs.subscribeAny(() => {
+      // Notify for all workspaces that have pending changes
+      for (const wsId of this.fileModifyingToolMs.keys()) {
+        listener(wsId);
+      }
+    });
   }
 
   /**
@@ -1793,8 +1807,8 @@ function getStoreInstance(): WorkspaceStore {
 export const workspaceStore = {
   onIdleCompactionNeeded: (callback: (workspaceId: string) => void) =>
     getStoreInstance().onIdleCompactionNeeded(callback),
-  subscribeFileModifyingTool: (workspaceId: string, listener: () => void) =>
-    getStoreInstance().subscribeFileModifyingTool(workspaceId, listener),
+  subscribeFileModifyingTool: (listener: (workspaceId: string) => void, workspaceId?: string) =>
+    getStoreInstance().subscribeFileModifyingTool(listener, workspaceId),
   getFileModifyingToolMs: (workspaceId: string) =>
     getStoreInstance().getFileModifyingToolMs(workspaceId),
   clearFileModifyingToolMs: (workspaceId: string) =>

@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import App from "../App";
 import { AuthTokenModal } from "./AuthTokenModal";
 import { LoadingScreen } from "./LoadingScreen";
-import { useWorkspaceStoreRaw } from "../stores/WorkspaceStore";
+import { useWorkspaceStoreRaw, workspaceStore } from "../stores/WorkspaceStore";
 import { useGitStatusStoreRaw } from "../stores/GitStatusStore";
 import { ProjectProvider, useProjectContext } from "../contexts/ProjectContext";
 import { APIProvider, useAPI, type APIClient } from "@/browser/contexts/API";
@@ -47,7 +47,7 @@ function AppLoaderInner() {
   const api = apiState.api;
 
   // Get store instances
-  const workspaceStore = useWorkspaceStoreRaw();
+  const workspaceStoreInstance = useWorkspaceStoreRaw();
   const gitStatusStore = useGitStatusStoreRaw();
 
   // Track whether stores have been synced
@@ -56,13 +56,19 @@ function AppLoaderInner() {
   // Sync stores when metadata finishes loading
   useEffect(() => {
     if (api) {
-      workspaceStore.setClient(api);
+      workspaceStoreInstance.setClient(api);
       gitStatusStore.setClient(api);
     }
 
     if (!workspaceContext.loading) {
-      workspaceStore.syncWorkspaces(workspaceContext.workspaceMetadata);
+      workspaceStoreInstance.syncWorkspaces(workspaceContext.workspaceMetadata);
       gitStatusStore.syncWorkspaces(workspaceContext.workspaceMetadata);
+
+      // Wire up file-modification subscription (idempotent - only subscribes once)
+      gitStatusStore.subscribeToFileModifications((listener) =>
+        workspaceStore.subscribeFileModifyingTool(listener)
+      );
+
       setStoresSynced(true);
     } else {
       setStoresSynced(false);
@@ -70,7 +76,7 @@ function AppLoaderInner() {
   }, [
     workspaceContext.loading,
     workspaceContext.workspaceMetadata,
-    workspaceStore,
+    workspaceStoreInstance,
     gitStatusStore,
     api,
   ]);

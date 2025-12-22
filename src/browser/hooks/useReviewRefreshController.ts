@@ -31,6 +31,8 @@ export interface UseReviewRefreshControllerOptions {
   onRefresh: () => void;
   /** Ref to scroll container for preserving scroll position */
   scrollContainerRef: React.RefObject<HTMLElement | null>;
+  /** Optional: called after refresh to trigger git status update */
+  onGitStatusRefresh?: () => void;
 }
 
 export interface ReviewRefreshController {
@@ -60,11 +62,16 @@ export interface ReviewRefreshController {
 export function useReviewRefreshController(
   options: UseReviewRefreshControllerOptions
 ): ReviewRefreshController {
-  const { workspaceId, api, isCreating, onRefresh, scrollContainerRef } = options;
+  const { workspaceId, api, isCreating, onRefresh, scrollContainerRef, onGitStatusRefresh } =
+    options;
 
   // Store diffBase in a ref so we always read the latest value
   const diffBaseRef = useRef(options.diffBase);
   diffBaseRef.current = options.diffBase;
+
+  // Store onGitStatusRefresh in a ref to avoid stale closures
+  const onGitStatusRefreshRef = useRef(onGitStatusRefresh);
+  onGitStatusRefreshRef.current = onGitStatusRefresh;
 
   // State refs (avoid re-renders, just track state for refresh logic)
   const isRefreshingRef = useRef(false);
@@ -111,6 +118,7 @@ export function useReviewRefreshController(
           isRefreshingRef.current = false;
           isRefreshingForReturn.current = false;
           onRefresh();
+          onGitStatusRefreshRef.current?.();
 
           // If another refresh was requested while we were fetching, do it now
           if (pendingBecauseInFlightRef.current) {
@@ -125,6 +133,7 @@ export function useReviewRefreshController(
 
     // Local base - just trigger refresh immediately
     onRefresh();
+    onGitStatusRefreshRef.current?.();
   });
 
   // Update executeRefresh closure dependencies
@@ -151,6 +160,7 @@ export function useReviewRefreshController(
           isRefreshingRef.current = false;
           isRefreshingForReturn.current = false;
           onRefresh();
+          onGitStatusRefreshRef.current?.();
 
           if (pendingBecauseInFlightRef.current) {
             pendingBecauseInFlightRef.current = false;
@@ -162,6 +172,7 @@ export function useReviewRefreshController(
     }
 
     onRefresh();
+    onGitStatusRefreshRef.current?.();
   };
 
   /**
@@ -225,7 +236,7 @@ export function useReviewRefreshController(
   useEffect(() => {
     if (!api || isCreating) return;
 
-    const unsubscribe = workspaceStore.subscribeFileModifyingTool(workspaceId, scheduleRefresh);
+    const unsubscribe = workspaceStore.subscribeFileModifyingTool(scheduleRefresh, workspaceId);
 
     return () => {
       unsubscribe();
