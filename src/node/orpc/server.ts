@@ -214,14 +214,15 @@ export async function createOrpcServer({
     next();
   });
 
-  // SPA fallback (optional, only for non-orpc routes)
+  // SPA fallback (optional, only for non-API routes)
   if (serveStatic) {
     app.use((req, res, next) => {
-      if (!req.path.startsWith("/orpc")) {
-        res.sendFile(path.join(staticDir, "index.html"));
-      } else {
-        next();
+      // Don't swallow API/ORPC routes with index.html.
+      if (req.path.startsWith("/orpc") || req.path.startsWith("/api")) {
+        return next();
       }
+
+      res.sendFile(path.join(staticDir, "index.html"));
     });
   }
 

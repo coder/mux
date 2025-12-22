@@ -45,16 +45,18 @@ describe("Config", () => {
   });
 
   describe("api server settings", () => {
-    it("should persist apiServerBindHost and apiServerPort", async () => {
+    it("should persist apiServerBindHost, apiServerPort, and apiServerServeWebUi", async () => {
       await config.editConfig((cfg) => {
         cfg.apiServerBindHost = "0.0.0.0";
         cfg.apiServerPort = 3000;
+        cfg.apiServerServeWebUi = true;
         return cfg;
       });
 
       const loaded = config.loadConfigOrDefault();
       expect(loaded.apiServerBindHost).toBe("0.0.0.0");
       expect(loaded.apiServerPort).toBe(3000);
+      expect(loaded.apiServerServeWebUi).toBe(true);
     });
 
     it("should ignore invalid apiServerPort values on load", () => {

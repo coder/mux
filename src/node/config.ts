@@ -43,6 +43,10 @@ function parseOptionalNonEmptyString(value: unknown): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
+function parseOptionalBoolean(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
 function parseOptionalPort(value: unknown): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value)) {
     return undefined;
@@ -87,6 +91,7 @@ export class Config {
           projects?: unknown;
           apiServerBindHost?: unknown;
           apiServerPort?: unknown;
+          apiServerServeWebUi?: unknown;
           serverSshHost?: string;
           viewedSplashScreens?: string[];
           featureFlagOverrides?: Record<string, "default" | "on" | "off">;
@@ -106,6 +111,9 @@ export class Config {
           return {
             projects: projectsMap,
             apiServerBindHost: parseOptionalNonEmptyString(parsed.apiServerBindHost),
+            apiServerServeWebUi: parseOptionalBoolean(parsed.apiServerServeWebUi)
+              ? true
+              : undefined,
             apiServerPort: parseOptionalPort(parsed.apiServerPort),
             serverSshHost: parsed.serverSshHost,
             viewedSplashScreens: parsed.viewedSplashScreens,
@@ -137,6 +145,7 @@ export class Config {
         projects: Array<[string, ProjectConfig]>;
         apiServerBindHost?: string;
         apiServerPort?: number;
+        apiServerServeWebUi?: boolean;
         serverSshHost?: string;
         viewedSplashScreens?: string[];
         featureFlagOverrides?: ProjectsConfig["featureFlagOverrides"];
@@ -149,6 +158,11 @@ export class Config {
       const apiServerBindHost = parseOptionalNonEmptyString(config.apiServerBindHost);
       if (apiServerBindHost) {
         data.apiServerBindHost = apiServerBindHost;
+      }
+
+      const apiServerServeWebUi = parseOptionalBoolean(config.apiServerServeWebUi);
+      if (apiServerServeWebUi) {
+        data.apiServerServeWebUi = true;
       }
 
       const apiServerPort = parseOptionalPort(config.apiServerPort);

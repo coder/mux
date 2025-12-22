@@ -375,6 +375,7 @@ async function loadServices(): Promise<void> {
           loadedConfig.apiServerBindHost.trim()
             ? loadedConfig.apiServerBindHost.trim()
             : undefined;
+        const serveStatic = loadedConfig.apiServerServeWebUi === true;
         const configuredPort = loadedConfig.apiServerPort;
 
         const envPortRaw = process.env.MUX_SERVER_PORT
@@ -392,6 +393,7 @@ async function loadServices(): Promise<void> {
           router: orpcRouter,
           authToken,
           host,
+          serveStatic,
           port,
         });
         console.log(`[${timestamp()}] API server started at ${serverInfo.baseUrl}`);

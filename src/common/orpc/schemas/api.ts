@@ -612,6 +612,8 @@ export const ApiServerStatusSchema = z.object({
   configuredBindHost: z.string().nullable(),
   /** Configured port from ~/.mux/config.json (if set). */
   configuredPort: z.number().int().min(0).max(65535).nullable(),
+  /** Whether the API server should serve the mux web UI at /. */
+  configuredServeWebUi: z.boolean(),
 });
 export const server = {
   getLaunchProject: {
@@ -634,6 +636,7 @@ export const server = {
     input: z.object({
       bindHost: z.string().nullable(),
       port: z.number().int().min(0).max(65535).nullable(),
+      serveWebUi: z.boolean().nullable().optional(),
     }),
     output: ApiServerStatusSchema,
   },

@@ -28,6 +28,12 @@ export interface ProjectsConfig {
    * When unset, mux binds to port 0 (random available port).
    */
   apiServerPort?: number;
+  /**
+   * When true, the desktop HTTP server also serves the mux web UI at /.
+   *
+   * This enables other devices (LAN/VPN) to open mux in a browser.
+   */
+  apiServerServeWebUi?: boolean;
   /** SSH hostname/alias for this machine (used for editor deep links in browser mode) */
   serverSshHost?: string;
   /** IDs of splash screens that have been viewed */

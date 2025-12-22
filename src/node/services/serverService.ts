@@ -1,6 +1,9 @@
 import { createOrpcServer, type OrpcServer, type OrpcServerOptions } from "@/node/orpc/server";
 import { ServerLockfile } from "./serverLockfile";
 import type { ORPCContext } from "@/node/orpc/context";
+import * as fs from "fs/promises";
+import * as path from "path";
+import { log } from "./log";
 import * as os from "os";
 import type { AppRouter } from "@/node/orpc/router";
 
@@ -211,13 +214,26 @@ export class ServerService {
 
     this.apiAuthToken = options.authToken;
 
+    const staticDir = path.join(__dirname, "../..");
+    let serveStatic = options.serveStatic ?? false;
+    if (serveStatic) {
+      const indexPath = path.join(staticDir, "index.html");
+      try {
+        await fs.access(indexPath);
+      } catch {
+        log.warn(`API server static UI requested, but ${indexPath} is missing. Disabling.`);
+        serveStatic = false;
+      }
+    }
+
     const serverOptions: OrpcServerOptions = {
       host: bindHost,
       port: options.port ?? 0,
       context: options.context,
       authToken: options.authToken,
       router: options.router,
-      serveStatic: options.serveStatic ?? false,
+      serveStatic,
+      staticDir,
     };
 
     const server = await createOrpcServer(serverOptions);

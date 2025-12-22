@@ -82,6 +82,7 @@ function ConfigurableBindUrlControls() {
   const [status, setStatus] = useState<ApiServerStatus | null>(null);
   const [hostMode, setHostMode] = useState<BindHostMode>("localhost");
   const [customHost, setCustomHost] = useState<string>("");
+  const [serveWebUi, setServeWebUi] = useState(false);
   const [portMode, setPortMode] = useState<PortMode>("random");
   const [fixedPort, setFixedPort] = useState<string>("");
 
@@ -105,6 +106,7 @@ function ConfigurableBindUrlControls() {
       setCustomHost(configuredHost);
     }
 
+    setServeWebUi(next.configuredServeWebUi);
     const configuredPort = next.configuredPort;
     if (!configuredPort) {
       setPortMode("random");
@@ -205,7 +207,11 @@ function ConfigurableBindUrlControls() {
     setSaving(true);
 
     try {
-      const next = await api.server.setApiServerSettings({ bindHost, port });
+      const next = await api.server.setApiServerSettings({
+        bindHost,
+        port,
+        serveWebUi: serveWebUi ? true : null,
+      });
       setStatus(next);
       syncFormFromStatus(next);
     } catch (e) {
@@ -213,7 +219,7 @@ function ConfigurableBindUrlControls() {
     } finally {
       setSaving(false);
     }
-  }, [api, hostMode, portMode, customHost, fixedPort, syncFormFromStatus]);
+  }, [api, hostMode, portMode, customHost, fixedPort, serveWebUi, syncFormFromStatus]);
 
   if (!enabled) {
     return null;
@@ -227,6 +233,14 @@ function ConfigurableBindUrlControls() {
     );
   }
 
+  const encodedToken = status?.token ? encodeURIComponent(status.token) : null;
+  const localWebUiUrl = status?.baseUrl ? `${status.baseUrl}/` : null;
+  const localWebUiUrlWithToken =
+    status?.baseUrl && encodedToken ? `${status.baseUrl}/?token=${encodedToken}` : null;
+  const networkWebUiUrls = status?.networkBaseUrls.map((baseUrl) => `${baseUrl}/`) ?? [];
+  const networkWebUiUrlsWithToken = encodedToken
+    ? (status?.networkBaseUrls.map((baseUrl) => `${baseUrl}/?token=${encodedToken}`) ?? [])
+    : [];
   const localDocsUrl = status?.baseUrl ? `${status.baseUrl}/api/docs` : null;
   const networkDocsUrls = status?.networkBaseUrls.map((baseUrl) => `${baseUrl}/api/docs`) ?? [];
 
@@ -304,6 +318,20 @@ function ConfigurableBindUrlControls() {
           </div>
         )}
 
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <div className="text-foreground text-sm">Serve mux web UI</div>
+            <div className="text-muted text-xs">
+              Serve the mux web interface at / (browser mode)
+            </div>
+          </div>
+          <Switch
+            checked={serveWebUi}
+            onCheckedChange={(value) => setServeWebUi(value)}
+            aria-label="Toggle serving mux web UI"
+          />
+        </div>
+
         <div className="flex items-center justify-between">
           <div className="text-muted text-xs">
             {loading
@@ -375,6 +403,44 @@ function ConfigurableBindUrlControls() {
             </div>
           )}
 
+          {status.configuredServeWebUi ? (
+            <>
+              {(localWebUiUrlWithToken ?? localWebUiUrl) && (
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1">
+                    <div className="text-muted text-xs">Local web UI URL</div>
+                    <div className="font-mono text-xs break-all">
+                      {localWebUiUrlWithToken ?? localWebUiUrl}
+                    </div>
+                  </div>
+                  <CopyButton text={localWebUiUrlWithToken ?? localWebUiUrl ?? ""} />
+                </div>
+              )}
+
+              {(encodedToken ? networkWebUiUrlsWithToken : networkWebUiUrls).length > 0 ? (
+                <div className="space-y-2">
+                  {(encodedToken ? networkWebUiUrlsWithToken : networkWebUiUrls).map((uiUrl) => (
+                    <div key={uiUrl} className="flex items-start justify-between gap-2">
+                      <div className="flex-1">
+                        <div className="text-muted text-xs">Network web UI URL</div>
+                        <div className="font-mono text-xs break-all">{uiUrl}</div>
+                      </div>
+                      <CopyButton text={uiUrl} />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-muted text-xs">
+                  No network URLs detected for the web UI (bind host may still be localhost).
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="text-muted text-xs">
+              Web UI serving is disabled (enable “Serve mux web UI” and Apply to access /).
+            </div>
+          )}
+
           {status.token && (
             <div className="flex items-start justify-between gap-2">
               <div className="flex-1">
@@ -442,9 +508,11 @@ export function ExperimentsSection() {
         return;
       }
 
-      api?.server.setApiServerSettings({ bindHost: null, port: null }).catch(() => {
-        // ignore
-      });
+      api?.server
+        .setApiServerSettings({ bindHost: null, port: null, serveWebUi: null })
+        .catch(() => {
+          // ignore
+        });
     },
     [api]
   );

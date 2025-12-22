@@ -106,6 +106,7 @@ export const router = (authToken?: string) => {
         .handler(({ context }) => {
           const config = context.config.loadConfigOrDefault();
           const configuredBindHost = config.apiServerBindHost ?? null;
+          const configuredServeWebUi = config.apiServerServeWebUi === true;
           const configuredPort = config.apiServerPort ?? null;
 
           const info = context.serverService.getServerInfo();
@@ -119,6 +120,7 @@ export const router = (authToken?: string) => {
             token: info?.token ?? null,
             configuredBindHost,
             configuredPort,
+            configuredServeWebUi,
           };
         }),
       setApiServerSettings: t
@@ -127,10 +129,17 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           const prevConfig = context.config.loadConfigOrDefault();
           const prevBindHost = prevConfig.apiServerBindHost;
+          const prevServeWebUi = prevConfig.apiServerServeWebUi;
           const prevPort = prevConfig.apiServerPort;
           const wasRunning = context.serverService.isServerRunning();
 
           const bindHost = input.bindHost?.trim() ? input.bindHost.trim() : undefined;
+          const serveWebUi =
+            input.serveWebUi === undefined
+              ? prevServeWebUi
+              : input.serveWebUi === true
+                ? true
+                : undefined;
           const port = input.port === null || input.port === 0 ? undefined : input.port;
 
           if (wasRunning) {
@@ -138,6 +147,7 @@ export const router = (authToken?: string) => {
           }
 
           await context.config.editConfig((config) => {
+            config.apiServerServeWebUi = serveWebUi;
             config.apiServerBindHost = bindHost;
             config.apiServerPort = port;
             return config;
@@ -160,11 +170,13 @@ export const router = (authToken?: string) => {
                 muxHome: context.config.rootDir,
                 context,
                 authToken,
+                serveStatic: serveWebUi === true,
                 host: hostToUse,
                 port: portToUse,
               });
             } catch (error) {
               await context.config.editConfig((config) => {
+                config.apiServerServeWebUi = prevServeWebUi;
                 config.apiServerBindHost = prevBindHost;
                 config.apiServerPort = prevPort;
                 return config;
@@ -178,6 +190,7 @@ export const router = (authToken?: string) => {
                   await context.serverService.startServer({
                     muxHome: context.config.rootDir,
                     context,
+                    serveStatic: prevServeWebUi === true,
                     authToken,
                     host: hostToRestore,
                     port: portToRestore,
@@ -193,6 +206,7 @@ export const router = (authToken?: string) => {
 
           const nextConfig = context.config.loadConfigOrDefault();
           const configuredBindHost = nextConfig.apiServerBindHost ?? null;
+          const configuredServeWebUi = nextConfig.apiServerServeWebUi === true;
           const configuredPort = nextConfig.apiServerPort ?? null;
 
           const info = context.serverService.getServerInfo();
@@ -206,6 +220,7 @@ export const router = (authToken?: string) => {
             token: info?.token ?? null,
             configuredBindHost,
             configuredPort,
+            configuredServeWebUi,
           };
         }),
     },
