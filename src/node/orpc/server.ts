@@ -66,6 +66,23 @@ export interface OrpcServer {
 
 // --- Server Factory ---
 
+function formatHostForUrl(host: string): string {
+  const trimmed = host.trim();
+
+  // IPv6 URLs must be bracketed: http://[::1]:1234
+  if (trimmed.includes(":")) {
+    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+      return trimmed;
+    }
+
+    // If the host contains a zone index (e.g. fe80::1%en0), percent must be encoded.
+    const escaped = trimmed.replaceAll("%", "%25");
+    return `[${escaped}]`;
+  }
+
+  return trimmed;
+}
+
 /**
  * Create an oRPC server with HTTP and WebSocket endpoints.
  *
@@ -235,16 +252,17 @@ export async function createOrpcServer({
 
   // Wildcard addresses (0.0.0.0, ::) are not routable - convert to loopback for lockfile
   const connectableHost = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
+  const connectableHostForUrl = formatHostForUrl(connectableHost);
 
   return {
     httpServer,
     wsServer,
     app,
     port: actualPort,
-    baseUrl: `http://${connectableHost}:${actualPort}`,
-    wsUrl: `ws://${connectableHost}:${actualPort}/orpc/ws`,
-    specUrl: `http://${connectableHost}:${actualPort}/api/spec.json`,
-    docsUrl: `http://${connectableHost}:${actualPort}/api/docs`,
+    baseUrl: `http://${connectableHostForUrl}:${actualPort}`,
+    wsUrl: `ws://${connectableHostForUrl}:${actualPort}/orpc/ws`,
+    specUrl: `http://${connectableHostForUrl}:${actualPort}/api/spec.json`,
+    docsUrl: `http://${connectableHostForUrl}:${actualPort}/api/docs`,
     close: async () => {
       // Close WebSocket server first
       wsServer.close();
