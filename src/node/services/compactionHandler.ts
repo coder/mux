@@ -19,7 +19,7 @@ import {
 import { computeRecencyFromMessages } from "@/common/utils/recency";
 
 /** Minimum word count for a valid compaction summary */
-const MIN_SUMMARY_WORDS = 50;
+const MIN_SUMMARY_WORDS = 10;
 
 /** Active compaction operation tracked via session state (control-plane) */
 export interface ActiveCompactionOperation {

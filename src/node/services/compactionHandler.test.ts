@@ -380,14 +380,12 @@ describe("CompactionHandler", () => {
       expect(clearActiveOperationCalled).toBe(true);
     });
 
-    it("should reject summary that is too short (<50 words)", async () => {
+    it("should reject summary that is too short (<10 words)", async () => {
       setActiveOperation("op-1");
       mockHistoryService.mockGetHistory(Ok([createNormalUserMessage()]));
 
-      // Only ~10 words
-      const event = createStreamEndEvent(
-        "This is a very short summary that won't pass validation."
-      );
+      // Only 9 words
+      const event = createStreamEndEvent("one two three four five six seven eight nine");
       const result = await handler.handleCompletion(event);
 
       expect(result).toBe(true);
