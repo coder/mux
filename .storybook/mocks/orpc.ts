@@ -21,6 +21,10 @@ import {
   type SubagentAiDefaults,
   type TaskSettings,
 } from "@/common/types/tasks";
+import {
+  normalizeModeAiDefaults,
+  type ModeAiDefaults,
+} from "@/common/types/modeAiDefaults";
 import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 
@@ -57,6 +61,8 @@ export interface MockORPCClientOptions {
   workspaces?: FrontendWorkspaceMetadata[];
   /** Initial task settings for config.getConfig (e.g., Settings → Tasks section) */
   taskSettings?: Partial<TaskSettings>;
+  /** Initial mode AI defaults for config.getConfig (e.g., Settings → Modes section) */
+  modeAiDefaults?: ModeAiDefaults;
   /** Initial per-subagent AI defaults for config.getConfig (e.g., Settings → Tasks section) */
   subagentAiDefaults?: SubagentAiDefaults;
   /** Per-workspace chat callback. Return messages to emit, or use the callback for streaming. */
@@ -140,6 +146,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     mcpOverrides = new Map(),
     mcpTestResults = new Map(),
     taskSettings: initialTaskSettings,
+    modeAiDefaults: initialModeAiDefaults,
     subagentAiDefaults: initialSubagentAiDefaults,
   } = options;
 
@@ -158,6 +165,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
   };
 
   const workspaceMap = new Map(workspaces.map((w) => [w.id, w]));
+  let modeAiDefaults = normalizeModeAiDefaults(initialModeAiDefaults ?? {});
   let taskSettings = normalizeTaskSettings(initialTaskSettings ?? DEFAULT_TASK_SETTINGS);
   let subagentAiDefaults = normalizeSubagentAiDefaults(initialSubagentAiDefaults ?? {});
 
@@ -193,12 +201,16 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       setSshHost: async () => undefined,
     },
     config: {
-      getConfig: async () => ({ taskSettings, subagentAiDefaults }),
+      getConfig: async () => ({ taskSettings, subagentAiDefaults, modeAiDefaults }),
       saveConfig: async (input: { taskSettings: unknown; subagentAiDefaults?: unknown }) => {
         taskSettings = normalizeTaskSettings(input.taskSettings);
         if (input.subagentAiDefaults !== undefined) {
           subagentAiDefaults = normalizeSubagentAiDefaults(input.subagentAiDefaults);
         }
+        return undefined;
+      },
+      updateModeAiDefaults: async (input: { modeAiDefaults: unknown }) => {
+        modeAiDefaults = normalizeModeAiDefaults(input.modeAiDefaults);
         return undefined;
       },
     },

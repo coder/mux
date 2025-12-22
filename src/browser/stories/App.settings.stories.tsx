@@ -3,8 +3,10 @@
  *
  * Shows different sections and states of the Settings modal:
  * - General (theme toggle)
+ * - Agents (task parallelism / nesting)
  * - Providers (API key configuration)
  * - Models (custom model management)
+ * - Modes (per-mode default model / reasoning)
  * - Experiments
  *
  * NOTE: Projects/MCP stories live in App.mcp.stories.tsx
@@ -19,6 +21,7 @@ import { selectWorkspace } from "./storyHelpers";
 import { createMockORPCClient } from "../../../.storybook/mocks/orpc";
 import { within, userEvent, waitFor } from "@storybook/test";
 import { getExperimentKey, EXPERIMENT_IDS } from "@/common/constants/experiments";
+import type { ModeAiDefaults } from "@/common/types/modeAiDefaults";
 import type { TaskSettings } from "@/common/types/tasks";
 
 export default {
@@ -34,6 +37,7 @@ export default {
 function setupSettingsStory(options: {
   providersConfig?: Record<string, { apiKeySet: boolean; baseUrl?: string; models?: string[] }>;
   providersList?: string[];
+  modeAiDefaults?: ModeAiDefaults;
   taskSettings?: Partial<TaskSettings>;
   /** Pre-set experiment states in localStorage before render */
   experiments?: Partial<Record<string, boolean>>;
@@ -54,6 +58,7 @@ function setupSettingsStory(options: {
     projects: groupWorkspacesByProject(workspaces),
     workspaces,
     providersConfig: options.providersConfig ?? {},
+    modeAiDefaults: options.modeAiDefaults,
     providersList: options.providersList ?? ["anthropic", "openai", "xai"],
     taskSettings: options.taskSettings,
   });
@@ -226,6 +231,35 @@ export const ModelsConfigured: AppStory = {
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     await openSettingsToSection(canvasElement, "models");
+  },
+};
+
+/** Modes section - global default model/reasoning per mode */
+export const Modes: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSettingsStory({
+          modeAiDefaults: {
+            plan: { modelString: "anthropic:claude-sonnet-4-5", thinkingLevel: "medium" },
+            exec: { modelString: "openai:gpt-5.2", thinkingLevel: "xhigh" },
+            compact: { modelString: "openai:gpt-5.2-pro", thinkingLevel: "high" },
+          },
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await openSettingsToSection(canvasElement, "modes");
+
+    const body = within(canvasElement.ownerDocument.body);
+    const dialog = await body.findByRole("dialog");
+    const modal = within(dialog);
+
+    await modal.findByText(/Mode Defaults/i);
+    await modal.findByText(/^Plan$/i);
+    await modal.findByText(/^Exec$/i);
+    await modal.findByText(/^Compact$/i);
   },
 };
 
