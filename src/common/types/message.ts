@@ -3,6 +3,7 @@ import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { StreamErrorType } from "./errors";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import type { ImagePart, MuxToolPartSchema } from "@/common/orpc/schemas";
+import type { AgentMode } from "@/common/types/mode";
 import type { z } from "zod";
 import { type ReviewNoteData, formatReviewForModel } from "./review";
 
@@ -126,7 +127,7 @@ export interface MuxMetadata {
   // Readers should use helper: isCompacted = compacted !== undefined && compacted !== false
   compacted?: "user" | "idle" | boolean;
   toolPolicy?: ToolPolicy; // Tool policy active when this message was sent (user messages only)
-  mode?: string; // The mode active when this message was sent (assistant messages only) - plan/exec today, custom modes in future
+  mode?: AgentMode; // The mode active when this message was sent (assistant messages only)
   cmuxMetadata?: MuxFrontendMetadata; // Frontend-defined metadata, backend treats as black-box
   muxMetadata?: MuxFrontendMetadata; // Frontend-defined metadata, backend treats as black-box
 }

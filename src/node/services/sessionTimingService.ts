@@ -6,6 +6,7 @@ import writeFileAtomic from "write-file-atomic";
 import type { Config } from "@/node/config";
 import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks";
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
+import type { AgentMode } from "@/common/types/mode";
 import {
   ActiveStreamStatsSchema,
   CompletedStreamStatsSchema,
@@ -48,7 +49,7 @@ interface ActiveStreamState {
   workspaceId: string;
   messageId: string;
   model: string;
-  mode?: string;
+  mode?: AgentMode;
 
   startTimeMs: number;
   firstTokenTimeMs: number | null;
@@ -64,7 +65,7 @@ interface ActiveStreamState {
   lastEventTimestampMs: number;
 }
 
-function getModelKey(model: string, mode: string | undefined): string {
+function getModelKey(model: string, mode: AgentMode | undefined): string {
   return mode ? `${model}:${mode}` : model;
 }
 
@@ -354,7 +355,7 @@ export class SessionTimingService {
           event: "stream_timing_computed",
           properties: {
             model: completed.model,
-            mode: completed.mode ?? "unknown",
+            mode: completed.mode ?? "exec",
             duration_b2: roundToBase2(durationSecs),
             ttft_ms_b2: completed.ttftMs !== null ? roundToBase2(completed.ttftMs) : 0,
             tool_ms_b2: roundToBase2(completed.toolExecutionMs),

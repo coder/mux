@@ -8,6 +8,7 @@
 
 import { trackEvent } from "./client";
 import { roundToBase2 } from "./utils";
+import type { AgentMode } from "@/common/types/mode";
 import type {
   TelemetryRuntimeType,
   TelemetryThinkingLevel,
@@ -67,7 +68,7 @@ export function trackWorkspaceSwitched(fromWorkspaceId: string, toWorkspaceId: s
 export function trackMessageSent(
   workspaceId: string,
   model: string,
-  mode: string,
+  mode: AgentMode,
   messageLength: number,
   runtimeType: TelemetryRuntimeType,
   thinkingLevel: TelemetryThinkingLevel

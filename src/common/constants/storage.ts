@@ -66,6 +66,14 @@ export function getThinkingLevelKey(scopeId: string): string {
 }
 
 /**
+ * Get the localStorage key for per-mode workspace AI overrides cache.
+ * Format: "workspaceAiSettingsByMode:{workspaceId}"
+ */
+export function getWorkspaceAISettingsByModeKey(workspaceId: string): string {
+  return `workspaceAiSettingsByMode:${workspaceId}`;
+}
+
+/**
  * LEGACY: Get the localStorage key for thinking level preference per model (global).
  * Format: "thinkingLevel:model:{modelName}"
  *
@@ -164,6 +172,12 @@ export function getLastSshHostKey(projectPath: string): string {
  * Format: "preferredCompactionModel"
  */
 export const PREFERRED_COMPACTION_MODEL_KEY = "preferredCompactionModel";
+
+/**
+ * Get the localStorage key for cached mode AI defaults (global).
+ * Format: "modeAiDefaults"
+ */
+export const MODE_AI_DEFAULTS_KEY = "modeAiDefaults";
 
 /**
  * Get the localStorage key for vim mode preference (global)
@@ -346,6 +360,7 @@ export function getAutoCompactionThresholdKey(model: string): string {
  * List of workspace-scoped key functions that should be copied on fork and deleted on removal
  */
 const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string> = [
+  getWorkspaceAISettingsByModeKey,
   getModelKey,
   getInputKey,
   getInputImagesKey,

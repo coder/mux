@@ -6,6 +6,7 @@
 import type { z } from "zod";
 import type { ProjectConfigSchema, WorkspaceConfigSchema } from "../orpc/schemas";
 import type { TaskSettings, SubagentAiDefaults } from "./tasks";
+import type { ModeAiDefaults } from "./modeAiDefaults";
 
 export type Workspace = z.infer<typeof WorkspaceConfigSchema>;
 
@@ -44,4 +45,6 @@ export interface ProjectsConfig {
   taskSettings?: TaskSettings;
   /** Per-subagent default model + thinking overrides. Missing values inherit from the parent workspace. */
   subagentAiDefaults?: SubagentAiDefaults;
+  /** Default model + thinking overrides per mode (plan/exec/compact). */
+  modeAiDefaults?: ModeAiDefaults;
 }

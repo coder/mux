@@ -1,4 +1,5 @@
 import { eventIterator } from "@orpc/server";
+import { UIModeSchema } from "../../types/mode";
 import { z } from "zod";
 import { ChatStatsSchema, SessionUsageFileSchema } from "./chatStats";
 import { SendMessageErrorSchema } from "./errors";
@@ -253,6 +254,14 @@ export const workspace = {
   },
   updateTitle: {
     input: z.object({ workspaceId: z.string(), title: z.string() }),
+    output: ResultSchema(z.void(), z.string()),
+  },
+  updateModeAISettings: {
+    input: z.object({
+      workspaceId: z.string(),
+      mode: UIModeSchema,
+      aiSettings: WorkspaceAISettingsSchema,
+    }),
     output: ResultSchema(z.void(), z.string()),
   },
   updateAISettings: {
@@ -649,6 +658,20 @@ const SubagentAiDefaultsEntrySchema = z
   })
   .strict();
 
+const ModeAiDefaultsEntrySchema = z
+  .object({
+    modelString: z.string().min(1).optional(),
+    thinkingLevel: z.enum(["off", "low", "medium", "high", "xhigh"]).optional(),
+  })
+  .strict();
+
+const ModeAiDefaultsSchema = z
+  .object({
+    plan: ModeAiDefaultsEntrySchema.optional(),
+    exec: ModeAiDefaultsEntrySchema.optional(),
+    compact: ModeAiDefaultsEntrySchema.optional(),
+  })
+  .strict();
 const SubagentAiDefaultsSchema = z.record(z.string().min(1), SubagentAiDefaultsEntrySchema);
 
 export const config = {
@@ -660,6 +683,7 @@ export const config = {
         maxTaskNestingDepth: z.number().int(),
       }),
       subagentAiDefaults: SubagentAiDefaultsSchema,
+      modeAiDefaults: ModeAiDefaultsSchema,
     }),
   },
   saveConfig: {
@@ -669,6 +693,12 @@ export const config = {
         maxTaskNestingDepth: z.number().int(),
       }),
       subagentAiDefaults: SubagentAiDefaultsSchema.optional(),
+    }),
+    output: z.void(),
+  },
+  updateModeAiDefaults: {
+    input: z.object({
+      modeAiDefaults: ModeAiDefaultsSchema,
     }),
     output: z.void(),
   },
