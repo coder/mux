@@ -218,7 +218,7 @@ export const ProjectSettingsAddRemoteServerHeaders: AppStory = {
     const headerNameInputs = body.getAllByPlaceholderText("Authorization");
     await userEvent.type(headerNameInputs[0], "Authorization");
 
-    const secretToggles = body.getAllByRole("button", { name: "Secret" });
+    const secretToggles = body.getAllByRole("radio", { name: "Secret" });
     await userEvent.click(secretToggles[0]);
 
     const secretValueInput = await body.findByPlaceholderText("MCP_TOKEN");
