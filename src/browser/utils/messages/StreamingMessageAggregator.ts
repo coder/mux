@@ -225,6 +225,10 @@ export class StreamingMessageAggregator {
     mode?: string; // Mode in which this response occurred
   } | null = null;
 
+  // Optimistic "interrupting" state: set before calling interruptStream
+  // Shows "interrupting..." in StreamingBarrier until real stream-abort arrives
+  private interruptingMessageId: string | null = null;
+
   // Session-level timing stats: model -> stats (totals computed on-the-fly)
   private sessionTimingStats: Record<
     string,
@@ -827,6 +831,33 @@ export class StreamingMessageAggregator {
     return this.activeStreams.keys().next().value;
   }
 
+  /**
+   * Mark the current active stream as "interrupting" (transient state).
+   * Called before interruptStream so UI shows "interrupting..." immediately.
+   * Cleared when real stream-abort arrives, at which point "interrupted" shows.
+   */
+  setInterrupting(): void {
+    const activeMessageId = this.getActiveStreamMessageId();
+    if (activeMessageId) {
+      this.interruptingMessageId = activeMessageId;
+      this.invalidateCache();
+    }
+  }
+
+  /**
+   * Check if a message is in the "interrupting" transient state.
+   */
+  isInterrupting(messageId: string): boolean {
+    return this.interruptingMessageId === messageId;
+  }
+
+  /**
+   * Check if any stream is currently being interrupted.
+   */
+  hasInterruptingStream(): boolean {
+    return this.interruptingMessageId !== null;
+  }
+
   isCompacting(): boolean {
     for (const context of this.activeStreams.values()) {
       if (context.isCompacting) {
@@ -1024,6 +1055,11 @@ export class StreamingMessageAggregator {
   }
 
   handleStreamAbort(data: StreamAbortEvent): void {
+    // Clear "interrupting" state - stream is now fully "interrupted"
+    if (this.interruptingMessageId === data.messageId) {
+      this.interruptingMessageId = null;
+    }
+
     // Direct lookup by messageId
     const activeStream = this.activeStreams.get(data.messageId);
 
@@ -1490,6 +1526,9 @@ export class StreamingMessageAggregator {
           // Direct Map.has() check - O(1) instead of O(n) iteration
           const hasActiveStream = this.activeStreams.has(message.id);
 
+          // isPartial from metadata (set by stream-abort event)
+          const isPartial = message.metadata?.partial === true;
+
           // Merge adjacent text/reasoning parts for display
           const mergedParts = mergeAdjacentParts(message.parts);
 
@@ -1523,7 +1562,7 @@ export class StreamingMessageAggregator {
                 historySequence,
                 streamSequence: streamSeq++,
                 isStreaming,
-                isPartial: message.metadata?.partial ?? false,
+                isPartial,
                 isLastPartOfMessage: isLastPart,
                 timestamp: part.timestamp ?? baseTimestamp,
               });
@@ -1537,7 +1576,7 @@ export class StreamingMessageAggregator {
                 historySequence,
                 streamSequence: streamSeq++,
                 isStreaming,
-                isPartial: message.metadata?.partial ?? false,
+                isPartial,
                 isLastPartOfMessage: isLastPart,
                 // Support both new enum ("user"|"idle") and legacy boolean (true)
                 isCompacted: !!message.metadata?.compacted,
@@ -1558,7 +1597,7 @@ export class StreamingMessageAggregator {
                 // showing retry/auto-resume UX.
                 if (part.toolName === "ask_user_question") {
                   status = "executing";
-                } else if (message.metadata?.partial) {
+                } else if (isPartial) {
                   status = "interrupted";
                 } else {
                   status = "executing";
@@ -1607,7 +1646,7 @@ export class StreamingMessageAggregator {
                 args: part.input,
                 result: part.state === "output-available" ? part.output : undefined,
                 status,
-                isPartial: message.metadata?.partial ?? false,
+                isPartial,
                 historySequence,
                 streamSequence: streamSeq++,
                 isLastPartOfMessage: isLastPart,
