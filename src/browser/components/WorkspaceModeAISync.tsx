@@ -1,6 +1,10 @@
 import { useEffect } from "react";
 import { useMode } from "@/browser/contexts/ModeContext";
-import { updatePersistedState, usePersistedState } from "@/browser/hooks/usePersistedState";
+import {
+  readPersistedState,
+  updatePersistedState,
+  usePersistedState,
+} from "@/browser/hooks/usePersistedState";
 import {
   getModelKey,
   getThinkingLevelKey,
@@ -35,37 +39,34 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
 
   useEffect(() => {
     const fallbackModel = getDefaultModel();
+    const modelKey = getModelKey(workspaceId);
+    const thinkingKey = getThinkingLevelKey(workspaceId);
 
-    const candidateModel = workspaceByMode[mode]?.model ?? modeAiDefaults[mode]?.modelString;
+    const existingModel = readPersistedState<string>(modelKey, fallbackModel);
+    const candidateModel =
+      workspaceByMode[mode]?.model ?? modeAiDefaults[mode]?.modelString ?? existingModel;
     const resolvedModel =
       typeof candidateModel === "string" && candidateModel.trim().length > 0
         ? candidateModel
         : fallbackModel;
 
+    const existingThinking = readPersistedState<ThinkingLevel>(thinkingKey, "off");
     const candidateThinking =
-      workspaceByMode[mode]?.thinkingLevel ?? modeAiDefaults[mode]?.thinkingLevel ?? "off";
+      workspaceByMode[mode]?.thinkingLevel ??
+      modeAiDefaults[mode]?.thinkingLevel ??
+      existingThinking ??
+      "off";
     const resolvedThinking = coerceThinkingLevel(candidateThinking) ?? "off";
 
     const effectiveThinking = enforceThinkingPolicy(resolvedModel, resolvedThinking);
 
-    const modelKey = getModelKey(workspaceId);
-    const thinkingKey = getThinkingLevelKey(workspaceId);
+    if (existingModel !== resolvedModel) {
+      updatePersistedState(modelKey, resolvedModel);
+    }
 
-    updatePersistedState(
-      modelKey,
-      (prev) => {
-        return prev === resolvedModel ? prev : resolvedModel;
-      },
-      fallbackModel
-    );
-
-    updatePersistedState(
-      thinkingKey,
-      (prev) => {
-        return prev === effectiveThinking ? prev : effectiveThinking;
-      },
-      "off"
-    );
+    if (existingThinking !== effectiveThinking) {
+      updatePersistedState(thinkingKey, effectiveThinking);
+    }
   }, [mode, modeAiDefaults, workspaceByMode, workspaceId]);
 
   return null;
