@@ -108,4 +108,47 @@ describe("RefreshController", () => {
 
     expect(onRefresh).not.toHaveBeenCalled();
   });
+
+  it("requestImmediate() bypasses isPaused check (for manual refresh)", () => {
+    const onRefresh = jest.fn<() => void>();
+    const paused = true;
+    const controller = new RefreshController({
+      onRefresh,
+      debounceMs: 100,
+      isPaused: () => paused,
+    });
+
+    // schedule() should be blocked by isPaused
+    controller.schedule();
+    jest.advanceTimersByTime(100);
+    expect(onRefresh).not.toHaveBeenCalled();
+
+    // requestImmediate() should bypass isPaused (manual refresh)
+    controller.requestImmediate();
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+
+    controller.dispose();
+  });
+
+  it("schedule() respects isPaused and flushes on notifyUnpaused", () => {
+    const onRefresh = jest.fn<() => void>();
+    let paused = true;
+    const controller = new RefreshController({
+      onRefresh,
+      debounceMs: 100,
+      isPaused: () => paused,
+    });
+
+    // schedule() should queue but not execute while paused
+    controller.schedule();
+    jest.advanceTimersByTime(100);
+    expect(onRefresh).not.toHaveBeenCalled();
+
+    // Unpausing should flush the pending refresh
+    paused = false;
+    controller.notifyUnpaused();
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+
+    controller.dispose();
+  });
 });

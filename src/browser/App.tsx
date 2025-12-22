@@ -17,6 +17,7 @@ import { buildSortedWorkspacesByProject } from "./utils/ui/workspaceFiltering";
 import { useResumeManager } from "./hooks/useResumeManager";
 import { useUnreadTracking } from "./hooks/useUnreadTracking";
 import { useWorkspaceStoreRaw, useWorkspaceRecency } from "./stores/WorkspaceStore";
+import { setActiveWorkspace } from "./stores/GitStatusStore";
 
 import { useStableReference, compareMaps } from "./hooks/useStableReference";
 import { CommandRegistryProvider, useCommandRegistry } from "./contexts/CommandRegistryContext";
@@ -132,6 +133,11 @@ function AppInner() {
     }
     prevWorkspaceRef.current = selectedWorkspace;
   }, [selectedWorkspace, telemetry]);
+
+  // Tell GitStatusStore which workspace is active (for prioritized 1s refresh)
+  useEffect(() => {
+    setActiveWorkspace(selectedWorkspace?.workspaceId ?? null);
+  }, [selectedWorkspace?.workspaceId]);
 
   // Track last-read timestamps for unread indicators
   const { lastReadTimestamps, onToggleUnread } = useUnreadTracking(selectedWorkspace);
