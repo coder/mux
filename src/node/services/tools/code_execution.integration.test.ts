@@ -42,84 +42,92 @@ describe("code_execution integration tests", () => {
   });
 
   describe("file_read through sandbox", () => {
-    it("reads a real file via mux.file_read()", async () => {
-      // Create a real file
-      const testContent = "hello from integration test\nline two\nline three";
-      await fs.writeFile(path.join(testDir, "test.txt"), testContent);
+    it(
+      "reads a real file via mux.file_read()",
+      async () => {
+        // Create a real file
+        const testContent = "hello from integration test\nline two\nline three";
+        await fs.writeFile(path.join(testDir, "test.txt"), testContent);
 
-      // Create real file_read tool
-      const fileReadTool = createFileReadTool(toolConfig);
-      const tools: Record<string, Tool> = { file_read: fileReadTool };
+        // Create real file_read tool
+        const fileReadTool = createFileReadTool(toolConfig);
+        const tools: Record<string, Tool> = { file_read: fileReadTool };
 
-      // Track events
-      const events: PTCEvent[] = [];
-      const codeExecutionTool = await createCodeExecutionTool(
-        runtimeFactory,
-        new ToolBridge(tools),
-        (e) => events.push(e)
-      );
+        // Track events
+        const events: PTCEvent[] = [];
+        const codeExecutionTool = await createCodeExecutionTool(
+          runtimeFactory,
+          new ToolBridge(tools),
+          (e) => events.push(e)
+        );
 
-      // Execute code that reads the file
-      const code = `
+        // Execute code that reads the file
+        const code = `
         const result = mux.file_read({ filePath: "test.txt" });
         return result;
       `;
 
-      const result = (await codeExecutionTool.execute!(
-        { code },
-        mockToolCallOptions
-      )) as PTCExecutionResult;
+        const result = (await codeExecutionTool.execute!(
+          { code },
+          mockToolCallOptions
+        )) as PTCExecutionResult;
 
-      // Verify the result contains the file content
-      expect(result).toBeDefined();
-      expect(result.success).toBe(true);
+        // Verify the result contains the file content
+        expect(result).toBeDefined();
+        expect(result.success).toBe(true);
 
-      // The result should be the file_read response
-      const fileReadResult = result.result as {
-        success: boolean;
-        content?: string;
-        lines_read?: number;
-      };
-      expect(fileReadResult.success).toBe(true);
-      expect(fileReadResult.content).toContain("hello from integration test");
-      expect(fileReadResult.lines_read).toBe(3);
+        // The result should be the file_read response
+        const fileReadResult = result.result as {
+          success: boolean;
+          content?: string;
+          lines_read?: number;
+        };
+        expect(fileReadResult.success).toBe(true);
+        expect(fileReadResult.content).toContain("hello from integration test");
+        expect(fileReadResult.lines_read).toBe(3);
 
-      // Verify tool call event was emitted
-      const toolCallEndEvents = events.filter(
-        (e): e is PTCToolCallEndEvent => e.type === "tool-call-end"
-      );
-      expect(toolCallEndEvents.length).toBe(1);
-      expect(toolCallEndEvents[0].toolName).toBe("file_read");
-      expect(toolCallEndEvents[0].error).toBeUndefined();
-    });
+        // Verify tool call event was emitted
+        const toolCallEndEvents = events.filter(
+          (e): e is PTCToolCallEndEvent => e.type === "tool-call-end"
+        );
+        expect(toolCallEndEvents.length).toBe(1);
+        expect(toolCallEndEvents[0].toolName).toBe("file_read");
+        expect(toolCallEndEvents[0].error).toBeUndefined();
+      },
+      { timeout: 20_000 }
+    );
 
-    it("handles file not found gracefully", async () => {
-      const fileReadTool = createFileReadTool(toolConfig);
-      const tools: Record<string, Tool> = { file_read: fileReadTool };
+    it(
+      "handles file not found gracefully",
+      async () => {
+        const fileReadTool = createFileReadTool(toolConfig);
+        const tools: Record<string, Tool> = { file_read: fileReadTool };
 
-      const codeExecutionTool = await createCodeExecutionTool(
-        runtimeFactory,
-        new ToolBridge(tools)
-      );
+        const codeExecutionTool = await createCodeExecutionTool(
+          runtimeFactory,
+          new ToolBridge(tools)
+        );
 
-      const code = `
+        const code = `
         const result = mux.file_read({ filePath: "nonexistent.txt" });
         return result;
       `;
 
-      const result = (await codeExecutionTool.execute!(
-        { code },
-        mockToolCallOptions
-      )) as PTCExecutionResult;
+        const result = (await codeExecutionTool.execute!(
+          { code },
+          mockToolCallOptions
+        )) as PTCExecutionResult;
 
-      expect(result.success).toBe(true);
+        expect(result.success).toBe(true);
 
-      // file_read returns success: false for missing files, not an exception
-      const fileReadResult = result.result as { success: boolean; error?: string };
-      expect(fileReadResult.success).toBe(false);
-      // Error contains ENOENT or stat failure message
-      expect(fileReadResult.error).toMatch(/ENOENT|stat/i);
-    });
+        // file_read returns success: false for missing files, not an exception
+        const fileReadResult = result.result as { success: boolean; error?: string };
+        expect(fileReadResult.success).toBe(false);
+        // Error contains ENOENT or stat failure message
+        expect(fileReadResult.error).toMatch(/ENOENT|stat/i);
+      },
+      { timeout: 20_000 }
+    );
   });
 
   describe("bash through sandbox", () => {

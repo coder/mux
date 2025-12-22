@@ -29,14 +29,17 @@ import { ThemeProvider, useTheme, type ThemeMode } from "./contexts/ThemeContext
 import { CommandPalette } from "./components/CommandPalette";
 import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sources";
 
+import type { UIMode } from "@/common/types/mode";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { isWorkspaceForkSwitchEvent } from "./utils/workspaceEvents";
 import {
+  EXPANDED_PROJECTS_KEY,
+  getModeKey,
+  getModelKey,
   getThinkingLevelByModelKey,
   getThinkingLevelKey,
-  getModelKey,
-  EXPANDED_PROJECTS_KEY,
+  getWorkspaceAISettingsByModeKey,
 } from "@/common/constants/storage";
 import { sortProjectsByOrder } from "@/common/utils/projectOrdering";
 import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
@@ -322,10 +325,33 @@ function AppInner() {
       // ThinkingProvider will pick this up via its listener
       updatePersistedState(key, effective);
 
+      type WorkspaceAISettingsByModeCache = Partial<
+        Record<UIMode, { model: string; thinkingLevel: ThinkingLevel }>
+      >;
+
+      const mode = readPersistedState<UIMode>(getModeKey(workspaceId), "exec");
+
+      updatePersistedState<WorkspaceAISettingsByModeCache>(
+        getWorkspaceAISettingsByModeKey(workspaceId),
+        (prev) => {
+          const record: WorkspaceAISettingsByModeCache =
+            prev && typeof prev === "object" ? prev : {};
+          return {
+            ...record,
+            [mode]: { model, thinkingLevel: effective },
+          };
+        },
+        {}
+      );
+
       // Persist to backend so the palette change follows the workspace across devices.
       if (api) {
         api.workspace
-          .updateAISettings({ workspaceId, aiSettings: { model, thinkingLevel: effective } })
+          .updateModeAISettings({
+            workspaceId,
+            mode,
+            aiSettings: { model, thinkingLevel: effective },
+          })
           .catch(() => {
             // Best-effort only.
           });

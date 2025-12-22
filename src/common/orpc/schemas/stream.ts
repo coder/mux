@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AgentModeSchema } from "../../types/mode";
 import { ChatUsageDisplaySchema } from "./chatStats";
 import { StreamErrorTypeSchema } from "./errors";
 import {
@@ -43,7 +44,7 @@ export const StreamStartEventSchema = z.object({
   startTime: z.number().meta({
     description: "Backend timestamp when stream started (Date.now())",
   }),
-  mode: z.string().optional().meta({
+  mode: AgentModeSchema.optional().catch(undefined).meta({
     description: "Agent mode for this stream",
   }),
 });
@@ -386,7 +387,7 @@ export const SendMessageOptionsSchema = z.object({
   additionalSystemInstructions: z.string().optional(),
   maxOutputTokens: z.number().optional(),
   providerOptions: MuxProviderOptionsSchema.optional(),
-  mode: z.string().optional(),
+  mode: AgentModeSchema.optional().catch(undefined),
   muxMetadata: z.any().optional(), // Black box
   experiments: ExperimentsSchema.optional(),
 });

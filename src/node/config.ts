@@ -17,6 +17,7 @@ import {
   normalizeSubagentAiDefaults,
   normalizeTaskSettings,
 } from "@/common/types/tasks";
+import { normalizeModeAiDefaults } from "@/common/types/modeAiDefaults";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility";
 import { getMuxHome } from "@/common/constants/paths";
@@ -97,6 +98,7 @@ export class Config {
           featureFlagOverrides?: Record<string, "default" | "on" | "off">;
           taskSettings?: unknown;
           subagentAiDefaults?: unknown;
+          modeAiDefaults?: unknown;
         };
 
         // Config is stored as array of [path, config] pairs
@@ -119,6 +121,7 @@ export class Config {
             viewedSplashScreens: parsed.viewedSplashScreens,
             taskSettings: normalizeTaskSettings(parsed.taskSettings),
             subagentAiDefaults: normalizeSubagentAiDefaults(parsed.subagentAiDefaults),
+            modeAiDefaults: normalizeModeAiDefaults(parsed.modeAiDefaults),
             featureFlagOverrides: parsed.featureFlagOverrides,
           };
         }
@@ -132,6 +135,7 @@ export class Config {
       projects: new Map(),
       taskSettings: DEFAULT_TASK_SETTINGS,
       subagentAiDefaults: {},
+      modeAiDefaults: {},
     };
   }
 
@@ -151,6 +155,7 @@ export class Config {
         featureFlagOverrides?: ProjectsConfig["featureFlagOverrides"];
         taskSettings?: ProjectsConfig["taskSettings"];
         subagentAiDefaults?: ProjectsConfig["subagentAiDefaults"];
+        modeAiDefaults?: ProjectsConfig["modeAiDefaults"];
       } = {
         projects: Array.from(config.projects.entries()),
         taskSettings: config.taskSettings ?? DEFAULT_TASK_SETTINGS,
@@ -178,6 +183,9 @@ export class Config {
       }
       if (config.viewedSplashScreens) {
         data.viewedSplashScreens = config.viewedSplashScreens;
+      }
+      if (config.modeAiDefaults && Object.keys(config.modeAiDefaults).length > 0) {
+        data.modeAiDefaults = config.modeAiDefaults;
       }
       if (config.subagentAiDefaults && Object.keys(config.subagentAiDefaults).length > 0) {
         data.subagentAiDefaults = config.subagentAiDefaults;
@@ -406,6 +414,7 @@ export class Config {
               // GUARANTEE: All workspaces must have runtimeConfig (apply default if missing)
               runtimeConfig: workspace.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG,
               aiSettings: workspace.aiSettings,
+              aiSettingsByMode: workspace.aiSettingsByMode,
               parentWorkspaceId: workspace.parentWorkspaceId,
               agentType: workspace.agentType,
               taskStatus: workspace.taskStatus,
@@ -456,6 +465,7 @@ export class Config {
             metadata.runtimeConfig ??= DEFAULT_RUNTIME_CONFIG;
 
             // Preserve any config-only fields that may not exist in legacy metadata.json
+            metadata.aiSettingsByMode ??= workspace.aiSettingsByMode;
             metadata.aiSettings ??= workspace.aiSettings;
 
             // Preserve tree/task metadata when present in config (metadata.json won't have it)
@@ -494,6 +504,7 @@ export class Config {
               // GUARANTEE: All workspaces must have runtimeConfig
               runtimeConfig: DEFAULT_RUNTIME_CONFIG,
               aiSettings: workspace.aiSettings,
+              aiSettingsByMode: workspace.aiSettingsByMode,
               parentWorkspaceId: workspace.parentWorkspaceId,
               agentType: workspace.agentType,
               taskStatus: workspace.taskStatus,
@@ -529,6 +540,7 @@ export class Config {
             // GUARANTEE: All workspaces must have runtimeConfig (even in error cases)
             runtimeConfig: DEFAULT_RUNTIME_CONFIG,
             aiSettings: workspace.aiSettings,
+            aiSettingsByMode: workspace.aiSettingsByMode,
             parentWorkspaceId: workspace.parentWorkspaceId,
             agentType: workspace.agentType,
             taskStatus: workspace.taskStatus,

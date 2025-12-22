@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import React, { createContext, useContext, useEffect, useMemo, useCallback } from "react";
+import type { UIMode } from "@/common/types/mode";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import {
   readPersistedState,
@@ -9,8 +10,10 @@ import {
 import {
   getModelKey,
   getProjectScopeId,
+  getModeKey,
   getThinkingLevelByModelKey,
   getThinkingLevelKey,
+  getWorkspaceAISettingsByModeKey,
   GLOBAL_SCOPE_ID,
 } from "@/common/constants/storage";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
@@ -79,13 +82,37 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
       setThinkingLevelInternal(effective);
 
       // Workspace variant: persist to backend so settings follow the workspace across devices.
-      if (!props.workspaceId || !api) {
+      if (!props.workspaceId) {
+        return;
+      }
+
+      type WorkspaceAISettingsByModeCache = Partial<
+        Record<UIMode, { model: string; thinkingLevel: ThinkingLevel }>
+      >;
+
+      const mode = readPersistedState<UIMode>(getModeKey(scopeId), "exec");
+
+      updatePersistedState<WorkspaceAISettingsByModeCache>(
+        getWorkspaceAISettingsByModeKey(props.workspaceId),
+        (prev) => {
+          const record: WorkspaceAISettingsByModeCache =
+            prev && typeof prev === "object" ? prev : {};
+          return {
+            ...record,
+            [mode]: { model, thinkingLevel: effective },
+          };
+        },
+        {}
+      );
+
+      if (!api) {
         return;
       }
 
       api.workspace
-        .updateAISettings({
+        .updateModeAISettings({
           workspaceId: props.workspaceId,
+          mode,
           aiSettings: { model, thinkingLevel: effective },
         })
         .catch(() => {

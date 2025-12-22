@@ -72,7 +72,7 @@ import { MockScenarioPlayer } from "./mock/mockScenarioPlayer";
 import { EnvHttpProxyAgent, type Dispatcher } from "undici";
 import { getPlanFilePath } from "@/common/utils/planStorage";
 import { getPlanFileHint, getPlanModeInstruction } from "@/common/utils/ui/modeUtils";
-import type { UIMode } from "@/common/types/mode";
+import type { AgentMode, UIMode } from "@/common/types/mode";
 import { MUX_APP_ATTRIBUTION_TITLE, MUX_APP_ATTRIBUTION_URL } from "@/constants/appAttribution";
 import { readPlanFile } from "@/node/utils/runtime/helpers";
 import { getAgentPreset } from "@/node/services/agentPresets";
@@ -1000,7 +1000,7 @@ export class AIService extends EventEmitter {
     additionalSystemInstructions?: string,
     maxOutputTokens?: number,
     muxProviderOptions?: MuxProviderOptions,
-    mode?: string,
+    mode?: AgentMode,
     recordFileState?: (filePath: string, state: FileState) => void,
     changedFileAttachments?: EditedFileAttachment[],
     postCompactionAttachments?: PostCompactionAttachment[] | null,
@@ -1476,7 +1476,7 @@ export class AIService extends EventEmitter {
         properties: {
           workspaceId,
           model: modelString,
-          mode: mode ?? uiMode ?? "unknown",
+          mode: mode ?? uiMode ?? "exec",
           runtimeType: getRuntimeTypeForTelemetry(metadata.runtimeConfig),
 
           mcp_server_enabled_count: effectiveMcpStats.enabledServerCount,

@@ -26,6 +26,7 @@ import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import {
   getModelKey,
+  getWorkspaceAISettingsByModeKey,
   getInputKey,
   getInputImagesKey,
   VIM_ENABLED_KEY,
@@ -346,26 +347,49 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
   const setPreferredModel = useCallback(
     (model: string) => {
+      type WorkspaceAISettingsByModeCache = Partial<
+        Record<"plan" | "exec", { model: string; thinkingLevel: ThinkingLevel }>
+      >;
+
       const canonicalModel = migrateGatewayModel(model);
       ensureModelInSettings(canonicalModel); // Ensure model exists in Settings
       updatePersistedState(storageKeys.modelKey, canonicalModel); // Update workspace or project-specific
 
-      // Workspace variant: persist to backend for cross-device consistency.
-      if (!api || variant !== "workspace" || !workspaceId) {
+      if (variant !== "workspace" || !workspaceId) {
         return;
       }
 
       const effectiveThinkingLevel = enforceThinkingPolicy(canonicalModel, thinkingLevel);
+
+      updatePersistedState<WorkspaceAISettingsByModeCache>(
+        getWorkspaceAISettingsByModeKey(workspaceId),
+        (prev) => {
+          const record: WorkspaceAISettingsByModeCache =
+            prev && typeof prev === "object" ? prev : {};
+          return {
+            ...record,
+            [mode]: { model: canonicalModel, thinkingLevel: effectiveThinkingLevel },
+          };
+        },
+        {}
+      );
+
+      // Workspace variant: persist to backend for cross-device consistency.
+      if (!api) {
+        return;
+      }
+
       api.workspace
-        .updateAISettings({
+        .updateModeAISettings({
           workspaceId,
+          mode,
           aiSettings: { model: canonicalModel, thinkingLevel: effectiveThinkingLevel },
         })
         .catch(() => {
           // Best-effort only. If offline or backend is old, sendMessage will persist.
         });
     },
-    [api, storageKeys.modelKey, ensureModelInSettings, thinkingLevel, variant, workspaceId]
+    [api, mode, storageKeys.modelKey, ensureModelInSettings, thinkingLevel, variant, workspaceId]
   );
   const deferredModel = useDeferredValue(preferredModel);
   const deferredInput = useDeferredValue(input);

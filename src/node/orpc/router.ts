@@ -20,6 +20,7 @@ import { readPlanFile } from "@/node/utils/runtime/helpers";
 import { secretsToRecord } from "@/common/types/secrets";
 import { roundToBase2 } from "@/common/telemetry/utils";
 import { createAsyncEventQueue } from "@/common/utils/asyncEventIterator";
+import { normalizeModeAiDefaults } from "@/common/types/modeAiDefaults";
 import {
   DEFAULT_TASK_SETTINGS,
   normalizeSubagentAiDefaults,
@@ -251,7 +252,21 @@ export const router = (authToken?: string) => {
           return {
             taskSettings: config.taskSettings ?? DEFAULT_TASK_SETTINGS,
             subagentAiDefaults: config.subagentAiDefaults ?? {},
+            modeAiDefaults: config.modeAiDefaults ?? {},
           };
+        }),
+      updateModeAiDefaults: t
+        .input(schemas.config.updateModeAiDefaults.input)
+        .output(schemas.config.updateModeAiDefaults.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => {
+            const normalizedDefaults = normalizeModeAiDefaults(input.modeAiDefaults);
+            return {
+              ...config,
+              modeAiDefaults:
+                Object.keys(normalizedDefaults).length > 0 ? normalizedDefaults : undefined,
+            };
+          });
         }),
       saveConfig: t
         .input(schemas.config.saveConfig.input)
@@ -751,6 +766,16 @@ export const router = (authToken?: string) => {
         .output(schemas.workspace.rename.output)
         .handler(async ({ context, input }) => {
           return context.workspaceService.rename(input.workspaceId, input.newName);
+        }),
+      updateModeAISettings: t
+        .input(schemas.workspace.updateModeAISettings.input)
+        .output(schemas.workspace.updateModeAISettings.output)
+        .handler(async ({ context, input }) => {
+          return context.workspaceService.updateModeAISettings(
+            input.workspaceId,
+            input.mode,
+            input.aiSettings
+          );
         }),
       updateTitle: t
         .input(schemas.workspace.updateTitle.input)

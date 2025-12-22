@@ -44,6 +44,7 @@ import {
   AskUserQuestionToolArgsSchema,
   AskUserQuestionToolResultSchema,
 } from "@/common/utils/tools/toolDefinitions";
+import type { UIMode } from "@/common/types/mode";
 import type { MuxMessage } from "@/common/types/message";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { hasSrcBaseDir, getSrcBaseDir, isSSHRuntime } from "@/common/types/runtime";
@@ -1107,22 +1108,90 @@ export class WorkspaceService extends EventEmitter {
     options: SendMessageOptions | undefined,
     context: "send" | "resume"
   ): Promise<void> {
-    // Skip for compaction - it may use a different model and shouldn't override user preference
+    // Skip for compaction - it may use a different model and shouldn't override user preference.
     const isCompaction = options?.mode === "compact";
     if (isCompaction) return;
 
     const extractedSettings = this.extractWorkspaceAISettingsFromSendOptions(options);
     if (!extractedSettings) return;
 
-    const persistResult = await this.persistWorkspaceAISettings(workspaceId, extractedSettings, {
-      emitMetadata: false,
-    });
+    const mode: UIMode = options?.mode === "plan" ? "plan" : "exec";
+
+    const persistResult = await this.persistWorkspaceAISettingsForMode(
+      workspaceId,
+      mode,
+      extractedSettings,
+      {
+        emitMetadata: false,
+      }
+    );
     if (!persistResult.success) {
       log.debug(`Failed to persist workspace AI settings from ${context} options`, {
         workspaceId,
         error: persistResult.error,
       });
     }
+  }
+
+  private async persistWorkspaceAISettingsForMode(
+    workspaceId: string,
+    mode: UIMode,
+    aiSettings: WorkspaceAISettings,
+    options?: { emitMetadata?: boolean }
+  ): Promise<Result<boolean, string>> {
+    const found = this.config.findWorkspace(workspaceId);
+    if (!found) {
+      return Err("Workspace not found");
+    }
+
+    const { projectPath, workspacePath } = found;
+
+    const config = this.config.loadConfigOrDefault();
+    const projectConfig = config.projects.get(projectPath);
+    if (!projectConfig) {
+      return Err(`Project not found: ${projectPath}`);
+    }
+
+    const workspaceEntry = projectConfig.workspaces.find((w) => w.id === workspaceId);
+    const workspaceEntryWithFallback =
+      workspaceEntry ?? projectConfig.workspaces.find((w) => w.path === workspacePath);
+    if (!workspaceEntryWithFallback) {
+      return Err("Workspace not found");
+    }
+
+    const prev = workspaceEntryWithFallback.aiSettingsByMode?.[mode];
+    const changed =
+      prev?.model !== aiSettings.model || prev?.thinkingLevel !== aiSettings.thinkingLevel;
+    if (!changed) {
+      return Ok(false);
+    }
+
+    workspaceEntryWithFallback.aiSettingsByMode = {
+      ...(workspaceEntryWithFallback.aiSettingsByMode ?? {}),
+      [mode]: aiSettings,
+    };
+
+    // Keep the legacy field in sync for older clients (prefer exec).
+    workspaceEntryWithFallback.aiSettings =
+      workspaceEntryWithFallback.aiSettingsByMode.exec ??
+      workspaceEntryWithFallback.aiSettingsByMode.plan ??
+      aiSettings;
+
+    await this.config.saveConfig(config);
+
+    if (options?.emitMetadata !== false) {
+      const allMetadata = await this.config.getAllWorkspaceMetadata();
+      const updatedMetadata = allMetadata.find((m) => m.id === workspaceId) ?? null;
+
+      const session = this.sessions.get(workspaceId);
+      if (session) {
+        session.emitMetadata(updatedMetadata);
+      } else {
+        this.emit("metadata", { workspaceId, metadata: updatedMetadata });
+      }
+    }
+
+    return Ok(true);
   }
 
   private async persistWorkspaceAISettings(
@@ -1150,14 +1219,22 @@ export class WorkspaceService extends EventEmitter {
       return Err("Workspace not found");
     }
 
-    const prev = workspaceEntryWithFallback.aiSettings;
+    const prevLegacy = workspaceEntryWithFallback.aiSettings;
+    const prevByMode = workspaceEntryWithFallback.aiSettingsByMode;
+
     const changed =
-      prev?.model !== aiSettings.model || prev?.thinkingLevel !== aiSettings.thinkingLevel;
+      prevLegacy?.model !== aiSettings.model ||
+      prevLegacy?.thinkingLevel !== aiSettings.thinkingLevel ||
+      prevByMode?.plan?.model !== aiSettings.model ||
+      prevByMode?.plan?.thinkingLevel !== aiSettings.thinkingLevel ||
+      prevByMode?.exec?.model !== aiSettings.model ||
+      prevByMode?.exec?.thinkingLevel !== aiSettings.thinkingLevel;
     if (!changed) {
       return Ok(false);
     }
 
     workspaceEntryWithFallback.aiSettings = aiSettings;
+    workspaceEntryWithFallback.aiSettingsByMode = { plan: aiSettings, exec: aiSettings };
     await this.config.saveConfig(config);
 
     if (options?.emitMetadata !== false) {
@@ -1188,6 +1265,36 @@ export class WorkspaceService extends EventEmitter {
       const persistResult = await this.persistWorkspaceAISettings(workspaceId, normalized.data, {
         emitMetadata: true,
       });
+      if (!persistResult.success) {
+        return Err(persistResult.error);
+      }
+
+      return Ok(undefined);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Err(`Failed to update workspace AI settings: ${message}`);
+    }
+  }
+
+  async updateModeAISettings(
+    workspaceId: string,
+    mode: UIMode,
+    aiSettings: WorkspaceAISettings
+  ): Promise<Result<void, string>> {
+    try {
+      const normalized = this.normalizeWorkspaceAISettings(aiSettings);
+      if (!normalized.success) {
+        return Err(normalized.error);
+      }
+
+      const persistResult = await this.persistWorkspaceAISettingsForMode(
+        workspaceId,
+        mode,
+        normalized.data,
+        {
+          emitMetadata: true,
+        }
+      );
       if (!persistResult.success) {
         return Err(persistResult.error);
       }
