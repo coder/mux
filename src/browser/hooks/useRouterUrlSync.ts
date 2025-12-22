@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { useLocation, useNavigate, type NavigateFunction } from "react-router-dom";
+import { useLocation } from "react-router-dom";
 import { readPersistedState } from "./usePersistedState";
 import { SELECTED_WORKSPACE_KEY } from "@/common/constants/storage";
 import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar";
@@ -78,43 +78,4 @@ export function useRouterUrlSync(): void {
       window.history.replaceState(null, "", url);
     }
   }, [location.pathname, location.search]);
-}
-
-/**
- * Creates URL for navigating to a workspace
- */
-export function workspaceUrl(workspaceId: string): string {
-  return `/workspace/${encodeURIComponent(workspaceId)}`;
-}
-
-/**
- * Creates URL for the project page (workspace creation)
- */
-export function projectUrl(projectPath: string): string {
-  return `/project?path=${encodeURIComponent(projectPath)}`;
-}
-
-/**
- * Hook that returns typed navigation helpers
- */
-export function useAppNavigate(): {
-  navigate: NavigateFunction;
-  toWorkspace: (workspaceId: string) => void;
-  toProject: (projectPath: string) => void;
-  toHome: () => void;
-} {
-  const navigate = useNavigate();
-
-  return {
-    navigate,
-    toWorkspace: (workspaceId: string) => {
-      void navigate(workspaceUrl(workspaceId), { replace: true });
-    },
-    toProject: (projectPath: string) => {
-      void navigate(projectUrl(projectPath), { replace: true });
-    },
-    toHome: () => {
-      void navigate("/", { replace: true });
-    },
-  };
 }
