@@ -10,6 +10,7 @@ import type { HistoryService } from "@/node/services/historyService";
 import type { PartialService } from "@/node/services/partialService";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import { log } from "@/node/services/log";
+import { detectDefaultTrunkBranch, listLocalBranches } from "@/node/git";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import type { InitLogger, WorkspaceCreationResult } from "@/node/runtime/Runtime";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
@@ -497,9 +498,23 @@ export class TaskService {
       initLogger,
     });
 
-    const trunkBranch = forkResult.success
-      ? (forkResult.sourceBranch ?? parentMeta.name)
-      : parentMeta.name;
+    let trunkBranch: string;
+    if (forkResult.success && forkResult.sourceBranch) {
+      trunkBranch = forkResult.sourceBranch;
+    } else {
+      // Fork failed - validate parentMeta.name is a valid local branch.
+      // For non-git projects (LocalRuntime), git commands fail - fall back to "main".
+      try {
+        const localBranches = await listLocalBranches(parentMeta.projectPath);
+        if (localBranches.includes(parentMeta.name)) {
+          trunkBranch = parentMeta.name;
+        } else {
+          trunkBranch = await detectDefaultTrunkBranch(parentMeta.projectPath, localBranches);
+        }
+      } catch {
+        trunkBranch = "main";
+      }
+    }
     const createResult: WorkspaceCreationResult = forkResult.success
       ? { success: true as const, workspacePath: forkResult.workspacePath }
       : await runtime.createWorkspace({

@@ -1947,4 +1947,75 @@ describe("TaskService", () => {
     expect(remove).toHaveBeenCalled();
     expect(resumeStream).toHaveBeenCalled();
   });
+
+  test("falls back to default trunk when parent branch does not exist locally", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["aaaaaaaaaa"], "bbbbbbbbbb");
+
+    const projectPath = await createTestProject(rootDir);
+
+    const runtimeConfig = { type: "worktree" as const, srcBaseDir: config.srcDir };
+    const runtime = createRuntime(runtimeConfig, { projectPath });
+
+    const initLogger = createNullInitLogger();
+
+    // Create a worktree for the parent on main
+    const parentName = "parent";
+    const parentCreate = await runtime.createWorkspace({
+      projectPath,
+      branchName: parentName,
+      trunkBranch: "main",
+      directoryName: parentName,
+      initLogger,
+    });
+    expect(parentCreate.success).toBe(true);
+
+    const parentId = "1111111111";
+    const parentPath = runtime.getWorkspacePath(projectPath, parentName);
+
+    // Register parent with a name that does NOT exist as a local branch.
+    // This simulates the case where parent workspace name (e.g., from SSH)
+    // doesn't correspond to a local branch in the project repository.
+    const nonExistentBranchName = "non-existent-branch-xyz";
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              {
+                path: parentPath,
+                id: parentId,
+                name: nonExistentBranchName, // This branch doesn't exist locally
+                createdAt: new Date().toISOString(),
+                runtimeConfig,
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+    });
+    const { taskService } = createTaskServiceHarness(config);
+
+    // Creating a task should succeed by falling back to "main" as trunkBranch
+    // instead of failing with "fatal: 'non-existent-branch-xyz' is not a commit"
+    const created = await taskService.create({
+      parentWorkspaceId: parentId,
+      kind: "agent",
+      agentType: "explore",
+      prompt: "explore this repo",
+      title: "Test task",
+    });
+    expect(created.success).toBe(true);
+    if (!created.success) return;
+
+    // Verify the child workspace was created
+    const postCfg = config.loadConfigOrDefault();
+    const childEntry = Array.from(postCfg.projects.values())
+      .flatMap((p) => p.workspaces)
+      .find((w) => w.id === created.data.taskId);
+    expect(childEntry).toBeTruthy();
+    expect(childEntry?.runtimeConfig?.type).toBe("worktree");
+  }, 20_000);
 });
