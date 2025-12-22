@@ -94,6 +94,31 @@ type DiffState =
 const REVIEW_PANEL_CACHE_MAX_ENTRIES = 20;
 const REVIEW_PANEL_CACHE_MAX_SIZE_BYTES = 20 * 1024 * 1024; // 20MB
 
+/**
+ * Preserve object references for unchanged hunks to prevent re-renders.
+ * Compares by ID and content - if a hunk exists in prev with same content, reuse it.
+ */
+function preserveHunkReferences(prev: DiffHunk[], next: DiffHunk[]): DiffHunk[] {
+  if (prev.length === 0) return next;
+
+  const prevById = new Map(prev.map((h) => [h.id, h]));
+  let allSame = prev.length === next.length;
+
+  const result = next.map((hunk, i) => {
+    const prevHunk = prevById.get(hunk.id);
+    // Fast path: same ID and content means unchanged (content hash is part of ID)
+    if (prevHunk && prevHunk.content === hunk.content) {
+      if (allSame && prev[i]?.id !== hunk.id) allSame = false;
+      return prevHunk;
+    }
+    allSame = false;
+    return hunk;
+  });
+
+  // If all hunks are reused in same order, return prev array to preserve top-level reference
+  return allSame ? prev : result;
+}
+
 interface ReviewPanelDiffCacheValue {
   hunks: DiffHunk[];
   truncationWarning: string | null;
@@ -458,10 +483,19 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         if (cancelled) return;
 
         setDiagnosticInfo(data.diagnosticInfo);
-        setDiffState({
-          status: "loaded",
-          hunks: data.hunks,
-          truncationWarning: data.truncationWarning,
+
+        // Preserve object references for unchanged hunks to prevent unnecessary re-renders.
+        // HunkViewer is memoized on hunk object identity, so reusing references avoids
+        // re-rendering (and re-highlighting) hunks that haven't actually changed.
+        setDiffState((prev) => {
+          const prevHunks =
+            prev.status === "loaded" || prev.status === "refreshing" ? prev.hunks : [];
+          const hunks = preserveHunkReferences(prevHunks, data.hunks);
+          return {
+            status: "loaded",
+            hunks,
+            truncationWarning: data.truncationWarning,
+          };
         });
 
         if (data.hunks.length > 0) {
