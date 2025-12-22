@@ -1,4 +1,4 @@
-import React, { useId } from "react";
+import React from "react";
 import { ChevronDown } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/browser/components/ui/popover";
 import { ToggleGroup, ToggleGroupItem } from "@/browser/components/ui/toggle-group";
@@ -18,7 +18,6 @@ export const MCPHeadersEditor: React.FC<{
   const sortedSecretKeys = props.secretKeys
     .slice()
     .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
-  const datalistId = useId();
   const { validation } = mcpHeaderRowsToRecord(props.rows, {
     knownSecretKeys: new Set(props.secretKeys),
   });
@@ -92,11 +91,12 @@ export const MCPHeadersEditor: React.FC<{
                 }}
                 size="sm"
                 disabled={props.disabled}
+                className="h-[34px]"
               >
-                <ToggleGroupItem value="text" size="sm">
+                <ToggleGroupItem value="text" size="sm" className="h-[26px] px-3 text-[13px]">
                   Text
                 </ToggleGroupItem>
-                <ToggleGroupItem value="secret" size="sm">
+                <ToggleGroupItem value="secret" size="sm" className="h-[26px] px-3 text-[13px]">
                   Secret
                 </ToggleGroupItem>
               </ToggleGroup>
@@ -105,7 +105,6 @@ export const MCPHeadersEditor: React.FC<{
                 <div className="flex items-stretch gap-1">
                   <input
                     type="text"
-                    list={datalistId}
                     value={row.value}
                     onChange={(e) => updateRow(row.id, { value: e.target.value })}
                     placeholder="MCP_TOKEN"
@@ -180,12 +179,6 @@ export const MCPHeadersEditor: React.FC<{
           ))}
         </div>
       )}
-
-      <datalist id={datalistId}>
-        {sortedSecretKeys.map((key) => (
-          <option key={key} value={key} />
-        ))}
-      </datalist>
 
       {validation.errors.length > 0 && (
         <div className="bg-destructive/10 text-destructive rounded-md px-3 py-2 text-xs">
