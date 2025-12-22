@@ -39,6 +39,15 @@ export {
   TokenConsumerSchema,
 } from "./schemas/chatStats";
 
+// Agent Skill schemas
+export {
+  AgentSkillDescriptorSchema,
+  AgentSkillFrontmatterSchema,
+  AgentSkillPackageSchema,
+  AgentSkillScopeSchema,
+  SkillNameSchema,
+} from "./schemas/agentSkill";
+
 // Error schemas
 export { SendMessageErrorSchema, StreamErrorTypeSchema } from "./schemas/errors";
 

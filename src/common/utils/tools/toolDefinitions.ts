@@ -6,6 +6,7 @@
  */
 
 import { z } from "zod";
+import { AgentSkillPackageSchema, SkillNameSchema } from "@/common/orpc/schemas";
 import {
   BASH_HARD_MAX_LINES,
   BASH_MAX_LINE_BYTES,
@@ -388,6 +389,46 @@ export const TOOL_DEFINITIONS = {
         .describe("Number of lines to return from offset (optional, returns all if not specified)"),
     }),
   },
+  agent_skill_read: {
+    description:
+      "Load an Agent Skill's SKILL.md (YAML frontmatter + markdown body) by name. " +
+      "Skills are discovered from <projectRoot>/.mux/skills/<name>/SKILL.md and ~/.mux/skills/<name>/SKILL.md.",
+    schema: z
+      .object({
+        name: SkillNameSchema.describe("Skill name (directory name under the skills root)"),
+      })
+      .strict(),
+  },
+  agent_skill_read_file: {
+    description:
+      "Read a file within an Agent Skill directory. " +
+      "filePath must be relative to the skill directory (no absolute paths, no ~, no .. traversal). " +
+      "Supports offset/limit like file_read.",
+    schema: z
+      .object({
+        name: SkillNameSchema.describe("Skill name (directory name under the skills root)"),
+        filePath: z
+          .string()
+          .min(1)
+          .describe("Path to the file within the skill directory (relative)"),
+        offset: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe("1-based starting line number (optional, defaults to 1)"),
+        limit: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe(
+            "Number of lines to return from offset (optional, returns all if not specified)"
+          ),
+      })
+      .strict(),
+  },
+
   file_edit_replace_string: {
     description:
       "⚠️ CRITICAL: Always check tool results - edits WILL fail if old_string is not found or unique. Do not proceed with dependent operations (commits, pushes, builds) until confirming success.\n\n" +
@@ -778,6 +819,26 @@ export const FileReadToolResultSchema = z.union([
 ]);
 
 /**
+ * Agent Skill read tool result - full SKILL.md package or error.
+ */
+export const AgentSkillReadToolResultSchema = z.union([
+  z.object({
+    success: z.literal(true),
+    skill: AgentSkillPackageSchema,
+  }),
+  z.object({
+    success: z.literal(false),
+    error: z.string(),
+  }),
+]);
+
+/**
+ * Agent Skill read_file tool result.
+ * Uses the same shape/limits as file_read.
+ */
+export const AgentSkillReadFileToolResultSchema = FileReadToolResultSchema;
+
+/**
  * File edit insert tool result - diff or error.
  */
 export const FileEditInsertToolResultSchema = z.union([
@@ -839,6 +900,8 @@ export type BridgeableToolName =
   | "bash_background_list"
   | "bash_background_terminate"
   | "file_read"
+  | "agent_skill_read"
+  | "agent_skill_read_file"
   | "file_edit_insert"
   | "file_edit_replace_string"
   | "web_fetch";
@@ -855,6 +918,8 @@ export const RESULT_SCHEMAS: Record<BridgeableToolName, z.ZodType> = {
   bash_background_list: BashBackgroundListResultSchema,
   bash_background_terminate: BashBackgroundTerminateResultSchema,
   file_read: FileReadToolResultSchema,
+  agent_skill_read: AgentSkillReadToolResultSchema,
+  agent_skill_read_file: AgentSkillReadFileToolResultSchema,
   file_edit_insert: FileEditInsertToolResultSchema,
   file_edit_replace_string: FileEditReplaceStringToolResultSchema,
   web_fetch: WebFetchToolResultSchema,
@@ -901,6 +966,8 @@ export function getAvailableTools(
     "bash_background_list",
     "bash_background_terminate",
     "file_read",
+    "agent_skill_read",
+    "agent_skill_read_file",
     "file_edit_replace_string",
     // "file_edit_replace_lines", // DISABLED: causes models to break repo state
     "file_edit_insert",

@@ -12,6 +12,8 @@ import {
 } from "@/node/utils/main/markdown";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { getMuxHome } from "@/common/constants/paths";
+import { discoverAgentSkills } from "@/node/services/agentSkills/agentSkillsService";
+import { log } from "@/node/services/log";
 import { getAvailableTools } from "@/common/utils/tools/toolDefinitions";
 
 // NOTE: keep this in sync with the docs/models.md file
@@ -115,6 +117,41 @@ You are in a git worktree at ${workspacePath}
  * Only included when at least one MCP server is configured.
  * Note: We only expose server names, not commands, to avoid leaking secrets.
  */
+
+async function buildAgentSkillsContext(projectPath: string): Promise<string> {
+  try {
+    const skills = await discoverAgentSkills(projectPath);
+    if (skills.length === 0) return "";
+
+    const MAX_SKILLS = 50;
+    const shown = skills.slice(0, MAX_SKILLS);
+    const omitted = skills.length - shown.length;
+
+    const lines: string[] = [];
+    lines.push("Available agent skills (call tools to load):");
+    for (const skill of shown) {
+      lines.push(`- ${skill.name}: ${skill.description} (scope: ${skill.scope})`);
+    }
+    if (omitted > 0) {
+      lines.push(`(+${omitted} more not shown)`);
+    }
+
+    lines.push("");
+    lines.push("To load a skill:");
+    lines.push('- agent_skill_read({ name: "<skill-name>" })');
+
+    lines.push("");
+    lines.push("To read referenced files inside a skill directory:");
+    lines.push(
+      '- agent_skill_read_file({ name: "<skill-name>", filePath: "references/whatever.txt" })'
+    );
+
+    return `\n\n<agent-skills>\n${lines.join("\n")}\n</agent-skills>`;
+  } catch (error) {
+    log.warn("Failed to build agent skills context", { projectPath, error });
+    return "";
+  }
+}
 function buildMCPContext(mcpServers: MCPServerMap): string {
   const names = Object.keys(mcpServers);
   if (names.length === 0) return "";
@@ -274,6 +311,9 @@ export async function buildSystemMessage(
   if (mcpServers && Object.keys(mcpServers).length > 0) {
     systemMessage += buildMCPContext(mcpServers);
   }
+
+  // Add agent skills context (if any)
+  systemMessage += await buildAgentSkillsContext(metadata.projectPath);
 
   if (options?.variant === "agent") {
     const agentPrompt = options.agentSystemPrompt?.trim();

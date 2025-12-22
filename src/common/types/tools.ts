@@ -6,6 +6,8 @@
 import type { z } from "zod";
 import type {
   AgentReportToolResultSchema,
+  AgentSkillReadFileToolResultSchema,
+  AgentSkillReadToolResultSchema,
   AskUserQuestionOptionSchema,
   AskUserQuestionQuestionSchema,
   AskUserQuestionToolResultSchema,
@@ -41,6 +43,16 @@ export interface FileReadToolArgs {
   offset?: number; // 1-based starting line number (optional)
   limit?: number; // number of lines to return from offset (optional)
 }
+
+// Agent Skill Tool Types
+// Args derived from schema (avoid drift)
+export type AgentSkillReadToolArgs = z.infer<typeof TOOL_DEFINITIONS.agent_skill_read.schema>;
+export type AgentSkillReadToolResult = z.infer<typeof AgentSkillReadToolResultSchema>;
+
+export type AgentSkillReadFileToolArgs = z.infer<
+  typeof TOOL_DEFINITIONS.agent_skill_read_file.schema
+>;
+export type AgentSkillReadFileToolResult = z.infer<typeof AgentSkillReadFileToolResultSchema>;
 
 // FileReadToolResult derived from Zod schema (single source of truth)
 export type FileReadToolResult = z.infer<typeof FileReadToolResultSchema>;

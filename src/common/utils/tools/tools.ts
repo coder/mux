@@ -15,6 +15,8 @@ import { createTaskTool } from "@/node/services/tools/task";
 import { createTaskAwaitTool } from "@/node/services/tools/task_await";
 import { createTaskTerminateTool } from "@/node/services/tools/task_terminate";
 import { createTaskListTool } from "@/node/services/tools/task_list";
+import { createAgentSkillReadTool } from "@/node/services/tools/agent_skill_read";
+import { createAgentSkillReadFileTool } from "@/node/services/tools/agent_skill_read_file";
 import { createAgentReportTool } from "@/node/services/tools/agent_report";
 import { wrapWithInitWait } from "@/node/services/tools/wrapWithInitWait";
 import { log } from "@/node/services/log";
@@ -145,6 +147,8 @@ export async function getToolsForModel(
   // Non-runtime tools execute immediately (no init wait needed)
   const nonRuntimeTools: Record<string, Tool> = {
     ...(config.mode === "plan" ? { ask_user_question: createAskUserQuestionTool(config) } : {}),
+    agent_skill_read: createAgentSkillReadTool(config),
+    agent_skill_read_file: createAgentSkillReadFileTool(config),
     propose_plan: createProposePlanTool(config),
     task: createTaskTool(config),
     task_await: createTaskAwaitTool(config),
