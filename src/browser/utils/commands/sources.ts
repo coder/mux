@@ -153,7 +153,13 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         subtitle: workspaceDisplayName,
         section: section.workspaces,
         run: async () => {
-          const ok = confirm("Remove current workspace? This cannot be undone.");
+          const branchName =
+            selectedMeta?.name ??
+            selected.namedWorkspacePath.split("/").pop() ??
+            selected.namedWorkspacePath;
+          const ok = confirm(
+            `Remove current workspace? This will delete the worktree and local branch "${branchName}". This cannot be undone.`
+          );
           if (ok) await p.onRemoveWorkspace(selected.workspaceId);
         },
       });
@@ -305,7 +311,10 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
               (m) => m.id === vals.workspaceId
             );
             const workspaceName = meta ? `${meta.projectName}/${meta.name}` : vals.workspaceId;
-            const ok = confirm(`Remove workspace ${workspaceName}? This cannot be undone.`);
+            const branchName = meta?.name ?? workspaceName.split("/").pop() ?? workspaceName;
+            const ok = confirm(
+              `Remove workspace ${workspaceName}? This will delete the worktree and local branch "${branchName}". This cannot be undone.`
+            );
             if (ok) {
               await p.onRemoveWorkspace(vals.workspaceId);
             }

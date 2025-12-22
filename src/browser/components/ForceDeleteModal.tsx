@@ -70,7 +70,7 @@ export const ForceDeleteModal: React.FC<ForceDeleteModalProps> = ({
         <WarningBox>
           <WarningTitle>This action cannot be undone</WarningTitle>
           <WarningText>
-            Force deleting will permanently remove the workspace and{" "}
+            Force deleting will permanently remove the workspace and its local branch, and{" "}
             {error.includes("unpushed commits:")
               ? "discard the unpushed commits shown above"
               : "may discard uncommitted work or lose data"}

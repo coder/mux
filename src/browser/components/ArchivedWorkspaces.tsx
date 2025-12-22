@@ -518,7 +518,9 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
               <span className="text-muted text-xs">{selectedIds.size} selected</span>
               {bulkDeleteConfirm ? (
                 <>
-                  <span className="text-muted text-xs">Delete permanently?</span>
+                  <span className="text-muted text-xs">
+                    Delete permanently (also deletes local branches)?
+                  </span>
                   <button
                     onClick={() => void handleBulkDelete()}
                     className="rounded bg-red-600 px-2 py-0.5 text-xs text-white hover:bg-red-700"
@@ -556,7 +558,9 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
                         <Trash2 className="h-4 w-4" />
                       </button>
                     </TooltipTrigger>
-                    <TooltipContent>Delete selected permanently</TooltipContent>
+                    <TooltipContent>
+                      Delete selected permanently (local branches too)
+                    </TooltipContent>
                   </Tooltip>
                   <button
                     onClick={() => setSelectedIds(new Set())}
@@ -680,7 +684,7 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
                                 <Trash2 className="h-4 w-4" />
                               </button>
                             </TooltipTrigger>
-                            <TooltipContent>Delete permanently</TooltipContent>
+                            <TooltipContent>Delete permanently (local branch too)</TooltipContent>
                           </Tooltip>
                         </div>
                       </div>

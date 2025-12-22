@@ -9,7 +9,7 @@ import type {
   WorkspaceForkResult,
   InitLogger,
 } from "./Runtime";
-import { listLocalBranches, cleanStaleLock } from "@/node/git";
+import { listLocalBranches, cleanStaleLock, getCurrentBranch } from "@/node/git";
 import { checkInitHookExists, getMuxEnv } from "./initHook";
 import { execAsync } from "@/node/utils/disposableExec";
 import { getBashPath } from "@/node/utils/main/bashPath";
@@ -222,21 +222,112 @@ export class WorktreeRuntime extends LocalBaseRuntime {
     // In-place workspaces are identified by projectPath === workspaceName
     // These are direct workspace directories (e.g., CLI/benchmark sessions), not git worktrees
     const isInPlace = projectPath === workspaceName;
-    const shouldDeleteBranch = !isInPlace && workspaceName.startsWith("agent_");
+
+    // For git worktree workspaces, workspaceName is the branch name.
+    // Now that archiving exists, deleting a workspace should also delete its local branch by default.
+    const shouldDeleteBranch = !isInPlace;
 
     const tryDeleteBranch = async () => {
       if (!shouldDeleteBranch) return;
+
+      const branchToDelete = workspaceName.trim();
+      if (!branchToDelete) {
+        log.debug("Skipping git branch deletion: empty workspace name", {
+          projectPath,
+          workspaceName,
+        });
+        return;
+      }
+
+      let localBranches: string[];
+      try {
+        localBranches = await listLocalBranches(projectPath);
+      } catch (error) {
+        log.debug("Failed to list local branches; skipping branch deletion", {
+          projectPath,
+          workspaceName: branchToDelete,
+          error: getErrorMessage(error),
+        });
+        return;
+      }
+
+      if (!localBranches.includes(branchToDelete)) {
+        log.debug("Skipping git branch deletion: branch does not exist locally", {
+          projectPath,
+          workspaceName: branchToDelete,
+        });
+        return;
+      }
+
+      // Never delete protected/trunk branches.
+      const protectedBranches = new Set<string>(["main", "master", "trunk", "develop", "default"]);
+
+      // If there's only one local branch, treat it as protected (likely trunk).
+      if (localBranches.length === 1) {
+        protectedBranches.add(localBranches[0]);
+      }
+
+      const currentBranch = await getCurrentBranch(projectPath);
+      if (currentBranch) {
+        protectedBranches.add(currentBranch);
+      }
+
+      // If origin/HEAD points at a local branch, also treat it as protected.
+      try {
+        using originHeadProc = execAsync(
+          `git -C "${projectPath}" symbolic-ref refs/remotes/origin/HEAD`
+        );
+        const { stdout } = await originHeadProc.result;
+        const ref = stdout.trim();
+        const prefix = "refs/remotes/origin/";
+        if (ref.startsWith(prefix)) {
+          protectedBranches.add(ref.slice(prefix.length));
+        }
+      } catch {
+        // No origin/HEAD (or not a git repo) - ignore
+      }
+
+      if (protectedBranches.has(branchToDelete)) {
+        log.debug("Skipping git branch deletion: protected branch", {
+          projectPath,
+          workspaceName: branchToDelete,
+        });
+        return;
+      }
+
+      // Extra safety: don't delete a branch still checked out by any worktree.
+      try {
+        using worktreeProc = execAsync(`git -C "${projectPath}" worktree list --porcelain`);
+        const { stdout } = await worktreeProc.result;
+        const needle = `branch refs/heads/${branchToDelete}`;
+        const isCheckedOut = stdout.split("\n").some((line) => line.trim() === needle);
+        if (isCheckedOut) {
+          log.debug("Skipping git branch deletion: branch still checked out by a worktree", {
+            projectPath,
+            workspaceName: branchToDelete,
+          });
+          return;
+        }
+      } catch (error) {
+        // If the worktree list fails, proceed anyway - git itself will refuse to delete a checked-out branch.
+        log.debug("Failed to check worktree list before branch deletion; proceeding", {
+          projectPath,
+          workspaceName: branchToDelete,
+          error: getErrorMessage(error),
+        });
+      }
+
       const deleteFlag = force ? "-D" : "-d";
       try {
         using deleteProc = execAsync(
-          `git -C "${projectPath}" branch ${deleteFlag} "${workspaceName}"`
+          `git -C "${projectPath}" branch ${deleteFlag} "${branchToDelete}"`
         );
         await deleteProc.result;
       } catch (error) {
         // Best-effort: workspace deletion should not fail just because branch cleanup failed.
         log.debug("Failed to delete git branch after removing worktree", {
           projectPath,
-          workspaceName,
+          workspaceName: branchToDelete,
           error: getErrorMessage(error),
         });
       }
@@ -260,7 +351,7 @@ export class WorktreeRuntime extends LocalBaseRuntime {
         }
       }
 
-      // Best-effort: if this looks like an agent workspace, also delete the branch.
+      // Best-effort: also delete the local branch.
       await tryDeleteBranch();
       return { success: true, deletedPath };
     }
@@ -282,7 +373,7 @@ export class WorktreeRuntime extends LocalBaseRuntime {
       );
       await proc.result;
 
-      // Best-effort: if this looks like an agent workspace, also delete the branch.
+      // Best-effort: also delete the local branch.
       await tryDeleteBranch();
       return { success: true, deletedPath };
     } catch (error) {
@@ -327,7 +418,7 @@ export class WorktreeRuntime extends LocalBaseRuntime {
           });
           await rmProc.result;
 
-          // Best-effort: if this looks like an agent workspace, also delete the branch.
+          // Best-effort: also delete the local branch.
           await tryDeleteBranch();
           return { success: true, deletedPath };
         } catch (rmError) {
