@@ -223,8 +223,11 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     planTitle = "Plan";
   }
 
-  // Format: Title as H1 + plan content for "Start Here" functionality
-  const startHereContent = `# ${planTitle}\n\n${planContent}`;
+  // Format: Title as H1 + plan content for "Start Here" functionality.
+  // Note: we intentionally preserve the plan file on disk when starting here so it can be
+  // referenced later (e.g., via post-compaction attachments).
+  const planPathNote = planPath ? `\n\n---\n\n*Plan file preserved at:* \`${planPath}\`` : "";
+  const startHereContent = `# ${planTitle}\n\n${planContent}${planPathNote}`;
   const {
     openModal,
     buttonLabel,
@@ -233,8 +236,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   } = useStartHere(
     workspaceId,
     startHereContent,
-    false, // Plans are never already compacted
-    { deletePlanFile: true }
+    false // Plans are never already compacted
   );
 
   // Copy to clipboard with feedback

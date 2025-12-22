@@ -1921,7 +1921,8 @@ export class WorkspaceService extends EventEmitter {
       }
 
       // Optional cleanup: delete plan file when caller explicitly requests it.
-      // Used by propose_plan "Start Here" to prevent stale plans from lingering on disk.
+      // Note: the propose_plan UI keeps the plan file on disk; this flag is reserved for
+      // explicit reset flows and backwards compatibility.
       if (options?.deletePlanFile === true) {
         const metadata = await this.getInfo(workspaceId);
         if (metadata) {
