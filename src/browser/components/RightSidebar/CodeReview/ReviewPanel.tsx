@@ -94,6 +94,31 @@ type DiffState =
 const REVIEW_PANEL_CACHE_MAX_ENTRIES = 20;
 const REVIEW_PANEL_CACHE_MAX_SIZE_BYTES = 20 * 1024 * 1024; // 20MB
 
+/**
+ * Preserve object references for unchanged hunks to prevent re-renders.
+ * Compares by ID and content - if a hunk exists in prev with same content, reuse it.
+ */
+function preserveHunkReferences(prev: DiffHunk[], next: DiffHunk[]): DiffHunk[] {
+  if (prev.length === 0) return next;
+
+  const prevById = new Map(prev.map((h) => [h.id, h]));
+  let allSame = prev.length === next.length;
+
+  const result = next.map((hunk, i) => {
+    const prevHunk = prevById.get(hunk.id);
+    // Fast path: same ID and content means unchanged (content hash is part of ID)
+    if (prevHunk && prevHunk.content === hunk.content) {
+      if (allSame && prev[i]?.id !== hunk.id) allSame = false;
+      return prevHunk;
+    }
+    allSame = false;
+    return hunk;
+  });
+
+  // If all hunks are reused in same order, return prev array to preserve top-level reference
+  return allSame ? prev : result;
+}
+
 interface ReviewPanelDiffCacheValue {
   hunks: DiffHunk[];
   truncationWarning: string | null;
@@ -118,6 +143,53 @@ const reviewPanelCache = new LRUCache<string, ReviewPanelCacheValue>({
   sizeCalculation: (value) => estimateJsonSizeBytes(value),
 });
 
+function getOriginBranchForFetch(diffBase: string): string | null {
+  const trimmed = diffBase.trim();
+  if (!trimmed.startsWith("origin/")) return null;
+
+  const branch = trimmed.slice("origin/".length);
+
+  // Avoid shell injection; diffBase is user-controlled.
+  if (!/^[0-9A-Za-z._/-]+$/.test(branch)) return null;
+
+  return branch;
+}
+
+interface OriginFetchState {
+  key: string;
+  promise: Promise<void>;
+}
+
+async function ensureOriginFetched(params: {
+  api: APIClient;
+  workspaceId: string;
+  diffBase: string;
+  refreshToken: number;
+  originFetchRef: React.MutableRefObject<OriginFetchState | null>;
+}): Promise<void> {
+  const originBranch = getOriginBranchForFetch(params.diffBase);
+  if (!originBranch) return;
+
+  const key = [params.workspaceId, params.diffBase, String(params.refreshToken)].join("\u0000");
+  const existing = params.originFetchRef.current;
+  if (existing?.key === key) {
+    await existing.promise;
+    return;
+  }
+
+  // Ensure manual refresh doesn't hang on credential prompts.
+  const promise = params.api.workspace
+    .executeBash({
+      workspaceId: params.workspaceId,
+      script: `GIT_TERMINAL_PROMPT=0 git fetch origin ${originBranch} --quiet || true`,
+      options: { timeout_secs: 30 },
+    })
+    .then(() => undefined)
+    .catch(() => undefined);
+
+  params.originFetchRef.current = { key, promise };
+  await promise;
+}
 function makeReviewPanelCacheKey(params: {
   workspaceId: string;
   workspacePath: string;
@@ -161,6 +233,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   isCreating = false,
   onStatsChange,
 }) => {
+  const originFetchRef = useRef<OriginFetchState | null>(null);
   const { api } = useAPI();
   const panelRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -309,6 +382,15 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     const loadFileTree = async () => {
       setIsLoadingTree(true);
       try {
+        await ensureOriginFetched({
+          api,
+          workspaceId,
+          diffBase: filters.diffBase,
+          refreshToken: refreshTrigger,
+          originFetchRef,
+        });
+        if (cancelled) return;
+
         const tree = await executeWorkspaceBashAndCache({
           api,
           workspaceId,
@@ -420,6 +502,15 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
 
     const loadDiff = async () => {
       try {
+        await ensureOriginFetched({
+          api,
+          workspaceId,
+          diffBase: filters.diffBase,
+          refreshToken: refreshTrigger,
+          originFetchRef,
+        });
+        if (cancelled) return;
+
         // Git-level filters (affect what data is fetched):
         // - diffBase: what to diff against
         // - includeUncommitted: include working directory changes
@@ -458,10 +549,19 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         if (cancelled) return;
 
         setDiagnosticInfo(data.diagnosticInfo);
-        setDiffState({
-          status: "loaded",
-          hunks: data.hunks,
-          truncationWarning: data.truncationWarning,
+
+        // Preserve object references for unchanged hunks to prevent unnecessary re-renders.
+        // HunkViewer is memoized on hunk object identity, so reusing references avoids
+        // re-rendering (and re-highlighting) hunks that haven't actually changed.
+        setDiffState((prev) => {
+          const prevHunks =
+            prev.status === "loaded" || prev.status === "refreshing" ? prev.hunks : [];
+          const hunks = preserveHunkReferences(prevHunks, data.hunks);
+          return {
+            status: "loaded",
+            hunks,
+            truncationWarning: data.truncationWarning,
+          };
         });
 
         if (data.hunks.length > 0) {
@@ -811,6 +911,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         workspaceId={workspaceId}
         workspacePath={workspacePath}
         refreshTrigger={refreshTrigger}
+        lastRefreshInfo={refreshController.lastRefreshInfo}
       />
 
       {diffState.status === "error" ? (
