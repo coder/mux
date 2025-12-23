@@ -13,52 +13,16 @@
 import { createCli } from "trpc-cli";
 import { router } from "@/node/orpc/router";
 import { proxifyOrpc } from "./proxifyOrpc";
-import { ServerLockfile } from "@/node/services/serverLockfile";
-import { getMuxHome } from "@/common/constants/paths";
 import { getArgsAfterSplice } from "./argv";
+import { discoverServer } from "./discoverServer";
 
 // index.ts already splices "api" from argv before importing this module,
 // so we just need to get the remaining args after the splice point.
 const args = getArgsAfterSplice();
 
-interface ServerDiscovery {
-  baseUrl: string;
-  authToken: string | undefined;
-}
-
-async function discoverServer(): Promise<ServerDiscovery> {
-  // Priority 1: Explicit env vars override everything
-  if (process.env.MUX_SERVER_URL) {
-    return {
-      baseUrl: process.env.MUX_SERVER_URL,
-      authToken: process.env.MUX_SERVER_AUTH_TOKEN,
-    };
-  }
-
-  // Priority 2: Try lockfile discovery (running Electron or mux server)
-  try {
-    const lockfile = new ServerLockfile(getMuxHome());
-    const data = await lockfile.read();
-    if (data) {
-      return {
-        baseUrl: data.baseUrl,
-        authToken: data.token,
-      };
-    }
-  } catch {
-    // Ignore lockfile errors
-  }
-
-  // Priority 3: Default fallback (standalone server on default port)
-  return {
-    baseUrl: "http://localhost:3000",
-    authToken: process.env.MUX_SERVER_AUTH_TOKEN,
-  };
-}
-
 // Run async discovery then start CLI
 (async () => {
-  const { baseUrl, authToken } = await discoverServer();
+  const { baseUrl, authToken } = await discoverServer({ fallbackBaseUrl: "http://localhost:3000" });
 
   const proxiedRouter = proxifyOrpc(router(), { baseUrl, authToken });
 
