@@ -594,9 +594,29 @@ async function getWorkspacesForSidebar(
 
   const modeSetting: ConnectionMode = getConnectionModeSetting();
 
+  const tryReadFromFiles = async (): Promise<
+    { workspaces: WorkspaceWithContext[] } | { error: string }
+  > => {
+    try {
+      return { workspaces: await getAllWorkspacesFromFiles() };
+    } catch (error) {
+      return { error: formatError(error) };
+    }
+  };
+
   if (modeSetting === "file-only") {
-    const workspaces = await getAllWorkspacesFromFiles();
-    return { workspaces, status: { mode: "file" } };
+    const fileResult = await tryReadFromFiles();
+    if ("error" in fileResult) {
+      return {
+        workspaces: [],
+        status: {
+          mode: "file",
+          error: `Failed to read mux workspaces from local files. (${fileResult.error})`,
+        },
+      };
+    }
+
+    return { workspaces: fileResult.workspaces, status: { mode: "file" } };
   }
 
   const api = await tryGetApiClient(context);
@@ -614,9 +634,20 @@ async function getWorkspacesForSidebar(
       };
     }
 
-    const workspaces = await getAllWorkspacesFromFiles();
+    const fileResult = await tryReadFromFiles();
+    if ("error" in fileResult) {
+      return {
+        workspaces: [],
+        status: {
+          mode: "file",
+          baseUrl: failure.baseUrl,
+          error: `${describeFailure(failure)}. ${getWarningSuffix(failure)} (${failure.error}). Additionally, reading local workspaces failed. (${fileResult.error})`,
+        },
+      };
+    }
+
     return {
-      workspaces,
+      workspaces: fileResult.workspaces,
       status: {
         mode: "file",
         baseUrl: failure.baseUrl,
@@ -625,14 +656,50 @@ async function getWorkspacesForSidebar(
     };
   }
 
-  const workspaces = await getAllWorkspacesFromApi(api.client);
-  return {
-    workspaces,
-    status: {
-      mode: "api",
-      baseUrl: api.baseUrl,
-    },
-  };
+  try {
+    const workspaces = await getAllWorkspacesFromApi(api.client);
+    return {
+      workspaces,
+      status: {
+        mode: "api",
+        baseUrl: api.baseUrl,
+      },
+    };
+  } catch (error) {
+    const apiError = formatError(error);
+
+    if (modeSetting === "server-only") {
+      return {
+        workspaces: [],
+        status: {
+          mode: "api",
+          baseUrl: api.baseUrl,
+          error: `Failed to list mux workspaces from server. (${apiError})`,
+        },
+      };
+    }
+
+    const fileResult = await tryReadFromFiles();
+    if ("error" in fileResult) {
+      return {
+        workspaces: [],
+        status: {
+          mode: "api",
+          baseUrl: api.baseUrl,
+          error: `Failed to list mux workspaces from server. (${apiError}). Additionally, reading local workspaces failed. (${fileResult.error})`,
+        },
+      };
+    }
+
+    return {
+      workspaces: fileResult.workspaces,
+      status: {
+        mode: "api",
+        baseUrl: api.baseUrl,
+        error: `Failed to list mux workspaces from server; falling back to local file access. (${apiError})`,
+      },
+    };
+  }
 }
 
 function findWorkspaceIdMatchingCurrentFolder(workspaces: WorkspaceWithContext[]): string | null {
@@ -645,9 +712,13 @@ function findWorkspaceIdMatchingCurrentFolder(workspaces: WorkspaceWithContext[]
 
   const folderUriString = folderUri.toString();
   for (const workspace of workspaces) {
-    const expected = getOpenFolderUri(workspace).toString();
-    if (expected === folderUriString) {
-      return workspace.id;
+    try {
+      const expected = getOpenFolderUri(workspace).toString();
+      if (expected === folderUriString) {
+        return workspace.id;
+      }
+    } catch {
+      // Best-effort: ignore auto-detection failures.
     }
   }
 
@@ -870,20 +941,25 @@ function renderChatViewHtml(webview: vscode.Webview): string {
         function setConnectionStatus(status) {
           state.connectionStatus = status;
 
+          const parts = [];
+
           if (status.mode === 'api') {
-            setStatusText('Connected to mux server\n' + (status.baseUrl || ''));
-          } else {
-            const parts = [];
-            parts.push('Using local file access');
-            if (status.error) {
-              parts.push(status.error);
+            parts.push('Connected to mux server');
+            if (status.baseUrl) {
+              parts.push(status.baseUrl);
             }
+          } else {
+            parts.push('Using local file access');
             if (status.baseUrl) {
               parts.push('Server: ' + status.baseUrl);
             }
-            setStatusText(parts.join('\n'));
           }
 
+          if (status.error) {
+            parts.push(status.error);
+          }
+
+          setStatusText(parts.join('\\n'));
           updateControls();
         }
 
@@ -1147,17 +1223,27 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
       enableScripts: true,
     };
 
-    view.webview.html = renderChatViewHtml(view.webview);
-
-    view.webview.onDidReceiveMessage((msg: unknown) => {
-      void this.onWebviewMessage(msg);
+    // Register the message handler before setting HTML to avoid losing the initial
+    // "ready" handshake due to a race.
+    const messageDisposable = view.webview.onDidReceiveMessage((msg: unknown) => {
+      void this.onWebviewMessage(msg).catch((error) => {
+        console.error("mux.chatView: error handling webview message", error);
+        this.postMessage({
+          type: "uiNotice",
+          level: "error",
+          message: `Webview message error: ${formatError(error)}`,
+        });
+      });
     });
 
     view.onDidDispose(() => {
+      messageDisposable.dispose();
       this.view = undefined;
       this.isWebviewReady = false;
       this.dispose();
     });
+
+    view.webview.html = renderChatViewHtml(view.webview);
   }
 
   private postMessage(message: ExtensionToWebviewMessage): void {
@@ -1223,23 +1309,47 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
   }
 
   private async refreshWorkspaces(): Promise<void> {
-    const result = await getWorkspacesForSidebar(this.context);
+    try {
+      const result = await getWorkspacesForSidebar(this.context);
 
-    this.connectionStatus = result.status;
-    this.workspaces = result.workspaces;
-    this.workspacesById = new Map(this.workspaces.map((w) => [w.id, w]));
+      this.connectionStatus = result.status;
+      this.workspaces = result.workspaces;
+      this.workspacesById = new Map(this.workspaces.map((w) => [w.id, w]));
 
-    this.postMessage({ type: "connectionStatus", status: this.connectionStatus });
-    this.postMessage({ type: "workspaces", workspaces: this.workspaces.map(toUiWorkspace) });
+      this.postMessage({ type: "connectionStatus", status: this.connectionStatus });
+      this.postMessage({ type: "workspaces", workspaces: this.workspaces.map(toUiWorkspace) });
 
-    if (!this.selectedWorkspaceId) {
-      const match = findWorkspaceIdMatchingCurrentFolder(this.workspaces);
-      if (match) {
-        await this.setSelectedWorkspaceId(match);
+      if (this.selectedWorkspaceId && !this.workspacesById.has(this.selectedWorkspaceId)) {
+        await this.setSelectedWorkspaceId(null);
       }
-    }
 
-    await this.updateChatSubscription();
+      if (!this.selectedWorkspaceId) {
+        const match = findWorkspaceIdMatchingCurrentFolder(this.workspaces);
+        if (match) {
+          await this.setSelectedWorkspaceId(match);
+        }
+      }
+
+      await this.updateChatSubscription();
+    } catch (error) {
+      const message = `Failed to load mux workspaces. (${formatError(error)})`;
+
+      this.connectionStatus = { mode: "file", error: message };
+      this.workspaces = [];
+      this.workspacesById = new Map();
+
+      this.subscriptionAbort?.abort();
+      this.subscriptionAbort = null;
+      this.subscribedWorkspaceId = null;
+
+      this.selectedWorkspaceId = null;
+      await this.context.workspaceState.update(SELECTED_WORKSPACE_STATE_KEY, undefined);
+
+      this.postMessage({ type: "connectionStatus", status: this.connectionStatus });
+      this.postMessage({ type: "workspaces", workspaces: [] });
+      this.postMessage({ type: "setSelectedWorkspace", workspaceId: null });
+      this.postMessage({ type: "uiNotice", level: "error", message });
+    }
   }
 
   private async updateChatSubscription(): Promise<void> {
