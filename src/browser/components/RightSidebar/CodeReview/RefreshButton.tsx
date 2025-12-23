@@ -18,7 +18,6 @@ interface RefreshButtonProps {
 
 /** Human-readable trigger labels */
 const TRIGGER_LABELS: Record<RefreshTrigger, string> = {
-  initial: "initial load",
   manual: "manual click",
   scheduled: "tool completion",
   priority: "tool completion (priority)",
@@ -30,11 +29,6 @@ const TRIGGER_LABELS: Record<RefreshTrigger, string> = {
 
 export const RefreshButton: React.FC<RefreshButtonProps> = (props) => {
   const { onClick, isLoading = false, lastRefreshInfo } = props;
-
-  const handleClick = () => {
-    console.debug("[RefreshButton] clicked");
-    onClick();
-  };
   // Track animation state for graceful stopping
   const [animationState, setAnimationState] = useState<"idle" | "spinning" | "stopping">("idle");
   const spinOnceTimeoutRef = useRef<number | null>(null);
@@ -73,7 +67,7 @@ export const RefreshButton: React.FC<RefreshButtonProps> = (props) => {
     <Tooltip>
       <TooltipTrigger asChild>
         <button
-          onClick={handleClick}
+          onClick={onClick}
           className={cn(
             "flex items-center justify-center bg-transparent border-none p-0.5 transition-colors duration-[1500ms] ease-out",
             animationState === "spinning"

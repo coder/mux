@@ -272,7 +272,6 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   });
 
   const handleRefresh = () => {
-    console.debug("[ReviewPanel] handleRefresh called");
     refreshController.requestManualRefresh();
   };
 
@@ -413,9 +412,6 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
           truncationWarning: cached.truncationWarning,
         });
 
-        // Mark refresh complete for cache hit too (initial load from cache)
-        refreshController.markDiffLoaded();
-
         if (cached.hunks.length > 0) {
           setSelectedHunkId((prev) => prev ?? cached.hunks[0].id);
         }
@@ -502,9 +498,6 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
           };
         });
 
-        // Mark refresh complete - updates lastRefreshInfo with actual completion time
-        refreshController.markDiffLoaded();
-
         if (data.hunks.length > 0) {
           setSelectedHunkId((prev) => prev ?? data.hunks[0].id);
         }
@@ -531,7 +524,6 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     selectedFilePath,
     refreshTrigger,
     isCreating,
-    refreshController,
   ]);
 
   // Persist diffBase when it changes

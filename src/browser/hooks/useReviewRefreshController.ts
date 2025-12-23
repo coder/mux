@@ -1,11 +1,7 @@
 import { useEffect, useRef, useMemo } from "react";
 import { workspaceStore } from "@/browser/stores/WorkspaceStore";
 import type { APIClient } from "@/browser/contexts/API";
-import {
-  RefreshController,
-  type LastRefreshInfo,
-  type RefreshTrigger,
-} from "@/browser/utils/RefreshController";
+import { RefreshController, type LastRefreshInfo } from "@/browser/utils/RefreshController";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 
 /** Debounce delay for auto-refresh after tool completion */
@@ -50,8 +46,6 @@ export interface ReviewRefreshController {
   isRefreshing: boolean;
   /** Info about the last completed refresh (for debugging) */
   lastRefreshInfo: LastRefreshInfo | null;
-  /** Call when diff finishes loading to update lastRefreshInfo with correct timing */
-  markDiffLoaded: () => void;
 }
 
 /**
@@ -90,9 +84,6 @@ export function useReviewRefreshController(
     null
   );
 
-  // Track pending trigger - set when refresh starts, used when diff finishes loading
-  const pendingTriggerRef = useRef<RefreshTrigger>("initial");
-
   // Create RefreshController once, with stable callbacks via refs
   const controller = useMemo(() => {
     const wsName = workspaceStore.getWorkspaceName(workspaceId);
@@ -122,16 +113,13 @@ export function useReviewRefreshController(
         onRefreshRef.current();
         onGitStatusRefreshRef.current?.();
       },
-      // Track the trigger so we can use it when diff actually finishes loading
-      onRefreshComplete: (info) => {
-        pendingTriggerRef.current = info.trigger;
-      },
+      onRefreshComplete: setLastRefreshInfo,
     });
     ctrl.bindListeners();
     return ctrl;
     // workspaceId/api/isCreating changes require new controller with updated closure
     // Note: options.onRefresh is accessed via ref to avoid recreating controller on every render
-  }, [workspaceId, api, isCreating, scrollContainerRef]);
+  }, [workspaceId, api, isCreating, scrollContainerRef, setLastRefreshInfo]);
 
   // Cleanup on unmount or when controller changes
   useEffect(() => {
@@ -168,25 +156,12 @@ export function useReviewRefreshController(
   };
 
   const requestManualRefresh = () => {
-    const wsName = workspaceStore.getWorkspaceName(workspaceId);
-    console.debug(`[ReviewRefresh] requestManualRefresh for "${wsName}"`);
     controller.requestImmediate();
-  };
-
-  // Called by ReviewPanel when diff finishes loading
-  const markDiffLoaded = () => {
-    setLastRefreshInfo({
-      timestamp: Date.now(),
-      trigger: pendingTriggerRef.current,
-    });
-    // Reset to "initial" for next mount
-    pendingTriggerRef.current = "initial";
   };
 
   return {
     requestManualRefresh,
     setInteracting,
-    markDiffLoaded,
     get isRefreshing() {
       return controller.isRefreshing;
     },
