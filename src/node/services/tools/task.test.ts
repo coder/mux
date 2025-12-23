@@ -31,7 +31,7 @@ describe("task tool", () => {
 
     const result: unknown = await Promise.resolve(
       tool.execute!(
-        { subagent_type: "explore", prompt: "do it", run_in_background: true },
+        { subagent_type: "explore", prompt: "do it", title: "Child task", run_in_background: true },
         mockToolCallOptions
       )
     );
@@ -63,7 +63,12 @@ describe("task tool", () => {
 
     const result: unknown = await Promise.resolve(
       tool.execute!(
-        { subagent_type: "explore", prompt: "do it", run_in_background: false },
+        {
+          subagent_type: "explore",
+          prompt: "do it",
+          title: "Child task",
+          run_in_background: false,
+        },
         mockToolCallOptions
       )
     );
@@ -95,7 +100,10 @@ describe("task tool", () => {
     let caught: unknown = null;
     try {
       await Promise.resolve(
-        tool.execute!({ subagent_type: "explore", prompt: "do it" }, mockToolCallOptions)
+        tool.execute!(
+          { subagent_type: "explore", prompt: "do it", title: "Child task" },
+          mockToolCallOptions
+        )
       );
     } catch (error: unknown) {
       caught = error;
@@ -131,7 +139,10 @@ describe("task tool", () => {
     let caught: unknown = null;
     try {
       await Promise.resolve(
-        tool.execute!({ subagent_type: "exec", prompt: "do it" }, mockToolCallOptions)
+        tool.execute!(
+          { subagent_type: "exec", prompt: "do it", title: "Child task" },
+          mockToolCallOptions
+        )
       );
     } catch (error: unknown) {
       caught = error;

@@ -56,8 +56,12 @@ export interface UseVoiceInputResult {
  * We hide our voice UI on these devices to avoid redundancy with system dictation.
  */
 function hasTouchDictation(): boolean {
-  if (typeof window === "undefined") return false;
-  const hasTouch = "ontouchstart" in window || navigator.maxTouchPoints > 0;
+  if (typeof window === "undefined" || typeof navigator === "undefined") return false;
+
+  const maxTouchPoints =
+    typeof navigator.maxTouchPoints === "number" ? navigator.maxTouchPoints : 0;
+  const hasTouch = "ontouchstart" in window || maxTouchPoints > 0;
+
   // Touch-only check: most touch devices have native dictation.
   // We don't check screen size because iPads are large but still have dictation.
   return hasTouch;
@@ -66,7 +70,9 @@ function hasTouchDictation(): boolean {
 const HAS_TOUCH_DICTATION = hasTouchDictation();
 const HAS_MEDIA_RECORDER = typeof window !== "undefined" && typeof MediaRecorder !== "undefined";
 const HAS_GET_USER_MEDIA =
-  typeof window !== "undefined" && typeof navigator.mediaDevices?.getUserMedia === "function";
+  typeof window !== "undefined" &&
+  typeof navigator !== "undefined" &&
+  typeof navigator.mediaDevices?.getUserMedia === "function";
 
 // =============================================================================
 // Global Key State Tracking
@@ -79,7 +85,7 @@ const HAS_GET_USER_MEDIA =
  */
 let isSpaceCurrentlyHeld = false;
 
-if (typeof window !== "undefined") {
+if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
   window.addEventListener(
     "keydown",
     (e) => {
