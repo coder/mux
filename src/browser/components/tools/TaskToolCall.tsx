@@ -168,6 +168,9 @@ const TaskId: React.FC<{ id: string; className?: string }> = ({ id, className })
 // TASK TOOL CALL (spawn sub-agent)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+function isBashTaskArgs(args: TaskToolArgs): args is Extract<TaskToolArgs, { kind: "bash" }> {
+  return (args as { kind?: unknown }).kind === "bash";
+}
 interface TaskToolCallProps {
   args: TaskToolArgs;
   result?: TaskToolSuccessResult;
@@ -180,19 +183,37 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({ args, result, status
   const { expanded, toggleExpanded } = useToolExpansion(hasReport);
 
   const isBackground = args.run_in_background ?? false;
-  const agentType = args.agentId ?? args.subagent_type ?? "unknown";
-  const prompt = args.prompt;
-  const title = args.title;
+
+  let isBashTask: boolean;
+  let title: string;
+  let promptOrScript: string;
+  let kindBadge: React.ReactNode;
+
+  if (isBashTaskArgs(args)) {
+    isBashTask = true;
+    title = args.display_name;
+    promptOrScript = args.script;
+    kindBadge = <AgentTypeBadge type="bash" />;
+  } else {
+    isBashTask = false;
+    title = args.title;
+    promptOrScript = args.prompt;
+    const agentType = args.agentId ?? args.subagent_type ?? "unknown";
+    kindBadge = <AgentTypeBadge type={agentType} />;
+  }
 
   // Derive task state from result
   const taskId = result?.taskId;
   const taskStatus = result?.status;
   const reportMarkdown = result?.status === "completed" ? result.reportMarkdown : undefined;
   const reportTitle = result?.status === "completed" ? result.title : undefined;
+  const exitCode = result?.status === "completed" ? result.exitCode : undefined;
 
-  // Show preview of prompt (first line or truncated)
-  const promptPreview =
-    prompt.length > 60 ? prompt.slice(0, 60).trim() + "…" : prompt.split("\n")[0];
+  // Show preview (first line or truncated)
+  const preview =
+    promptOrScript.length > 60
+      ? promptOrScript.slice(0, 60).trim() + "…"
+      : promptOrScript.split("\n")[0];
 
   return (
     <ToolContainer expanded={expanded}>
@@ -200,7 +221,7 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({ args, result, status
         <ExpandIcon expanded={expanded}>▶</ExpandIcon>
         <TaskIcon toolName="task" />
         <ToolName>task</ToolName>
-        <AgentTypeBadge type={agentType} />
+        {kindBadge}
         {isBackground && (
           <span className="text-backgrounded text-[10px] font-medium">background</span>
         )}
@@ -211,26 +232,33 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({ args, result, status
         <ToolDetails>
           {/* Task info surface */}
           <div className="task-surface mt-1 rounded-md p-3">
-            <div className="task-divider mb-2 flex items-center gap-2 border-b pb-2">
+            <div className="task-divider mb-2 flex flex-wrap items-center gap-2 border-b pb-2">
               <span className="text-task-mode text-[12px] font-semibold">
                 {reportTitle ?? title}
               </span>
               {taskId && <TaskId id={taskId} />}
               {taskStatus && <TaskStatusBadge status={taskStatus} />}
+              {exitCode !== undefined && (
+                <span className="text-muted text-[10px]">exit {exitCode}</span>
+              )}
             </div>
 
-            {/* Prompt section */}
+            {/* Prompt / script */}
             <div className="mb-2">
-              <div className="text-muted mb-1 text-[10px] tracking-wide uppercase">Prompt</div>
-              <div className="text-foreground bg-code-bg max-h-[100px] overflow-y-auto rounded-sm p-2 text-[11px] break-words whitespace-pre-wrap">
-                {prompt}
+              <div className="text-muted mb-1 text-[10px] tracking-wide uppercase">
+                {isBashTask ? "Script" : "Prompt"}
+              </div>
+              <div className="text-foreground bg-code-bg max-h-[140px] overflow-y-auto rounded-sm p-2 text-[11px] break-words whitespace-pre-wrap">
+                {promptOrScript}
               </div>
             </div>
 
             {/* Report section */}
             {reportMarkdown && (
               <div className="task-divider border-t pt-2">
-                <div className="text-muted mb-1 text-[10px] tracking-wide uppercase">Report</div>
+                <div className="text-muted mb-1 text-[10px] tracking-wide uppercase">
+                  {isBashTask ? "Output" : "Report"}
+                </div>
                 <div className="text-[11px]">
                   <MarkdownRenderer content={reportMarkdown} />
                 </div>
@@ -249,7 +277,7 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({ args, result, status
       )}
 
       {/* Collapsed preview */}
-      {!expanded && <div className="text-muted mt-1 truncate text-[10px]">{promptPreview}</div>}
+      {!expanded && <div className="text-muted mt-1 truncate text-[10px]">{preview}</div>}
     </ToolContainer>
   );
 };
@@ -276,6 +304,12 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
   const timeoutSecs = args.timeout_secs;
   const results = result?.results ?? [];
 
+  const showConfigInfo =
+    taskIds !== undefined ||
+    timeoutSecs !== undefined ||
+    args.filter !== undefined ||
+    args.filter_exclude === true;
+
   // Summary for header
   const completedCount = results.filter((r) => r.status === "completed").length;
   const totalCount = results.length;
@@ -298,10 +332,12 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
         <ToolDetails>
           <div className="task-surface mt-1 rounded-md p-3">
             {/* Config info */}
-            {(taskIds ?? timeoutSecs) && (
+            {showConfigInfo && (
               <div className="task-divider text-muted mb-2 flex flex-wrap gap-2 border-b pb-2 text-[10px]">
-                {taskIds && <span>Waiting for: {taskIds.length} task(s)</span>}
-                {timeoutSecs && <span>Timeout: {timeoutSecs}s</span>}
+                {taskIds !== undefined && <span>Waiting for: {taskIds.length} task(s)</span>}
+                {timeoutSecs !== undefined && <span>Timeout: {timeoutSecs}s</span>}
+                {args.filter !== undefined && <span>Filter: {args.filter}</span>}
+                {args.filter_exclude === true && <span>Exclude: true</span>}
               </div>
             )}
 
@@ -335,19 +371,34 @@ const TaskAwaitResult: React.FC<{
   const reportMarkdown = isCompleted ? result.reportMarkdown : undefined;
   const title = isCompleted ? result.title : undefined;
 
+  const output = "output" in result ? result.output : undefined;
+  const note = "note" in result ? result.note : undefined;
+  const exitCode = "exitCode" in result ? result.exitCode : undefined;
+  const elapsedMs = "elapsed_ms" in result ? result.elapsed_ms : undefined;
+
   return (
     <div className="bg-code-bg rounded-sm p-2">
-      <div className="mb-1 flex items-center gap-2">
+      <div className="mb-1 flex flex-wrap items-center gap-2">
         <TaskId id={result.taskId} />
         <TaskStatusBadge status={result.status} />
         {title && <span className="text-foreground text-[11px] font-medium">{title}</span>}
+        {exitCode !== undefined && <span className="text-muted text-[10px]">exit {exitCode}</span>}
+        {elapsedMs !== undefined && <span className="text-muted text-[10px]">{elapsedMs}ms</span>}
       </div>
+
+      {!isCompleted && output && output.length > 0 && (
+        <div className="text-foreground bg-code-bg max-h-[140px] overflow-y-auto rounded-sm p-2 text-[11px] break-words whitespace-pre-wrap">
+          {output}
+        </div>
+      )}
 
       {reportMarkdown && (
         <div className="mt-2 text-[11px]">
           <MarkdownRenderer content={reportMarkdown} />
         </div>
       )}
+
+      {note && <div className="text-muted mt-1 text-[10px]">{note}</div>}
 
       {"error" in result && result.error && (
         <div className="text-danger mt-1 text-[11px]">{result.error}</div>

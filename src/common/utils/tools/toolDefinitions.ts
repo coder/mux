@@ -98,7 +98,7 @@ const TaskAgentIdSchema = z.preprocess(
   AgentIdSchema
 );
 
-export const TaskToolArgsSchema = z
+const TaskToolAgentArgsSchema = z
   .object({
     // Prefer agentId. subagent_type is a deprecated alias for backwards compatibility.
     agentId: TaskAgentIdSchema.optional(),
@@ -131,6 +131,18 @@ export const TaskToolArgsSchema = z
     }
   });
 
+const TaskToolBashArgsSchema = z
+  .object({
+    kind: z.literal("bash"),
+    script: z.string().min(1),
+    timeout_secs: z.number().positive(),
+    run_in_background: z.boolean().default(false),
+    display_name: z.string().min(1),
+  })
+  .strict();
+
+export const TaskToolArgsSchema = z.union([TaskToolAgentArgsSchema, TaskToolBashArgsSchema]);
+
 export const TaskToolQueuedResultSchema = z
   .object({
     status: z.enum(["queued", "running"]),
@@ -146,6 +158,8 @@ export const TaskToolCompletedResultSchema = z
     title: z.string().optional(),
     agentId: z.string().optional(),
     agentType: z.string().optional(),
+    exitCode: z.number().optional(),
+    note: z.string().optional(),
   })
   .strict();
 
@@ -166,12 +180,28 @@ export const TaskAwaitToolArgsSchema = z
       .describe(
         "List of task IDs to await. When omitted, waits for all active descendant tasks of the current workspace."
       ),
+    filter: z
+      .string()
+      .optional()
+      .describe(
+        "Optional regex to filter bash task output lines. By default, only matching lines are returned. " +
+          "When filter_exclude is true, matching lines are excluded instead. " +
+          "Non-matching lines are discarded and cannot be retrieved later."
+      ),
+    filter_exclude: z
+      .boolean()
+      .optional()
+      .describe(
+        "When true, lines matching 'filter' are excluded instead of kept. " +
+          "Requires 'filter' to be set."
+      ),
     timeout_secs: z
       .number()
-      .positive()
+      .min(0)
       .optional()
       .describe(
         "Maximum time to wait in seconds for each task. " +
+          "For bash tasks, this waits for NEW output (or process exit). " +
           "If exceeded, the result returns status=queued|running|awaiting_report (task is still active). " +
           "Optional, defaults to 10 minutes."
       ),
@@ -184,6 +214,10 @@ export const TaskAwaitToolCompletedResultSchema = z
     taskId: z.string(),
     reportMarkdown: z.string(),
     title: z.string().optional(),
+    output: z.string().optional(),
+    elapsed_ms: z.number().optional(),
+    exitCode: z.number().optional(),
+    note: z.string().optional(),
   })
   .strict();
 
@@ -191,6 +225,9 @@ export const TaskAwaitToolActiveResultSchema = z
   .object({
     status: z.enum(["queued", "running", "awaiting_report"]),
     taskId: z.string(),
+    output: z.string().optional(),
+    elapsed_ms: z.number().optional(),
+    note: z.string().optional(),
   })
   .strict();
 
@@ -542,15 +579,18 @@ export const TOOL_DEFINITIONS = {
   },
   task: {
     description:
-      "Spawn a sub-agent task in a child workspace. " +
-      'Use this to delegate work to specialized presets like "explore" (read-only investigation) or "exec" (general-purpose coding in a child workspace). ' +
-      "If run_in_background is false, this tool blocks until the sub-agent calls agent_report, then returns the report. " +
-      "If run_in_background is true, you can await it later with task_await.",
+      "Unified task tool for (1) spawning sub-agent tasks and (2) running bash commands. " +
+      "\n\nAgent tasks: provide subagent_type, prompt, title, run_in_background. " +
+      '\nBash tasks: set kind="bash" and provide script, timeout_secs, display_name, run_in_background. ' +
+      "\n\nIf run_in_background is false, returns a completed reportMarkdown. " +
+      "If run_in_background is true, returns a running taskId; use task_await to read incremental output and task_terminate to stop it.",
     schema: TaskToolArgsSchema,
   },
   task_await: {
     description:
-      "Wait for one or more sub-agent tasks to finish and return their reports. " +
+      "Wait for one or more tasks to produce output. " +
+      "Agent tasks return reports when completed. " +
+      "Bash tasks return incremental output while running and a final reportMarkdown when they exit. " +
       "Use this tool to WAIT; do not poll task_list in a loop to wait for task completion (that is misuse and wastes tool calls). " +
       "This is similar to Promise.allSettled(): you always get per-task results. " +
       "Possible statuses: completed, queued, running, awaiting_report, not_found, invalid_scope, error.",
@@ -558,15 +598,16 @@ export const TOOL_DEFINITIONS = {
   },
   task_terminate: {
     description:
-      "Terminate one or more sub-agent tasks immediately. " +
-      "This stops their AI streams and deletes their workspaces (best-effort). " +
+      "Terminate one or more tasks immediately (sub-agent tasks or background bash tasks). " +
+      "For sub-agent tasks, this stops their AI streams and deletes their workspaces (best-effort). " +
       "No report will be delivered; any in-progress work is discarded. " +
       "If the task has descendant sub-agent tasks, they are terminated too.",
     schema: TaskTerminateToolArgsSchema,
   },
   task_list: {
     description:
-      "List descendant sub-agent tasks for the current workspace, including their status and metadata. " +
+      "List descendant tasks for the current workspace, including status + metadata. " +
+      "This includes sub-agent tasks and background bash tasks. " +
       "Use this after compaction or interruptions to rediscover which tasks are still active. " +
       "This is a discovery tool, NOT a waiting mechanism: if you need to wait for tasks to finish, call task_await (optionally omit task_ids to await all active descendant tasks).",
     schema: TaskListToolArgsSchema,
@@ -998,10 +1039,6 @@ export function getAvailableTools(
 
   // Base tools available for all models
   const baseTools = [
-    "bash",
-    "bash_output",
-    "bash_background_list",
-    "bash_background_terminate",
     "file_read",
     "agent_skill_read",
     "agent_skill_read_file",

@@ -24,6 +24,7 @@ import { log } from "@/node/services/log";
 import { attachModelOnlyToolNotifications } from "@/common/utils/tools/internalToolResultFields";
 import { NotificationEngine } from "@/node/services/agentNotifications/NotificationEngine";
 import { TodoListReminderSource } from "@/node/services/agentNotifications/sources/TodoListReminderSource";
+import { getAvailableTools } from "@/common/utils/tools/toolDefinitions";
 import { sanitizeMCPToolsForOpenAI } from "@/common/utils/tools/schemaSanitizer";
 
 import type { Runtime } from "@/node/runtime/Runtime";
@@ -236,10 +237,19 @@ export async function getToolsForModel(
     // to leave repository in broken state due to issues with concurrent file modifications
     // and line number miscalculations. Use file_edit_replace_string instead.
     // file_edit_replace_lines: wrap(createFileEditReplaceLinesTool(config)),
+
+    // Unified task abstraction (agent + bash)
+    task: wrap(createTaskTool(config)),
+    task_await: wrap(createTaskAwaitTool(config)),
+    task_terminate: wrap(createTaskTerminateTool(config)),
+    task_list: wrap(createTaskListTool(config)),
+
+    // Legacy bash tools (deprecated: prefer task(kind="bash"))
     bash: wrap(createBashTool(config)),
     bash_output: wrap(createBashOutputTool(config)),
     bash_background_list: wrap(createBashBackgroundListTool(config)),
     bash_background_terminate: wrap(createBashBackgroundTerminateTool(config)),
+
     web_fetch: wrap(createWebFetchTool(config)),
   };
 
@@ -247,10 +257,6 @@ export async function getToolsForModel(
   const nonRuntimeTools: Record<string, Tool> = {
     ...(config.mode === "plan" ? { ask_user_question: createAskUserQuestionTool(config) } : {}),
     propose_plan: createProposePlanTool(config),
-    task: createTaskTool(config),
-    task_await: createTaskAwaitTool(config),
-    task_terminate: createTaskTerminateTool(config),
-    task_list: createTaskListTool(config),
     ...(config.enableAgentReport ? { agent_report: createAgentReportTool(config) } : {}),
     todo_write: createTodoWriteTool(config),
     todo_read: createTodoReadTool(config),
@@ -317,8 +323,20 @@ export async function getToolsForModel(
     log.error(`No web search tools available for ${provider}:`, error);
   }
 
-  let finalTools = allTools;
+  // Filter tools to the canonical allowlist so system prompt + toolset stay in sync.
+  // Include MCP tools even if they're not in getAvailableTools().
+  const allowlistedToolNames = new Set(
+    getAvailableTools(modelString, config.mode, { enableAgentReport: config.enableAgentReport })
+  );
+  for (const toolName of Object.keys(mcpTools ?? {})) {
+    allowlistedToolNames.add(toolName);
+  }
 
+  allTools = Object.fromEntries(
+    Object.entries(allTools).filter(([toolName]) => allowlistedToolNames.has(toolName))
+  );
+
+  let finalTools = allTools;
   // Apply tool-specific instructions if provided
   if (toolInstructions) {
     const augmentedTools: Record<string, Tool> = {};

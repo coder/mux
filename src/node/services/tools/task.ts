@@ -1,27 +1,126 @@
 import { tool } from "ai";
 
+import type { BashToolResult } from "@/common/types/tools";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { TaskToolResultSchema, TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import { coerceThinkingLevel } from "@/common/types/thinking";
 
+import { createBashTool } from "./bash";
+import { toBashTaskId } from "./taskId";
 import { parseToolResult, requireTaskService, requireWorkspaceId } from "./toolUtils";
 
+function formatBashReport(
+  args: { script: string; display_name: string },
+  result: BashToolResult
+): string {
+  const lines: string[] = [];
+
+  lines.push(`### Bash: ${args.display_name}`);
+  lines.push("");
+
+  lines.push("```bash");
+  lines.push(args.script.trimEnd());
+  lines.push("```");
+  lines.push("");
+
+  lines.push(`exitCode: ${result.exitCode}`);
+  lines.push(`wall_duration_ms: ${result.wall_duration_ms}`);
+
+  if (!result.success) {
+    lines.push("");
+    lines.push(`error: ${result.error}`);
+  }
+
+  if (typeof result.output === "string" && result.output.length > 0) {
+    lines.push("");
+    lines.push("```text");
+    lines.push(result.output.trimEnd());
+    lines.push("```");
+  }
+
+  return lines.join("\n");
+}
+
 export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
+  const bashTool = createBashTool(config);
+
   return tool({
     description: TOOL_DEFINITIONS.task.description,
     inputSchema: TOOL_DEFINITIONS.task.schema,
-    execute: async (args, { abortSignal }): Promise<unknown> => {
-      const workspaceId = requireWorkspaceId(config, "task");
-      const taskService = requireTaskService(config, "task");
-
+    execute: async (args, { abortSignal, toolCallId, messages }): Promise<unknown> => {
+      // Defensive: tool() should have already validated args via inputSchema,
+      // but keep runtime validation here to preserve type-safety.
+      const parsedArgs = TOOL_DEFINITIONS.task.schema.safeParse(args);
+      if (!parsedArgs.success) {
+        throw new Error(`task tool input validation failed: ${parsedArgs.error.message}`);
+      }
+      const validatedArgs = parsedArgs.data;
       if (abortSignal?.aborted) {
         throw new Error("Interrupted");
       }
 
+      // task(kind="bash") - run bash commands via the task abstraction.
+      if ("kind" in validatedArgs && validatedArgs.kind === "bash") {
+        const bashArgs = validatedArgs;
+        const bashResult = (await bashTool.execute!(
+          {
+            script: bashArgs.script,
+            timeout_secs: bashArgs.timeout_secs,
+            run_in_background: bashArgs.run_in_background,
+            display_name: bashArgs.display_name,
+          },
+          { abortSignal, toolCallId, messages }
+        )) as BashToolResult;
+
+        if (
+          bashResult.success &&
+          "backgroundProcessId" in bashResult &&
+          bashResult.backgroundProcessId
+        ) {
+          return parseToolResult(
+            TaskToolResultSchema,
+            { status: "running" as const, taskId: toBashTaskId(bashResult.backgroundProcessId) },
+            "task"
+          );
+        }
+
+        return parseToolResult(
+          TaskToolResultSchema,
+          {
+            status: "completed" as const,
+            reportMarkdown: formatBashReport(
+              { script: bashArgs.script, display_name: bashArgs.display_name },
+              bashResult
+            ),
+            title: bashArgs.display_name,
+            exitCode: bashResult.exitCode,
+            note: "note" in bashResult ? bashResult.note : undefined,
+          },
+          "task"
+        );
+      }
+
+      if ("kind" in validatedArgs) {
+        throw new Error("task tool input validation failed: invalid task args");
+      }
+
+      const agentArgs = validatedArgs;
+
       const requestedAgentId =
-        typeof args.agentId === "string" && args.agentId.trim().length > 0
-          ? args.agentId
-          : args.subagent_type;
+        typeof agentArgs.agentId === "string" && agentArgs.agentId.trim().length > 0
+          ? agentArgs.agentId
+          : agentArgs.subagent_type;
+      if (!requestedAgentId) {
+        throw new Error("task tool input validation failed: expected agentId or subagent_type");
+      }
+
+      const workspaceId = requireWorkspaceId(config, "task");
+      const taskService = requireTaskService(config, "task");
+
+      // Disallow recursive sub-agent spawning.
+      if (config.enableAgentReport) {
+        throw new Error("Sub-agent workspaces may not spawn additional sub-agent tasks.");
+      }
 
       // Plan mode is explicitly non-executing. Allow only read-only exploration tasks.
       if (config.mode === "plan" && requestedAgentId !== "explore") {
@@ -40,8 +139,8 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
         agentId: requestedAgentId,
         // Legacy alias (persisted for older clients / on-disk compatibility).
         agentType: requestedAgentId,
-        prompt: args.prompt,
-        title: args.title,
+        prompt: agentArgs.prompt,
+        title: agentArgs.title,
         modelString,
         thinkingLevel,
         experiments: config.experiments,
@@ -51,7 +150,7 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
         throw new Error(created.error);
       }
 
-      if (args.run_in_background) {
+      if (agentArgs.run_in_background) {
         return parseToolResult(
           TaskToolResultSchema,
           { status: created.data.status, taskId: created.data.taskId },
