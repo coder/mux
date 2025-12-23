@@ -61,6 +61,9 @@ export interface RefreshControllerOptions {
   debugLabel?: string;
 }
 
+/** Minimum ms between refresh executions - hard guard against loops */
+const MIN_REFRESH_INTERVAL_MS = 500;
+
 export class RefreshController {
   private readonly onRefresh: () => Promise<void> | void;
   private readonly onRefreshComplete: ((info: LastRefreshInfo) => void) | null;
@@ -82,6 +85,9 @@ export class RefreshController {
   // Track last refresh for debugging
   private _lastRefreshInfo: LastRefreshInfo | null = null;
   private pendingTrigger: RefreshTrigger | null = null;
+
+  // Hard guard: timestamp of last refresh START (not completion)
+  private lastRefreshStartMs = 0;
 
   // Track if listeners are bound (for cleanup)
   private listenersBound = false;
@@ -212,6 +218,16 @@ export class RefreshController {
   private executeRefresh(trigger: RefreshTrigger): void {
     if (this.disposed) return;
 
+    // Hard guard: refuse to refresh if too soon after last refresh started.
+    // This prevents loops even if other guards fail.
+    const now = Date.now();
+    const elapsed = now - this.lastRefreshStartMs;
+    if (elapsed < MIN_REFRESH_INTERVAL_MS) {
+      this.debug(`executeRefresh: too soon (${elapsed}ms < ${MIN_REFRESH_INTERVAL_MS}ms), skipping`);
+      return;
+    }
+
+    this.lastRefreshStartMs = now;
     this.inFlight = true;
     this.pendingTrigger = null;
 
