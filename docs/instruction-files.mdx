@@ -18,6 +18,7 @@ Priority within each location: `AGENTS.md` → `AGENT.md` → `CLAUDE.md` (first
 
 mux supports **Scoped Instructions** that activate only in specific contexts. You define them using special headings in your instruction files:
 
+- `Agent: <agentId>` — Active only for a specific agent definition (e.g., plan, exec, explore).
 - `Mode: <mode>` — Active only in specific interaction modes (e.g., plan, exec).
 - `Model: <regex>` — Active only for specific models (e.g., GPT-4, Claude).
 - `Tool: <tool_name>` — Appended to the description of specific tools.
@@ -62,6 +63,30 @@ When planning:
 - **exec** (default) — Normal operations.
 - **plan** — Active in Plan Mode.
 - **compact** — Used during `/compact` to guide history summarization.
+
+### Agent Prompts
+
+Use agent-specific sections to customize behavior for a single agent definition. The selected agent’s content is injected via an `<agent-...>` tag.
+
+**Syntax**: `Agent: <agentId>` (case-insensitive)
+
+**Example**:
+
+```markdown
+## Agent: review
+
+When reviewing:
+
+- Prefer short, high-signal comments
+- Call out risky changes and missing tests
+```
+
+Notes:
+
+- `agentId` comes from the agent definition filename (e.g., `.mux/agents/review.md` → `review`).
+- `Mode:` prompts still apply based on the selected agent’s base policy. Use `Mode:` for shared behavior across multiple agents; use `Agent:` for per-agent behavior.
+
+---
 
 ### Model Prompts
 
