@@ -378,11 +378,11 @@ vscode-ext-install: ## Build and install VS Code extension locally
 
 ## Documentation
 docs-server: node_modules/.installed ## Serve documentation locally (Mintlify dev server)
-	@cd docs && npx mintlify@4.2.252 dev
+	@cd docs && npx mintlify dev
 
 check-docs-links: ## Check documentation for broken links
 	@echo "🔗 Checking documentation links..."
-	@cd docs && npx mintlify@4.2.252 broken-links
+	@cd docs && npx mintlify broken-links
 
 ## Storybook
 storybook: node_modules/.installed ## Start Storybook development server
