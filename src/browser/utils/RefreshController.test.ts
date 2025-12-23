@@ -10,7 +10,22 @@ describe("RefreshController", () => {
     jest.useRealTimers();
   });
 
-  it("debounces multiple schedule() calls", () => {
+  it("rate-limits multiple schedule() calls (doesn't reset timer)", () => {
+    const onRefresh = jest.fn<() => void>();
+    const controller = new RefreshController({ onRefresh, debounceMs: 100 });
+
+    controller.schedule();
+    jest.advanceTimersByTime(50);
+    controller.schedule(); // Shouldn't reset timer
+    jest.advanceTimersByTime(50);
+
+    // Should fire at 100ms from first call, not 150ms
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+
+    controller.dispose();
+  });
+
+  it("coalesces calls during rate-limit window", () => {
     const onRefresh = jest.fn<() => void>();
     const controller = new RefreshController({ onRefresh, debounceMs: 100 });
 
@@ -27,7 +42,7 @@ describe("RefreshController", () => {
     controller.dispose();
   });
 
-  it("requestImmediate() bypasses debounce", () => {
+  it("requestImmediate() bypasses rate-limit timer", () => {
     const onRefresh = jest.fn<() => void>();
     const controller = new RefreshController({ onRefresh, debounceMs: 100 });
 
@@ -37,7 +52,7 @@ describe("RefreshController", () => {
     controller.requestImmediate();
     expect(onRefresh).toHaveBeenCalledTimes(1);
 
-    // Original debounce timer should be cleared
+    // Original timer should be cleared
     jest.advanceTimersByTime(100);
     expect(onRefresh).toHaveBeenCalledTimes(1);
 
@@ -60,6 +75,36 @@ describe("RefreshController", () => {
     // Multiple immediate requests should only call once (queued ones execute after)
     controller.requestImmediate();
     expect(onRefresh).toHaveBeenCalledTimes(1);
+
+    controller.dispose();
+  });
+
+  it("schedule() during in-flight queues refresh for after completion", async () => {
+    let resolveRefresh: () => void;
+    const onRefresh = jest.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveRefresh = resolve;
+        })
+    );
+
+    const controller = new RefreshController({ onRefresh, debounceMs: 100 });
+
+    // Start first refresh
+    controller.requestImmediate();
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+
+    // schedule() while in-flight should queue, not start timer
+    controller.schedule();
+
+    // Complete the first refresh and let .finally() run
+    resolveRefresh!();
+    await Promise.resolve();
+    await Promise.resolve(); // Extra tick for .finally()
+
+    // Should trigger follow-up refresh (via setTimeout 0 in onComplete)
+    jest.advanceTimersByTime(1);
+    expect(onRefresh).toHaveBeenCalledTimes(2);
 
     controller.dispose();
   });
@@ -148,6 +193,59 @@ describe("RefreshController", () => {
     paused = false;
     controller.notifyUnpaused();
     expect(onRefresh).toHaveBeenCalledTimes(1);
+
+    controller.dispose();
+  });
+
+  it("lastRefreshInfo tracks trigger and timestamp", () => {
+    const onRefresh = jest.fn<() => void>();
+    const controller = new RefreshController({ onRefresh, debounceMs: 100 });
+
+    expect(controller.lastRefreshInfo).toBeNull();
+
+    // Manual refresh should record "manual" trigger
+    const beforeManual = Date.now();
+    controller.requestImmediate();
+    expect(controller.lastRefreshInfo).not.toBeNull();
+    expect(controller.lastRefreshInfo!.trigger).toBe("manual");
+    expect(controller.lastRefreshInfo!.timestamp).toBeGreaterThanOrEqual(beforeManual);
+
+    // Scheduled refresh should record "scheduled" trigger
+    controller.schedule();
+    jest.advanceTimersByTime(100);
+    expect(controller.lastRefreshInfo!.trigger).toBe("scheduled");
+
+    // Priority refresh should record "priority" trigger
+    controller.schedulePriority();
+    jest.advanceTimersByTime(100);
+    expect(controller.lastRefreshInfo!.trigger).toBe("priority");
+
+    controller.dispose();
+  });
+
+  it("onRefreshComplete callback is called with refresh info", () => {
+    const onRefresh = jest.fn<() => void>();
+    const onRefreshComplete = jest.fn<(info: { trigger: string; timestamp: number }) => void>();
+    const controller = new RefreshController({
+      onRefresh,
+      onRefreshComplete,
+      debounceMs: 100,
+    });
+
+    expect(onRefreshComplete).not.toHaveBeenCalled();
+
+    controller.requestImmediate();
+    expect(onRefreshComplete).toHaveBeenCalledTimes(1);
+    expect(onRefreshComplete).toHaveBeenCalledWith(
+      expect.objectContaining({ trigger: "manual", timestamp: expect.any(Number) })
+    );
+
+    controller.schedule();
+    jest.advanceTimersByTime(100);
+    expect(onRefreshComplete).toHaveBeenCalledTimes(2);
+    expect(onRefreshComplete).toHaveBeenLastCalledWith(
+      expect.objectContaining({ trigger: "scheduled" })
+    );
 
     controller.dispose();
   });

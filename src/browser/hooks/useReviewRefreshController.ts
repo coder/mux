@@ -1,7 +1,8 @@
 import { useEffect, useRef, useMemo } from "react";
 import { workspaceStore } from "@/browser/stores/WorkspaceStore";
 import type { APIClient } from "@/browser/contexts/API";
-import { RefreshController } from "@/browser/utils/RefreshController";
+import { RefreshController, type LastRefreshInfo } from "@/browser/utils/RefreshController";
+import { usePersistedState } from "@/browser/hooks/usePersistedState";
 
 /** Debounce delay for auto-refresh after tool completion */
 const TOOL_REFRESH_DEBOUNCE_MS = 3000;
@@ -43,6 +44,8 @@ export interface ReviewRefreshController {
   setInteracting: (interacting: boolean) => void;
   /** Whether a git fetch is currently in-flight */
   isRefreshing: boolean;
+  /** Info about the last completed refresh (for debugging) */
+  lastRefreshInfo: LastRefreshInfo | null;
 }
 
 /**
@@ -57,15 +60,17 @@ export interface ReviewRefreshController {
 export function useReviewRefreshController(
   options: UseReviewRefreshControllerOptions
 ): ReviewRefreshController {
-  const { workspaceId, api, isCreating, onRefresh, scrollContainerRef, onGitStatusRefresh } =
-    options;
+  const { workspaceId, api, isCreating, scrollContainerRef } = options;
 
   // Refs for values that executeRefresh needs at call time (avoid stale closures)
   const diffBaseRef = useRef(options.diffBase);
   diffBaseRef.current = options.diffBase;
 
-  const onGitStatusRefreshRef = useRef(onGitStatusRefresh);
-  onGitStatusRefreshRef.current = onGitStatusRefresh;
+  const onRefreshRef = useRef(options.onRefresh);
+  onRefreshRef.current = options.onRefresh;
+
+  const onGitStatusRefreshRef = useRef(options.onGitStatusRefresh);
+  onGitStatusRefreshRef.current = options.onGitStatusRefresh;
 
   // Scroll position to restore after refresh
   const savedScrollTopRef = useRef<number | null>(null);
@@ -73,11 +78,19 @@ export function useReviewRefreshController(
   // User interaction state (pauses auto-refresh)
   const isInteractingRef = useRef(false);
 
+  // Track last refresh info - persisted per workspace so it survives workspace switches
+  const [lastRefreshInfo, setLastRefreshInfo] = usePersistedState<LastRefreshInfo | null>(
+    `review-last-refresh:${workspaceId}`,
+    null
+  );
+
   // Create RefreshController once, with stable callbacks via refs
   const controller = useMemo(() => {
+    const wsName = workspaceStore.getWorkspaceName(workspaceId);
     const ctrl = new RefreshController({
       debounceMs: TOOL_REFRESH_DEBOUNCE_MS,
       isPaused: () => isInteractingRef.current,
+      debugLabel: wsName,
       onRefresh: async () => {
         if (!api || isCreating) return;
 
@@ -97,14 +110,16 @@ export function useReviewRefreshController(
           }
         }
 
-        onRefresh();
+        onRefreshRef.current();
         onGitStatusRefreshRef.current?.();
       },
+      onRefreshComplete: setLastRefreshInfo,
     });
     ctrl.bindListeners();
     return ctrl;
     // workspaceId/api/isCreating changes require new controller with updated closure
-  }, [workspaceId, api, isCreating, onRefresh, scrollContainerRef]);
+    // Note: options.onRefresh is accessed via ref to avoid recreating controller on every render
+  }, [workspaceId, api, isCreating, scrollContainerRef, setLastRefreshInfo]);
 
   // Cleanup on unmount or when controller changes
   useEffect(() => {
@@ -115,12 +130,18 @@ export function useReviewRefreshController(
   useEffect(() => {
     if (!api || isCreating) return;
 
-    const unsubscribe = workspaceStore.subscribeFileModifyingTool(
-      () => controller.schedule(),
-      workspaceId
-    );
+    const wsName = workspaceStore.getWorkspaceName(workspaceId);
+    console.debug(`[ReviewRefresh] subscribing for "${wsName}"`);
 
-    return unsubscribe;
+    const unsubscribe = workspaceStore.subscribeFileModifyingTool(() => {
+      console.debug(`[ReviewRefresh] tool completed in "${wsName}", scheduling refresh`);
+      controller.schedule();
+    }, workspaceId);
+
+    return () => {
+      console.debug(`[ReviewRefresh] unsubscribing for "${wsName}"`);
+      unsubscribe();
+    };
   }, [api, workspaceId, isCreating, controller]);
 
   // Public API
@@ -144,6 +165,7 @@ export function useReviewRefreshController(
     get isRefreshing() {
       return controller.isRefreshing;
     },
+    lastRefreshInfo,
   };
 }
 
