@@ -44,11 +44,11 @@ function extractBashTaskId(events: WorkspaceChatMessage[]): string | null {
     if (!("type" in event) || event.type !== "tool-call-end") continue;
     if (!("toolName" in event) || event.toolName !== "task") continue;
 
-    const args = (event as { args?: { kind?: string } }).args;
-    if (args?.kind !== "bash") continue;
-
     const taskId = (event as { result?: { taskId?: string } }).result?.taskId;
-    if (typeof taskId === "string" && taskId.trim().length > 0) return taskId;
+    if (typeof taskId !== "string") continue;
+
+    const trimmed = taskId.trim();
+    if (trimmed.startsWith("bash:")) return trimmed;
   }
   return null;
 }
@@ -167,7 +167,7 @@ describeIntegration("Background Bash Execution", () => {
           const startEvents = await sendMessageAndWait(
             env,
             workspaceId,
-            'Use task(kind="bash") with run_in_background=true, display_name="bg-basic", timeout_secs=60 to run: true && sleep 30. Do not spawn a sub-agent.',
+            'Use the task tool with args: { kind: "bash", script: "true && sleep 30", timeout_secs: 60, run_in_background: true, display_name: "bg-basic" }. Do not spawn a sub-agent.',
             HAIKU_MODEL,
             TASK_TOOLS,
             30000
@@ -241,7 +241,7 @@ describeIntegration("Background Bash Execution", () => {
           const startEvents = await sendMessageAndWait(
             env,
             workspaceId,
-            'Use task(kind="bash") with run_in_background=true, display_name="bg-terminate", timeout_secs=600 to run: true && sleep 300. Do not spawn a sub-agent.',
+            'Use the task tool with args: { kind: "bash", script: "true && sleep 300", timeout_secs: 600, run_in_background: true, display_name: "bg-terminate" }. Do not spawn a sub-agent.',
             HAIKU_MODEL,
             TASK_TOOLS,
             30000
@@ -316,7 +316,7 @@ describeIntegration("Background Bash Execution", () => {
           const startEvents = await sendMessageAndWait(
             env,
             workspaceId,
-            `Use task(kind="bash") with run_in_background=true, display_name="bg-output", timeout_secs=30 to run: echo "${marker}" && sleep 1. Do not spawn a sub-agent.`,
+            `Use the task tool with args: { kind: "bash", script: "echo \"${marker}\" && sleep 1", timeout_secs: 30, run_in_background: true, display_name: "bg-output" }. Do not spawn a sub-agent.`,
             HAIKU_MODEL,
             TASK_TOOLS,
             30000
