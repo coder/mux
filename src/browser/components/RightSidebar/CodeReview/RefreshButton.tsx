@@ -29,6 +29,9 @@ const TRIGGER_LABELS: Record<RefreshTrigger, string> = {
 
 export const RefreshButton: React.FC<RefreshButtonProps> = (props) => {
   const { onClick, isLoading = false, lastRefreshInfo } = props;
+
+  console.debug("[RefreshButton] render, isLoading:", isLoading);
+
   // Track animation state for graceful stopping
   const [animationState, setAnimationState] = useState<"idle" | "spinning" | "stopping">("idle");
   const spinOnceTimeoutRef = useRef<number | null>(null);
