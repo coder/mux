@@ -52,6 +52,7 @@ import {
 } from "@/browser/stores/WorkspaceStore";
 import { WorkspaceHeader } from "./WorkspaceHeader";
 
+import type { ImagePart } from "@/common/orpc/types";
 import type { DisplayedMessage } from "@/common/types/message";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { getRuntimeTypeForTelemetry } from "@/common/telemetry";
@@ -169,9 +170,9 @@ const AIViewInner: React.FC<AIViewProps> = ({
     pendingModel
   );
 
-  const [editingMessage, setEditingMessage] = useState<{ id: string; content: string } | undefined>(
-    undefined
-  );
+  const [editingMessage, setEditingMessage] = useState<
+    { id: string; content: string; imageParts?: ImagePart[] } | undefined
+  >(undefined);
 
   // Track which bash_output groups are expanded (keyed by first message ID)
   const [expandedBashGroups, setExpandedBashGroups] = useState<Set<string>>(new Set());
@@ -299,9 +300,12 @@ const AIViewInner: React.FC<AIViewProps> = ({
   const { thinkingLevel: currentWorkspaceThinking, setThinkingLevel } = useThinking();
 
   // Handlers for editing messages
-  const handleEditUserMessage = useCallback((messageId: string, content: string) => {
-    setEditingMessage({ id: messageId, content });
-  }, []);
+  const handleEditUserMessage = useCallback(
+    (messageId: string, content: string, imageParts?: ImagePart[]) => {
+      setEditingMessage({ id: messageId, content, imageParts });
+    },
+    []
+  );
 
   const handleEditQueuedMessage = useCallback(async () => {
     const queuedMessage = workspaceState?.queuedMessage;
@@ -357,6 +361,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
     setEditingMessage({
       id: lastUserMessage.historyId,
       content: getEditableUserMessageText(lastUserMessage),
+      imageParts: lastUserMessage.imageParts,
     });
     setAutoScroll(false); // Show jump-to-bottom indicator
 

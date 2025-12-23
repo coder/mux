@@ -1,4 +1,5 @@
 import React from "react";
+import type { ImagePart } from "@/common/orpc/types";
 import type { DisplayedMessage } from "@/common/types/message";
 import type { ButtonConfig } from "./MessageWindow";
 import { MessageWindow } from "./MessageWindow";
@@ -15,7 +16,7 @@ import { Clipboard, ClipboardCheck, Pencil } from "lucide-react";
 interface UserMessageProps {
   message: DisplayedMessage & { type: "user" };
   className?: string;
-  onEdit?: (messageId: string, content: string) => void;
+  onEdit?: (messageId: string, content: string, imageParts?: ImagePart[]) => void;
   isCompacting?: boolean;
   clipboardWriteText?: (data: string) => Promise<void>;
 }
@@ -50,7 +51,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
   const handleEdit = () => {
     if (onEdit && !isLocalCommandOutput) {
       const editText = getEditableUserMessageText(message);
-      onEdit(message.historyId, editText);
+      onEdit(message.historyId, editText, message.imageParts);
     }
   };
 
