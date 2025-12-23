@@ -58,7 +58,8 @@ type WebviewToExtensionMessage =
   | { type: "selectWorkspace"; workspaceId: string | null }
   | { type: "openWorkspace"; workspaceId: string }
   | { type: "sendMessage"; workspaceId: string; text: string }
-  | { type: "configureConnection" };
+  | { type: "configureConnection" }
+  | { type: "debugLog"; message: string; data?: unknown };
 
 type ExtensionToWebviewMessage =
   | { type: "connectionStatus"; status: UiConnectionStatus }
@@ -67,6 +68,64 @@ type ExtensionToWebviewMessage =
   | { type: "chatReset"; workspaceId: string }
   | { type: "chatEvent"; workspaceId: string; event: WorkspaceChatMessage }
   | { type: "uiNotice"; level: "info" | "error"; message: string };
+
+let muxLogChannel: vscode.LogOutputChannel | undefined;
+
+function getMuxLogChannel(): vscode.LogOutputChannel {
+  if (!muxLogChannel) {
+    muxLogChannel = vscode.window.createOutputChannel("Mux", { log: true });
+  }
+
+  return muxLogChannel;
+}
+
+function formatLogData(data: unknown): string {
+  if (data === undefined) {
+    return "";
+  }
+
+  try {
+    return JSON.stringify(data);
+  } catch {
+    return String(data);
+  }
+}
+
+function muxLog(level: "debug" | "info" | "warn" | "error", message: string, data?: unknown): void {
+  const channel = getMuxLogChannel();
+  const suffix = data === undefined ? "" : ` ${formatLogData(data)}`;
+
+  switch (level) {
+    case "debug":
+      channel.debug(message + suffix);
+      return;
+    case "info":
+      channel.info(message + suffix);
+      return;
+    case "warn":
+      channel.warn(message + suffix);
+      return;
+    case "error":
+      channel.error(message + suffix);
+      return;
+  }
+}
+
+function muxLogDebug(message: string, data?: unknown): void {
+  muxLog("debug", message, data);
+}
+
+function muxLogInfo(message: string, data?: unknown): void {
+  muxLog("info", message, data);
+}
+
+function muxLogWarn(message: string, data?: unknown): void {
+  muxLog("warn", message, data);
+}
+
+function muxLogError(message: string, data?: unknown): void {
+  muxLog("error", message, data);
+}
 
 function toUiWorkspace(workspace: WorkspaceWithContext): UiWorkspace {
   assert(workspace, "toUiWorkspace requires workspace");
@@ -212,11 +271,22 @@ async function tryGetApiClient(
 ): Promise<{ client: ApiClient; baseUrl: string } | { failure: ApiConnectionFailure }> {
   assert(context, "tryGetApiClient requires context");
 
+  muxLogDebug("mux: tryGetApiClient start");
+
   try {
     const discovery = await discoverServerConfig(context);
+
+    muxLogDebug("mux: discovered server config", {
+      baseUrl: discovery.baseUrl,
+      baseUrlSource: discovery.baseUrlSource,
+      authTokenSource: discovery.authTokenSource,
+      hasAuthToken: Boolean(discovery.authToken),
+    });
+
     const client = createApiClient({ baseUrl: discovery.baseUrl, authToken: discovery.authToken });
 
     const reachable = await checkServerReachable(discovery.baseUrl);
+    muxLogDebug("mux: server reachable check", reachable);
     if (reachable.status !== "ok") {
       return {
         failure: {
@@ -228,6 +298,8 @@ async function tryGetApiClient(
     }
 
     const auth = await checkAuth(client);
+    muxLogDebug("mux: auth check", auth);
+
     if (auth.status === "unauthorized") {
       return {
         failure: {
@@ -247,11 +319,15 @@ async function tryGetApiClient(
       };
     }
 
+    muxLogDebug("mux: tryGetApiClient success", { baseUrl: discovery.baseUrl });
+
     return {
       client,
       baseUrl: discovery.baseUrl,
     };
   } catch (error) {
+    muxLogError("mux: tryGetApiClient threw", { error: formatError(error) });
+
     return {
       failure: {
         kind: "error",
@@ -593,6 +669,7 @@ async function getWorkspacesForSidebar(
   assert(context, "getWorkspacesForSidebar requires context");
 
   const modeSetting: ConnectionMode = getConnectionModeSetting();
+  muxLogDebug("mux: getWorkspacesForSidebar", { modeSetting });
 
   const tryReadFromFiles = async (): Promise<
     { workspaces: WorkspaceWithContext[] } | { error: string }
@@ -786,6 +863,20 @@ function renderChatViewHtml(webview: vscode.Webview): string {
         border-bottom: 1px solid var(--color-border);
         background: var(--color-background-secondary);
       }
+      #debugPanel {
+        margin-bottom: 8px;
+      }
+      #debugPanel > summary {
+        cursor: pointer;
+        user-select: none;
+        font-size: 12px;
+        color: var(--color-muted-foreground);
+      }
+      #debugLog {
+        max-height: 140px;
+        overflow-y: auto;
+        white-space: pre-wrap;
+      }
       #status {
         font-size: 12px;
         line-height: 1.3;
@@ -919,6 +1010,10 @@ function renderChatViewHtml(webview: vscode.Webview): string {
     <div id="container">
       <div id="top">
         <div id="status">Loading mux…</div>
+        <details id="debugPanel">
+          <summary>Debug</summary>
+          <pre id="debugLog"></pre>
+        </details>
         <div class="row">
           <select id="workspaceSelect"></select>
           <button id="refreshBtn" class="secondary" type="button">Refresh</button>
@@ -938,8 +1033,55 @@ function renderChatViewHtml(webview: vscode.Webview): string {
     </div>
 
     <script nonce="${nonce}">
-      (function () {
         const vscode = acquireVsCodeApi();
+
+      (function () {
+
+        const debugLogEl = document.getElementById('debugLog');
+        const debugLines = [];
+        const DEBUG_MAX_LINES = 200;
+
+        function safeStringify(value) {
+          try {
+            return JSON.stringify(value);
+          } catch {
+            return String(value);
+          }
+        }
+
+        function appendDebug(message, data) {
+          const ts = new Date().toISOString();
+          const suffix = data === undefined ? '' : ' ' + safeStringify(data);
+          debugLines.push(ts + ' ' + message + suffix);
+          if (debugLines.length > DEBUG_MAX_LINES) {
+            debugLines.splice(0, debugLines.length - DEBUG_MAX_LINES);
+          }
+          if (debugLogEl) {
+            debugLogEl.textContent = debugLines.join('\\n');
+            debugLogEl.scrollTop = debugLogEl.scrollHeight;
+          }
+        }
+
+        function postToExtension(payload) {
+          try {
+            vscode.postMessage(payload);
+          } catch (error) {
+            appendDebug('postMessage threw', String(error));
+          }
+        }
+
+        window.addEventListener('error', (ev) => {
+          appendDebug('window.error', { message: ev.message, filename: ev.filename, lineno: ev.lineno, colno: ev.colno });
+          postToExtension({ type: 'debugLog', message: 'window.error', data: { message: ev.message, filename: ev.filename, lineno: ev.lineno, colno: ev.colno } });
+        });
+
+        window.addEventListener('unhandledrejection', (ev) => {
+          appendDebug('unhandledrejection', { reason: String(ev.reason) });
+          postToExtension({ type: 'debugLog', message: 'unhandledrejection', data: { reason: String(ev.reason) } });
+        });
+
+        appendDebug('webview boot');
+        postToExtension({ type: 'debugLog', message: 'webview boot' });
 
         const statusEl = document.getElementById('status');
         const workspaceSelectEl = document.getElementById('workspaceSelect');
@@ -1411,10 +1553,46 @@ function renderChatViewHtml(webview: vscode.Webview): string {
           }
         });
 
+        let handshakeComplete = false;
+        let readyAttempts = 0;
+
+        const readyInterval = setInterval(() => {
+          if (handshakeComplete) {
+            return;
+          }
+
+          readyAttempts += 1;
+          appendDebug('post ready', { attempt: readyAttempts, reason: 'retry' });
+          postToExtension({ type: 'ready' });
+        }, 1_000);
+
+        function markHandshakeComplete(reason) {
+          if (handshakeComplete) {
+            return;
+          }
+
+          handshakeComplete = true;
+          clearInterval(readyInterval);
+          appendDebug('handshake complete', { reason, attempts: readyAttempts });
+          postToExtension({ type: 'debugLog', message: 'handshake complete', data: { reason, attempts: readyAttempts } });
+        }
+
+        readyAttempts += 1;
+        appendDebug('post ready', { attempt: readyAttempts, reason: 'initial' });
+        postToExtension({ type: 'ready' });
+
         window.addEventListener('message', (ev) => {
           const msg = ev.data;
           if (!msg || typeof msg !== 'object' || !msg.type) {
             return;
+          }
+
+          if (typeof msg.type === 'string' && msg.type !== 'chatEvent') {
+            appendDebug('rx ' + msg.type);
+          }
+
+          if (msg.type === 'connectionStatus' || msg.type === 'workspaces' || msg.type === 'setSelectedWorkspace') {
+            markHandshakeComplete(msg.type);
           }
 
           if (msg.type === 'connectionStatus') {
@@ -1451,7 +1629,7 @@ function renderChatViewHtml(webview: vscode.Webview): string {
           }
         });
 
-        vscode.postMessage({ type: 'ready' });
+        // ready handshake is posted via postToExtension + retry timer above.
       })();
     </script>
   </body>
@@ -1502,6 +1680,8 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
   }
 
   resolveWebviewView(view: vscode.WebviewView): void {
+    muxLogDebug("mux.chatView: resolveWebviewView");
+
     this.view = view;
     this.isWebviewReady = false;
 
@@ -1512,7 +1692,18 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
     // Register the message handler before setting HTML to avoid losing the initial
     // "ready" handshake due to a race.
     const messageDisposable = view.webview.onDidReceiveMessage((msg: unknown) => {
+      const msgType =
+        typeof msg === "object" &&
+        msg !== null &&
+        "type" in msg &&
+        typeof (msg as { type?: unknown }).type === "string"
+          ? (msg as { type: string }).type
+          : undefined;
+
+      muxLogDebug("mux.chatView: <- webview message", { type: msgType });
+
       void this.onWebviewMessage(msg).catch((error) => {
+        muxLogError("mux.chatView: error handling webview message", { error: formatError(error) });
         console.error("mux.chatView: error handling webview message", error);
         this.postMessage({
           type: "uiNotice",
@@ -1523,6 +1714,7 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
     });
 
     view.onDidDispose(() => {
+      muxLogDebug("mux.chatView: disposed");
       messageDisposable.dispose();
       this.view = undefined;
       this.isWebviewReady = false;
@@ -1530,6 +1722,18 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
     });
 
     view.webview.html = renderChatViewHtml(view.webview);
+
+    setTimeout(() => {
+      if (this.view !== view) {
+        return;
+      }
+
+      if (this.isWebviewReady) {
+        return;
+      }
+
+      muxLogWarn("mux.chatView: webview has not sent ready after 2s");
+    }, 2_000);
   }
 
   private postMessage(message: ExtensionToWebviewMessage): void {
@@ -1551,6 +1755,15 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
     }
 
     const type = msg.type as WebviewToExtensionMessage["type"];
+
+    if (type === "debugLog") {
+      if (typeof msg.message !== "string") {
+        return;
+      }
+
+      muxLogDebug(`mux.chatView(webview): ${msg.message}`, msg.data);
+      return;
+    }
 
     if (type === "ready") {
       this.isWebviewReady = true;
@@ -1595,6 +1808,9 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
   }
 
   private async refreshWorkspaces(): Promise<void> {
+    const startedAt = Date.now();
+    muxLogDebug("mux.chatView: refreshWorkspaces start");
+
     try {
       const result = await getWorkspacesForSidebar(this.context);
 
@@ -1612,12 +1828,25 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
       if (!this.selectedWorkspaceId) {
         const match = findWorkspaceIdMatchingCurrentFolder(this.workspaces);
         if (match) {
+          muxLogDebug("mux.chatView: auto-selected workspace", { workspaceId: match });
           await this.setSelectedWorkspaceId(match);
         }
       }
 
       await this.updateChatSubscription();
+
+      muxLogDebug("mux.chatView: refreshWorkspaces done", {
+        durationMs: Date.now() - startedAt,
+        workspaceCount: this.workspaces.length,
+        connectionMode: this.connectionStatus.mode,
+        hasError: Boolean(this.connectionStatus.error),
+      });
     } catch (error) {
+      muxLogError("mux.chatView: refreshWorkspaces failed", {
+        durationMs: Date.now() - startedAt,
+        error: formatError(error),
+      });
+
       const message = `Failed to load mux workspaces. (${formatError(error)})`;
 
       this.connectionStatus = { mode: "file", error: message };
@@ -1808,6 +2037,11 @@ async function maybeAutoRevealChatViewFromPendingSelection(
  * Activate the extension
  */
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
+  muxLogInfo("mux: activate", {
+    connectionMode: getConnectionModeSetting(),
+    workspaceFolder: vscode.workspace.workspaceFolders?.[0]?.uri.toString() ?? null,
+  });
+
   const chatViewProvider = new MuxChatViewProvider(context);
 
   context.subscriptions.push(chatViewProvider);
