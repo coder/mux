@@ -13,6 +13,7 @@
 
 /** Reason that triggered a refresh - useful for debugging */
 export type RefreshTrigger =
+  | "initial" // Initial load (app start, workspace switch)
   | "manual" // User clicked refresh button
   | "scheduled" // Debounced tool completion
   | "priority" // Priority debounced (active workspace)
@@ -162,10 +163,15 @@ export class RefreshController {
    * Use for manual refresh (user clicked button) which should always execute.
    */
   requestImmediate(): void {
-    if (this.disposed) return;
+    this.debug("requestImmediate called");
+    if (this.disposed) {
+      this.debug("requestImmediate: disposed, ignoring");
+      return;
+    }
 
     // Clear any pending debounce
     if (this.debounceTimer) {
+      this.debug("requestImmediate: clearing pending debounce timer");
       clearTimeout(this.debounceTimer);
       this.debounceTimer = null;
     }
@@ -177,12 +183,17 @@ export class RefreshController {
    * Attempt refresh, respecting pause conditions.
    */
   private tryRefresh(options?: { bypassPause?: boolean; trigger?: RefreshTrigger }): void {
-    if (this.disposed) return;
-
     const trigger = options?.trigger ?? this.pendingTrigger ?? "scheduled";
+    this.debug(`tryRefresh(${trigger}) bypassPause=${options?.bypassPause ?? false}`);
+
+    if (this.disposed) {
+      this.debug("tryRefresh: disposed, ignoring");
+      return;
+    }
 
     // Hidden → queue for visibility
     if (typeof document !== "undefined" && document.hidden) {
+      this.debug("tryRefresh: document hidden, queueing");
       this.pendingBecauseHidden = true;
       this.pendingTrigger = trigger;
       return;
@@ -191,6 +202,7 @@ export class RefreshController {
     // Custom pause (e.g., user interacting) → queue for unpause
     // Bypassed for manual refresh (user explicitly requested)
     if (!options?.bypassPause && this.isPaused?.()) {
+      this.debug("tryRefresh: paused, queueing");
       this.pendingBecausePaused = true;
       this.pendingTrigger = trigger;
       return;
@@ -198,11 +210,13 @@ export class RefreshController {
 
     // In-flight → queue for completion
     if (this.inFlight) {
+      this.debug("tryRefresh: in-flight, queueing");
       this.pendingBecauseInFlight = true;
       this.pendingTrigger = trigger;
       return;
     }
 
+    this.debug(`tryRefresh: executing refresh (${trigger})`);
     this.executeRefresh(trigger);
   }
 
