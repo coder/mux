@@ -47,9 +47,6 @@ function buildSystemPrompt(args: {
 const EXEC_PRESET: AgentPreset = {
   agentType: "exec",
   toolPolicy: [
-    // Non-recursive: subagents must not spawn more subagents.
-    { regex_match: "task", action: "disable" },
-    { regex_match: "task_.*", action: "disable" },
     // Only the main plan-mode session should call propose_plan.
     { regex_match: "propose_plan", action: "disable" },
   ],
@@ -60,7 +57,7 @@ const EXEC_PRESET: AgentPreset = {
       "- Make minimal, correct changes that match existing codebase patterns.",
     ],
     rules: [
-      "- Do not call task/task_await/task_list/task_terminate (subagent recursion is disabled).",
+      "- You MUST NOT spawn additional sub-agent tasks.",
       "- Do not call propose_plan.",
       "- Prefer small, reviewable diffs and run targeted checks when feasible.",
     ],
@@ -71,10 +68,10 @@ const EXPLORE_PRESET: AgentPreset = {
   agentType: "explore",
   toolPolicy: enableOnly(
     "file_read",
-    "bash",
-    "bash_output",
-    "bash_background_list",
-    "bash_background_terminate",
+    "task",
+    "task_await",
+    "task_list",
+    "task_terminate",
     "web_fetch",
     "web_search",
     "google_search",
@@ -92,8 +89,8 @@ const EXPLORE_PRESET: AgentPreset = {
       "- You MUST NOT create temporary files anywhere (including /tmp).",
       "- You MUST NOT use redirect operators (>, >>, |) or heredocs to write to files.",
       "- You MUST NOT run commands that change system state (rm, mv, cp, mkdir, touch, git add/commit, installs, etc.).",
-      "- Use bash only for read-only operations (rg, ls, cat, git diff/show/log, etc.).",
-      "- Do not call task/task_await/task_list/task_terminate (subagent recursion is disabled).",
+      '- Use task(kind="bash") only for read-only operations (rg, ls, cat, git diff/show/log, etc.).',
+      "- You MUST NOT spawn additional sub-agent tasks.",
     ],
   }),
 };
