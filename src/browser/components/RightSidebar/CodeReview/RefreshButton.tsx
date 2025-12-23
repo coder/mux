@@ -100,7 +100,7 @@ export const RefreshButton: React.FC<RefreshButtonProps> = (props) => {
             {lastRefreshInfo && (
               <span className="text-muted block text-[10px]">
                 Last: {formatRelativeTimeCompact(lastRefreshInfo.timestamp)} via{" "}
-                {TRIGGER_LABELS[lastRefreshInfo.trigger]}
+                {TRIGGER_LABELS[lastRefreshInfo.trigger] ?? lastRefreshInfo.trigger}
               </span>
             )}
           </span>
