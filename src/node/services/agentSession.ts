@@ -25,7 +25,12 @@ import { createUnknownSendMessageError } from "@/node/services/utils/sendMessage
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
-import type { MuxFrontendMetadata, ContinueMessage } from "@/common/types/message";
+import type {
+  ContinueMessage,
+  MuxFrontendMetadata,
+  MuxImagePart,
+  MuxMessage,
+} from "@/common/types/message";
 import { prepareUserMessageForSend } from "@/common/types/message";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { MessageQueue } from "./messageQueue";
@@ -393,7 +398,27 @@ export class AgentSession {
     const trimmedMessage = message.trim();
     const imageParts = options?.imageParts;
 
-    if (trimmedMessage.length === 0 && (!imageParts || imageParts.length === 0)) {
+    // Edits are implemented as truncate+replace. If the frontend forgets to re-send
+    // imageParts, we should preserve the original message's attachments.
+    let preservedEditImageParts: MuxImagePart[] | undefined;
+    if (options?.editMessageId && (!imageParts || imageParts.length === 0)) {
+      const historyResult = await this.historyService.getHistory(this.workspaceId);
+      if (historyResult.success) {
+        const targetMessage: MuxMessage | undefined = historyResult.data.find(
+          (msg) => msg.id === options.editMessageId
+        );
+        const fileParts = targetMessage?.parts.filter(
+          (part): part is MuxImagePart => part.type === "file"
+        );
+        if (fileParts && fileParts.length > 0) {
+          preservedEditImageParts = fileParts;
+        }
+      }
+    }
+
+    const hasImages = (imageParts?.length ?? 0) > 0 || (preservedEditImageParts?.length ?? 0) > 0;
+
+    if (trimmedMessage.length === 0 && !hasImages) {
       return Err(
         createUnknownSendMessageError(
           "Empty message not allowed. Use interruptStream() to interrupt active streams."
@@ -436,27 +461,29 @@ export class AgentSession {
 
     const messageId = `user-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
     const additionalParts =
-      imageParts && imageParts.length > 0
-        ? imageParts.map((img, index) => {
-            assert(
-              typeof img.url === "string",
-              `image part [${index}] must include url string content (got ${typeof img.url}): ${JSON.stringify(img).slice(0, 200)}`
-            );
-            assert(
-              img.url.startsWith("data:"),
-              `image part [${index}] url must be a data URL (got: ${img.url.slice(0, 50)}...)`
-            );
-            assert(
-              typeof img.mediaType === "string" && img.mediaType.trim().length > 0,
-              `image part [${index}] must include a mediaType (got ${typeof img.mediaType}): ${JSON.stringify(img).slice(0, 200)}`
-            );
-            return {
-              type: "file" as const,
-              url: img.url,
-              mediaType: img.mediaType,
-            };
-          })
-        : undefined;
+      preservedEditImageParts && preservedEditImageParts.length > 0
+        ? preservedEditImageParts
+        : imageParts && imageParts.length > 0
+          ? imageParts.map((img, index) => {
+              assert(
+                typeof img.url === "string",
+                `image part [${index}] must include url string content (got ${typeof img.url}): ${JSON.stringify(img).slice(0, 200)}`
+              );
+              assert(
+                img.url.startsWith("data:"),
+                `image part [${index}] url must be a data URL (got: ${img.url.slice(0, 50)}...)`
+              );
+              assert(
+                typeof img.mediaType === "string" && img.mediaType.trim().length > 0,
+                `image part [${index}] must include a mediaType (got ${typeof img.mediaType}): ${JSON.stringify(img).slice(0, 200)}`
+              );
+              return {
+                type: "file" as const,
+                url: img.url,
+                mediaType: img.mediaType,
+              };
+            })
+          : undefined;
 
     // toolPolicy is properly typed via Zod schema inference
     const typedToolPolicy = options?.toolPolicy;

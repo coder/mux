@@ -132,6 +132,13 @@ function createTokenCountResource(promise: Promise<number>): TokenCountReader {
 import type { ChatInputProps, ChatInputAPI } from "./types";
 import type { ImagePart } from "@/common/orpc/types";
 
+function imagePartsToAttachments(imageParts: ImagePart[], idPrefix: string): ImageAttachment[] {
+  return imageParts.map((img, index) => ({
+    id: `${idPrefix}-${index}`,
+    url: img.url,
+    mediaType: img.mediaType,
+  }));
+}
 export type { ChatInputProps, ChatInputAPI };
 
 const ChatInputInner: React.FC<ChatInputProps> = (props) => {
@@ -496,12 +503,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   // Method to restore images to input (used by queued message edit)
   const restoreImages = useCallback(
     (images: ImagePart[]) => {
-      const attachments: ImageAttachment[] = images.map((img, index) => ({
-        id: `restored-${Date.now()}-${index}`,
-        url: img.url,
-        mediaType: img.mediaType,
-      }));
-      setImageAttachments(attachments);
+      setImageAttachments(imagePartsToAttachments(images, `restored-${Date.now()}`));
     },
     [setImageAttachments]
   );
@@ -556,7 +558,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   useEffect(() => {
     if (editingMessage) {
       preEditDraftRef.current = getDraft();
-      setDraft({ text: editingMessage.content, images: [] });
+      const images = editingMessage.imageParts
+        ? imagePartsToAttachments(editingMessage.imageParts, `edit-${editingMessage.id}`)
+        : [];
+      setDraft({ text: editingMessage.content, images });
       // Auto-resize textarea and focus
       setTimeout(() => {
         if (inputRef.current) {
@@ -793,13 +798,20 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       const imageFiles = extractImagesFromClipboard(items);
       if (imageFiles.length === 0) return;
 
+      // When editing an existing message, we only allow changing the text.
+      // Don't preventDefault here so any clipboard text can still paste normally.
+      if (editingMessage) {
+        pushToast({ type: "error", message: "Images cannot be changed while editing a message." });
+        return;
+      }
+
       e.preventDefault(); // Prevent default paste behavior for images
 
       void processImageFiles(imageFiles).then((attachments) => {
         setImageAttachments((prev) => [...prev, ...attachments]);
       });
     },
-    [setImageAttachments]
+    [editingMessage, pushToast, setImageAttachments]
   );
 
   // Handle removing an image attachment
@@ -811,13 +823,16 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   );
 
   // Handle drag over to allow drop
-  const handleDragOver = useCallback((e: React.DragEvent<HTMLTextAreaElement>) => {
-    // Check if drag contains files
-    if (e.dataTransfer.types.includes("Files")) {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = "copy";
-    }
-  }, []);
+  const handleDragOver = useCallback(
+    (e: React.DragEvent<HTMLTextAreaElement>) => {
+      // Check if drag contains files
+      if (e.dataTransfer.types.includes("Files")) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = editingMessage ? "none" : "copy";
+      }
+    },
+    [editingMessage]
+  );
 
   // Handle drop to extract images
   const handleDrop = useCallback(
@@ -827,11 +842,16 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       const imageFiles = extractImagesFromDrop(e.dataTransfer);
       if (imageFiles.length === 0) return;
 
+      if (editingMessage) {
+        pushToast({ type: "error", message: "Images cannot be changed while editing a message." });
+        return;
+      }
+
       void processImageFiles(imageFiles).then((attachments) => {
         setImageAttachments((prev) => [...prev, ...attachments]);
       });
     },
-    [setImageAttachments]
+    [editingMessage, pushToast, setImageAttachments]
   );
 
   // Handle command selection
@@ -1688,7 +1708,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           </div>
 
           {/* Image attachments */}
-          <ImageAttachments images={imageAttachments} onRemove={handleRemoveImage} />
+          <ImageAttachments
+            images={imageAttachments}
+            onRemove={editingMessage ? undefined : handleRemoveImage}
+          />
 
           <div className="flex flex-col gap-0.5" data-component="ChatModeToggles">
             {/* Editing indicator - workspace only */}
