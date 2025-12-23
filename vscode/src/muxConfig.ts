@@ -1,4 +1,6 @@
 import { Config } from "mux/node/config";
+import assert from "node:assert";
+
 import type { FrontendWorkspaceMetadata, WorkspaceActivitySnapshot } from "mux/common/types/workspace";
 import { type ExtensionMetadata, readExtensionMetadata } from "mux/node/utils/extensionMetadata";
 import { createRuntime } from "mux/node/runtime/runtimeFactory";
@@ -8,6 +10,24 @@ import type { ApiClient } from "./api/client";
 /**
  * Workspace with extension metadata for display in VS Code extension.
  */
+
+const DEFAULT_WORKSPACE_LIST_TIMEOUT_MS = 5_000;
+
+async function promiseWithTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  assert(timeoutMs > 0, "timeoutMs must be positive");
+
+  return new Promise<T>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    promise
+      .then(resolve, reject)
+      .finally(() => {
+        clearTimeout(timeout);
+      });
+  });
+}
 export interface WorkspaceWithContext extends FrontendWorkspaceMetadata {
   extensionMetadata?: ExtensionMetadata;
 }
@@ -37,16 +57,39 @@ function enrichAndSort(
   return enriched;
 }
 
-export async function getAllWorkspacesFromFiles(): Promise<WorkspaceWithContext[]> {
+export async function getAllWorkspacesFromFiles(options?: {
+  timeoutMs?: number;
+}): Promise<WorkspaceWithContext[]> {
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_WORKSPACE_LIST_TIMEOUT_MS;
+
   const config = new Config();
-  const workspaces = await config.getAllWorkspaceMetadata();
+  const workspaces = await promiseWithTimeout(
+    config.getAllWorkspaceMetadata(),
+    timeoutMs,
+    "Read mux workspaces from files"
+  );
   const extensionMeta = readExtensionMetadata();
   return enrichAndSort(workspaces, extensionMeta);
 }
 
-export async function getAllWorkspacesFromApi(client: ApiClient): Promise<WorkspaceWithContext[]> {
-  const workspaces = await client.workspace.list();
-  const activityById: Record<string, WorkspaceActivitySnapshot> = await client.workspace.activity.list();
+export async function getAllWorkspacesFromApi(
+  client: ApiClient,
+  options?: {
+    timeoutMs?: number;
+  }
+): Promise<WorkspaceWithContext[]> {
+  assert(client, "getAllWorkspacesFromApi requires client");
+
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_WORKSPACE_LIST_TIMEOUT_MS;
+
+  const [workspaces, activityById] = await Promise.all([
+    promiseWithTimeout(client.workspace.list(), timeoutMs, "mux API workspace.list"),
+    promiseWithTimeout(
+      client.workspace.activity.list() as Promise<Record<string, WorkspaceActivitySnapshot>>,
+      timeoutMs,
+      "mux API workspace.activity.list"
+    ),
+  ]);
 
   const extensionMeta = new Map<string, ExtensionMetadata>();
   for (const [workspaceId, activity] of Object.entries(activityById)) {
