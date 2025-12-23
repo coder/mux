@@ -634,12 +634,8 @@ export class AIService extends EventEmitter {
 
         const baseFetch = getProviderFetch(providerConfig);
 
-        // Wrap fetch to force truncation: "auto" for OpenAI Responses API calls.
-        // This is a temporary override until @ai-sdk/openai supports passing
-        // truncation via providerOptions. Safe because it only targets the
-        // OpenAI Responses endpoint and leaves other providers untouched.
-        // Can be disabled via muxProviderOptions for testing purposes.
-        const disableAutoTruncation = muxProviderOptions?.openai?.disableAutoTruncation ?? false;
+        // Wrap fetch to force truncation: "disabled" for OpenAI Responses API calls.
+        // This guarantees OpenAI never truncates server-side (mux handles context).
         const fetchWithOpenAITruncation = Object.assign(
           async (
             input: Parameters<typeof fetch>[0],
@@ -666,12 +662,7 @@ export class AIService extends EventEmitter {
               const isOpenAIResponses = /\/v1\/responses(\?|$)/.test(urlString);
 
               const body = init?.body;
-              if (
-                !disableAutoTruncation &&
-                isOpenAIResponses &&
-                method === "POST" &&
-                typeof body === "string"
-              ) {
+              if (isOpenAIResponses && method === "POST" && typeof body === "string") {
                 // Clone headers to avoid mutating caller-provided objects
                 const headers = new Headers(init?.headers);
                 // Remove content-length if present, since body will change
@@ -679,10 +670,7 @@ export class AIService extends EventEmitter {
 
                 try {
                   const json = JSON.parse(body) as Record<string, unknown>;
-                  // Only set if not already present
-                  if (json.truncation === undefined) {
-                    json.truncation = "auto";
-                  }
+                  json.truncation = "disabled";
                   const newBody = JSON.stringify(json);
                   const newInit: RequestInit = { ...init, headers, body: newBody };
                   return baseFetch(input, newInit);

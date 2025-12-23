@@ -25,14 +25,10 @@ function getProviderOptions(): MuxProviderOptions {
     "provider_options_anthropic",
     { use1MContext: false }
   );
-  const openai = readPersistedState<MuxProviderOptions["openai"]>("provider_options_openai", {
-    disableAutoTruncation: true,
-  });
   const google = readPersistedState<MuxProviderOptions["google"]>("provider_options_google", {});
 
   return {
     anthropic,
-    openai,
     google,
   };
 }

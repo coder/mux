@@ -2,13 +2,12 @@
  * sendMessage heavy/load integration tests.
  *
  * Tests heavy workload scenarios:
- * - Large conversation history handling
- * - Auto-truncation behavior
+ * - Large message handling
  * - Context limit error handling
  */
 
 import { shouldRunIntegrationTests, validateApiKeys } from "./setup";
-import { sendMessageWithModel, modelString, createStreamCollector } from "./helpers";
+import { sendMessageWithModel, modelString } from "./helpers";
 import {
   createSharedRepo,
   cleanupSharedRepo,
@@ -31,91 +30,41 @@ afterAll(cleanupSharedRepo);
 describeIntegration("sendMessage heavy/load tests", () => {
   configureTestRetries(3);
 
-  describe("OpenAI auto truncation", () => {
+  describe("OpenAI context limit error (forced)", () => {
     const provider = "openai";
     const model = KNOWN_MODELS.GPT_MINI.providerModelId;
 
     test.concurrent(
-      "respects disableAutoTruncation flag",
+      "should emit context_exceeded when forceContextLimitError is set",
       async () => {
         await withSharedWorkspace(provider, async ({ env, workspaceId, collector }) => {
-          // Build up large conversation history to exceed context limit
-          // This approach is model-agnostic - it keeps sending until we've built up enough history
-          // Use auto-truncation enabled (disableAutoTruncation: false) so history builds up successfully
-          const largeMessage = "x".repeat(50_000);
-          for (let i = 0; i < 10; i++) {
-            await sendMessageWithModel(
-              env,
-              workspaceId,
-              `Message ${i}: ${largeMessage}`,
-              modelString(provider, model),
-              {
-                providerOptions: {
-                  openai: {
-                    disableAutoTruncation: false,
-                  },
-                },
-              }
-            );
-            await collector.waitForEvent("stream-end", 30000);
-            collector.clear();
-          }
-
-          // Now send a new message with auto-truncation disabled - should trigger real API error
           const result = await sendMessageWithModel(
             env,
             workspaceId,
-            "This should trigger a context error",
+            "Trigger a forced context limit error",
             modelString(provider, model),
             {
               providerOptions: {
                 openai: {
-                  disableAutoTruncation: true,
+                  forceContextLimitError: true,
                 },
               },
             }
           );
 
-          // IPC call itself should succeed (errors come through stream events)
           expect(result.success).toBe(true);
 
-          // Wait for stream-error event from the real OpenAI API
           const errorEvent = await collector.waitForEvent("stream-error", 30000);
-          expect(errorEvent).toBeDefined();
-
-          if (errorEvent?.type === "stream-error") {
-            const errorStr = errorEvent.error.toLowerCase();
-            // OpenAI will return an error about context/token limits
-            expect(
-              errorStr.includes("context") ||
-                errorStr.includes("length") ||
-                errorStr.includes("exceed") ||
-                errorStr.includes("token") ||
-                errorStr.includes("maximum")
-            ).toBe(true);
+          expect(errorEvent).not.toBeNull();
+          if (!errorEvent || errorEvent.type !== "stream-error") {
+            throw new Error("Expected stream-error event");
           }
 
-          // Phase 2: Send message with auto-truncation enabled (should succeed)
-          collector.clear();
-          const successResult = await sendMessageWithModel(
-            env,
-            workspaceId,
-            "This should succeed with auto-truncation",
-            modelString(provider, model),
-            {
-              providerOptions: {
-                openai: {
-                  disableAutoTruncation: false,
-                },
-              },
-            }
-          );
-
-          expect(successResult.success).toBe(true);
-          await collector.waitForEvent("stream-end", 30000);
+          expect(errorEvent.errorType).toBe("context_exceeded");
+          expect(errorEvent.error.toLowerCase()).toContain("context");
         });
       },
-      180000 // 3 minute timeout for building large history and API calls
+      45000
     );
   });
 

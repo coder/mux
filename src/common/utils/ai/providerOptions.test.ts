@@ -122,7 +122,7 @@ describe("buildProviderOptions - Anthropic", () => {
   });
 });
 
-describe("buildProviderOptions - OpenAI promptCacheKey", () => {
+describe("buildProviderOptions - OpenAI", () => {
   // Helper to extract OpenAI options from the result
   const getOpenAIOptions = (
     result: ReturnType<typeof buildProviderOptions>
@@ -147,6 +147,7 @@ describe("buildProviderOptions - OpenAI promptCacheKey", () => {
 
       expect(openai).toBeDefined();
       expect(openai!.promptCacheKey).toBe("mux-v1-abc123");
+      expect(openai!.truncation).toBe("disabled");
     });
 
     test("should derive promptCacheKey for gateway OpenAI model", () => {
@@ -162,6 +163,7 @@ describe("buildProviderOptions - OpenAI promptCacheKey", () => {
 
       expect(openai).toBeDefined();
       expect(openai!.promptCacheKey).toBe("mux-v1-workspace-xyz");
+      expect(openai!.truncation).toBe("disabled");
     });
   });
 });

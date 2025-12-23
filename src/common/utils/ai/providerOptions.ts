@@ -208,9 +208,6 @@ export function buildProviderOptions(
       }
     }
 
-    // Check if auto-truncation should be disabled (for testing context limit errors)
-    const disableAutoTruncation = muxProviderOptions?.openai?.disableAutoTruncation ?? false;
-
     // Prompt cache key: derive from workspaceId
     // This helps OpenAI route requests to cached prefixes for improved hit rates
     // workspaceId is always passed from AIService.streamMessage for real requests
@@ -220,7 +217,6 @@ export function buildProviderOptions(
       reasoningEffort,
       thinkingLevel: effectiveThinking,
       previousResponseId,
-      disableAutoTruncation,
       promptCacheKey,
     });
 
@@ -230,8 +226,8 @@ export function buildProviderOptions(
       openai: {
         parallelToolCalls: true, // Always enable concurrent tool execution
         serviceTier,
-        // Automatically truncate conversation to fit context window, unless disabled for testing
-        truncation: disableAutoTruncation ? "disabled" : "auto",
+        // Never allow server-side truncation (mux handles context via compaction)
+        truncation: "disabled",
         // Stable prompt cache key to improve OpenAI cache hit rates
         // See: https://sdk.vercel.ai/providers/ai-sdk-providers/openai#responses-models
         ...(promptCacheKey && { promptCacheKey }),
