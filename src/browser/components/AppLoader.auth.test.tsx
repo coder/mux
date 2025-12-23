@@ -15,9 +15,16 @@ void mock.module("@/browser/contexts/API", () => ({
 }));
 
 void mock.module("@/browser/components/AuthTokenModal", () => ({
+  // Note: Module mocks leak between bun test files.
+  // Export all commonly-used symbols to avoid cross-test import errors.
   AuthTokenModal: (props: { error?: string | null }) => (
     <div data-testid="AuthTokenModalMock">{props.error ?? "no-error"}</div>
   ),
+  getStoredAuthToken: () => null,
+  // eslint-disable-next-line @typescript-eslint/no-empty-function
+  setStoredAuthToken: () => {},
+  // eslint-disable-next-line @typescript-eslint/no-empty-function
+  clearStoredAuthToken: () => {},
 }));
 
 import { AppLoader } from "./AppLoader";

@@ -66,8 +66,12 @@ void mock.module("@orpc/client/message-port", () => ({
 }));
 
 void mock.module("@/browser/components/AuthTokenModal", () => ({
+  // Note: Module mocks leak between bun test files.
+  // Export all commonly-used symbols to avoid cross-test import errors.
   AuthTokenModal: () => null,
   getStoredAuthToken: () => null,
+  // eslint-disable-next-line @typescript-eslint/no-empty-function
+  setStoredAuthToken: () => {},
   // eslint-disable-next-line @typescript-eslint/no-empty-function
   clearStoredAuthToken: () => {},
 }));

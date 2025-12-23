@@ -56,9 +56,12 @@ export interface UseVoiceInputResult {
  * We hide our voice UI on these devices to avoid redundancy with system dictation.
  */
 function hasTouchDictation(): boolean {
-  if (typeof window === "undefined") return false;
-  const hasTouch =
-    "ontouchstart" in window || (typeof navigator !== "undefined" && navigator.maxTouchPoints > 0);
+  if (typeof window === "undefined" || typeof navigator === "undefined") return false;
+
+  const maxTouchPoints =
+    typeof navigator.maxTouchPoints === "number" ? navigator.maxTouchPoints : 0;
+  const hasTouch = "ontouchstart" in window || maxTouchPoints > 0;
+
   // Touch-only check: most touch devices have native dictation.
   // We don't check screen size because iPads are large but still have dictation.
   return hasTouch;
