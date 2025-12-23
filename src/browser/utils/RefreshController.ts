@@ -204,6 +204,7 @@ export class RefreshController {
   private tryRefresh(options?: {
     bypassPause?: boolean;
     bypassHidden?: boolean;
+    bypassMinInterval?: boolean;
     trigger?: RefreshTrigger;
   }): void {
     if (this.disposed) return;
@@ -211,6 +212,7 @@ export class RefreshController {
     const trigger = options?.trigger ?? this.pendingTrigger ?? "scheduled";
     const bypassHidden = (options?.bypassHidden ?? false) || trigger === "manual";
     const bypassPause = (options?.bypassPause ?? false) || trigger === "manual";
+    const bypassMinInterval = (options?.bypassMinInterval ?? false) || trigger === "manual";
 
     // Hidden → queue for visibility (unless bypassed)
     if (!bypassHidden && typeof document !== "undefined" && document.hidden) {
@@ -236,7 +238,8 @@ export class RefreshController {
 
     // Hard guard: enforce minimum interval between refresh starts.
     // Rather than dropping the request, schedule it for the earliest allowed time.
-    if (this.lastRefreshStartMs > 0) {
+    // Bypassed for manual refresh (user/component explicitly requested).
+    if (!bypassMinInterval && this.lastRefreshStartMs > 0) {
       const now = Date.now();
       const elapsed = now - this.lastRefreshStartMs;
       if (elapsed < MIN_REFRESH_INTERVAL_MS) {
