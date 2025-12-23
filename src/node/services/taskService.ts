@@ -75,6 +75,10 @@ type AgentTaskWorkspaceEntry = WorkspaceConfigEntry & { projectPath: string };
 const COMPLETED_REPORT_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 const COMPLETED_REPORT_CACHE_MAX_ENTRIES = 128;
 
+// Delay auto-deleting reported agent task workspaces so users can see the final report/tool output
+// before the workspace disappears.
+const REPORTED_TASK_WORKSPACE_AUTO_DELETE_DELAY_MS = 5000;
+
 interface AgentTaskIndex {
   byId: Map<string, AgentTaskWorkspaceEntry>;
   childrenByParent: Map<string, string[]>;
@@ -177,6 +181,10 @@ export class TaskService {
     string,
     { reportMarkdown: string; title?: string; expiresAtMs: number }
   >();
+
+  // Best-effort delayed cleanup of reported task workspaces.
+  // Keyed by workspaceId to avoid scheduling duplicate deletes.
+  private readonly scheduledTaskWorkspaceDeletes = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly remindedAwaitingReport = new Set<string>();
 
   constructor(
@@ -2088,8 +2096,32 @@ export class TaskService {
     return true;
   }
 
-  private async cleanupReportedLeafTask(workspaceId: string): Promise<void> {
+  private async cleanupReportedLeafTask(
+    workspaceId: string,
+    options?: { skipDelay?: boolean }
+  ): Promise<void> {
     assert(workspaceId.length > 0, "cleanupReportedLeafTask: workspaceId must be non-empty");
+
+    // UX: Delay deletion briefly after agent_report so the user can see the final tool output.
+    if (!options?.skipDelay) {
+      if (this.scheduledTaskWorkspaceDeletes.has(workspaceId)) {
+        return;
+      }
+
+      const timeout = setTimeout(() => {
+        this.scheduledTaskWorkspaceDeletes.delete(workspaceId);
+        void this.cleanupReportedLeafTask(workspaceId, { skipDelay: true }).catch(
+          (error: unknown) => {
+            log.error("cleanupReportedLeafTask: delayed cleanup failed", { workspaceId, error });
+          }
+        );
+      }, REPORTED_TASK_WORKSPACE_AUTO_DELETE_DELAY_MS);
+
+      // Do not keep the process alive just for this best-effort cleanup.
+      timeout.unref?.();
+      this.scheduledTaskWorkspaceDeletes.set(workspaceId, timeout);
+      return;
+    }
 
     let currentWorkspaceId = workspaceId;
     const visited = new Set<string>();
@@ -2115,6 +2147,13 @@ export class TaskService {
         (t) => t.parentWorkspaceId === currentWorkspaceId
       );
       if (hasChildren) return;
+
+      // Best-effort: if we previously scheduled deletion, clear the timer now.
+      const scheduled = this.scheduledTaskWorkspaceDeletes.get(currentWorkspaceId);
+      if (scheduled) {
+        clearTimeout(scheduled);
+        this.scheduledTaskWorkspaceDeletes.delete(currentWorkspaceId);
+      }
 
       const removeResult = await this.workspaceService.remove(currentWorkspaceId, true);
       if (!removeResult.success) {

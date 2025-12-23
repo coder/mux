@@ -1553,6 +1553,17 @@ describe("TaskService", () => {
       expect.objectContaining({ workspaceId: childId })
     );
 
+    expect(remove).not.toHaveBeenCalled();
+
+    await (
+      taskService as unknown as {
+        cleanupReportedLeafTask: (
+          workspaceId: string,
+          options?: { skipDelay?: boolean }
+        ) => Promise<void>;
+      }
+    ).cleanupReportedLeafTask(childId, { skipDelay: true });
+
     expect(remove).toHaveBeenCalled();
     expect(resumeStream).toHaveBeenCalled();
     expect(emit).toHaveBeenCalled();
@@ -1690,6 +1701,17 @@ describe("TaskService", () => {
       }
     }
 
+    expect(remove).not.toHaveBeenCalled();
+
+    await (
+      taskService as unknown as {
+        cleanupReportedLeafTask: (
+          workspaceId: string,
+          options?: { skipDelay?: boolean }
+        ) => Promise<void>;
+      }
+    ).cleanupReportedLeafTask(childId, { skipDelay: true });
+
     expect(remove).toHaveBeenCalled();
     expect(resumeStream).toHaveBeenCalled();
   });
@@ -1806,6 +1828,17 @@ describe("TaskService", () => {
       .flatMap((p) => p.workspaces)
       .find((w) => w.id === childId);
     expect(ws?.taskStatus).toBe("reported");
+
+    expect(remove).not.toHaveBeenCalled();
+
+    await (
+      taskService as unknown as {
+        cleanupReportedLeafTask: (
+          workspaceId: string,
+          options?: { skipDelay?: boolean }
+        ) => Promise<void>;
+      }
+    ).cleanupReportedLeafTask(childId, { skipDelay: true });
 
     expect(remove).toHaveBeenCalled();
     expect(resumeStream).toHaveBeenCalled();
@@ -1943,6 +1976,17 @@ describe("TaskService", () => {
       .flatMap((p) => p.workspaces)
       .find((w) => w.id === childId);
     expect(ws?.taskStatus).toBe("reported");
+
+    expect(remove).not.toHaveBeenCalled();
+
+    await (
+      taskService as unknown as {
+        cleanupReportedLeafTask: (
+          workspaceId: string,
+          options?: { skipDelay?: boolean }
+        ) => Promise<void>;
+      }
+    ).cleanupReportedLeafTask(childId, { skipDelay: true });
 
     expect(remove).toHaveBeenCalled();
     expect(resumeStream).toHaveBeenCalled();
