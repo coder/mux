@@ -141,7 +141,44 @@ const TaskToolBashArgsSchema = z
   })
   .strict();
 
-export const TaskToolArgsSchema = z.union([TaskToolAgentArgsSchema, TaskToolBashArgsSchema]);
+// NOTE: Several providers require tool schemas to be a *single* JSON Schema object.
+// In particular, Anthropic rejects union/anyOf schemas for tool input.
+//
+// To keep the provider-facing schema as `type: "object"` while still enforcing a strict
+// agent-vs-bash split, we validate via superRefine against the appropriate strict schema.
+export const TaskToolArgsSchema = z
+  .object({
+    // Discriminator for bash tasks. Omit for agent tasks.
+    kind: z.literal("bash").optional(),
+
+    // Agent task args
+    agentId: TaskAgentIdSchema.optional(),
+    subagent_type: SubagentTypeSchema.optional(),
+    prompt: z.string().min(1).optional(),
+    title: z.string().min(1).optional(),
+
+    // Shared
+    run_in_background: z.boolean().default(false),
+
+    // Bash task args
+    script: z.string().min(1).optional(),
+    timeout_secs: z.number().positive().optional(),
+    display_name: z.string().min(1).optional(),
+  })
+  .strict()
+  .superRefine((args, ctx) => {
+    const strictSchema = args.kind === "bash" ? TaskToolBashArgsSchema : TaskToolAgentArgsSchema;
+    const parsed = strictSchema.safeParse(args);
+    if (!parsed.success) {
+      for (const issue of parsed.error.issues) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: issue.message,
+          path: issue.path,
+        });
+      }
+    }
+  });
 
 export const TaskToolQueuedResultSchema = z
   .object({

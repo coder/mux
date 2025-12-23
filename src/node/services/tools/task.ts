@@ -60,14 +60,18 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
       }
 
       // task(kind="bash") - run bash commands via the task abstraction.
-      if ("kind" in validatedArgs && validatedArgs.kind === "bash") {
-        const bashArgs = validatedArgs;
+      if (validatedArgs.kind === "bash") {
+        const { script, timeout_secs, run_in_background, display_name } = validatedArgs;
+        if (!script || timeout_secs === undefined || !display_name) {
+          throw new Error("task tool input validation failed: expected bash task args");
+        }
+
         const bashResult = (await bashTool.execute!(
           {
-            script: bashArgs.script,
-            timeout_secs: bashArgs.timeout_secs,
-            run_in_background: bashArgs.run_in_background,
-            display_name: bashArgs.display_name,
+            script,
+            timeout_secs,
+            run_in_background,
+            display_name,
           },
           { abortSignal, toolCallId, messages }
         )) as BashToolResult;
@@ -88,11 +92,8 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
           TaskToolResultSchema,
           {
             status: "completed" as const,
-            reportMarkdown: formatBashReport(
-              { script: bashArgs.script, display_name: bashArgs.display_name },
-              bashResult
-            ),
-            title: bashArgs.display_name,
+            reportMarkdown: formatBashReport({ script, display_name }, bashResult),
+            title: display_name,
             exitCode: bashResult.exitCode,
             note: "note" in bashResult ? bashResult.note : undefined,
           },
@@ -100,18 +101,11 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
         );
       }
 
-      if ("kind" in validatedArgs) {
-        throw new Error("task tool input validation failed: invalid task args");
-      }
-
-      const agentArgs = validatedArgs;
-
+      const { agentId, subagent_type, prompt, title, run_in_background } = validatedArgs;
       const requestedAgentId =
-        typeof agentArgs.agentId === "string" && agentArgs.agentId.trim().length > 0
-          ? agentArgs.agentId
-          : agentArgs.subagent_type;
-      if (!requestedAgentId) {
-        throw new Error("task tool input validation failed: expected agentId or subagent_type");
+        typeof agentId === "string" && agentId.trim().length > 0 ? agentId : subagent_type;
+      if (!requestedAgentId || !prompt || !title) {
+        throw new Error("task tool input validation failed: expected agent task args");
       }
 
       const workspaceId = requireWorkspaceId(config, "task");
@@ -139,8 +133,8 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
         agentId: requestedAgentId,
         // Legacy alias (persisted for older clients / on-disk compatibility).
         agentType: requestedAgentId,
-        prompt: agentArgs.prompt,
-        title: agentArgs.title,
+        prompt,
+        title,
         modelString,
         thinkingLevel,
         experiments: config.experiments,
@@ -150,7 +144,7 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
         throw new Error(created.error);
       }
 
-      if (agentArgs.run_in_background) {
+      if (run_in_background) {
         return parseToolResult(
           TaskToolResultSchema,
           { status: created.data.status, taskId: created.data.taskId },
