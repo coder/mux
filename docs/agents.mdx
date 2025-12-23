@@ -1,0 +1,122 @@
+---
+title: Agents
+description: Define custom agents (modes + subagents) with Markdown files
+---
+
+## Overview
+
+mux uses **agents** to control the model’s:
+
+- **System prompt** (what the assistant “is”)
+- **Tool access policy** (which tools it can call)
+
+This unifies two older concepts:
+
+- **UI modes** (Plan/Exec/Compact)
+- **Subagents** (the presets used by the `task` tool)
+
+An **Agent Definition** is a Markdown file:
+
+- The **YAML frontmatter** defines metadata + policy.
+- The **Markdown body** becomes the agent’s system prompt (layered with mux’s base prelude).
+
+## Discovery + precedence
+
+mux discovers agent definitions from (non-recursive):
+
+1. `<projectRoot>/.mux/agents/*.md`
+2. `~/.mux/agents/*.md`
+3. Built-ins (shipped with mux)
+
+If multiple definitions share the same **agent id**, the higher-precedence one wins:
+
+`project` overrides `global` overrides `built-in`.
+
+### Agent IDs
+
+The **agent id** is derived from the filename:
+
+- `review.md` → `agentId = "review"`
+
+Agent ids are lowercase and should be simple (letters/numbers with `-`/`_`).
+
+## File format
+
+Example:
+
+```md
+---
+name: Review
+description: Terse reviewer-style feedback
+
+ui:
+  selectable: true
+
+subagent:
+  runnable: true
+
+policy:
+  base: exec
+  tools:
+    deny: ["file_edit_insert", "file_edit_replace_string"]
+---
+
+You are a code reviewer.
+
+- Focus on correctness, risks, and test coverage.
+- Prefer short, actionable comments.
+```
+
+### Frontmatter fields (v1)
+
+- `name` (required): UI label
+- `description` (optional): UI help text
+- `ui.selectable` (optional, default `false`): show in the main agent selector
+- `subagent.runnable` (optional, default `false`): allow `task({ agentId: ... })`
+- `policy.base` (optional, default `exec`): `plan | exec | compact`
+- `policy.tools` (optional): restrict tools from the base policy
+  - `deny: ["toolA", ...]` — disable a subset
+  - `only: ["toolA", ...]` — disable everything except this allowlist
+
+Notes:
+
+- `policy.tools` must specify **exactly one** of `deny` or `only`.
+- Tool names are matched against mux’s tool registry. Unknown names are effectively no-ops.
+
+## Tool policy semantics
+
+- `policy.base: plan` enables Plan-mode behaviors (e.g. `ask_user_question`).
+- `policy.base: exec` is the normal coding workflow.
+- `policy.base: compact` is an internal no-tools flow.
+
+Even if an agent definition tries to allow them, mux applies **hard denies** in child workspaces
+(subagents) so tasks cannot:
+
+- spawn more tasks (no recursive `task`/`task_*`)
+- call `propose_plan`
+- call `ask_user_question`
+
+## Using agents
+
+### Main agent
+
+Use the agent selector in the chat input to switch agents.
+
+- `Cmd+Shift+M` (mac) / `Ctrl+Shift+M` (win/linux) toggles between the last two UI-selectable agents.
+
+### Subagents (task tool)
+
+Spawn a subagent workspace with:
+
+```ts
+task({
+  agentId: "explore",
+  title: "Find the callsites",
+  prompt: "Locate where X is computed and report back"
+})
+```
+
+## Related docs
+
+- Scoped instructions in `AGENTS.md`: see **Instruction Files**.
+- Built-in skills (`agent_skill_read`): see **Agent Skills**.
