@@ -31,6 +31,12 @@ import { isExperimentEnabled } from "@/browser/hooks/useExperiments";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 
+// Keep in sync with backend auto-delete delay for reported task workspaces.
+//
+// Even if the backend deletes a task workspace quickly, we keep it visible for at least this
+// duration after it reports so the user can read the final report/tool output.
+const REPORTED_TASK_WORKSPACE_AUTO_DELETE_DELAY_MS = 5000;
+
 /**
  * Seed per-workspace localStorage from backend workspace metadata.
  *
@@ -170,6 +176,10 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
   // Used by async subscription handlers to safely access the most recent metadata map
   // without triggering render-phase state updates.
+
+  // When a reported task workspace is deleted, keep it visible briefly so users can read the report.
+  // Keyed by workspaceId.
+  const reportedTaskDeletionTimeoutsRef = useRef(new Map<string, number>());
   const workspaceMetadataRef = useRef(workspaceMetadata);
   useEffect(() => {
     workspaceMetadataRef.current = workspaceMetadata;
@@ -311,6 +321,55 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   // Subscribe to metadata updates (for create/rename/delete operations)
   useEffect(() => {
     if (!api) return;
+
+    const reportedTaskDeletionTimeouts = reportedTaskDeletionTimeoutsRef.current;
+
+    const applyDeletedWorkspaceSelectionFallback = (
+      deletedWorkspaceId: string,
+      deletedMeta: FrontendWorkspaceMetadata | undefined
+    ): void => {
+      // If the user is currently viewing a deleted child workspace, fall back to its parent.
+      // Otherwise, fall back to another workspace in the same project (best effort).
+      setSelectedWorkspace((current) => {
+        if (current?.workspaceId !== deletedWorkspaceId) {
+          return current;
+        }
+
+        const parentWorkspaceId = deletedMeta?.parentWorkspaceId;
+        if (parentWorkspaceId) {
+          const parentMeta = workspaceMetadataRef.current.get(parentWorkspaceId);
+          if (parentMeta) {
+            return {
+              workspaceId: parentMeta.id,
+              projectPath: parentMeta.projectPath,
+              projectName: parentMeta.projectName,
+              namedWorkspacePath: parentMeta.namedWorkspacePath,
+            };
+          }
+        }
+
+        const projectPath = deletedMeta?.projectPath;
+        const fallbackMeta =
+          (projectPath
+            ? Array.from(workspaceMetadataRef.current.values()).find(
+                (meta) => meta.projectPath === projectPath && meta.id !== deletedWorkspaceId
+              )
+            : null) ??
+          Array.from(workspaceMetadataRef.current.values()).find(
+            (meta) => meta.id !== deletedWorkspaceId
+          );
+        if (!fallbackMeta) {
+          return null;
+        }
+
+        return {
+          workspaceId: fallbackMeta.id,
+          projectPath: fallbackMeta.projectPath,
+          projectName: fallbackMeta.projectName,
+          namedWorkspacePath: fallbackMeta.namedWorkspacePath,
+        };
+      });
+    };
     const controller = new AbortController();
     const { signal } = controller;
 
@@ -321,52 +380,58 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         for await (const event of iterator) {
           if (signal.aborted) break;
 
+          // If a workspace reappears after we scheduled a delayed removal, cancel it.
+          const pendingRemoval = reportedTaskDeletionTimeouts.get(event.workspaceId);
+          if (pendingRemoval && event.metadata !== null) {
+            window.clearTimeout(pendingRemoval);
+            reportedTaskDeletionTimeouts.delete(event.workspaceId);
+          }
+
           if (event.metadata === null) {
+            const deletedMeta = workspaceMetadataRef.current.get(event.workspaceId);
+
+            const isReportedTaskWorkspace =
+              Boolean(deletedMeta?.parentWorkspaceId) && deletedMeta?.taskStatus === "reported";
+
+            // Ensure reported task workspaces remain visible for at least the configured delay after reporting.
+            let delayRemovalMs = 0;
+            if (isReportedTaskWorkspace) {
+              const reportedAtMs =
+                typeof deletedMeta?.reportedAt === "string"
+                  ? Date.parse(deletedMeta.reportedAt)
+                  : NaN;
+              const elapsedSinceReportedMs = Number.isFinite(reportedAtMs)
+                ? Math.max(0, Date.now() - reportedAtMs)
+                : 0;
+              delayRemovalMs = Math.max(
+                0,
+                REPORTED_TASK_WORKSPACE_AUTO_DELETE_DELAY_MS - elapsedSinceReportedMs
+              );
+            }
+
+            if (delayRemovalMs > 0) {
+              if (!reportedTaskDeletionTimeouts.has(event.workspaceId)) {
+                const handle = window.setTimeout(() => {
+                  reportedTaskDeletionTimeouts.delete(event.workspaceId);
+                  deleteWorkspaceStorage(event.workspaceId);
+                  applyDeletedWorkspaceSelectionFallback(event.workspaceId, deletedMeta);
+                  setWorkspaceMetadata((prev) => {
+                    const updated = new Map(prev);
+                    updated.delete(event.workspaceId);
+                    return updated;
+                  });
+                }, delayRemovalMs);
+
+                reportedTaskDeletionTimeouts.set(event.workspaceId, handle);
+              }
+
+              // Keep the workspace visible until the grace period elapses.
+              continue;
+            }
+
             // Workspace deleted - clean up workspace-scoped persisted state.
             deleteWorkspaceStorage(event.workspaceId);
-
-            // If the user is currently viewing a deleted child workspace, fall back to its parent.
-            // Otherwise, fall back to another workspace in the same project (best effort).
-            const deletedMeta = workspaceMetadataRef.current.get(event.workspaceId);
-            setSelectedWorkspace((current) => {
-              if (current?.workspaceId !== event.workspaceId) {
-                return current;
-              }
-
-              const parentWorkspaceId = deletedMeta?.parentWorkspaceId;
-              if (parentWorkspaceId) {
-                const parentMeta = workspaceMetadataRef.current.get(parentWorkspaceId);
-                if (parentMeta) {
-                  return {
-                    workspaceId: parentMeta.id,
-                    projectPath: parentMeta.projectPath,
-                    projectName: parentMeta.projectName,
-                    namedWorkspacePath: parentMeta.namedWorkspacePath,
-                  };
-                }
-              }
-
-              const projectPath = deletedMeta?.projectPath;
-              const fallbackMeta =
-                (projectPath
-                  ? Array.from(workspaceMetadataRef.current.values()).find(
-                      (meta) => meta.projectPath === projectPath && meta.id !== event.workspaceId
-                    )
-                  : null) ??
-                Array.from(workspaceMetadataRef.current.values()).find(
-                  (meta) => meta.id !== event.workspaceId
-                );
-              if (!fallbackMeta) {
-                return null;
-              }
-
-              return {
-                workspaceId: fallbackMeta.id,
-                projectPath: fallbackMeta.projectPath,
-                projectName: fallbackMeta.projectName,
-                namedWorkspacePath: fallbackMeta.namedWorkspacePath,
-              };
-            });
+            applyDeletedWorkspaceSelectionFallback(event.workspaceId, deletedMeta);
           }
 
           if (event.metadata !== null) {
@@ -408,6 +473,11 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
     return () => {
       controller.abort();
+
+      for (const handle of reportedTaskDeletionTimeouts.values()) {
+        window.clearTimeout(handle);
+      }
+      reportedTaskDeletionTimeouts.clear();
     };
   }, [refreshProjects, setSelectedWorkspace, setWorkspaceMetadata, api]);
 
