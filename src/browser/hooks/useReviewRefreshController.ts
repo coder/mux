@@ -1,7 +1,7 @@
 import { useEffect, useRef, useMemo } from "react";
 import { workspaceStore } from "@/browser/stores/WorkspaceStore";
 import type { APIClient } from "@/browser/contexts/API";
-import { RefreshController } from "@/browser/utils/RefreshController";
+import { RefreshController, type LastRefreshInfo } from "@/browser/utils/RefreshController";
 
 /** Debounce delay for auto-refresh after tool completion */
 const TOOL_REFRESH_DEBOUNCE_MS = 3000;
@@ -43,6 +43,8 @@ export interface ReviewRefreshController {
   setInteracting: (interacting: boolean) => void;
   /** Whether a git fetch is currently in-flight */
   isRefreshing: boolean;
+  /** Info about the last completed refresh (for debugging) */
+  lastRefreshInfo: LastRefreshInfo | null;
 }
 
 /**
@@ -143,6 +145,9 @@ export function useReviewRefreshController(
     setInteracting,
     get isRefreshing() {
       return controller.isRefreshing;
+    },
+    get lastRefreshInfo() {
+      return controller.lastRefreshInfo;
     },
   };
 }

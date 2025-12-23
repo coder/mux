@@ -11,6 +11,23 @@
  * Used by GitStatusStore and useReviewRefreshController.
  */
 
+/** Reason that triggered a refresh - useful for debugging */
+export type RefreshTrigger =
+  | "manual" // User clicked refresh button
+  | "scheduled" // Debounced tool completion
+  | "priority" // Priority debounced (active workspace)
+  | "focus" // Window regained focus
+  | "visibility" // Tab became visible
+  | "unpaused" // Interaction ended, flushing pending
+  | "in-flight-followup"; // Queued while previous refresh was running
+
+export interface LastRefreshInfo {
+  /** Timestamp of last refresh completion */
+  timestamp: number;
+  /** What triggered the refresh */
+  trigger: RefreshTrigger;
+}
+
 export interface RefreshControllerOptions {
   /** Called to execute the actual refresh. Can be async. */
   onRefresh: () => Promise<void> | void;
@@ -54,6 +71,10 @@ export class RefreshController {
   private lastFocusRefreshMs = 0;
   private disposed = false;
 
+  // Track last refresh for debugging
+  private _lastRefreshInfo: LastRefreshInfo | null = null;
+  private pendingTrigger: RefreshTrigger | null = null;
+
   // Track if listeners are bound (for cleanup)
   private listenersBound = false;
   private boundHandleVisibility: (() => void) | null = null;
@@ -72,26 +93,27 @@ export class RefreshController {
    * Schedule a debounced refresh. Multiple calls within debounceMs coalesce.
    */
   schedule(): void {
-    this.scheduleWithDelay(this.debounceMs);
+    this.scheduleWithDelay(this.debounceMs, "scheduled");
   }
 
   /**
    * Schedule with priority (shorter) debounce. Used for active workspace.
    */
   schedulePriority(): void {
-    this.scheduleWithDelay(this.priorityDebounceMs);
+    this.scheduleWithDelay(this.priorityDebounceMs, "priority");
   }
 
-  private scheduleWithDelay(delayMs: number): void {
+  private scheduleWithDelay(delayMs: number, trigger: RefreshTrigger): void {
     if (this.disposed) return;
 
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
     }
 
+    this.pendingTrigger = trigger;
     this.debounceTimer = setTimeout(() => {
       this.debounceTimer = null;
-      this.tryRefresh();
+      this.tryRefresh({ trigger });
     }, delayMs);
   }
 
@@ -108,18 +130,21 @@ export class RefreshController {
       this.debounceTimer = null;
     }
 
-    this.tryRefresh({ bypassPause: true });
+    this.tryRefresh({ bypassPause: true, trigger: "manual" });
   }
 
   /**
    * Attempt refresh, respecting pause conditions.
    */
-  private tryRefresh(options?: { bypassPause?: boolean }): void {
+  private tryRefresh(options?: { bypassPause?: boolean; trigger?: RefreshTrigger }): void {
     if (this.disposed) return;
+
+    const trigger = options?.trigger ?? this.pendingTrigger ?? "scheduled";
 
     // Hidden → queue for visibility
     if (typeof document !== "undefined" && document.hidden) {
       this.pendingBecauseHidden = true;
+      this.pendingTrigger = trigger;
       return;
     }
 
@@ -127,36 +152,41 @@ export class RefreshController {
     // Bypassed for manual refresh (user explicitly requested)
     if (!options?.bypassPause && this.isPaused?.()) {
       this.pendingBecausePaused = true;
+      this.pendingTrigger = trigger;
       return;
     }
 
     // In-flight → queue for completion
     if (this.inFlight) {
       this.pendingBecauseInFlight = true;
+      this.pendingTrigger = trigger;
       return;
     }
 
-    this.executeRefresh();
+    this.executeRefresh(trigger);
   }
 
   /**
    * Execute the refresh, tracking in-flight state.
    */
-  private executeRefresh(): void {
+  private executeRefresh(trigger: RefreshTrigger): void {
     if (this.disposed) return;
 
     this.inFlight = true;
+    this.pendingTrigger = null;
 
     const maybePromise = this.onRefresh();
 
     const onComplete = () => {
       this.inFlight = false;
+      this._lastRefreshInfo = { timestamp: Date.now(), trigger };
 
       // Process any queued refresh
       if (this.pendingBecauseInFlight) {
         this.pendingBecauseInFlight = false;
-        // Defer to avoid recursive stack
-        setTimeout(() => this.tryRefresh(), 0);
+        // Defer to avoid recursive stack; use the queued trigger
+        const followupTrigger = this.pendingTrigger ?? "in-flight-followup";
+        setTimeout(() => this.tryRefresh({ trigger: followupTrigger }), 0);
       }
     };
 
@@ -170,14 +200,14 @@ export class RefreshController {
   /**
    * Handle focus/visibility return. Call from visibility/focus listeners.
    */
-  private handleReturn(): void {
+  private handleReturn(trigger: "focus" | "visibility"): void {
     if (this.disposed) return;
     if (typeof document !== "undefined" && document.hidden) return;
 
     // Flush pending hidden refresh
     if (this.pendingBecauseHidden) {
       this.pendingBecauseHidden = false;
-      this.tryRefresh();
+      this.tryRefresh({ trigger });
       return; // Don't double-refresh with proactive
     }
 
@@ -186,7 +216,7 @@ export class RefreshController {
       const now = Date.now();
       if (now - this.lastFocusRefreshMs >= this.focusDebounceMs) {
         this.lastFocusRefreshMs = now;
-        this.tryRefresh();
+        this.tryRefresh({ trigger });
       }
     }
   }
@@ -199,7 +229,7 @@ export class RefreshController {
     if (this.disposed) return;
     if (this.pendingBecausePaused) {
       this.pendingBecausePaused = false;
-      this.tryRefresh();
+      this.tryRefresh({ trigger: "unpaused" });
     }
   }
 
@@ -215,12 +245,12 @@ export class RefreshController {
 
     this.boundHandleVisibility = () => {
       if (document.visibilityState === "visible") {
-        this.handleReturn();
+        this.handleReturn("visibility");
       }
     };
 
     this.boundHandleFocus = () => {
-      this.handleReturn();
+      this.handleReturn("focus");
     };
 
     document.addEventListener("visibilitychange", this.boundHandleVisibility);
@@ -232,6 +262,14 @@ export class RefreshController {
    */
   get isRefreshing(): boolean {
     return this.inFlight;
+  }
+
+  /**
+   * Info about the last completed refresh (timestamp and trigger reason).
+   * Useful for debugging refresh behavior.
+   */
+  get lastRefreshInfo(): LastRefreshInfo | null {
+    return this._lastRefreshInfo;
   }
 
   /**

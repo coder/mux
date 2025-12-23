@@ -151,4 +151,30 @@ describe("RefreshController", () => {
 
     controller.dispose();
   });
+
+  it("lastRefreshInfo tracks trigger and timestamp", () => {
+    const onRefresh = jest.fn<() => void>();
+    const controller = new RefreshController({ onRefresh, debounceMs: 100 });
+
+    expect(controller.lastRefreshInfo).toBeNull();
+
+    // Manual refresh should record "manual" trigger
+    const beforeManual = Date.now();
+    controller.requestImmediate();
+    expect(controller.lastRefreshInfo).not.toBeNull();
+    expect(controller.lastRefreshInfo!.trigger).toBe("manual");
+    expect(controller.lastRefreshInfo!.timestamp).toBeGreaterThanOrEqual(beforeManual);
+
+    // Scheduled refresh should record "scheduled" trigger
+    controller.schedule();
+    jest.advanceTimersByTime(100);
+    expect(controller.lastRefreshInfo!.trigger).toBe("scheduled");
+
+    // Priority refresh should record "priority" trigger
+    controller.schedulePriority();
+    jest.advanceTimersByTime(100);
+    expect(controller.lastRefreshInfo!.trigger).toBe("priority");
+
+    controller.dispose();
+  });
 });

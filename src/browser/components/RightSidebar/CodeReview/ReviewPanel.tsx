@@ -845,6 +845,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         workspaceId={workspaceId}
         workspacePath={workspacePath}
         refreshTrigger={refreshTrigger}
+        lastRefreshInfo={refreshController.lastRefreshInfo}
       />
 
       {diffState.status === "error" ? (
