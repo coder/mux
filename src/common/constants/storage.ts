@@ -132,6 +132,13 @@ export function getCancelledCompactionKey(workspaceId: string): string {
 }
 
 /**
+ * Get the localStorage key for the selected agent definition id for a scope.
+ * Format: "agentId:{scopeId}"
+ */
+export function getAgentIdKey(scopeId: string): string {
+  return `agentId:${scopeId}`;
+}
+/**
  * Get the localStorage key for the UI mode for a workspace
  * Format: "mode:{workspaceId}"
  */
@@ -364,6 +371,7 @@ const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string>
   getModelKey,
   getInputKey,
   getInputImagesKey,
+  getAgentIdKey,
   getModeKey,
   getThinkingLevelKey,
   getAutoRetryKey,

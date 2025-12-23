@@ -42,6 +42,10 @@ export const WorkspaceMetadataSchema = z.object({
   agentType: z.string().optional().meta({
     description: 'If set, selects an agent preset for this workspace (e.g., "explore" or "exec").',
   }),
+  agentId: z.string().optional().meta({
+    description:
+      'If set, selects an agent definition for this workspace (e.g., "explore" or "exec").',
+  }),
   taskStatus: z.enum(["queued", "running", "awaiting_report", "reported"]).optional().meta({
     description:
       "Agent task lifecycle status for child workspaces (queued|running|awaiting_report|reported).",

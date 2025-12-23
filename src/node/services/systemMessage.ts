@@ -5,6 +5,7 @@ import {
   readInstructionSetFromRuntime,
 } from "@/node/utils/main/instructionFiles";
 import {
+  extractAgentSection,
   extractModeSection,
   extractModelSection,
   extractToolSection,
@@ -293,7 +294,7 @@ export async function buildSystemMessage(
   modelString?: string,
   mcpServers?: MCPServerMap,
   options?: {
-    variant?: "default" | "agent";
+    agentId?: string;
     agentSystemPrompt?: string;
   }
 ): Promise<string> {
@@ -315,12 +316,9 @@ export async function buildSystemMessage(
   // Add agent skills context (if any)
   systemMessage += await buildAgentSkillsContext(runtime, workspacePath);
 
-  if (options?.variant === "agent") {
-    const agentPrompt = options.agentSystemPrompt?.trim();
-    if (agentPrompt) {
-      systemMessage += `\n<agent-instructions>\n${agentPrompt}\n</agent-instructions>`;
-    }
-    return systemMessage;
+  const agentPrompt = options?.agentSystemPrompt?.trim();
+  if (agentPrompt) {
+    systemMessage += `\n<agent-instructions>\n${agentPrompt}\n</agent-instructions>`;
   }
 
   // Read instruction sets
@@ -342,6 +340,16 @@ export async function buildSystemMessage(
     sanitizeScopedInstructions(contextInstructions),
   ].filter((value): value is string => Boolean(value));
   const customInstructions = customInstructionSources.join("\n\n");
+
+  // Extract agent-specific section (context first, then global fallback)
+  const agentId = options?.agentId;
+  let agentContent: string | null = null;
+  if (agentId) {
+    agentContent =
+      (contextInstructions && extractAgentSection(contextInstructions, agentId)) ??
+      (globalInstructions && extractAgentSection(globalInstructions, agentId)) ??
+      null;
+  }
 
   // Extract mode-specific section (context first, then global fallback)
   let modeContent: string | null = null;
@@ -366,6 +374,13 @@ export async function buildSystemMessage(
   }
 
   const modeSection = buildTaggedSection(modeContent, mode, "mode");
+  if (agentId) {
+    const agentSection = buildTaggedSection(agentContent, `agent-${agentId}`, "agent");
+    if (agentSection) {
+      systemMessage += agentSection;
+    }
+  }
+
   if (modeSection) {
     systemMessage += modeSection;
   }

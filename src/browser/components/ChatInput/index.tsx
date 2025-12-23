@@ -56,7 +56,7 @@ import {
   type SlashSuggestion,
 } from "@/browser/utils/slashCommands/suggestions";
 import { Tooltip, TooltipTrigger, TooltipContent, HelpIndicator } from "../ui/tooltip";
-import { ModeSelector } from "../ModeSelector";
+import { AgentSelector } from "../AgentSelector";
 import { ContextUsageIndicatorButton } from "../ContextUsageIndicatorButton";
 import { useWorkspaceUsage } from "@/browser/stores/WorkspaceStore";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
@@ -273,7 +273,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const preEditDraftRef = useRef<DraftState>({ text: "", images: [] });
   const { open } = useSettings();
   const { selectedWorkspace } = useWorkspaceContext();
-  const [mode, setMode] = useMode();
+  const [mode] = useMode();
   const {
     models,
     customModels,
@@ -1849,7 +1849,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     autoCompaction={autoCompactionProps}
                   />
                 )}
-                <ModeSelector mode={mode} onChange={setMode} />
+                <AgentSelector />
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button

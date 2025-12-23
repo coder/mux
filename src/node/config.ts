@@ -18,6 +18,7 @@ import {
   normalizeTaskSettings,
 } from "@/common/types/tasks";
 import { normalizeModeAiDefaults } from "@/common/types/modeAiDefaults";
+import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility";
 import { getMuxHome } from "@/common/constants/paths";
@@ -97,6 +98,7 @@ export class Config {
           viewedSplashScreens?: string[];
           featureFlagOverrides?: Record<string, "default" | "on" | "off">;
           taskSettings?: unknown;
+          agentAiDefaults?: unknown;
           subagentAiDefaults?: unknown;
           modeAiDefaults?: unknown;
         };
@@ -110,6 +112,19 @@ export class Config {
             return [stripTrailingSlashes(projectPath), projectConfig] as [string, ProjectConfig];
           });
           const projectsMap = new Map<string, ProjectConfig>(normalizedPairs);
+
+          const taskSettings = normalizeTaskSettings(parsed.taskSettings);
+          const legacySubagentAiDefaults = normalizeSubagentAiDefaults(parsed.subagentAiDefaults);
+          const legacyModeAiDefaults = normalizeModeAiDefaults(parsed.modeAiDefaults);
+
+          const agentAiDefaults =
+            parsed.agentAiDefaults !== undefined
+              ? normalizeAgentAiDefaults(parsed.agentAiDefaults)
+              : normalizeAgentAiDefaults({
+                  ...legacySubagentAiDefaults,
+                  ...(legacyModeAiDefaults as Record<string, unknown>),
+                });
+
           return {
             projects: projectsMap,
             apiServerBindHost: parseOptionalNonEmptyString(parsed.apiServerBindHost),
@@ -119,9 +134,11 @@ export class Config {
             apiServerPort: parseOptionalPort(parsed.apiServerPort),
             serverSshHost: parsed.serverSshHost,
             viewedSplashScreens: parsed.viewedSplashScreens,
-            taskSettings: normalizeTaskSettings(parsed.taskSettings),
-            subagentAiDefaults: normalizeSubagentAiDefaults(parsed.subagentAiDefaults),
-            modeAiDefaults: normalizeModeAiDefaults(parsed.modeAiDefaults),
+            taskSettings,
+            agentAiDefaults,
+            // Legacy fields are still parsed and returned for downgrade compatibility.
+            subagentAiDefaults: legacySubagentAiDefaults,
+            modeAiDefaults: legacyModeAiDefaults,
             featureFlagOverrides: parsed.featureFlagOverrides,
           };
         }
@@ -134,6 +151,7 @@ export class Config {
     return {
       projects: new Map(),
       taskSettings: DEFAULT_TASK_SETTINGS,
+      agentAiDefaults: {},
       subagentAiDefaults: {},
       modeAiDefaults: {},
     };
@@ -154,6 +172,7 @@ export class Config {
         viewedSplashScreens?: string[];
         featureFlagOverrides?: ProjectsConfig["featureFlagOverrides"];
         taskSettings?: ProjectsConfig["taskSettings"];
+        agentAiDefaults?: ProjectsConfig["agentAiDefaults"];
         subagentAiDefaults?: ProjectsConfig["subagentAiDefaults"];
         modeAiDefaults?: ProjectsConfig["modeAiDefaults"];
       } = {
@@ -184,11 +203,38 @@ export class Config {
       if (config.viewedSplashScreens) {
         data.viewedSplashScreens = config.viewedSplashScreens;
       }
-      if (config.modeAiDefaults && Object.keys(config.modeAiDefaults).length > 0) {
-        data.modeAiDefaults = config.modeAiDefaults;
-      }
-      if (config.subagentAiDefaults && Object.keys(config.subagentAiDefaults).length > 0) {
-        data.subagentAiDefaults = config.subagentAiDefaults;
+      if (config.agentAiDefaults && Object.keys(config.agentAiDefaults).length > 0) {
+        data.agentAiDefaults = config.agentAiDefaults;
+
+        // Downgrade compatibility: also write legacy modeAiDefaults + subagentAiDefaults.
+        // Older clients ignore unknown keys, so this is safe.
+        const legacyMode: Record<string, unknown> = {};
+        for (const id of ["plan", "exec", "compact"] as const) {
+          const entry = config.agentAiDefaults[id];
+          if (entry) {
+            legacyMode[id] = entry;
+          }
+        }
+        if (Object.keys(legacyMode).length > 0) {
+          data.modeAiDefaults = legacyMode as ProjectsConfig["modeAiDefaults"];
+        }
+
+        const legacySubagent: Record<string, unknown> = {};
+        for (const [id, entry] of Object.entries(config.agentAiDefaults)) {
+          if (id === "plan" || id === "exec" || id === "compact") continue;
+          legacySubagent[id] = entry;
+        }
+        if (Object.keys(legacySubagent).length > 0) {
+          data.subagentAiDefaults = legacySubagent as ProjectsConfig["subagentAiDefaults"];
+        }
+      } else {
+        // Legacy only.
+        if (config.modeAiDefaults && Object.keys(config.modeAiDefaults).length > 0) {
+          data.modeAiDefaults = config.modeAiDefaults;
+        }
+        if (config.subagentAiDefaults && Object.keys(config.subagentAiDefaults).length > 0) {
+          data.subagentAiDefaults = config.subagentAiDefaults;
+        }
       }
 
       await writeFileAtomic(this.configFile, JSON.stringify(data, null, 2), "utf-8");

@@ -1,11 +1,10 @@
 import React from "react";
-import { Settings, Key, Cpu, X, Briefcase, FlaskConical, Bot, Keyboard, Layers } from "lucide-react";
+import { Settings, Key, Cpu, X, Briefcase, FlaskConical, Bot, Keyboard } from "lucide-react";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { Dialog, DialogContent, DialogTitle, VisuallyHidden } from "@/browser/components/ui/dialog";
 import { GeneralSection } from "./sections/GeneralSection";
 import { TasksSection } from "./sections/TasksSection";
 import { ProvidersSection } from "./sections/ProvidersSection";
-import { ModesSection } from "./sections/ModesSection";
 import { ModelsSection } from "./sections/ModelsSection";
 import { Button } from "@/browser/components/ui/button";
 import { ProjectSettingsSection } from "./sections/ProjectSettingsSection";
@@ -37,12 +36,6 @@ const SECTIONS: SettingsSection[] = [
     label: "Projects",
     icon: <Briefcase className="h-4 w-4" />,
     component: ProjectSettingsSection,
-  },
-  {
-    id: "modes",
-    label: "Modes",
-    icon: <Layers className="h-4 w-4" />,
-    component: ModesSection,
   },
   {
     id: "models",

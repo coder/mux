@@ -41,6 +41,7 @@ export function applyCompactionOverrides(
 
   return {
     ...baseOptions,
+    agentId: "compact",
     model: compactionModel,
     thinkingLevel,
     maxOutputTokens: compactData.maxOutputTokens,
