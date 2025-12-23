@@ -7,6 +7,8 @@ import { waitFor } from "@storybook/test";
  * to let any pending coalesced scroll from useAutoScroll complete.
  */
 export async function waitForChatMessagesLoaded(canvasElement: HTMLElement): Promise<void> {
+  // Use 15s timeout to handle CI cold-start scenarios where large dependencies
+  // (Shiki, Mermaid) are still being loaded/initialized
   await waitFor(
     () => {
       const messageWindow = canvasElement.querySelector('[data-testid="message-window"]');
@@ -14,7 +16,7 @@ export async function waitForChatMessagesLoaded(canvasElement: HTMLElement): Pro
         throw new Error("Messages not loaded yet");
       }
     },
-    { timeout: 5000 }
+    { timeout: 15000 }
   );
 
   // One RAF to let any pending coalesced scroll complete
