@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, jest } from "@jest/globals";
+import { describe, it, expect, beforeEach, afterEach, jest } from "bun:test";
 import { RefreshController, type LastRefreshInfo } from "./RefreshController";
 
 describe("RefreshController", () => {
