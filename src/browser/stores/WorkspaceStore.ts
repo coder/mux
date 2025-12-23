@@ -494,6 +494,22 @@ export class WorkspaceStore {
       aggregator.handleReasoningEnd(data as never);
       this.states.bump(workspaceId);
     },
+    "session-usage-delta": (workspaceId, _aggregator, data) => {
+      const usageDelta = data as Extract<WorkspaceChatMessage, { type: "session-usage-delta" }>;
+
+      const current = this.sessionUsage.get(workspaceId) ?? {
+        byModel: {},
+        version: 1 as const,
+      };
+
+      for (const [model, usage] of Object.entries(usageDelta.byModelDelta)) {
+        const existing = current.byModel[model];
+        current.byModel[model] = existing ? sumUsageHistory([existing, usage])! : usage;
+      }
+
+      this.sessionUsage.set(workspaceId, current);
+      this.usageStore.bump(workspaceId);
+    },
     "usage-delta": (workspaceId, aggregator, data) => {
       aggregator.handleUsageDelta(data as never);
       this.usageStore.bump(workspaceId);

@@ -107,7 +107,8 @@ export class ServiceContainer {
       this.aiService,
       this.initStateManager,
       this.extensionMetadata,
-      this.backgroundProcessManager
+      this.backgroundProcessManager,
+      this.sessionUsageService
     );
     this.workspaceService.setMCPServerManager(this.mcpServerManager);
     this.taskService = new TaskService(

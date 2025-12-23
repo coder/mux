@@ -1,6 +1,7 @@
 import * as fs from "fs/promises";
 import * as path from "path";
 import writeFileAtomic from "write-file-atomic";
+import assert from "@/common/utils/assert";
 import type { Config } from "@/node/config";
 import type { HistoryService } from "./historyService";
 import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks";
@@ -18,6 +19,16 @@ export interface SessionUsageFile {
     usage: ChatUsageDisplay;
     timestamp: number;
   };
+
+  /**
+   * Idempotency ledger for rolled-up sub-agent usage.
+   *
+   * When a child workspace is deleted, we merge its byModel usage into the parent.
+   * This tracks which children have already been merged to prevent double-counting
+   * if removal is retried.
+   */
+  rolledUpFrom?: Record<string, true>;
+
   version: 1;
 }
 
@@ -74,6 +85,71 @@ export class SessionUsageService {
       current.byModel[model] = existing ? sumUsageHistory([existing, usage])! : usage;
       current.lastRequest = { model, usage, timestamp: Date.now() };
       await this.writeFile(workspaceId, current);
+    });
+  }
+
+  /**
+   * Merge child usage into the parent workspace.
+   *
+   * Used to preserve sub-agent costs when the child workspace is deleted.
+   *
+   * IMPORTANT:
+   * - Does not update parent's lastRequest
+   * - Uses an on-disk idempotency ledger (rolledUpFrom) to prevent double-counting
+   */
+  async rollUpUsageIntoParent(
+    parentWorkspaceId: string,
+    childWorkspaceId: string,
+    childUsageByModel: Record<string, ChatUsageDisplay>
+  ): Promise<{ didRollUp: boolean }> {
+    assert(parentWorkspaceId.trim().length > 0, "rollUpUsageIntoParent: parentWorkspaceId empty");
+    assert(childWorkspaceId.trim().length > 0, "rollUpUsageIntoParent: childWorkspaceId empty");
+    assert(
+      parentWorkspaceId !== childWorkspaceId,
+      "rollUpUsageIntoParent: parentWorkspaceId must differ from childWorkspaceId"
+    );
+
+    // Defensive: don't create new session dirs for already-deleted parents.
+    if (!this.config.findWorkspace(parentWorkspaceId)) {
+      return { didRollUp: false };
+    }
+
+    const entries = Object.entries(childUsageByModel);
+    if (entries.length === 0) {
+      return { didRollUp: false };
+    }
+
+    return this.fileLocks.withLock(parentWorkspaceId, async () => {
+      let current: SessionUsageFile;
+      try {
+        current = await this.readFile(parentWorkspaceId);
+      } catch {
+        // Parse errors or other read failures - best-effort rebuild.
+        log.warn(
+          `session-usage.json unreadable for ${parentWorkspaceId}, rebuilding before roll-up`
+        );
+        const historyResult = await this.historyService.getHistory(parentWorkspaceId);
+        if (historyResult.success && historyResult.data.length > 0) {
+          await this.rebuildFromMessagesInternal(parentWorkspaceId, historyResult.data);
+          current = await this.readFile(parentWorkspaceId);
+        } else {
+          current = { byModel: {}, version: 1 };
+        }
+      }
+
+      if (current.rolledUpFrom?.[childWorkspaceId]) {
+        return { didRollUp: false };
+      }
+
+      for (const [model, usage] of entries) {
+        const existing = current.byModel[model];
+        current.byModel[model] = existing ? sumUsageHistory([existing, usage])! : usage;
+      }
+
+      current.rolledUpFrom = { ...(current.rolledUpFrom ?? {}), [childWorkspaceId]: true };
+      await this.writeFile(parentWorkspaceId, current);
+
+      return { didRollUp: true };
     });
   }
 

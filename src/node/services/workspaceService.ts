@@ -52,6 +52,7 @@ import type { StreamEndEvent, StreamAbortEvent } from "@/common/types/stream";
 import type { TerminalService } from "@/node/services/terminalService";
 import type { WorkspaceAISettingsSchema } from "@/common/orpc/schemas";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
+import type { SessionUsageService } from "@/node/services/sessionUsageService";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 
 import { DisposableTempDir } from "@/node/services/tempDir";
@@ -123,7 +124,8 @@ export class WorkspaceService extends EventEmitter {
     private readonly aiService: AIService,
     private readonly initStateManager: InitStateManager,
     private readonly extensionMetadata: ExtensionMetadataService,
-    private readonly backgroundProcessManager: BackgroundProcessManager
+    private readonly backgroundProcessManager: BackgroundProcessManager,
+    private readonly sessionUsageService?: SessionUsageService
   ) {
     super();
     this.setupMetadataListeners();
@@ -676,6 +678,39 @@ export class WorkspaceService extends EventEmitter {
           log.error(
             `Failed to delete workspace from disk, but force=true. Removing from config. Error: ${deleteResult.error}`
           );
+        }
+
+        // If this workspace is a sub-agent/task, roll its accumulated usage into the parent BEFORE
+        // deleting ~/.mux/sessions/<workspaceId>/session-usage.json.
+        const parentWorkspaceId = metadata.parentWorkspaceId;
+        if (parentWorkspaceId && this.sessionUsageService) {
+          try {
+            const childUsage = await this.sessionUsageService.getSessionUsage(workspaceId);
+            if (childUsage && Object.keys(childUsage.byModel).length > 0) {
+              const rollup = await this.sessionUsageService.rollUpUsageIntoParent(
+                parentWorkspaceId,
+                workspaceId,
+                childUsage.byModel
+              );
+
+              if (rollup.didRollUp) {
+                // Live UI update (best-effort): only emit if the parent session is already active.
+                this.sessions.get(parentWorkspaceId)?.emitChatEvent({
+                  type: "session-usage-delta",
+                  workspaceId: parentWorkspaceId,
+                  sourceWorkspaceId: workspaceId,
+                  byModelDelta: childUsage.byModel,
+                  timestamp: Date.now(),
+                });
+              }
+            }
+          } catch (error: unknown) {
+            log.error("Failed to roll up child session usage into parent", {
+              workspaceId,
+              parentWorkspaceId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
         }
       } else {
         log.error(`Could not find metadata for workspace ${workspaceId}, creating phantom cleanup`);

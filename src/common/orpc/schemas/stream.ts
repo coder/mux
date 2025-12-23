@@ -221,6 +221,17 @@ export const ErrorEventSchema = z.object({
   errorType: StreamErrorTypeSchema.optional(),
 });
 
+/**
+ * Emitted when a child workspace is deleted and its accumulated session usage has been
+ * rolled up into the parent workspace.
+ */
+export const SessionUsageDeltaEventSchema = z.object({
+  type: z.literal("session-usage-delta"),
+  workspaceId: z.string().meta({ description: "Parent workspace ID" }),
+  sourceWorkspaceId: z.string().meta({ description: "Deleted child workspace ID" }),
+  byModelDelta: z.record(z.string(), ChatUsageDisplaySchema),
+  timestamp: z.number(),
+});
 export const UsageDeltaEventSchema = z.object({
   type: z.literal("usage-delta"),
   workspaceId: z.string(),
@@ -320,6 +331,7 @@ export const WorkspaceChatMessageSchema = z.discriminatedUnion("type", [
   ErrorEventSchema,
   // Usage and queue events
   UsageDeltaEventSchema,
+  SessionUsageDeltaEventSchema,
   QueuedMessageChangedEventSchema,
   RestoreToInputEventSchema,
   // Idle compaction notification
