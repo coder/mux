@@ -143,6 +143,53 @@ const reviewPanelCache = new LRUCache<string, ReviewPanelCacheValue>({
   sizeCalculation: (value) => estimateJsonSizeBytes(value),
 });
 
+function getOriginBranchForFetch(diffBase: string): string | null {
+  const trimmed = diffBase.trim();
+  if (!trimmed.startsWith("origin/")) return null;
+
+  const branch = trimmed.slice("origin/".length);
+
+  // Avoid shell injection; diffBase is user-controlled.
+  if (!/^[0-9A-Za-z._/-]+$/.test(branch)) return null;
+
+  return branch;
+}
+
+interface OriginFetchState {
+  key: string;
+  promise: Promise<void>;
+}
+
+async function ensureOriginFetched(params: {
+  api: APIClient;
+  workspaceId: string;
+  diffBase: string;
+  refreshToken: number;
+  originFetchRef: React.MutableRefObject<OriginFetchState | null>;
+}): Promise<void> {
+  const originBranch = getOriginBranchForFetch(params.diffBase);
+  if (!originBranch) return;
+
+  const key = [params.workspaceId, params.diffBase, String(params.refreshToken)].join("\u0000");
+  const existing = params.originFetchRef.current;
+  if (existing?.key === key) {
+    await existing.promise;
+    return;
+  }
+
+  // Ensure manual refresh doesn't hang on credential prompts.
+  const promise = params.api.workspace
+    .executeBash({
+      workspaceId: params.workspaceId,
+      script: `GIT_TERMINAL_PROMPT=0 git fetch origin ${originBranch} --quiet || true`,
+      options: { timeout_secs: 30 },
+    })
+    .then(() => undefined)
+    .catch(() => undefined);
+
+  params.originFetchRef.current = { key, promise };
+  await promise;
+}
 function makeReviewPanelCacheKey(params: {
   workspaceId: string;
   workspacePath: string;
@@ -186,6 +233,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   isCreating = false,
   onStatsChange,
 }) => {
+  const originFetchRef = useRef<OriginFetchState | null>(null);
   const { api } = useAPI();
   const panelRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -334,6 +382,15 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     const loadFileTree = async () => {
       setIsLoadingTree(true);
       try {
+        await ensureOriginFetched({
+          api,
+          workspaceId,
+          diffBase: filters.diffBase,
+          refreshToken: refreshTrigger,
+          originFetchRef,
+        });
+        if (cancelled) return;
+
         const tree = await executeWorkspaceBashAndCache({
           api,
           workspaceId,
@@ -445,6 +502,15 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
 
     const loadDiff = async () => {
       try {
+        await ensureOriginFetched({
+          api,
+          workspaceId,
+          diffBase: filters.diffBase,
+          refreshToken: refreshTrigger,
+          originFetchRef,
+        });
+        if (cancelled) return;
+
         // Git-level filters (affect what data is fetched):
         // - diffBase: what to diff against
         // - includeUncommitted: include working directory changes

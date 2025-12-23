@@ -7,22 +7,6 @@ import { usePersistedState } from "@/browser/hooks/usePersistedState";
 /** Debounce delay for auto-refresh after tool completion */
 const TOOL_REFRESH_DEBOUNCE_MS = 3000;
 
-/**
- * Extract branch name from an "origin/..." diff base for git fetch.
- * Returns null if not an origin ref or if branch name is unsafe for shell.
- */
-function getOriginBranchForFetch(diffBase: string): string | null {
-  const trimmed = diffBase.trim();
-  if (!trimmed.startsWith("origin/")) return null;
-
-  const branch = trimmed.slice("origin/".length);
-
-  // Avoid shell injection; diffBase is user-controlled.
-  if (!/^[0-9A-Za-z._/-]+$/.test(branch)) return null;
-
-  return branch;
-}
-
 export interface UseReviewRefreshControllerOptions {
   workspaceId: string;
   api: APIClient | null;
@@ -53,7 +37,6 @@ export interface ReviewRefreshController {
  *
  * Delegates debouncing, visibility/focus handling, and in-flight guards to RefreshController.
  * Keeps ReviewPanel-specific logic:
- * - Origin branch fetch before refresh
  * - Scroll position preservation
  * - User interaction pause state
  */
@@ -63,9 +46,6 @@ export function useReviewRefreshController(
   const { workspaceId, api, isCreating, scrollContainerRef } = options;
 
   // Refs for values that executeRefresh needs at call time (avoid stale closures)
-  const diffBaseRef = useRef(options.diffBase);
-  diffBaseRef.current = options.diffBase;
-
   const onRefreshRef = useRef(options.onRefresh);
   onRefreshRef.current = options.onRefresh;
 
@@ -89,24 +69,11 @@ export function useReviewRefreshController(
     const ctrl = new RefreshController({
       debounceMs: TOOL_REFRESH_DEBOUNCE_MS,
       isPaused: () => isInteractingRef.current,
-      onRefresh: async () => {
-        if (!api || isCreating) return;
+      onRefresh: () => {
+        if (isCreating) return;
 
         // Save scroll position before refresh
         savedScrollTopRef.current = scrollContainerRef.current?.scrollTop ?? null;
-
-        const originBranch = getOriginBranchForFetch(diffBaseRef.current);
-        if (originBranch) {
-          try {
-            await api.workspace.executeBash({
-              workspaceId,
-              script: `git fetch origin ${originBranch} --quiet || true`,
-              options: { timeout_secs: 30 },
-            });
-          } catch (err) {
-            console.debug("ReviewPanel origin fetch failed", err);
-          }
-        }
 
         onRefreshRef.current();
         onGitStatusRefreshRef.current?.();
@@ -115,9 +82,9 @@ export function useReviewRefreshController(
     });
     ctrl.bindListeners();
     return ctrl;
-    // workspaceId/api/isCreating changes require new controller with updated closure
-    // Note: options.onRefresh is accessed via ref to avoid recreating controller on every render
-  }, [workspaceId, api, isCreating, scrollContainerRef, setLastRefreshInfo]);
+    // isCreating/scrollContainerRef/setLastRefreshInfo changes require a new controller.
+    // Note: options.onRefresh is accessed via ref to avoid recreating controller on every render.
+  }, [isCreating, scrollContainerRef, setLastRefreshInfo]);
 
   // Cleanup on unmount or when controller changes
   useEffect(() => {
