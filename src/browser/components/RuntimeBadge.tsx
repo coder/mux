@@ -15,6 +15,8 @@ interface RuntimeBadgeProps {
   isWorking?: boolean;
   /** Workspace path to show in tooltip */
   workspacePath?: string;
+  /** Git branch/workspace name to show in tooltip */
+  branchName?: string;
 }
 
 // Runtime-specific color schemes - each type has consistent colors in idle/working states
@@ -68,11 +70,21 @@ function PathWithCopy({ path }: { path: string }) {
   );
 }
 
+function BranchWithLabel({ branchName }: { branchName: string }) {
+  return (
+    <div className="mt-1 flex max-w-80 items-baseline gap-1">
+      <span className="text-muted shrink-0">Branch:</span>
+      <span className="min-w-0 font-mono break-words">{branchName}</span>
+    </div>
+  );
+}
+
 export function RuntimeBadge({
   runtimeConfig,
   className,
   isWorking = false,
   workspacePath,
+  branchName,
 }: RuntimeBadgeProps) {
   // SSH runtime: show server icon with hostname
   if (isSSHRuntime(runtimeConfig)) {
@@ -93,6 +105,7 @@ export function RuntimeBadge({
         </TooltipTrigger>
         <TooltipContent align="end">
           <div>SSH: {hostname ?? runtimeConfig.host}</div>
+          {branchName && <BranchWithLabel branchName={branchName} />}
           {workspacePath && <PathWithCopy path={workspacePath} />}
         </TooltipContent>
       </Tooltip>
@@ -117,6 +130,7 @@ export function RuntimeBadge({
         </TooltipTrigger>
         <TooltipContent align="end">
           <div>Worktree: isolated git worktree</div>
+          {branchName && <BranchWithLabel branchName={branchName} />}
           {workspacePath && <PathWithCopy path={workspacePath} />}
         </TooltipContent>
       </Tooltip>
@@ -141,6 +155,7 @@ export function RuntimeBadge({
         </TooltipTrigger>
         <TooltipContent align="end">
           <div>Local: project directory</div>
+          {branchName && <BranchWithLabel branchName={branchName} />}
           {workspacePath && <PathWithCopy path={workspacePath} />}
         </TooltipContent>
       </Tooltip>

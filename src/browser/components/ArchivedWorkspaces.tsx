@@ -590,7 +590,7 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
                   <Search className="text-muted pointer-events-none absolute top-1/2 left-2 h-4 w-4 -translate-y-1/2" />
                   <input
                     type="text"
-                    placeholder="Search archived workspaces..."
+                    placeholder="Search titles or branches..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     className="bg-bg-dark placeholder:text-muted text-foreground focus:border-border-light w-full rounded border border-transparent py-1.5 pr-3 pl-8 text-sm focus:outline-none"
@@ -618,6 +618,10 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
                   {periodWorkspaces.map((workspace) => {
                     const isProcessing = processingIds.has(workspace.id);
                     const isSelected = selectedIds.has(workspace.id);
+                    const branchForTooltip =
+                      workspace.title && workspace.title !== workspace.name
+                        ? workspace.name
+                        : undefined;
                     const displayTitle = workspace.title ?? workspace.name;
 
                     return (
@@ -637,7 +641,12 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
                           className="h-4 w-4 rounded border-gray-600 bg-transparent"
                           aria-label={`Select ${displayTitle}`}
                         />
-                        <RuntimeBadge runtimeConfig={workspace.runtimeConfig} isWorking={false} />
+                        <RuntimeBadge
+                          runtimeConfig={workspace.runtimeConfig}
+                          isWorking={false}
+                          workspacePath={workspace.namedWorkspacePath}
+                          branchName={branchForTooltip}
+                        />
                         <div className="min-w-0 flex-1">
                           <div className="text-foreground truncate text-sm font-medium">
                             {displayTitle}
