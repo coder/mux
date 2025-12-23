@@ -12,6 +12,8 @@ import { useToolExpansion, getStatusDisplay, type ToolStatus } from "./shared/to
 import { MarkdownRenderer } from "../Messages/MarkdownRenderer";
 import { cn } from "@/common/lib/utils";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
+import { useWorkspaceContext, toWorkspaceSelection } from "@/browser/contexts/WorkspaceContext";
+import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import type {
   TaskToolArgs,
   TaskToolSuccessResult,
@@ -120,10 +122,41 @@ const AgentTypeBadge: React.FC<{
   );
 };
 
-// Task ID display with monospace styling
-const TaskId: React.FC<{ id: string; className?: string }> = ({ id, className }) => (
-  <span className={cn("font-mono text-[10px] text-muted opacity-70", className)}>{id}</span>
-);
+// Task ID display with open/copy affordance.
+// - If the task workspace exists locally, clicking opens it.
+// - Otherwise, clicking copies the ID (so the user can search / share it).
+const TaskId: React.FC<{ id: string; className?: string }> = ({ id, className }) => {
+  const { workspaceMetadata, setSelectedWorkspace } = useWorkspaceContext();
+  const { copied, copyToClipboard } = useCopyToClipboard();
+
+  const workspace = workspaceMetadata.get(id);
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          className={cn(
+            "font-mono text-[10px] text-muted opacity-70 hover:opacity-100 hover:underline underline-offset-2",
+            className
+          )}
+          onClick={() => {
+            if (workspace) {
+              setSelectedWorkspace(toWorkspaceSelection(workspace));
+              return;
+            }
+            void copyToClipboard(id);
+          }}
+        >
+          {id}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent>
+        {workspace ? "Open workspace" : copied ? "Copied" : "Copy task ID"}
+      </TooltipContent>
+    </Tooltip>
+  );
+};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TASK TOOL CALL (spawn sub-agent)

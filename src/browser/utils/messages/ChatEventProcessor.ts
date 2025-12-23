@@ -45,7 +45,12 @@ export interface InitState {
   status: "running" | "success" | "error";
   lines: string[];
   exitCode: number | null;
+
+  /** Start timestamp from init-start. */
   timestamp: number;
+
+  /** Duration in milliseconds (null while running). */
+  durationMs: number | null;
 }
 
 export interface ChatEventProcessor {
@@ -120,6 +125,7 @@ export function createChatEventProcessor(): ChatEventProcessor {
         lines: [],
         exitCode: null,
         timestamp: event.timestamp,
+        durationMs: null,
       };
       return;
     }
@@ -145,7 +151,19 @@ export function createChatEventProcessor(): ChatEventProcessor {
       }
       initState.status = event.exitCode === 0 ? "success" : "error";
       initState.exitCode = event.exitCode;
-      initState.timestamp = event.timestamp;
+
+      const durationMs = event.timestamp - initState.timestamp;
+      if (!Number.isFinite(durationMs) || durationMs < 0) {
+        console.error("Init hook duration was invalid", {
+          start: initState.timestamp,
+          end: event.timestamp,
+          durationMs,
+        });
+        initState.durationMs = null;
+      } else {
+        initState.durationMs = durationMs;
+      }
+
       return;
     }
 

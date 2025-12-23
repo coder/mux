@@ -5,7 +5,7 @@ import { useTheme } from "../theme";
 import { ThemedText } from "./ThemedText";
 import { useThinkingLevel, type ThinkingLevel } from "../contexts/ThinkingContext";
 
-const LEVELS: ThinkingLevel[] = ["off", "low", "medium", "high"];
+const LEVELS: ThinkingLevel[] = ["off", "low", "medium", "high", "xhigh"];
 
 function thinkingLevelToValue(level: ThinkingLevel): number {
   const index = LEVELS.indexOf(level);

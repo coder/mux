@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import React from "react";
-import { View, Text, ScrollView, StyleSheet } from "react-native";
+import { View, Text, ScrollView, StyleSheet, Pressable } from "react-native";
+import { Link } from "expo-router";
 import { parsePatch } from "diff";
 import type { DisplayedMessage } from "@/common/types/message";
 import {
@@ -24,8 +25,20 @@ import {
   type FileEditToolName,
   type FileReadToolArgs,
   type FileReadToolResult,
+  type TaskToolArgs,
+  type TaskToolResult,
+  type TaskAwaitToolArgs,
+  type TaskAwaitToolResult,
+  type TaskListToolArgs,
+  type TaskListToolResult,
+  type TaskTerminateToolArgs,
+  type TaskTerminateToolResult,
+  type AgentReportToolArgs,
+  type AgentReportToolResult,
 } from "@/common/types/tools";
 import { useTheme } from "../../theme";
+import { MarkdownMessageBody } from "../../components/MarkdownMessageBody";
+import { useLiveBashOutputView } from "../../contexts/LiveBashOutputContext";
 import { ThemedText } from "../../components/ThemedText";
 
 export type ToolDisplayedMessage = DisplayedMessage & { type: "tool" };
@@ -70,6 +83,35 @@ export function renderSpecializedToolCard(message: ToolDisplayedMessage): ToolCa
       }
       return buildBashBackgroundListViewModel(
         message as ToolDisplayedMessage & { args: BashBackgroundListArgs }
+      );
+    case "task":
+      if (!isTaskToolArgs(message.args)) {
+        return null;
+      }
+      return buildTaskViewModel(message as ToolDisplayedMessage & { args: TaskToolArgs });
+    case "task_await":
+      if (!isTaskAwaitToolArgs(message.args)) {
+        return null;
+      }
+      return buildTaskAwaitViewModel(message as ToolDisplayedMessage & { args: TaskAwaitToolArgs });
+    case "task_list":
+      if (!isTaskListToolArgs(message.args)) {
+        return null;
+      }
+      return buildTaskListViewModel(message as ToolDisplayedMessage & { args: TaskListToolArgs });
+    case "task_terminate":
+      if (!isTaskTerminateToolArgs(message.args)) {
+        return null;
+      }
+      return buildTaskTerminateViewModel(
+        message as ToolDisplayedMessage & { args: TaskTerminateToolArgs }
+      );
+    case "agent_report":
+      if (!isAgentReportToolArgs(message.args)) {
+        return null;
+      }
+      return buildAgentReportViewModel(
+        message as ToolDisplayedMessage & { args: AgentReportToolArgs }
       );
     case "bash_background_terminate":
       if (!isBashBackgroundTerminateArgs(message.args)) {
@@ -122,7 +164,14 @@ function buildBashViewModel(
     caption: "bash",
     title: preview,
     summary: metadata.length > 0 ? <MetadataList items={metadata} /> : undefined,
-    content: <BashToolContent args={args} result={result} status={message.status} />,
+    content: (
+      <BashToolContent
+        args={args}
+        result={result}
+        status={message.status}
+        toolCallId={message.toolCallId}
+      />
+    ),
     defaultExpanded: message.status !== "completed" || Boolean(result && result.success === false),
   };
 }
@@ -352,6 +401,392 @@ function BashBackgroundTerminateContent({
   return <ThemedText>{result.message}</ThemedText>;
 }
 
+function buildTaskViewModel(
+  message: ToolDisplayedMessage & { args: TaskToolArgs }
+): ToolCardViewModel {
+  const args = message.args;
+  const result = coerceTaskToolResult(message.result);
+
+  const taskId =
+    result && !("success" in result) && typeof (result as { taskId?: unknown }).taskId === "string"
+      ? ((result as { taskId: string }).taskId ?? null)
+      : null;
+
+  const metadata: MetadataItem[] = [{ label: "agent", value: args.subagent_type }];
+  if (args.run_in_background) {
+    metadata.push({ label: "background", value: "true" });
+  }
+  if (taskId) {
+    metadata.push({ label: "task", value: truncate(taskId, 16) });
+  }
+  if (result && !("success" in result)) {
+    metadata.push({ label: "status", value: result.status });
+  }
+
+  return {
+    icon: "🧵",
+    caption: "task",
+    title: args.title,
+    subtitle: args.subagent_type,
+    summary: metadata.length > 0 ? <MetadataList items={metadata} /> : undefined,
+    content: <TaskToolContent args={args} result={result} status={message.status} />,
+    defaultExpanded: message.status !== "completed" || Boolean(result && "success" in result),
+  };
+}
+
+function TaskToolContent({
+  args,
+  result,
+  status,
+}: {
+  args: TaskToolArgs;
+  result: TaskToolResult | null;
+  status: ToolDisplayedMessage["status"];
+}): JSX.Element {
+  const theme = useTheme();
+
+  if (result && "success" in result) {
+    return <CodeBlock label="error" text={result.error} tone="danger" />;
+  }
+
+  const taskId =
+    result && !("success" in result) && typeof (result as { taskId?: unknown }).taskId === "string"
+      ? (result as { taskId: string }).taskId
+      : null;
+
+  const reportMarkdown =
+    result && !("success" in result) && result.status === "completed"
+      ? result.reportMarkdown
+      : null;
+
+  return (
+    <View style={{ gap: theme.spacing.sm }}>
+      {taskId ? <WorkspaceLinkButton workspaceId={taskId} /> : null}
+      <ScrollableCodeBlock label="prompt" text={args.prompt} maxHeight={220} />
+      {reportMarkdown ? (
+        <View style={{ gap: theme.spacing.xs }}>
+          <ThemedText variant="caption" style={{ color: theme.colors.foregroundSecondary }}>
+            report
+          </ThemedText>
+          <View
+            style={{
+              padding: theme.spacing.sm,
+              borderRadius: theme.radii.sm,
+              backgroundColor: theme.colors.surfaceSunken,
+              borderWidth: StyleSheet.hairlineWidth,
+              borderColor: theme.colors.border,
+            }}
+          >
+            <MarkdownMessageBody variant="assistant" content={reportMarkdown} />
+          </View>
+        </View>
+      ) : status === "executing" ? (
+        <ThemedText variant="muted">Task running…</ThemedText>
+      ) : null}
+    </View>
+  );
+}
+
+function buildTaskAwaitViewModel(
+  message: ToolDisplayedMessage & { args: TaskAwaitToolArgs }
+): ToolCardViewModel {
+  const args = message.args;
+  const result = coerceTaskAwaitToolResult(message.result);
+
+  const taskCount = Array.isArray(args.task_ids) ? args.task_ids.length : undefined;
+  const title = taskCount ? `Awaiting ${taskCount} task(s)` : "Awaiting tasks";
+
+  const metadata: MetadataItem[] = [];
+  if (typeof args.timeout_secs === "number") {
+    metadata.push({ label: "timeout", value: `${args.timeout_secs}s` });
+  }
+
+  return {
+    icon: "⏳",
+    caption: "task_await",
+    title,
+    summary: metadata.length > 0 ? <MetadataList items={metadata} /> : undefined,
+    content: <TaskAwaitContent result={result} status={message.status} />,
+    defaultExpanded: message.status !== "completed" || Boolean(result && "success" in result),
+  };
+}
+
+function TaskAwaitContent({
+  result,
+  status,
+}: {
+  result: TaskAwaitToolResult | null;
+  status: ToolDisplayedMessage["status"];
+}): JSX.Element {
+  const theme = useTheme();
+
+  if (!result) {
+    return <ThemedText variant="muted">Waiting…</ThemedText>;
+  }
+
+  if ("success" in result) {
+    return <CodeBlock label="error" text={result.error} tone="danger" />;
+  }
+
+  const results = result.results;
+  if (!Array.isArray(results) || results.length === 0) {
+    return status === "executing" ? (
+      <ThemedText variant="muted">Waiting…</ThemedText>
+    ) : (
+      <ThemedText variant="muted">No tasks</ThemedText>
+    );
+  }
+
+  return (
+    <View style={{ gap: theme.spacing.sm }}>
+      {results.map((entry) => (
+        <TaskResultRow key={entry.taskId} taskId={entry.taskId} status={entry.status}>
+          {entry.status === "completed" ? (
+            <View style={{ marginTop: theme.spacing.xs }}>
+              <MarkdownMessageBody variant="assistant" content={entry.reportMarkdown} />
+            </View>
+          ) : "error" in entry && typeof entry.error === "string" ? (
+            <ThemedText variant="muted" style={{ color: theme.colors.error }}>
+              {entry.error}
+            </ThemedText>
+          ) : null}
+        </TaskResultRow>
+      ))}
+    </View>
+  );
+}
+
+function buildTaskListViewModel(
+  message: ToolDisplayedMessage & { args: TaskListToolArgs }
+): ToolCardViewModel {
+  const args = message.args;
+  const result = coerceTaskListToolResult(message.result);
+
+  const statuses = Array.isArray(args.statuses) ? args.statuses.join(", ") : null;
+
+  return {
+    icon: "📋",
+    caption: "task_list",
+    title: "Tasks",
+    subtitle: statuses ? `filter: ${statuses}` : undefined,
+    content: <TaskListContent result={result} status={message.status} />,
+    defaultExpanded: message.status !== "completed" || Boolean(result && "success" in result),
+  };
+}
+
+function TaskListContent({
+  result,
+  status,
+}: {
+  result: TaskListToolResult | null;
+  status: ToolDisplayedMessage["status"];
+}): JSX.Element {
+  const theme = useTheme();
+
+  if (!result) {
+    return <ThemedText variant="muted">Loading…</ThemedText>;
+  }
+
+  if ("success" in result) {
+    return <CodeBlock label="error" text={result.error} tone="danger" />;
+  }
+
+  const tasks = result.tasks;
+  if (!Array.isArray(tasks) || tasks.length === 0) {
+    return status === "executing" ? (
+      <ThemedText variant="muted">Loading…</ThemedText>
+    ) : (
+      <ThemedText variant="muted">No tasks</ThemedText>
+    );
+  }
+
+  return (
+    <View style={{ gap: theme.spacing.sm }}>
+      {tasks.map((task) => (
+        <TaskResultRow key={task.taskId} taskId={task.taskId} status={task.status}>
+          {task.title ? (
+            <ThemedText variant="caption" style={{ color: theme.colors.foregroundSecondary }}>
+              {task.title}
+            </ThemedText>
+          ) : null}
+        </TaskResultRow>
+      ))}
+    </View>
+  );
+}
+
+function buildTaskTerminateViewModel(
+  message: ToolDisplayedMessage & { args: TaskTerminateToolArgs }
+): ToolCardViewModel {
+  const args = message.args;
+  const result = coerceTaskTerminateToolResult(message.result);
+
+  return {
+    icon: "🛑",
+    caption: "task_terminate",
+    title: `Terminate ${args.task_ids.length} task(s)`,
+    content: <TaskTerminateContent result={result} status={message.status} />,
+    defaultExpanded: message.status !== "completed" || Boolean(result && "success" in result),
+  };
+}
+
+function TaskTerminateContent({
+  result,
+  status,
+}: {
+  result: TaskTerminateToolResult | null;
+  status: ToolDisplayedMessage["status"];
+}): JSX.Element {
+  const theme = useTheme();
+
+  if (!result) {
+    return <ThemedText variant="muted">Terminating…</ThemedText>;
+  }
+
+  if ("success" in result) {
+    return <CodeBlock label="error" text={result.error} tone="danger" />;
+  }
+
+  const results = result.results;
+  if (!Array.isArray(results) || results.length === 0) {
+    return status === "executing" ? (
+      <ThemedText variant="muted">Terminating…</ThemedText>
+    ) : (
+      <ThemedText variant="muted">No results</ThemedText>
+    );
+  }
+
+  return (
+    <View style={{ gap: theme.spacing.sm }}>
+      {results.map((entry) => (
+        <TaskResultRow key={entry.taskId} taskId={entry.taskId} status={entry.status}>
+          {"error" in entry && typeof entry.error === "string" ? (
+            <ThemedText variant="caption" style={{ color: theme.colors.error }}>
+              {entry.error}
+            </ThemedText>
+          ) : null}
+        </TaskResultRow>
+      ))}
+    </View>
+  );
+}
+
+function buildAgentReportViewModel(
+  message: ToolDisplayedMessage & { args: AgentReportToolArgs }
+): ToolCardViewModel {
+  const args = message.args;
+  const result = coerceAgentReportToolResult(message.result);
+
+  return {
+    icon: "📝",
+    caption: "agent_report",
+    title: args.title ?? "Agent report",
+    content: <AgentReportContent args={args} result={result} status={message.status} />,
+    defaultExpanded: true,
+  };
+}
+
+function AgentReportContent({
+  args,
+  result,
+  status,
+}: {
+  args: AgentReportToolArgs;
+  result: AgentReportToolResult | null;
+  status: ToolDisplayedMessage["status"];
+}): JSX.Element {
+  const theme = useTheme();
+
+  if (result && "success" in result && result.success === false) {
+    return <CodeBlock label="error" text={result.error} tone="danger" />;
+  }
+
+  if (status === "executing") {
+    return <ThemedText variant="muted">Reporting…</ThemedText>;
+  }
+
+  return (
+    <View
+      style={{
+        padding: theme.spacing.sm,
+        borderRadius: theme.radii.sm,
+        backgroundColor: theme.colors.surfaceSunken,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: theme.colors.border,
+      }}
+    >
+      <MarkdownMessageBody variant="assistant" content={args.reportMarkdown} />
+    </View>
+  );
+}
+
+function TaskResultRow({
+  taskId,
+  status,
+  children,
+}: {
+  taskId: string;
+  status: string;
+  children?: ReactNode;
+}): JSX.Element {
+  const theme = useTheme();
+
+  return (
+    <View
+      style={{
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: theme.colors.border,
+        backgroundColor: theme.colors.surfaceSunken,
+        borderRadius: theme.radii.sm,
+        padding: theme.spacing.sm,
+        gap: theme.spacing.xs,
+      }}
+    >
+      <View style={{ flexDirection: "row", alignItems: "center", gap: theme.spacing.xs }}>
+        <ThemedText variant="monoMuted" style={{ flex: 1 }} numberOfLines={1}>
+          {taskId}
+        </ThemedText>
+        <ThemedText variant="caption" style={{ color: theme.colors.foregroundSecondary }}>
+          {status}
+        </ThemedText>
+        <WorkspaceLinkButton workspaceId={taskId} label="Open" />
+      </View>
+      {children}
+    </View>
+  );
+}
+
+function WorkspaceLinkButton({
+  workspaceId,
+  label,
+}: {
+  workspaceId: string;
+  label?: string;
+}): JSX.Element {
+  const theme = useTheme();
+
+  return (
+    <Link href={`/workspace/${encodeURIComponent(workspaceId)}`} asChild>
+      <Pressable
+        accessibilityRole="button"
+        style={({ pressed }) => ({
+          paddingHorizontal: theme.spacing.sm,
+          paddingVertical: theme.spacing.xs,
+          borderRadius: theme.radii.pill,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: theme.colors.accent,
+          backgroundColor: theme.colors.accentMuted,
+          opacity: pressed ? 0.75 : 1,
+        })}
+      >
+        <ThemedText variant="caption" style={{ color: theme.colors.accent }}>
+          {label ?? "Open workspace"}
+        </ThemedText>
+      </Pressable>
+    </Link>
+  );
+}
+
 function ScrollableCodeBlock({
   label,
   text,
@@ -498,16 +933,59 @@ function BashToolContent({
   args,
   result,
   status,
+  toolCallId,
 }: {
   args: BashToolArgs;
   result: BashToolResult | null;
   status: ToolDisplayedMessage["status"];
+  toolCallId: string;
 }): JSX.Element {
+  const theme = useTheme();
+  const liveOutput = useLiveBashOutputView(toolCallId);
+
+  const resultHasOutput = typeof (result as { output?: unknown } | null)?.output === "string";
+  const showLiveOutput = status === "executing" || (Boolean(liveOutput) && !resultHasOutput);
+
+  if (showLiveOutput) {
+    const combined = liveOutput?.combined ?? "";
+    if (combined.trim().length > 0) {
+      return (
+        <View style={{ gap: theme.spacing.sm }}>
+          <ScrollableCodeBlock label="output" text={combined} maxHeight={220} />
+          {liveOutput?.truncated ? (
+            <ThemedText variant="caption" style={{ color: theme.colors.warning }}>
+              Live output truncated
+            </ThemedText>
+          ) : null}
+          {result ? (
+            <MetadataList
+              items={[
+                {
+                  label: "duration",
+                  value: `${result.wall_duration_ms} ms`,
+                },
+                {
+                  label: "status",
+                  value: result.success ? "success" : status,
+                  tone: result.success ? "default" : "danger",
+                },
+              ]}
+            />
+          ) : null}
+        </View>
+      );
+    }
+
+    if (!result) {
+      return <ThemedText variant="muted">Command is executing…</ThemedText>;
+    }
+  }
+
   if (!result) {
     return <ThemedText variant="muted">Command is executing…</ThemedText>;
   }
 
-  const stdout = result.output?.trim() ?? "";
+  const stdout = typeof result.output === "string" ? result.output.trim() : "";
   const stderr = result.success ? "" : (result.error?.trim() ?? "");
 
   return (
@@ -1024,6 +1502,44 @@ function isBashBackgroundTerminateArgs(value: unknown): value is BashBackgroundT
   return Boolean(value && typeof (value as BashBackgroundTerminateArgs).process_id === "string");
 }
 
+function isTaskToolArgs(value: unknown): value is TaskToolArgs {
+  return (
+    Boolean(value && typeof value === "object") &&
+    typeof (value as TaskToolArgs).prompt === "string" &&
+    typeof (value as TaskToolArgs).title === "string" &&
+    typeof (value as TaskToolArgs).subagent_type === "string"
+  );
+}
+
+function isTaskAwaitToolArgs(value: unknown): value is TaskAwaitToolArgs {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const args = value as TaskAwaitToolArgs;
+  if (args.task_ids !== undefined && !Array.isArray(args.task_ids)) {
+    return false;
+  }
+  return true;
+}
+
+function isTaskListToolArgs(value: unknown): value is TaskListToolArgs {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const args = value as TaskListToolArgs;
+  if (args.statuses !== undefined && !Array.isArray(args.statuses)) {
+    return false;
+  }
+  return true;
+}
+
+function isTaskTerminateToolArgs(value: unknown): value is TaskTerminateToolArgs {
+  return Boolean(value && Array.isArray((value as TaskTerminateToolArgs).task_ids));
+}
+
+function isAgentReportToolArgs(value: unknown): value is AgentReportToolArgs {
+  return Boolean(value && typeof (value as AgentReportToolArgs).reportMarkdown === "string");
+}
 function isFileEditArgsUnion(value: unknown): value is FileEditArgsUnion {
   return Boolean(value && typeof (value as FileEditArgsUnion).file_path === "string");
 }
@@ -1078,6 +1594,68 @@ function coerceFileReadToolResult(value: unknown): FileReadToolResult | null {
 function coerceFileEditResultUnion(value: unknown): FileEditResultUnion | null {
   if (value && typeof value === "object" && "success" in value) {
     return value as FileEditResultUnion;
+  }
+  return null;
+}
+
+function coerceTaskToolResult(value: unknown): TaskToolResult | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  if ("success" in value && typeof (value as { success?: unknown }).success === "boolean") {
+    return value as TaskToolResult;
+  }
+  if ("status" in value && typeof (value as { status?: unknown }).status === "string") {
+    return value as TaskToolResult;
+  }
+  return null;
+}
+
+function coerceTaskAwaitToolResult(value: unknown): TaskAwaitToolResult | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  if ("success" in value && typeof (value as { success?: unknown }).success === "boolean") {
+    return value as TaskAwaitToolResult;
+  }
+  if ("results" in value && Array.isArray((value as { results?: unknown }).results)) {
+    return value as TaskAwaitToolResult;
+  }
+  return null;
+}
+
+function coerceTaskListToolResult(value: unknown): TaskListToolResult | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  if ("success" in value && typeof (value as { success?: unknown }).success === "boolean") {
+    return value as TaskListToolResult;
+  }
+  if ("tasks" in value && Array.isArray((value as { tasks?: unknown }).tasks)) {
+    return value as TaskListToolResult;
+  }
+  return null;
+}
+
+function coerceTaskTerminateToolResult(value: unknown): TaskTerminateToolResult | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  if ("success" in value && typeof (value as { success?: unknown }).success === "boolean") {
+    return value as TaskTerminateToolResult;
+  }
+  if ("results" in value && Array.isArray((value as { results?: unknown }).results)) {
+    return value as TaskTerminateToolResult;
+  }
+  return null;
+}
+
+function coerceAgentReportToolResult(value: unknown): AgentReportToolResult | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  if ("success" in value && typeof (value as { success?: unknown }).success === "boolean") {
+    return value as AgentReportToolResult;
   }
   return null;
 }

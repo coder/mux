@@ -228,6 +228,7 @@ export function createChatEventExpander(): ChatEventExpander {
         lines: [...initState.lines],
         exitCode: initState.exitCode,
         timestamp: initState.timestamp,
+        durationMs: initState.durationMs,
       },
     ];
   };
@@ -398,6 +399,12 @@ export function createChatEventExpander(): ChatEventExpander {
           return [];
         },
 
+        // UI-only incremental output from the bash tool.
+        // This is rendered inside the bash tool card (and should not spam the timeline).
+        "bash-output": () => [],
+
+        // Rolled-up session usage from deleted child workspaces (desktop-only for now).
+        "session-usage-delta": () => [],
         // Usage delta: mobile app doesn't display usage, silently ignore
         "usage-delta": () => [],
 

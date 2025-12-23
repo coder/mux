@@ -166,7 +166,7 @@ export class SessionTimingService {
   // Serialize disk writes per workspace; useful for tests and crash-safe ordering.
   private readonly pendingWrites = new Map<string, Promise<void>>();
   private readonly writeEpoch = new Map<string, number>();
-  private readonly tickIntervals = new Map<string, NodeJS.Timeout>();
+  private readonly tickIntervals = new Map<string, ReturnType<typeof setInterval>>();
 
   private statsTabState: StatsTabState = {
     enabled: false,

@@ -2,9 +2,10 @@ import type { JSX } from "react";
 import type { PropsWithChildren } from "react";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import * as SecureStore from "expo-secure-store";
+import type { ThinkingLevel } from "@/common/types/thinking";
 import { assert } from "../utils/assert";
 
-export type ThinkingLevel = "off" | "low" | "medium" | "high";
+export type { ThinkingLevel } from "@/common/types/thinking";
 
 interface ThinkingContextValue {
   thinkingLevel: ThinkingLevel;
@@ -27,7 +28,13 @@ function sanitizeWorkspaceId(workspaceId: string): string {
 async function readThinkingLevel(storageKey: string): Promise<ThinkingLevel | null> {
   try {
     const value = await SecureStore.getItemAsync(storageKey);
-    if (value === "off" || value === "low" || value === "medium" || value === "high") {
+    if (
+      value === "off" ||
+      value === "low" ||
+      value === "medium" ||
+      value === "high" ||
+      value === "xhigh"
+    ) {
       return value;
     }
     return null;

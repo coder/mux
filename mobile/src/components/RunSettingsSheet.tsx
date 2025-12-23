@@ -4,6 +4,7 @@ import { Modal, Pressable, ScrollView, StyleSheet, Switch, TextInput, View } fro
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../theme";
 import { ThemedText } from "./ThemedText";
+import { getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
 import type { ThinkingLevel, WorkspaceMode } from "../types/settings";
 import {
   formatModelSummary,
@@ -13,7 +14,6 @@ import {
 } from "../utils/modelCatalog";
 
 const ALL_MODELS = listKnownModels();
-const THINKING_LEVELS: ThinkingLevel[] = ["off", "low", "medium", "high"];
 
 interface RunSettingsSheetProps {
   visible: boolean;
@@ -52,6 +52,9 @@ export function RunSettingsSheet(props: RunSettingsSheetProps): JSX.Element {
     });
   }, [query]);
 
+  const allowedThinkingLevels = useMemo(() => {
+    return getThinkingPolicyForModel(props.selectedModel);
+  }, [props.selectedModel]);
   const recentModels = useMemo(() => {
     return props.recentModels.filter(isKnownModelId);
   }, [props.recentModels]);
@@ -293,11 +296,13 @@ export function RunSettingsSheet(props: RunSettingsSheetProps): JSX.Element {
               Reasoning
             </ThemedText>
             <View style={styles.levelRow}>
-              {THINKING_LEVELS.map((level) => {
+              {allowedThinkingLevels.map((level) => {
+                const locked = allowedThinkingLevels.length <= 1;
                 const active = props.thinkingLevel === level;
                 return (
                   <Pressable
                     key={level}
+                    disabled={locked}
                     onPress={() => props.onSelectThinkingLevel(level)}
                     style={({ pressed }) => [
                       styles.levelChip,
@@ -305,7 +310,7 @@ export function RunSettingsSheet(props: RunSettingsSheetProps): JSX.Element {
                         backgroundColor: active
                           ? theme.colors.accent
                           : theme.colors.surfaceSecondary,
-                        opacity: pressed ? 0.85 : 1,
+                        opacity: locked ? 1 : pressed ? 0.85 : 1,
                       },
                     ]}
                   >

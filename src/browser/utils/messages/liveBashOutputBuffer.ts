@@ -28,8 +28,31 @@ function normalizeNewlines(text: string): string {
   // In our UI, that reads better as actual line breaks.
   return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 }
+let warnedMissingTextEncoder = false;
+
 function getUtf8ByteLength(text: string): number {
-  return new TextEncoder().encode(text).length;
+  if (typeof TextEncoder !== "undefined") {
+    return new TextEncoder().encode(text).length;
+  }
+
+  // Defensive fallback for runtimes without TextEncoder (some RN/Hermes builds).
+  // encodeURIComponent uses UTF-8 percent-encoding; count bytes by scanning '%XX' sequences.
+  if (!warnedMissingTextEncoder && typeof console !== "undefined") {
+    warnedMissingTextEncoder = true;
+    console.warn("[liveBashOutputBuffer] TextEncoder unavailable; using slow UTF-8 fallback");
+  }
+
+  const encoded = encodeURIComponent(text);
+  let bytes = 0;
+  for (let i = 0; i < encoded.length; i++) {
+    if (encoded[i] === "%") {
+      bytes += 1;
+      i += 2;
+    } else {
+      bytes += 1;
+    }
+  }
+  return bytes;
 }
 
 export function appendLiveBashOutputChunk(
