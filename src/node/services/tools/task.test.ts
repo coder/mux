@@ -75,6 +75,7 @@ describe("task tool", () => {
       taskId: "child-task",
       reportMarkdown: "Hello from child",
       title: "Result",
+      agentId: "explore",
       agentType: "explore",
     });
   });
