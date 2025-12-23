@@ -162,8 +162,13 @@ const TaskId: React.FC<{ id: string; className?: string }> = ({ id, className })
 // TASK TOOL CALL (spawn sub-agent)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function isBashTaskArgs(args: TaskToolArgs): args is Extract<TaskToolArgs, { kind: "bash" }> {
-  return (args as { kind?: unknown }).kind === "bash";
+function isBashTaskArgs(args: TaskToolArgs): args is TaskToolArgs & {
+  kind: "bash";
+  script: string;
+  display_name: string;
+  timeout_secs: number;
+} {
+  return args.kind === "bash";
 }
 interface TaskToolCallProps {
   args: TaskToolArgs;
@@ -176,7 +181,7 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({ args, result, status
   const hasReport = result?.status === "completed" && !!result.reportMarkdown;
   const { expanded, toggleExpanded } = useToolExpansion(hasReport);
 
-  const isBackground = args.run_in_background ?? false;
+  const isBackground = args.run_in_background;
 
   let isBashTask: boolean;
   let title: string;
@@ -185,14 +190,14 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({ args, result, status
 
   if (isBashTaskArgs(args)) {
     isBashTask = true;
-    title = args.display_name;
-    promptOrScript = args.script;
+    title = args.display_name ?? "Bash task";
+    promptOrScript = args.script ?? "";
     kindBadge = <AgentTypeBadge type="bash" />;
   } else {
     isBashTask = false;
-    title = args.title;
-    promptOrScript = args.prompt;
-    kindBadge = <AgentTypeBadge type={args.subagent_type} />;
+    title = args.title ?? "Task";
+    promptOrScript = args.prompt ?? "";
+    kindBadge = <AgentTypeBadge type={args.subagent_type ?? "explore"} />;
   }
 
   // Derive task state from result
