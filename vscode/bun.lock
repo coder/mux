@@ -6,7 +6,7 @@
       "name": "mux",
       "devDependencies": {
         "@types/node": "^20.0.0",
-        "@types/vscode": "^1.85.0",
+        "@types/vscode": "^1.106.0",
         "@vscode/vsce": "^2.22.0",
         "esbuild": "^0.27.0",
         "typescript": "^5.3.0",
@@ -90,7 +90,7 @@
 
     "@types/node": ["@types/node@20.19.24", "", { "dependencies": { "undici-types": "~6.21.0" } }, "sha512-FE5u0ezmi6y9OZEzlJfg37mqqf6ZDSF2V/NLjUyGrR9uTZ7Sb9F7bLNZ03S4XVUNRWGA7Ck4c1kK+YnuWjl+DA=="],
 
-    "@types/vscode": ["@types/vscode@1.105.0", "", {}, "sha512-Lotk3CTFlGZN8ray4VxJE7axIyLZZETQJVWi/lYoUVQuqfRxlQhVOfoejsD2V3dVXPSbS15ov5ZyowMAzgUqcw=="],
+    "@types/vscode": ["@types/vscode@1.107.0", "", {}, "sha512-XS8YE1jlyTIowP64+HoN30OlC1H9xqSlq1eoLZUgFEC8oUTO6euYZxti1xRiLSfZocs4qytTzR6xCBYtioQTCg=="],
 
     "@typespec/ts-http-runtime": ["@typespec/ts-http-runtime@0.3.2", "", { "dependencies": { "http-proxy-agent": "^7.0.0", "https-proxy-agent": "^7.0.0", "tslib": "^2.6.2" } }, "sha512-IlqQ/Gv22xUC1r/WQm4StLkYQmaaTsXAhUVsNE0+xiyf0yRFiH5++q78U3bw6bLKDCTmh0uqKB9eG9+Bt75Dkg=="],
 

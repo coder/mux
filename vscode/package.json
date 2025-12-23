@@ -9,7 +9,7 @@
     "ui"
   ],
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.106.0"
   },
   "categories": [
     "Other"
@@ -22,6 +22,8 @@
     "development"
   ],
   "activationEvents": [
+    "onStartupFinished",
+    "onView:mux.chatView",
     "onCommand:mux.openWorkspace",
     "onCommand:mux.configureConnection"
   ],
@@ -37,6 +39,24 @@
         "title": "mux: Configure Connection"
       }
     ],
+    "viewsContainers": {
+      "secondarySidebar": [
+        {
+          "id": "muxSecondary",
+          "title": "mux",
+          "icon": "icon.png"
+        }
+      ]
+    },
+    "views": {
+      "muxSecondary": [
+        {
+          "id": "mux.chatView",
+          "name": "Chat",
+          "type": "webview"
+        }
+      ]
+    },
     "configuration": {
       "title": "mux",
       "properties": {
@@ -68,7 +88,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
-    "@types/vscode": "^1.85.0",
+    "@types/vscode": "^1.106.0",
     "@vscode/vsce": "^2.22.0",
     "esbuild": "^0.27.0",
     "typescript": "^5.3.0"
