@@ -22,67 +22,111 @@ import {
   generateBranchName,
   createWorkspaceWithInit,
   sendMessageAndWait,
-  extractTextFromEvents,
   HAIKU_MODEL,
 } from "./helpers";
 import type { WorkspaceChatMessage } from "../../src/common/orpc/types";
 import type { ToolPolicy } from "../../src/common/utils/tools/toolPolicy";
 
-// Tool policy: Allow bash and bash_background_* tools (bash prefix matches all)
-const BACKGROUND_TOOLS: ToolPolicy = [
-  { regex_match: "bash", action: "enable" },
-  { regex_match: "file_.*", action: "disable" },
+// Tool policy: Enable only task* tools (task, task_list, task_await, task_terminate).
+const TASK_TOOLS: ToolPolicy = [
+  { regex_match: ".*", action: "disable" },
+  { regex_match: "task.*", action: "enable" },
 ];
 
 // Extended timeout for tests making multiple AI calls
 const BACKGROUND_TEST_TIMEOUT_MS = 75000;
 
 /**
- * Extract process ID from bash tool output containing "Background process started with ID: xxx"
- * The process ID is now the display_name, which can be any string like "Sleep Process" or "bash_123"
+ * Extract a bash taskId (e.g. "bash:<processId>") from task(kind="bash") results.
  */
-function extractProcessId(events: WorkspaceChatMessage[]): string | null {
+function extractBashTaskId(events: WorkspaceChatMessage[]): string | null {
   for (const event of events) {
-    if (
-      "type" in event &&
-      event.type === "tool-call-end" &&
-      "toolName" in event &&
-      event.toolName === "bash"
-    ) {
-      const result = (event as { result?: { output?: string } }).result?.output;
-      if (typeof result === "string") {
-        // Match any non-empty process ID after "Background process started with ID: "
-        const match = result.match(/Background process started with ID: (.+)$/);
-        if (match) return match[1].trim();
-      }
-    }
+    if (!("type" in event) || event.type !== "tool-call-end") continue;
+    if (!("toolName" in event) || event.toolName !== "task") continue;
+
+    const args = (event as { args?: { kind?: string } }).args;
+    if (args?.kind !== "bash") continue;
+
+    const taskId = (event as { result?: { taskId?: string } }).result?.taskId;
+    if (typeof taskId === "string" && taskId.trim().length > 0) return taskId;
   }
   return null;
 }
 
 /**
- * Check if any tool output contains a specific string
+ * Extract taskIds from a task_list tool result.
  */
-function toolOutputContains(
-  events: WorkspaceChatMessage[],
-  toolName: string,
-  substring: string
-): boolean {
+function extractTaskListTaskIds(events: WorkspaceChatMessage[]): string[] {
   for (const event of events) {
-    if (
-      "type" in event &&
-      event.type === "tool-call-end" &&
-      "toolName" in event &&
-      event.toolName === toolName
-    ) {
-      const result = (event as { result?: { output?: string; message?: string } }).result;
-      const text = result?.output ?? result?.message;
-      if (typeof text === "string" && text.includes(substring)) {
-        return true;
+    if (!("type" in event) || event.type !== "tool-call-end") continue;
+    if (!("toolName" in event) || event.toolName !== "task_list") continue;
+
+    const tasks = (event as { result?: { tasks?: Array<{ taskId?: string }> } }).result?.tasks;
+    if (!Array.isArray(tasks)) return [];
+
+    return tasks
+      .map((t) => t.taskId)
+      .filter((taskId): taskId is string => typeof taskId === "string");
+  }
+  return [];
+}
+
+/**
+ * Collect output strings from task_await tool results.
+ */
+function collectTaskAwaitOutputs(events: WorkspaceChatMessage[]): string {
+  const outputs: string[] = [];
+
+  for (const event of events) {
+    if (!("type" in event) || event.type !== "tool-call-end") continue;
+    if (!("toolName" in event) || event.toolName !== "task_await") continue;
+
+    const results = (
+      event as { result?: { results?: Array<{ output?: string; reportMarkdown?: string }> } }
+    ).result?.results;
+
+    if (!Array.isArray(results)) continue;
+
+    for (const result of results) {
+      if (typeof result.output === "string" && result.output.length > 0) {
+        outputs.push(result.output);
+        continue;
+      }
+      if (typeof result.reportMarkdown === "string" && result.reportMarkdown.length > 0) {
+        outputs.push(result.reportMarkdown);
       }
     }
   }
-  return false;
+
+  return outputs.join("\n");
+}
+
+/**
+ * Extract terminated task ids from a task_terminate tool result.
+ */
+function extractTerminatedTaskIds(events: WorkspaceChatMessage[]): string[] {
+  for (const event of events) {
+    if (!("type" in event) || event.type !== "tool-call-end") continue;
+    if (!("toolName" in event) || event.toolName !== "task_terminate") continue;
+
+    const results = (
+      event as {
+        result?: {
+          results?: Array<{ status?: string; terminatedTaskIds?: string[] }>;
+        };
+      }
+    ).result?.results;
+    if (!Array.isArray(results)) return [];
+
+    const terminated: string[] = [];
+    for (const result of results) {
+      if (result.status !== "terminated") continue;
+      if (!Array.isArray(result.terminatedTaskIds)) continue;
+      terminated.push(...result.terminatedTaskIds);
+    }
+    return terminated;
+  }
+  return [];
 }
 
 // Skip all tests if TEST_INTEGRATION is not set
@@ -119,47 +163,44 @@ describeIntegration("Background Bash Execution", () => {
         );
 
         try {
-          // Start a background process using explicit tool call instruction
+          // Start a background bash task via task(kind="bash")
           const startEvents = await sendMessageAndWait(
             env,
             workspaceId,
-            "Use the bash tool with run_in_background=true to run: true && sleep 30",
+            'Use task(kind="bash") with run_in_background=true, display_name="bg-basic", timeout_secs=60 to run: true && sleep 30. Do not spawn a sub-agent.',
             HAIKU_MODEL,
-            BACKGROUND_TOOLS,
+            TASK_TOOLS,
             30000
           );
 
-          // Extract process ID from tool output (now uses display_name)
-          const processId = extractProcessId(startEvents);
-          expect(processId).not.toBeNull();
-          expect(processId!.length).toBeGreaterThan(0);
+          const taskId = extractBashTaskId(startEvents);
+          expect(taskId).not.toBeNull();
+          expect(taskId!.startsWith("bash:")).toBe(true);
 
-          // List background processes to verify it's tracked
+          // List tasks to verify it's tracked
           const listEvents = await sendMessageAndWait(
             env,
             workspaceId,
-            "Use the bash_background_list tool to show running background processes",
+            "Use task_list to show running tasks.",
             HAIKU_MODEL,
-            BACKGROUND_TOOLS,
+            TASK_TOOLS,
             20000
           );
 
-          // Verify the process appears in the list
-          const responseText = extractTextFromEvents(listEvents);
-          expect(
-            responseText.includes(processId!) ||
-              toolOutputContains(listEvents, "bash_background_list", processId!)
-          ).toBe(true);
+          const listedTaskIds = extractTaskListTaskIds(listEvents);
+          expect(listedTaskIds).toContain(taskId!);
 
           // Clean up: terminate the background process
-          await sendMessageAndWait(
+          const terminateEvents = await sendMessageAndWait(
             env,
             workspaceId,
-            `Use bash_background_terminate to terminate process ${processId}`,
+            `Use task_terminate with task_ids: ["${taskId}"] to terminate the task.`,
             HAIKU_MODEL,
-            BACKGROUND_TOOLS,
+            TASK_TOOLS,
             20000
           );
+          const terminatedTaskIds = extractTerminatedTaskIds(terminateEvents);
+          expect(terminatedTaskIds).toContain(taskId!);
         } finally {
           await cleanup();
         }
@@ -196,53 +237,44 @@ describeIntegration("Background Bash Execution", () => {
         );
 
         try {
-          // Start a long-running background process
+          // Start a long-running background bash task
           const startEvents = await sendMessageAndWait(
             env,
             workspaceId,
-            "Use bash with run_in_background=true to run: true && sleep 300",
+            'Use task(kind="bash") with run_in_background=true, display_name="bg-terminate", timeout_secs=600 to run: true && sleep 300. Do not spawn a sub-agent.',
             HAIKU_MODEL,
-            BACKGROUND_TOOLS,
+            TASK_TOOLS,
             30000
           );
 
-          const processId = extractProcessId(startEvents);
-          expect(processId).not.toBeNull();
+          const taskId = extractBashTaskId(startEvents);
+          expect(taskId).not.toBeNull();
 
-          // Terminate the process
+          // Terminate the task
           const terminateEvents = await sendMessageAndWait(
             env,
             workspaceId,
-            `Use bash_background_terminate to terminate process ${processId}`,
+            `Use task_terminate with task_ids: ["${taskId}"] to terminate the task.`,
             HAIKU_MODEL,
-            BACKGROUND_TOOLS,
+            TASK_TOOLS,
             20000
           );
 
-          // Verify termination succeeded (tool output should indicate success)
-          const terminateSuccess =
-            toolOutputContains(terminateEvents, "bash_background_terminate", "terminated") ||
-            toolOutputContains(terminateEvents, "bash_background_terminate", "success") ||
-            toolOutputContains(terminateEvents, "bash_background_terminate", processId!);
-          expect(terminateSuccess).toBe(true);
+          const terminatedTaskIds = extractTerminatedTaskIds(terminateEvents);
+          expect(terminatedTaskIds).toContain(taskId!);
 
-          // List to verify status changed to killed
+          // List to verify the task remains discoverable (including reported)
           const listEvents = await sendMessageAndWait(
             env,
             workspaceId,
-            "Use bash_background_list to show all background processes including terminated ones",
+            'Use task_list with statuses: ["queued", "running", "awaiting_report", "reported"].',
             HAIKU_MODEL,
-            BACKGROUND_TOOLS,
+            TASK_TOOLS,
             20000
           );
 
-          // Process should show as killed/terminated
-          const listResponse = extractTextFromEvents(listEvents);
-          expect(
-            listResponse.toLowerCase().includes("killed") ||
-              listResponse.toLowerCase().includes("terminated") ||
-              toolOutputContains(listEvents, "bash_background_list", "killed")
-          ).toBe(true);
+          const listedTaskIds = extractTaskListTaskIds(listEvents);
+          expect(listedTaskIds).toContain(taskId!);
         } finally {
           await cleanup();
         }
@@ -284,42 +316,27 @@ describeIntegration("Background Bash Execution", () => {
           const startEvents = await sendMessageAndWait(
             env,
             workspaceId,
-            `Use bash with run_in_background=true to run: echo "${marker}" && sleep 1`,
+            `Use task(kind="bash") with run_in_background=true, display_name="bg-output", timeout_secs=30 to run: echo "${marker}" && sleep 1. Do not spawn a sub-agent.`,
             HAIKU_MODEL,
-            BACKGROUND_TOOLS,
+            TASK_TOOLS,
             30000
           );
 
-          const processId = extractProcessId(startEvents);
-          expect(processId).not.toBeNull();
+          const taskId = extractBashTaskId(startEvents);
+          expect(taskId).not.toBeNull();
 
-          // Wait for process to complete and output to be written
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-
-          // List processes - should show the marker in output or process details
-          const listEvents = await sendMessageAndWait(
+          // Wait for the process to complete and retrieve its output
+          const awaitEvents = await sendMessageAndWait(
             env,
             workspaceId,
-            `Use bash_background_list to show details of background processes`,
+            `Use task_await with task_ids: ["${taskId}"] and timeout_secs: 10 to retrieve output.`,
             HAIKU_MODEL,
-            BACKGROUND_TOOLS,
+            TASK_TOOLS,
             20000
           );
 
-          // The process should have exited (status: exited) after sleep completes
-          const listResponse = extractTextFromEvents(listEvents);
-          const hasExited =
-            listResponse.toLowerCase().includes("exited") ||
-            listResponse.toLowerCase().includes("completed") ||
-            toolOutputContains(listEvents, "bash_background_list", "exited");
-
-          // Process may still be running or just finished - either is acceptable
-          // The main assertion is that the process was tracked
-          expect(
-            hasExited ||
-              listResponse.includes(processId!) ||
-              toolOutputContains(listEvents, "bash_background_list", processId!)
-          ).toBe(true);
+          const output = collectTaskAwaitOutputs(awaitEvents);
+          expect(output).toContain(marker);
         } finally {
           await cleanup();
         }
