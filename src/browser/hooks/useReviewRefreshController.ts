@@ -1,10 +1,14 @@
-import { useEffect, useRef, useMemo } from "react";
+import { useEffect, useRef, useMemo, useState } from "react";
 import { workspaceStore } from "@/browser/stores/WorkspaceStore";
 import type { APIClient } from "@/browser/contexts/API";
 import { RefreshController, type LastRefreshInfo } from "@/browser/utils/RefreshController";
-import { usePersistedState } from "@/browser/hooks/usePersistedState";
 
 /** Debounce delay for auto-refresh after tool completion */
+
+// Session-scoped cache of last refresh info per workspace.
+// We intentionally do NOT persist this across window reloads, since that can
+// show confusing/stale values (e.g. "4h ago") after restarting the app.
+const lastRefreshInfoByWorkspaceId = new Map<string, LastRefreshInfo>();
 const TOOL_REFRESH_DEBOUNCE_MS = 3000;
 
 export interface UseReviewRefreshControllerOptions {
@@ -58,11 +62,14 @@ export function useReviewRefreshController(
   // User interaction state (pauses auto-refresh)
   const isInteractingRef = useRef(false);
 
-  // Track last refresh info - persisted per workspace so it survives workspace switches
-  const [lastRefreshInfo, setLastRefreshInfo] = usePersistedState<LastRefreshInfo | null>(
-    `review-last-refresh:${workspaceId}`,
-    null
-  );
+  const [lastRefreshInfo, setLastRefreshInfo] = useState<LastRefreshInfo | null>(() => {
+    return lastRefreshInfoByWorkspaceId.get(workspaceId) ?? null;
+  });
+
+  // If workspaceId changes without a full remount, load any cached value.
+  useEffect(() => {
+    setLastRefreshInfo(lastRefreshInfoByWorkspaceId.get(workspaceId) ?? null);
+  }, [workspaceId]);
 
   // Create RefreshController once, with stable callbacks via refs
   const controller = useMemo(() => {
@@ -78,13 +85,16 @@ export function useReviewRefreshController(
         onRefreshRef.current();
         onGitStatusRefreshRef.current?.();
       },
-      onRefreshComplete: setLastRefreshInfo,
+      onRefreshComplete: (info) => {
+        lastRefreshInfoByWorkspaceId.set(workspaceId, info);
+        setLastRefreshInfo(info);
+      },
     });
     ctrl.bindListeners();
     return ctrl;
-    // isCreating/scrollContainerRef/setLastRefreshInfo changes require a new controller.
+    // workspaceId/isCreating/scrollContainerRef changes require a new controller.
     // Note: options.onRefresh is accessed via ref to avoid recreating controller on every render.
-  }, [isCreating, scrollContainerRef, setLastRefreshInfo]);
+  }, [workspaceId, isCreating, scrollContainerRef]);
 
   // Cleanup on unmount or when controller changes
   useEffect(() => {
@@ -114,6 +124,9 @@ export function useReviewRefreshController(
   };
 
   const requestManualRefresh = () => {
+    const info: LastRefreshInfo = { timestamp: Date.now(), trigger: "manual" };
+    lastRefreshInfoByWorkspaceId.set(workspaceId, info);
+    setLastRefreshInfo(info);
     controller.requestImmediate();
   };
 
