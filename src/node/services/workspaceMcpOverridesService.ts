@@ -13,10 +13,21 @@ const MCP_OVERRIDES_DIR = ".mux";
 const MCP_OVERRIDES_JSONC = "mcp.local.jsonc";
 const MCP_OVERRIDES_JSON = "mcp.local.json";
 
+const MCP_OVERRIDES_GITIGNORE_PATTERNS = [
+  `${MCP_OVERRIDES_DIR}/${MCP_OVERRIDES_JSONC}`,
+  `${MCP_OVERRIDES_DIR}/${MCP_OVERRIDES_JSON}`,
+];
+
 function joinForRuntime(runtimeConfig: RuntimeConfig | undefined, ...parts: string[]): string {
   assert(parts.length > 0, "joinForRuntime requires at least one path segment");
   // For SSH runtimes, paths must remain POSIX even on Windows.
   return runtimeConfig?.type === "ssh" ? path.posix.join(...parts) : path.join(...parts);
+}
+
+function isAbsoluteForRuntime(runtimeConfig: RuntimeConfig | undefined, filePath: string): boolean {
+  return runtimeConfig?.type === "ssh"
+    ? path.posix.isAbsolute(filePath)
+    : path.isAbsolute(filePath);
 }
 
 function isStringArray(value: unknown): value is string[] {
@@ -229,6 +240,74 @@ export class WorkspaceMcpOverridesService {
     }
   }
 
+  private async ensureOverridesGitignored(
+    runtime: ReturnType<typeof createRuntime>,
+    workspacePath: string,
+    runtimeConfig: RuntimeConfig | undefined
+  ): Promise<void> {
+    try {
+      const isInsideGitResult = await execBuffered(runtime, "git rev-parse --is-inside-work-tree", {
+        cwd: workspacePath,
+        timeout: 10,
+      });
+      if (isInsideGitResult.exitCode !== 0 || isInsideGitResult.stdout.trim() !== "true") {
+        return;
+      }
+
+      const excludePathResult = await execBuffered(
+        runtime,
+        "git rev-parse --git-path info/exclude",
+        {
+          cwd: workspacePath,
+          timeout: 10,
+        }
+      );
+      if (excludePathResult.exitCode !== 0) {
+        return;
+      }
+
+      const excludeFilePathRaw = excludePathResult.stdout.trim();
+      if (excludeFilePathRaw.length === 0) {
+        return;
+      }
+
+      const excludeFilePath = isAbsoluteForRuntime(runtimeConfig, excludeFilePathRaw)
+        ? excludeFilePathRaw
+        : joinForRuntime(runtimeConfig, workspacePath, excludeFilePathRaw);
+
+      let existing = "";
+      try {
+        existing = await readFileString(runtime, excludeFilePath);
+      } catch {
+        // Missing exclude file is OK.
+      }
+
+      const existingPatterns = new Set(
+        existing
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0)
+      );
+      const missingPatterns = MCP_OVERRIDES_GITIGNORE_PATTERNS.filter(
+        (pattern) => !existingPatterns.has(pattern)
+      );
+      if (missingPatterns.length === 0) {
+        return;
+      }
+
+      const needsNewline = existing.length > 0 && !existing.endsWith("\n");
+      const updated = existing + (needsNewline ? "\n" : "") + missingPatterns.join("\n") + "\n";
+
+      await writeFileString(runtime, excludeFilePath, updated);
+    } catch (error) {
+      // Best-effort only; never fail a workspace operation because git ignore couldn't be updated.
+      log.debug("[MCP] Failed to add workspace MCP overrides file to git exclude", {
+        workspacePath,
+        error,
+      });
+    }
+  }
+
   private async removeOverridesFile(
     runtime: ReturnType<typeof createRuntime>,
     workspacePath: string
@@ -284,6 +363,7 @@ export class WorkspaceMcpOverridesService {
     try {
       await this.ensureOverridesDir(runtime, workspacePath);
       await writeFileString(runtime, jsoncPath, JSON.stringify(normalizedLegacy, null, 2) + "\n");
+      await this.ensureOverridesGitignored(runtime, workspacePath, metadata.runtimeConfig);
       await this.clearLegacyOverridesInConfig(workspaceId);
       log.info("[MCP] Migrated workspace MCP overrides from config.json", {
         workspaceId,
@@ -326,5 +406,6 @@ export class WorkspaceMcpOverridesService {
 
     await this.ensureOverridesDir(runtime, workspacePath);
     await writeFileString(runtime, jsoncPath, JSON.stringify(normalized, null, 2) + "\n");
+    await this.ensureOverridesGitignored(runtime, workspacePath, metadata.runtimeConfig);
   }
 }

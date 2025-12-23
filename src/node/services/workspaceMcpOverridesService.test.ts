@@ -3,6 +3,8 @@ import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import { Config } from "@/node/config";
+import { createRuntime } from "@/node/runtime/runtimeFactory";
+import { execBuffered } from "@/node/utils/runtime/helpers";
 import { WorkspaceMcpOverridesService } from "./workspaceMcpOverridesService";
 
 function getWorkspacePath(args: {
@@ -68,6 +70,64 @@ describe("WorkspaceMcpOverridesService", () => {
     expect(await pathExists(path.join(workspacePath, ".mux", "mcp.local.jsonc"))).toBe(false);
   });
 
+  it("adds .mux/mcp.local.jsonc to git exclude when writing overrides", async () => {
+    const projectPath = "/fake/project";
+    const workspaceId = "ws-id";
+    const workspaceName = "branch";
+
+    const workspacePath = getWorkspacePath({
+      srcDir: config.srcDir,
+      projectName: "project",
+      workspaceName,
+    });
+    await fs.mkdir(workspacePath, { recursive: true });
+
+    const runtime = createRuntime({ type: "local" }, { projectPath: workspacePath });
+    const gitInitResult = await execBuffered(runtime, "git init", {
+      cwd: workspacePath,
+      timeout: 10,
+    });
+    expect(gitInitResult.exitCode).toBe(0);
+
+    await config.editConfig((cfg) => {
+      cfg.projects.set(projectPath, {
+        workspaces: [
+          {
+            path: workspacePath,
+            id: workspaceId,
+            name: workspaceName,
+            runtimeConfig: { type: "worktree", srcBaseDir: config.srcDir },
+          },
+        ],
+      });
+      return cfg;
+    });
+
+    const service = new WorkspaceMcpOverridesService(config);
+
+    const excludePathResult = await execBuffered(runtime, "git rev-parse --git-path info/exclude", {
+      cwd: workspacePath,
+      timeout: 10,
+    });
+    expect(excludePathResult.exitCode).toBe(0);
+
+    const excludePathRaw = excludePathResult.stdout.trim();
+    expect(excludePathRaw.length).toBeGreaterThan(0);
+
+    const excludePath = path.isAbsolute(excludePathRaw)
+      ? excludePathRaw
+      : path.join(workspacePath, excludePathRaw);
+
+    const before = (await pathExists(excludePath)) ? await fs.readFile(excludePath, "utf-8") : "";
+    expect(before).not.toContain(".mux/mcp.local.jsonc");
+
+    await service.setOverridesForWorkspace(workspaceId, {
+      disabledServers: ["server-a"],
+    });
+
+    const after = await fs.readFile(excludePath, "utf-8");
+    expect(after).toContain(".mux/mcp.local.jsonc");
+  });
   it("persists overrides to .mux/mcp.local.jsonc and reads them back", async () => {
     const projectPath = "/fake/project";
     const workspaceId = "ws-id";
