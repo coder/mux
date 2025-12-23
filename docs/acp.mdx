@@ -1,0 +1,84 @@
+---
+title: Agent Client Protocol (ACP)
+description: Use mux as an ACP agent in editors like Zed
+---
+
+`mux acp` starts an **Agent Client Protocol (ACP)** agent over **stdio**.
+
+It acts as a thin bridge to a running mux **HTTP/WebSocket API server**, so editors that support ACP (like Zed) can drive mux workspaces.
+
+## Prerequisites
+
+You need a mux API server running locally:
+
+- **Mux Desktop**: the API server is typically started automatically (unless disabled).
+- **Standalone**: run `mux server`.
+
+Server discovery order:
+
+1. `--server-url` / `--server-token`
+2. `MUX_SERVER_URL` / `MUX_SERVER_AUTH_TOKEN`
+3. `~/.mux/server.lock`
+
+If none are available, `mux acp` will exit with an error.
+
+## Zed setup
+
+Zed can run any ACP agent as a subprocess via `agent_servers`.
+
+Add this to your Zed `settings.json`:
+
+```json
+{
+  "agent_servers": {
+    "Mux": {
+      "command": "mux",
+      "args": ["acp"],
+      "env": {}
+    }
+  }
+}
+```
+
+Then in Zed, create a new external agent thread and select **Mux**.
+
+### Using a specific mux server
+
+If you want to connect to a specific server instance, add args/env:
+
+```json
+{
+  "agent_servers": {
+    "Mux (custom server)": {
+      "command": "mux",
+      "args": ["acp", "--server-url", "http://127.0.0.1:3000", "--server-token", "<token>"],
+      "env": {}
+    }
+  }
+}
+```
+
+## Notes
+
+- `mux acp` reserves **stdout** for the ACP protocol. Logs go to **stderr**.
+- By default, mux uses the **local** runtime (project directory directly).
+  - For `--runtime worktree|ssh`, you must also pass `--trunk-branch`.
+
+## Troubleshooting
+
+### "No running mux API server found"
+
+- Start mux desktop (ensure API server is enabled), or run:
+
+```bash
+mux server
+```
+
+- Or explicitly set `MUX_SERVER_URL` / `MUX_SERVER_AUTH_TOKEN`.
+
+### Zed shows no output / agent immediately disconnects
+
+Open Zed’s ACP debug logs (Command Palette: `dev: open acp logs`) and look for:
+
+- JSON parsing errors (often means something wrote to stdout)
+- Connection/auth errors to the mux server
