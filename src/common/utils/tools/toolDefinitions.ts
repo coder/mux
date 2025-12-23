@@ -6,7 +6,7 @@
  */
 
 import { z } from "zod";
-import { AgentSkillPackageSchema, SkillNameSchema } from "@/common/orpc/schemas";
+import { AgentIdSchema, AgentSkillPackageSchema, SkillNameSchema } from "@/common/orpc/schemas";
 import {
   BASH_HARD_MAX_LINES,
   BASH_MAX_LINE_BYTES,
@@ -94,14 +94,43 @@ const SubagentTypeSchema = z.preprocess(
   z.enum(BUILT_IN_SUBAGENT_TYPES)
 );
 
+const TaskAgentIdSchema = z.preprocess(
+  (value) => (typeof value === "string" ? value.trim().toLowerCase() : value),
+  AgentIdSchema
+);
+
 export const TaskToolArgsSchema = z
   .object({
-    subagent_type: SubagentTypeSchema,
+    // Prefer agentId. subagent_type is a deprecated alias for backwards compatibility.
+    agentId: TaskAgentIdSchema.optional(),
+    subagent_type: SubagentTypeSchema.optional(),
     prompt: z.string().min(1),
     title: z.string().min(1),
     run_in_background: z.boolean().default(false),
   })
-  .strict();
+  .strict()
+  .superRefine((args, ctx) => {
+    const hasAgentId = typeof args.agentId === "string" && args.agentId.length > 0;
+    const hasSubagentType = typeof args.subagent_type === "string" && args.subagent_type.length > 0;
+
+    if (!hasAgentId && !hasSubagentType) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Provide agentId (preferred) or subagent_type",
+        path: ["agentId"],
+      });
+      return;
+    }
+
+    if (hasAgentId && hasSubagentType) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Provide only one of agentId or subagent_type (not both)",
+        path: ["agentId"],
+      });
+      return;
+    }
+  });
 
 export const TaskToolQueuedResultSchema = z
   .object({
@@ -116,6 +145,7 @@ export const TaskToolCompletedResultSchema = z
     taskId: z.string().optional(),
     reportMarkdown: z.string(),
     title: z.string().optional(),
+    agentId: z.string().optional(),
     agentType: z.string().optional(),
   })
   .strict();

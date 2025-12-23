@@ -11,6 +11,7 @@ import type { PartialService } from "@/node/services/partialService";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import { log } from "@/node/services/log";
 import { detectDefaultTrunkBranch, listLocalBranches } from "@/node/git";
+import { readAgentDefinition } from "@/node/services/agentDefinitions/agentDefinitionsService";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import type { InitLogger, WorkspaceCreationResult } from "@/node/runtime/Runtime";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
@@ -20,6 +21,7 @@ import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import { defaultModel, normalizeGatewayModel } from "@/common/utils/ai/models";
 import type { RuntimeConfig } from "@/common/types/runtime";
+import { AgentIdSchema } from "@/common/orpc/schemas";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { ToolCallEndEvent, StreamEndEvent } from "@/common/types/stream";
 import { isDynamicToolPart, type DynamicToolPart } from "@/common/types/toolParts";
@@ -39,7 +41,10 @@ export type AgentTaskStatus = NonNullable<WorkspaceConfigEntry["taskStatus"]>;
 export interface TaskCreateArgs {
   parentWorkspaceId: string;
   kind: TaskKind;
-  agentType: string;
+  /** Preferred identifier (matches agent definition id). */
+  agentId?: string;
+  /** @deprecated Legacy alias for agentId (kept for on-disk compatibility). */
+  agentType?: string;
   prompt: string;
   /** Human-readable title for the task (displayed in sidebar) */
   title: string;
@@ -343,10 +348,19 @@ export class TaskService {
       return Err("Task.create: prompt is required");
     }
 
-    const agentType = coerceNonEmptyString(args.agentType);
-    if (!agentType) {
-      return Err("Task.create: agentType is required");
+    const agentIdRaw = coerceNonEmptyString(args.agentId ?? args.agentType);
+    if (!agentIdRaw) {
+      return Err("Task.create: agentId is required");
     }
+
+    const normalizedAgentId = agentIdRaw.trim().toLowerCase();
+    const parsedAgentId = AgentIdSchema.safeParse(normalizedAgentId);
+    if (!parsedAgentId.success) {
+      return Err(`Task.create: invalid agentId (${normalizedAgentId})`);
+    }
+
+    const agentId = parsedAgentId.data;
+    const agentType = agentId; // Legacy alias for on-disk compatibility.
 
     await using _lock = await this.mutex.acquire();
 
@@ -378,7 +392,7 @@ export class TaskService {
     const shouldQueue = activeCount >= taskSettings.maxParallelAgentTasks;
 
     const taskId = this.config.generateStableId();
-    const workspaceName = buildAgentWorkspaceName(agentType, taskId);
+    const workspaceName = buildAgentWorkspaceName(agentId, taskId);
 
     const nameValidation = validateWorkspaceName(workspaceName);
     if (!nameValidation.valid) {
@@ -394,8 +408,7 @@ export class TaskService {
     const inheritedThinkingLevel: ThinkingLevel =
       args.thinkingLevel ?? parentMeta.aiSettings?.thinkingLevel ?? "off";
 
-    const normalizedAgentType = agentType.trim().toLowerCase();
-    const subagentDefaults = cfg.subagentAiDefaults?.[normalizedAgentType];
+    const subagentDefaults = cfg.agentAiDefaults?.[agentId] ?? cfg.subagentAiDefaults?.[agentId];
 
     const taskModelString = subagentDefaults?.modelString ?? inheritedModelString;
     const canonicalModel = normalizeGatewayModel(taskModelString).trim();
@@ -410,12 +423,27 @@ export class TaskService {
       projectPath: parentMeta.projectPath,
     });
 
+    // Validate the agent definition exists and is runnable as a sub-agent.
+    const isInPlace = parentMeta.projectPath === parentMeta.name;
+    const parentWorkspacePath = isInPlace
+      ? parentMeta.projectPath
+      : runtime.getWorkspacePath(parentMeta.projectPath, parentMeta.name);
+
+    try {
+      const definition = await readAgentDefinition(runtime, parentWorkspacePath, agentId);
+      if (definition.frontmatter.subagent?.runnable !== true) {
+        return Err(`Task.create: agentId is not runnable as a sub-agent (${agentId})`);
+      }
+    } catch {
+      return Err(`Task.create: unknown agentId (${agentId})`);
+    }
+
     const createdAt = getIsoNow();
 
     taskQueueDebug("TaskService.create decision", {
       parentWorkspaceId,
       taskId,
-      agentType,
+      agentId,
       workspaceName,
       createdAt,
       activeCount,
@@ -462,6 +490,7 @@ export class TaskService {
           runtimeConfig: taskRuntimeConfig,
           aiSettings: { model: canonicalModel, thinkingLevel: effectiveThinkingLevel },
           parentWorkspaceId,
+          agentId,
           agentType,
           taskStatus: "queued",
           taskPrompt: prompt,
@@ -561,6 +590,7 @@ export class TaskService {
         createdAt,
         runtimeConfig: taskRuntimeConfig,
         aiSettings: { model: canonicalModel, thinkingLevel: effectiveThinkingLevel },
+        agentId,
         parentWorkspaceId,
         agentType,
         taskStatus: "running",

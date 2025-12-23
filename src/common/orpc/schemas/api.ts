@@ -19,6 +19,11 @@ import { WorkspaceStatsSnapshotSchema } from "./workspaceStats";
 import { FrontendWorkspaceMetadataSchema, WorkspaceActivitySnapshotSchema } from "./workspace";
 import { WorkspaceAISettingsSchema } from "./workspaceAiSettings";
 import {
+  AgentDefinitionDescriptorSchema,
+  AgentDefinitionPackageSchema,
+  AgentIdSchema,
+} from "./agentDefinition";
+import {
   MCPAddParamsSchema,
   MCPRemoveParamsSchema,
   MCPServerMapSchema,
@@ -506,15 +511,31 @@ export type WorkspaceSendMessageOutput = z.infer<typeof workspace.sendMessage.ou
 // Tasks (agent sub-workspaces)
 export const tasks = {
   create: {
-    input: z.object({
-      parentWorkspaceId: z.string(),
-      kind: z.literal("agent"),
-      agentType: z.string(),
-      prompt: z.string(),
-      title: z.string().min(1),
-      modelString: z.string().optional(),
-      thinkingLevel: z.string().optional(),
-    }),
+    input: z
+      .object({
+        parentWorkspaceId: z.string(),
+        kind: z.literal("agent"),
+        agentId: AgentIdSchema.optional(),
+        /** @deprecated Legacy alias for agentId (kept for downgrade compatibility). */
+        agentType: z.string().min(1).optional(),
+        prompt: z.string(),
+        title: z.string().min(1),
+        modelString: z.string().optional(),
+        thinkingLevel: z.string().optional(),
+      })
+      .superRefine((value, ctx) => {
+        const hasAgentId = typeof value.agentId === "string" && value.agentId.trim().length > 0;
+        const hasAgentType =
+          typeof value.agentType === "string" && value.agentType.trim().length > 0;
+
+        if (hasAgentId === hasAgentType) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "tasks.create: exactly one of agentId or agentType is required",
+            path: ["agentId"],
+          });
+        }
+      }),
     output: ResultSchema(
       z.object({
         taskId: z.string(),
@@ -523,6 +544,18 @@ export const tasks = {
       }),
       z.string()
     ),
+  },
+};
+
+// Agent definitions (unifies UI modes + subagents)
+export const agents = {
+  list: {
+    input: z.object({ workspaceId: z.string() }),
+    output: z.array(AgentDefinitionDescriptorSchema),
+  },
+  get: {
+    input: z.object({ workspaceId: z.string(), agentId: AgentIdSchema }),
+    output: AgentDefinitionPackageSchema,
   },
 };
 
@@ -672,6 +705,7 @@ const ModeAiDefaultsSchema = z
     compact: ModeAiDefaultsEntrySchema.optional(),
   })
   .strict();
+const AgentAiDefaultsSchema = z.record(z.string().min(1), SubagentAiDefaultsEntrySchema);
 const SubagentAiDefaultsSchema = z.record(z.string().min(1), SubagentAiDefaultsEntrySchema);
 
 export const config = {
@@ -682,6 +716,8 @@ export const config = {
         maxParallelAgentTasks: z.number().int(),
         maxTaskNestingDepth: z.number().int(),
       }),
+      agentAiDefaults: AgentAiDefaultsSchema,
+      // Legacy fields (downgrade compatibility)
       subagentAiDefaults: SubagentAiDefaultsSchema,
       modeAiDefaults: ModeAiDefaultsSchema,
     }),
@@ -692,7 +728,15 @@ export const config = {
         maxParallelAgentTasks: z.number().int(),
         maxTaskNestingDepth: z.number().int(),
       }),
+      agentAiDefaults: AgentAiDefaultsSchema.optional(),
+      // Legacy field (downgrade compatibility)
       subagentAiDefaults: SubagentAiDefaultsSchema.optional(),
+    }),
+    output: z.void(),
+  },
+  updateAgentAiDefaults: {
+    input: z.object({
+      agentAiDefaults: AgentAiDefaultsSchema,
     }),
     output: z.void(),
   },

@@ -386,6 +386,7 @@ export const SendMessageOptionsSchema = z.object({
   toolPolicy: ToolPolicySchema.optional(),
   additionalSystemInstructions: z.string().optional(),
   maxOutputTokens: z.number().optional(),
+  agentId: z.string().optional().catch(undefined),
   providerOptions: MuxProviderOptionsSchema.optional(),
   mode: AgentModeSchema.optional().catch(undefined),
   muxMetadata: z.any().optional(), // Black box

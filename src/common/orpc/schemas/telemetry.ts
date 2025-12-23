@@ -85,6 +85,7 @@ const MCPContextInjectedPropertiesSchema = z.object({
   workspaceId: z.string(),
   model: z.string(),
   mode: AgentModeSchema.catch("exec"),
+  agentId: z.string().min(1).optional().catch(undefined),
   runtimeType: TelemetryRuntimeTypeSchema,
 
   mcp_server_enabled_count: z.number(),

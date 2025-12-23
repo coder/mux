@@ -1,5 +1,6 @@
 import { useThinkingLevel } from "./useThinkingLevel";
 import { useMode } from "@/browser/contexts/ModeContext";
+import { useAgent } from "@/browser/contexts/AgentContext";
 import { usePersistedState } from "./usePersistedState";
 import { getDefaultModel } from "./useModelsFromSettings";
 import { migrateGatewayModel, useGateway, isProviderSupported } from "./useGatewayModels";
@@ -48,6 +49,7 @@ interface ExperimentValues {
  */
 function constructSendMessageOptions(
   mode: UIMode,
+  agentId: string,
   thinkingLevel: ThinkingLevel,
   preferredModel: string | null | undefined,
   providerOptions: MuxProviderOptions,
@@ -71,6 +73,7 @@ function constructSendMessageOptions(
   return {
     thinkingLevel: uiThinking,
     model,
+    agentId,
     mode: mode === "exec" || mode === "plan" ? mode : "exec", // Only pass exec/plan to backend
     toolPolicy: modeToToolPolicy(mode),
     providerOptions,
@@ -107,6 +110,7 @@ export interface SendMessageOptionsWithBase extends SendMessageOptions {
 export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWithBase {
   const [thinkingLevel] = useThinkingLevel();
   const [mode] = useMode();
+  const { agentId } = useAgent();
   const { options: providerOptions } = useProviderOptions();
   const defaultModel = getDefaultModel();
   const [preferredModel] = usePersistedState<string>(
@@ -135,6 +139,7 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
 
   const options = constructSendMessageOptions(
     mode,
+    agentId,
     thinkingLevel,
     preferredModel,
     providerOptions,

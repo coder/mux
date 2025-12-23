@@ -9,6 +9,7 @@ import { sanitizeToolInputs } from "@/browser/utils/messages/sanitizeToolInput";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
+import { AgentIdSchema } from "@/common/orpc/schemas";
 import {
   PROVIDER_REGISTRY,
   PROVIDER_DEFINITIONS,
@@ -75,7 +76,8 @@ import { getPlanFileHint, getPlanModeInstruction } from "@/common/utils/ui/modeU
 import type { AgentMode, UIMode } from "@/common/types/mode";
 import { MUX_APP_ATTRIBUTION_TITLE, MUX_APP_ATTRIBUTION_URL } from "@/constants/appAttribution";
 import { readPlanFile } from "@/node/utils/runtime/helpers";
-import { getAgentPreset } from "@/node/services/agentPresets";
+import { readAgentDefinition } from "@/node/services/agentDefinitions/agentDefinitionsService";
+import { resolveToolPolicyForAgent } from "@/node/services/agentDefinitions/resolveToolPolicy";
 
 // Export a standalone version of getToolsForModel for use in backend
 
@@ -1001,6 +1003,7 @@ export class AIService extends EventEmitter {
     maxOutputTokens?: number,
     muxProviderOptions?: MuxProviderOptions,
     mode?: AgentMode,
+    agentId?: string,
     recordFileState?: (filePath: string, state: FileState) => void,
     changedFileAttachments?: EditedFileAttachment[],
     postCompactionAttachments?: PostCompactionAttachment[] | null,
@@ -1021,8 +1024,7 @@ export class AIService extends EventEmitter {
       // This is idempotent - won't double-commit if already in chat.jsonl
       await this.partialService.commitToHistory(workspaceId);
 
-      const uiMode: UIMode | undefined =
-        mode === "plan" ? "plan" : mode === "exec" ? "exec" : undefined;
+      // Mode (plan|exec|compact) is derived from the selected agent definition.
       const effectiveMuxProviderOptions: MuxProviderOptions = muxProviderOptions ?? {};
 
       // For xAI models, swap between reasoning and non-reasoning variants based on thinkingLevel
@@ -1055,24 +1057,9 @@ export class AIService extends EventEmitter {
 
       // Use the provider name already extracted above (providerName variable)
 
-      // Get tool names early for mode transition sentinel (stub config, no workspace context needed)
-      const earlyRuntime = createRuntime({ type: "local", srcBaseDir: process.cwd() });
-      const earlyAllTools = await getToolsForModel(
-        modelString,
-        {
-          cwd: process.cwd(),
-          runtime: earlyRuntime,
-          runtimeTempDir: os.tmpdir(),
-          secrets: {},
-          mode: uiMode,
-        },
-        "", // Empty workspace ID for early stub config
-        this.initStateManager,
-        undefined,
-        undefined
-      );
-      const earlyTools = applyToolPolicy(earlyAllTools, toolPolicy);
-      const toolNamesForSentinel = Object.keys(earlyTools);
+      // Tool names are needed for the mode transition sentinel injection.
+      // Compute them once we know the effective agent + tool policy.
+      let toolNamesForSentinel: string[] = [];
 
       // Filter out assistant messages with only reasoning (no text/tools)
       // EXCEPTION: When extended thinking is enabled, preserve reasoning-only messages
@@ -1121,6 +1108,75 @@ export class AIService extends EventEmitter {
         ? metadata.projectPath
         : runtime.getWorkspacePath(metadata.projectPath, metadata.name);
 
+      // Resolve the active agent definition.
+      //
+      // Precedence:
+      // - Child workspaces (tasks) use their persisted agentId/agentType.
+      // - Main workspaces use the requested agentId (frontend), falling back to legacy mode.
+      const requestedAgentIdRaw =
+        (metadata.parentWorkspaceId ? (metadata.agentId ?? metadata.agentType) : undefined) ??
+        (typeof agentId === "string" ? agentId : undefined) ??
+        (typeof mode === "string" ? mode : undefined) ??
+        "exec";
+      const requestedAgentIdNormalized = requestedAgentIdRaw.trim().toLowerCase();
+      const parsedAgentId = AgentIdSchema.safeParse(requestedAgentIdNormalized);
+      const effectiveAgentId = parsedAgentId.success ? parsedAgentId.data : ("exec" as const);
+
+      let agentDefinition;
+      try {
+        agentDefinition = await readAgentDefinition(runtime, workspacePath, effectiveAgentId);
+      } catch (error) {
+        log.warn("Failed to load agent definition; falling back to exec", {
+          workspaceId,
+          effectiveAgentId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        agentDefinition = await readAgentDefinition(runtime, workspacePath, "exec");
+      }
+
+      const effectiveMode: AgentMode = agentDefinition.frontmatter.policy?.base ?? "exec";
+      const uiMode: UIMode | undefined =
+        effectiveMode === "plan" ? "plan" : effectiveMode === "exec" ? "exec" : undefined;
+
+      const cfg = this.config.loadConfigOrDefault();
+      const taskSettings = cfg.taskSettings ?? DEFAULT_TASK_SETTINGS;
+      const taskDepth = getTaskDepthFromConfig(cfg, workspaceId);
+      const shouldDisableTaskToolsForDepth = taskDepth >= taskSettings.maxTaskNestingDepth;
+
+      const isSubagentWorkspace = Boolean(metadata.parentWorkspaceId);
+
+      // NOTE: Agent tool policy is applied after any caller-supplied policy so callers cannot
+      // broaden the tool set (e.g., re-enable propose_plan in exec mode).
+      const agentToolPolicy = resolveToolPolicyForAgent({
+        base: effectiveMode,
+        frontmatter: agentDefinition.frontmatter,
+        isSubagent: isSubagentWorkspace,
+        disableTaskToolsForDepth: shouldDisableTaskToolsForDepth,
+      });
+      const effectiveToolPolicy: ToolPolicy | undefined =
+        toolPolicy || agentToolPolicy.length > 0
+          ? [...(toolPolicy ?? []), ...agentToolPolicy]
+          : undefined;
+
+      // Compute tool names for mode transition sentinel.
+      const earlyRuntime = createRuntime({ type: "local", srcBaseDir: process.cwd() });
+      const earlyAllTools = await getToolsForModel(
+        modelString,
+        {
+          cwd: process.cwd(),
+          runtime: earlyRuntime,
+          runtimeTempDir: os.tmpdir(),
+          secrets: {},
+          mode: uiMode,
+        },
+        "", // Empty workspace ID for early stub config
+        this.initStateManager,
+        undefined,
+        undefined
+      );
+      const earlyTools = applyToolPolicy(earlyAllTools, effectiveToolPolicy);
+      toolNamesForSentinel = Object.keys(earlyTools);
+
       // Fetch workspace MCP overrides (for filtering servers and tools)
       // NOTE: Stored in <workspace>/.mux/mcp.local.jsonc (not ~/.mux/config.json).
       let mcpOverrides: WorkspaceMCPOverrides | undefined;
@@ -1154,7 +1210,7 @@ export class AIService extends EventEmitter {
         workspaceId
       );
 
-      if (mode === "plan") {
+      if (effectiveMode === "plan") {
         const planModeInstruction = getPlanModeInstruction(planFilePath, planResult.exists);
         effectiveAdditionalInstructions = additionalSystemInstructions
           ? `${planModeInstruction}\n\n${additionalSystemInstructions}`
@@ -1171,10 +1227,19 @@ export class AIService extends EventEmitter {
         }
       }
 
+      if (shouldDisableTaskToolsForDepth) {
+        const nestingInstruction =
+          `Task delegation is disabled in this workspace (taskDepth=${taskDepth}, ` +
+          `maxTaskNestingDepth=${taskSettings.maxTaskNestingDepth}). Do not call task/task_await/task_list/task_terminate.`;
+        effectiveAdditionalInstructions = effectiveAdditionalInstructions
+          ? `${effectiveAdditionalInstructions}\n\n${nestingInstruction}`
+          : nestingInstruction;
+      }
+
       // Read plan content for mode transition (plan → exec)
       // Only read if switching to exec mode and last assistant was in plan mode
       let planContentForTransition: string | undefined;
-      if (mode === "exec") {
+      if (effectiveMode === "exec") {
         const lastAssistantMessage = [...filteredMessages]
           .reverse()
           .find((m) => m.role === "assistant");
@@ -1186,7 +1251,7 @@ export class AIService extends EventEmitter {
       // Now inject mode transition context with plan content (runtime is now available)
       const messagesWithModeContext = injectModeTransition(
         messagesWithSentinel,
-        mode,
+        effectiveMode,
         toolNamesForSentinel,
         planContentForTransition,
         planContentForTransition ? planFilePath : undefined
@@ -1261,34 +1326,19 @@ export class AIService extends EventEmitter {
         }
       }
 
-      const cfg = this.config.loadConfigOrDefault();
-      const taskSettings = cfg.taskSettings ?? DEFAULT_TASK_SETTINGS;
-      const taskDepth = getTaskDepthFromConfig(cfg, workspaceId);
-      const shouldDisableTaskToolsForDepth = taskDepth >= taskSettings.maxTaskNestingDepth;
-
-      const agentPreset = getAgentPreset(metadata.agentType);
-      const agentSystemPrompt = agentPreset
-        ? shouldDisableTaskToolsForDepth
-          ? [
-              agentPreset.systemPrompt,
-              "",
-              "Nesting:",
-              `- Task delegation is disabled in this workspace (taskDepth=${taskDepth}, maxTaskNestingDepth=${taskSettings.maxTaskNestingDepth}).`,
-              "- Do not call task/task_await/task_list/task_terminate.",
-            ].join("\n")
-          : agentPreset.systemPrompt
-        : undefined;
-
       // Build system message from workspace metadata
       const systemMessage = await buildSystemMessage(
         metadata,
         runtime,
         workspacePath,
-        mode,
+        effectiveMode,
         effectiveAdditionalInstructions,
         modelString,
         mcpServers,
-        agentSystemPrompt ? { variant: "agent", agentSystemPrompt } : undefined
+        {
+          agentId: effectiveAgentId,
+          agentSystemPrompt: agentDefinition.body,
+        }
       );
 
       // Count system message tokens for cost tracking
@@ -1384,18 +1434,7 @@ export class AIService extends EventEmitter {
         mcpTools
       );
 
-      const depthToolPolicy: ToolPolicy = shouldDisableTaskToolsForDepth
-        ? [
-            { regex_match: "task", action: "disable" },
-            { regex_match: "task_.*", action: "disable" },
-          ]
-        : [];
-
-      // Preset + depth tool policies must be applied last so callers cannot re-enable restricted tools.
-      const effectiveToolPolicy =
-        agentPreset || depthToolPolicy.length > 0
-          ? [...(toolPolicy ?? []), ...(agentPreset?.toolPolicy ?? []), ...depthToolPolicy]
-          : toolPolicy;
+      // NOTE: effectiveToolPolicy is derived from the selected agent definition (plus hard-denies).
 
       // Apply tool policy FIRST - this must happen before PTC to ensure sandbox
       // respects allow/deny filters. The policy-filtered tools are passed to
@@ -1476,7 +1515,8 @@ export class AIService extends EventEmitter {
         properties: {
           workspaceId,
           model: modelString,
-          mode: mode ?? uiMode ?? "exec",
+          mode: effectiveMode,
+          agentId: effectiveAgentId,
           runtimeType: getRuntimeTypeForTelemetry(metadata.runtimeConfig),
 
           mcp_server_enabled_count: effectiveMcpStats.enabledServerCount,
@@ -1509,7 +1549,7 @@ export class AIService extends EventEmitter {
         timestamp: Date.now(),
         model: modelString,
         systemMessageTokens,
-        mode, // Track the mode for this assistant response
+        mode: effectiveMode, // Track the base mode for this assistant response
       });
 
       // Append to history to get historySequence assigned
@@ -1576,7 +1616,7 @@ export class AIService extends EventEmitter {
           timestamp: Date.now(),
           model: modelString,
           systemMessageTokens,
-          toolPolicy,
+          toolPolicy: effectiveToolPolicy,
         });
 
         const parts: StreamEndEvent["parts"] = [
@@ -1677,8 +1717,9 @@ export class AIService extends EventEmitter {
           providerOptions,
           thinkingLevel,
           maxOutputTokens,
-          mode,
-          toolPolicy,
+          mode: effectiveMode,
+          agentId: effectiveAgentId,
+          toolPolicy: effectiveToolPolicy,
         };
         log.info(
           `[MUX_DEBUG_LLM_REQUEST] Full LLM request:\n${JSON.stringify(llmRequest, null, 2)}`
@@ -1699,11 +1740,11 @@ export class AIService extends EventEmitter {
         {
           systemMessageTokens,
           timestamp: Date.now(),
-          mode, // Pass mode so it persists in final history entry
+          mode: effectiveMode, // Pass base mode so it persists in final history entry
         },
         providerOptions,
         maxOutputTokens,
-        toolPolicy,
+        effectiveToolPolicy,
         streamToken // Pass the pre-generated stream token
       );
 

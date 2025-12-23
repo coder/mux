@@ -180,7 +180,7 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({ args, result, status
   const { expanded, toggleExpanded } = useToolExpansion(hasReport);
 
   const isBackground = args.run_in_background ?? false;
-  const agentType = args.subagent_type;
+  const agentType = args.agentId ?? args.subagent_type ?? "unknown";
   const prompt = args.prompt;
   const title = args.title;
 

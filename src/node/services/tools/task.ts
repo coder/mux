@@ -18,9 +18,14 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
         throw new Error("Interrupted");
       }
 
+      const requestedAgentId =
+        typeof args.agentId === "string" && args.agentId.trim().length > 0
+          ? args.agentId
+          : args.subagent_type;
+
       // Plan mode is explicitly non-executing. Allow only read-only exploration tasks.
-      if (config.mode === "plan" && args.subagent_type === "exec") {
-        throw new Error('In Plan Mode you may only spawn subagent_type: "explore" tasks.');
+      if (config.mode === "plan" && requestedAgentId !== "explore") {
+        throw new Error('In Plan Mode you may only spawn agentId: "explore" tasks.');
       }
 
       const modelString =
@@ -32,7 +37,9 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
       const created = await taskService.create({
         parentWorkspaceId: workspaceId,
         kind: "agent",
-        agentType: args.subagent_type,
+        agentId: requestedAgentId,
+        // Legacy alias (persisted for older clients / on-disk compatibility).
+        agentType: requestedAgentId,
         prompt: args.prompt,
         title: args.title,
         modelString,
@@ -64,7 +71,8 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
           taskId: created.data.taskId,
           reportMarkdown: report.reportMarkdown,
           title: report.title,
-          agentType: args.subagent_type,
+          agentId: requestedAgentId,
+          agentType: requestedAgentId,
         },
         "task"
       );

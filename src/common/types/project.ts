@@ -7,6 +7,7 @@ import type { z } from "zod";
 import type { ProjectConfigSchema, WorkspaceConfigSchema } from "../orpc/schemas";
 import type { TaskSettings, SubagentAiDefaults } from "./tasks";
 import type { ModeAiDefaults } from "./modeAiDefaults";
+import type { AgentAiDefaults } from "./agentAiDefaults";
 
 export type Workspace = z.infer<typeof WorkspaceConfigSchema>;
 
@@ -43,8 +44,10 @@ export interface ProjectsConfig {
   featureFlagOverrides?: Record<string, FeatureFlagOverride>;
   /** Global task settings (agent sub-workspaces, queue limits, nesting depth) */
   taskSettings?: TaskSettings;
-  /** Per-subagent default model + thinking overrides. Missing values inherit from the parent workspace. */
+  /** Default model + thinking overrides per agentId (applies to UI agents and subagents). */
+  agentAiDefaults?: AgentAiDefaults;
+  /** @deprecated Legacy per-subagent default model + thinking overrides. */
   subagentAiDefaults?: SubagentAiDefaults;
-  /** Default model + thinking overrides per mode (plan/exec/compact). */
+  /** @deprecated Legacy per-mode (plan/exec/compact) default model + thinking overrides. */
   modeAiDefaults?: ModeAiDefaults;
 }

@@ -120,8 +120,10 @@ export interface MCPContextInjectedPayload {
   workspaceId: string;
   /** Full model identifier */
   model: string;
-  /** UI mode */
+  /** UI mode (plan|exec|compact) derived from the selected agent definition */
   mode: AgentMode;
+  /** Active agent definition id (e.g. "plan", "exec", "explore"). Optional for backwards compatibility. */
+  agentId?: string;
   /** Runtime type for the workspace */
   runtimeType: TelemetryRuntimeType;
 

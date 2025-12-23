@@ -20,12 +20,17 @@ import { readPlanFile } from "@/node/utils/runtime/helpers";
 import { secretsToRecord } from "@/common/types/secrets";
 import { roundToBase2 } from "@/common/telemetry/utils";
 import { createAsyncEventQueue } from "@/common/utils/asyncEventIterator";
+import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { normalizeModeAiDefaults } from "@/common/types/modeAiDefaults";
 import {
   DEFAULT_TASK_SETTINGS,
   normalizeSubagentAiDefaults,
   normalizeTaskSettings,
 } from "@/common/types/tasks";
+import {
+  discoverAgentDefinitions,
+  readAgentDefinition,
+} from "@/node/services/agentDefinitions/agentDefinitionsService";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 
 export const router = (authToken?: string) => {
@@ -251,6 +256,8 @@ export const router = (authToken?: string) => {
           const config = context.config.loadConfigOrDefault();
           return {
             taskSettings: config.taskSettings ?? DEFAULT_TASK_SETTINGS,
+            agentAiDefaults: config.agentAiDefaults ?? {},
+            // Legacy fields (downgrade compatibility)
             subagentAiDefaults: config.subagentAiDefaults ?? {},
             modeAiDefaults: config.modeAiDefaults ?? {},
           };
@@ -261,10 +268,58 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           await context.config.editConfig((config) => {
             const normalizedDefaults = normalizeModeAiDefaults(input.modeAiDefaults);
+
+            const nextAgentAiDefaults = { ...(config.agentAiDefaults ?? {}) };
+            for (const id of ["plan", "exec", "compact"] as const) {
+              const entry = normalizedDefaults[id];
+              if (entry) {
+                nextAgentAiDefaults[id] = entry;
+              } else {
+                delete nextAgentAiDefaults[id];
+              }
+            }
+
             return {
               ...config,
+              agentAiDefaults:
+                Object.keys(nextAgentAiDefaults).length > 0 ? nextAgentAiDefaults : undefined,
+              // Keep legacy field up to date.
               modeAiDefaults:
                 Object.keys(normalizedDefaults).length > 0 ? normalizedDefaults : undefined,
+            };
+          });
+        }),
+      updateAgentAiDefaults: t
+        .input(schemas.config.updateAgentAiDefaults.input)
+        .output(schemas.config.updateAgentAiDefaults.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => {
+            const normalized = normalizeAgentAiDefaults(input.agentAiDefaults);
+
+            const legacyModeDefaults = normalizeModeAiDefaults({
+              plan: normalized.plan,
+              exec: normalized.exec,
+              compact: normalized.compact,
+            });
+
+            const legacySubagentDefaultsRaw: Record<string, unknown> = {};
+            for (const [agentType, entry] of Object.entries(normalized)) {
+              if (agentType === "plan" || agentType === "exec" || agentType === "compact") {
+                continue;
+              }
+              legacySubagentDefaultsRaw[agentType] = entry;
+            }
+
+            const legacySubagentDefaults = normalizeSubagentAiDefaults(legacySubagentDefaultsRaw);
+
+            return {
+              ...config,
+              agentAiDefaults: Object.keys(normalized).length > 0 ? normalized : undefined,
+              // Legacy fields (downgrade compatibility)
+              modeAiDefaults:
+                Object.keys(legacyModeDefaults).length > 0 ? legacyModeDefaults : undefined,
+              subagentAiDefaults:
+                Object.keys(legacySubagentDefaults).length > 0 ? legacySubagentDefaults : undefined,
             };
           });
         }),
@@ -276,14 +331,122 @@ export const router = (authToken?: string) => {
             const normalizedTaskSettings = normalizeTaskSettings(input.taskSettings);
             const result = { ...config, taskSettings: normalizedTaskSettings };
 
+            if (input.agentAiDefaults !== undefined) {
+              const normalized = normalizeAgentAiDefaults(input.agentAiDefaults);
+              result.agentAiDefaults = Object.keys(normalized).length > 0 ? normalized : undefined;
+
+              // Legacy fields (downgrade compatibility)
+              const legacyModeDefaults = normalizeModeAiDefaults({
+                plan: normalized.plan,
+                exec: normalized.exec,
+                compact: normalized.compact,
+              });
+              result.modeAiDefaults =
+                Object.keys(legacyModeDefaults).length > 0 ? legacyModeDefaults : undefined;
+
+              if (input.subagentAiDefaults === undefined) {
+                const legacySubagentDefaultsRaw: Record<string, unknown> = {};
+                for (const [agentType, entry] of Object.entries(normalized)) {
+                  if (agentType === "plan" || agentType === "exec" || agentType === "compact") {
+                    continue;
+                  }
+                  legacySubagentDefaultsRaw[agentType] = entry;
+                }
+
+                const legacySubagentDefaults =
+                  normalizeSubagentAiDefaults(legacySubagentDefaultsRaw);
+                result.subagentAiDefaults =
+                  Object.keys(legacySubagentDefaults).length > 0
+                    ? legacySubagentDefaults
+                    : undefined;
+              }
+            }
+
             if (input.subagentAiDefaults !== undefined) {
               const normalizedDefaults = normalizeSubagentAiDefaults(input.subagentAiDefaults);
               result.subagentAiDefaults =
                 Object.keys(normalizedDefaults).length > 0 ? normalizedDefaults : undefined;
+
+              // Downgrade compatibility: keep agentAiDefaults in sync with legacy subagentAiDefaults.
+              // Only mutate keys previously managed by subagentAiDefaults so we don't clobber other
+              // agent defaults (e.g., UI-selectable custom agents).
+              const previousLegacy = config.subagentAiDefaults ?? {};
+              const nextAgentAiDefaults: Record<string, unknown> = {
+                ...(result.agentAiDefaults ?? config.agentAiDefaults ?? {}),
+              };
+
+              for (const legacyAgentType of Object.keys(previousLegacy)) {
+                if (
+                  legacyAgentType === "plan" ||
+                  legacyAgentType === "exec" ||
+                  legacyAgentType === "compact"
+                ) {
+                  continue;
+                }
+                if (!(legacyAgentType in normalizedDefaults)) {
+                  delete nextAgentAiDefaults[legacyAgentType];
+                }
+              }
+
+              for (const [agentType, entry] of Object.entries(normalizedDefaults)) {
+                if (agentType === "plan" || agentType === "exec" || agentType === "compact")
+                  continue;
+                nextAgentAiDefaults[agentType] = entry;
+              }
+
+              const normalizedAgent = normalizeAgentAiDefaults(nextAgentAiDefaults);
+              result.agentAiDefaults =
+                Object.keys(normalizedAgent).length > 0 ? normalizedAgent : undefined;
             }
 
             return result;
           });
+        }),
+    },
+    agents: {
+      list: t
+        .input(schemas.agents.list.input)
+        .output(schemas.agents.list.output)
+        .handler(async ({ context, input }) => {
+          const metadataResult = await context.aiService.getWorkspaceMetadata(input.workspaceId);
+          if (!metadataResult.success) {
+            throw new Error(metadataResult.error);
+          }
+
+          const metadata = metadataResult.data;
+          const runtime = createRuntime(
+            metadata.runtimeConfig ?? { type: "local", srcBaseDir: context.config.srcDir },
+            { projectPath: metadata.projectPath }
+          );
+
+          const isInPlace = metadata.projectPath === metadata.name;
+          const workspacePath = isInPlace
+            ? metadata.projectPath
+            : runtime.getWorkspacePath(metadata.projectPath, metadata.name);
+
+          return discoverAgentDefinitions(runtime, workspacePath);
+        }),
+      get: t
+        .input(schemas.agents.get.input)
+        .output(schemas.agents.get.output)
+        .handler(async ({ context, input }) => {
+          const metadataResult = await context.aiService.getWorkspaceMetadata(input.workspaceId);
+          if (!metadataResult.success) {
+            throw new Error(metadataResult.error);
+          }
+
+          const metadata = metadataResult.data;
+          const runtime = createRuntime(
+            metadata.runtimeConfig ?? { type: "local", srcBaseDir: context.config.srcDir },
+            { projectPath: metadata.projectPath }
+          );
+
+          const isInPlace = metadata.projectPath === metadata.name;
+          const workspacePath = isInPlace
+            ? metadata.projectPath
+            : runtime.getWorkspacePath(metadata.projectPath, metadata.name);
+
+          return readAgentDefinition(runtime, workspacePath, input.agentId);
         }),
     },
     providers: {
@@ -1303,6 +1466,7 @@ export const router = (authToken?: string) => {
           return context.taskService.create({
             parentWorkspaceId: input.parentWorkspaceId,
             kind: input.kind,
+            agentId: input.agentId,
             agentType: input.agentType,
             prompt: input.prompt,
             title: input.title,

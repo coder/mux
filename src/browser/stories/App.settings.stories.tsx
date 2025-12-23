@@ -21,7 +21,7 @@ import { selectWorkspace } from "./storyHelpers";
 import { createMockORPCClient } from "../../../.storybook/mocks/orpc";
 import { within, userEvent, waitFor } from "@storybook/test";
 import { getExperimentKey, EXPERIMENT_IDS } from "@/common/constants/experiments";
-import type { ModeAiDefaults } from "@/common/types/modeAiDefaults";
+import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import type { TaskSettings } from "@/common/types/tasks";
 
 export default {
@@ -37,7 +37,7 @@ export default {
 function setupSettingsStory(options: {
   providersConfig?: Record<string, { apiKeySet: boolean; baseUrl?: string; models?: string[] }>;
   providersList?: string[];
-  modeAiDefaults?: ModeAiDefaults;
+  agentAiDefaults?: AgentAiDefaults;
   taskSettings?: Partial<TaskSettings>;
   /** Pre-set experiment states in localStorage before render */
   experiments?: Partial<Record<string, boolean>>;
@@ -58,7 +58,7 @@ function setupSettingsStory(options: {
     projects: groupWorkspacesByProject(workspaces),
     workspaces,
     providersConfig: options.providersConfig ?? {},
-    modeAiDefaults: options.modeAiDefaults,
+    agentAiDefaults: options.agentAiDefaults,
     providersList: options.providersList ?? ["anthropic", "openai", "xai"],
     taskSettings: options.taskSettings,
   });
@@ -118,20 +118,15 @@ export const Tasks: AppStory = {
 
     await body.findByText(/Max Parallel Agent Tasks/i);
     await body.findByText(/Max Task Nesting Depth/i);
-    const subagentsHeading = await body.findByRole("heading", { name: /Sub-agents/i });
-    const subagentsSection = subagentsHeading.parentElement;
-    if (!subagentsSection) {
-      throw new Error("Expected Sub-agents section container to exist");
-    }
+    await body.findByText(/Agent Defaults/i);
+    await body.findByRole("heading", { name: /UI agents/i });
+    await body.findByRole("heading", { name: /Sub-agents/i });
+    await body.findByRole("heading", { name: /Internal/i });
 
-    const subagents = within(subagentsSection);
-
-    await subagents.findByText(/^Explore$/i);
-
-    const execMatches = subagents.queryAllByText(/^Exec$/i);
-    if (execMatches.length > 0) {
-      throw new Error("Expected Exec sub-agent settings to be hidden (always inherits)");
-    }
+    await body.findByText(/^Plan$/i);
+    await body.findByText(/^Exec$/i);
+    await body.findByText(/^Explore$/i);
+    await body.findByText(/^Compact$/i);
 
     const inputs = await body.findAllByRole("spinbutton");
     if (inputs.length !== 2) {
@@ -231,35 +226,6 @@ export const ModelsConfigured: AppStory = {
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     await openSettingsToSection(canvasElement, "models");
-  },
-};
-
-/** Modes section - global default model/reasoning per mode */
-export const Modes: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSettingsStory({
-          modeAiDefaults: {
-            plan: { modelString: "anthropic:claude-sonnet-4-5", thinkingLevel: "medium" },
-            exec: { modelString: "openai:gpt-5.2", thinkingLevel: "xhigh" },
-            compact: { modelString: "openai:gpt-5.2-pro", thinkingLevel: "high" },
-          },
-        })
-      }
-    />
-  ),
-  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-    await openSettingsToSection(canvasElement, "modes");
-
-    const body = within(canvasElement.ownerDocument.body);
-    const dialog = await body.findByRole("dialog");
-    const modal = within(dialog);
-
-    await modal.findByText(/Mode Defaults/i);
-    await modal.findByText(/^Plan$/i);
-    await modal.findByText(/^Exec$/i);
-    await modal.findByText(/^Compact$/i);
   },
 };
 

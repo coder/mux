@@ -49,6 +49,15 @@ export {
 } from "./schemas/agentSkill";
 
 // Error schemas
+// Agent Definition schemas
+export {
+  AgentDefinitionDescriptorSchema,
+  AgentDefinitionFrontmatterSchema,
+  AgentDefinitionPackageSchema,
+  AgentDefinitionScopeSchema,
+  AgentIdSchema,
+} from "./schemas/agentDefinition";
+
 export { SendMessageErrorSchema, StreamErrorTypeSchema } from "./schemas/errors";
 
 // Tool schemas
@@ -129,6 +138,7 @@ export {
   features,
   general,
   menu,
+  agents,
   nameGeneration,
   projects,
   ProviderConfigInfoSchema,

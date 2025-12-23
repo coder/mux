@@ -8,6 +8,7 @@ import { useDraftWorkspaceSettings } from "@/browser/hooks/useDraftWorkspaceSett
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
 import {
+  getAgentIdKey,
   getInputKey,
   getInputImagesKey,
   getModelKey,
@@ -43,6 +44,10 @@ function syncCreationPreferences(projectPath: string, workspaceId: string): void
     updatePersistedState(getModelKey(workspaceId), projectModel);
   }
 
+  const projectAgentId = readPersistedState<string | null>(getAgentIdKey(projectScopeId), null);
+  if (projectAgentId) {
+    updatePersistedState(getAgentIdKey(workspaceId), projectAgentId);
+  }
   const projectMode = readPersistedState<UIMode | null>(getModeKey(projectScopeId), null);
   if (projectMode) {
     updatePersistedState(getModeKey(workspaceId), projectMode);

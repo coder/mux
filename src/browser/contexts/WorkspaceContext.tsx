@@ -16,6 +16,7 @@ import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import {
   deleteWorkspaceStorage,
+  getAgentIdKey,
   getModeKey,
   getModelKey,
   getThinkingLevelKey,
@@ -44,6 +45,18 @@ function seedWorkspaceLocalStorageFromBackend(metadata: FrontendWorkspaceMetadat
   >;
 
   const workspaceId = metadata.id;
+
+  // Seed the workspace agentId (tasks/subagents) so the UI renders correctly on reload.
+  // Main workspaces default to the locally-selected agentId (stored in localStorage).
+  const metadataAgentId = metadata.agentId ?? metadata.agentType;
+  if (typeof metadataAgentId === "string" && metadataAgentId.trim().length > 0) {
+    const key = getAgentIdKey(workspaceId);
+    const normalized = metadataAgentId.trim().toLowerCase();
+    const existing = readPersistedState<string | undefined>(key, undefined);
+    if (existing !== normalized) {
+      updatePersistedState(key, normalized);
+    }
+  }
 
   const aiByMode =
     metadata.aiSettingsByMode ??
