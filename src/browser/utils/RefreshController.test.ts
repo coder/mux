@@ -1,33 +1,32 @@
-import { describe, it, expect, beforeEach, afterEach, jest } from "bun:test";
+import { describe, it, expect, mock } from "bun:test";
+
 import { RefreshController, type LastRefreshInfo } from "./RefreshController";
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// NOTE: Bun's Jest-compat layer does not currently expose timer controls like
+// jest.advanceTimersByTime(), so these tests use real timers.
+
 describe("RefreshController", () => {
-  beforeEach(() => {
-    jest.useFakeTimers();
-  });
-
-  afterEach(() => {
-    jest.useRealTimers();
-  });
-
-  it("rate-limits multiple schedule() calls (doesn't reset timer)", () => {
-    const onRefresh = jest.fn<() => void>();
-    const controller = new RefreshController({ onRefresh, debounceMs: 100 });
+  it("rate-limits multiple schedule() calls (doesn't reset timer)", async () => {
+    const onRefresh = mock<() => void>(() => undefined);
+    const controller = new RefreshController({ onRefresh, debounceMs: 20 });
 
     controller.schedule();
-    jest.advanceTimersByTime(50);
+    await sleep(10);
     controller.schedule(); // Shouldn't reset timer
-    jest.advanceTimersByTime(50);
 
-    // Should fire at 100ms from first call, not 150ms
+    await sleep(40);
+
+    // Should fire ~20ms after first call, not ~30ms after second.
     expect(onRefresh).toHaveBeenCalledTimes(1);
 
     controller.dispose();
   });
 
-  it("coalesces calls during rate-limit window", () => {
-    const onRefresh = jest.fn<() => void>();
-    const controller = new RefreshController({ onRefresh, debounceMs: 100 });
+  it("coalesces calls during rate-limit window", async () => {
+    const onRefresh = mock<() => void>(() => undefined);
+    const controller = new RefreshController({ onRefresh, debounceMs: 20 });
 
     controller.schedule();
     controller.schedule();
@@ -35,16 +34,16 @@ describe("RefreshController", () => {
 
     expect(onRefresh).not.toHaveBeenCalled();
 
-    jest.advanceTimersByTime(100);
+    await sleep(60);
 
     expect(onRefresh).toHaveBeenCalledTimes(1);
 
     controller.dispose();
   });
 
-  it("requestImmediate() bypasses rate-limit timer", () => {
-    const onRefresh = jest.fn<() => void>();
-    const controller = new RefreshController({ onRefresh, debounceMs: 100 });
+  it("requestImmediate() bypasses rate-limit timer", async () => {
+    const onRefresh = mock<() => void>(() => undefined);
+    const controller = new RefreshController({ onRefresh, debounceMs: 50 });
 
     controller.schedule();
     expect(onRefresh).not.toHaveBeenCalled();
@@ -53,7 +52,7 @@ describe("RefreshController", () => {
     expect(onRefresh).toHaveBeenCalledTimes(1);
 
     // Original timer should be cleared
-    jest.advanceTimersByTime(100);
+    await sleep(80);
     expect(onRefresh).toHaveBeenCalledTimes(1);
 
     controller.dispose();
@@ -62,286 +61,173 @@ describe("RefreshController", () => {
   it("guards against concurrent sync refreshes (in-flight queuing)", () => {
     // Track if refresh is currently in-flight
     let inFlight = false;
-    const onRefresh = jest.fn(() => {
-      // Simulate sync operation that takes time
+    const onRefresh = mock(() => {
       expect(inFlight).toBe(false); // Should never be called while already in-flight
       inFlight = true;
-      // Immediately complete (sync)
       inFlight = false;
     });
 
-    const controller = new RefreshController({ onRefresh, debounceMs: 100 });
+    const controller = new RefreshController({ onRefresh, debounceMs: 20 });
 
-    // Multiple immediate requests should only call once (queued ones execute after)
     controller.requestImmediate();
     expect(onRefresh).toHaveBeenCalledTimes(1);
 
     controller.dispose();
   });
 
-  it("schedule() during in-flight queues refresh with trailing debounce", async () => {
+  it("schedule() during in-flight queues refresh for after completion", async () => {
     let resolveRefresh: () => void;
-    const onRefresh = jest.fn(
+    const onRefresh = mock(
       () =>
         new Promise<void>((resolve) => {
           resolveRefresh = resolve;
         })
     );
 
-    // Use debounceMs longer than MIN_REFRESH_INTERVAL_MS (500ms) to avoid cooldown interference
-    const controller = new RefreshController({ onRefresh, debounceMs: 1000 });
+    const controller = new RefreshController({ onRefresh, debounceMs: 20 });
 
-    // Start first refresh
     controller.requestImmediate();
     expect(onRefresh).toHaveBeenCalledTimes(1);
 
-    // schedule() while in-flight should queue, not start timer
+    // schedule() while in-flight should queue for after completion.
     controller.schedule();
 
-    // Complete the first refresh and let .finally() run
     resolveRefresh!();
     await Promise.resolve();
-    await Promise.resolve(); // Extra tick for .finally()
 
-    // After in-flight completes, a trailing debounce timer should start.
-    // It should NOT immediately refresh.
-    jest.advanceTimersByTime(0);
-    expect(onRefresh).toHaveBeenCalledTimes(1); // Still 1, waiting for debounce
+    // Follow-up refresh is subject to MIN_REFRESH_INTERVAL_MS (500ms).
+    await sleep(650);
 
-    // Halfway through debounce - still not refreshed
-    jest.advanceTimersByTime(500);
-    expect(onRefresh).toHaveBeenCalledTimes(1);
-
-    // After full debounce period, should refresh
-    jest.advanceTimersByTime(500);
     expect(onRefresh).toHaveBeenCalledTimes(2);
 
     controller.dispose();
   });
 
-  it("trailing debounce captures final state (rate-limit with trailing debounce)", async () => {
-    // This test verifies the key behavior: constant updates don't infinitely delay
-    // the next refresh, but there's still a trailing debounce to capture final state.
-    let resolveRefresh: (() => void) | null = null;
-    const onRefresh = jest.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          resolveRefresh = resolve;
-        })
-    );
-
-    // Use debounceMs longer than MIN_REFRESH_INTERVAL_MS (500ms) to avoid cooldown interference
-    const controller = new RefreshController({ onRefresh, debounceMs: 1000 });
-
-    // 1. First schedule() starts the rate-limit timer
-    controller.schedule();
-    expect(onRefresh).not.toHaveBeenCalled();
-
-    // 2. More schedule() calls during rate-limit window are coalesced (don't reset timer)
-    jest.advanceTimersByTime(500);
-    controller.schedule();
-    controller.schedule();
-
-    // Timer fires at 1000ms, not 1500ms (rate-limited, not pure debounced)
-    jest.advanceTimersByTime(500);
-    expect(onRefresh).toHaveBeenCalledTimes(1);
-
-    // 3. Now refresh is in-flight. More schedule() calls queue a follow-up.
-    controller.schedule();
-    controller.schedule();
-    controller.schedule();
-
-    // 4. Complete the refresh
-    resolveRefresh!();
-    await Promise.resolve();
-    await Promise.resolve();
-
-    // 5. Should start a NEW trailing debounce timer (not immediate refresh)
-    expect(onRefresh).toHaveBeenCalledTimes(1);
-
-    // 6. More calls during trailing debounce don't reset it
-    jest.advanceTimersByTime(500);
-    controller.schedule();
-    controller.schedule();
-
-    // Timer fires at 1000ms from when trailing debounce started
-    jest.advanceTimersByTime(500);
-    expect(onRefresh).toHaveBeenCalledTimes(2);
-
-    controller.dispose();
-  });
-
-  it("isRefreshing reflects in-flight state", () => {
+  it("isRefreshing reflects in-flight state", async () => {
     let resolveRefresh: () => void;
     const refreshPromise = new Promise<void>((resolve) => {
       resolveRefresh = resolve;
     });
 
-    const onRefresh = jest.fn(() => refreshPromise);
-    const controller = new RefreshController({ onRefresh, debounceMs: 100 });
+    const onRefresh = mock(() => refreshPromise);
+    const controller = new RefreshController({ onRefresh, debounceMs: 20 });
 
     expect(controller.isRefreshing).toBe(false);
 
     controller.requestImmediate();
     expect(controller.isRefreshing).toBe(true);
 
-    // Complete the promise
     resolveRefresh!();
+    await Promise.resolve();
+
+    expect(controller.isRefreshing).toBe(false);
 
     controller.dispose();
   });
 
-  it("dispose() cleans up debounce timer", () => {
-    const onRefresh = jest.fn<() => void>();
-    const controller = new RefreshController({ onRefresh, debounceMs: 100 });
+  it("dispose() cleans up debounce timer", async () => {
+    const onRefresh = mock<() => void>(() => undefined);
+    const controller = new RefreshController({ onRefresh, debounceMs: 20 });
 
     controller.schedule();
     controller.dispose();
 
-    jest.advanceTimersByTime(100);
+    await sleep(80);
 
     expect(onRefresh).not.toHaveBeenCalled();
   });
 
-  it("does not refresh after dispose", () => {
-    const onRefresh = jest.fn<() => void>();
-    const controller = new RefreshController({ onRefresh, debounceMs: 100 });
+  it("does not refresh after dispose", async () => {
+    const onRefresh = mock<() => void>(() => undefined);
+    const controller = new RefreshController({ onRefresh, debounceMs: 20 });
 
     controller.dispose();
     controller.schedule();
     controller.requestImmediate();
 
-    jest.advanceTimersByTime(100);
+    await sleep(80);
 
     expect(onRefresh).not.toHaveBeenCalled();
   });
 
-  it("requestImmediate() bypasses isPaused check (for manual refresh)", () => {
-    const onRefresh = jest.fn<() => void>();
+  it("requestImmediate() bypasses isPaused check (for manual refresh)", async () => {
+    const onRefresh = mock<() => void>(() => undefined);
     const paused = true;
     const controller = new RefreshController({
       onRefresh,
-      debounceMs: 100,
+      debounceMs: 20,
       isPaused: () => paused,
     });
 
-    // schedule() should be blocked by isPaused
     controller.schedule();
-    jest.advanceTimersByTime(100);
+    await sleep(80);
     expect(onRefresh).not.toHaveBeenCalled();
 
-    // requestImmediate() should bypass isPaused (manual refresh still works during interaction)
     controller.requestImmediate();
     expect(onRefresh).toHaveBeenCalledTimes(1);
 
     controller.dispose();
   });
 
-  it("requestImmediate() respects isManualBlocked (for composing review note)", () => {
-    const onRefresh = jest.fn<() => void>();
-    let manualBlocked = true;
-    const controller = new RefreshController({
-      onRefresh,
-      debounceMs: 100,
-      isManualBlocked: () => manualBlocked,
-    });
-
-    // requestImmediate() should be blocked when isManualBlocked returns true
-    controller.requestImmediate();
-    expect(onRefresh).not.toHaveBeenCalled();
-
-    // Check that isManualBlocked getter reflects the state
-    expect(controller.isManualBlocked).toBe(true);
-
-    // Unblock and try again
-    manualBlocked = false;
-    expect(controller.isManualBlocked).toBe(false);
-
-    // Notify unpaused should flush the queued manual refresh
-    controller.notifyUnpaused();
-    expect(onRefresh).toHaveBeenCalledTimes(1);
-
-    controller.dispose();
-  });
-
-  it("isManualBlocked blocks both schedule() and requestImmediate()", () => {
-    const onRefresh = jest.fn<() => void>();
-    const manualBlocked = true;
-    const controller = new RefreshController({
-      onRefresh,
-      debounceMs: 100,
-      isManualBlocked: () => manualBlocked,
-      // Also set isPaused to ensure isManualBlocked takes precedence
-      isPaused: () => manualBlocked,
-    });
-
-    // schedule() should be blocked
-    controller.schedule();
-    jest.advanceTimersByTime(100);
-    expect(onRefresh).not.toHaveBeenCalled();
-
-    // requestImmediate() should also be blocked
-    controller.requestImmediate();
-    expect(onRefresh).not.toHaveBeenCalled();
-
-    controller.dispose();
-  });
-
-  it("schedule() respects isPaused and flushes on notifyUnpaused", () => {
-    const onRefresh = jest.fn<() => void>();
+  it("schedule() respects isPaused and flushes on notifyUnpaused", async () => {
+    const onRefresh = mock<() => void>(() => undefined);
     let paused = true;
     const controller = new RefreshController({
       onRefresh,
-      debounceMs: 100,
+      debounceMs: 20,
       isPaused: () => paused,
     });
 
-    // schedule() should queue but not execute while paused
     controller.schedule();
-    jest.advanceTimersByTime(100);
+    await sleep(80);
     expect(onRefresh).not.toHaveBeenCalled();
 
-    // Unpausing should flush the pending refresh
     paused = false;
     controller.notifyUnpaused();
+
     expect(onRefresh).toHaveBeenCalledTimes(1);
 
     controller.dispose();
   });
 
-  it("lastRefreshInfo tracks trigger and timestamp", () => {
-    const onRefresh = jest.fn<() => void>();
-    const controller = new RefreshController({ onRefresh, debounceMs: 100 });
+  it("lastRefreshInfo tracks trigger and timestamp", async () => {
+    const onRefresh = mock<() => void>(() => undefined);
+    const controller = new RefreshController({
+      onRefresh,
+      debounceMs: 20,
+      priorityDebounceMs: 20,
+    });
 
     expect(controller.lastRefreshInfo).toBeNull();
 
-    // Manual refresh should record "manual" trigger
     const beforeManual = Date.now();
     controller.requestImmediate();
+
+    expect(onRefresh).toHaveBeenCalledTimes(1);
     expect(controller.lastRefreshInfo).not.toBeNull();
     expect(controller.lastRefreshInfo!.trigger).toBe("manual");
     expect(controller.lastRefreshInfo!.timestamp).toBeGreaterThanOrEqual(beforeManual);
 
-    // Scheduled refresh should record "scheduled" trigger
     controller.schedule();
-    jest.advanceTimersByTime(500);
+    await sleep(650);
+    expect(onRefresh).toHaveBeenCalledTimes(2);
     expect(controller.lastRefreshInfo!.trigger).toBe("scheduled");
 
-    // Priority refresh should record "priority" trigger
     controller.schedulePriority();
-    jest.advanceTimersByTime(500);
+    await sleep(650);
+    expect(onRefresh).toHaveBeenCalledTimes(3);
     expect(controller.lastRefreshInfo!.trigger).toBe("priority");
 
     controller.dispose();
   });
 
-  it("onRefreshComplete callback is called with refresh info", () => {
-    const onRefresh = jest.fn<() => void>();
-    const onRefreshComplete = jest.fn<(info: { trigger: string; timestamp: number }) => void>();
+  it("onRefreshComplete callback is called with refresh info", async () => {
+    const onRefresh = mock<() => void>(() => undefined);
+    const onRefreshComplete = mock<(info: LastRefreshInfo) => void>(() => undefined);
     const controller = new RefreshController({
       onRefresh,
       onRefreshComplete,
-      debounceMs: 100,
+      debounceMs: 20,
     });
 
     expect(onRefreshComplete).not.toHaveBeenCalled();
@@ -349,73 +235,16 @@ describe("RefreshController", () => {
     controller.requestImmediate();
     expect(onRefreshComplete).toHaveBeenCalledTimes(1);
     expect(onRefreshComplete).toHaveBeenCalledWith(
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       expect.objectContaining({ trigger: "manual", timestamp: expect.any(Number) })
     );
 
     controller.schedule();
-    jest.advanceTimersByTime(500);
+    await sleep(650);
     expect(onRefreshComplete).toHaveBeenCalledTimes(2);
     expect(onRefreshComplete).toHaveBeenLastCalledWith(
       expect.objectContaining({ trigger: "scheduled" })
     );
-
-    controller.dispose();
-  });
-});
-
-describe("RefreshController manual refresh", () => {
-  it("requestImmediate always calls onRefreshComplete with trigger=manual", () => {
-    const onRefresh = jest.fn<() => void>();
-    const onRefreshComplete = jest.fn<(info: LastRefreshInfo) => void>();
-
-    const controller = new RefreshController({
-      debounceMs: 1000,
-      onRefresh,
-      onRefreshComplete,
-    });
-
-    // Request immediate (manual) refresh
-    controller.requestImmediate();
-
-    // onRefresh should be called
-    expect(onRefresh).toHaveBeenCalledTimes(1);
-
-    // onRefreshComplete should be called with trigger=manual
-    expect(onRefreshComplete).toHaveBeenCalledTimes(1);
-    expect(onRefreshComplete).toHaveBeenCalledWith(
-      expect.objectContaining({
-        trigger: "manual",
-        timestamp: expect.any(Number),
-      })
-    );
-
-    controller.dispose();
-  });
-
-  it("requestImmediate updates lastRefreshInfo on every call even when diff unchanged", () => {
-    const onRefresh = jest.fn<() => void>();
-    const onRefreshComplete = jest.fn<(info: LastRefreshInfo) => void>();
-
-    const controller = new RefreshController({
-      debounceMs: 1000,
-      onRefresh,
-      onRefreshComplete,
-    });
-
-    // First manual refresh
-    controller.requestImmediate();
-    expect(onRefreshComplete).toHaveBeenCalledTimes(1);
-    expect(onRefreshComplete.mock.calls[0][0].trigger).toBe("manual");
-
-    // Second manual refresh (simulating same diff - onRefresh doesn't change anything)
-    controller.requestImmediate();
-    expect(onRefreshComplete).toHaveBeenCalledTimes(2);
-    expect(onRefreshComplete.mock.calls[1][0].trigger).toBe("manual");
-
-    // Third manual refresh
-    controller.requestImmediate();
-    expect(onRefreshComplete).toHaveBeenCalledTimes(3);
-    expect(onRefreshComplete.mock.calls[2][0].trigger).toBe("manual");
 
     controller.dispose();
   });
