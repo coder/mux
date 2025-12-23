@@ -308,6 +308,92 @@ General details only.
   });
 
   describe("instruction scoping matrix", () => {
+  test("includes agent-specific section when agentId is provided", async () => {
+    await fs.writeFile(
+      path.join(projectDir, "AGENTS.md"),
+      `# General Instructions
+Always be helpful.
+
+## Agent: foo
+Foo instructions.
+
+## Agent: bar
+Bar instructions.
+`
+    );
+
+    const metadata: WorkspaceMetadata = {
+      id: "test-workspace",
+      name: "test-workspace",
+      projectName: "test-project",
+      projectPath: projectDir,
+      runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+    };
+
+    const systemMessage = await buildSystemMessage(
+      metadata,
+      runtime,
+      workspaceDir,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { agentId: "foo" }
+    );
+
+    const customInstructions = extractTagContent(systemMessage, "custom-instructions") ?? "";
+    expect(customInstructions).toContain("Always be helpful.");
+    expect(customInstructions).not.toContain("Foo instructions.");
+    expect(customInstructions).not.toContain("Bar instructions.");
+
+    const agentFoo = extractTagContent(systemMessage, "agent-foo") ?? "";
+    expect(agentFoo).toContain("Foo instructions.");
+    expect(agentFoo).not.toContain("Bar instructions.");
+
+    expect(systemMessage).not.toContain("<agent-bar>");
+  });
+
+  test("prefers project agent section over global fallback", async () => {
+    await fs.writeFile(
+      path.join(globalDir, "AGENTS.md"),
+      `# Global Instructions
+## Agent: foo
+Global foo.
+`
+    );
+
+    await fs.writeFile(
+      path.join(projectDir, "AGENTS.md"),
+      `# Project Instructions
+## Agent: foo
+Project foo.
+`
+    );
+
+    const metadata: WorkspaceMetadata = {
+      id: "test-workspace",
+      name: "test-workspace",
+      projectName: "test-project",
+      projectPath: projectDir,
+      runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+    };
+
+    const systemMessage = await buildSystemMessage(
+      metadata,
+      runtime,
+      workspaceDir,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { agentId: "foo" }
+    );
+
+    const agentFoo = extractTagContent(systemMessage, "agent-foo") ?? "";
+    expect(agentFoo).toContain("Project foo.");
+    expect(agentFoo).not.toContain("Global foo.");
+  });
+
     interface Scenario {
       name: string;
       mdContent: string;
