@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import * as fsPromises from "fs/promises";
 
+import { MutexMap } from "@/node/utils/concurrency/mutexMap";
 import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
 import type { Config, Workspace as WorkspaceConfigEntry } from "@/node/config";
 import type { AIService } from "@/node/services/aiService";
@@ -160,6 +161,9 @@ function getIsoNow(): string {
 }
 
 export class TaskService {
+  // Serialize stream-end/tool-call-end processing per workspace to avoid races (e.g.
+  // stream-end observing awaiting_report before agent_report handling flips the status).
+  private readonly workspaceEventLocks = new MutexMap<string>();
   private readonly mutex = new AsyncMutex();
   private readonly pendingWaitersByTaskId = new Map<string, PendingTaskWaiter[]>();
   private readonly pendingStartWaitersByTaskId = new Map<string, PendingTaskStartWaiter[]>();
@@ -188,16 +192,26 @@ export class TaskService {
       if (payload.toolName !== "agent_report") return;
       // Ignore failed agent_report attempts (e.g. tool rejected due to active descendants).
       if (!isSuccessfulToolResult(payload.result)) return;
-      void this.handleAgentReport(payload).catch((error: unknown) => {
-        log.error("TaskService.handleAgentReport failed", { error });
-      });
+
+      void this.workspaceEventLocks
+        .withLock(payload.workspaceId, async () => {
+          await this.handleAgentReport(payload);
+        })
+        .catch((error: unknown) => {
+          log.error("TaskService.handleAgentReport failed", { error });
+        });
     });
 
     this.aiService.on("stream-end", (payload: unknown) => {
       if (!isStreamEndEvent(payload)) return;
-      void this.handleStreamEnd(payload).catch((error: unknown) => {
-        log.error("TaskService.handleStreamEnd failed", { error });
-      });
+
+      void this.workspaceEventLocks
+        .withLock(payload.workspaceId, async () => {
+          await this.handleStreamEnd(payload);
+        })
+        .catch((error: unknown) => {
+          log.error("TaskService.handleStreamEnd failed", { error });
+        });
     });
   }
 
@@ -1542,6 +1556,12 @@ export class TaskService {
       return;
     }
 
+    const reportArgs = this.findAgentReportArgsInParts(event.parts);
+    if (reportArgs) {
+      await this.finalizeAgentTaskReport(workspaceId, entry, reportArgs);
+      return;
+    }
+
     // If a task stream ends without agent_report, request it once.
     if (status === "awaiting_report" && this.remindedAwaitingReport.has(workspaceId)) {
       await this.fallbackReportMissingAgentReport(entry);
@@ -1674,6 +1694,11 @@ export class TaskService {
     }
 
     const cfgBeforeReport = this.config.loadConfigOrDefault();
+    const childEntryBeforeReport = this.findWorkspaceEntry(cfgBeforeReport, childWorkspaceId);
+    if (childEntryBeforeReport?.workspace.taskStatus === "reported") {
+      return;
+    }
+
     if (this.hasActiveDescendantAgentTasks(cfgBeforeReport, childWorkspaceId)) {
       log.error("agent_report called while task has active descendants; ignoring", {
         childWorkspaceId,
@@ -1685,6 +1710,33 @@ export class TaskService {
     const reportArgs = await this.readLatestAgentReportArgs(childWorkspaceId);
     if (!reportArgs) {
       log.error("agent_report tool-call args not found", { childWorkspaceId });
+      return;
+    }
+
+    await this.finalizeAgentTaskReport(childWorkspaceId, childEntryBeforeReport, reportArgs, {
+      stopStream: true,
+    });
+  }
+
+  private async finalizeAgentTaskReport(
+    childWorkspaceId: string,
+    childEntry: { projectPath: string; workspace: WorkspaceConfigEntry } | null | undefined,
+    reportArgs: { reportMarkdown: string; title?: string },
+    options?: { stopStream?: boolean }
+  ): Promise<void> {
+    assert(
+      childWorkspaceId.length > 0,
+      "finalizeAgentTaskReport: childWorkspaceId must be non-empty"
+    );
+    assert(
+      typeof reportArgs.reportMarkdown === "string" && reportArgs.reportMarkdown.length > 0,
+      "finalizeAgentTaskReport: reportMarkdown must be non-empty"
+    );
+
+    const cfgBeforeReport = this.config.loadConfigOrDefault();
+    const statusBefore = this.findWorkspaceEntry(cfgBeforeReport, childWorkspaceId)?.workspace
+      .taskStatus;
+    if (statusBefore === "reported") {
       return;
     }
 
@@ -1700,31 +1752,36 @@ export class TaskService {
 
     await this.emitWorkspaceMetadata(childWorkspaceId);
 
-    // `agent_report` is terminal. Stop the child stream immediately to prevent any further token
-    // usage and to ensure parallelism accounting never "frees" a slot while the stream is still
-    // active (Claude/Anthropic can emit tool calls before the final assistant block completes).
-    try {
-      const stopResult = await this.aiService.stopStream(childWorkspaceId, {
-        abandonPartial: true,
-      });
-      if (!stopResult.success) {
-        log.debug("Failed to stop task stream after agent_report", {
+    if (options?.stopStream) {
+      // `agent_report` is terminal. Stop the child stream immediately to prevent any further token
+      // usage and to ensure parallelism accounting never "frees" a slot while the stream is still
+      // active (Claude/Anthropic can emit tool calls before the final assistant block completes).
+      try {
+        const stopResult = await this.aiService.stopStream(childWorkspaceId, {
+          abandonPartial: true,
+        });
+        if (!stopResult.success) {
+          log.debug("Failed to stop task stream after agent_report", {
+            workspaceId: childWorkspaceId,
+            error: stopResult.error,
+          });
+        }
+      } catch (error: unknown) {
+        log.debug("Failed to stop task stream after agent_report (threw)", {
           workspaceId: childWorkspaceId,
-          error: stopResult.error,
+          error,
         });
       }
-    } catch (error: unknown) {
-      log.debug("Failed to stop task stream after agent_report (threw)", {
-        workspaceId: childWorkspaceId,
-        error,
-      });
     }
 
     const cfgAfterReport = this.config.loadConfigOrDefault();
-    const childEntry = this.findWorkspaceEntry(cfgAfterReport, childWorkspaceId);
-    const parentWorkspaceId = childEntry?.workspace.parentWorkspaceId;
+    const latestChildEntry =
+      this.findWorkspaceEntry(cfgAfterReport, childWorkspaceId) ?? childEntry;
+    const parentWorkspaceId = latestChildEntry?.workspace.parentWorkspaceId;
     if (!parentWorkspaceId) {
-      const reason = childEntry ? "missing parentWorkspaceId" : "workspace not found in config";
+      const reason = latestChildEntry
+        ? "missing parentWorkspaceId"
+        : "workspace not found in config";
       log.debug("Ignoring agent_report: workspace is not an agent task", {
         childWorkspaceId,
         reason,
@@ -1735,7 +1792,7 @@ export class TaskService {
       return;
     }
 
-    await this.deliverReportToParent(parentWorkspaceId, childEntry, reportArgs);
+    await this.deliverReportToParent(parentWorkspaceId, latestChildEntry, reportArgs);
 
     // Resolve foreground waiters.
     this.resolveWaiters(childWorkspaceId, reportArgs);
@@ -1755,7 +1812,7 @@ export class TaskService {
     const hasActiveDescendants = this.hasActiveDescendantAgentTasks(postCfg, parentWorkspaceId);
     if (!hasActiveDescendants && !this.aiService.isStreaming(parentWorkspaceId)) {
       const resumeResult = await this.workspaceService.resumeStream(parentWorkspaceId, {
-        model: childEntry?.workspace.taskModelString ?? defaultModel,
+        model: latestChildEntry?.workspace.taskModelString ?? defaultModel,
       });
       if (!resumeResult.success) {
         log.error("Failed to auto-resume parent after agent_report", {
@@ -1856,11 +1913,11 @@ export class TaskService {
     return null;
   }
 
-  private findAgentReportArgsInMessage(
-    msg: MuxMessage
+  private findAgentReportArgsInParts(
+    parts: readonly unknown[]
   ): { reportMarkdown: string; title?: string } | null {
-    for (let i = msg.parts.length - 1; i >= 0; i--) {
-      const part = msg.parts[i];
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const part = parts[i];
       if (!isDynamicToolPart(part)) continue;
       if (part.toolName !== "agent_report") continue;
       if (part.state !== "output-available") continue;
@@ -1870,6 +1927,12 @@ export class TaskService {
       return parsed.data;
     }
     return null;
+  }
+
+  private findAgentReportArgsInMessage(
+    msg: MuxMessage
+  ): { reportMarkdown: string; title?: string } | null {
+    return this.findAgentReportArgsInParts(msg.parts);
   }
 
   private async deliverReportToParent(

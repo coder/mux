@@ -10,6 +10,7 @@ import { PartialService } from "@/node/services/partialService";
 import { TaskService } from "@/node/services/taskService";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { Ok, Err, type Result } from "@/common/types/result";
+import type { StreamEndEvent } from "@/common/types/stream";
 import { createMuxMessage } from "@/common/types/message";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { AIService } from "@/node/services/aiService";
@@ -896,10 +897,16 @@ describe("TaskService", () => {
     const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
 
     const internal = taskService as unknown as {
-      handleStreamEnd: (event: { type: "stream-end"; workspaceId: string }) => Promise<void>;
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
     };
 
-    await internal.handleStreamEnd({ type: "stream-end", workspaceId: rootWorkspaceId });
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: rootWorkspaceId,
+      messageId: "assistant-root",
+      metadata: { model: "openai:gpt-5.2" },
+      parts: [],
+    });
 
     expect(resumeStream).toHaveBeenCalledTimes(1);
     expect(resumeStream).toHaveBeenCalledWith(
@@ -1261,9 +1268,15 @@ describe("TaskService", () => {
     const { taskService } = createTaskServiceHarness(config, { workspaceService });
 
     const internal = taskService as unknown as {
-      handleStreamEnd: (event: { type: "stream-end"; workspaceId: string }) => Promise<void>;
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
     };
-    await internal.handleStreamEnd({ type: "stream-end", workspaceId: parentTaskId });
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: parentTaskId,
+      messageId: "assistant-parent-task",
+      metadata: { model: "openai:gpt-4o-mini" },
+      parts: [],
+    });
 
     expect(sendMessage).not.toHaveBeenCalled();
 
@@ -1316,9 +1329,15 @@ describe("TaskService", () => {
     const { taskService } = createTaskServiceHarness(config, { workspaceService });
 
     const internal = taskService as unknown as {
-      handleStreamEnd: (event: { type: "stream-end"; workspaceId: string }) => Promise<void>;
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
     };
-    await internal.handleStreamEnd({ type: "stream-end", workspaceId: parentTaskId });
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: parentTaskId,
+      messageId: "assistant-parent-task",
+      metadata: { model: "openai:gpt-4o-mini" },
+      parts: [],
+    });
 
     expect(sendMessage).not.toHaveBeenCalled();
 
@@ -1675,6 +1694,123 @@ describe("TaskService", () => {
     expect(resumeStream).toHaveBeenCalled();
   });
 
+  test("uses agent_report from stream-end parts instead of fallback", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-111";
+    const childId = "child-222";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
+              {
+                path: path.join(projectPath, "child"),
+                id: childId,
+                name: "agent_explore_child",
+                parentWorkspaceId: parentId,
+                agentType: "explore",
+                taskStatus: "awaiting_report",
+                taskModelString: "openai:gpt-4o-mini",
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage, resumeStream, remove } = createWorkspaceServiceMocks();
+    const { partialService, taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+
+    // Simulate the "second attempt" state (the task was already reminded).
+    (taskService as unknown as { remindedAwaitingReport: Set<string> }).remindedAwaitingReport.add(
+      childId
+    );
+
+    const parentPartial = createMuxMessage(
+      "assistant-parent-partial",
+      "assistant",
+      "Waiting on subagent…",
+      { timestamp: Date.now() },
+      [
+        {
+          type: "dynamic-tool",
+          toolCallId: "task-call-1",
+          toolName: "task",
+          input: { subagent_type: "explore", prompt: "do the thing", title: "Test task" },
+          state: "input-available",
+        },
+      ]
+    );
+    const writeParentPartial = await partialService.writePartial(parentId, parentPartial);
+    expect(writeParentPartial.success).toBe(true);
+
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: unknown) => Promise<void>;
+    };
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: childId,
+      messageId: "assistant-child-output",
+      metadata: { model: "openai:gpt-4o-mini" },
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "agent-report-call-1",
+          toolName: "agent_report",
+          input: { reportMarkdown: "Hello from child", title: "Result" },
+          state: "output-available",
+          output: { success: true },
+        },
+      ],
+    });
+
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    const updatedParentPartial = await partialService.readPartial(parentId);
+    expect(updatedParentPartial).not.toBeNull();
+    if (updatedParentPartial) {
+      const toolPart = updatedParentPartial.parts.find(
+        (p) =>
+          p &&
+          typeof p === "object" &&
+          "type" in p &&
+          (p as { type?: unknown }).type === "dynamic-tool"
+      ) as unknown as
+        | {
+            toolName: string;
+            state: string;
+            output?: unknown;
+          }
+        | undefined;
+      expect(toolPart?.toolName).toBe("task");
+      expect(toolPart?.state).toBe("output-available");
+      const outputJson = JSON.stringify(toolPart?.output);
+      expect(outputJson).toContain("Hello from child");
+      expect(outputJson).toContain("Result");
+      expect(outputJson).not.toContain("fallback");
+    }
+
+    const postCfg = config.loadConfigOrDefault();
+    const ws = Array.from(postCfg.projects.values())
+      .flatMap((p) => p.workspaces)
+      .find((w) => w.id === childId);
+    expect(ws?.taskStatus).toBe("reported");
+
+    expect(remove).toHaveBeenCalled();
+    expect(resumeStream).toHaveBeenCalled();
+  });
+
   test("missing agent_report triggers one reminder, then posts fallback output and cleans up", async () => {
     const config = await createTestConfig(rootDir);
 
@@ -1741,10 +1877,16 @@ describe("TaskService", () => {
     expect(appendChildHistory.success).toBe(true);
 
     const internal = taskService as unknown as {
-      handleStreamEnd: (event: { type: "stream-end"; workspaceId: string }) => Promise<void>;
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
     };
 
-    await internal.handleStreamEnd({ type: "stream-end", workspaceId: childId });
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: childId,
+      messageId: "assistant-child-output",
+      metadata: { model: "openai:gpt-4o-mini" },
+      parts: [],
+    });
     expect(sendMessage).toHaveBeenCalled();
 
     const midCfg = config.loadConfigOrDefault();
@@ -1753,7 +1895,13 @@ describe("TaskService", () => {
       .find((w) => w.id === childId);
     expect(midWs?.taskStatus).toBe("awaiting_report");
 
-    await internal.handleStreamEnd({ type: "stream-end", workspaceId: childId });
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: childId,
+      messageId: "assistant-child-output",
+      metadata: { model: "openai:gpt-4o-mini" },
+      parts: [],
+    });
 
     const emitCalls = (emit as unknown as { mock: { calls: Array<[string, unknown]> } }).mock.calls;
     const metadataEmitsForChild = emitCalls.filter((call) => {
