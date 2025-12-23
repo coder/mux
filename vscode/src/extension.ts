@@ -743,15 +743,38 @@ function renderChatViewHtml(webview: vscode.Webview): string {
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <style nonce="${nonce}">
       :root {
-        color-scheme: light dark;
+        color-scheme: dark;
+
+        /* Minimal subset of mux theme tokens (mirrors src/browser/styles/globals.css). */
+        --color-background: hsl(0 0% 12%);
+        --color-background-secondary: hsl(60 1% 15%);
+        --color-border: #262626;
+        --color-foreground: hsl(0 0% 83%);
+        --color-muted-foreground: hsl(0 0% 60%);
+
+        --color-button-bg: hsl(0 0% 24%);
+        --color-button-hover: hsl(0 0% 29%);
+        --color-button-text: hsl(0 0% 80%);
+
+        --color-input-bg: hsl(0 0% 12%);
+        --color-input-border: hsla(0 0% 100% / 0.08);
+
+        --color-user-surface: hsla(0 0% 100% / 0.06);
+        --color-user-border: hsla(0 0% 100% / 0.1);
+
+        --color-assistant-border: hsl(207 45% 40%);
+
+        --color-message-debug-bg: rgba(0, 0, 0, 0.3);
+        --color-message-debug-border: rgba(255, 255, 255, 0.1);
+        --color-message-debug-text: rgba(255, 255, 255, 0.8);
       }
       body {
         padding: 0;
         margin: 0;
         font-family: var(--vscode-font-family);
         font-size: var(--vscode-font-size);
-        color: var(--vscode-foreground);
-        background: var(--vscode-editor-background);
+        color: var(--color-foreground);
+        background: var(--color-background);
       }
       #container {
         display: flex;
@@ -760,14 +783,14 @@ function renderChatViewHtml(webview: vscode.Webview): string {
       }
       #top {
         padding: 10px;
-        border-bottom: 1px solid var(--vscode-panel-border);
-        background: var(--vscode-sideBar-background);
+        border-bottom: 1px solid var(--color-border);
+        background: var(--color-background-secondary);
       }
       #status {
         font-size: 12px;
         line-height: 1.3;
         margin-bottom: 8px;
-        opacity: 0.9;
+        color: var(--color-muted-foreground);
         white-space: pre-wrap;
       }
       .row {
@@ -779,22 +802,28 @@ function renderChatViewHtml(webview: vscode.Webview): string {
       select {
         flex: 1;
         min-width: 120px;
-        background: var(--vscode-input-background);
-        color: var(--vscode-input-foreground);
-        border: 1px solid var(--vscode-input-border);
+        background: var(--color-input-bg);
+        color: var(--color-foreground);
+        border: 1px solid var(--color-input-border);
+        border-radius: 8px;
         padding: 4px 6px;
       }
       button {
-        background: var(--vscode-button-background);
-        color: var(--vscode-button-foreground);
-        border: 1px solid transparent;
-        padding: 4px 8px;
+        background: var(--color-button-bg);
+        color: var(--color-button-text);
+        border: 1px solid var(--color-input-border);
+        border-radius: 8px;
+        padding: 4px 10px;
         cursor: pointer;
+      }
+      button:hover {
+        background: var(--color-button-hover);
       }
       button.secondary {
         background: transparent;
-        color: var(--vscode-foreground);
-        border: 1px solid var(--vscode-input-border);
+      }
+      button.secondary:hover {
+        background: rgba(255, 255, 255, 0.05);
       }
       button:disabled {
         opacity: 0.6;
@@ -806,35 +835,67 @@ function renderChatViewHtml(webview: vscode.Webview): string {
         padding: 10px;
       }
       .msg {
-        padding: 8px 10px;
-        border-radius: 6px;
-        margin-bottom: 8px;
-        background: rgba(127, 127, 127, 0.12);
+        max-width: 100%;
+        margin-bottom: 14px;
         white-space: pre-wrap;
         word-break: break-word;
       }
       .msg .meta {
         font-size: 11px;
-        opacity: 0.75;
-        margin-bottom: 4px;
+        color: var(--color-muted-foreground);
+        margin-bottom: 6px;
       }
       .msg.user {
-        background: rgba(0, 122, 204, 0.18);
+        margin-left: auto;
+        background: var(--color-user-surface);
+        border: 1px solid var(--color-user-border);
+        border-radius: 12px;
+        padding: 10px 12px;
       }
       .msg.assistant {
-        background: rgba(127, 127, 127, 0.12);
+        border-left: 2px solid var(--color-assistant-border);
+        padding-left: 12px;
+        padding-top: 2px;
+        padding-bottom: 2px;
       }
       .msg.notice {
-        background: transparent;
-        border: 1px dashed var(--vscode-input-border);
+        border: 1px dashed var(--color-input-border);
+        border-radius: 12px;
+        padding: 8px 10px;
       }
       .msg.notice.error {
-        border-color: var(--vscode-inputValidation-errorBorder);
+        border-color: rgba(255, 120, 120, 0.7);
+      }
+      .part + .part {
+        margin-top: 10px;
+      }
+      details.part {
+        border: 1px solid var(--color-input-border);
+        border-radius: 10px;
+        padding: 6px 8px;
+        background: rgba(255, 255, 255, 0.02);
+      }
+      details.part > summary {
+        cursor: pointer;
+        user-select: none;
+        color: var(--color-foreground);
+        font-size: 12px;
+      }
+      pre {
+        margin: 8px 0 0;
+        overflow-x: auto;
+        border-radius: 8px;
+        border: 1px solid var(--color-message-debug-border);
+        background: var(--color-message-debug-bg);
+        padding: 8px;
+        font-size: 12px;
+        line-height: 1.35;
+        color: var(--color-message-debug-text);
       }
       #composer {
-        border-top: 1px solid var(--vscode-panel-border);
+        border-top: 1px solid var(--color-border);
         padding: 10px;
-        background: var(--vscode-sideBar-background);
+        background: var(--color-background-secondary);
         display: flex;
         gap: 8px;
         align-items: flex-end;
@@ -844,9 +905,10 @@ function renderChatViewHtml(webview: vscode.Webview): string {
         resize: vertical;
         min-height: 52px;
         max-height: 160px;
-        background: var(--vscode-input-background);
-        color: var(--vscode-input-foreground);
-        border: 1px solid var(--vscode-input-border);
+        background: var(--color-input-bg);
+        color: var(--color-foreground);
+        border: 1px solid var(--color-input-border);
+        border-radius: 8px;
         padding: 6px;
         font-family: var(--vscode-font-family);
         font-size: var(--vscode-font-size);
@@ -895,6 +957,7 @@ function renderChatViewHtml(webview: vscode.Webview): string {
         };
 
         const streamElsByMessageId = new Map();
+        const toolElsByToolCallId = new Map();
 
         function setStatusText(text) {
           statusEl.textContent = text;
@@ -959,7 +1022,7 @@ function renderChatViewHtml(webview: vscode.Webview): string {
             parts.push(status.error);
           }
 
-          setStatusText(parts.join('\\n'));
+          setStatusText(parts.join('\n'));
           updateControls();
         }
 
@@ -977,18 +1040,178 @@ function renderChatViewHtml(webview: vscode.Webview): string {
           messagesEl.scrollTop = messagesEl.scrollHeight;
         }
 
-        function extractTextParts(parts) {
+        function clearEl(el) {
+          while (el.firstChild) {
+            el.removeChild(el.firstChild);
+          }
+        }
+
+        function formatJson(value) {
+          try {
+            return JSON.stringify(value, null, 2);
+          } catch {
+            return String(value);
+          }
+        }
+
+        function renderPartsInto(container, parts) {
+          clearEl(container);
+
           if (!Array.isArray(parts)) {
-            return '';
+            return;
           }
 
-          const out = [];
-          for (const p of parts) {
-            if (p && typeof p === 'object' && p.type === 'text' && typeof p.text === 'string') {
-              out.push(p.text);
-            }
+          if (parts.length === 0) {
+            const textEl = document.createElement('div');
+            textEl.className = 'part';
+            textEl.textContent = '(no content)';
+            container.appendChild(textEl);
+            return;
           }
-          return out.join('');
+
+          let appended = false;
+          let textBuffer = '';
+
+          function flushText() {
+            if (!textBuffer) {
+              return;
+            }
+
+            const textEl = document.createElement('div');
+            textEl.className = 'part';
+            textEl.textContent = textBuffer;
+            container.appendChild(textEl);
+            appended = true;
+            textBuffer = '';
+          }
+
+          for (const part of parts) {
+            if (!part || typeof part !== 'object' || typeof part.type !== 'string') {
+              continue;
+            }
+
+            if (part.type === 'text' && typeof part.text === 'string') {
+              textBuffer += part.text;
+              continue;
+            }
+
+            flushText();
+
+            if (part.type === 'reasoning' && typeof part.text === 'string') {
+              const details = document.createElement('details');
+              details.className = 'part';
+
+              const summary = document.createElement('summary');
+              summary.textContent = 'Reasoning';
+              details.appendChild(summary);
+
+              const pre = document.createElement('pre');
+              pre.textContent = part.text;
+              details.appendChild(pre);
+
+              container.appendChild(details);
+              appended = true;
+              continue;
+            }
+
+            if (part.type === 'dynamic-tool' && typeof part.toolName === 'string') {
+              const details = document.createElement('details');
+              details.className = 'part';
+
+              const summary = document.createElement('summary');
+              summary.textContent = 'Tool: ' + part.toolName;
+              details.appendChild(summary);
+
+              const pre = document.createElement('pre');
+              let text = 'input:\n' + formatJson(part.input);
+
+              if (part.state === 'output-available') {
+                text += '\n\noutput:\n' + formatJson(part.output);
+              }
+
+              if (Array.isArray(part.nestedCalls) && part.nestedCalls.length > 0) {
+                text += '\n\nnestedCalls:\n' + formatJson(part.nestedCalls);
+              }
+
+              pre.textContent = text;
+              details.appendChild(pre);
+
+              container.appendChild(details);
+              appended = true;
+              continue;
+            }
+
+            if (part.type === 'file') {
+              const fileEl = document.createElement('div');
+              fileEl.className = 'part';
+
+              const filename = typeof part.filename === 'string' ? part.filename : part.url;
+              fileEl.textContent = 'File: ' + String(filename || '');
+
+              container.appendChild(fileEl);
+              appended = true;
+              continue;
+            }
+
+            const fallback = document.createElement('details');
+            fallback.className = 'part';
+
+            const summary = document.createElement('summary');
+            summary.textContent = 'Part: ' + part.type;
+            fallback.appendChild(summary);
+
+            const pre = document.createElement('pre');
+            pre.textContent = formatJson(part);
+            fallback.appendChild(pre);
+
+            container.appendChild(fallback);
+            appended = true;
+          }
+
+          flushText();
+
+          if (!appended) {
+            const pre = document.createElement('pre');
+            pre.textContent = formatJson(parts);
+            container.appendChild(pre);
+          }
+        }
+
+        function ensureToolEvent(toolCallId, toolName) {
+          if (toolElsByToolCallId.has(toolCallId)) {
+            return toolElsByToolCallId.get(toolCallId);
+          }
+
+          const el = document.createElement('div');
+          el.className = 'msg assistant';
+
+          const meta = document.createElement('div');
+          meta.className = 'meta';
+          meta.textContent = 'tool';
+
+          const body = document.createElement('div');
+
+          const details = document.createElement('details');
+          details.className = 'part';
+
+          const summary = document.createElement('summary');
+          summary.textContent = 'Tool: ' + String(toolName || '');
+          details.appendChild(summary);
+
+          const pre = document.createElement('pre');
+          pre.textContent = '';
+          details.appendChild(pre);
+
+          body.appendChild(details);
+
+          el.appendChild(meta);
+          el.appendChild(body);
+          messagesEl.appendChild(el);
+
+          const item = { root: el, pre };
+          toolElsByToolCallId.set(toolCallId, item);
+          messagesEl.scrollTop = messagesEl.scrollHeight;
+          return item;
         }
 
         function ensureStreamingMessage(messageId) {
@@ -1004,15 +1227,20 @@ function renderChatViewHtml(webview: vscode.Webview): string {
           meta.textContent = 'assistant (streaming)';
 
           const body = document.createElement('div');
-          body.textContent = '';
+
+          const streamText = document.createElement('div');
+          streamText.className = 'part';
+          streamText.textContent = '';
+          body.appendChild(streamText);
 
           el.appendChild(meta);
           el.appendChild(body);
           messagesEl.appendChild(el);
 
-          streamElsByMessageId.set(messageId, { root: el, body });
+          const item = { root: el, body, streamText };
+          streamElsByMessageId.set(messageId, item);
           messagesEl.scrollTop = messagesEl.scrollHeight;
-          return streamElsByMessageId.get(messageId);
+          return item;
         }
 
         function handleChatEvent(event) {
@@ -1021,16 +1249,18 @@ function renderChatViewHtml(webview: vscode.Webview): string {
           }
 
           if (event.type === 'message') {
-            const role = event.role || 'unknown';
+            const role = typeof event.role === 'string' ? event.role : 'assistant';
+            const variant = role === 'user' ? 'user' : role === 'assistant' ? 'assistant' : 'notice';
+
             const el = document.createElement('div');
-            el.className = 'msg ' + (role === 'user' ? 'user' : 'assistant');
+            el.className = 'msg ' + variant;
 
             const meta = document.createElement('div');
             meta.className = 'meta';
             meta.textContent = role;
 
             const body = document.createElement('div');
-            body.textContent = extractTextParts(event.parts) || '';
+            renderPartsInto(body, event.parts);
 
             el.appendChild(meta);
             el.appendChild(body);
@@ -1047,7 +1277,7 @@ function renderChatViewHtml(webview: vscode.Webview): string {
           if (event.type === 'stream-delta') {
             const item = ensureStreamingMessage(event.messageId);
             if (typeof event.delta === 'string') {
-              item.body.textContent += event.delta;
+              item.streamText.textContent += event.delta;
               messagesEl.scrollTop = messagesEl.scrollHeight;
             }
             return;
@@ -1055,10 +1285,8 @@ function renderChatViewHtml(webview: vscode.Webview): string {
 
           if (event.type === 'stream-end') {
             const item = ensureStreamingMessage(event.messageId);
-            const finalText = extractTextParts(event.parts);
-            if (finalText) {
-              item.body.textContent = finalText;
-            }
+            renderPartsInto(item.body, event.parts);
+
             const meta = item.root.querySelector('.meta');
             if (meta) {
               meta.textContent = 'assistant';
@@ -1072,14 +1300,72 @@ function renderChatViewHtml(webview: vscode.Webview): string {
             return;
           }
 
+          if (event.type === 'error') {
+            appendNotice('error', event.error || 'Error');
+            return;
+          }
+
           if (event.type === 'caught-up') {
             // No-op (history replay completed).
             return;
           }
+
+          if (event.type === 'tool-call-start') {
+            if (typeof event.toolCallId !== 'string') {
+              return;
+            }
+
+            const toolName = typeof event.toolName === 'string' ? event.toolName : 'tool';
+            const item = ensureToolEvent(event.toolCallId, toolName);
+            item.pre.textContent = 'input:\n' + formatJson(event.args);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+            return;
+          }
+
+          if (event.type === 'tool-call-delta') {
+            if (typeof event.toolCallId !== 'string') {
+              return;
+            }
+
+            const toolName = typeof event.toolName === 'string' ? event.toolName : 'tool';
+            const item = ensureToolEvent(event.toolCallId, toolName);
+            const prefix = item.pre.textContent ? '\n\n' : '';
+            item.pre.textContent += prefix + 'delta:\n' + formatJson(event.delta);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+            return;
+          }
+
+          if (event.type === 'tool-call-end') {
+            if (typeof event.toolCallId !== 'string') {
+              return;
+            }
+
+            const toolName = typeof event.toolName === 'string' ? event.toolName : 'tool';
+            const item = ensureToolEvent(event.toolCallId, toolName);
+            const prefix = item.pre.textContent ? '\n\n' : '';
+            item.pre.textContent += prefix + 'result:\n' + formatJson(event.result);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+            return;
+          }
+
+          if (event.type === 'bash-output') {
+            if (typeof event.toolCallId !== 'string') {
+              return;
+            }
+
+            const item = ensureToolEvent(event.toolCallId, 'bash');
+            const prefix = event.isError ? '[stderr] ' : '';
+            item.pre.textContent += prefix + String(event.text || '');
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+            return;
+          }
+
+          // Ignore other events (usage deltas, init events, etc.) for now.
         }
 
         function resetChat() {
           streamElsByMessageId.clear();
+          toolElsByToolCallId.clear();
           while (messagesEl.firstChild) {
             messagesEl.removeChild(messagesEl.firstChild);
           }
