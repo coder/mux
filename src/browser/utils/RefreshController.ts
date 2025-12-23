@@ -75,6 +75,7 @@ export class RefreshController {
   private readonly debugLabel: string | null;
 
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private cooldownTimer: ReturnType<typeof setTimeout> | null = null;
   private inFlight = false;
   private pendingBecauseHidden = false;
   private pendingBecauseInFlight = false;
@@ -86,7 +87,7 @@ export class RefreshController {
   private _lastRefreshInfo: LastRefreshInfo | null = null;
   private pendingTrigger: RefreshTrigger | null = null;
 
-  // Hard guard: timestamp of last refresh START (not completion)
+  // Timestamp of last refresh START (not completion)
   private lastRefreshStartMs = 0;
 
   // Track if listeners are bound (for cleanup)
@@ -105,6 +106,26 @@ export class RefreshController {
     this.debugLabel = options.debugLabel ?? null;
   }
 
+  private updatePendingTrigger(trigger: RefreshTrigger): void {
+    const priorities: Record<RefreshTrigger, number> = {
+      manual: 3,
+      priority: 2,
+      scheduled: 1,
+      focus: 0,
+      visibility: 0,
+      unpaused: 0,
+      "in-flight-followup": 0,
+    };
+
+    if (!this.pendingTrigger) {
+      this.pendingTrigger = trigger;
+      return;
+    }
+
+    if (priorities[trigger] >= priorities[this.pendingTrigger]) {
+      this.pendingTrigger = trigger;
+    }
+  }
   private debug(message: string): void {
     if (this.debugLabel) {
       console.debug(`[RefreshController:${this.debugLabel}] ${message}`);
@@ -135,10 +156,8 @@ export class RefreshController {
   private scheduleWithDelay(delayMs: number, trigger: RefreshTrigger): void {
     if (this.disposed) return;
 
-    // Always update pending trigger (use priority if upgrading from scheduled)
-    if (!this.pendingTrigger || trigger === "priority") {
-      this.pendingTrigger = trigger;
-    }
+    // Always update pending trigger (manual > priority > scheduled)
+    this.updatePendingTrigger(trigger);
 
     // If refresh is in-flight, mark pending and let onComplete handle scheduling
     if (this.inFlight) {
@@ -176,37 +195,71 @@ export class RefreshController {
       this.debounceTimer = null;
     }
 
-    this.tryRefresh({ bypassPause: true, trigger: "manual" });
+    this.tryRefresh({ bypassPause: true, bypassHidden: true, trigger: "manual" });
   }
 
   /**
    * Attempt refresh, respecting pause conditions.
    */
-  private tryRefresh(options?: { bypassPause?: boolean; trigger?: RefreshTrigger }): void {
+  private tryRefresh(options?: {
+    bypassPause?: boolean;
+    bypassHidden?: boolean;
+    trigger?: RefreshTrigger;
+  }): void {
     if (this.disposed) return;
 
     const trigger = options?.trigger ?? this.pendingTrigger ?? "scheduled";
+    const bypassHidden = (options?.bypassHidden ?? false) || trigger === "manual";
+    const bypassPause = (options?.bypassPause ?? false) || trigger === "manual";
 
-    // Hidden → queue for visibility
-    if (typeof document !== "undefined" && document.hidden) {
+    // Hidden → queue for visibility (unless bypassed)
+    if (!bypassHidden && typeof document !== "undefined" && document.hidden) {
       this.pendingBecauseHidden = true;
-      this.pendingTrigger = trigger;
+      this.updatePendingTrigger(trigger);
       return;
     }
 
     // Custom pause (e.g., user interacting) → queue for unpause
     // Bypassed for manual refresh (user explicitly requested)
-    if (!options?.bypassPause && this.isPaused?.()) {
+    if (!bypassPause && this.isPaused?.()) {
       this.pendingBecausePaused = true;
-      this.pendingTrigger = trigger;
+      this.updatePendingTrigger(trigger);
       return;
     }
 
     // In-flight → queue for completion
     if (this.inFlight) {
       this.pendingBecauseInFlight = true;
-      this.pendingTrigger = trigger;
+      this.updatePendingTrigger(trigger);
       return;
+    }
+
+    // Hard guard: enforce minimum interval between refresh starts.
+    // Rather than dropping the request, schedule it for the earliest allowed time.
+    if (this.lastRefreshStartMs > 0) {
+      const now = Date.now();
+      const elapsed = now - this.lastRefreshStartMs;
+      if (elapsed < MIN_REFRESH_INTERVAL_MS) {
+        this.updatePendingTrigger(trigger);
+
+        if (this.cooldownTimer) {
+          this.debug("cooldown timer running, coalescing");
+          return;
+        }
+
+        const delayMs = MIN_REFRESH_INTERVAL_MS - elapsed;
+        const t = this.pendingTrigger ?? trigger;
+        this.debug(`cooldown: delaying ${delayMs}ms (${t})`);
+
+        this.cooldownTimer = setTimeout(() => {
+          this.cooldownTimer = null;
+          const cooldownTrigger = this.pendingTrigger ?? t;
+          this.pendingTrigger = null;
+          this.tryRefresh({ trigger: cooldownTrigger });
+        }, delayMs);
+
+        return;
+      }
     }
 
     this.executeRefresh(trigger);
@@ -218,16 +271,14 @@ export class RefreshController {
   private executeRefresh(trigger: RefreshTrigger): void {
     if (this.disposed) return;
 
-    // Hard guard: refuse to refresh if too soon after last refresh started.
-    // This prevents loops even if other guards fail.
-    const now = Date.now();
-    const elapsed = now - this.lastRefreshStartMs;
-    if (elapsed < MIN_REFRESH_INTERVAL_MS) {
-      this.debug(`executeRefresh: too soon (${elapsed}ms < ${MIN_REFRESH_INTERVAL_MS}ms), skipping`);
-      return;
+    // Record refresh start; min-interval enforcement happens in tryRefresh().
+    this.lastRefreshStartMs = Date.now();
+
+    if (this.cooldownTimer) {
+      clearTimeout(this.cooldownTimer);
+      this.cooldownTimer = null;
     }
 
-    this.lastRefreshStartMs = now;
     this.inFlight = true;
     this.pendingTrigger = null;
 
@@ -266,7 +317,9 @@ export class RefreshController {
     // Flush pending hidden refresh
     if (this.pendingBecauseHidden) {
       this.pendingBecauseHidden = false;
-      this.tryRefresh({ trigger });
+      const pendingTrigger = this.pendingTrigger ?? trigger;
+      this.pendingTrigger = null;
+      this.tryRefresh({ trigger: pendingTrigger });
       return; // Don't double-refresh with proactive
     }
 
@@ -288,7 +341,9 @@ export class RefreshController {
     if (this.disposed) return;
     if (this.pendingBecausePaused) {
       this.pendingBecausePaused = false;
-      this.tryRefresh({ trigger: "unpaused" });
+      const pendingTrigger = this.pendingTrigger ?? "unpaused";
+      this.pendingTrigger = null;
+      this.tryRefresh({ trigger: pendingTrigger });
     }
   }
 
@@ -340,6 +395,11 @@ export class RefreshController {
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
       this.debounceTimer = null;
+    }
+
+    if (this.cooldownTimer) {
+      clearTimeout(this.cooldownTimer);
+      this.cooldownTimer = null;
     }
 
     if (this.listenersBound) {

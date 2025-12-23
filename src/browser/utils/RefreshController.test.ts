@@ -102,8 +102,10 @@ describe("RefreshController", () => {
     await Promise.resolve();
     await Promise.resolve(); // Extra tick for .finally()
 
-    // Should trigger follow-up refresh (via setTimeout 0 in onComplete)
-    jest.advanceTimersByTime(1);
+    // Should trigger follow-up refresh, but never more frequently than the minimum interval.
+    // First tick runs the post-flight setTimeout(0), then we wait out the min interval.
+    jest.advanceTimersByTime(0);
+    jest.advanceTimersByTime(500);
     expect(onRefresh).toHaveBeenCalledTimes(2);
 
     controller.dispose();
@@ -212,12 +214,12 @@ describe("RefreshController", () => {
 
     // Scheduled refresh should record "scheduled" trigger
     controller.schedule();
-    jest.advanceTimersByTime(100);
+    jest.advanceTimersByTime(500);
     expect(controller.lastRefreshInfo!.trigger).toBe("scheduled");
 
     // Priority refresh should record "priority" trigger
     controller.schedulePriority();
-    jest.advanceTimersByTime(100);
+    jest.advanceTimersByTime(500);
     expect(controller.lastRefreshInfo!.trigger).toBe("priority");
 
     controller.dispose();
@@ -241,7 +243,7 @@ describe("RefreshController", () => {
     );
 
     controller.schedule();
-    jest.advanceTimersByTime(100);
+    jest.advanceTimersByTime(500);
     expect(onRefreshComplete).toHaveBeenCalledTimes(2);
     expect(onRefreshComplete).toHaveBeenLastCalledWith(
       expect.objectContaining({ trigger: "scheduled" })

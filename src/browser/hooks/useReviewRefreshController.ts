@@ -86,11 +86,9 @@ export function useReviewRefreshController(
 
   // Create RefreshController once, with stable callbacks via refs
   const controller = useMemo(() => {
-    const wsName = workspaceStore.getWorkspaceName(workspaceId);
     const ctrl = new RefreshController({
       debounceMs: TOOL_REFRESH_DEBOUNCE_MS,
       isPaused: () => isInteractingRef.current,
-      debugLabel: wsName,
       onRefresh: async () => {
         if (!api || isCreating) return;
 
@@ -130,18 +128,11 @@ export function useReviewRefreshController(
   useEffect(() => {
     if (!api || isCreating) return;
 
-    const wsName = workspaceStore.getWorkspaceName(workspaceId);
-    console.debug(`[ReviewRefresh] subscribing for "${wsName}"`);
-
     const unsubscribe = workspaceStore.subscribeFileModifyingTool(() => {
-      console.debug(`[ReviewRefresh] tool completed in "${wsName}", scheduling refresh`);
       controller.schedule();
     }, workspaceId);
 
-    return () => {
-      console.debug(`[ReviewRefresh] unsubscribing for "${wsName}"`);
-      unsubscribe();
-    };
+    return unsubscribe;
   }, [api, workspaceId, isCreating, controller]);
 
   // Public API
