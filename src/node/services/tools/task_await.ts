@@ -133,7 +133,8 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
               args.filter_exclude,
               timeoutSecsForBash,
               abortSignal,
-              workspaceId
+              workspaceId,
+              "task_await"
             );
 
             if (!outputResult.success) {

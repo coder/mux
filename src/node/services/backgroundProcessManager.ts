@@ -452,6 +452,7 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
    * @param timeout Seconds to wait for output if none available (default 0 = non-blocking)
    * @param abortSignal Optional signal to abort waiting early (e.g., when stream is cancelled)
    * @param workspaceId Optional workspace ID to check for queued messages (return early to process them)
+   * @param noteToolName Optional tool name to use in polling guidance notes
    */
   async getOutput(
     processId: string,
@@ -459,7 +460,8 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
     filterExclude?: boolean,
     timeout?: number,
     abortSignal?: AbortSignal,
-    workspaceId?: string
+    workspaceId?: string,
+    noteToolName?: string
   ): Promise<
     | {
         success: true;
@@ -669,10 +671,12 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
     const shouldSuggestBetterPattern =
       callCount >= 3 && filterExclude && currentStatus === "running";
 
+    const pollingToolName = noteToolName ?? "bash_output";
+
     let note: string | undefined;
     if (shouldSuggestFilterExclude) {
       note =
-        "STOP POLLING. You've called bash_output 3+ times on this process. " +
+        `STOP POLLING. You've called ${pollingToolName} 3+ times on this process. ` +
         "This wastes tokens and clutters the conversation. " +
         "Instead, make ONE call with: filter='⏳|progress|waiting|\\\\\\.\\\\\\.\\\\\\.', " +
         "filter_exclude=true, timeout_secs=120. This blocks until meaningful output arrives.";
