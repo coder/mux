@@ -13,8 +13,8 @@ import {
 
 function coerceTimeoutMs(timeoutSecs: unknown): number | undefined {
   if (typeof timeoutSecs !== "number" || !Number.isFinite(timeoutSecs)) return undefined;
+  if (timeoutSecs < 0) return undefined;
   const timeoutMs = Math.floor(timeoutSecs * 1000);
-  if (timeoutMs <= 0) return undefined;
   return timeoutMs;
 }
 
