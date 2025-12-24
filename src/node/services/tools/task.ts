@@ -26,6 +26,13 @@ function formatBashReport(
   lines.push(`exitCode: ${result.exitCode}`);
   lines.push(`wall_duration_ms: ${result.wall_duration_ms}`);
 
+  if ("truncated" in result && result.truncated) {
+    lines.push("");
+    lines.push("WARNING: output truncated");
+    lines.push(`reason: ${result.truncated.reason}`);
+    lines.push(`totalLines: ${result.truncated.totalLines}`);
+  }
+
   if (!result.success) {
     lines.push("");
     lines.push(`error: ${result.error}`);
@@ -42,7 +49,7 @@ function formatBashReport(
 }
 
 export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
-  const bashTool = createBashTool(config);
+  let bashTool: ReturnType<typeof createBashTool> | null = null;
 
   return tool({
     description: TOOL_DEFINITIONS.task.description,
@@ -65,6 +72,8 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
         if (!script || timeout_secs === undefined || !display_name) {
           throw new Error("task tool input validation failed: expected bash task args");
         }
+
+        bashTool ??= createBashTool(config);
 
         const bashResult = (await bashTool.execute!(
           {
@@ -96,6 +105,7 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
             title: display_name,
             exitCode: bashResult.exitCode,
             note: "note" in bashResult ? bashResult.note : undefined,
+            truncated: "truncated" in bashResult ? bashResult.truncated : undefined,
           },
           "task"
         );
