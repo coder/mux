@@ -64,13 +64,8 @@ describeIntegration("ReviewPanel refresh (UI + ORPC + live LLM)", () => {
       });
 
       try {
-        // Wait for initial load to settle.
-        await waitFor(
-          () => {
-            expect(view.queryByText(/Loading diff/i)).toBeNull();
-          },
-          { timeout: 30_000 }
-        );
+        // Wait for the first diff load to complete.
+        await view.findByText(/No changes found/i, {}, { timeout: 30_000 });
 
         // === Auto refresh path (tool-call-end triggers scheduled refresh) ===
         const AUTO_MARKER = "AUTO_REFRESH_MARKER";
