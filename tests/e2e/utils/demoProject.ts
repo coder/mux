@@ -55,6 +55,8 @@ export function prepareDemoProject(
   // detecting the default branch.
   for (const repoPath of [projectPath, workspacePath]) {
     spawnSync("git", ["init", "-q"], { cwd: repoPath });
+    // Avoid hanging when developers have global commit signing enabled.
+    spawnSync("git", ["config", "commit.gpgsign", "false"], { cwd: repoPath });
     spawnSync("git", ["config", "user.email", "test@example.com"], { cwd: repoPath });
     spawnSync("git", ["config", "user.name", "Test"], { cwd: repoPath });
     spawnSync("git", ["commit", "--allow-empty", "-q", "-m", "init"], { cwd: repoPath });

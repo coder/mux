@@ -110,13 +110,25 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
 
     async setMode(mode: ChatMode): Promise<void> {
       const normalizedMode = sanitizeMode(mode);
-      const button = page.getByRole("button", { name: normalizedMode, exact: true });
-      await expect(button).toBeVisible();
-      await button.click();
-      const pressed = await button.getAttribute("aria-pressed");
-      if (pressed !== "true") {
-        throw new Error(`"${normalizedMode}" button did not toggle into active state`);
-      }
+
+      // Mode selection is now a combobox (Agent selector).
+      const selector = page
+        .getByRole("combobox")
+        .filter({ hasText: /^(plan|exec|compact|explore)$/i })
+        .first();
+      await expect(selector).toBeVisible();
+
+      await selector.click();
+
+      // Radix Select items typically use role=option.
+      const option = page.getByRole("option", { name: normalizedMode, exact: true });
+      const listbox = page.getByRole("listbox").filter({ has: option });
+      await expect(option).toBeVisible();
+      await option.click();
+
+      // Ensure the dropdown closes so it doesn't intercept Enter presses.
+      await expect(listbox).toBeHidden();
+      await expect(selector).toContainText(normalizedMode);
     },
 
     async setThinkingLevel(value: number): Promise<void> {
