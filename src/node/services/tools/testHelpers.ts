@@ -56,6 +56,7 @@ export function createTestToolConfig(
 ): ToolConfiguration {
   return {
     cwd: tempDir,
+    workspaceSessionDir: options?.sessionsDir ?? tempDir,
     runtime: new LocalRuntime(tempDir),
     runtimeTempDir: tempDir,
     niceness: options?.niceness,

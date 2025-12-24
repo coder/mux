@@ -59,6 +59,8 @@ export interface ToolConfiguration {
    * Used for streaming bash stdout/stderr to the UI without sending it to the model.
    */
   emitChatEvent?: (event: WorkspaceChatMessage) => void;
+  /** Workspace session directory (e.g. ~/.mux/sessions/<workspaceId>) for persistent tool state */
+  workspaceSessionDir?: string;
   /** Workspace ID for tracking background processes and plan storage */
   workspaceId?: string;
   /** Callback to record file state for external edit detection (plan files) */

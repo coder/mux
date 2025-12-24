@@ -2,28 +2,22 @@ import { describe, it, expect, beforeEach, afterEach } from "@jest/globals";
 import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
-import { clearTodosForTempDir, getTodosForTempDir, setTodosForTempDir } from "./todo";
+import { clearTodosForSessionDir, getTodosForSessionDir, setTodosForSessionDir } from "./todo";
 import type { TodoItem } from "@/common/types/tools";
-import type { Runtime } from "@/node/runtime/Runtime";
-import { createRuntime } from "@/node/runtime/runtimeFactory";
 
 describe("Todo Storage", () => {
-  let runtimeTempDir: string;
-  let runtime: Runtime;
+  const workspaceId = "test-workspace";
+  let workspaceSessionDir: string;
 
   beforeEach(async () => {
-    // Create a temporary directory for each test
-    runtimeTempDir = await fs.mkdtemp(path.join(os.tmpdir(), "todo-test-"));
-    // Create a local runtime for testing
-    runtime = createRuntime({ type: "local", srcBaseDir: "/tmp" });
+    workspaceSessionDir = await fs.mkdtemp(path.join(os.tmpdir(), "todo-session-test-"));
   });
 
   afterEach(async () => {
-    // Clean up temporary directory after each test
-    await fs.rm(runtimeTempDir, { recursive: true, force: true });
+    await fs.rm(workspaceSessionDir, { recursive: true, force: true });
   });
 
-  describe("setTodosForTempDir", () => {
+  describe("setTodosForSessionDir", () => {
     it("should store todo list in temp directory", async () => {
       const todos: TodoItem[] = [
         {
@@ -40,9 +34,9 @@ describe("Todo Storage", () => {
         },
       ];
 
-      await setTodosForTempDir(runtime, runtimeTempDir, todos);
+      await setTodosForSessionDir(workspaceId, workspaceSessionDir, todos);
 
-      const storedTodos = await getTodosForTempDir(runtime, runtimeTempDir);
+      const storedTodos = await getTodosForSessionDir(workspaceSessionDir);
       expect(storedTodos).toEqual(todos);
     });
 
@@ -59,7 +53,7 @@ describe("Todo Storage", () => {
         },
       ];
 
-      await setTodosForTempDir(runtime, runtimeTempDir, initialTodos);
+      await setTodosForSessionDir(workspaceId, workspaceSessionDir, initialTodos);
 
       // Replace with updated list
       const updatedTodos: TodoItem[] = [
@@ -77,16 +71,16 @@ describe("Todo Storage", () => {
         },
       ];
 
-      await setTodosForTempDir(runtime, runtimeTempDir, updatedTodos);
+      await setTodosForSessionDir(workspaceId, workspaceSessionDir, updatedTodos);
 
       // Verify list was replaced, not merged
-      const storedTodos = await getTodosForTempDir(runtime, runtimeTempDir);
+      const storedTodos = await getTodosForSessionDir(workspaceSessionDir);
       expect(storedTodos).toEqual(updatedTodos);
     });
 
     it("should handle empty todo list", async () => {
       // Create initial list
-      await setTodosForTempDir(runtime, runtimeTempDir, [
+      await setTodosForSessionDir(workspaceId, workspaceSessionDir, [
         {
           content: "Task 1",
           status: "pending",
@@ -94,9 +88,9 @@ describe("Todo Storage", () => {
       ]);
 
       // Clear list
-      await setTodosForTempDir(runtime, runtimeTempDir, []);
+      await setTodosForSessionDir(workspaceId, workspaceSessionDir, []);
 
-      const storedTodos = await getTodosForTempDir(runtime, runtimeTempDir);
+      const storedTodos = await getTodosForSessionDir(workspaceSessionDir);
       expect(storedTodos).toEqual([]);
     });
 
@@ -113,12 +107,12 @@ describe("Todo Storage", () => {
         { content: "Task 8", status: "pending" },
       ];
 
-      await expect(setTodosForTempDir(runtime, runtimeTempDir, tooManyTodos)).rejects.toThrow(
-        /Too many TODOs \(8\/7\)/i
-      );
-      await expect(setTodosForTempDir(runtime, runtimeTempDir, tooManyTodos)).rejects.toThrow(
-        /Keep high precision at the center/i
-      );
+      await expect(
+        setTodosForSessionDir(workspaceId, workspaceSessionDir, tooManyTodos)
+      ).rejects.toThrow(/Too many TODOs \(8\/7\)/i);
+      await expect(
+        setTodosForSessionDir(workspaceId, workspaceSessionDir, tooManyTodos)
+      ).rejects.toThrow(/Keep high precision at the center/i);
     });
 
     it("should accept exactly MAX_TODOS items", async () => {
@@ -132,8 +126,8 @@ describe("Todo Storage", () => {
         { content: "Future work (5 items)", status: "pending" },
       ];
 
-      await setTodosForTempDir(runtime, runtimeTempDir, maxTodos);
-      expect(await getTodosForTempDir(runtime, runtimeTempDir)).toEqual(maxTodos);
+      await setTodosForSessionDir(workspaceId, workspaceSessionDir, maxTodos);
+      expect(await getTodosForSessionDir(workspaceSessionDir)).toEqual(maxTodos);
     });
 
     it("should reject multiple in_progress tasks", async () => {
@@ -144,7 +138,7 @@ describe("Todo Storage", () => {
         },
       ];
 
-      await setTodosForTempDir(runtime, runtimeTempDir, validTodos);
+      await setTodosForSessionDir(workspaceId, workspaceSessionDir, validTodos);
 
       const invalidTodos: TodoItem[] = [
         {
@@ -157,12 +151,12 @@ describe("Todo Storage", () => {
         },
       ];
 
-      await expect(setTodosForTempDir(runtime, runtimeTempDir, invalidTodos)).rejects.toThrow(
-        /only one task can be marked as in_progress/i
-      );
+      await expect(
+        setTodosForSessionDir(workspaceId, workspaceSessionDir, invalidTodos)
+      ).rejects.toThrow(/only one task can be marked as in_progress/i);
 
       // Original todos should remain unchanged on failure
-      expect(await getTodosForTempDir(runtime, runtimeTempDir)).toEqual(validTodos);
+      expect(await getTodosForSessionDir(workspaceSessionDir)).toEqual(validTodos);
     });
 
     it("should reject when in_progress tasks appear after pending", async () => {
@@ -177,9 +171,9 @@ describe("Todo Storage", () => {
         },
       ];
 
-      await expect(setTodosForTempDir(runtime, runtimeTempDir, invalidTodos)).rejects.toThrow(
-        /in-progress tasks must appear before pending tasks/i
-      );
+      await expect(
+        setTodosForSessionDir(workspaceId, workspaceSessionDir, invalidTodos)
+      ).rejects.toThrow(/in-progress tasks must appear before pending tasks/i);
     });
 
     it("should reject when completed tasks appear after in_progress", async () => {
@@ -194,9 +188,9 @@ describe("Todo Storage", () => {
         },
       ];
 
-      await expect(setTodosForTempDir(runtime, runtimeTempDir, invalidTodos)).rejects.toThrow(
-        /completed tasks must appear before in-progress or pending tasks/i
-      );
+      await expect(
+        setTodosForSessionDir(workspaceId, workspaceSessionDir, invalidTodos)
+      ).rejects.toThrow(/completed tasks must appear before in-progress or pending tasks/i);
     });
 
     it("should allow all completed tasks without in_progress", async () => {
@@ -211,8 +205,8 @@ describe("Todo Storage", () => {
         },
       ];
 
-      await setTodosForTempDir(runtime, runtimeTempDir, todos);
-      expect(await getTodosForTempDir(runtime, runtimeTempDir)).toEqual(todos);
+      await setTodosForSessionDir(workspaceId, workspaceSessionDir, todos);
+      expect(await getTodosForSessionDir(workspaceSessionDir)).toEqual(todos);
     });
 
     it("should create directory if it doesn't exist", async () => {
@@ -228,10 +222,10 @@ describe("Todo Storage", () => {
         ];
 
         // Should not throw even though directory doesn't exist
-        await setTodosForTempDir(runtime, nonExistentDir, todos);
+        await setTodosForSessionDir(workspaceId, nonExistentDir, todos);
 
         // Verify the file was created and is readable
-        const retrievedTodos = await getTodosForTempDir(runtime, nonExistentDir);
+        const retrievedTodos = await getTodosForSessionDir(nonExistentDir);
         expect(retrievedTodos).toEqual(todos);
 
         // Verify the directory was actually created
@@ -247,9 +241,9 @@ describe("Todo Storage", () => {
     });
   });
 
-  describe("getTodosForTempDir", () => {
+  describe("getTodosForSessionDir", () => {
     it("should return empty array when no todos exist", async () => {
-      const todos = await getTodosForTempDir(runtime, runtimeTempDir);
+      const todos = await getTodosForSessionDir(workspaceSessionDir);
       expect(todos).toEqual([]);
     });
 
@@ -265,15 +259,15 @@ describe("Todo Storage", () => {
         },
       ];
 
-      await setTodosForTempDir(runtime, runtimeTempDir, todos);
+      await setTodosForSessionDir(workspaceId, workspaceSessionDir, todos);
 
-      const retrievedTodos = await getTodosForTempDir(runtime, runtimeTempDir);
+      const retrievedTodos = await getTodosForSessionDir(workspaceSessionDir);
       expect(retrievedTodos).toEqual(todos);
     });
   });
 
-  describe("stream isolation", () => {
-    it("should isolate todos between different temp directories", async () => {
+  describe("workspace isolation", () => {
+    it("should isolate todos between different session directories", async () => {
       const tempDir1 = await fs.mkdtemp(path.join(os.tmpdir(), "todo-test-1-"));
       const tempDir2 = await fs.mkdtemp(path.join(os.tmpdir(), "todo-test-2-"));
 
@@ -293,12 +287,12 @@ describe("Todo Storage", () => {
           },
         ];
 
-        await setTodosForTempDir(runtime, tempDir1, todos1);
-        await setTodosForTempDir(runtime, tempDir2, todos2);
+        await setTodosForSessionDir("ws-1", tempDir1, todos1);
+        await setTodosForSessionDir("ws-2", tempDir2, todos2);
 
-        // Verify each temp directory has its own todos
-        const retrievedTodos1 = await getTodosForTempDir(runtime, tempDir1);
-        const retrievedTodos2 = await getTodosForTempDir(runtime, tempDir2);
+        // Verify each session directory has its own todos
+        const retrievedTodos1 = await getTodosForSessionDir(tempDir1);
+        const retrievedTodos2 = await getTodosForSessionDir(tempDir2);
 
         expect(retrievedTodos1).toEqual(todos1);
         expect(retrievedTodos2).toEqual(todos2);
@@ -310,7 +304,7 @@ describe("Todo Storage", () => {
     });
   });
 
-  describe("clearTodosForTempDir", () => {
+  describe("clearTodosForSessionDir", () => {
     it("should clear todos for specific temp directory", async () => {
       const todos: TodoItem[] = [
         {
@@ -319,11 +313,11 @@ describe("Todo Storage", () => {
         },
       ];
 
-      await setTodosForTempDir(runtime, runtimeTempDir, todos);
-      expect(await getTodosForTempDir(runtime, runtimeTempDir)).toEqual(todos);
+      await setTodosForSessionDir(workspaceId, workspaceSessionDir, todos);
+      expect(await getTodosForSessionDir(workspaceSessionDir)).toEqual(todos);
 
-      await clearTodosForTempDir(runtime, runtimeTempDir);
-      expect(await getTodosForTempDir(runtime, runtimeTempDir)).toEqual([]);
+      await clearTodosForSessionDir(workspaceId, workspaceSessionDir);
+      expect(await getTodosForSessionDir(workspaceSessionDir)).toEqual([]);
     });
   });
 });

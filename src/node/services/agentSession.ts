@@ -40,6 +40,7 @@ import type { TelemetryService } from "./telemetryService";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
 import { computeDiff } from "@/node/utils/diff";
 import { AttachmentService } from "./attachmentService";
+import type { TodoItem } from "@/common/types/tools";
 import type { PostCompactionAttachment, PostCompactionExclusions } from "@/common/types/attachment";
 import { TURNS_BETWEEN_ATTACHMENTS } from "@/common/constants/attachments";
 import { extractEditedFileDiffs } from "@/common/utils/messages/extractEditedFiles";
@@ -944,22 +945,33 @@ export class AgentSession {
       // Clear file state cache since history context is gone
       this.readFileState.clear();
 
+      // Load exclusions and persistent TODO state (local workspace session data)
+      const excludedItems = await this.loadExcludedItems();
+      const todoAttachment = await this.loadTodoListAttachment(excludedItems);
+
       // Get runtime for reading plan file
       const metadataResult = await this.aiService.getWorkspaceMetadata(this.workspaceId);
       if (!metadataResult.success) {
-        // Can't get metadata, skip plan reference but still include file diffs
-        return [
-          AttachmentService.generateEditedFilesAttachment(pendingDiffs) ?? [],
-        ].flat() as PostCompactionAttachment[];
+        // Can't get metadata, skip plan reference but still include other attachments
+        const attachments: PostCompactionAttachment[] = [];
+
+        if (todoAttachment) {
+          attachments.push(todoAttachment);
+        }
+
+        const editedFilesRef = AttachmentService.generateEditedFilesAttachment(pendingDiffs);
+        if (editedFilesRef) {
+          attachments.push(editedFilesRef);
+        }
+
+        return attachments;
       }
       const runtime = createRuntime(
         metadataResult.data.runtimeConfig ?? { type: "local", srcBaseDir: this.config.srcDir },
         { projectPath: metadataResult.data.projectPath }
       );
 
-      // Load exclusions and use cached diffs extracted before history was cleared
-      const excludedItems = await this.loadExcludedItems();
-      return AttachmentService.generatePostCompactionAttachments(
+      const attachments = await AttachmentService.generatePostCompactionAttachments(
         metadataResult.data.name,
         metadataResult.data.projectName,
         this.workspaceId,
@@ -967,6 +979,15 @@ export class AgentSession {
         runtime,
         excludedItems
       );
+
+      if (todoAttachment) {
+        // Insert TODO after plan (if present), otherwise first.
+        const planIndex = attachments.findIndex((att) => att.type === "plan_file_reference");
+        const insertIndex = planIndex === -1 ? 0 : planIndex + 1;
+        attachments.splice(insertIndex, 0, todoAttachment);
+      }
+
+      return attachments;
     }
 
     // Increment turn counter
@@ -991,22 +1012,33 @@ export class AgentSession {
     }
     const fileDiffs = extractEditedFileDiffs(historyResult.data);
 
+    // Load exclusions and persistent TODO state (local workspace session data)
+    const excludedItems = await this.loadExcludedItems();
+    const todoAttachment = await this.loadTodoListAttachment(excludedItems);
+
     // Get runtime for reading plan file
     const metadataResult = await this.aiService.getWorkspaceMetadata(this.workspaceId);
     if (!metadataResult.success) {
-      // Can't get metadata, skip plan reference but still include file diffs
+      // Can't get metadata, skip plan reference but still include other attachments
+      const attachments: PostCompactionAttachment[] = [];
+
+      if (todoAttachment) {
+        attachments.push(todoAttachment);
+      }
+
       const editedFilesRef = AttachmentService.generateEditedFilesAttachment(fileDiffs);
-      return editedFilesRef ? [editedFilesRef] : [];
+      if (editedFilesRef) {
+        attachments.push(editedFilesRef);
+      }
+
+      return attachments;
     }
     const runtime = createRuntime(
       metadataResult.data.runtimeConfig ?? { type: "local", srcBaseDir: this.config.srcDir },
       { projectPath: metadataResult.data.projectPath }
     );
 
-    // Load exclusions
-    const excludedItems = await this.loadExcludedItems();
-
-    return AttachmentService.generatePostCompactionAttachments(
+    const attachments = await AttachmentService.generatePostCompactionAttachments(
       metadataResult.data.name,
       metadataResult.data.projectName,
       this.workspaceId,
@@ -1014,6 +1046,15 @@ export class AgentSession {
       runtime,
       excludedItems
     );
+
+    if (todoAttachment) {
+      // Insert TODO after plan (if present), otherwise first.
+      const planIndex = attachments.findIndex((att) => att.type === "plan_file_reference");
+      const insertIndex = planIndex === -1 ? 0 : planIndex + 1;
+      attachments.splice(insertIndex, 0, todoAttachment);
+    }
+
+    return attachments;
   }
 
   /**
@@ -1031,6 +1072,54 @@ export class AgentSession {
       return new Set(exclusions.excludedItems);
     } catch {
       return new Set();
+    }
+  }
+
+  private coerceTodoItems(value: unknown): TodoItem[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    const result: TodoItem[] = [];
+    for (const item of value) {
+      if (!item || typeof item !== "object") continue;
+
+      const content = (item as { content?: unknown }).content;
+      const status = (item as { status?: unknown }).status;
+
+      if (typeof content !== "string") continue;
+      if (status !== "pending" && status !== "in_progress" && status !== "completed") continue;
+
+      result.push({ content, status });
+    }
+
+    return result;
+  }
+
+  private async loadTodoListAttachment(
+    excludedItems: Set<string>
+  ): Promise<PostCompactionAttachment | null> {
+    if (excludedItems.has("todo")) {
+      return null;
+    }
+
+    const todoPath = path.join(this.config.getSessionDir(this.workspaceId), "todos.json");
+
+    try {
+      const data = await readFile(todoPath, "utf-8");
+      const parsed: unknown = JSON.parse(data);
+      const todos = this.coerceTodoItems(parsed);
+      if (todos.length === 0) {
+        return null;
+      }
+
+      return {
+        type: "todo_list",
+        todos,
+      };
+    } catch {
+      // File missing or unreadable
+      return null;
     }
   }
 

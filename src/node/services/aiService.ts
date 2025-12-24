@@ -1356,6 +1356,7 @@ export class AIService extends EventEmitter {
             }
             this.emit(event.type, event as never);
           },
+          workspaceSessionDir: this.config.getSessionDir(workspaceId),
           planFilePath,
           workspaceId,
           // Only child workspaces (tasks) can report to a parent.

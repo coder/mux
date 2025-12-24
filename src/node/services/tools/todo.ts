@@ -1,29 +1,59 @@
 import { tool } from "ai";
+import * as fs from "fs/promises";
 import * as path from "path";
-import type { Runtime } from "@/node/runtime/Runtime";
+import writeFileAtomic from "write-file-atomic";
+import assert from "@/common/utils/assert";
 import type { ToolFactory } from "@/common/utils/tools/tools";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { TodoItem } from "@/common/types/tools";
 import { MAX_TODOS } from "@/common/constants/toolLimits";
-import { readFileString, writeFileString, execBuffered } from "@/node/utils/runtime/helpers";
+import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks";
+
+const TODO_FILE_NAME = "todos.json";
 
 /**
- * Get path to todos.json file in the stream's temporary directory
+ * Get path to todos.json file in the workspace's session directory
  */
-function getTodoFilePath(tempDir: string): string {
-  return path.join(tempDir, "todos.json");
+function getTodoFilePath(workspaceSessionDir: string): string {
+  return path.join(workspaceSessionDir, TODO_FILE_NAME);
+}
+
+function coerceTodoItems(value: unknown): TodoItem[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const result: TodoItem[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+
+    const content = (item as { content?: unknown }).content;
+    const status = (item as { status?: unknown }).status;
+
+    if (typeof content !== "string") continue;
+    if (status !== "pending" && status !== "in_progress" && status !== "completed") continue;
+
+    result.push({ content, status });
+  }
+
+  return result;
 }
 
 /**
- * Read todos from filesystem using runtime abstraction
+ * Read todos from the workspace session directory.
  */
-async function readTodos(runtime: Runtime, tempDir: string): Promise<TodoItem[]> {
-  const todoFile = getTodoFilePath(tempDir);
+async function readTodos(workspaceSessionDir: string): Promise<TodoItem[]> {
+  const todoFile = getTodoFilePath(workspaceSessionDir);
+
   try {
-    const content = await readFileString(runtime, todoFile);
-    return JSON.parse(content) as TodoItem[];
-  } catch {
+    const content = await fs.readFile(todoFile, "utf-8");
+    const parsed: unknown = JSON.parse(content);
+    return coerceTodoItems(parsed);
+  } catch (error) {
     // File doesn't exist yet or is invalid
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      return [];
+    }
     return [];
   }
 }
@@ -100,14 +130,34 @@ function validateTodos(todos: TodoItem[]): void {
 }
 
 /**
- * Write todos to filesystem using runtime abstraction
+ * Write todos to the workspace session directory.
  */
-async function writeTodos(runtime: Runtime, tempDir: string, todos: TodoItem[]): Promise<void> {
+async function writeTodos(
+  workspaceId: string,
+  workspaceSessionDir: string,
+  todos: TodoItem[]
+): Promise<void> {
   validateTodos(todos);
-  const todoFile = getTodoFilePath(tempDir);
-  // Ensure directory exists before writing (SSH runtime might not have created it yet)
-  await execBuffered(runtime, `mkdir -p "${tempDir}"`, { cwd: "/", timeout: 10 });
-  await writeFileString(runtime, todoFile, JSON.stringify(todos, null, 2));
+
+  await workspaceFileLocks.withLock(workspaceId, async () => {
+    const todoFile = getTodoFilePath(workspaceSessionDir);
+    await fs.mkdir(path.dirname(todoFile), { recursive: true });
+    await writeFileAtomic(todoFile, JSON.stringify(todos, null, 2));
+  });
+}
+
+async function clearTodos(workspaceId: string, workspaceSessionDir: string): Promise<void> {
+  await workspaceFileLocks.withLock(workspaceId, async () => {
+    const todoFile = getTodoFilePath(workspaceSessionDir);
+    try {
+      await fs.unlink(todoFile);
+    } catch (error) {
+      if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+        return;
+      }
+      throw error;
+    }
+  });
 }
 
 /**
@@ -119,7 +169,9 @@ export const createTodoWriteTool: ToolFactory = (config) => {
     description: TOOL_DEFINITIONS.todo_write.description,
     inputSchema: TOOL_DEFINITIONS.todo_write.schema,
     execute: async ({ todos }) => {
-      await writeTodos(config.runtime, config.runtimeTempDir, todos);
+      assert(config.workspaceId, "todo_write requires workspaceId");
+      assert(config.workspaceSessionDir, "todo_write requires workspaceSessionDir");
+      await writeTodos(config.workspaceId, config.workspaceSessionDir, todos);
       return {
         success: true as const,
         count: todos.length,
@@ -137,7 +189,8 @@ export const createTodoReadTool: ToolFactory = (config) => {
     description: TOOL_DEFINITIONS.todo_read.description,
     inputSchema: TOOL_DEFINITIONS.todo_read.schema,
     execute: async () => {
-      const todos = await readTodos(config.runtime, config.runtimeTempDir);
+      assert(config.workspaceSessionDir, "todo_read requires workspaceSessionDir");
+      const todos = await readTodos(config.workspaceSessionDir);
       return {
         todos,
       };
@@ -146,31 +199,29 @@ export const createTodoReadTool: ToolFactory = (config) => {
 };
 
 /**
- * Set todos for a temp directory (useful for testing)
+ * Set todos for a workspace session directory (useful for testing)
  */
-export async function setTodosForTempDir(
-  runtime: Runtime,
-  tempDir: string,
+export async function setTodosForSessionDir(
+  workspaceId: string,
+  workspaceSessionDir: string,
   todos: TodoItem[]
 ): Promise<void> {
-  await writeTodos(runtime, tempDir, todos);
+  await writeTodos(workspaceId, workspaceSessionDir, todos);
 }
 
 /**
- * Get todos for a temp directory (useful for testing)
+ * Get todos for a workspace session directory (useful for testing)
  */
-export async function getTodosForTempDir(runtime: Runtime, tempDir: string): Promise<TodoItem[]> {
-  return readTodos(runtime, tempDir);
+export async function getTodosForSessionDir(workspaceSessionDir: string): Promise<TodoItem[]> {
+  return readTodos(workspaceSessionDir);
 }
 
 /**
- * Clear todos for a temp directory (useful for testing and cleanup)
+ * Clear todos for a workspace session directory (useful for testing and cleanup)
  */
-export async function clearTodosForTempDir(runtime: Runtime, tempDir: string): Promise<void> {
-  const todoFile = getTodoFilePath(tempDir);
-  try {
-    await execBuffered(runtime, `rm -f "${todoFile}"`, { cwd: "/", timeout: 10 });
-  } catch {
-    // File doesn't exist, nothing to clear
-  }
+export async function clearTodosForSessionDir(
+  workspaceId: string,
+  workspaceSessionDir: string
+): Promise<void> {
+  await clearTodos(workspaceId, workspaceSessionDir);
 }

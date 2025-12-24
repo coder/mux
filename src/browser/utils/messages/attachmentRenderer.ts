@@ -1,6 +1,7 @@
 import type {
   PostCompactionAttachment,
   PlanFileReferenceAttachment,
+  TodoListAttachment,
   EditedFilesReferenceAttachment,
 } from "@/common/types/attachment";
 
@@ -14,6 +15,21 @@ Plan contents:
 ${attachment.planContent}
 
 If this plan is relevant to the current work and not already complete, continue working on it.`;
+}
+
+/**
+ * Render a todo list attachment to a content string.
+ */
+function renderTodoListAttachment(attachment: TodoListAttachment): string {
+  const items = attachment.todos
+    .map((todo) => {
+      const statusMarker =
+        todo.status === "completed" ? "[x]" : todo.status === "in_progress" ? "[>]" : "[ ]";
+      return `- ${statusMarker} ${todo.content}`;
+    })
+    .join("\n");
+
+  return `TODO list (persisted; \`todo_read\` will return this):\n${items || "- (empty)"}`;
 }
 
 /**
@@ -42,6 +58,8 @@ export function renderAttachmentToContent(attachment: PostCompactionAttachment):
   switch (attachment.type) {
     case "plan_file_reference":
       return renderPlanFileReference(attachment);
+    case "todo_list":
+      return renderTodoListAttachment(attachment);
     case "edited_files_reference":
       return renderEditedFilesReference(attachment);
   }
