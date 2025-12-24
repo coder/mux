@@ -10,6 +10,7 @@ interface DomGlobalsSnapshot {
   requestAnimationFrame: typeof globalThis.requestAnimationFrame;
   cancelAnimationFrame: typeof globalThis.cancelAnimationFrame;
   ResizeObserver: unknown;
+  IntersectionObserver: unknown;
 }
 
 export function installDom(): () => void {
@@ -23,6 +24,8 @@ export function installDom(): () => void {
     requestAnimationFrame: globalThis.requestAnimationFrame,
     cancelAnimationFrame: globalThis.cancelAnimationFrame,
     ResizeObserver: (globalThis as unknown as { ResizeObserver?: unknown }).ResizeObserver,
+    IntersectionObserver: (globalThis as unknown as { IntersectionObserver?: unknown })
+      .IntersectionObserver,
   };
 
   const domWindow = new GlobalWindow({ url: "http://localhost" }) as unknown as Window &
@@ -60,6 +63,22 @@ export function installDom(): () => void {
     (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = ResizeObserver;
   }
 
+  // Used by ReviewPanel/HunkViewer for lazy visibility tracking.
+  if (!(globalThis as unknown as { IntersectionObserver?: unknown }).IntersectionObserver) {
+    class IntersectionObserver {
+      constructor(_callback: IntersectionObserverCallback, _options?: IntersectionObserverInit) {}
+      observe(_target: Element): void {}
+      unobserve(_target: Element): void {}
+      disconnect(): void {}
+      takeRecords(): IntersectionObserverEntry[] {
+        return [];
+      }
+    }
+
+    (globalThis as unknown as { IntersectionObserver: unknown }).IntersectionObserver =
+      IntersectionObserver;
+  }
+
   // matchMedia is used by some components and by Radix.
   if (!domWindow.matchMedia) {
     domWindow.matchMedia = ((_query: string) => {
@@ -95,6 +114,8 @@ export function installDom(): () => void {
     (globalThis as unknown as { Node?: unknown }).Node = previous.Node;
     globalThis.requestAnimationFrame = previous.requestAnimationFrame;
     globalThis.cancelAnimationFrame = previous.cancelAnimationFrame;
+    (globalThis as unknown as { IntersectionObserver?: unknown }).IntersectionObserver =
+      previous.IntersectionObserver;
     (globalThis as unknown as { ResizeObserver?: unknown }).ResizeObserver =
       previous.ResizeObserver;
   };
