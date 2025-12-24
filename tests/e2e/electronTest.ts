@@ -92,7 +92,12 @@ export const electronTest = base.extend<ElectronFixtures>({
     const envRoot = process.env.MUX_ROOT ?? "";
     const baseRoot = envRoot || defaultTestRoot;
     const uniqueTestId = testInfo.testId || testInfo.title || `test-${Date.now()}`;
-    const testRoot = envRoot ? baseRoot : path.join(baseRoot, sanitizeForPath(uniqueTestId));
+
+    // Always isolate each test run under its own root directory.
+    //
+    // Even when MUX_ROOT is set (often for debugging), Playwright runs tests in parallel.
+    // A shared root would cause cross-test interference when we reset the filesystem.
+    const testRoot = path.join(baseRoot, sanitizeForPath(uniqueTestId));
 
     const shouldCleanup = !envRoot;
 
