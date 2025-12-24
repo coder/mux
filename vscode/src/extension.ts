@@ -1033,9 +1033,8 @@ function renderChatViewHtml(webview: vscode.Webview): string {
     </div>
 
     <script nonce="${nonce}">
-        const vscode = acquireVsCodeApi();
-
       (function () {
+        const statusEl = document.getElementById('status');
 
         const debugLogEl = document.getElementById('debugLog');
         const debugLines = [];
@@ -1062,6 +1061,20 @@ function renderChatViewHtml(webview: vscode.Webview): string {
           }
         }
 
+        appendDebug('script start');
+
+        let vscode;
+        try {
+          vscode = acquireVsCodeApi();
+          appendDebug('acquireVsCodeApi ok');
+        } catch (error) {
+          appendDebug('acquireVsCodeApi failed', String(error));
+          if (statusEl) {
+            statusEl.textContent = 'Failed to initialize VS Code API. ' + String(error);
+          }
+          return;
+        }
+
         function postToExtension(payload) {
           try {
             vscode.postMessage(payload);
@@ -1083,7 +1096,6 @@ function renderChatViewHtml(webview: vscode.Webview): string {
         appendDebug('webview boot');
         postToExtension({ type: 'debugLog', message: 'webview boot' });
 
-        const statusEl = document.getElementById('status');
         const workspaceSelectEl = document.getElementById('workspaceSelect');
         const refreshBtn = document.getElementById('refreshBtn');
         const openBtn = document.getElementById('openBtn');
