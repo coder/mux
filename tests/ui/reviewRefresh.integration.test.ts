@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, waitFor } from "@testing-library/react";
 
 import { shouldRunIntegrationTests, validateApiKeys } from "../testUtils";
 import {
@@ -58,7 +58,7 @@ describeIntegration("ReviewPanel refresh (UI + ORPC + live LLM)", () => {
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, collector, metadata }) => {
       const cleanupDom = installDom();
 
-      const { unmount } = renderReviewPanel({
+      const view = renderReviewPanel({
         apiClient: env.orpc,
         metadata,
       });
@@ -67,7 +67,7 @@ describeIntegration("ReviewPanel refresh (UI + ORPC + live LLM)", () => {
         // Wait for initial load to settle.
         await waitFor(
           () => {
-            expect(screen.queryByText(/Loading diff/i)).toBeNull();
+            expect(view.queryByText(/Loading diff/i)).toBeNull();
           },
           { timeout: 30_000 }
         );
@@ -95,12 +95,12 @@ describeIntegration("ReviewPanel refresh (UI + ORPC + live LLM)", () => {
         await waitForToolCallEnd(collector, "file_edit_insert");
 
         // Wait for ReviewPanel's tool-completion debounce + refresh to land.
-        await screen.findByText(new RegExp(AUTO_MARKER), {}, { timeout: 60_000 });
+        await view.findByText(new RegExp(AUTO_MARKER), {}, { timeout: 60_000 });
 
         // Tooltip should reflect the scheduled/tool-completion refresh.
-        const refreshButton = screen.getByTestId("review-refresh");
+        const refreshButton = view.getByTestId("review-refresh");
         fireEvent.focus(refreshButton);
-        await screen.findByText(/via tool completion/i, {}, { timeout: 10_000 });
+        await view.findByText(/via tool completion/i, {}, { timeout: 10_000 });
 
         // === Manual refresh path (no tool-call events) ===
         const MANUAL_MARKER = "MANUAL_REFRESH_MARKER";
@@ -114,7 +114,7 @@ describeIntegration("ReviewPanel refresh (UI + ORPC + live LLM)", () => {
         expect(bashRes.data.success).toBe(true);
 
         // Without manual refresh, the UI should not pick this up yet.
-        expect(screen.queryByText(new RegExp(MANUAL_MARKER))).toBeNull();
+        expect(view.queryByText(new RegExp(MANUAL_MARKER))).toBeNull();
 
         fireEvent.click(refreshButton);
 
@@ -127,13 +127,13 @@ describeIntegration("ReviewPanel refresh (UI + ORPC + live LLM)", () => {
           { timeout: 5_000 }
         );
 
-        await screen.findByText(new RegExp(MANUAL_MARKER), {}, { timeout: 60_000 });
+        await view.findByText(new RegExp(MANUAL_MARKER), {}, { timeout: 60_000 });
 
         // Tooltip should now reflect the manual refresh (and not remain stuck on tool completion).
         fireEvent.focus(refreshButton);
-        await screen.findByText(/via manual click/i, {}, { timeout: 10_000 });
+        await view.findByText(/via manual click/i, {}, { timeout: 10_000 });
       } finally {
-        unmount();
+        view.unmount();
         cleanup();
         cleanupDom();
       }
