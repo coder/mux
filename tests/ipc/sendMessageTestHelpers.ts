@@ -20,6 +20,7 @@ import {
   INIT_HOOK_WAIT_MS,
 } from "./helpers";
 import { detectDefaultTrunkBranch } from "../../src/node/git";
+import type { FrontendWorkspaceMetadata } from "../../src/common/types/workspace";
 import { getApiKey } from "../testUtils";
 
 // Shared test environment and git repo
@@ -76,6 +77,7 @@ export function getSharedRepoPath(): string {
 interface SharedWorkspaceContext {
   env: TestEnvironment;
   workspaceId: string;
+  metadata: FrontendWorkspaceMetadata;
   collector: ReturnType<typeof createStreamCollector>;
 }
 
@@ -108,7 +110,8 @@ export async function withSharedWorkspace(
     throw new Error(`Failed to create workspace: ${result.error}`);
   }
 
-  const workspaceId = result.metadata.id;
+  const metadata = result.metadata;
+  const workspaceId = metadata.id;
 
   // Setup provider with API key
   const apiKey = getApiKey(provider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY");
@@ -131,7 +134,7 @@ export async function withSharedWorkspace(
   }
 
   try {
-    await testFn({ env, workspaceId, collector });
+    await testFn({ env, workspaceId, metadata, collector });
   } finally {
     collector.stop();
     // Cleanup workspace
@@ -166,7 +169,8 @@ export async function withSharedWorkspaceNoProvider(
     throw new Error(`Failed to create workspace: ${result.error}`);
   }
 
-  const workspaceId = result.metadata.id;
+  const metadata = result.metadata;
+  const workspaceId = metadata.id;
 
   // Set up event collector
   const collector = createStreamCollector(env.orpc, workspaceId);
@@ -176,7 +180,7 @@ export async function withSharedWorkspaceNoProvider(
   await collector.waitForSubscription();
 
   try {
-    await testFn({ env, workspaceId, collector });
+    await testFn({ env, workspaceId, metadata, collector });
   } finally {
     collector.stop();
     // Cleanup workspace
