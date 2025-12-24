@@ -74,25 +74,33 @@ describeIntegration("ReviewPanel refresh (UI + ORPC + live LLM)", () => {
 
         // === Auto refresh path (tool-call-end triggers scheduled refresh) ===
         const AUTO_MARKER = "AUTO_REFRESH_MARKER";
-        const FORCE_FILE_EDIT: ToolPolicy = [
-          { regex_match: "file_edit_insert", action: "require" },
-        ];
+        const FORCE_BASH: ToolPolicy = [{ regex_match: "bash", action: "require" }];
 
         const autoRes = await sendMessageWithModel(
           env,
           workspaceId,
-          `Use file_edit_insert to add a new line containing "${AUTO_MARKER}" to README.md.`,
+          `Use bash to append a new line containing "${AUTO_MARKER}" to README.md.`,
           HAIKU_MODEL,
           {
             mode: "exec",
             thinkingLevel: "off",
-            toolPolicy: FORCE_FILE_EDIT,
+            toolPolicy: FORCE_BASH,
           }
         );
         expect(autoRes.success).toBe(true);
 
         await collector.waitForEvent("stream-end", 30_000);
-        await waitForToolCallEnd(collector, "file_edit_insert");
+        await waitForToolCallEnd(collector, "bash");
+
+        // Verify the workspace actually changed, so a refresh has something to pick up.
+        const statusRes = await env.orpc.workspace.executeBash({
+          workspaceId,
+          script: "git status --porcelain",
+        });
+        expect(statusRes.success).toBe(true);
+        if (!statusRes.success) return;
+        expect(statusRes.data.success).toBe(true);
+        expect(statusRes.data.output).toContain("README.md");
 
         // Wait for ReviewPanel's tool-completion debounce + refresh to land.
         await view.findByText(new RegExp(AUTO_MARKER), {}, { timeout: 60_000 });

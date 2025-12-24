@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useLayoutEffect } from "react";
 import { render, type RenderResult } from "@testing-library/react";
 
 import { APIProvider, type APIClient } from "@/browser/contexts/API";
@@ -16,7 +16,7 @@ interface RenderReviewPanelParams {
 function ReviewPanelBootstrap(props: RenderReviewPanelParams) {
   const store = useWorkspaceStoreRaw();
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     store.setClient(props.apiClient);
     store.syncWorkspaces(new Map([[props.metadata.id, props.metadata]]));
 
