@@ -115,20 +115,22 @@ export const Tasks: AppStory = {
     await openSettingsToSection(canvasElement, "agents");
 
     const body = within(canvasElement.ownerDocument.body);
+    const dialog = await body.findByRole("dialog");
+    const dialogCanvas = within(dialog);
 
-    await body.findByText(/Max Parallel Agent Tasks/i);
-    await body.findByText(/Max Task Nesting Depth/i);
-    await body.findByText(/Agent Defaults/i);
-    await body.findByRole("heading", { name: /UI agents/i });
-    await body.findByRole("heading", { name: /Sub-agents/i });
-    await body.findByRole("heading", { name: /Internal/i });
+    await dialogCanvas.findByText(/Max Parallel Agent Tasks/i);
+    await dialogCanvas.findByText(/Max Task Nesting Depth/i);
+    await dialogCanvas.findByText(/Agent Defaults/i);
+    await dialogCanvas.findByRole("heading", { name: /UI agents/i });
+    await dialogCanvas.findByRole("heading", { name: /Sub-agents/i });
+    await dialogCanvas.findByRole("heading", { name: /Internal/i });
 
-    await body.findByText(/^Plan$/i);
-    await body.findByText(/^Exec$/i);
-    await body.findByText(/^Explore$/i);
-    await body.findByText(/^Compact$/i);
+    await dialogCanvas.findByText(/^Plan$/i);
+    await dialogCanvas.findByText(/^Exec$/i);
+    await dialogCanvas.findByText(/^Explore$/i);
+    await dialogCanvas.findByText(/^Compact$/i);
 
-    const inputs = await body.findAllByRole("spinbutton");
+    const inputs = await dialogCanvas.findAllByRole("spinbutton");
     if (inputs.length !== 2) {
       throw new Error(`Expected 2 task settings inputs, got ${inputs.length}`);
     }
