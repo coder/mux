@@ -81,6 +81,8 @@ export const RefreshButton: React.FC<RefreshButtonProps> = (props) => {
     <Tooltip>
       <TooltipTrigger asChild>
         <button
+          aria-label="Refresh diff"
+          data-testid="review-refresh"
           onClick={handleClick}
           className={cn(
             "flex items-center justify-center bg-transparent border-none p-0.5 transition-colors duration-[1500ms] ease-out",

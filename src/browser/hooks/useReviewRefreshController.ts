@@ -124,9 +124,6 @@ export function useReviewRefreshController(
   };
 
   const requestManualRefresh = () => {
-    const info: LastRefreshInfo = { timestamp: Date.now(), trigger: "manual" };
-    lastRefreshInfoByWorkspaceId.set(workspaceId, info);
-    setLastRefreshInfo(info);
     controller.requestImmediate();
   };
 
