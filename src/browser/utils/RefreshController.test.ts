@@ -91,14 +91,16 @@ describe("RefreshController", () => {
     controller.requestImmediate();
     expect(onRefresh).toHaveBeenCalledTimes(1);
 
-    refreshes[0]!.resolve();
+    expect(refreshes).toHaveLength(1);
+    refreshes[0].resolve();
 
     // Allow the Promise.finally() callback + the queued setTimeout(0) refresh.
     await sleep(10);
 
     expect(onRefresh).toHaveBeenCalledTimes(2);
 
-    refreshes[1]!.resolve();
+    expect(refreshes).toHaveLength(2);
+    refreshes[1].resolve();
     await sleep(10);
 
     expect(controller.isRefreshing).toBe(false);
