@@ -171,6 +171,37 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
             return { status: "invalid_scope" as const, taskId };
           }
 
+          // When timeout_secs=0 (or rounds down to 0ms), task_await should be non-blocking.
+          // `waitForAgentReport` asserts timeoutMs > 0, so handle 0 explicitly by returning the
+          // current task status instead of awaiting.
+          if (timeoutMs === 0) {
+            const status = taskService.getAgentTaskStatus(taskId);
+            if (status === "queued" || status === "running" || status === "awaiting_report") {
+              return { status, taskId };
+            }
+            if (!status) {
+              return { status: "not_found" as const, taskId };
+            }
+
+            // Best-effort: the task might already have a cached report. Avoid blocking when it's not.
+            try {
+              const report = await taskService.waitForAgentReport(taskId, {
+                timeoutMs: 1,
+                abortSignal,
+                requestingWorkspaceId: workspaceId,
+              });
+              return {
+                status: "completed" as const,
+                taskId,
+                reportMarkdown: report.reportMarkdown,
+                title: report.title,
+              };
+            } catch (error: unknown) {
+              const message = error instanceof Error ? error.message : String(error);
+              return { status: "error" as const, taskId, error: message };
+            }
+          }
+
           try {
             const report = await taskService.waitForAgentReport(taskId, {
               timeoutMs,
