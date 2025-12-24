@@ -1173,6 +1173,48 @@ describe("TaskService", () => {
     expect(report.title).toBe("t");
   });
 
+  test("isDescendantAgentTask consults cached ancestry after workspace is removed", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-111";
+    const childId = "child-222";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
+              {
+                path: path.join(projectPath, "child"),
+                id: childId,
+                name: "agent_explore_child",
+                parentWorkspaceId: parentId,
+                agentType: "explore",
+                taskStatus: "running",
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
+    });
+
+    const { taskService } = createTaskServiceHarness(config);
+
+    const internal = taskService as unknown as {
+      resolveWaiters: (taskId: string, report: { reportMarkdown: string; title?: string }) => void;
+    };
+    internal.resolveWaiters(childId, { reportMarkdown: "ok", title: "t" });
+
+    await config.removeWorkspace(childId);
+
+    expect(taskService.isDescendantAgentTask(parentId, childId)).toBe(true);
+    expect(taskService.isDescendantAgentTask("other-parent", childId)).toBe(false);
+  });
+
   test("waitForAgentReport cache is cleared by TTL cleanup", async () => {
     const config = await createTestConfig(rootDir);
 

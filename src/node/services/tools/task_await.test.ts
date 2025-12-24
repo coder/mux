@@ -187,4 +187,40 @@ describe("task_await tool", () => {
     expect(waitForAgentReport).toHaveBeenCalledTimes(0);
     expect(getAgentTaskStatus).toHaveBeenCalledWith("t1");
   });
+
+  it("returns completed result when timeout_secs=0 and a cached report is available", async () => {
+    using tempDir = new TestTempDir("test-task-await-tool-timeout-zero-cached");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    const getAgentTaskStatus = mock(() => null);
+    const waitForAgentReport = mock(() =>
+      Promise.resolve({ reportMarkdown: "ok", title: "cached-title" })
+    );
+
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => ["t1"]),
+      isDescendantAgentTask: mock(() => true),
+      getAgentTaskStatus,
+      waitForAgentReport,
+    } as unknown as TaskService;
+
+    const tool = createTaskAwaitTool({ ...baseConfig, taskService });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ timeout_secs: 0 }, mockToolCallOptions)
+    );
+
+    expect(result).toEqual({
+      results: [
+        {
+          status: "completed",
+          taskId: "t1",
+          reportMarkdown: "ok",
+          title: "cached-title",
+        },
+      ],
+    });
+    expect(getAgentTaskStatus).toHaveBeenCalledWith("t1");
+    expect(waitForAgentReport).toHaveBeenCalledTimes(1);
+  });
 });

@@ -180,11 +180,9 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
             if (status === "queued" || status === "running" || status === "awaiting_report") {
               return { status, taskId };
             }
-            if (!status) {
-              return { status: "not_found" as const, taskId };
-            }
 
-            // Best-effort: the task might already have a cached report. Avoid blocking when it's not.
+            // Best-effort: the task might already have a cached report (even if its workspace was
+            // cleaned up). Avoid blocking when it isn't available.
             try {
               const report = await taskService.waitForAgentReport(taskId, {
                 timeoutMs: 1,
@@ -199,6 +197,9 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
               };
             } catch (error: unknown) {
               const message = error instanceof Error ? error.message : String(error);
+              if (/not found/i.test(message)) {
+                return { status: "not_found" as const, taskId };
+              }
               return { status: "error" as const, taskId, error: message };
             }
           }
