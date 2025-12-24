@@ -197,6 +197,12 @@ export const TaskToolCompletedResultSchema = z
     agentType: z.string().optional(),
     exitCode: z.number().optional(),
     note: z.string().optional(),
+    truncated: z
+      .object({
+        reason: z.string(),
+        totalLines: z.number(),
+      })
+      .optional(),
   })
   .strict();
 
