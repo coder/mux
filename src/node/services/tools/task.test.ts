@@ -12,7 +12,6 @@ const mockToolCallOptions: ToolCallOptions = {
   messages: [],
 };
 
-
 describe("task tool", () => {
   it("should return immediately when run_in_background is true", async () => {
     using tempDir = new TestTempDir("test-task-tool");
