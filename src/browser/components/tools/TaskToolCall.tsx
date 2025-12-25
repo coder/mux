@@ -171,10 +171,12 @@ const TaskId: React.FC<{ id: string; className?: string }> = ({ id, className })
 function isBashTaskArgs(args: TaskToolArgs): args is TaskToolArgs & {
   kind: "bash";
   script: string;
-  display_name: string;
   timeout_secs: number;
+  display_name?: string;
 } {
-  return args.kind === "bash";
+  return (
+    args.kind === "bash" && typeof args.script === "string" && typeof args.timeout_secs === "number"
+  );
 }
 interface TaskToolCallProps {
   args: TaskToolArgs;

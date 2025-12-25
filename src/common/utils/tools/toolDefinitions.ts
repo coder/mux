@@ -137,7 +137,8 @@ const TaskToolBashArgsSchema = z
     script: z.string().min(1),
     timeout_secs: z.number().positive(),
     run_in_background: z.boolean().default(false),
-    display_name: z.string().min(1),
+    // Optional: if omitted we'll derive a filesystem-safe name from the script.
+    display_name: z.string().min(1).optional(),
   })
   .strict();
 
@@ -624,7 +625,7 @@ export const TOOL_DEFINITIONS = {
     description:
       "Unified task tool for (1) spawning sub-agent tasks and (2) running bash commands. " +
       "\n\nAgent tasks: provide subagent_type, prompt, title, run_in_background. " +
-      '\nBash tasks: set kind="bash" and provide script, timeout_secs, display_name, run_in_background. ' +
+      '\nBash tasks: set kind="bash" and provide script, timeout_secs, run_in_background (display_name optional). ' +
       "\n\nIf run_in_background is false, returns a completed reportMarkdown. " +
       "If run_in_background is true, returns a running taskId; use task_await to read incremental output and task_terminate to stop it.",
     schema: TaskToolArgsSchema,

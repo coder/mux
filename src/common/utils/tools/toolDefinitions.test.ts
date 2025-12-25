@@ -24,6 +24,17 @@ describe("TOOL_DEFINITIONS", () => {
     );
   });
 
+  it("allows task(kind=bash) without display_name", () => {
+    const parsed = TOOL_DEFINITIONS.task.schema.safeParse({
+      kind: "bash",
+      script: "ls",
+      timeout_secs: 100000,
+      run_in_background: false,
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
   it("discourages repeating plan contents or plan file location after propose_plan", () => {
     expect(TOOL_DEFINITIONS.propose_plan.description).toContain("do not paste the plan contents");
     expect(TOOL_DEFINITIONS.propose_plan.description).toContain("plan file path");
