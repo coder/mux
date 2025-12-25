@@ -1,4 +1,5 @@
 import React from "react";
+import { resolveBashDisplayName } from "@/common/utils/tools/bashDisplayName";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { DisplayedMessage } from "@/common/types/message";
 import { GenericToolCall } from "../tools/GenericToolCall";
@@ -178,10 +179,12 @@ function isTaskListTool(toolName: string, args: unknown): args is TaskListToolAr
 function isTaskBashArgs(args: TaskToolArgs): args is TaskToolArgs & {
   kind: "bash";
   script: string;
-  display_name: string;
   timeout_secs: number;
+  display_name?: string;
 } {
-  return "kind" in args && args.kind === "bash";
+  return (
+    args.kind === "bash" && typeof args.script === "string" && typeof args.timeout_secs === "number"
+  );
 }
 
 function taskBashResultToBashToolResult(
@@ -464,7 +467,7 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
         script: message.args.script,
         timeout_secs: message.args.timeout_secs,
         run_in_background: message.args.run_in_background,
-        display_name: message.args.display_name,
+        display_name: resolveBashDisplayName(message.args.script, message.args.display_name),
       };
 
       const bashResult = taskBashResultToBashToolResult(

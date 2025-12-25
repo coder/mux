@@ -2,6 +2,7 @@ import { tool } from "ai";
 
 import type { BashToolResult } from "@/common/types/tools";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
+import { resolveBashDisplayName } from "@/common/utils/tools/bashDisplayName";
 import { TaskToolResultSchema, TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import { coerceThinkingLevel } from "@/common/types/thinking";
 
@@ -69,9 +70,11 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
       // task(kind="bash") - run bash commands via the task abstraction.
       if (validatedArgs.kind === "bash") {
         const { script, timeout_secs, run_in_background, display_name } = validatedArgs;
-        if (!script || timeout_secs === undefined || !display_name) {
+        if (!script || timeout_secs === undefined) {
           throw new Error("task tool input validation failed: expected bash task args");
         }
+
+        const resolvedDisplayName = resolveBashDisplayName(script, display_name);
 
         bashTool ??= createBashTool(config);
 
@@ -80,7 +83,7 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
             script,
             timeout_secs,
             run_in_background,
-            display_name,
+            display_name: resolvedDisplayName,
           },
           { abortSignal, toolCallId, messages }
         )) as BashToolResult;
@@ -101,8 +104,11 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
           TaskToolResultSchema,
           {
             status: "completed" as const,
-            reportMarkdown: formatBashReport({ script, display_name }, bashResult),
-            title: display_name,
+            reportMarkdown: formatBashReport(
+              { script, display_name: resolvedDisplayName },
+              bashResult
+            ),
+            title: resolvedDisplayName,
             exitCode: bashResult.exitCode,
             note: "note" in bashResult ? bashResult.note : undefined,
             truncated: "truncated" in bashResult ? bashResult.truncated : undefined,

@@ -49,6 +49,44 @@ describe("task_* bash tasks", () => {
     expect(result).toEqual({ status: "running", taskId: "bash:proc-1" });
   });
 
+  it("task(kind=bash) derives display_name when omitted", async () => {
+    using tempDir = new TestTempDir("test-task-bash-default-display-name");
+
+    const spawn = mock(() => ({
+      success: true as const,
+      processId: "proc-1",
+      outputDir: "ignored",
+      pid: 123,
+    }));
+
+    const backgroundProcessManager = { spawn } as unknown as BackgroundProcessManager;
+
+    const tool = createTaskTool({
+      ...createTestToolConfig(tempDir.path, { workspaceId: "ws-1" }),
+      backgroundProcessManager,
+    });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!(
+        {
+          kind: "bash",
+          script: "echo hi",
+          timeout_secs: 10,
+          run_in_background: true,
+        },
+        mockToolCallOptions
+      )
+    );
+
+    expect(spawn).toHaveBeenCalledWith(
+      expect.anything(),
+      "ws-1",
+      "echo hi",
+      expect.objectContaining({ displayName: "echo hi" })
+    );
+    expect(result).toEqual({ status: "running", taskId: "bash:proc-1" });
+  });
+
   it("task_await returns incremental output for bash tasks", async () => {
     using tempDir = new TestTempDir("test-task-await-bash");
 
