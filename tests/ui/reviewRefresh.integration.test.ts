@@ -29,6 +29,44 @@ function isToolCallEndEvent(event: unknown): event is ToolCallEndEvent {
   return record.type === "tool-call-end" && typeof record.toolName === "string";
 }
 
+function getRefreshIconClass(refreshButton: HTMLElement): string {
+  return refreshButton.querySelector("svg")?.getAttribute("class") ?? "";
+}
+
+async function waitForRefreshButtonIdle(
+  refreshButton: HTMLElement,
+  timeoutMs: number = 60_000
+): Promise<void> {
+  await waitFor(
+    () => {
+      const cls = getRefreshIconClass(refreshButton);
+      expect(cls).not.toContain("animate-spin");
+      // Stopping state uses `animate-[spin_0.8s_ease-out_forwards]`.
+      expect(cls).not.toContain("animate-[");
+    },
+    { timeout: timeoutMs }
+  );
+}
+
+async function expectTooltipText(
+  refreshButton: HTMLElement,
+  pattern: RegExp,
+  timeoutMs: number = 10_000
+): Promise<void> {
+  // Radix renders tooltip content in a Portal. Use aria-describedby to locate it.
+  fireEvent.focus(refreshButton);
+
+  await waitFor(
+    () => {
+      const tooltipId = refreshButton.getAttribute("aria-describedby");
+      expect(tooltipId).toBeTruthy();
+      const tooltipEl = document.getElementById(tooltipId!);
+      expect(tooltipEl).not.toBeNull();
+      expect(tooltipEl?.textContent ?? "").toMatch(pattern);
+    },
+    { timeout: timeoutMs }
+  );
+}
 async function waitForToolCallEnd(
   collector: EventCollector,
   toolName: string,
@@ -102,8 +140,8 @@ describeIntegration("ReviewPanel refresh (UI + ORPC + live LLM)", () => {
 
         // Tooltip should reflect the scheduled/tool-completion refresh.
         const refreshButton = view.getByTestId("review-refresh");
-        fireEvent.focus(refreshButton);
-        await view.findByText(/via tool completion/i, {}, { timeout: 10_000 });
+        await waitForRefreshButtonIdle(refreshButton);
+        await expectTooltipText(refreshButton, /via tool completion/i);
 
         // === Manual refresh path (no tool-call events) ===
         const MANUAL_MARKER = "MANUAL_REFRESH_MARKER";
@@ -133,8 +171,8 @@ describeIntegration("ReviewPanel refresh (UI + ORPC + live LLM)", () => {
         await view.findByText(new RegExp(MANUAL_MARKER), {}, { timeout: 60_000 });
 
         // Tooltip should now reflect the manual refresh (and not remain stuck on tool completion).
-        fireEvent.focus(refreshButton);
-        await view.findByText(/via manual click/i, {}, { timeout: 10_000 });
+        await waitForRefreshButtonIdle(refreshButton);
+        await expectTooltipText(refreshButton, /via manual click/i);
       } finally {
         view.unmount();
         cleanup();
