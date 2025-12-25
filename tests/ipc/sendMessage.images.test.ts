@@ -41,7 +41,9 @@ const BLUE_PIXEL = {
 
 // Test both providers with their respective models
 const PROVIDER_CONFIGS: Array<[string, string]> = [
-  ["openai", KNOWN_MODELS.GPT_MINI.providerModelId],
+  // NOTE: Use a chat-mode vision-capable model. Some *responses-only* models may advertise
+  // supports_vision but still fail to ingest data-URI image parts in our current adapter.
+  ["openai", KNOWN_MODELS.GPT.providerModelId],
   ["anthropic", KNOWN_MODELS.HAIKU.providerModelId],
 ];
 
@@ -145,7 +147,7 @@ describeIntegration("sendMessage image handling tests", () => {
         await withSharedWorkspace("openai", async ({ env, workspaceId, collector }) => {
           // Send first message with image
           const result1 = await sendMessage(env, workspaceId, "Remember this image", {
-            model: modelString("openai", KNOWN_MODELS.GPT_MINI.providerModelId),
+            model: modelString("openai", KNOWN_MODELS.GPT.providerModelId),
             imageParts: [RED_PIXEL],
           });
 
@@ -163,7 +165,7 @@ describeIntegration("sendMessage image handling tests", () => {
             workspaceId,
             "What color was the image I showed you?",
             {
-              model: modelString("openai", KNOWN_MODELS.GPT_MINI.providerModelId),
+              model: modelString("openai", KNOWN_MODELS.GPT.providerModelId),
             }
           );
 
