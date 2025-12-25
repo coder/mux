@@ -44,13 +44,32 @@ async function getShikiHighlighter(): Promise<Highlighter> {
 
 let workerAPI: Comlink.Remote<HighlightWorkerAPI> | null = null;
 let workerFailed = false;
+let warnedVscodeWorkerDisabled = false;
 
 function getWorkerAPI(): Comlink.Remote<HighlightWorkerAPI> | null {
+  // VS Code webviews load the chat UI from a bundled ESM file.
+  // Our current webview bundling does not ship the worker entrypoint referenced by
+  // `new URL("../../workers/highlightWorker.ts", import.meta.url)`, which means the
+  // worker will fail to start and Comlink calls can hang.
+  //
+  // Prefer correctness and responsiveness: fall back to the main-thread highlighter.
+  const acquireVsCodeApi = (globalThis as { acquireVsCodeApi?: unknown }).acquireVsCodeApi;
+  if (typeof acquireVsCodeApi === "function") {
+    if (!warnedVscodeWorkerDisabled) {
+      warnedVscodeWorkerDisabled = true;
+      console.warn("[highlightWorkerClient] Worker highlighting disabled in VS Code webview");
+    }
+
+    workerFailed = true;
+    workerAPI = null;
+    return null;
+  }
+
   if (workerFailed) return null;
   if (workerAPI) return workerAPI;
 
   try {
-    // Use relative path - @/ alias doesn't work in worker context
+    // Use relative path - @/ alias doesn't work in worker context.
     const worker = new Worker(new URL("../../workers/highlightWorker.ts", import.meta.url), {
       type: "module",
       name: "shiki-highlighter", // Shows up in DevTools
@@ -62,7 +81,6 @@ function getWorkerAPI(): Comlink.Remote<HighlightWorkerAPI> | null {
       workerAPI = null;
     };
 
-    console.log("[highlightWorkerClient] Worker created successfully");
     workerAPI = Comlink.wrap<HighlightWorkerAPI>(worker);
     return workerAPI;
   } catch (e) {
@@ -132,5 +150,17 @@ export async function highlightCode(
   if (!api) {
     return highlightMainThread(code, language, theme);
   }
-  return api.highlight(code, language, theme);
+
+  try {
+    return await api.highlight(code, language, theme);
+  } catch (e) {
+    // Defensive fallback: if the worker crashes or fails to respond, keep rendering.
+    console.error(
+      "[highlightWorkerClient] Worker highlight failed; falling back to main thread:",
+      e
+    );
+    workerFailed = true;
+    workerAPI = null;
+    return highlightMainThread(code, language, theme);
+  }
 }
