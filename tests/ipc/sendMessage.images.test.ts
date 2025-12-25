@@ -43,9 +43,11 @@ const BLUE_PIXEL = {
 // NOTE: Some OpenAI Codex-focused models are vision-capable but can be unreliable at
 // ultra-small image classification (e.g. a 4x4 solid-color PNG). Use a general-purpose
 // vision model to keep this test stable.
-const OPENAI_VISION_MODEL = "gpt-5-mini";
+const OPENAI_VISION_MODEL = KNOWN_MODELS.GPT.providerModelId;
 
 const PROVIDER_CONFIGS: Array<[string, string]> = [
+  // NOTE: Use a chat-mode vision-capable model. Some *responses-only* models may advertise
+  // supports_vision but still fail to ingest data-URI image parts in our current adapter.
   ["openai", OPENAI_VISION_MODEL],
   ["anthropic", KNOWN_MODELS.HAIKU.providerModelId],
 ];
