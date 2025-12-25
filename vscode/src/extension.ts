@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import assert from "node:assert";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 
 import { formatRelativeTime } from "mux/browser/utils/ui/dateTime";
 import type { WorkspaceChatMessage } from "mux/common/orpc/types";
@@ -59,7 +59,8 @@ type WebviewToExtensionMessage =
   | { type: "openWorkspace"; workspaceId: string }
   | { type: "sendMessage"; workspaceId: string; text: string }
   | { type: "configureConnection" }
-  | { type: "debugLog"; message: string; data?: unknown };
+  | { type: "debugLog"; message: string; data?: unknown }
+  | { type: "copyDebugLog"; text: string };
 
 type ExtensionToWebviewMessage =
   | { type: "connectionStatus"; status: UiConnectionStatus }
@@ -67,7 +68,8 @@ type ExtensionToWebviewMessage =
   | { type: "setSelectedWorkspace"; workspaceId: string | null }
   | { type: "chatReset"; workspaceId: string }
   | { type: "chatEvent"; workspaceId: string; event: WorkspaceChatMessage }
-  | { type: "uiNotice"; level: "info" | "error"; message: string };
+  | { type: "uiNotice"; level: "info" | "error"; message: string }
+  | { type: "debugProbe"; attempt: number; sentAtMs: number };
 
 let muxLogChannel: vscode.LogOutputChannel | undefined;
 
@@ -154,7 +156,9 @@ function toUiWorkspace(workspace: WorkspaceWithContext): UiWorkspace {
 }
 
 function getNonce(): string {
-  return randomBytes(16).toString("base64");
+  // Use a CSP nonce format that is known to work well in VS Code webviews.
+  // (Hex avoids characters like "+" and "/" that can be awkward to debug.)
+  return randomBytes(16).toString("hex");
 }
 
 function getOpenFolderUri(workspace: WorkspaceWithContext): vscode.Uri {
@@ -663,6 +667,73 @@ async function configureConnectionCommand(context: vscode.ExtensionContext): Pro
 
 
 
+async function debugConnectionCommand(context: vscode.ExtensionContext): Promise<void> {
+  assert(context, "debugConnectionCommand requires context");
+
+  const output = getMuxLogChannel();
+  output.show(true);
+
+  muxLogInfo("mux: debugConnection start");
+
+  let discovery: Awaited<ReturnType<typeof discoverServerConfig>>;
+  try {
+    discovery = await discoverServerConfig(context);
+  } catch (error) {
+    muxLogError("mux: debugConnection discovery failed", { error: formatError(error) });
+    void vscode.window.showErrorMessage(`mux: Failed to discover server config. (${formatError(error)})`);
+    return;
+  }
+
+  muxLogInfo("mux: debugConnection discovered server config", {
+    baseUrl: discovery.baseUrl,
+    baseUrlSource: discovery.baseUrlSource,
+    authTokenSource: discovery.authTokenSource,
+    hasAuthToken: Boolean(discovery.authToken),
+  });
+
+  const reachable = await checkServerReachable(discovery.baseUrl, { timeoutMs: 2_000 });
+  muxLogInfo("mux: debugConnection server reachable", reachable);
+
+  if (reachable.status !== "ok") {
+    void vscode.window.showErrorMessage(
+      `mux: Server not reachable at ${discovery.baseUrl}. (${reachable.error})`
+    );
+    return;
+  }
+
+  const client = createApiClient({ baseUrl: discovery.baseUrl, authToken: discovery.authToken });
+
+  const auth = await checkAuth(client, { timeoutMs: 2_000 });
+  muxLogInfo("mux: debugConnection auth", auth);
+
+  if (auth.status !== "ok") {
+    const hint =
+      auth.status === "unauthorized"
+        ? " Run \"mux: Configure Connection\" to update the auth token."
+        : "";
+
+    void vscode.window.showErrorMessage(
+      `mux: Failed to authenticate at ${discovery.baseUrl}. (${auth.error})${hint}`
+    );
+    return;
+  }
+
+  let workspaceCount: number | null = null;
+  try {
+    const workspaces = await getAllWorkspacesFromApi(client);
+    workspaceCount = workspaces.length;
+    muxLogInfo("mux: debugConnection listed workspaces", { count: workspaceCount });
+  } catch (error) {
+    muxLogWarn("mux: debugConnection list workspaces failed", { error: formatError(error) });
+  }
+
+  void vscode.window.showInformationMessage(
+    workspaceCount === null
+      ? `mux: Connected to ${discovery.baseUrl} (auth ok).`
+      : `mux: Connected to ${discovery.baseUrl} (auth ok). Workspaces: ${workspaceCount}.`
+  );
+}
+
 async function getWorkspacesForSidebar(
   context: vscode.ExtensionContext
 ): Promise<{ workspaces: WorkspaceWithContext[]; status: UiConnectionStatus }> {
@@ -802,17 +873,21 @@ function findWorkspaceIdMatchingCurrentFolder(workspaces: WorkspaceWithContext[]
   return null;
 }
 
-function renderChatViewHtml(webview: vscode.Webview): string {
+function renderChatViewHtml(webview: vscode.Webview, extensionUri: vscode.Uri, traceId: string): string {
+
+  assert(typeof traceId === "string" && traceId.length > 0, "traceId must be a non-empty string");
+
+  const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "muxChatView.js"));
   const nonce = getNonce();
 
   const csp = [
     "default-src 'none'",
     `img-src ${webview.cspSource} https: data:`,
     `style-src ${webview.cspSource} 'nonce-${nonce}'`,
-    `script-src 'nonce-${nonce}'`,
+    `script-src ${webview.cspSource} 'nonce-${nonce}'`,
   ].join("; ");
 
-  return `<!DOCTYPE html>
+  const html = `<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -1006,12 +1081,18 @@ function renderChatViewHtml(webview: vscode.Webview): string {
       }
     </style>
   </head>
-  <body>
+  <body data-mux-trace-id="${traceId}">
     <div id="container">
       <div id="top">
-        <div id="status">Loading mux…</div>
+        <div id="status">Loading mux… (trace ${traceId}). If this never changes, open Webview Developer Tools.</div>
         <details id="debugPanel">
           <summary>Debug</summary>
+          <pre id="staticDebugInfo">traceId: ${traceId}
+scriptUri: ${scriptUri}
+cspSource: ${webview.cspSource}</pre>
+          <div class="row">
+            <button id="copyDebugBtn" class="secondary" type="button">Copy debug log</button>
+          </div>
           <pre id="debugLog"></pre>
         </details>
         <div class="row">
@@ -1032,7 +1113,9 @@ function renderChatViewHtml(webview: vscode.Webview): string {
       </div>
     </div>
 
-    <script nonce="${nonce}">
+    <script src="${scriptUri}"></script>
+
+    <script nonce="${nonce}" type="text/plain" data-mux-disabled="1">
       (function () {
         const statusEl = document.getElementById('status');
 
@@ -1061,11 +1144,19 @@ function renderChatViewHtml(webview: vscode.Webview): string {
           }
         }
 
+
+        if (statusEl) {
+          statusEl.textContent = 'mux webview: script started (waiting for extension)…';
+        }
         appendDebug('script start');
 
         let vscode;
         try {
           vscode = acquireVsCodeApi();
+
+          if (statusEl) {
+            statusEl.textContent = 'mux webview: acquired VS Code API; sending ready…';
+          }
           appendDebug('acquireVsCodeApi ok');
         } catch (error) {
           appendDebug('acquireVsCodeApi failed', String(error));
@@ -1600,6 +1691,19 @@ function renderChatViewHtml(webview: vscode.Webview): string {
           }
 
           if (typeof msg.type === 'string' && msg.type !== 'chatEvent') {
+
+          if (msg.type === 'debugProbe') {
+            appendDebug('rx debugProbe', msg);
+
+            if (statusEl) {
+              statusEl.textContent = 'mux webview: received debugProbe #' + String(msg.attempt ?? '?');
+            }
+
+            postToExtension({ type: 'debugLog', message: 'rx debugProbe', data: msg });
+            // Re-send ready in case the bridge came up late.
+            postToExtension({ type: 'ready' });
+            return;
+          }
             appendDebug('rx ' + msg.type);
           }
 
@@ -1646,10 +1750,30 @@ function renderChatViewHtml(webview: vscode.Webview): string {
     </script>
   </body>
 </html>`;
+
+  const htmlHash = createHash("sha256").update(html).digest("hex").slice(0, 12);
+  muxLogDebug("mux.chatView: renderChatViewHtml", {
+    traceId,
+    scriptUri: scriptUri.toString(),
+    cspSource: webview.cspSource,
+    nonceLength: nonce.length,
+    noncePreview: nonce.slice(0, 8),
+    htmlLength: html.length,
+    htmlHash,
+    csp,
+  });
+
+  return html;
 }
 
 class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
   private view: vscode.WebviewView | undefined;
+
+  private nextWebviewMessageSeq = 1;
+
+  private traceId: string | null = null;
+
+  private readyProbeInterval: ReturnType<typeof setInterval> | null = null;
   private isWebviewReady = false;
 
   private connectionStatus: UiConnectionStatus = { mode: "file" };
@@ -1664,7 +1788,18 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
     this.selectedWorkspaceId = context.workspaceState.get<string>(SELECTED_WORKSPACE_STATE_KEY) ?? null;
   }
 
+  private clearReadyProbeInterval(): void {
+    if (!this.readyProbeInterval) {
+      return;
+    }
+
+    clearInterval(this.readyProbeInterval);
+    this.readyProbeInterval = null;
+  }
+
   dispose(): void {
+    this.clearReadyProbeInterval();
+
     this.subscriptionAbort?.abort();
     this.subscriptionAbort = null;
     this.subscribedWorkspaceId = null;
@@ -1692,14 +1827,30 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
   }
 
   resolveWebviewView(view: vscode.WebviewView): void {
-    muxLogDebug("mux.chatView: resolveWebviewView");
+    muxLogDebug("mux.chatView: resolveWebviewView", { visible: view.visible });
+
+    // New view instance; clear any previous timers.
+    this.clearReadyProbeInterval();
+
+    this.traceId = randomBytes(8).toString("hex");
+    muxLogDebug("mux.chatView: traceId assigned", { traceId: this.traceId });
 
     this.view = view;
     this.isWebviewReady = false;
 
     view.webview.options = {
       enableScripts: true,
+      localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, "media")],
     };
+
+    muxLogDebug("mux.chatView: webview.options set", {
+      enableScripts: view.webview.options.enableScripts ?? false,
+      localResourceRoots: (view.webview.options.localResourceRoots ?? []).map((uri) => uri.toString()),
+    });
+
+    const visibilityDisposable = view.onDidChangeVisibility(() => {
+      muxLogDebug("mux.chatView: view visibility changed", { visible: view.visible });
+    });
 
     // Register the message handler before setting HTML to avoid losing the initial
     // "ready" handshake due to a race.
@@ -1712,7 +1863,16 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
           ? (msg as { type: string }).type
           : undefined;
 
-      muxLogDebug("mux.chatView: <- webview message", { type: msgType });
+      const meta =
+        typeof msg === "object" && msg !== null && "__muxMeta" in msg
+          ? (msg as { __muxMeta?: unknown }).__muxMeta
+          : undefined;
+
+      muxLogDebug("mux.chatView: <- webview message", {
+        traceId: this.traceId,
+        type: msgType,
+        meta,
+      });
 
       void this.onWebviewMessage(msg).catch((error) => {
         muxLogError("mux.chatView: error handling webview message", { error: formatError(error) });
@@ -1727,13 +1887,59 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
 
     view.onDidDispose(() => {
       muxLogDebug("mux.chatView: disposed");
+      visibilityDisposable.dispose();
       messageDisposable.dispose();
+      this.traceId = null;
       this.view = undefined;
       this.isWebviewReady = false;
       this.dispose();
     });
 
-    view.webview.html = renderChatViewHtml(view.webview);
+    const traceId = this.traceId;
+    assert(typeof traceId === "string" && traceId.length > 0, "mux.chatView: traceId must be set before rendering webview");
+
+    const html = renderChatViewHtml(view.webview, this.context.extensionUri, traceId);
+    muxLogDebug("mux.chatView: setting webview.html", { traceId, htmlLength: html.length });
+    view.webview.html = html;
+
+    // While debugging the stuck "Loading mux..." state, this sends a message to the webview
+    // at a fixed interval until we get a "ready" message back.
+    let probeAttempts = 0;
+    this.readyProbeInterval = setInterval(() => {
+      if (this.view !== view) {
+        muxLogDebug("mux.chatView: stopping debugProbe (view changed)");
+        this.clearReadyProbeInterval();
+        return;
+      }
+
+      if (this.isWebviewReady) {
+        muxLogDebug("mux.chatView: stopping debugProbe (ready received)");
+        this.clearReadyProbeInterval();
+        return;
+      }
+
+      probeAttempts += 1;
+      const attempt = probeAttempts;
+      const sentAtMs = Date.now();
+
+      void view.webview.postMessage({ type: "debugProbe", attempt, sentAtMs }).then(
+        (delivered) => {
+          muxLogDebug("mux.chatView: -> debugProbe", { traceId: this.traceId, attempt, delivered });
+        },
+        (error) => {
+          muxLogWarn("mux.chatView: debugProbe postMessage failed", {
+            traceId: this.traceId,
+            attempt,
+            error: formatError(error),
+          });
+        }
+      );
+
+      if (attempt >= 15) {
+        muxLogWarn("mux.chatView: stopping debugProbe after max attempts", { maxAttempts: attempt });
+        this.clearReadyProbeInterval();
+      }
+    }, 1_000);
 
     setTimeout(() => {
       if (this.view !== view) {
@@ -1744,16 +1950,78 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
         return;
       }
 
-      muxLogWarn("mux.chatView: webview has not sent ready after 2s");
+      muxLogWarn("mux.chatView: webview has not sent ready after 2s", {
+        traceId: this.traceId,
+        visible: view.visible,
+        cspSource: view.webview.cspSource,
+        hint: "Open Webview Developer Tools and look for CSP/script errors; also check Output > Mux.",
+      });
     }, 2_000);
+
+    setTimeout(() => {
+      if (this.view !== view) {
+        return;
+      }
+
+      if (this.isWebviewReady) {
+        return;
+      }
+
+      muxLogError("mux.chatView: webview has not sent ready after 10s", {
+        traceId: this.traceId,
+        visible: view.visible,
+        cspSource: view.webview.cspSource,
+        hint: "Open Webview Developer Tools and look for CSP/script errors; also check Output > Mux.",
+      });
+    }, 10_000);
   }
 
   private postMessage(message: ExtensionToWebviewMessage): void {
-    if (!this.view || !this.isWebviewReady) {
+    const shouldLog = message.type !== "chatEvent";
+
+    if (!this.view) {
+      if (shouldLog) {
+        muxLogDebug("mux.chatView: -> drop postMessage (no view)", { traceId: this.traceId, type: message.type });
+      }
       return;
     }
 
-    void this.view.webview.postMessage(message);
+    if (!this.isWebviewReady) {
+      if (shouldLog) {
+        muxLogDebug("mux.chatView: -> drop postMessage (webview not ready)", { traceId: this.traceId, type: message.type });
+      }
+      return;
+    }
+
+    const seq = this.nextWebviewMessageSeq++;
+    const meta = {
+      traceId: this.traceId,
+      seq,
+      sentAtMs: Date.now(),
+    };
+
+    const envelope: Record<string, unknown> = { __muxMeta: meta, ...message };
+
+    void this.view.webview.postMessage(envelope).then(
+      (delivered) => {
+        if (shouldLog) {
+          muxLogDebug("mux.chatView: -> postMessage", {
+            traceId: this.traceId,
+            seq,
+            type: message.type,
+            delivered,
+          });
+        }
+      },
+      (error) => {
+        muxLogWarn("mux.chatView: postMessage failed", {
+          traceId: this.traceId,
+          seq,
+          type: message.type,
+          error: formatError(error),
+        });
+      }
+    );
   }
 
   private async onWebviewMessage(raw: unknown): Promise<void> {
@@ -1777,8 +2045,24 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
       return;
     }
 
+    if (type === "copyDebugLog") {
+      if (typeof msg.text !== "string") {
+        return;
+      }
+
+      const text = msg.text;
+      muxLogInfo("mux.chatView: copyDebugLog requested", { traceId: this.traceId, length: text.length });
+
+      await vscode.env.clipboard.writeText(text);
+      this.postMessage({ type: "uiNotice", level: "info", message: "Copied mux debug log to clipboard." });
+      return;
+    }
+
     if (type === "ready") {
+      muxLogDebug("mux.chatView: ready handshake received", { traceId: this.traceId });
       this.isWebviewReady = true;
+      this.clearReadyProbeInterval();
+
       await this.refreshWorkspaces();
       this.postMessage({ type: "setSelectedWorkspace", workspaceId: this.selectedWorkspaceId });
       await this.updateChatSubscription();
@@ -1821,7 +2105,7 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
 
   private async refreshWorkspaces(): Promise<void> {
     const startedAt = Date.now();
-    muxLogDebug("mux.chatView: refreshWorkspaces start");
+    muxLogDebug("mux.chatView: refreshWorkspaces start", { traceId: this.traceId });
 
     try {
       const result = await getWorkspacesForSidebar(this.context);
@@ -1848,6 +2132,7 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
       await this.updateChatSubscription();
 
       muxLogDebug("mux.chatView: refreshWorkspaces done", {
+        traceId: this.traceId,
         durationMs: Date.now() - startedAt,
         workspaceCount: this.workspaces.length,
         connectionMode: this.connectionStatus.mode,
@@ -1855,6 +2140,7 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
       });
     } catch (error) {
       muxLogError("mux.chatView: refreshWorkspaces failed", {
+        traceId: this.traceId,
         durationMs: Date.now() - startedAt,
         error: formatError(error),
       });
@@ -2071,6 +2357,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   context.subscriptions.push(
     vscode.commands.registerCommand("mux.configureConnection", () => configureConnectionCommand(context))
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("mux.debugConnection", () => debugConnectionCommand(context))
   );
 
   await maybeAutoRevealChatViewFromPendingSelection(context, chatViewProvider);
