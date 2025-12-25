@@ -25,7 +25,8 @@
     "onStartupFinished",
     "onView:mux.chatView",
     "onCommand:mux.openWorkspace",
-    "onCommand:mux.configureConnection"
+    "onCommand:mux.configureConnection",
+    "onCommand:mux.debugConnection"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -37,6 +38,10 @@
       {
         "command": "mux.configureConnection",
         "title": "mux: Configure Connection"
+      },
+      {
+        "command": "mux.debugConnection",
+        "title": "mux: Debug Connection"
       }
     ],
     "viewsContainers": {
