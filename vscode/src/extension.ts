@@ -3,8 +3,6 @@ import assert from "node:assert";
 import { createHash, randomBytes } from "node:crypto";
 
 import { formatRelativeTime } from "mux/browser/utils/ui/dateTime";
-import type { WorkspaceChatMessage } from "mux/common/orpc/types";
-
 import {
   getAllWorkspacesFromFiles,
   getAllWorkspacesFromApi,
@@ -20,6 +18,12 @@ import {
   storeAuthTokenOverride,
   type ConnectionMode,
 } from "./api/discovery";
+import type {
+  ExtensionToWebviewMessage,
+  UiConnectionStatus,
+  UiWorkspace,
+  WebviewToExtensionMessage,
+} from "./webview/protocol";
 import { openWorkspace } from "./workspaceOpener";
 
 let sessionPreferredMode: "api" | "file" | null = null;
@@ -38,38 +42,6 @@ interface PendingAutoSelectState {
   createdAtMs: number;
 }
 
-interface UiWorkspace {
-  id: string;
-  label: string;
-  description: string;
-  streaming: boolean;
-  runtimeType: string;
-}
-
-interface UiConnectionStatus {
-  mode: "api" | "file";
-  baseUrl?: string;
-  error?: string;
-}
-
-type WebviewToExtensionMessage =
-  | { type: "ready" }
-  | { type: "refreshWorkspaces" }
-  | { type: "selectWorkspace"; workspaceId: string | null }
-  | { type: "openWorkspace"; workspaceId: string }
-  | { type: "sendMessage"; workspaceId: string; text: string }
-  | { type: "configureConnection" }
-  | { type: "debugLog"; message: string; data?: unknown }
-  | { type: "copyDebugLog"; text: string };
-
-type ExtensionToWebviewMessage =
-  | { type: "connectionStatus"; status: UiConnectionStatus }
-  | { type: "workspaces"; workspaces: UiWorkspace[] }
-  | { type: "setSelectedWorkspace"; workspaceId: string | null }
-  | { type: "chatReset"; workspaceId: string }
-  | { type: "chatEvent"; workspaceId: string; event: WorkspaceChatMessage }
-  | { type: "uiNotice"; level: "info" | "error"; message: string }
-  | { type: "debugProbe"; attempt: number; sentAtMs: number };
 
 let muxLogChannel: vscode.LogOutputChannel | undefined;
 
@@ -152,6 +124,9 @@ function toUiWorkspace(workspace: WorkspaceWithContext): UiWorkspace {
     description: workspace.projectPath,
     streaming: workspace.extensionMetadata?.streaming ?? false,
     runtimeType,
+    // Backend guarantees createdAt for new workspaces, but keep a stable fallback for legacy ones.
+    createdAt: workspace.createdAt ?? new Date(0).toISOString(),
+    unarchivedAt: workspace.unarchivedAt,
   };
 }
 
@@ -874,17 +849,27 @@ function findWorkspaceIdMatchingCurrentFolder(workspaces: WorkspaceWithContext[]
 }
 
 function renderChatViewHtml(webview: vscode.Webview, extensionUri: vscode.Uri, traceId: string): string {
-
   assert(typeof traceId === "string" && traceId.length > 0, "traceId must be a non-empty string");
 
-  const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "muxChatView.js"));
+  const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "out", "muxChatView.js"));
+  const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "out", "muxChatView.css"));
+  const katexStyleUri = webview.asWebviewUri(
+    vscode.Uri.joinPath(extensionUri, "out", "katex", "katex.min.css")
+  );
   const nonce = getNonce();
 
   const csp = [
     "default-src 'none'",
     `img-src ${webview.cspSource} https: data:`,
-    `style-src ${webview.cspSource} 'nonce-${nonce}'`,
+    // Many mux components use inline styles (e.g., FileIcon).
+    `style-src ${webview.cspSource} 'unsafe-inline'`,
     `script-src ${webview.cspSource} 'nonce-${nonce}'`,
+    `font-src ${webview.cspSource} https: data:`,
+    // Allow webview to fetch additional local assets (e.g. source maps, wasm) without
+    // enabling arbitrary network access to the mux server.
+    `connect-src ${webview.cspSource}`,
+    // Shiki uses a Web Worker when available.
+    `worker-src ${webview.cspSource} blob:`,
   ].join("; ");
 
   const html = `<!DOCTYPE html>
@@ -893,861 +878,12 @@ function renderChatViewHtml(webview: vscode.Webview, extensionUri: vscode.Uri, t
     <meta charset="UTF-8" />
     <meta http-equiv="Content-Security-Policy" content="${csp}" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <style nonce="${nonce}">
-      :root {
-        color-scheme: dark;
-
-        /* Minimal subset of mux theme tokens (mirrors src/browser/styles/globals.css). */
-        --color-background: hsl(0 0% 12%);
-        --color-background-secondary: hsl(60 1% 15%);
-        --color-border: #262626;
-        --color-foreground: hsl(0 0% 83%);
-        --color-muted-foreground: hsl(0 0% 60%);
-
-        --color-button-bg: hsl(0 0% 24%);
-        --color-button-hover: hsl(0 0% 29%);
-        --color-button-text: hsl(0 0% 80%);
-
-        --color-input-bg: hsl(0 0% 12%);
-        --color-input-border: hsla(0 0% 100% / 0.08);
-
-        --color-user-surface: hsla(0 0% 100% / 0.06);
-        --color-user-border: hsla(0 0% 100% / 0.1);
-
-        --color-assistant-border: hsl(207 45% 40%);
-
-        --color-message-debug-bg: rgba(0, 0, 0, 0.3);
-        --color-message-debug-border: rgba(255, 255, 255, 0.1);
-        --color-message-debug-text: rgba(255, 255, 255, 0.8);
-      }
-      body {
-        padding: 0;
-        margin: 0;
-        font-family: var(--vscode-font-family);
-        font-size: var(--vscode-font-size);
-        color: var(--color-foreground);
-        background: var(--color-background);
-      }
-      #container {
-        display: flex;
-        flex-direction: column;
-        height: 100vh;
-      }
-      #top {
-        padding: 10px;
-        border-bottom: 1px solid var(--color-border);
-        background: var(--color-background-secondary);
-      }
-      #debugPanel {
-        margin-bottom: 8px;
-      }
-      #debugPanel > summary {
-        cursor: pointer;
-        user-select: none;
-        font-size: 12px;
-        color: var(--color-muted-foreground);
-      }
-      #debugLog {
-        max-height: 140px;
-        overflow-y: auto;
-        white-space: pre-wrap;
-      }
-      #status {
-        font-size: 12px;
-        line-height: 1.3;
-        margin-bottom: 8px;
-        color: var(--color-muted-foreground);
-        white-space: pre-wrap;
-      }
-      .row {
-        display: flex;
-        gap: 6px;
-        align-items: center;
-        margin-top: 6px;
-      }
-      select {
-        flex: 1;
-        min-width: 120px;
-        background: var(--color-input-bg);
-        color: var(--color-foreground);
-        border: 1px solid var(--color-input-border);
-        border-radius: 8px;
-        padding: 4px 6px;
-      }
-      button {
-        background: var(--color-button-bg);
-        color: var(--color-button-text);
-        border: 1px solid var(--color-input-border);
-        border-radius: 8px;
-        padding: 4px 10px;
-        cursor: pointer;
-      }
-      button:hover {
-        background: var(--color-button-hover);
-      }
-      button.secondary {
-        background: transparent;
-      }
-      button.secondary:hover {
-        background: rgba(255, 255, 255, 0.05);
-      }
-      button:disabled {
-        opacity: 0.6;
-        cursor: default;
-      }
-      #messages {
-        flex: 1;
-        overflow-y: auto;
-        padding: 10px;
-      }
-      .msg {
-        max-width: 100%;
-        margin-bottom: 14px;
-        white-space: pre-wrap;
-        word-break: break-word;
-      }
-      .msg .meta {
-        font-size: 11px;
-        color: var(--color-muted-foreground);
-        margin-bottom: 6px;
-      }
-      .msg.user {
-        margin-left: auto;
-        background: var(--color-user-surface);
-        border: 1px solid var(--color-user-border);
-        border-radius: 12px;
-        padding: 10px 12px;
-      }
-      .msg.assistant {
-        border-left: 2px solid var(--color-assistant-border);
-        padding-left: 12px;
-        padding-top: 2px;
-        padding-bottom: 2px;
-      }
-      .msg.notice {
-        border: 1px dashed var(--color-input-border);
-        border-radius: 12px;
-        padding: 8px 10px;
-      }
-      .msg.notice.error {
-        border-color: rgba(255, 120, 120, 0.7);
-      }
-      .part + .part {
-        margin-top: 10px;
-      }
-      details.part {
-        border: 1px solid var(--color-input-border);
-        border-radius: 10px;
-        padding: 6px 8px;
-        background: rgba(255, 255, 255, 0.02);
-      }
-      details.part > summary {
-        cursor: pointer;
-        user-select: none;
-        color: var(--color-foreground);
-        font-size: 12px;
-      }
-      pre {
-        margin: 8px 0 0;
-        overflow-x: auto;
-        border-radius: 8px;
-        border: 1px solid var(--color-message-debug-border);
-        background: var(--color-message-debug-bg);
-        padding: 8px;
-        font-size: 12px;
-        line-height: 1.35;
-        color: var(--color-message-debug-text);
-      }
-      #composer {
-        border-top: 1px solid var(--color-border);
-        padding: 10px;
-        background: var(--color-background-secondary);
-        display: flex;
-        gap: 8px;
-        align-items: flex-end;
-      }
-      textarea {
-        flex: 1;
-        resize: vertical;
-        min-height: 52px;
-        max-height: 160px;
-        background: var(--color-input-bg);
-        color: var(--color-foreground);
-        border: 1px solid var(--color-input-border);
-        border-radius: 8px;
-        padding: 6px;
-        font-family: var(--vscode-font-family);
-        font-size: var(--vscode-font-size);
-      }
-    </style>
+    <link rel="stylesheet" href="${katexStyleUri}" />
+    <link rel="stylesheet" href="${styleUri}" />
   </head>
   <body data-mux-trace-id="${traceId}">
-    <div id="container">
-      <div id="top">
-        <div id="status">Loading mux… (trace ${traceId}). If this never changes, open Webview Developer Tools.</div>
-        <details id="debugPanel">
-          <summary>Debug</summary>
-          <pre id="staticDebugInfo">traceId: ${traceId}
-scriptUri: ${scriptUri}
-cspSource: ${webview.cspSource}</pre>
-          <div class="row">
-            <button id="copyDebugBtn" class="secondary" type="button">Copy debug log</button>
-          </div>
-          <pre id="debugLog"></pre>
-        </details>
-        <div class="row">
-          <select id="workspaceSelect"></select>
-          <button id="refreshBtn" class="secondary" type="button">Refresh</button>
-          <button id="openBtn" type="button">Open</button>
-        </div>
-        <div class="row">
-          <button id="configureBtn" class="secondary" type="button">Configure Connection</button>
-        </div>
-      </div>
-
-      <div id="messages"></div>
-
-      <div id="composer">
-        <textarea id="input" placeholder="Message mux…"></textarea>
-        <button id="sendBtn" type="button">Send</button>
-      </div>
-    </div>
-
-    <script src="${scriptUri}"></script>
-
-    <script nonce="${nonce}" type="text/plain" data-mux-disabled="1">
-      (function () {
-        const statusEl = document.getElementById('status');
-
-        const debugLogEl = document.getElementById('debugLog');
-        const debugLines = [];
-        const DEBUG_MAX_LINES = 200;
-
-        function safeStringify(value) {
-          try {
-            return JSON.stringify(value);
-          } catch {
-            return String(value);
-          }
-        }
-
-        function appendDebug(message, data) {
-          const ts = new Date().toISOString();
-          const suffix = data === undefined ? '' : ' ' + safeStringify(data);
-          debugLines.push(ts + ' ' + message + suffix);
-          if (debugLines.length > DEBUG_MAX_LINES) {
-            debugLines.splice(0, debugLines.length - DEBUG_MAX_LINES);
-          }
-          if (debugLogEl) {
-            debugLogEl.textContent = debugLines.join('\\n');
-            debugLogEl.scrollTop = debugLogEl.scrollHeight;
-          }
-        }
-
-
-        if (statusEl) {
-          statusEl.textContent = 'mux webview: script started (waiting for extension)…';
-        }
-        appendDebug('script start');
-
-        let vscode;
-        try {
-          vscode = acquireVsCodeApi();
-
-          if (statusEl) {
-            statusEl.textContent = 'mux webview: acquired VS Code API; sending ready…';
-          }
-          appendDebug('acquireVsCodeApi ok');
-        } catch (error) {
-          appendDebug('acquireVsCodeApi failed', String(error));
-          if (statusEl) {
-            statusEl.textContent = 'Failed to initialize VS Code API. ' + String(error);
-          }
-          return;
-        }
-
-        function postToExtension(payload) {
-          try {
-            vscode.postMessage(payload);
-          } catch (error) {
-            appendDebug('postMessage threw', String(error));
-          }
-        }
-
-        window.addEventListener('error', (ev) => {
-          appendDebug('window.error', { message: ev.message, filename: ev.filename, lineno: ev.lineno, colno: ev.colno });
-          postToExtension({ type: 'debugLog', message: 'window.error', data: { message: ev.message, filename: ev.filename, lineno: ev.lineno, colno: ev.colno } });
-        });
-
-        window.addEventListener('unhandledrejection', (ev) => {
-          appendDebug('unhandledrejection', { reason: String(ev.reason) });
-          postToExtension({ type: 'debugLog', message: 'unhandledrejection', data: { reason: String(ev.reason) } });
-        });
-
-        appendDebug('webview boot');
-        postToExtension({ type: 'debugLog', message: 'webview boot' });
-
-        const workspaceSelectEl = document.getElementById('workspaceSelect');
-        const refreshBtn = document.getElementById('refreshBtn');
-        const openBtn = document.getElementById('openBtn');
-        const configureBtn = document.getElementById('configureBtn');
-        const messagesEl = document.getElementById('messages');
-        const inputEl = document.getElementById('input');
-        const sendBtn = document.getElementById('sendBtn');
-
-        const state = {
-          workspaces: [],
-          selectedWorkspaceId: null,
-          connectionStatus: { mode: 'file' },
-        };
-
-        const streamElsByMessageId = new Map();
-        const toolElsByToolCallId = new Map();
-
-        function setStatusText(text) {
-          statusEl.textContent = text;
-        }
-
-        function updateControls() {
-          const hasSelection = Boolean(state.selectedWorkspaceId);
-          openBtn.disabled = !hasSelection;
-
-          const canChat = state.connectionStatus && state.connectionStatus.mode === 'api' && hasSelection;
-          sendBtn.disabled = !canChat;
-          inputEl.disabled = !canChat;
-
-          if (!canChat) {
-            inputEl.placeholder = hasSelection
-              ? 'Chat requires mux server connection.'
-              : 'Select a mux workspace to chat.';
-          } else {
-            inputEl.placeholder = 'Message mux…';
-          }
-        }
-
-        function renderWorkspaces() {
-          while (workspaceSelectEl.firstChild) {
-            workspaceSelectEl.removeChild(workspaceSelectEl.firstChild);
-          }
-
-          const placeholder = document.createElement('option');
-          placeholder.value = '';
-          placeholder.textContent = state.workspaces.length > 0 ? 'Select workspace…' : 'No workspaces found';
-          workspaceSelectEl.appendChild(placeholder);
-
-          for (const ws of state.workspaces) {
-            const opt = document.createElement('option');
-            opt.value = ws.id;
-            opt.textContent = ws.label;
-            workspaceSelectEl.appendChild(opt);
-          }
-
-          workspaceSelectEl.value = state.selectedWorkspaceId || '';
-          updateControls();
-        }
-
-        function setConnectionStatus(status) {
-          state.connectionStatus = status;
-
-          const parts = [];
-
-          if (status.mode === 'api') {
-            parts.push('Connected to mux server');
-            if (status.baseUrl) {
-              parts.push(status.baseUrl);
-            }
-          } else {
-            parts.push('Using local file access');
-            if (status.baseUrl) {
-              parts.push('Server: ' + status.baseUrl);
-            }
-          }
-
-          if (status.error) {
-            parts.push(status.error);
-          }
-
-          setStatusText(parts.join('\n'));
-          updateControls();
-        }
-
-        function appendNotice(level, message) {
-          const el = document.createElement('div');
-          el.className = 'msg notice ' + (level || 'info');
-          const meta = document.createElement('div');
-          meta.className = 'meta';
-          meta.textContent = level === 'error' ? 'error' : 'info';
-          const body = document.createElement('div');
-          body.textContent = message;
-          el.appendChild(meta);
-          el.appendChild(body);
-          messagesEl.appendChild(el);
-          messagesEl.scrollTop = messagesEl.scrollHeight;
-        }
-
-        function clearEl(el) {
-          while (el.firstChild) {
-            el.removeChild(el.firstChild);
-          }
-        }
-
-        function formatJson(value) {
-          try {
-            return JSON.stringify(value, null, 2);
-          } catch {
-            return String(value);
-          }
-        }
-
-        function renderPartsInto(container, parts) {
-          clearEl(container);
-
-          if (!Array.isArray(parts)) {
-            return;
-          }
-
-          if (parts.length === 0) {
-            const textEl = document.createElement('div');
-            textEl.className = 'part';
-            textEl.textContent = '(no content)';
-            container.appendChild(textEl);
-            return;
-          }
-
-          let appended = false;
-          let textBuffer = '';
-
-          function flushText() {
-            if (!textBuffer) {
-              return;
-            }
-
-            const textEl = document.createElement('div');
-            textEl.className = 'part';
-            textEl.textContent = textBuffer;
-            container.appendChild(textEl);
-            appended = true;
-            textBuffer = '';
-          }
-
-          for (const part of parts) {
-            if (!part || typeof part !== 'object' || typeof part.type !== 'string') {
-              continue;
-            }
-
-            if (part.type === 'text' && typeof part.text === 'string') {
-              textBuffer += part.text;
-              continue;
-            }
-
-            flushText();
-
-            if (part.type === 'reasoning' && typeof part.text === 'string') {
-              const details = document.createElement('details');
-              details.className = 'part';
-
-              const summary = document.createElement('summary');
-              summary.textContent = 'Reasoning';
-              details.appendChild(summary);
-
-              const pre = document.createElement('pre');
-              pre.textContent = part.text;
-              details.appendChild(pre);
-
-              container.appendChild(details);
-              appended = true;
-              continue;
-            }
-
-            if (part.type === 'dynamic-tool' && typeof part.toolName === 'string') {
-              const details = document.createElement('details');
-              details.className = 'part';
-
-              const summary = document.createElement('summary');
-              summary.textContent = 'Tool: ' + part.toolName;
-              details.appendChild(summary);
-
-              const pre = document.createElement('pre');
-              let text = 'input:\n' + formatJson(part.input);
-
-              if (part.state === 'output-available') {
-                text += '\n\noutput:\n' + formatJson(part.output);
-              }
-
-              if (Array.isArray(part.nestedCalls) && part.nestedCalls.length > 0) {
-                text += '\n\nnestedCalls:\n' + formatJson(part.nestedCalls);
-              }
-
-              pre.textContent = text;
-              details.appendChild(pre);
-
-              container.appendChild(details);
-              appended = true;
-              continue;
-            }
-
-            if (part.type === 'file') {
-              const fileEl = document.createElement('div');
-              fileEl.className = 'part';
-
-              const filename = typeof part.filename === 'string' ? part.filename : part.url;
-              fileEl.textContent = 'File: ' + String(filename || '');
-
-              container.appendChild(fileEl);
-              appended = true;
-              continue;
-            }
-
-            const fallback = document.createElement('details');
-            fallback.className = 'part';
-
-            const summary = document.createElement('summary');
-            summary.textContent = 'Part: ' + part.type;
-            fallback.appendChild(summary);
-
-            const pre = document.createElement('pre');
-            pre.textContent = formatJson(part);
-            fallback.appendChild(pre);
-
-            container.appendChild(fallback);
-            appended = true;
-          }
-
-          flushText();
-
-          if (!appended) {
-            const pre = document.createElement('pre');
-            pre.textContent = formatJson(parts);
-            container.appendChild(pre);
-          }
-        }
-
-        function ensureToolEvent(toolCallId, toolName) {
-          if (toolElsByToolCallId.has(toolCallId)) {
-            return toolElsByToolCallId.get(toolCallId);
-          }
-
-          const el = document.createElement('div');
-          el.className = 'msg assistant';
-
-          const meta = document.createElement('div');
-          meta.className = 'meta';
-          meta.textContent = 'tool';
-
-          const body = document.createElement('div');
-
-          const details = document.createElement('details');
-          details.className = 'part';
-
-          const summary = document.createElement('summary');
-          summary.textContent = 'Tool: ' + String(toolName || '');
-          details.appendChild(summary);
-
-          const pre = document.createElement('pre');
-          pre.textContent = '';
-          details.appendChild(pre);
-
-          body.appendChild(details);
-
-          el.appendChild(meta);
-          el.appendChild(body);
-          messagesEl.appendChild(el);
-
-          const item = { root: el, pre };
-          toolElsByToolCallId.set(toolCallId, item);
-          messagesEl.scrollTop = messagesEl.scrollHeight;
-          return item;
-        }
-
-        function ensureStreamingMessage(messageId) {
-          if (streamElsByMessageId.has(messageId)) {
-            return streamElsByMessageId.get(messageId);
-          }
-
-          const el = document.createElement('div');
-          el.className = 'msg assistant';
-
-          const meta = document.createElement('div');
-          meta.className = 'meta';
-          meta.textContent = 'assistant (streaming)';
-
-          const body = document.createElement('div');
-
-          const streamText = document.createElement('div');
-          streamText.className = 'part';
-          streamText.textContent = '';
-          body.appendChild(streamText);
-
-          el.appendChild(meta);
-          el.appendChild(body);
-          messagesEl.appendChild(el);
-
-          const item = { root: el, body, streamText };
-          streamElsByMessageId.set(messageId, item);
-          messagesEl.scrollTop = messagesEl.scrollHeight;
-          return item;
-        }
-
-        function handleChatEvent(event) {
-          if (!event || typeof event !== 'object') {
-            return;
-          }
-
-          if (event.type === 'message') {
-            const role = typeof event.role === 'string' ? event.role : 'assistant';
-            const variant = role === 'user' ? 'user' : role === 'assistant' ? 'assistant' : 'notice';
-
-            const el = document.createElement('div');
-            el.className = 'msg ' + variant;
-
-            const meta = document.createElement('div');
-            meta.className = 'meta';
-            meta.textContent = role;
-
-            const body = document.createElement('div');
-            renderPartsInto(body, event.parts);
-
-            el.appendChild(meta);
-            el.appendChild(body);
-            messagesEl.appendChild(el);
-            messagesEl.scrollTop = messagesEl.scrollHeight;
-            return;
-          }
-
-          if (event.type === 'stream-start') {
-            ensureStreamingMessage(event.messageId);
-            return;
-          }
-
-          if (event.type === 'stream-delta') {
-            const item = ensureStreamingMessage(event.messageId);
-            if (typeof event.delta === 'string') {
-              item.streamText.textContent += event.delta;
-              messagesEl.scrollTop = messagesEl.scrollHeight;
-            }
-            return;
-          }
-
-          if (event.type === 'stream-end') {
-            const item = ensureStreamingMessage(event.messageId);
-            renderPartsInto(item.body, event.parts);
-
-            const meta = item.root.querySelector('.meta');
-            if (meta) {
-              meta.textContent = 'assistant';
-            }
-            messagesEl.scrollTop = messagesEl.scrollHeight;
-            return;
-          }
-
-          if (event.type === 'stream-error') {
-            appendNotice('error', event.error || 'Stream error');
-            return;
-          }
-
-          if (event.type === 'error') {
-            appendNotice('error', event.error || 'Error');
-            return;
-          }
-
-          if (event.type === 'caught-up') {
-            // No-op (history replay completed).
-            return;
-          }
-
-          if (event.type === 'tool-call-start') {
-            if (typeof event.toolCallId !== 'string') {
-              return;
-            }
-
-            const toolName = typeof event.toolName === 'string' ? event.toolName : 'tool';
-            const item = ensureToolEvent(event.toolCallId, toolName);
-            item.pre.textContent = 'input:\n' + formatJson(event.args);
-            messagesEl.scrollTop = messagesEl.scrollHeight;
-            return;
-          }
-
-          if (event.type === 'tool-call-delta') {
-            if (typeof event.toolCallId !== 'string') {
-              return;
-            }
-
-            const toolName = typeof event.toolName === 'string' ? event.toolName : 'tool';
-            const item = ensureToolEvent(event.toolCallId, toolName);
-            const prefix = item.pre.textContent ? '\n\n' : '';
-            item.pre.textContent += prefix + 'delta:\n' + formatJson(event.delta);
-            messagesEl.scrollTop = messagesEl.scrollHeight;
-            return;
-          }
-
-          if (event.type === 'tool-call-end') {
-            if (typeof event.toolCallId !== 'string') {
-              return;
-            }
-
-            const toolName = typeof event.toolName === 'string' ? event.toolName : 'tool';
-            const item = ensureToolEvent(event.toolCallId, toolName);
-            const prefix = item.pre.textContent ? '\n\n' : '';
-            item.pre.textContent += prefix + 'result:\n' + formatJson(event.result);
-            messagesEl.scrollTop = messagesEl.scrollHeight;
-            return;
-          }
-
-          if (event.type === 'bash-output') {
-            if (typeof event.toolCallId !== 'string') {
-              return;
-            }
-
-            const item = ensureToolEvent(event.toolCallId, 'bash');
-            const prefix = event.isError ? '[stderr] ' : '';
-            item.pre.textContent += prefix + String(event.text || '');
-            messagesEl.scrollTop = messagesEl.scrollHeight;
-            return;
-          }
-
-          // Ignore other events (usage deltas, init events, etc.) for now.
-        }
-
-        function resetChat() {
-          streamElsByMessageId.clear();
-          toolElsByToolCallId.clear();
-          while (messagesEl.firstChild) {
-            messagesEl.removeChild(messagesEl.firstChild);
-          }
-        }
-
-        workspaceSelectEl.addEventListener('change', () => {
-          const id = workspaceSelectEl.value || null;
-          vscode.postMessage({ type: 'selectWorkspace', workspaceId: id });
-        });
-
-        refreshBtn.addEventListener('click', () => {
-          vscode.postMessage({ type: 'refreshWorkspaces' });
-        });
-
-        openBtn.addEventListener('click', () => {
-          if (!state.selectedWorkspaceId) {
-            return;
-          }
-          vscode.postMessage({ type: 'openWorkspace', workspaceId: state.selectedWorkspaceId });
-        });
-
-        configureBtn.addEventListener('click', () => {
-          vscode.postMessage({ type: 'configureConnection' });
-        });
-
-        function sendCurrentInput() {
-          const text = String(inputEl.value || '').trim();
-          if (!text) {
-            return;
-          }
-          if (!state.selectedWorkspaceId) {
-            return;
-          }
-          vscode.postMessage({ type: 'sendMessage', workspaceId: state.selectedWorkspaceId, text });
-          inputEl.value = '';
-        }
-
-        sendBtn.addEventListener('click', sendCurrentInput);
-        inputEl.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            sendCurrentInput();
-          }
-        });
-
-        let handshakeComplete = false;
-        let readyAttempts = 0;
-
-        const readyInterval = setInterval(() => {
-          if (handshakeComplete) {
-            return;
-          }
-
-          readyAttempts += 1;
-          appendDebug('post ready', { attempt: readyAttempts, reason: 'retry' });
-          postToExtension({ type: 'ready' });
-        }, 1_000);
-
-        function markHandshakeComplete(reason) {
-          if (handshakeComplete) {
-            return;
-          }
-
-          handshakeComplete = true;
-          clearInterval(readyInterval);
-          appendDebug('handshake complete', { reason, attempts: readyAttempts });
-          postToExtension({ type: 'debugLog', message: 'handshake complete', data: { reason, attempts: readyAttempts } });
-        }
-
-        readyAttempts += 1;
-        appendDebug('post ready', { attempt: readyAttempts, reason: 'initial' });
-        postToExtension({ type: 'ready' });
-
-        window.addEventListener('message', (ev) => {
-          const msg = ev.data;
-          if (!msg || typeof msg !== 'object' || !msg.type) {
-            return;
-          }
-
-          if (typeof msg.type === 'string' && msg.type !== 'chatEvent') {
-
-          if (msg.type === 'debugProbe') {
-            appendDebug('rx debugProbe', msg);
-
-            if (statusEl) {
-              statusEl.textContent = 'mux webview: received debugProbe #' + String(msg.attempt ?? '?');
-            }
-
-            postToExtension({ type: 'debugLog', message: 'rx debugProbe', data: msg });
-            // Re-send ready in case the bridge came up late.
-            postToExtension({ type: 'ready' });
-            return;
-          }
-            appendDebug('rx ' + msg.type);
-          }
-
-          if (msg.type === 'connectionStatus' || msg.type === 'workspaces' || msg.type === 'setSelectedWorkspace') {
-            markHandshakeComplete(msg.type);
-          }
-
-          if (msg.type === 'connectionStatus') {
-            setConnectionStatus(msg.status);
-            return;
-          }
-
-          if (msg.type === 'workspaces') {
-            state.workspaces = Array.isArray(msg.workspaces) ? msg.workspaces : [];
-            renderWorkspaces();
-            return;
-          }
-
-          if (msg.type === 'setSelectedWorkspace') {
-            state.selectedWorkspaceId = msg.workspaceId || null;
-            workspaceSelectEl.value = state.selectedWorkspaceId || '';
-            updateControls();
-            return;
-          }
-
-          if (msg.type === 'chatReset') {
-            resetChat();
-            return;
-          }
-
-          if (msg.type === 'chatEvent') {
-            handleChatEvent(msg.event);
-            return;
-          }
-
-          if (msg.type === 'uiNotice') {
-            appendNotice(msg.level, msg.message);
-            return;
-          }
-        });
-
-        // ready handshake is posted via postToExtension + retry timer above.
-      })();
-    </script>
+    <div id="root"></div>
+    <script nonce="${nonce}" type="module" src="${scriptUri}"></script>
   </body>
 </html>`;
 
@@ -1755,6 +891,8 @@ cspSource: ${webview.cspSource}</pre>
   muxLogDebug("mux.chatView: renderChatViewHtml", {
     traceId,
     scriptUri: scriptUri.toString(),
+    styleUri: styleUri.toString(),
+    katexStyleUri: katexStyleUri.toString(),
     cspSource: webview.cspSource,
     nonceLength: nonce.length,
     noncePreview: nonce.slice(0, 8),
@@ -1765,6 +903,7 @@ cspSource: ${webview.cspSource}</pre>
 
   return html;
 }
+
 
 class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
   private view: vscode.WebviewView | undefined;
@@ -1781,6 +920,15 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
   private workspacesById = new Map<string, WorkspaceWithContext>();
 
   private selectedWorkspaceId: string | null;
+
+  private pendingOrpcCalls = new Map<string, AbortController>();
+  private activeOrpcStreams = new Map<
+    string,
+    {
+      controller: AbortController;
+      iterator: AsyncIterator<unknown>;
+    }
+  >();
   private subscribedWorkspaceId: string | null = null;
   private subscriptionAbort: AbortController | null = null;
 
@@ -1803,6 +951,18 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
     this.subscriptionAbort?.abort();
     this.subscriptionAbort = null;
     this.subscribedWorkspaceId = null;
+
+    for (const controller of this.pendingOrpcCalls.values()) {
+      controller.abort();
+    }
+    this.pendingOrpcCalls.clear();
+
+    for (const stream of this.activeOrpcStreams.values()) {
+      stream.controller.abort();
+      // Best-effort: allow the iterator to clean up server-side.
+      void stream.iterator.return?.();
+    }
+    this.activeOrpcStreams.clear();
   }
 
   async setSelectedWorkspaceId(workspaceId: string | null): Promise<void> {
@@ -1840,7 +1000,10 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
 
     view.webview.options = {
       enableScripts: true,
-      localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, "media")],
+      localResourceRoots: [
+        vscode.Uri.joinPath(this.context.extensionUri, "out"),
+        vscode.Uri.joinPath(this.context.extensionUri, "media"),
+      ],
     };
 
     muxLogDebug("mux.chatView: webview.options set", {
@@ -1977,7 +1140,7 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
   }
 
   private postMessage(message: ExtensionToWebviewMessage): void {
-    const shouldLog = message.type !== "chatEvent";
+    const shouldLog = message.type !== "chatEvent" && message.type !== "orpcStreamData";
 
     if (!this.view) {
       if (shouldLog) {
@@ -2055,6 +1218,46 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
 
       await vscode.env.clipboard.writeText(text);
       this.postMessage({ type: "uiNotice", level: "info", message: "Copied mux debug log to clipboard." });
+      return;
+    }
+
+    if (type === "orpcCall") {
+      if (typeof msg.requestId !== "string") {
+        return;
+      }
+      if (!Array.isArray(msg.path) || !msg.path.every((p) => typeof p === "string")) {
+        this.postMessage({
+          type: "orpcResponse",
+          requestId: msg.requestId,
+          ok: false,
+          error: "Invalid ORPC path",
+        });
+        return;
+      }
+
+      const lastEventId = typeof msg.lastEventId === "string" ? msg.lastEventId : undefined;
+      await this.handleOrpcCall({
+        requestId: msg.requestId,
+        path: msg.path,
+        input: msg.input,
+        lastEventId,
+      });
+      return;
+    }
+
+    if (type === "orpcCancel") {
+      if (typeof msg.requestId !== "string") {
+        return;
+      }
+      this.handleOrpcCancel(msg.requestId);
+      return;
+    }
+
+    if (type === "orpcStreamCancel") {
+      if (typeof msg.streamId !== "string") {
+        return;
+      }
+      this.handleOrpcStreamCancel(msg.streamId);
       return;
     }
 
@@ -2162,6 +1365,217 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
       this.postMessage({ type: "workspaces", workspaces: [] });
       this.postMessage({ type: "setSelectedWorkspace", workspaceId: null });
       this.postMessage({ type: "uiNotice", level: "error", message });
+    }
+  }
+
+  private isAllowedOrpcPath(path: string[]): boolean {
+    if (path.length === 0) {
+      return false;
+    }
+
+    const allowedRoots = new Set(["general", "workspace"]);
+    const forbiddenSegments = new Set(["__proto__", "prototype", "constructor"]);
+
+    for (const segment of path) {
+      if (!segment || forbiddenSegments.has(segment)) {
+        return false;
+      }
+
+      // Keep the proxy surface tight and predictable.
+      if (!/^[a-zA-Z0-9_]+$/.test(segment)) {
+        return false;
+      }
+    }
+
+    return allowedRoots.has(path[0]);
+  }
+
+  private resolveOrpcProcedure(client: unknown, path: string[]): ((input: unknown, options?: unknown) => Promise<unknown>) | null {
+    let cursor: unknown = client;
+
+    for (const segment of path) {
+      if (!cursor || typeof cursor !== "object") {
+        return null;
+      }
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      cursor = (cursor as any)[segment];
+    }
+
+    if (typeof cursor !== "function") {
+      return null;
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return cursor as any;
+  }
+
+  private handleOrpcCancel(requestId: string): void {
+    const controller = this.pendingOrpcCalls.get(requestId);
+    if (!controller) {
+      return;
+    }
+
+    controller.abort();
+    this.pendingOrpcCalls.delete(requestId);
+  }
+
+  private handleOrpcStreamCancel(streamId: string): void {
+    const stream = this.activeOrpcStreams.get(streamId);
+    if (!stream) {
+      return;
+    }
+
+    stream.controller.abort();
+    void stream.iterator.return?.();
+  }
+
+  private isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
+    return Boolean(
+      value &&
+        typeof value === "object" &&
+        Symbol.asyncIterator in value &&
+        typeof (value as { [Symbol.asyncIterator]?: unknown })[Symbol.asyncIterator] === "function"
+    );
+  }
+
+  private async pumpOrpcStream(streamId: string, iterator: AsyncIterator<unknown>, controller: AbortController): Promise<void> {
+    try {
+      for await (const value of {
+        [Symbol.asyncIterator]() {
+          return iterator;
+        },
+      } as AsyncIterable<unknown>) {
+        if (controller.signal.aborted) {
+          break;
+        }
+
+        this.postMessage({
+          type: "orpcStreamData",
+          streamId,
+          value,
+        });
+      }
+
+      this.postMessage({
+        type: "orpcStreamEnd",
+        streamId,
+      });
+    } catch (error) {
+      if (controller.signal.aborted) {
+        this.postMessage({
+          type: "orpcStreamEnd",
+          streamId,
+        });
+        return;
+      }
+
+      this.postMessage({
+        type: "orpcStreamError",
+        streamId,
+        error: formatError(error),
+      });
+    } finally {
+      this.activeOrpcStreams.delete(streamId);
+    }
+  }
+
+  private async handleOrpcCall(args: {
+    requestId: string;
+    path: string[];
+    input: unknown;
+    lastEventId?: string | undefined;
+  }): Promise<void> {
+    if (!this.isAllowedOrpcPath(args.path)) {
+      this.postMessage({
+        type: "orpcResponse",
+        requestId: args.requestId,
+        ok: false,
+        error: `ORPC path not allowed: ${args.path.join(".")}`,
+      });
+      return;
+    }
+
+    if (this.connectionStatus.mode !== "api") {
+      this.postMessage({
+        type: "orpcResponse",
+        requestId: args.requestId,
+        ok: false,
+        error: "mux server connection required",
+      });
+      return;
+    }
+
+    const api = await tryGetApiClient(this.context);
+    if ("failure" in api) {
+      this.postMessage({
+        type: "orpcResponse",
+        requestId: args.requestId,
+        ok: false,
+        error: `${describeFailure(api.failure)}. (${api.failure.error})`,
+      });
+      return;
+    }
+
+    const procedure = this.resolveOrpcProcedure(api.client, args.path);
+    if (!procedure) {
+      this.postMessage({
+        type: "orpcResponse",
+        requestId: args.requestId,
+        ok: false,
+        error: `Unknown ORPC procedure: ${args.path.join(".")}`,
+      });
+      return;
+    }
+
+    const controller = new AbortController();
+    this.pendingOrpcCalls.set(args.requestId, controller);
+
+    try {
+      const result = await procedure(args.input, {
+        signal: controller.signal,
+        lastEventId: args.lastEventId,
+      });
+
+      this.pendingOrpcCalls.delete(args.requestId);
+
+      if (this.isAsyncIterable(result)) {
+        const streamId = randomBytes(16).toString("hex");
+        const iterator = result[Symbol.asyncIterator]();
+
+        this.activeOrpcStreams.set(streamId, {
+          controller,
+          iterator,
+        });
+
+        this.postMessage({
+          type: "orpcResponse",
+          requestId: args.requestId,
+          ok: true,
+          kind: "stream",
+          streamId,
+        });
+
+        void this.pumpOrpcStream(streamId, iterator, controller);
+        return;
+      }
+
+      this.postMessage({
+        type: "orpcResponse",
+        requestId: args.requestId,
+        ok: true,
+        kind: "value",
+        value: result,
+      });
+    } catch (error) {
+      this.pendingOrpcCalls.delete(args.requestId);
+
+      this.postMessage({
+        type: "orpcResponse",
+        requestId: args.requestId,
+        ok: false,
+        error: formatError(error),
+      });
     }
   }
 
