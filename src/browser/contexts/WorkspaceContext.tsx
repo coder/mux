@@ -120,7 +120,6 @@ export interface WorkspaceContext {
   // Workspace creation flow
   pendingNewWorkspaceProject: string | null;
   beginWorkspaceCreation: (projectPath: string) => void;
-  clearPendingWorkspaceCreation: () => void;
 
   // Helpers
   getWorkspaceInfo: (workspaceId: string) => Promise<FrontendWorkspaceMetadata | null>;
@@ -177,11 +176,20 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     return toWorkspaceSelection(metadata);
   }, [currentWorkspaceId, workspaceMetadata]);
 
+  // Keep a ref to the current selectedWorkspace for use in functional updates.
+  // This ensures setSelectedWorkspace always has access to the latest value,
+  // avoiding stale closure issues when called with a functional updater.
+  const selectedWorkspaceRef = useRef(selectedWorkspace);
+  useEffect(() => {
+    selectedWorkspaceRef.current = selectedWorkspace;
+  }, [selectedWorkspace]);
+
   // setSelectedWorkspace navigates to the workspace URL (or clears if null)
   const setSelectedWorkspace = useCallback(
     (update: SetStateAction<WorkspaceSelection | null>) => {
-      // Handle functional updates by resolving against current value
-      const newValue = typeof update === "function" ? update(selectedWorkspace) : update;
+      // Handle functional updates by resolving against the ref (always fresh)
+      const current = selectedWorkspaceRef.current;
+      const newValue = typeof update === "function" ? update(current) : update;
       if (newValue) {
         navigateToWorkspace(newValue.workspaceId);
         // Persist to localStorage for next session
@@ -191,7 +199,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         updatePersistedState(SELECTED_WORKSPACE_KEY, null);
       }
     },
-    [selectedWorkspace, navigateToWorkspace, navigateToHome]
+    [navigateToWorkspace, navigateToHome]
   );
 
   // Used by async subscription handlers to safely access the most recent metadata map
@@ -593,10 +601,6 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     [navigateToProject]
   );
 
-  const clearPendingWorkspaceCreation = useCallback(() => {
-    navigateToHome();
-  }, [navigateToHome]);
-
   const value = useMemo<WorkspaceContext>(
     () => ({
       workspaceMetadata,
@@ -612,7 +616,6 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       setSelectedWorkspace,
       pendingNewWorkspaceProject,
       beginWorkspaceCreation,
-      clearPendingWorkspaceCreation,
       getWorkspaceInfo,
     }),
     [
@@ -629,7 +632,6 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       setSelectedWorkspace,
       pendingNewWorkspaceProject,
       beginWorkspaceCreation,
-      clearPendingWorkspaceCreation,
       getWorkspaceInfo,
     ]
   );

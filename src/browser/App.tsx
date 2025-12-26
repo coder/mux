@@ -68,7 +68,6 @@ function AppInner() {
     setSelectedWorkspace,
     pendingNewWorkspaceProject,
     beginWorkspaceCreation,
-    clearPendingWorkspaceCreation,
   } = useWorkspaceContext();
   const { theme, setTheme, toggleTheme } = useTheme();
   const { open: openSettings } = useSettings();
@@ -653,8 +652,9 @@ function AppInner() {
                         getRuntimeTypeForTelemetry(metadata.runtimeConfig)
                       );
 
-                      // Clear pending state
-                      clearPendingWorkspaceCreation();
+                      // Note: No need to call clearPendingWorkspaceCreation() here.
+                      // Navigating to the workspace URL automatically clears the pending
+                      // state since pendingNewWorkspaceProject is derived from the URL.
                     }}
                   />
                 );
