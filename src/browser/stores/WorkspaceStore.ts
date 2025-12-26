@@ -5,6 +5,7 @@ import type { WorkspaceChatMessage, WorkspaceStatsSnapshot } from "@/common/orpc
 import type { RouterClient } from "@orpc/server";
 import type { AppRouter } from "@/node/orpc/router";
 import type { TodoItem } from "@/common/types/tools";
+import { applyWorkspaceChatEventToAggregator } from "@/browser/utils/messages/applyWorkspaceChatEventToAggregator";
 import { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getRetryStateKey } from "@/common/constants/storage";
@@ -348,7 +349,7 @@ export class WorkspaceStore {
     ) => void
   > = {
     "stream-start": (workspaceId, aggregator, data) => {
-      aggregator.handleStreamStart(data as never);
+      applyWorkspaceChatEventToAggregator(aggregator, data);
       if (this.onModelUsed) {
         this.onModelUsed((data as { model: string }).model);
       }
@@ -359,13 +360,12 @@ export class WorkspaceStore {
       this.usageStore.bump(workspaceId);
     },
     "stream-delta": (workspaceId, aggregator, data) => {
-      aggregator.handleStreamDelta(data as never);
+      applyWorkspaceChatEventToAggregator(aggregator, data);
       this.scheduleIdleStateBump(workspaceId);
     },
     "stream-end": (workspaceId, aggregator, data) => {
       const streamEndData = data as StreamEndEvent;
-      aggregator.handleStreamEnd(streamEndData as never);
-      aggregator.clearTokenState(streamEndData.messageId);
+      applyWorkspaceChatEventToAggregator(aggregator, streamEndData);
 
       // Track stream completion telemetry
       this.trackStreamCompletedTelemetry(streamEndData, false);
@@ -401,8 +401,7 @@ export class WorkspaceStore {
     },
     "stream-abort": (workspaceId, aggregator, data) => {
       const streamAbortData = data as StreamAbortEvent;
-      aggregator.clearTokenState(streamAbortData.messageId);
-      aggregator.handleStreamAbort(streamAbortData as never);
+      applyWorkspaceChatEventToAggregator(aggregator, streamAbortData);
 
       // Track stream interruption telemetry (get model from aggregator)
       const model = aggregator.getCurrentModel();
@@ -426,11 +425,11 @@ export class WorkspaceStore {
       this.finalizeUsageStats(workspaceId, streamAbortData.metadata);
     },
     "tool-call-start": (workspaceId, aggregator, data) => {
-      aggregator.handleToolCallStart(data as never);
+      applyWorkspaceChatEventToAggregator(aggregator, data);
       this.states.bump(workspaceId);
     },
     "tool-call-delta": (workspaceId, aggregator, data) => {
-      aggregator.handleToolCallDelta(data as never);
+      applyWorkspaceChatEventToAggregator(aggregator, data);
       this.scheduleIdleStateBump(workspaceId);
     },
     "tool-call-end": (workspaceId, aggregator, data) => {
@@ -446,7 +445,7 @@ export class WorkspaceStore {
         }
       }
 
-      aggregator.handleToolCallEnd(data as never);
+      applyWorkspaceChatEventToAggregator(aggregator, data);
       this.states.bump(workspaceId);
       this.consumerManager.scheduleCalculation(workspaceId, aggregator);
 
@@ -457,11 +456,11 @@ export class WorkspaceStore {
       }
     },
     "reasoning-delta": (workspaceId, aggregator, data) => {
-      aggregator.handleReasoningDelta(data as never);
+      applyWorkspaceChatEventToAggregator(aggregator, data);
       this.scheduleIdleStateBump(workspaceId);
     },
     "reasoning-end": (workspaceId, aggregator, data) => {
-      aggregator.handleReasoningEnd(data as never);
+      applyWorkspaceChatEventToAggregator(aggregator, data);
       this.states.bump(workspaceId);
     },
     "session-usage-delta": (workspaceId, _aggregator, data) => {
@@ -481,19 +480,19 @@ export class WorkspaceStore {
       this.usageStore.bump(workspaceId);
     },
     "usage-delta": (workspaceId, aggregator, data) => {
-      aggregator.handleUsageDelta(data as never);
+      applyWorkspaceChatEventToAggregator(aggregator, data);
       this.usageStore.bump(workspaceId);
     },
     "init-start": (workspaceId, aggregator, data) => {
-      aggregator.handleMessage(data);
+      applyWorkspaceChatEventToAggregator(aggregator, data);
       this.states.bump(workspaceId);
     },
     "init-output": (workspaceId, aggregator, data) => {
-      aggregator.handleMessage(data);
+      applyWorkspaceChatEventToAggregator(aggregator, data);
       this.states.bump(workspaceId);
     },
     "init-end": (workspaceId, aggregator, data) => {
-      aggregator.handleMessage(data);
+      applyWorkspaceChatEventToAggregator(aggregator, data);
       this.states.bump(workspaceId);
     },
     "queued-message-changed": (workspaceId, _aggregator, data) => {
@@ -1659,7 +1658,7 @@ export class WorkspaceStore {
   ): void {
     // Handle non-buffered special events first
     if (isStreamError(data)) {
-      aggregator.handleStreamError(data);
+      applyWorkspaceChatEventToAggregator(aggregator, data);
 
       // Increment retry attempt counter when stream fails
       // This handles auth errors that happen AFTER stream-start
@@ -1684,7 +1683,7 @@ export class WorkspaceStore {
     }
 
     if (isDeleteMessage(data)) {
-      aggregator.handleDeleteMessage(data);
+      applyWorkspaceChatEventToAggregator(aggregator, data);
       this.cleanupStaleLiveBashOutput(workspaceId, aggregator);
       this.states.bump(workspaceId);
       this.checkAndBumpRecencyIfChanged();
@@ -1727,7 +1726,7 @@ export class WorkspaceStore {
         transient.historicalMessages.push(data);
       } else {
         // Process live events immediately (after history loaded)
-        aggregator.handleMessage(data);
+        applyWorkspaceChatEventToAggregator(aggregator, data);
         this.states.bump(workspaceId);
         this.usageStore.bump(workspaceId);
         this.checkAndBumpRecencyIfChanged();
