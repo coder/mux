@@ -532,15 +532,24 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   const archiveWorkspace = useCallback(
     async (workspaceId: string): Promise<{ success: boolean; error?: string }> => {
       if (!api) return { success: false, error: "API not connected" };
+
+      // Capture the current selection before the async operation
+      // We need to know if the archived workspace is currently selected
+      // and its projectPath so we can navigate to the project page
+      const wasSelected = selectedWorkspace?.workspaceId === workspaceId;
+      const projectPath = selectedWorkspace?.projectPath;
+
       try {
         const result = await api.workspace.archive({ workspaceId });
         if (result.success) {
           // Reload workspace metadata to get the updated state
           await loadWorkspaceMetadata();
-          // Clear selected workspace if it was archived
-          setSelectedWorkspace((current) =>
-            current?.workspaceId === workspaceId ? null : current
-          );
+
+          // If the archived workspace was selected, navigate to its project page
+          // instead of going home (user likely wants to stay in context)
+          if (wasSelected && projectPath) {
+            navigateToProject(projectPath);
+          }
           return { success: true };
         } else {
           console.error("Failed to archive workspace:", result.error);
@@ -552,7 +561,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         return { success: false, error: errorMessage };
       }
     },
-    [loadWorkspaceMetadata, setSelectedWorkspace, api]
+    [loadWorkspaceMetadata, navigateToProject, selectedWorkspace, api]
   );
 
   const unarchiveWorkspace = useCallback(
