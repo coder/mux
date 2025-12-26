@@ -27,6 +27,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { HunkViewer } from "./HunkViewer";
 import { ReviewControls } from "./ReviewControls";
 import { FileTree } from "./FileTree";
+import { shellQuote } from "@/common/utils/shell";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useReviewState } from "@/browser/hooks/useReviewState";
 import { useHunkFirstSeen } from "@/browser/hooks/useHunkFirstSeen";
@@ -150,9 +151,7 @@ function getOriginBranchForFetch(diffBase: string): string | null {
   if (!trimmed.startsWith("origin/")) return null;
 
   const branch = trimmed.slice("origin/".length);
-
-  // Avoid shell injection; diffBase is user-controlled.
-  if (!/^[0-9A-Za-z._/-]+$/.test(branch)) return null;
+  if (branch.length === 0) return null;
 
   return branch;
 }
@@ -183,7 +182,7 @@ async function ensureOriginFetched(params: {
   const promise = params.api.workspace
     .executeBash({
       workspaceId: params.workspaceId,
-      script: `GIT_TERMINAL_PROMPT=0 git fetch origin ${originBranch} --quiet || true`,
+      script: `GIT_TERMINAL_PROMPT=0 git fetch origin ${shellQuote(originBranch)} --quiet || true`,
       options: { timeout_secs: 30 },
     })
     .then(() => undefined)

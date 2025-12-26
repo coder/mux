@@ -1,3 +1,6 @@
+import { shellQuote } from "@/common/utils/shell";
+export { shellQuote };
+
 /** Exit code for process killed by SIGKILL (128 + 9) */
 export const EXIT_CODE_SIGKILL = 137;
 
@@ -25,15 +28,6 @@ export function parsePid(output: string): number | null {
  * Shared command builders for background process management.
  * Used by both LocalRuntime and SSHRuntime for parity.
  */
-
-/**
- * Shell-escape a string using POSIX-safe single-quote escaping.
- * Handles empty strings and embedded single quotes.
- */
-export function shellQuote(value: string): string {
-  if (value.length === 0) return "''";
-  return "'" + value.replace(/'/g, "'\"'\"'") + "'";
-}
 
 /**
  * Options for building the wrapper script that runs inside bash.
