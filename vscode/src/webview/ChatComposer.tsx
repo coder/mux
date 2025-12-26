@@ -80,6 +80,7 @@ function ChatComposerInner(props: {
 
   const {
     models,
+    customModels,
     hiddenModels,
     hideModel,
     unhideModel,
@@ -175,6 +176,22 @@ function ChatComposerInner(props: {
       });
   };
 
+
+  const cycleModels = customModels.length > 0 ? customModels : models;
+
+  const cycleToNextModel = () => {
+    if (cycleModels.length < 2) {
+      return;
+    }
+
+    const currentIndex = cycleModels.indexOf(baseModel);
+    const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % cycleModels.length;
+    const nextModel = cycleModels[nextIndex];
+    if (nextModel) {
+      onModelChange(nextModel);
+    }
+  };
+
   const onSend = async () => {
     const trimmed = input.trim();
     if (!trimmed) {
@@ -260,6 +277,12 @@ function ChatComposerInner(props: {
         placeholder={placeholder}
         disabled={props.disabled}
         onKeyDown={(e) => {
+          if (matchesKeybind(e, KEYBINDS.CYCLE_MODEL)) {
+            e.preventDefault();
+            cycleToNextModel();
+            return;
+          }
+
           if (matchesKeybind(e, KEYBINDS.SEND_MESSAGE)) {
             e.preventDefault();
             void onSend();
