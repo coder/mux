@@ -139,7 +139,7 @@ export const LoadingDots: React.FC<React.HTMLAttributes<HTMLSpanElement>> = ({
 }) => (
   <span
     className={cn(
-      "after:content-[''] after:animate-[ellipsis_1.2s_steps(4,end)_infinite]",
+      "after:inline-block after:w-[3ch] after:text-left after:content-[''] after:animate-[ellipsis_1.2s_steps(4,end)_infinite]",
       className
     )}
     {...props}
