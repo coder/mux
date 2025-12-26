@@ -169,6 +169,77 @@ describeIntegration("Workspace Archive/Unarchive (UI)", () => {
     }
   }, 30_000);
 
+  test("archiving the active workspace navigates to project page, not home", async () => {
+    const env = getSharedEnv();
+    const projectPath = getSharedRepoPath();
+    const branchName = generateBranchName("test-archive-active");
+    const trunkBranch = await detectDefaultTrunkBranch(projectPath);
+
+    // Create workspace
+    const createResult = await env.orpc.workspace.create({
+      projectPath,
+      branchName,
+      trunkBranch,
+    });
+    if (!createResult.success) throw new Error(createResult.error);
+    const metadata = createResult.metadata;
+    const workspaceId = metadata.id;
+
+    const cleanupDom = installDom();
+    const view = renderReviewPanel({
+      apiClient: env.orpc,
+      metadata,
+    });
+
+    try {
+      // Navigate to the workspace (make it active)
+      await setupWorkspaceView(view, metadata, workspaceId);
+
+      // Verify we're in the workspace view
+      await waitFor(
+        () => {
+          const wsView = view.container.querySelector(
+            '[role="log"], [data-testid="chat-input"], textarea'
+          );
+          if (!wsView) throw new Error("Not in workspace view");
+        },
+        { timeout: 5_000 }
+      );
+
+      // Archive the active workspace via API
+      const archiveResult = await env.orpc.workspace.archive({ workspaceId });
+      expect(archiveResult.success).toBe(true);
+
+      // Give React time to process the archive and navigate
+      await new Promise((r) => setTimeout(r, 300));
+
+      // Should NOT be on home screen
+      const homeScreen = view.container.querySelector('[data-testid="home-screen"]');
+      expect(homeScreen).toBeNull();
+
+      // Should be on the project page (has creation textarea for new workspace)
+      // The project page shows when project is selected but no workspace is active
+      await waitFor(
+        () => {
+          // Project page has the ChatInput for creating new workspaces
+          // Look for the creation textarea or the project being selected
+          const creationTextarea = view.container.querySelector('textarea');
+          const projectSelected = view.container.querySelector(
+            `[data-project-path="${projectPath}"]`
+          );
+          if (!creationTextarea && !projectSelected) {
+            throw new Error("Not on project page after archiving");
+          }
+        },
+        { timeout: 5_000 }
+      );
+    } finally {
+      await env.orpc.workspace.unarchive({ workspaceId }).catch(() => {});
+      await env.orpc.workspace.remove({ workspaceId }).catch(() => {});
+      await cleanupView(view, cleanupDom);
+    }
+  }, 30_000);
+
   test("unarchiving a workspace adds it back to the active list", async () => {
     const env = getSharedEnv();
     const projectPath = getSharedRepoPath();
