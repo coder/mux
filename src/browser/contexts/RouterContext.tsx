@@ -1,5 +1,5 @@
-import { createContext, useContext, type ReactNode } from "react";
-import { HashRouter, useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { createContext, useContext, useEffect, type ReactNode } from "react";
+import { MemoryRouter, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
 import { SELECTED_WORKSPACE_KEY } from "@/common/constants/storage";
 import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar";
@@ -22,22 +22,36 @@ export function useRouter(): RouterContext {
   return ctx;
 }
 
-// Restore workspace from localStorage before HashRouter mounts (synchronous)
-function initializeHashFromStorage(): void {
-  const hash = window.location.hash;
-  // Only restore if at root (no hash path)
-  if (!hash || hash === "#" || hash === "#/") {
-    const saved = readPersistedState<WorkspaceSelection | null>(SELECTED_WORKSPACE_KEY, null);
-    if (saved?.workspaceId) {
-      window.location.hash = `#/workspace/${encodeURIComponent(saved.workspaceId)}`;
-    }
+/** Get initial route from localStorage (restores last workspace). */
+function getInitialRoute(): string {
+  const saved = readPersistedState<WorkspaceSelection | null>(SELECTED_WORKSPACE_KEY, null);
+  if (saved?.workspaceId) {
+    return `/workspace/${encodeURIComponent(saved.workspaceId)}`;
   }
+  return "/";
+}
+
+/** Sync router state to browser URL (dev server only, not Electron/Storybook). */
+function useUrlSync(): void {
+  const location = useLocation();
+  useEffect(() => {
+    // Skip in Storybook (conflicts with story navigation)
+    if (window.location.pathname.endsWith("iframe.html")) return;
+    // Skip in Electron (file:// breaks on reload)
+    if (window.location.protocol === "file:") return;
+
+    const url = location.pathname + location.search;
+    if (url !== window.location.pathname + window.location.search) {
+      window.history.replaceState(null, "", url);
+    }
+  }, [location.pathname, location.search]);
 }
 
 function RouterContextInner(props: { children: ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
+  useUrlSync();
 
   const workspaceMatch = /^\/workspace\/(.+)$/.exec(location.pathname);
   const currentWorkspaceId = workspaceMatch ? decodeURIComponent(workspaceMatch[1]) : null;
@@ -57,12 +71,9 @@ function RouterContextInner(props: { children: ReactNode }) {
 }
 
 export function RouterProvider(props: { children: ReactNode }) {
-  // Initialize hash before router mounts
-  initializeHashFromStorage();
-
   return (
-    <HashRouter>
+    <MemoryRouter initialEntries={[getInitialRoute()]}>
       <RouterContextInner>{props.children}</RouterContextInner>
-    </HashRouter>
+    </MemoryRouter>
   );
 }
