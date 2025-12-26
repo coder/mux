@@ -118,9 +118,19 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
           workspacesRef.current = msg.workspaces;
           setWorkspaces(msg.workspaces);
           return;
-        case "setSelectedWorkspace":
+        case "setSelectedWorkspace": {
           setSelectedWorkspaceId(msg.workspaceId);
+
+          // The webview retains React state when hidden, so clear stale transcript
+          // when no workspace is selected.
+          if (!msg.workspaceId) {
+            aggregatorRef.current = null;
+            setDisplayedMessages([]);
+            setNotices([]);
+          }
+
           return;
+        }
         case "chatReset": {
           const workspace = workspacesRef.current.find((w) => w.id === msg.workspaceId);
           const createdAt = pickWorkspaceCreatedAt(workspace);
