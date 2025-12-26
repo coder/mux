@@ -5,7 +5,8 @@
  * These tests verify the core logic extracted into helper functions.
  */
 
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
+import { RefreshController, type LastRefreshInfo } from "../utils/RefreshController";
 
 // Test the helper function directly (extract for testability)
 function getOriginBranchForFetch(diffBase: string): string | null {
@@ -49,6 +50,104 @@ describe("useReviewRefreshController design", () => {
    * These are behavioral contracts documented as tests.
    * The actual implementation is tested through integration.
    */
+
+  test("lastRefreshInfo contract: manual refresh sets lastRefreshInfo immediately", () => {
+    // Contract: When requestManualRefresh() is called, lastRefreshInfo is set
+    // with trigger "manual" and a current timestamp IMMEDIATELY after onRefresh returns.
+    //
+    // This is critical for UX: after user clicks refresh button, the tooltip
+    // should show "Last: just now via manual click" once the spinner stops.
+    //
+    // Implementation: RefreshController.onRefreshComplete fires synchronously
+    // after onRefresh() returns, updating the hook's lastRefreshInfo state.
+    // The state update triggers re-render, flowing to RefreshButton.
+
+    let capturedInfo: LastRefreshInfo | null = null;
+    const onRefresh = mock(() => {
+      // Simulate what the hook does: call setRefreshTrigger
+    });
+    const onRefreshComplete = mock((info: LastRefreshInfo) => {
+      capturedInfo = info;
+    });
+
+    const controller = new RefreshController({
+      debounceMs: 100,
+      onRefresh,
+      onRefreshComplete,
+    });
+
+    // Before any refresh
+    expect(controller.lastRefreshInfo).toBeNull();
+    expect(capturedInfo).toBeNull();
+
+    // Simulate user clicking refresh button
+    controller.requestImmediate();
+
+    // AFTER manual refresh: lastRefreshInfo MUST be set immediately
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+    expect(onRefreshComplete).toHaveBeenCalledTimes(1);
+
+    // The info must have trigger "manual"
+    expect(capturedInfo).not.toBeNull();
+    expect(capturedInfo!.trigger).toBe("manual");
+    expect(capturedInfo!.timestamp).toBeGreaterThan(0);
+    expect(capturedInfo!.timestamp).toBeLessThanOrEqual(Date.now());
+
+    // The controller's getter should also reflect this
+    expect(controller.lastRefreshInfo).not.toBeNull();
+    expect(controller.lastRefreshInfo!.trigger).toBe("manual");
+
+    controller.dispose();
+  });
+
+  test("lastRefreshInfo contract: simulates full hook flow", () => {
+    // This test simulates what useReviewRefreshController does internally:
+    // 1. Create a RefreshController with onRefreshComplete that updates state
+    // 2. Call requestImmediate() (manual refresh)
+    // 3. Verify the state was updated with the correct info
+
+    // Simulate React state
+    let lastRefreshInfo: LastRefreshInfo | null = null;
+    const setLastRefreshInfo = (info: LastRefreshInfo) => {
+      lastRefreshInfo = info;
+    };
+
+    // Session cache (like lastRefreshInfoByWorkspaceId)
+    const sessionCache = new Map<string, LastRefreshInfo>();
+    const workspaceId = "test-workspace";
+
+    // Create controller like the hook does
+    const controller = new RefreshController({
+      debounceMs: 3000,
+      isPaused: () => false,
+      onRefresh: () => {
+        // This is what the hook's onRefresh does:
+        // setRefreshTrigger(prev => prev + 1)
+        // (but we can't test React state directly here)
+      },
+      onRefreshComplete: (info) => {
+        // This is what the hook's onRefreshComplete does:
+        sessionCache.set(workspaceId, info);
+        setLastRefreshInfo(info);
+      },
+    });
+
+    // Initial state
+    expect(lastRefreshInfo).toBeNull();
+
+    // User clicks refresh button
+    controller.requestImmediate();
+
+    // CRITICAL INVARIANT: After manual refresh, lastRefreshInfo MUST be set
+    expect(lastRefreshInfo).not.toBeNull();
+    expect(lastRefreshInfo!.trigger).toBe("manual");
+    expect(lastRefreshInfo!.timestamp).toBeGreaterThan(0);
+
+    // Session cache should also be updated
+    expect(sessionCache.get(workspaceId)).toEqual(lastRefreshInfo);
+
+    controller.dispose();
+  });
 
   test("debounce contract: multiple signals within window coalesce to one refresh", () => {
     // Contract: When N tool completion signals arrive within TOOL_REFRESH_DEBOUNCE_MS,
