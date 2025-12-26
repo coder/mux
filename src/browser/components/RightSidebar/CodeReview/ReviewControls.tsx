@@ -2,12 +2,13 @@
  * ReviewControls - Consolidated one-line control bar for review panel
  */
 
-import React, { useState } from "react";
+import React from "react";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import type { ReviewFilters, ReviewStats, ReviewSortOrder } from "@/common/types/review";
 import type { LastRefreshInfo } from "@/browser/utils/RefreshController";
 import { RefreshButton } from "./RefreshButton";
 import { UntrackedStatus } from "./UntrackedStatus";
+import { BaseSelectorPopover } from "./BaseSelectorPopover";
 
 const SORT_OPTIONS: Array<{ value: ReviewSortOrder; label: string }> = [
   { value: "file-order", label: "File order" },
@@ -38,41 +39,11 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
   refreshTrigger,
   lastRefreshInfo,
 }) => {
-  // Local state for input value - only commit on blur/Enter
-  const [inputValue, setInputValue] = useState(filters.diffBase);
-
   // Global default base (used for new workspaces)
   const [defaultBase, setDefaultBase] = usePersistedState<string>("review-default-base", "HEAD");
 
-  // Sync input with external changes (e.g., workspace change)
-  React.useEffect(() => {
-    setInputValue(filters.diffBase);
-  }, [filters.diffBase]);
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setInputValue(e.target.value);
-  };
-
-  const commitValue = () => {
-    const trimmed = inputValue.trim();
-    if (trimmed && trimmed !== filters.diffBase) {
-      onFiltersChange({ ...filters, diffBase: trimmed });
-    }
-  };
-
-  const handleBaseBlur = () => {
-    commitValue();
-  };
-
-  const handleBaseKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") {
-      commitValue();
-      e.currentTarget.blur();
-    } else if (e.key === "Escape") {
-      // Revert to committed value
-      setInputValue(filters.diffBase);
-      e.currentTarget.blur();
-    }
+  const handleBaseChange = (value: string) => {
+    onFiltersChange({ ...filters, diffBase: value });
   };
 
   const handleUncommittedToggle = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -95,7 +66,7 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
   const showSetDefault = filters.diffBase !== defaultBase;
 
   return (
-    <div className="bg-separator border-border-light flex flex-wrap items-center gap-3 border-b px-3 py-2 text-[11px]">
+    <div className="border-border-light flex flex-wrap items-center gap-2 border-b px-2 py-1 text-[11px]">
       {onRefresh && (
         <RefreshButton
           onClick={onRefresh}
@@ -103,58 +74,54 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
           lastRefreshInfo={lastRefreshInfo}
         />
       )}
-      <label className="text-muted font-medium whitespace-nowrap">Base:</label>
-      <input
-        type="text"
-        list="base-suggestions"
-        value={inputValue}
-        onChange={handleInputChange}
-        onBlur={handleBaseBlur}
-        onKeyDown={handleBaseKeyDown}
-        placeholder="HEAD, main, etc."
-        className="bg-dark text-foreground border-border-medium hover:border-accent focus:border-accent placeholder:text-dim w-36 rounded border px-2 py-1 font-mono text-[11px] transition-[border-color] duration-200 focus:outline-none"
-      />
-      <datalist id="base-suggestions">
-        <option value="HEAD" />
-        <option value="--staged" />
-        <option value="main" />
-        <option value="origin/main" />
-        <option value="HEAD~1" />
-        <option value="HEAD~2" />
-        <option value="develop" />
-        <option value="origin/develop" />
-      </datalist>
 
-      {showSetDefault && (
-        <button
-          onClick={handleSetDefault}
-          className="text-muted font-primary hover:bg-white-overlay-light hover:text-foreground cursor-pointer rounded border-none bg-transparent px-2 py-0.5 text-[11px] whitespace-nowrap transition-all duration-200"
-        >
-          Set Default
-        </button>
-      )}
+      <div className="text-muted flex items-center gap-1 whitespace-nowrap">
+        <span>Base:</span>
+        <BaseSelectorPopover value={filters.diffBase} onChange={handleBaseChange} />
+        {showSetDefault && (
+          <button
+            onClick={handleSetDefault}
+            className="text-dim font-primary hover:text-muted cursor-pointer border-none bg-transparent p-0 text-[10px] whitespace-nowrap transition-colors duration-150"
+            title="Set as default base"
+          >
+            ★
+          </button>
+        )}
+      </div>
 
-      <label className="text-foreground flex cursor-pointer items-center gap-1.5 text-[11px] whitespace-nowrap hover:text-[var(--color-hover-foreground)] [&_input[type='checkbox']]:cursor-pointer">
+      <div className="bg-border-light h-3 w-px" />
+
+      <label className="text-muted hover:text-foreground flex cursor-pointer items-center gap-1 whitespace-nowrap">
+        <span>Uncommitted:</span>
         <input
           type="checkbox"
           checked={filters.includeUncommitted}
           onChange={handleUncommittedToggle}
+          className="h-3 w-3 cursor-pointer"
         />
-        Uncommitted
       </label>
 
-      <label className="text-foreground flex cursor-pointer items-center gap-1.5 text-[11px] whitespace-nowrap hover:text-[var(--color-hover-foreground)] [&_input[type='checkbox']]:cursor-pointer">
-        <input type="checkbox" checked={filters.showReadHunks} onChange={handleShowReadToggle} />
-        Show read
+      <div className="bg-border-light h-3 w-px" />
+
+      <label className="text-muted hover:text-foreground flex cursor-pointer items-center gap-1 whitespace-nowrap">
+        <span>Read:</span>
+        <input
+          type="checkbox"
+          checked={filters.showReadHunks}
+          onChange={handleShowReadToggle}
+          className="h-3 w-3 cursor-pointer"
+        />
       </label>
 
-      <label className="text-foreground flex cursor-pointer items-center gap-1.5 text-[11px] whitespace-nowrap">
-        <span className="text-muted font-medium">Sort:</span>
+      <div className="bg-border-light h-3 w-px" />
+
+      <label className="text-muted flex items-center gap-1 whitespace-nowrap">
+        <span>Sort:</span>
         <select
           aria-label="Sort hunks by"
           value={filters.sortOrder}
           onChange={handleSortChange}
-          className="bg-dark text-foreground border-border-medium hover:border-accent focus:border-accent cursor-pointer rounded border px-1.5 py-0.5 text-[11px] transition-[border-color] duration-200 focus:outline-none"
+          className="text-muted-light hover:bg-hover hover:text-foreground cursor-pointer rounded-sm bg-transparent px-1 py-0.5 font-mono transition-colors focus:outline-none"
         >
           {SORT_OPTIONS.map((opt) => (
             <option key={opt.value} value={opt.value}>
@@ -164,17 +131,17 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
         </select>
       </label>
 
-      <UntrackedStatus
-        workspaceId={workspaceId}
-        workspacePath={workspacePath}
-        refreshTrigger={refreshTrigger}
-        onRefresh={onRefresh}
-      />
+      <div className="ml-auto flex items-center gap-2">
+        <UntrackedStatus
+          workspaceId={workspaceId}
+          workspacePath={workspacePath}
+          refreshTrigger={refreshTrigger}
+          onRefresh={onRefresh}
+        />
 
-      <div className="bg-border-light h-4 w-px" />
-
-      <div className="text-muted rounded border border-transparent bg-transparent px-2.5 py-1 text-[11px] font-medium whitespace-nowrap">
-        {stats.read} read / {stats.total} total
+        <span className="text-dim whitespace-nowrap">
+          {stats.read}/{stats.total}
+        </span>
       </div>
     </div>
   );

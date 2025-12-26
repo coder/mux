@@ -1008,61 +1008,53 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
           )}
 
           {/* Search bar - always visible at top, not sticky */}
-          <div className="border-border-light bg-separator border-b px-3 py-2">
-            <div className="border-border-light bg-dark hover:border-border-gray focus-within:border-accent focus-within:hover:border-accent flex items-stretch overflow-hidden rounded border transition-[border-color] duration-150">
-              <input
-                ref={searchInputRef}
-                type="text"
-                placeholder={`Search in files and hunks... (${formatKeybind(KEYBINDS.FOCUS_REVIEW_SEARCH)})`}
-                value={searchState.input}
-                onChange={(e) => setSearchState({ ...searchState, input: e.target.value })}
-                className="text-foreground placeholder:text-dim focus:bg-separator flex h-full flex-1 items-center border-none bg-transparent px-2.5 py-1.5 font-sans text-xs leading-[1.4] outline-none"
-              />
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    className={cn(
-                      "py-1.5 px-2.5 border-none border-l border-light text-[11px] font-monospace font-semibold leading-[1.4] cursor-pointer outline-none transition-all duration-150 whitespace-nowrap flex items-center h-full",
-                      searchState.useRegex
-                        ? "bg-review-bg-blue text-accent-light shadow-[inset_0_0_0_1px_rgba(77,184,255,0.4)] hover:bg-review-bg-info hover:text-accent-light"
-                        : "bg-transparent text-subtle hover:bg-separator hover:text-foreground",
-                      "active:translate-y-px"
-                    )}
-                    onClick={() =>
-                      setSearchState({ ...searchState, useRegex: !searchState.useRegex })
-                    }
-                  >
-                    .*
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">
-                  {searchState.useRegex ? "Using regex search" : "Using substring search"}
-                </TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    className={cn(
-                      "py-1.5 px-2.5 border-none border-l border-light text-[11px] font-monospace font-semibold leading-[1.4] cursor-pointer outline-none transition-all duration-150 whitespace-nowrap flex items-center h-full",
-                      searchState.matchCase
-                        ? "bg-review-bg-blue text-accent-light shadow-[inset_0_0_0_1px_rgba(77,184,255,0.4)] hover:bg-review-bg-info hover:text-accent-light"
-                        : "bg-transparent text-subtle hover:bg-separator hover:text-foreground",
-                      "active:translate-y-px"
-                    )}
-                    onClick={() =>
-                      setSearchState({ ...searchState, matchCase: !searchState.matchCase })
-                    }
-                  >
-                    Aa
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">
-                  {searchState.matchCase
-                    ? "Match case (case-sensitive)"
-                    : "Ignore case (case-insensitive)"}
-                </TooltipContent>
-              </Tooltip>
-            </div>
+          <div className="border-border-light flex items-center gap-1.5 border-b px-2 py-1">
+            <input
+              ref={searchInputRef}
+              type="text"
+              placeholder={`Search... (${formatKeybind(KEYBINDS.FOCUS_REVIEW_SEARCH)})`}
+              value={searchState.input}
+              onChange={(e) => setSearchState({ ...searchState, input: e.target.value })}
+              className="bg-dark text-foreground border-border-medium placeholder:text-dim hover:border-accent focus:border-accent min-w-0 flex-1 rounded border px-1.5 py-0.5 font-mono text-[11px] transition-[border-color] duration-150 focus:outline-none"
+            />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  className={cn(
+                    "font-monospace cursor-pointer border-none bg-transparent p-0 text-[11px] font-semibold transition-colors duration-150",
+                    searchState.useRegex ? "text-accent-light" : "text-muted hover:text-foreground"
+                  )}
+                  onClick={() =>
+                    setSearchState({ ...searchState, useRegex: !searchState.useRegex })
+                  }
+                >
+                  .*
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                {searchState.useRegex ? "Using regex search" : "Using substring search"}
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  className={cn(
+                    "font-monospace cursor-pointer border-none bg-transparent p-0 text-[11px] font-semibold transition-colors duration-150",
+                    searchState.matchCase ? "text-accent-light" : "text-muted hover:text-foreground"
+                  )}
+                  onClick={() =>
+                    setSearchState({ ...searchState, matchCase: !searchState.matchCase })
+                  }
+                >
+                  Aa
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                {searchState.matchCase
+                  ? "Match case (case-sensitive)"
+                  : "Ignore case (case-insensitive)"}
+              </TooltipContent>
+            </Tooltip>
           </div>
 
           {/* Single scrollable area containing both file tree and hunks */}

@@ -196,36 +196,39 @@ export const HunkViewer = React.memo<HunkViewerProps>(
         tabIndex={0}
         data-hunk-id={hunkId}
       >
-        <div className="bg-separator border-border-light font-monospace flex items-center justify-between gap-2 border-b px-3 py-2 text-xs">
-          {isRead && (
+        <div className="border-border-light font-monospace flex items-center gap-1.5 border-b px-2 py-1 text-[11px]">
+          {onToggleRead && (
             <Tooltip>
               <TooltipTrigger asChild>
-                <span
-                  className="text-read mr-1 inline-flex items-center text-sm"
-                  aria-label="Marked as read"
+                <button
+                  className={cn(
+                    "text-muted hover:text-read flex cursor-pointer items-center bg-transparent border-none p-0 text-[11px] transition-colors duration-150",
+                    isRead && "text-read"
+                  )}
+                  data-hunk-id={hunkId}
+                  onClick={handleToggleRead}
+                  aria-label={`Mark as read (${formatKeybind(KEYBINDS.TOGGLE_HUNK_READ)})`}
                 >
-                  ✓
-                </span>
+                  {isRead ? "✓" : "○"}
+                </button>
               </TooltipTrigger>
-              <TooltipContent align="center" side="top">
-                Marked as read
+              <TooltipContent align="start" side="top">
+                Mark as read ({formatKeybind(KEYBINDS.TOGGLE_HUNK_READ)}) · Mark file (
+                {formatKeybind(KEYBINDS.MARK_FILE_READ)})
               </TooltipContent>
             </Tooltip>
           )}
           <div
-            className="text-foreground min-w-0 truncate font-medium"
+            className="text-foreground min-w-0 truncate"
             dangerouslySetInnerHTML={{ __html: highlightedFilePath }}
           />
-          <div className="flex shrink-0 items-center gap-2 text-[11px] whitespace-nowrap">
+          <div className="text-muted ml-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap">
             {!isPureRename && (
-              <span className="flex gap-2 text-[11px]">
+              <>
                 {additions > 0 && <span className="text-success-light">+{additions}</span>}
-                {deletions > 0 && <span className="text-warning-light">-{deletions}</span>}
-              </span>
+                {deletions > 0 && <span className="text-warning-light">−{deletions}</span>}
+              </>
             )}
-            <span className="text-muted">
-              ({lineCount} {lineCount === 1 ? "line" : "lines"})
-            </span>
             <Tooltip>
               <TooltipTrigger asChild>
                 <span className="text-dim cursor-default">{formatRelativeTime(firstSeenAt)}</span>
@@ -234,24 +237,6 @@ export const HunkViewer = React.memo<HunkViewerProps>(
                 First seen: {new Date(firstSeenAt).toLocaleString()}
               </TooltipContent>
             </Tooltip>
-            {onToggleRead && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    className="border-border-light text-muted hover:border-read hover:text-read flex cursor-pointer items-center gap-1 rounded-[3px] border bg-transparent px-1.5 py-0.5 text-[11px] transition-all duration-200 hover:bg-white/5 active:scale-95"
-                    data-hunk-id={hunkId}
-                    onClick={handleToggleRead}
-                    aria-label={`Mark as read (${formatKeybind(KEYBINDS.TOGGLE_HUNK_READ)})`}
-                  >
-                    {isRead ? "○" : "◉"}
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent align="end" side="top">
-                  Mark as read ({formatKeybind(KEYBINDS.TOGGLE_HUNK_READ)}) · Mark file (
-                  {formatKeybind(KEYBINDS.MARK_FILE_READ)})
-                </TooltipContent>
-              </Tooltip>
-            )}
           </div>
         </div>
 

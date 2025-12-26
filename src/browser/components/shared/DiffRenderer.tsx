@@ -281,13 +281,15 @@ export const DiffContainer: React.FC<
   const isOverflowing = useOverflowDetection(contentRef, { enabled: clampContent });
   const showOverflowControls = clampContent && isOverflowing;
 
-  // Calculate gutter width to match DiffLineGutter layout:
-  // px-1 (4px) + oldWidthCh + gap-0.5 (2px) + ml-3 (12px) + newWidthCh + px-1 (4px)
-  // When line numbers hidden, gutter is just px-1 (8px total)
+  // Calculate gutter width to match DiffLineGutter + DiffIndicator layout:
+  // DiffLineGutter: px-1 (8px) + oldWidthCh + gap-0.5 (2px) + ml-3 (12px) + newWidthCh
+  // DiffIndicator: w-4 (16px)
+  // Total: 8px + oldWidthCh + 14px + newWidthCh + 16px = 38px + oldWidthCh + newWidthCh
+  // When line numbers hidden: px-1 (8px) + w-4 (16px) = 24px
   const gutterWidth =
     showLineNumbers && lineNumberWidths
-      ? `calc(8px + ${lineNumberWidths.oldWidthCh}ch + 14px + ${lineNumberWidths.newWidthCh}ch)`
-      : "8px";
+      ? `calc(38px + ${lineNumberWidths.oldWidthCh}ch + ${lineNumberWidths.newWidthCh}ch)`
+      : "24px";
 
   // Padding strip mirrors gutter/content background split of diff lines
   // Must use font-monospace so ch units match DiffLineGutter's character widths

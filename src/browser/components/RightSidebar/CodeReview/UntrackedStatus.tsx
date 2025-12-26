@@ -160,14 +160,14 @@ export const UntrackedStatus: React.FC<UntrackedStatusProps> = ({
     <div ref={containerRef} className="inline-block">
       <div
         className={cn(
-          "py-1 px-2.5 rounded font-medium text-[11px] whitespace-nowrap transition-all duration-200",
+          "py-0.5 px-1.5 rounded text-[11px] whitespace-nowrap transition-colors duration-150",
           hasUntracked
-            ? "bg-review-bg-warning border border-review-warning text-info-yellow cursor-pointer hover:bg-review-warning-light hover:border-review-warning-medium"
-            : "bg-transparent border border-transparent text-muted cursor-default"
+            ? "text-info-yellow cursor-pointer hover:text-[hsl(38,100%,65%)]"
+            : "text-dim cursor-default"
         )}
         onClick={() => hasUntracked && setShowTooltip(!showTooltip)}
       >
-        {isLoading ? "..." : `${count} Untracked`}
+        {isLoading ? "…" : hasUntracked ? `+${count}` : ""}
       </div>
 
       {showTooltip &&
