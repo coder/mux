@@ -225,8 +225,8 @@ function ChatComposerInner(props: {
         }}
       />
 
-      <div className="@container flex flex-wrap items-center gap-x-3 gap-y-1">
-        <div className="flex items-center" data-component="ModelSelectorGroup">
+      <div className="flex flex-col gap-2">
+        <div className="w-full min-w-0" data-component="ModelSelectorGroup">
           <ModelSelector
             value={baseModel}
             onChange={onModelChange}
@@ -239,33 +239,35 @@ function ChatComposerInner(props: {
           />
         </div>
 
-        <div className="flex items-center [&_.thinking-slider]:[@container(max-width:550px)]:hidden">
-          <ThinkingSliderComponent modelString={baseModel} />
-        </div>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex shrink-0 items-center overflow-hidden">
+            <ThinkingSliderComponent modelString={baseModel} />
+          </div>
 
-        <div className="ml-auto flex items-center gap-2">
-          <ContextUsageIndicatorButton data={contextUsageData} autoCompaction={autoCompactionSettings} />
-          <ModeSelector mode={mode} onChange={setMode} />
+          <div className="flex shrink-0 items-center gap-1.5">
+            <ContextUsageIndicatorButton data={contextUsageData} autoCompaction={autoCompactionSettings} />
+            <ModeSelector mode={mode} onChange={setMode} />
 
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                onClick={() => void onSend()}
-                disabled={!canSend}
-                aria-label="Send message"
-                className={cn(
-                  "inline-flex items-center gap-1 rounded-sm border border-border-light px-1.5 py-0.5 text-[11px] font-medium text-white transition-colors duration-200 disabled:opacity-50",
-                  mode === "plan"
-                    ? "bg-plan-mode hover:bg-plan-mode-hover disabled:hover:bg-plan-mode"
-                    : "bg-exec-mode hover:bg-exec-mode-hover disabled:hover:bg-exec-mode"
-                )}
-              >
-                <SendHorizontal className="h-3.5 w-3.5" strokeWidth={2.5} />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent align="center">Send message (Ctrl+Enter)</TooltipContent>
-          </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => void onSend()}
+                  disabled={!canSend}
+                  aria-label="Send message"
+                  className={cn(
+                    "inline-flex items-center gap-1 rounded-sm border border-border-light px-1.5 py-0.5 text-[11px] font-medium text-white transition-colors duration-200 disabled:opacity-50",
+                    mode === "plan"
+                      ? "bg-plan-mode hover:bg-plan-mode-hover disabled:hover:bg-plan-mode"
+                      : "bg-exec-mode hover:bg-exec-mode-hover disabled:hover:bg-exec-mode"
+                  )}
+                >
+                  <SendHorizontal className="h-3.5 w-3.5" strokeWidth={2.5} />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent align="center">Send message (Ctrl+Enter)</TooltipContent>
+            </Tooltip>
+          </div>
         </div>
       </div>
 
