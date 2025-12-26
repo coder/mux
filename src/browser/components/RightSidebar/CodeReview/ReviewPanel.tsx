@@ -245,7 +245,11 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   // Note: Parent renders with key={workspaceId}, so component remounts on workspace change.
   const [diffState, setDiffState] = useState<DiffState>({ status: "loading" });
 
-  const [selectedHunkId, setSelectedHunkId] = useState<string | null>(null);
+  // Persist selected hunk per workspace so navigation survives tab switches
+  const [selectedHunkId, setSelectedHunkId] = usePersistedState<string | null>(
+    `review-selected-hunk:${workspaceId}`,
+    null
+  );
   const [isLoadingTree, setIsLoadingTree] = useState(true);
   const [diagnosticInfo, setDiagnosticInfo] = useState<DiagnosticInfo | null>(null);
   const [isPanelFocused, setIsPanelFocused] = useState(false);
@@ -553,10 +557,6 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
           truncationWarning: cached.truncationWarning,
         });
 
-        if (cached.hunks.length > 0) {
-          setSelectedHunkId((prev) => prev ?? cached.hunks[0].id);
-        }
-
         return () => {
           cancelled = true;
         };
@@ -647,10 +647,6 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
             truncationWarning: data.truncationWarning,
           };
         });
-
-        if (data.hunks.length > 0) {
-          setSelectedHunkId((prev) => prev ?? data.hunks[0].id);
-        }
       } catch (err) {
         if (cancelled) return;
         const errorMsg = `Failed to load diff: ${err instanceof Error ? err.message : String(err)}`;
@@ -756,6 +752,18 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   // Keep ref in sync so callbacks can access current filtered list without dependency
   filteredHunksRef.current = filteredHunks;
 
+  // Ensure selectedHunkId is valid after filtering/sorting:
+  // - If no selection or selection not in filtered list, select first visible hunk
+  // - This runs after sorting, so we always select the top-most hunk in current order
+  useEffect(() => {
+    if (filteredHunks.length === 0) return;
+
+    const selectionValid = selectedHunkId && filteredHunks.some((h) => h.id === selectedHunkId);
+    if (!selectionValid) {
+      setSelectedHunkId(filteredHunks[0].id);
+    }
+  }, [filteredHunks, selectedHunkId, setSelectedHunkId]);
+
   // Memoize search config to prevent re-creating object on every render
   // This allows React.memo on HunkViewer to work properly
   const searchConfig = useMemo(
@@ -787,7 +795,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         }
       }
     },
-    [isRead, toggleRead, filters.showReadHunks, selectedHunkId]
+    [isRead, toggleRead, filters.showReadHunks, selectedHunkId, setSelectedHunkId]
   );
 
   // Handle marking hunk as read with auto-navigation
@@ -802,7 +810,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         setSelectedHunkId(findNextHunkId(filteredHunksRef.current, hunkId));
       }
     },
-    [isRead, markAsRead, filters.showReadHunks, selectedHunkId]
+    [isRead, markAsRead, filters.showReadHunks, selectedHunkId, setSelectedHunkId]
   );
 
   // Handle marking hunk as unread (no navigation needed - unread hunks are always visible)
@@ -814,10 +822,13 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   );
 
   // Stable callbacks for HunkViewer (single callback shared across all hunks)
-  const handleHunkClick = useCallback((e: React.MouseEvent<HTMLElement>) => {
-    const hunkId = e.currentTarget.dataset.hunkId;
-    if (hunkId) setSelectedHunkId(hunkId);
-  }, []);
+  const handleHunkClick = useCallback(
+    (e: React.MouseEvent<HTMLElement>) => {
+      const hunkId = e.currentTarget.dataset.hunkId;
+      if (hunkId) setSelectedHunkId(hunkId);
+    },
+    [setSelectedHunkId]
+  );
 
   const handleHunkToggleRead = useCallback(
     (e: React.MouseEvent<HTMLElement>) => {
@@ -852,7 +863,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         );
       }
     },
-    [hunks, markAsRead, filters.showReadHunks, selectedHunkId]
+    [hunks, markAsRead, filters.showReadHunks, selectedHunkId, setSelectedHunkId]
   );
 
   // Calculate stats
@@ -946,6 +957,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   }, [
     isPanelFocused,
     selectedHunkId,
+    setSelectedHunkId,
     filteredHunks,
     handleToggleRead,
     handleMarkAsRead,
