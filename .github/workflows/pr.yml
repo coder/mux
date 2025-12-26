@@ -133,12 +133,11 @@ jobs:
           if [[ "$BACKEND" == "true" ]]; then
             echo "Backend changes detected - running all integration tests"
             TEST_INTEGRATION=1 bun x jest --coverage --maxWorkers=100% --silent tests/
-            exit 0
+          else
+            # Browser-only changes: run tests/ui
+            echo "Browser changes detected - running tests/ui"
+            TEST_INTEGRATION=1 bun x jest --coverage --maxWorkers=100% --silent tests/ui/
           fi
-          
-          # Browser-only changes: run tests/ui
-          echo "Browser changes detected - running tests/ui"
-          TEST_INTEGRATION=1 bun x jest --coverage --maxWorkers=100% --silent tests/ui/
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
