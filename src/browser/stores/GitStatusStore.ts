@@ -56,6 +56,9 @@ export class GitStatusStore {
   // RefreshController handles debouncing, focus/visibility, and in-flight guards
   private readonly refreshController: RefreshController;
 
+  // Per-workspace refreshing state for UI shimmer effects
+  private refreshingWorkspaces = new MapStore<string, boolean>();
+
   setClient(client: RouterClient<AppRouter>) {
     this.client = client;
   }
@@ -114,20 +117,46 @@ export class GitStatusStore {
   }
 
   /**
-   * Invalidate status for a workspace, clearing cache and triggering immediate refresh.
+   * Invalidate status for a workspace, triggering immediate refresh.
    * Call after operations that change git state (e.g., branch switch).
+   *
+   * Note: Old status is preserved during refresh to avoid UI flash.
+   * Components can use isWorkspaceRefreshing() to show a shimmer effect.
    */
   invalidateWorkspace(workspaceId: string): void {
     // Increment generation to mark any in-flight status checks as stale
     const currentGen = this.invalidationGeneration.get(workspaceId) ?? 0;
     this.invalidationGeneration.set(workspaceId, currentGen + 1);
-    // Set status to null immediately (shows loading state)
-    this.statusCache.set(workspaceId, null);
-    // Bump version to notify subscribers of the null state
-    this.statuses.bump(workspaceId);
+    // Mark workspace as refreshing (for shimmer effect)
+    this.setWorkspaceRefreshing(workspaceId, true);
     // Trigger immediate refresh (routes through RefreshController for in-flight guard)
     this.refreshController.requestImmediate();
   }
+
+  /**
+   * Set the refreshing state for a workspace and notify subscribers.
+   */
+  private setWorkspaceRefreshing(workspaceId: string, refreshing: boolean): void {
+    this.refreshingWorkspaces.bump(workspaceId);
+    // Store the actual value in a simple map (MapStore is for notifications)
+    this.refreshingWorkspacesCache.set(workspaceId, refreshing);
+  }
+
+  private refreshingWorkspacesCache = new Map<string, boolean>();
+
+  /**
+   * Check if a workspace is currently refreshing.
+   */
+  isWorkspaceRefreshing(workspaceId: string): boolean {
+    return this.refreshingWorkspacesCache.get(workspaceId) ?? false;
+  }
+
+  /**
+   * Subscribe to refreshing state changes for a specific workspace.
+   */
+  subscribeRefreshingKey = (workspaceId: string, listener: () => void) => {
+    return this.refreshingWorkspaces.subscribeKey(workspaceId, listener);
+  };
 
   private statusCache = new Map<string, GitStatus | null>();
   // Generation counter to detect and ignore stale status updates after invalidation.
@@ -215,6 +244,11 @@ export class GitStatusStore {
       if (snapshotGen !== currentGen) {
         // Status was invalidated during check - discard this stale result
         continue;
+      }
+
+      // Clear refreshing state now that we have a result
+      if (this.refreshingWorkspacesCache.get(workspaceId)) {
+        this.setWorkspaceRefreshing(workspaceId, false);
       }
 
       const oldStatus = this.statusCache.get(workspaceId) ?? null;
@@ -465,6 +499,8 @@ export class GitStatusStore {
   dispose(): void {
     this.isActive = false;
     this.statuses.clear();
+    this.refreshingWorkspaces.clear();
+    this.refreshingWorkspacesCache.clear();
     this.fetchCache.clear();
     this.fileModifyUnsubscribe?.();
     this.fileModifyUnsubscribe = null;
@@ -524,6 +560,19 @@ export function useGitStatus(workspaceId: string): GitStatus | null {
   return useSyncExternalStore(
     (listener) => store.subscribeKey(workspaceId, listener),
     () => store.getStatus(workspaceId)
+  );
+}
+
+/**
+ * Hook to check if a workspace's git status is currently being refreshed.
+ * Use this to show shimmer/loading effects while preserving old status.
+ */
+export function useGitStatusRefreshing(workspaceId: string): boolean {
+  const store = getGitStoreInstance();
+
+  return useSyncExternalStore(
+    (listener) => store.subscribeRefreshingKey(workspaceId, listener),
+    () => store.isWorkspaceRefreshing(workspaceId)
   );
 }
 

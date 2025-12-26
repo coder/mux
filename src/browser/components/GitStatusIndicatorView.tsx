@@ -55,6 +55,8 @@ export interface GitStatusIndicatorViewProps {
   onModeChange: (nextMode: GitStatusIndicatorMode) => void;
   /** When true, shows blue pulsing styling to indicate agent is working */
   isWorking?: boolean;
+  /** When true, shows shimmer effect to indicate git status is refreshing */
+  isRefreshing?: boolean;
 }
 
 /**
@@ -75,8 +77,9 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
   onOpenChange,
   onModeChange,
   isWorking = false,
+  isRefreshing = false,
 }) => {
-  // Handle null gitStatus (loading state)
+  // Handle null gitStatus (initial loading state)
   if (!gitStatus) {
     return (
       <span
@@ -330,7 +333,8 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
         <span
           className={cn(
             "relative flex items-center gap-1 font-mono text-[11px] transition-colors",
-            statusColor
+            statusColor,
+            isRefreshing && "animate-pulse"
           )}
         >
           {triggerContent}
