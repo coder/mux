@@ -86,7 +86,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
   <span
     className={cn(
       "text-[10px] ml-auto opacity-80 whitespace-nowrap shrink-0",
-      "[&_.status-text]:inline [@container(max-width:500px)]:&:has(.status-text):after:content-['']  [@container(max-width:500px)]:&_.status-text]:hidden",
+      "[&_.status-text]:inline [@container(max-width:350px)]:[&_.status-text]:hidden",
       getStatusColor(status),
       className
     )}
