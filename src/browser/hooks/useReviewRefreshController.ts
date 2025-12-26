@@ -86,6 +86,7 @@ export function useReviewRefreshController(
         onGitStatusRefreshRef.current?.();
       },
       onRefreshComplete: (info) => {
+        console.log("[RefreshController] onRefreshComplete called:", info, "workspaceId:", workspaceId);
         lastRefreshInfoByWorkspaceId.set(workspaceId, info);
         setLastRefreshInfo(info);
       },
@@ -126,6 +127,9 @@ export function useReviewRefreshController(
   const requestManualRefresh = () => {
     controller.requestImmediate();
   };
+
+  // Debug: log when lastRefreshInfo changes
+  console.log("[useReviewRefreshController] returning lastRefreshInfo:", lastRefreshInfo);
 
   return {
     requestManualRefresh,

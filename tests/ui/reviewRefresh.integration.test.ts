@@ -12,79 +12,18 @@ import type { ToolPolicy } from "../../src/common/utils/tools/toolPolicy";
 
 import { installDom } from "./dom";
 import { renderReviewPanel } from "./renderReviewPanel";
+import {
+  type EventCollector,
+  waitForToolCallEnd,
+  waitForRefreshButtonIdle,
+  assertRefreshButtonHasLastRefreshInfo,
+} from "./helpers";
 
 configureTestRetries(2);
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
 validateApiKeys(["ANTHROPIC_API_KEY"]);
-
-type EventCollector = { getEvents(): unknown[] };
-
-type ToolCallEndEvent = { type: "tool-call-end"; toolName: string };
-
-function isToolCallEndEvent(event: unknown): event is ToolCallEndEvent {
-  if (typeof event !== "object" || event === null) return false;
-  const record = event as { type?: unknown; toolName?: unknown };
-  return record.type === "tool-call-end" && typeof record.toolName === "string";
-}
-
-function getRefreshIconClass(refreshButton: HTMLElement): string {
-  return refreshButton.querySelector("svg")?.getAttribute("class") ?? "";
-}
-
-async function waitForRefreshButtonIdle(
-  refreshButton: HTMLElement,
-  timeoutMs: number = 60_000
-): Promise<void> {
-  await waitFor(
-    () => {
-      const cls = getRefreshIconClass(refreshButton);
-      expect(cls).not.toContain("animate-spin");
-      // Stopping state uses `animate-[spin_0.8s_ease-out_forwards]`.
-      expect(cls).not.toContain("animate-[");
-    },
-    { timeout: timeoutMs }
-  );
-}
-
-/**
- * Assert that the refresh button has lastRefreshInfo data attribute set.
- * We use a data attribute because Radix tooltip portals don't work in happy-dom.
- */
-async function assertRefreshButtonHasLastRefreshInfo(
-  refreshButton: HTMLElement,
-  expectedTrigger: string,
-  timeoutMs: number = 5_000
-): Promise<void> {
-  await waitFor(
-    () => {
-      const trigger = refreshButton.getAttribute("data-last-refresh-trigger");
-      if (!trigger) {
-        throw new Error("data-last-refresh-trigger not set on button");
-      }
-      if (trigger !== expectedTrigger) {
-        throw new Error(`Expected trigger "${expectedTrigger}" but got "${trigger}"`);
-      }
-    },
-    { timeout: timeoutMs }
-  );
-}
-async function waitForToolCallEnd(
-  collector: EventCollector,
-  toolName: string,
-  timeoutMs: number = 10_000
-): Promise<void> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    const match = collector
-      .getEvents()
-      .find((event) => isToolCallEndEvent(event) && event.toolName === toolName);
-    if (match) return;
-    await new Promise((r) => setTimeout(r, 50));
-  }
-  throw new Error(`Timed out waiting for tool-call-end: ${toolName}`);
-}
 
 describeIntegration("ReviewPanel refresh (UI + ORPC + live LLM)", () => {
   beforeAll(async () => {
