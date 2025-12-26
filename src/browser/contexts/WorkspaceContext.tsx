@@ -464,6 +464,13 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       options?: { force?: boolean }
     ): Promise<{ success: boolean; error?: string }> => {
       if (!api) return { success: false, error: "API not connected" };
+
+      // Capture the current selection before the async operation
+      // We need to know if the removed workspace is currently selected
+      // and its projectPath so we can navigate to the project page
+      const wasSelected = selectedWorkspace?.workspaceId === workspaceId;
+      const projectPath = selectedWorkspace?.projectPath;
+
       try {
         const result = await api.workspace.remove({ workspaceId, options });
         if (result.success) {
@@ -476,11 +483,12 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           // Reload workspace metadata
           await loadWorkspaceMetadata();
 
-          // Clear selected workspace if it was removed
-          // Use functional update to check *current* selection, not stale closure value
-          setSelectedWorkspace((current) =>
-            current?.workspaceId === workspaceId ? null : current
-          );
+          // If the removed workspace was selected, navigate to its project page
+          // instead of going home (user likely wants to stay in context)
+          if (wasSelected && projectPath) {
+            navigateToProject(projectPath);
+          }
+          // If not selected, don't navigate at all - stay where we are
           return { success: true };
         } else {
           console.error("Failed to remove workspace:", result.error);
@@ -492,7 +500,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         return { success: false, error: errorMessage };
       }
     },
-    [loadWorkspaceMetadata, refreshProjects, setSelectedWorkspace, api]
+    [loadWorkspaceMetadata, navigateToProject, refreshProjects, selectedWorkspace, api]
   );
 
   /**
