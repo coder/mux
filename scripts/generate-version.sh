@@ -1,17 +1,28 @@
 #!/usr/bin/env bash
 # Generate version.ts with git information
+#
+# In CI release builds (RELEASE_TAG set), use the tag directly to avoid false
+# "-dirty" stamps from CI artifacts (node_modules, build outputs, etc.).
+# Local builds continue using git describe --dirty for accurate dev info.
 
 GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-GIT_DESCRIBE=$(git describe --tags --always --dirty 2>/dev/null || echo "unknown")
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-# If the build runs in a dirty git checkout, `git describe --dirty` includes "-dirty".
-# This extra output helps debug CI/release builds that end up stamped as dirty.
-if git rev-parse --is-inside-work-tree >/dev/null 2>&1 && git rev-parse --verify HEAD >/dev/null 2>&1; then
-  if ! git diff-index --quiet HEAD -- 2>/dev/null; then
-    echo "⚠️  Git checkout is dirty; version will be stamped with '-dirty'."
-    echo "Tracked dirty files:"
-    git diff-index --name-only HEAD -- | sed 's/^/  - /'
+if [ -n "$RELEASE_TAG" ]; then
+  # CI release: use the authoritative tag, never dirty
+  GIT_DESCRIBE="$RELEASE_TAG"
+  echo "Release build: using RELEASE_TAG=${RELEASE_TAG}"
+else
+  # Local/dev build: use git describe with dirty detection
+  GIT_DESCRIBE=$(git describe --tags --always --dirty 2>/dev/null || echo "unknown")
+
+  # Debug output for dirty builds
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1 && git rev-parse --verify HEAD >/dev/null 2>&1; then
+    if ! git diff-index --quiet HEAD -- 2>/dev/null; then
+      echo "⚠️  Git checkout is dirty; version will be stamped with '-dirty'."
+      echo "Tracked dirty files:"
+      git diff-index --name-only HEAD -- | sed 's/^/  - /'
+    fi
   fi
 fi
 
