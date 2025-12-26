@@ -1,11 +1,8 @@
-import React, { useLayoutEffect } from "react";
-import { render, type RenderResult } from "@testing-library/react";
+import React from "react";
+import { render, type RenderResult, waitFor } from "@testing-library/react";
 
-import { APIProvider, type APIClient } from "@/browser/contexts/API";
-import { ThemeProvider } from "@/browser/contexts/ThemeContext";
-import { TooltipProvider } from "@/browser/components/ui/tooltip";
-import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
-import { ReviewPanel } from "@/browser/components/RightSidebar/CodeReview/ReviewPanel";
+import { AppLoader } from "@/browser/components/AppLoader";
+import type { APIClient } from "@/browser/contexts/API";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 
 interface RenderReviewPanelParams {
@@ -13,29 +10,72 @@ interface RenderReviewPanelParams {
   metadata: FrontendWorkspaceMetadata;
 }
 
-function ReviewPanelBootstrap(props: RenderReviewPanelParams) {
-  const store = useWorkspaceStoreRaw();
-
-  useLayoutEffect(() => {
-    store.setClient(props.apiClient);
-    store.syncWorkspaces(new Map([[props.metadata.id, props.metadata]]));
-
-    return () => {
-      store.removeWorkspace(props.metadata.id);
-    };
-  }, [store, props.apiClient, props.metadata]);
-
-  return <ReviewPanel workspaceId={props.metadata.id} workspacePath={props.metadata.namedWorkspacePath} />;
+export interface RenderedApp extends RenderResult {
+  /** Wait for app to be ready (loading screen gone) */
+  waitForReady(): Promise<void>;
+  /** Select a workspace by clicking in sidebar */
+  selectWorkspace(workspaceId: string): Promise<void>;
+  /** Switch to a specific tab in the right sidebar */
+  selectTab(tab: "costs" | "review" | "stats"): Promise<void>;
 }
 
-export function renderReviewPanel(props: RenderReviewPanelParams): RenderResult {
-  return render(
-    <ThemeProvider forcedTheme="dark">
-      <TooltipProvider delayDuration={0}>
-        <APIProvider client={props.apiClient}>
-          <ReviewPanelBootstrap {...props} />
-        </APIProvider>
-      </TooltipProvider>
-    </ThemeProvider>
-  );
+/**
+ * Render the full App via AppLoader for true integration testing.
+ * This exercises the real component tree, providers, and state management.
+ */
+export function renderReviewPanel(props: RenderReviewPanelParams): RenderedApp {
+  const result = render(<AppLoader client={props.apiClient} />);
+
+  return {
+    ...result,
+
+    async waitForReady(): Promise<void> {
+      // Wait for loading screen to disappear
+      await waitFor(
+        () => {
+          const loading = result.container.querySelector('[data-testid="loading-screen"]');
+          if (loading) {
+            throw new Error("Still loading");
+          }
+          // Also check for "Loading..." text
+          if (result.container.textContent?.includes("Loading...")) {
+            throw new Error("Still loading");
+          }
+        },
+        { timeout: 10000 }
+      );
+    },
+
+    async selectWorkspace(workspaceId: string): Promise<void> {
+      await waitFor(
+        () => {
+          // Find workspace in sidebar by data attribute or text
+          const workspaceElement = result.container.querySelector(
+            `[data-workspace-id="${workspaceId}"]`
+          );
+          if (!workspaceElement) {
+            throw new Error(`Workspace ${workspaceId} not found in sidebar`);
+          }
+          (workspaceElement as HTMLElement).click();
+        },
+        { timeout: 5000 }
+      );
+    },
+
+    async selectTab(tab: "costs" | "review" | "stats"): Promise<void> {
+      await waitFor(
+        () => {
+          // Find tab button by role and name
+          const tabButton = result.container.querySelector(
+            `[role="tab"][aria-controls*="${tab}"]`
+          ) as HTMLElement | null;
+          if (!tabButton) {
+            throw new Error(`Tab "${tab}" not found`);
+          }
+          tabButton.click();
+        },
+        { timeout: 5000 }
+      );
+    },
+  };
 }

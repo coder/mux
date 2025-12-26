@@ -7,6 +7,7 @@ interface DomGlobalsSnapshot {
   localStorage: typeof globalThis.localStorage;
   HTMLElement: unknown;
   Node: unknown;
+  Image: unknown;
   requestAnimationFrame: typeof globalThis.requestAnimationFrame;
   cancelAnimationFrame: typeof globalThis.cancelAnimationFrame;
   ResizeObserver: unknown;
@@ -21,6 +22,7 @@ export function installDom(): () => void {
     localStorage: globalThis.localStorage,
     HTMLElement: (globalThis as unknown as { HTMLElement?: unknown }).HTMLElement,
     Node: (globalThis as unknown as { Node?: unknown }).Node,
+    Image: (globalThis as unknown as { Image?: unknown }).Image,
     requestAnimationFrame: globalThis.requestAnimationFrame,
     cancelAnimationFrame: globalThis.cancelAnimationFrame,
     ResizeObserver: (globalThis as unknown as { ResizeObserver?: unknown }).ResizeObserver,
@@ -37,6 +39,8 @@ export function installDom(): () => void {
   globalThis.localStorage = domWindow.localStorage;
   (globalThis as unknown as { HTMLElement: unknown }).HTMLElement = domWindow.HTMLElement;
   (globalThis as unknown as { Node: unknown }).Node = domWindow.Node;
+  // Image is used by react-dnd-html5-backend for drag preview
+  (globalThis as unknown as { Image: unknown }).Image = domWindow.Image ?? class MockImage {};
 
   // happy-dom doesn't always define these on globalThis in node env.
   if (!globalThis.requestAnimationFrame) {
@@ -112,6 +116,7 @@ export function installDom(): () => void {
     globalThis.localStorage = previous.localStorage;
     (globalThis as unknown as { HTMLElement?: unknown }).HTMLElement = previous.HTMLElement;
     (globalThis as unknown as { Node?: unknown }).Node = previous.Node;
+    (globalThis as unknown as { Image?: unknown }).Image = previous.Image;
     globalThis.requestAnimationFrame = previous.requestAnimationFrame;
     globalThis.cancelAnimationFrame = previous.cancelAnimationFrame;
     (globalThis as unknown as { IntersectionObserver?: unknown }).IntersectionObserver =

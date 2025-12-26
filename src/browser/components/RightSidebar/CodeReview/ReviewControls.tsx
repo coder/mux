@@ -4,14 +4,8 @@
 
 import React, { useState } from "react";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
-<<<<<<< HEAD
 import type { ReviewFilters, ReviewStats, ReviewSortOrder } from "@/common/types/review";
-||||||| parent of 34409161 (fix: restore code review diff refresh with manual feedback)
-import type { ReviewFilters, ReviewStats } from "@/common/types/review";
-=======
-import type { ReviewFilters, ReviewStats } from "@/common/types/review";
 import type { LastRefreshInfo } from "@/browser/utils/RefreshController";
->>>>>>> 34409161 (fix: restore code review diff refresh with manual feedback)
 import { RefreshButton } from "./RefreshButton";
 import { UntrackedStatus } from "./UntrackedStatus";
 
@@ -44,8 +38,6 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
   refreshTrigger,
   lastRefreshInfo,
 }) => {
-  // Debug: log received lastRefreshInfo
-  console.log("[ReviewControls] received lastRefreshInfo:", lastRefreshInfo);
   // Local state for input value - only commit on blur/Enter
   const [inputValue, setInputValue] = useState(filters.diffBase);
 

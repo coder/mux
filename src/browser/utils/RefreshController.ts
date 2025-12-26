@@ -8,7 +8,7 @@
  * - Guards against concurrent refresh operations
  * - Debounces rapid focus/blur cycles
  *
- * Used by GitStatusStore and useReviewRefreshController.
+ * Used by GitStatusStore and ReviewPanel.
  */
 
 /** Reason that triggered a refresh - useful for debugging */

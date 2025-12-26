@@ -31,7 +31,7 @@ import { shellQuote } from "@/common/utils/shell";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useReviewState } from "@/browser/hooks/useReviewState";
 import { useHunkFirstSeen } from "@/browser/hooks/useHunkFirstSeen";
-import { useReviewRefreshController } from "@/browser/hooks/useReviewRefreshController";
+import { RefreshController, type LastRefreshInfo } from "@/browser/utils/RefreshController";
 import { parseDiff, extractAllHunks, buildGitDiffCommand } from "@/common/utils/git/diffParser";
 import { getReviewSearchStateKey, REVIEW_SORT_ORDER_KEY } from "@/common/constants/storage";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/ui/tooltip";
@@ -319,25 +319,62 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     sortOrder: sortOrder,
   });
 
-  // Centralized refresh controller - handles debouncing, visibility, interaction pausing
-  const refreshController = useReviewRefreshController({
-    workspaceId,
-    api,
-    isCreating,
-    diffBase: filters.diffBase,
-    onRefresh: () => setRefreshTrigger((prev) => prev + 1),
-    scrollContainerRef,
-    onGitStatusRefresh: () => invalidateGitStatus(workspaceId),
-  });
+  // Ref to track when user is interacting (pauses auto-refresh)
+  const isInteractingRef = useRef(false);
+
+  // Track last fetch time for detecting tool completions while unmounted
+  const lastFetchTimeRef = useRef(0);
+
+  // Last refresh info for UI display (tooltip showing trigger reason + time)
+  const [lastRefreshInfo, setLastRefreshInfo] = useState<LastRefreshInfo | null>(null);
+
+  // Create RefreshController once on mount - handles debouncing, visibility, interaction pausing
+  const controllerRef = useRef<RefreshController | null>(null);
+  if (!controllerRef.current) {
+    controllerRef.current = new RefreshController({
+      debounceMs: 3000,
+      isPaused: () => isInteractingRef.current,
+      onRefresh: () => {
+        lastFetchTimeRef.current = Date.now();
+        setRefreshTrigger((prev) => prev + 1);
+        invalidateGitStatus(workspaceId);
+      },
+      onRefreshComplete: setLastRefreshInfo,
+    });
+    controllerRef.current.bindListeners();
+  }
+
+  // Subscribe to tool completions while mounted
+  useEffect(() => {
+    return workspaceStore.subscribeFileModifyingTool((wsId) => {
+      if (wsId === workspaceId) {
+        controllerRef.current?.schedule();
+      }
+    });
+  }, [workspaceId]);
+
+  // Check for tool completions that happened while unmounted
+  useEffect(() => {
+    const lastToolMs = workspaceStore.getFileModifyingToolMs(workspaceId);
+    if (lastToolMs && lastToolMs > lastFetchTimeRef.current) {
+      controllerRef.current?.requestImmediate();
+      workspaceStore.clearFileModifyingToolMs(workspaceId);
+    }
+  }, [workspaceId]);
+
+  // Cleanup controller on unmount
+  useEffect(() => {
+    return () => controllerRef.current?.dispose();
+  }, []);
 
   const handleRefresh = () => {
-    refreshController.requestManualRefresh();
+    controllerRef.current?.requestImmediate();
   };
 
   // Sync panel focus with interaction tracking (pauses auto-refresh while user is focused)
   useEffect(() => {
-    refreshController.setInteracting(isPanelFocused);
-  }, [isPanelFocused, refreshController]);
+    isInteractingRef.current = isPanelFocused;
+  }, [isPanelFocused]);
 
   // Focus panel when focusTrigger changes (preserves current hunk selection)
   useEffect(() => {
@@ -909,7 +946,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (matchesKeybind(e, KEYBINDS.REFRESH_REVIEW)) {
         e.preventDefault();
-        refreshController.requestManualRefresh();
+        controllerRef.current?.requestImmediate();
       } else if (matchesKeybind(e, KEYBINDS.FOCUS_REVIEW_SEARCH)) {
         e.preventDefault();
         searchInputRef.current?.focus();
@@ -918,7 +955,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [refreshController]);
+  }, []);
 
   // Show loading state while workspace is being created
   if (isCreating) {
@@ -951,7 +988,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         workspaceId={workspaceId}
         workspacePath={workspacePath}
         refreshTrigger={refreshTrigger}
-        lastRefreshInfo={refreshController.lastRefreshInfo}
+        lastRefreshInfo={lastRefreshInfo}
       />
 
       {diffState.status === "error" ? (

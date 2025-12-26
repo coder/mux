@@ -1,3 +1,4 @@
+/** @type {import('jest').Config} */
 module.exports = {
   testEnvironment: "node",
   testMatch: ["<rootDir>/src/**/*.test.ts", "<rootDir>/tests/**/*.test.ts"],
@@ -11,18 +12,28 @@ module.exports = {
   ],
   setupFilesAfterEnv: ["<rootDir>/tests/setup.ts"],
   moduleNameMapper: {
+    // Vite query suffixes must be matched BEFORE the @/ alias
+    "^@/(.+)\\.svg\\?react$": "<rootDir>/tests/__mocks__/svgReactMock.js",
+    "^@/(.+)\\.txt\\?raw$": "<rootDir>/tests/__mocks__/textMock.js",
     "^@/(.*)$": "<rootDir>/src/$1",
     "^chalk$": "<rootDir>/tests/__mocks__/chalk.js",
     "^jsdom$": "<rootDir>/tests/__mocks__/jsdom.js",
-    // Mock CSS imports for full App rendering in Jest
+    // Mock static assets for full App rendering
     "\\.css$": "<rootDir>/tests/__mocks__/styleMock.js",
+    "\\.txt$": "<rootDir>/tests/__mocks__/textMock.js",
+    "\\.svg$": "<rootDir>/tests/__mocks__/svgMock.js",
   },
+  // Avoid haste module collision with vscode extension
+  modulePathIgnorePatterns: ["<rootDir>/vscode/"],
   transform: {
     "^.+\\.(ts|tsx|js|mjs)$": ["babel-jest"],
   },
-  // Transform ESM modules to CommonJS for Jest
+  // Transform ESM-only packages. Use negative lookahead to transform everything
+  // EXCEPT known CJS packages, which is more maintainable than listing all ESM packages.
   transformIgnorePatterns: [
-    "node_modules/(?!(@orpc|shiki|json-schema-typed|rou3|happy-dom|react-dnd|react-dnd-html5-backend|dnd-core|@react-dnd)/)",
+    // Transform all node_modules - ESM packages need babel transformation
+    // This is slower but ensures compatibility
+    "node_modules/(?!\\.pnpm)(?!.*)",
   ],
   // Run tests in parallel (use 50% of available cores, or 4 minimum)
   maxWorkers: "50%",
@@ -30,6 +41,4 @@ module.exports = {
   forceExit: true,
   // 10 minute timeout for integration tests, 10s for unit tests
   testTimeout: process.env.TEST_INTEGRATION === "1" ? 600000 : 10000,
-  // Detect open handles in development (disabled by default for speed)
-  // detectOpenHandles: true,
 };
