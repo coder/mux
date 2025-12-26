@@ -44,6 +44,8 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
   refreshTrigger,
   lastRefreshInfo,
 }) => {
+  // Debug: log received lastRefreshInfo
+  console.log("[ReviewControls] received lastRefreshInfo:", lastRefreshInfo);
   // Local state for input value - only commit on blur/Enter
   const [inputValue, setInputValue] = useState(filters.diffBase);
 
