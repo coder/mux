@@ -359,25 +359,25 @@ describeIntegration("ReviewPanel auto refresh (UI + ORPC + live LLM)", () => {
       try {
         const refreshButton = await setupReviewPanel(view, metadata, workspaceId);
 
-        // Use LLM to make a file change via bash tool
+        // Use LLM to make a file change via task(kind="bash") so we get a tool-call-end event.
         const AUTO_MARKER = "AUTO_REFRESH_MARKER";
-        const FORCE_BASH: ToolPolicy = [{ regex_match: "bash", action: "require" }];
+        const FORCE_TASK: ToolPolicy = [{ regex_match: "task", action: "require" }];
 
         const autoRes = await sendMessageWithModel(
           env,
           workspaceId,
-          `Use bash to append a new line containing "${AUTO_MARKER}" to README.md.`,
+          `Use task(kind="bash") to append a new line containing "${AUTO_MARKER}" to README.md. Do not spawn a sub-agent task.`,
           HAIKU_MODEL,
           {
             mode: "exec",
             thinkingLevel: "off",
-            toolPolicy: FORCE_BASH,
+            toolPolicy: FORCE_TASK,
           }
         );
         expect(autoRes.success).toBe(true);
 
         await collector.waitForEvent("stream-end", 30_000);
-        await waitForToolCallEnd(collector, "bash");
+        await waitForToolCallEnd(collector, "task");
 
         // Verify the workspace actually changed
         const statusRes = await env.orpc.workspace.executeBash({
