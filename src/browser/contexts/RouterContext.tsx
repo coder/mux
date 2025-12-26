@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, type ReactNode } from "react";
+import { createContext, useContext, type ReactNode } from "react";
 import { HashRouter, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
 import { SELECTED_WORKSPACE_KEY } from "@/common/constants/storage";
@@ -22,22 +22,22 @@ export function useRouter(): RouterContext {
   return ctx;
 }
 
+// Restore workspace from localStorage before HashRouter mounts (synchronous)
+function initializeHashFromStorage(): void {
+  const hash = window.location.hash;
+  // Only restore if at root (no hash path)
+  if (!hash || hash === "#" || hash === "#/") {
+    const saved = readPersistedState<WorkspaceSelection | null>(SELECTED_WORKSPACE_KEY, null);
+    if (saved?.workspaceId) {
+      window.location.hash = `#/workspace/${encodeURIComponent(saved.workspaceId)}`;
+    }
+  }
+}
+
 function RouterContextInner(props: { children: ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
-
-  // Restore from localStorage on first load at root
-  useEffect(() => {
-    if (location.pathname === "/") {
-      const saved = readPersistedState<WorkspaceSelection | null>(SELECTED_WORKSPACE_KEY, null);
-      if (saved?.workspaceId) {
-        void navigate(`/workspace/${encodeURIComponent(saved.workspaceId)}`, { replace: true });
-      }
-    }
-    // Only run once on mount
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const workspaceMatch = /^\/workspace\/(.+)$/.exec(location.pathname);
   const currentWorkspaceId = workspaceMatch ? decodeURIComponent(workspaceMatch[1]) : null;
@@ -57,6 +57,9 @@ function RouterContextInner(props: { children: ReactNode }) {
 }
 
 export function RouterProvider(props: { children: ReactNode }) {
+  // Initialize hash before router mounts
+  initializeHashFromStorage();
+
   return (
     <HashRouter>
       <RouterContextInner>{props.children}</RouterContextInner>
