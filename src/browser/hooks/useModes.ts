@@ -21,7 +21,8 @@ export function useModes(workspaceId: string | undefined): UseModesResult {
   const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
-    if (!api || !workspaceId) {
+    // Guard against missing API, workspaceId, or modes endpoint (e.g., in Storybook)
+    if (!api || !workspaceId || !api.modes?.list) {
       setLoading(false);
       return;
     }
