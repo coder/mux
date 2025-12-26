@@ -1,11 +1,12 @@
 import assert from "@/common/utils/assert";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { useAPI } from "@/browser/contexts/API";
+import { useAutoResizeTextarea } from "@/browser/hooks/useAutoResizeTextarea";
 import { Checkbox } from "@/browser/components/ui/checkbox";
-import { Input } from "@/browser/components/ui/input";
+import { cn } from "@/common/lib/utils";
 import { Button } from "@/browser/components/ui/button";
 import {
   ErrorBox,
@@ -169,6 +170,39 @@ function getDescriptionsForLabels(question: AskUserQuestionQuestion, labels: str
     .filter((label) => label !== OTHER_VALUE)
     .map((label) => question.options.find((o) => o.label === label)?.description)
     .filter((d): d is string => d !== undefined);
+}
+
+/** Auto-resizing textarea for "Other" text input. */
+function AutoResizeTextarea(props: {
+  value: string;
+  onChange: (value: string) => void;
+  onSubmit: () => void;
+  placeholder?: string;
+}): JSX.Element {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  useAutoResizeTextarea(textareaRef, props.value, 30);
+
+  return (
+    <textarea
+      ref={textareaRef}
+      placeholder={props.placeholder}
+      value={props.value}
+      onChange={(e) => props.onChange(e.target.value)}
+      onKeyDown={(e) => {
+        // Submit on Enter without shift (shift+Enter for newline)
+        if (e.key === "Enter" && !e.shiftKey && props.value.trim().length > 0) {
+          e.preventDefault();
+          props.onSubmit();
+        }
+      }}
+      className={cn(
+        "border-input placeholder:text-muted focus-visible:ring-ring",
+        "w-full rounded-md border bg-transparent px-3 py-2 text-sm",
+        "focus-visible:ring-1 focus-visible:outline-none",
+        "resize-none min-h-[2.5rem] max-h-[30vh] overflow-y-auto"
+      )}
+    />
+  );
 }
 
 export function AskUserQuestionToolCall(props: {
@@ -474,11 +508,10 @@ export function AskUserQuestionToolCall(props: {
                       })}
 
                       {currentDraft.selected.includes(OTHER_VALUE) && (
-                        <Input
+                        <AutoResizeTextarea
                           placeholder="Type your answer"
                           value={currentDraft.otherText}
-                          onChange={(e) => {
-                            const value = e.target.value;
+                          onChange={(value) => {
                             setDraftAnswers((prev) => ({
                               ...prev,
                               [currentQuestion.question]: {
@@ -490,12 +523,7 @@ export function AskUserQuestionToolCall(props: {
                               },
                             }));
                           }}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" && currentDraft.otherText.trim().length > 0) {
-                              e.preventDefault();
-                              setActiveIndex(activeIndex + 1);
-                            }
-                          }}
+                          onSubmit={() => setActiveIndex(activeIndex + 1)}
                         />
                       )}
                     </div>

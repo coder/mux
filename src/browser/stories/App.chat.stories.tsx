@@ -432,6 +432,52 @@ export const AskUserQuestionCompleted: AppStory = {
   ),
 };
 
+/**
+ * Test "Other" option with auto-resizing textarea.
+ * Shows the textarea expanded with multi-line content to demonstrate auto-resize.
+ */
+export const AskUserQuestionOther: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          messages: [
+            createUserMessage("msg-1", "How should I set this up?", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 3000,
+            }),
+            createAssistantMessage("msg-2", "Let me ask a few questions.", {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP - 2000,
+              toolCalls: [
+                createPendingTool("call-ask-1", "ask_user_question", {
+                  questions: [
+                    {
+                      question: "Describe your use case in detail",
+                      header: "Use Case",
+                      options: [
+                        { label: "Web app", description: "A web application" },
+                        { label: "CLI tool", description: "A command-line tool" },
+                      ],
+                      multiSelect: false,
+                    },
+                  ],
+                  // Pre-fill with "Other" selected to show the textarea
+                  answers: {
+                    "Describe your use case in detail":
+                      "I'm building a complex application.\nIt needs web, CLI, and API support.\nThe architecture should be modular.",
+                  },
+                }),
+              ],
+            }),
+          ],
+          gitStatus: { dirty: 0 },
+        })
+      }
+    />
+  ),
+};
+
 /** Generic tool call with JSON-highlighted arguments and results */
 export const GenericTool: AppStory = {
   render: () => (
