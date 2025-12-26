@@ -49,36 +49,26 @@ async function waitForRefreshButtonIdle(
 }
 
 /**
- * Best-effort tooltip assertion. Radix tooltips use portals that don't reliably
- * work in happy-dom, so we only log warnings on failure rather than failing the test.
+ * Assert that the refresh button has lastRefreshInfo data attribute set.
+ * We use a data attribute because Radix tooltip portals don't work in happy-dom.
  */
-async function checkTooltipText(
+async function assertRefreshButtonHasLastRefreshInfo(
   refreshButton: HTMLElement,
-  pattern: RegExp,
+  expectedTrigger: string,
   timeoutMs: number = 5_000
 ): Promise<void> {
-  // Radix renders tooltip content in a Portal. Use aria-describedby to locate it.
-  fireEvent.focus(refreshButton);
-
-  try {
-    await waitFor(
-      () => {
-        const tooltipId = refreshButton.getAttribute("aria-describedby");
-        if (!tooltipId) throw new Error("No aria-describedby yet");
-        const tooltipEl = document.getElementById(tooltipId);
-        if (!tooltipEl) throw new Error(`No element with id ${tooltipId}`);
-        if (!pattern.test(tooltipEl.textContent ?? "")) {
-          throw new Error(`Tooltip text "${tooltipEl.textContent}" doesn't match ${pattern}`);
-        }
-      },
-      { timeout: timeoutMs }
-    );
-  } catch {
-    // Radix tooltip portals are unreliable in happy-dom; don't fail the test.
-    console.warn(
-      `[checkTooltipText] Could not verify tooltip matches ${pattern} (happy-dom limitation)`
-    );
-  }
+  await waitFor(
+    () => {
+      const trigger = refreshButton.getAttribute("data-last-refresh-trigger");
+      if (!trigger) {
+        throw new Error("data-last-refresh-trigger not set on button");
+      }
+      if (trigger !== expectedTrigger) {
+        throw new Error(`Expected trigger "${expectedTrigger}" but got "${trigger}"`);
+      }
+    },
+    { timeout: timeoutMs }
+  );
 }
 async function waitForToolCallEnd(
   collector: EventCollector,
@@ -154,7 +144,7 @@ describeIntegration("ReviewPanel refresh (UI + ORPC + live LLM)", () => {
         // Tooltip should reflect the scheduled/tool-completion refresh.
         const refreshButton = view.getByTestId("review-refresh");
         await waitForRefreshButtonIdle(refreshButton);
-        await checkTooltipText(refreshButton, /via tool completion/i);
+        await assertRefreshButtonHasLastRefreshInfo(refreshButton, "scheduled");
 
         // === Manual refresh path (no tool-call events) ===
         const MANUAL_MARKER = "MANUAL_REFRESH_MARKER";
@@ -185,7 +175,7 @@ describeIntegration("ReviewPanel refresh (UI + ORPC + live LLM)", () => {
 
         // Tooltip should now reflect the manual refresh (and not remain stuck on tool completion).
         await waitForRefreshButtonIdle(refreshButton);
-        await checkTooltipText(refreshButton, /via manual click/i);
+        await assertRefreshButtonHasLastRefreshInfo(refreshButton, "manual");
       } finally {
         view.unmount();
         cleanup();

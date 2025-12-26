@@ -83,6 +83,7 @@ export const RefreshButton: React.FC<RefreshButtonProps> = (props) => {
         <button
           aria-label="Refresh diff"
           data-testid="review-refresh"
+          data-last-refresh-trigger={lastRefreshInfo?.trigger ?? ""}
           onClick={handleClick}
           className={cn(
             "flex items-center justify-center bg-transparent border-none p-0.5 transition-colors duration-[1500ms] ease-out",

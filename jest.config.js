@@ -14,13 +14,15 @@ module.exports = {
     "^@/(.*)$": "<rootDir>/src/$1",
     "^chalk$": "<rootDir>/tests/__mocks__/chalk.js",
     "^jsdom$": "<rootDir>/tests/__mocks__/jsdom.js",
+    // Mock CSS imports for full App rendering in Jest
+    "\\.css$": "<rootDir>/tests/__mocks__/styleMock.js",
   },
   transform: {
     "^.+\\.(ts|tsx|js|mjs)$": ["babel-jest"],
   },
   // Transform ESM modules to CommonJS for Jest
   transformIgnorePatterns: [
-    "node_modules/(?!(@orpc|shiki|json-schema-typed|rou3|happy-dom)/)",
+    "node_modules/(?!(@orpc|shiki|json-schema-typed|rou3|happy-dom|react-dnd|react-dnd-html5-backend|dnd-core|@react-dnd)/)",
   ],
   // Run tests in parallel (use 50% of available cores, or 4 minimum)
   maxWorkers: "50%",
