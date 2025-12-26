@@ -45,6 +45,7 @@ import type {
 import type { FileTreeNode } from "@/common/utils/git/numstatParser";
 import { matchesKeybind, KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 import { applyFrontendFilters } from "@/browser/utils/review/filterHunks";
+import { findNextHunkId, findNextHunkIdAfterFileRemoval } from "@/browser/utils/review/navigation";
 import { cn } from "@/common/lib/utils";
 import { useAPI, type APIClient } from "@/browser/contexts/API";
 import { workspaceStore } from "@/browser/stores/WorkspaceStore";
@@ -253,6 +254,10 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
 
   // Map of hunkId -> toggle function for expand/collapse
   const toggleExpandFnsRef = useRef<Map<string, () => void>>(new Map());
+
+  // Ref to hold current filteredHunks for use in navigation callbacks.
+  // Avoids needing filteredHunks as a dependency (which changes frequently).
+  const filteredHunksRef = useRef<DiffHunk[]>([]);
 
   // Track refresh trigger changes so we can distinguish initial mount vs manual refresh.
   // Each effect gets its own ref to avoid cross-effect interference.
@@ -717,6 +722,9 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     firstSeenMap,
   ]);
 
+  // Keep ref in sync so callbacks can access current filtered list without dependency
+  filteredHunksRef.current = filteredHunks;
+
   // Memoize search config to prevent re-creating object on every render
   // This allows React.memo on HunkViewer to work properly
   const searchConfig = useMemo(
@@ -743,26 +751,12 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         const willBeVisible = filters.showReadHunks || wasRead;
 
         if (!willBeVisible) {
-          // Compute filtered hunks here to avoid dependency on filteredHunks array
-          const currentFiltered = filters.showReadHunks
-            ? hunks
-            : hunks.filter((h) => !isRead(h.id));
-
-          // Hunk will be filtered out - move to next visible hunk
-          const currentIndex = currentFiltered.findIndex((h) => h.id === hunkId);
-          if (currentIndex !== -1) {
-            if (currentIndex < currentFiltered.length - 1) {
-              setSelectedHunkId(currentFiltered[currentIndex + 1].id);
-            } else if (currentIndex > 0) {
-              setSelectedHunkId(currentFiltered[currentIndex - 1].id);
-            } else {
-              setSelectedHunkId(null);
-            }
-          }
+          // Use ref to get current filtered/sorted list for navigation
+          setSelectedHunkId(findNextHunkId(filteredHunksRef.current, hunkId));
         }
       }
     },
-    [isRead, toggleRead, filters.showReadHunks, hunks, selectedHunkId]
+    [isRead, toggleRead, filters.showReadHunks, selectedHunkId]
   );
 
   // Handle marking hunk as read with auto-navigation
@@ -773,21 +767,11 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
 
       // If marking the selected hunk as read and it will be filtered out, navigate
       if (hunkId === selectedHunkId && !wasRead && !filters.showReadHunks) {
-        // Hunk will be filtered out - move to next visible hunk
-        const currentFiltered = hunks.filter((h) => !isRead(h.id));
-        const currentIndex = currentFiltered.findIndex((h) => h.id === hunkId);
-        if (currentIndex !== -1) {
-          if (currentIndex < currentFiltered.length - 1) {
-            setSelectedHunkId(currentFiltered[currentIndex + 1].id);
-          } else if (currentIndex > 0) {
-            setSelectedHunkId(currentFiltered[currentIndex - 1].id);
-          } else {
-            setSelectedHunkId(null);
-          }
-        }
+        // Use ref to get current filtered/sorted list for navigation
+        setSelectedHunkId(findNextHunkId(filteredHunksRef.current, hunkId));
       }
     },
-    [isRead, markAsRead, filters.showReadHunks, hunks, selectedHunkId]
+    [isRead, markAsRead, filters.showReadHunks, selectedHunkId]
   );
 
   // Handle marking hunk as unread (no navigation needed - unread hunks are always visible)
@@ -831,16 +815,13 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
 
       // If marking the selected hunk's file as read and hunks will be filtered out, navigate
       if (hunkId === selectedHunkId && !filters.showReadHunks) {
-        // Find the next visible hunk that's not in the same file
-        const currentFiltered = hunks.filter((h) => !isRead(h.id) && h.filePath !== hunk.filePath);
-        if (currentFiltered.length > 0) {
-          setSelectedHunkId(currentFiltered[0].id);
-        } else {
-          setSelectedHunkId(null);
-        }
+        // Use ref to get current filtered/sorted list, then find next hunk not in same file
+        setSelectedHunkId(
+          findNextHunkIdAfterFileRemoval(filteredHunksRef.current, hunkId, hunk.filePath)
+        );
       }
     },
-    [hunks, markAsRead, isRead, filters.showReadHunks, selectedHunkId]
+    [hunks, markAsRead, filters.showReadHunks, selectedHunkId]
   );
 
   // Calculate stats
