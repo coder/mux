@@ -240,9 +240,11 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
               onTouchStart={markUserInteraction}
             >
               <div ref={innerRef}>
-                {displayedMessages.map((msg) => (
-                  <DisplayedMessageRenderer key={msg.id} message={msg} workspaceId={selectedWorkspaceId} />
-                ))}
+                {selectedWorkspaceId
+                  ? displayedMessages.map((msg) => (
+                      <DisplayedMessageRenderer key={msg.id} message={msg} workspaceId={selectedWorkspaceId} />
+                    ))
+                  : null}
 
                 {notices.map((notice) => (
                   <div
@@ -256,6 +258,10 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
                     {notice.message}
                   </div>
                 ))}
+
+                {!selectedWorkspaceId && notices.length === 0 ? (
+                  <div className="text-muted text-sm">Select a mux workspace to view messages.</div>
+                ) : null}
               </div>
             </div>
 
