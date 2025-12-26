@@ -694,19 +694,10 @@ export function createStreamingChatHandler(opts: {
       }
     }, 50);
 
-    // Keep streaming state alive
-    const intervalId = setInterval(() => {
-      callback({
-        type: "stream-delta",
-        workspaceId: "mock",
-        messageId: opts.streamingMessageId,
-        delta: ".",
-        tokens: 0,
-        timestamp: NOW,
-      });
-    }, 2000);
-
-    return () => clearInterval(intervalId);
+    // Keep the streaming state active, but avoid emitting periodic visible deltas.
+    // Those deltas can make visual snapshots flaky (different text length per run).
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
+    return () => {};
   };
 }
 
