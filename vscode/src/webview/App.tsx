@@ -9,12 +9,16 @@ import { APIProvider } from "mux/browser/contexts/API";
 import { ThemeProvider } from "mux/browser/contexts/ThemeContext";
 import { TooltipProvider } from "mux/browser/components/ui/tooltip";
 import { Button } from "mux/browser/components/ui/button";
+import { matchesKeybind, KEYBINDS } from "mux/browser/utils/ui/keybinds";
+import { readPersistedState } from "mux/browser/hooks/usePersistedState";
+import { VIM_ENABLED_KEY } from "mux/common/constants/storage";
 import { useAutoScroll } from "mux/browser/hooks/useAutoScroll";
 import { applyWorkspaceChatEventToAggregator } from "mux/browser/utils/messages/applyWorkspaceChatEventToAggregator";
 import { StreamingMessageAggregator } from "mux/browser/utils/messages/StreamingMessageAggregator";
 
 import type { ExtensionToWebviewMessage, UiConnectionStatus, UiWorkspace } from "./protocol";
 import { ChatComposer } from "./ChatComposer";
+import { VscodeStreamingBarrier } from "./StreamingBarrier";
 import { DisplayedMessageRenderer } from "./DisplayedMessageRenderer";
 import { createVscodeOrpcLink } from "./createVscodeOrpcLink";
 import type { VscodeBridge } from "./vscodeBridge";
@@ -108,6 +112,9 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
     setDisplayedMessages(aggregator.getDisplayedMessages());
   };
 
+
+  const flushDisplayedMessagesRef = useRef(flushDisplayedMessages);
+  flushDisplayedMessagesRef.current = flushDisplayedMessages;
   const scheduleDisplayedMessages = () => {
     if (isRenderScheduledRef.current) {
       return;
@@ -151,6 +158,10 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
     const id = `notice-${noticeSeqRef.current}`;
     setNotices((prev) => [...prev, { id, level: notice.level, message: notice.message }]);
   };
+
+
+  const pushNoticeRef = useRef(pushNotice);
+  pushNoticeRef.current = pushNotice;
 
   const canChat = Boolean(connectionStatus?.mode === "api" && selectedWorkspaceId);
 
@@ -260,6 +271,54 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bridge]);
 
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!canChat || !selectedWorkspaceId) {
+        return;
+      }
+
+      const aggregator = aggregatorRef.current;
+      if (!aggregator) {
+        return;
+      }
+
+      const vimEnabled = readPersistedState(VIM_ENABLED_KEY, false);
+      const interruptKeybind = vimEnabled ? KEYBINDS.INTERRUPT_STREAM_VIM : KEYBINDS.INTERRUPT_STREAM_NORMAL;
+
+      if (!matchesKeybind(e, interruptKeybind)) {
+        return;
+      }
+
+      // ask_user_question is a special waiting state: don't interrupt it with Esc/Ctrl+C.
+      // Users can still respond by typing and sending a message.
+      if (aggregator.hasAwaitingUserQuestion()) {
+        return;
+      }
+
+      if (!aggregator.getActiveStreamMessageId()) {
+        return;
+      }
+
+      e.preventDefault();
+
+      aggregator.setInterrupting();
+      flushDisplayedMessagesRef.current();
+
+      apiClient.workspace.interruptStream({ workspaceId: selectedWorkspaceId }).catch((error) => {
+        bridge.debugLog("interruptStream failed", { error: String(error) });
+
+        pushNoticeRef.current({
+          level: "error",
+          message: `Failed to interrupt stream. (${error instanceof Error ? error.message : String(error)})`,
+        });
+      });
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [apiClient, bridge, canChat, selectedWorkspaceId]);
+
   const onRefresh = () => {
     bridge.postMessage({ type: "refreshWorkspaces" });
   };
@@ -330,11 +389,18 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
               onTouchStart={markUserInteraction}
             >
               <div ref={innerRef}>
-                {selectedWorkspaceId
-                  ? displayedMessages.map((msg) => (
+                {selectedWorkspaceId ? (
+                  <>
+                    {displayedMessages.map((msg) => (
                       <DisplayedMessageRenderer key={msg.id} message={msg} workspaceId={selectedWorkspaceId} />
-                    ))
-                  : null}
+                    ))}
+                    <VscodeStreamingBarrier
+                      workspaceId={selectedWorkspaceId}
+                      aggregator={aggregatorRef.current}
+                      className="mt-3"
+                    />
+                  </>
+                ) : null}
 
                 {notices.map((notice) => (
                   <div
@@ -361,7 +427,7 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
                   key={selectedWorkspaceId}
                   workspaceId={selectedWorkspaceId}
                   disabled={!canChat}
-                  placeholder={canChat ? "Message mux…" : "Chat requires mux server connection."}
+                  disabledReason={canChat ? undefined : "Chat requires mux server connection."}
                   aggregator={aggregatorRef.current}
                   onSendComplete={jumpToBottom}
                   onNotice={pushNotice}

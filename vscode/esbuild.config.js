@@ -153,19 +153,31 @@ function watchWebviewCss() {
   });
 }
 
-// Stub Vite-style SVG React imports ("*.svg?react") used by mux UI.
-const stubSvgReactPlugin = {
-  name: "stub-svg-react",
+// Support Vite-style SVG React imports ("*.svg?react") used by mux UI.
+// We can't rely on Vite's svgr plugin here, so embed the SVG markup and render it.
+const svgReactPlugin = {
+  name: "svg-react",
   setup(build) {
-    build.onResolve({ filter: /\.svg\?react$/ }, () => {
-      return { path: "svg-react-stub", namespace: "stub-svg-react" };
+    build.onResolve({ filter: /\.svg\?react$/ }, async (args) => {
+      const withoutQuery = args.path.replace(/\?react$/, "");
+      const resolved = await build.resolve(withoutQuery, { resolveDir: args.resolveDir });
+      if (resolved.errors.length > 0) {
+        return { errors: resolved.errors };
+      }
+
+      return { path: resolved.path, namespace: "svg-react" };
     });
 
-    build.onLoad({ filter: /.*/, namespace: "stub-svg-react" }, () => {
-      return {
-        contents: "export default function SvgReactStub() { return null; }",
-        loader: "js",
-      };
+    build.onLoad({ filter: /\.svg$/, namespace: "svg-react" }, async (args) => {
+      const svg = await fs.promises.readFile(args.path, "utf8");
+
+      // ProviderIcon wraps this element and applies fill/stroke via CSS.
+      const contents = `export default function SvgReactComponent() {
+  return <span dangerouslySetInnerHTML={{ __html: ${JSON.stringify(svg)} }} />;
+}
+`;
+
+      return { contents, loader: "jsx" };
     });
   },
 };
@@ -240,7 +252,7 @@ const webviewBuild = {
   ...sharedConfig,
   plugins: [
     ...sharedConfig.plugins,
-    stubSvgReactPlugin,
+    svgReactPlugin,
     stubKatexCssPlugin,
     ...(isWatch ? [rebuildWebviewCssPlugin] : []),
   ],

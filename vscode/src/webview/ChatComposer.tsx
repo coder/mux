@@ -5,6 +5,7 @@ import { SendHorizontal } from "lucide-react";
 import type { StreamingMessageAggregator } from "mux/browser/utils/messages/StreamingMessageAggregator";
 import { getSendOptionsFromStorage } from "mux/browser/utils/messages/sendOptions";
 
+import { matchesKeybind, formatKeybind, KEYBINDS } from "mux/browser/utils/ui/keybinds";
 import { useAPI } from "mux/browser/contexts/API";
 import { ModeProvider, useMode } from "mux/browser/contexts/ModeContext";
 import { ThinkingProvider } from "mux/browser/contexts/ThinkingContext";
@@ -15,6 +16,7 @@ import { migrateGatewayModel } from "mux/browser/hooks/useGatewayModels";
 import { useProviderOptions } from "mux/browser/hooks/useProviderOptions";
 import { useAutoCompactionSettings } from "mux/browser/hooks/useAutoCompactionSettings";
 
+import { VimTextArea } from "mux/browser/components/VimTextArea";
 import { ModelSelector } from "mux/browser/components/ModelSelector";
 import { ThinkingSliderComponent } from "mux/browser/components/ThinkingSlider";
 import { ContextUsageIndicatorButton } from "mux/browser/components/ContextUsageIndicatorButton";
@@ -26,7 +28,7 @@ import { createDisplayUsage } from "mux/common/utils/tokens/displayUsage";
 import type { ChatUsageDisplay } from "mux/common/utils/tokens/usageAggregator";
 import { enforceThinkingPolicy } from "mux/common/utils/thinking/policy";
 import { cn } from "mux/common/lib/utils";
-import { getInputKey, getModelKey } from "mux/common/constants/storage";
+import { VIM_ENABLED_KEY, getInputKey, getModelKey } from "mux/common/constants/storage";
 
 function getLastContextUsage(
   aggregator: StreamingMessageAggregator,
@@ -62,7 +64,7 @@ function getLastContextUsage(
 function ChatComposerInner(props: {
   workspaceId: string;
   disabled: boolean;
-  placeholder: string;
+  disabledReason?: string | undefined;
   aggregator: StreamingMessageAggregator | null;
   onSendComplete: () => void;
   onNotice: (notice: { level: "info" | "error"; message: string }) => void;
@@ -96,9 +98,15 @@ function ChatComposerInner(props: {
   const inputKey = getInputKey(props.workspaceId);
   const [input, setInput] = usePersistedState<string>(inputKey, "", { listener: true });
 
+
+  const [vimEnabled, setVimEnabled] = usePersistedState<boolean>(VIM_ENABLED_KEY, false, {
+    listener: true,
+  });
   const [isSending, setIsSending] = useState(false);
 
   const aggregator = props.aggregator;
+  const canInterruptStream = Boolean(aggregator?.getActiveStreamMessageId());
+  const isCompactingStream = aggregator?.isCompacting() ?? false;
   const usageModelFromAggregator = aggregator?.getCurrentModel() ?? null;
 
   // Note: avoid memoizing against the aggregator reference.
@@ -173,6 +181,14 @@ function ChatComposerInner(props: {
       return;
     }
 
+    if (trimmed === "/vim") {
+      const next = !vimEnabled;
+      setVimEnabled(next);
+      setInput("");
+      props.onNotice({ level: "info", message: `Vim mode ${next ? "enabled" : "disabled"}.` });
+      return;
+    }
+
     if (!api) {
       props.onNotice({ level: "error", message: "Not connected to mux server." });
       return;
@@ -208,17 +224,43 @@ function ChatComposerInner(props: {
     }
   };
 
+
+  const placeholder = (() => {
+    if (props.disabled) {
+      const disabledReason = props.disabledReason;
+      if (typeof disabledReason === "string" && disabledReason.trim().length > 0) {
+        return disabledReason;
+      }
+    }
+
+    if (isCompactingStream) {
+      const interruptKeybind = vimEnabled ? KEYBINDS.INTERRUPT_STREAM_VIM : KEYBINDS.INTERRUPT_STREAM_NORMAL;
+      return `Compacting... (${formatKeybind(interruptKeybind)} cancel | ${formatKeybind(KEYBINDS.SEND_MESSAGE)} to queue)`;
+    }
+
+    const hints: string[] = [];
+    if (canInterruptStream) {
+      const interruptKeybind = vimEnabled ? KEYBINDS.INTERRUPT_STREAM_VIM : KEYBINDS.INTERRUPT_STREAM_NORMAL;
+      hints.push(`${formatKeybind(interruptKeybind)} to interrupt`);
+    }
+
+    hints.push(`${formatKeybind(KEYBINDS.SEND_MESSAGE)} to ${canInterruptStream ? "queue" : "send"}`);
+    hints.push(`Click model to choose, ${formatKeybind(KEYBINDS.CYCLE_MODEL)} to cycle`);
+    hints.push(`/vim to toggle Vim mode (${vimEnabled ? "on" : "off"})`);
+
+    return `Type a message... (${hints.join(", ")})`;
+  })();
+
   return (
     <div className="flex flex-col gap-2">
-      <textarea
-        className="border-input bg-background text-foreground placeholder:text-muted w-full resize-y rounded-md border px-3 py-2 text-sm"
-        placeholder={props.placeholder}
+      <VimTextArea
         value={input}
-        onChange={(e) => setInput(e.target.value)}
+        onChange={setInput}
+        mode={mode}
+        placeholder={placeholder}
         disabled={props.disabled}
-        rows={3}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+          if (matchesKeybind(e, KEYBINDS.SEND_MESSAGE)) {
             e.preventDefault();
             void onSend();
           }
@@ -265,13 +307,14 @@ function ChatComposerInner(props: {
                   <SendHorizontal className="h-3.5 w-3.5" strokeWidth={2.5} />
                 </button>
               </TooltipTrigger>
-              <TooltipContent align="center">Send message (Ctrl+Enter)</TooltipContent>
+              <TooltipContent align="center">
+                Send message ({formatKeybind(KEYBINDS.SEND_MESSAGE)})
+              </TooltipContent>
             </Tooltip>
           </div>
         </div>
       </div>
 
-      <div className="text-muted text-[11px]">Tip: Press Ctrl+Enter (or Cmd+Enter) to send.</div>
     </div>
   );
 }
@@ -279,7 +322,7 @@ function ChatComposerInner(props: {
 export function ChatComposer(props: {
   workspaceId: string;
   disabled: boolean;
-  placeholder: string;
+  disabledReason?: string | undefined;
   aggregator: StreamingMessageAggregator | null;
   onSendComplete: () => void;
   onNotice: (notice: { level: "info" | "error"; message: string }) => void;
@@ -290,7 +333,7 @@ export function ChatComposer(props: {
         <ChatComposerInner
           workspaceId={props.workspaceId}
           disabled={props.disabled}
-          placeholder={props.placeholder}
+          disabledReason={props.disabledReason}
           aggregator={props.aggregator}
           onSendComplete={props.onSendComplete}
           onNotice={props.onNotice}
