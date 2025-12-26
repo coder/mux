@@ -176,8 +176,15 @@ const svgReactPlugin = {
       const svg = await fs.promises.readFile(args.path, "utf8");
 
       // ProviderIcon wraps this element and applies fill/stroke via CSS.
+      // IMPORTANT: the wrapper span must take up the full size of ProviderIcon's outer span.
+      // Otherwise the nested <svg> ends up with an indeterminate containing box and can render at 0x0.
       const contents = `export default function SvgReactComponent() {
-  return <span dangerouslySetInnerHTML={{ __html: ${JSON.stringify(svg)} }} />;
+  return (
+    <span
+      style={{ display: "block", width: "100%", height: "100%" }}
+      dangerouslySetInnerHTML={{ __html: ${JSON.stringify(svg)} }}
+    />
+  );
 }
 `;
 
