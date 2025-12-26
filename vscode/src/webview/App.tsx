@@ -3,6 +3,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { DisplayedMessage } from "mux/common/types/message";
 import { createClient } from "mux/common/orpc/client";
 
+import { ProviderOptionsProvider } from "mux/browser/contexts/ProviderOptionsContext";
+import { SettingsProvider } from "mux/browser/contexts/SettingsContext";
 import { APIProvider } from "mux/browser/contexts/API";
 import { ThemeProvider } from "mux/browser/contexts/ThemeContext";
 import { TooltipProvider } from "mux/browser/components/ui/tooltip";
@@ -11,6 +13,7 @@ import { useAutoScroll } from "mux/browser/hooks/useAutoScroll";
 import { StreamingMessageAggregator } from "mux/browser/utils/messages/StreamingMessageAggregator";
 
 import type { ExtensionToWebviewMessage, UiConnectionStatus, UiWorkspace } from "./protocol";
+import { ChatComposer } from "./ChatComposer";
 import { DisplayedMessageRenderer } from "./DisplayedMessageRenderer";
 import { createVscodeOrpcLink } from "./createVscodeOrpcLink";
 import type { VscodeBridge } from "./vscodeBridge";
@@ -67,7 +70,6 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
   const [notices, setNotices] = useState<Notice[]>([]);
 
   const workspacesRef = useRef<UiWorkspace[]>([]);
-  const [input, setInput] = useState("");
 
   const aggregatorRef = useRef<StreamingMessageAggregator | null>(null);
   const [displayedMessages, setDisplayedMessages] = useState<DisplayedMessage[]>([]);
@@ -78,8 +80,15 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
   const jumpToBottomRef = useRef(jumpToBottom);
   jumpToBottomRef.current = jumpToBottom;
 
+
   // Keep a stable monotonic counter for notice IDs.
   const noticeSeqRef = useRef(0);
+
+  const pushNotice = (notice: { level: Notice["level"]; message: string }) => {
+    noticeSeqRef.current += 1;
+    const id = `notice-${noticeSeqRef.current}`;
+    setNotices((prev) => [...prev, { id, level: notice.level, message: notice.message }]);
+  };
 
   const canChat = Boolean(connectionStatus?.mode === "api" && selectedWorkspaceId);
 
@@ -133,9 +142,7 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
           return;
         }
         case "uiNotice": {
-          noticeSeqRef.current += 1;
-          const id = `notice-${noticeSeqRef.current}`;
-          setNotices((prev) => [...prev, { id, level: msg.level, message: msg.message }]);
+          pushNotice({ level: msg.level, message: msg.message });
           return;
         }
         case "debugProbe":
@@ -169,25 +176,13 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
     bridge.postMessage({ type: "openWorkspace", workspaceId: selectedWorkspaceId });
   };
 
-  const onSend = () => {
-    if (!selectedWorkspaceId) {
-      return;
-    }
-
-    const trimmed = input.trim();
-    if (!trimmed) {
-      return;
-    }
-
-    bridge.postMessage({ type: "sendMessage", workspaceId: selectedWorkspaceId, text: trimmed });
-    setInput("");
-    jumpToBottom();
-  };
 
   return (
     <APIProvider client={apiClient}>
-      <ThemeProvider forcedTheme="dark">
-        <TooltipProvider>
+      <SettingsProvider>
+        <ProviderOptionsProvider>
+          <ThemeProvider forcedTheme="dark">
+            <TooltipProvider>
           <div className="flex h-screen flex-col">
             <div className="border-b border-border bg-background-secondary p-3">
               <div className="text-muted whitespace-pre-wrap text-xs">{formatConnectionStatus(connectionStatus)}</div>
@@ -255,39 +250,25 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
             </div>
 
             <div className="border-t border-border bg-background-secondary p-3">
-              <div className="flex gap-2">
-                <textarea
-                  className="border-input bg-background text-foreground placeholder:text-muted flex-1 resize-y rounded-md border px-3 py-2 text-sm"
-                  placeholder={
-                    canChat
-                      ? "Message mux…"
-                      : selectedWorkspaceId
-                        ? "Chat requires mux server connection."
-                        : "Select a mux workspace to chat."
-                  }
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
+              {selectedWorkspaceId ? (
+                <ChatComposer
+                  key={selectedWorkspaceId}
+                  workspaceId={selectedWorkspaceId}
                   disabled={!canChat}
-                  rows={3}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                      e.preventDefault();
-                      onSend();
-                    }
-                  }}
+                  placeholder={canChat ? "Message mux…" : "Chat requires mux server connection."}
+                  aggregator={aggregatorRef.current}
+                  onSendComplete={jumpToBottom}
+                  onNotice={pushNotice}
                 />
-
-                <Button type="button" onClick={onSend} disabled={!canChat}>
-                  Send
-                </Button>
-              </div>
-              <div className="text-muted mt-2 text-[11px]">
-                Tip: Press Ctrl+Enter (or Cmd+Enter) to send.
-              </div>
+              ) : (
+                <div className="text-muted text-sm">Select a mux workspace to chat.</div>
+              )}
             </div>
           </div>
-        </TooltipProvider>
-      </ThemeProvider>
+            </TooltipProvider>
+          </ThemeProvider>
+        </ProviderOptionsProvider>
+      </SettingsProvider>
     </APIProvider>
   );
 }

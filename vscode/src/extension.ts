@@ -1373,7 +1373,6 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
       return false;
     }
 
-    const allowedRoots = new Set(["general", "workspace"]);
     const forbiddenSegments = new Set(["__proto__", "prototype", "constructor"]);
 
     for (const segment of path) {
@@ -1387,7 +1386,23 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
       }
     }
 
-    return allowedRoots.has(path[0]);
+    const root = path[0];
+    if (root === "general" || root === "workspace") {
+      return true;
+    }
+
+    // Allow provider discovery/custom models so the webview can reuse the desktop
+    // model picker, but do NOT expose provider secret mutation APIs.
+    if (root === "providers") {
+      if (path.length !== 2) {
+        return false;
+      }
+
+      const allowed = new Set(["list", "getConfig", "onConfigChanged", "setModels"]);
+      return allowed.has(path[1]);
+    }
+
+    return false;
   }
 
   private resolveOrpcProcedure(client: unknown, path: string[]): ((input: unknown, options?: unknown) => Promise<unknown>) | null {

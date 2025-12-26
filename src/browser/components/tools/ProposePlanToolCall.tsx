@@ -22,7 +22,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { cn } from "@/common/lib/utils";
 import { useAPI } from "@/browser/contexts/API";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
-import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
+import { useOptionalWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { usePopoverError } from "@/browser/hooks/usePopoverError";
 import { PopoverError } from "../PopoverError";
 import { getPlanContentKey } from "@/common/constants/storage";
@@ -119,11 +119,13 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   const [showRaw, setShowRaw] = useState(false);
   const { api } = useAPI();
   const openInEditor = useOpenInEditor();
-  const { workspaceMetadata } = useWorkspaceContext();
+  const workspaceContext = useOptionalWorkspaceContext();
   const editorError = usePopoverError();
 
   // Get runtimeConfig for the workspace (needed for SSH-aware editor opening)
-  const runtimeConfig = workspaceId ? workspaceMetadata.get(workspaceId)?.runtimeConfig : undefined;
+  const runtimeConfig = workspaceId
+    ? workspaceContext?.workspaceMetadata.get(workspaceId)?.runtimeConfig
+    : undefined;
 
   // Fresh content from disk for the latest plan (external edit detection)
   // Initialize from localStorage cache for instant render (no flash on reload)
@@ -244,10 +246,20 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
 
   const handleOpenInEditor = async (event: React.MouseEvent) => {
     if (!planPath || !workspaceId) return;
-    const result = await openInEditor(workspaceId, planPath, runtimeConfig);
-    if (!result.success && result.error) {
-      const rect = (event.target as HTMLElement).getBoundingClientRect();
-      editorError.showError("plan-editor", result.error, {
+
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+
+    try {
+      const result = await openInEditor(workspaceId, planPath, runtimeConfig);
+      if (!result.success && result.error) {
+        editorError.showError("plan-editor", result.error, {
+          top: rect.bottom + 8,
+          left: rect.left,
+        });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      editorError.showError("plan-editor", message, {
         top: rect.bottom + 8,
         left: rect.left,
       });

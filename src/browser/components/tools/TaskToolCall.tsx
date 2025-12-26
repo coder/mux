@@ -12,7 +12,10 @@ import { useToolExpansion, getStatusDisplay, type ToolStatus } from "./shared/to
 import { MarkdownRenderer } from "../Messages/MarkdownRenderer";
 import { cn } from "@/common/lib/utils";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
-import { useWorkspaceContext, toWorkspaceSelection } from "@/browser/contexts/WorkspaceContext";
+import {
+  useOptionalWorkspaceContext,
+  toWorkspaceSelection,
+} from "@/browser/contexts/WorkspaceContext";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import type {
   TaskToolArgs,
@@ -126,10 +129,12 @@ const AgentTypeBadge: React.FC<{
 // - If the task workspace exists locally, clicking opens it.
 // - Otherwise, clicking copies the ID (so the user can search / share it).
 const TaskId: React.FC<{ id: string; className?: string }> = ({ id, className }) => {
-  const { workspaceMetadata, setSelectedWorkspace } = useWorkspaceContext();
+  const workspaceContext = useOptionalWorkspaceContext();
   const { copied, copyToClipboard } = useCopyToClipboard();
 
-  const workspace = workspaceMetadata.get(id);
+  const workspace = workspaceContext?.workspaceMetadata.get(id);
+
+  const canOpenWorkspace = Boolean(workspace && workspaceContext);
 
   return (
     <Tooltip>
@@ -141,10 +146,11 @@ const TaskId: React.FC<{ id: string; className?: string }> = ({ id, className })
             className
           )}
           onClick={() => {
-            if (workspace) {
-              setSelectedWorkspace(toWorkspaceSelection(workspace));
+            if (workspace && workspaceContext) {
+              workspaceContext.setSelectedWorkspace(toWorkspaceSelection(workspace));
               return;
             }
+
             void copyToClipboard(id);
           }}
         >
@@ -152,7 +158,7 @@ const TaskId: React.FC<{ id: string; className?: string }> = ({ id, className })
         </button>
       </TooltipTrigger>
       <TooltipContent>
-        {workspace ? "Open workspace" : copied ? "Copied" : "Copy task ID"}
+        {canOpenWorkspace ? "Open workspace" : copied ? "Copied" : "Copy task ID"}
       </TooltipContent>
     </Tooltip>
   );

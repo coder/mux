@@ -676,6 +676,15 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   return <WorkspaceContext.Provider value={value}>{props.children}</WorkspaceContext.Provider>;
 }
 
+/**
+ * Optional version of useWorkspaceContext.
+ *
+ * This is useful for environments that render message/tool components without the full
+ * workspace shell (e.g. VS Code webviews).
+ */
+export function useOptionalWorkspaceContext(): WorkspaceContext | null {
+  return useContext(WorkspaceContext) ?? null;
+}
 export function useWorkspaceContext(): WorkspaceContext {
   const context = useContext(WorkspaceContext);
   if (!context) {
