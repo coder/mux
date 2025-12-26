@@ -535,3 +535,159 @@ export const ReviewTabSortByFileOrder: AppStory = {
     await expect(sortSelect).toHaveValue("last-edit");
   },
 };
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DIFF LAYOUT STORIES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Diff with mixed line types for visual alignment testing.
+ * Tests that the padding strip at top/bottom of diff aligns correctly with
+ * the gutter and code areas in the actual diff lines.
+ *
+ * Key visual checks:
+ * - Top padding strip (green for additions) aligns with first + line's gutter/code split
+ * - Bottom padding strip aligns with last line's gutter/code split
+ * - The more saturated gutter background ends exactly at the indicator column
+ * - The less saturated code background starts at the indicator column
+ */
+const ALIGNMENT_TEST_DIFF = `diff --git a/src/test.ts b/src/test.ts
+new file mode 100644
+index 0000000..1234567
+--- /dev/null
++++ b/src/test.ts
+@@ -0,0 +1,8 @@
++// This file tests diff padding alignment
++export function add(a: number, b: number): number {
++  return a + b;
++}
++
++export function subtract(a: number, b: number): number {
++  return a - b;
++}
+`;
+
+const ALIGNMENT_TEST_NUMSTAT = `8\t0\tsrc/test.ts`;
+
+/**
+ * Review tab with diff focused on padding alignment verification.
+ * The saturated green gutter (line numbers) should align perfectly with
+ * the top/bottom padding strips. The indicator column (+/-) should have
+ * the less saturated code background.
+ */
+export const DiffPaddingAlignment: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
+        localStorage.setItem(RIGHT_SIDEBAR_REVIEW_WIDTH_KEY, "700");
+
+        const client = setupSimpleChatStory({
+          workspaceId: "ws-diff-alignment",
+          workspaceName: "feature/alignment-test",
+          projectName: "my-app",
+          messages: [
+            createUserMessage("msg-1", "Add math utilities", { historySequence: 1 }),
+            createAssistantMessage("msg-2", "Added the utilities.", { historySequence: 2 }),
+          ],
+          gitDiff: {
+            diffOutput: ALIGNMENT_TEST_DIFF,
+            numstatOutput: ALIGNMENT_TEST_NUMSTAT,
+          },
+        });
+        expandRightSidebar();
+        return client;
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Wait for review tab to be selected
+    await waitFor(
+      () => {
+        canvas.getByRole("tab", { name: /^review/i, selected: true });
+      },
+      { timeout: 5000 }
+    );
+
+    // Wait for diff content to render
+    await waitFor(
+      () => {
+        canvas.getByText(/add\(a: number/i);
+      },
+      { timeout: 5000 }
+    );
+
+    // Visual verification: the padding strip should align with the diff gutter
+    // This is primarily a visual regression test for Chromatic
+  },
+};
+
+/**
+ * Diff with context lines (modifications) for alignment testing.
+ * Shows a mix of context lines (no background), removals (red), and additions (green).
+ * Verifies padding alignment works for the most common diff pattern.
+ */
+const MODIFICATION_DIFF = `diff --git a/src/config.ts b/src/config.ts
+index aaa1111..bbb2222 100644
+--- a/src/config.ts
++++ b/src/config.ts
+@@ -1,7 +1,9 @@
+ export const config = {
+-  timeout: 1000,
+-  retries: 3,
++  timeout: 5000,
++  retries: 5,
++  maxConnections: 10,
+   debug: false,
++  verbose: true,
+ };
+`;
+
+const MODIFICATION_NUMSTAT = `4\t2\tsrc/config.ts`;
+
+/**
+ * Review tab with modification diff (context + additions + removals).
+ * Tests padding alignment when the first line is context (neutral) and
+ * the diff contains mixed line types.
+ */
+export const DiffPaddingAlignmentModification: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
+        localStorage.setItem(RIGHT_SIDEBAR_REVIEW_WIDTH_KEY, "700");
+
+        const client = setupSimpleChatStory({
+          workspaceId: "ws-diff-modification",
+          workspaceName: "feature/config-update",
+          projectName: "my-app",
+          messages: [
+            createUserMessage("msg-1", "Update config values", { historySequence: 1 }),
+            createAssistantMessage("msg-2", "Updated config.", { historySequence: 2 }),
+          ],
+          gitDiff: {
+            diffOutput: MODIFICATION_DIFF,
+            numstatOutput: MODIFICATION_NUMSTAT,
+          },
+        });
+        expandRightSidebar();
+        return client;
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Wait for diff content to render
+    await waitFor(
+      () => {
+        canvas.getByText(/export const config/i);
+      },
+      { timeout: 5000 }
+    );
+
+    // Visual verification for mixed diff types
+  },
+};
