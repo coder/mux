@@ -2146,6 +2146,12 @@ export class TaskService {
       return false;
     }
 
+    // Only sub-agent tasks are eligible for restart-safe finalization.
+    // Avoid overwriting a pending `task(kind="bash")` call with an unrelated agent_report.
+    if (parsedInput.data.kind === "bash") {
+      return false;
+    }
+
     const updated: MuxMessage = {
       ...partial,
       parts: partial.parts.map((part) => {
