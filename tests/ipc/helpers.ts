@@ -547,6 +547,19 @@ export async function createTempGitRepo(): Promise<string> {
     { cwd: tempDir }
   );
 
+  // Create a bare clone to serve as "origin" remote
+  // This enables GitStatusStore to detect ahead/behind status
+  const bareDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-test-bare-"));
+  await execAsync(`git clone --bare "${tempDir}" "${bareDir}"`);
+  await execAsync(`git remote add origin "${bareDir}"`, { cwd: tempDir });
+  // Set up tracking for main/master branch
+  const { stdout: branch } = await execAsync(`git branch --show-current`, { cwd: tempDir });
+  const branchName = branch.trim();
+  await execAsync(`git fetch origin`, { cwd: tempDir });
+  await execAsync(`git branch --set-upstream-to=origin/${branchName} ${branchName}`, {
+    cwd: tempDir,
+  });
+
   return tempDir;
 }
 
