@@ -477,11 +477,32 @@ export class WorkspaceStore {
       }
 
       aggregator.handleToolCallEnd(data as never);
+
+      // task(kind="bash") uses the bash tool under the hood, but emits tool-call-end with toolName="task".
+      // If the completed task result includes output, drop the live tail buffer.
+      if (toolCallEnd.toolName === "task") {
+        const reportMarkdown = (toolCallEnd.result as { reportMarkdown?: unknown } | undefined)
+          ?.reportMarkdown;
+        if (
+          typeof reportMarkdown === "string" &&
+          reportMarkdown.startsWith("### Bash:") &&
+          reportMarkdown.includes("```text")
+        ) {
+          const transient = this.chatTransientState.get(workspaceId);
+          transient?.liveBashOutput.delete(toolCallEnd.toolCallId);
+        }
+      }
+
       this.states.bump(workspaceId);
       this.consumerManager.scheduleCalculation(workspaceId, aggregator);
 
-      // Track file-modifying tools for ReviewPanel diff refresh
-      if (toolCallEnd.toolName.startsWith("file_edit_") || toolCallEnd.toolName === "bash") {
+      // Track file-modifying tools for ReviewPanel diff refresh.
+      // NOTE: `task` can also run bash commands via task(kind="bash"), so it should trigger refreshes.
+      if (
+        toolCallEnd.toolName.startsWith("file_edit_") ||
+        toolCallEnd.toolName === "bash" ||
+        toolCallEnd.toolName === "task"
+      ) {
         this.fileModifyingToolMs.set(workspaceId, Date.now());
         this.fileModifyingToolSubs.bump(workspaceId);
       }
