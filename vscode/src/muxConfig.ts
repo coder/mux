@@ -54,6 +54,7 @@ export async function getAllWorkspacesFromApi(client: ApiClient): Promise<Worksp
       recency: activity.recency,
       streaming: activity.streaming,
       lastModel: activity.lastModel,
+      lastThinkingLevel: activity.lastThinkingLevel,
     });
   }
 
