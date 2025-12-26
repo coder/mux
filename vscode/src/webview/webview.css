@@ -1,5 +1,13 @@
 @import "tailwindcss";
 
+@font-face {
+  font-family: "Seti";
+  src: url("./seti.woff") format("woff");
+  font-weight: normal;
+  font-style: normal;
+  font-display: block;
+}
+
 /* Tell Tailwind where to look for class usage. */
 @source "./**/*.{ts,tsx}";
 @source "../../../src/browser/**/*.{ts,tsx}";
