@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, type ReactNode } from "react";
-import { MemoryRouter, useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { HashRouter, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
 import { SELECTED_WORKSPACE_KEY } from "@/common/constants/storage";
 import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar";
@@ -22,42 +22,22 @@ export function useRouter(): RouterContext {
   return ctx;
 }
 
-/** Parses browser URL into router path, restoring from localStorage at root. */
-function parseInitialUrl(): string {
-  const { pathname, search } = window.location;
-  const isRoot =
-    pathname === "/" ||
-    pathname === "" ||
-    pathname === "blank" ||
-    pathname.endsWith("index.html") ||
-    pathname.endsWith("iframe.html");
-  const effectiveSearch = pathname.endsWith("iframe.html") ? "" : search;
-
-  if (isRoot && !effectiveSearch) {
-    const saved = readPersistedState<WorkspaceSelection | null>(SELECTED_WORKSPACE_KEY, null);
-    if (saved?.workspaceId) return `/workspace/${encodeURIComponent(saved.workspaceId)}`;
-  }
-  return pathname + search;
-}
-
-/** Syncs MemoryRouter state to browser URL (skipped in Electron/Storybook). */
-function useUrlSync(): void {
-  const location = useLocation();
-  useEffect(() => {
-    if (window.location.pathname.endsWith("iframe.html")) return;
-    if (window.location.protocol === "file:") return;
-    const url = location.pathname + location.search;
-    if (url !== window.location.pathname + window.location.search) {
-      window.history.replaceState(null, "", url);
-    }
-  }, [location.pathname, location.search]);
-}
-
 function RouterContextInner(props: { children: ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
-  useUrlSync();
+
+  // Restore from localStorage on first load at root
+  useEffect(() => {
+    if (location.pathname === "/") {
+      const saved = readPersistedState<WorkspaceSelection | null>(SELECTED_WORKSPACE_KEY, null);
+      if (saved?.workspaceId) {
+        void navigate(`/workspace/${encodeURIComponent(saved.workspaceId)}`, { replace: true });
+      }
+    }
+    // Only run once on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const workspaceMatch = /^\/workspace\/(.+)$/.exec(location.pathname);
   const currentWorkspaceId = workspaceMatch ? decodeURIComponent(workspaceMatch[1]) : null;
@@ -78,8 +58,8 @@ function RouterContextInner(props: { children: ReactNode }) {
 
 export function RouterProvider(props: { children: ReactNode }) {
   return (
-    <MemoryRouter initialEntries={[parseInitialUrl()]}>
+    <HashRouter>
       <RouterContextInner>{props.children}</RouterContextInner>
-    </MemoryRouter>
+    </HashRouter>
   );
 }
