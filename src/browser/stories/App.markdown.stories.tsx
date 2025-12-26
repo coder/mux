@@ -240,11 +240,6 @@ export const CodeBlocks: AppStory = {
       }
     />
   ),
-  parameters: {
-    // Avoid occasional (<5px) vertical shift diffs from the initial auto-scroll settling
-    // while fonts/code highlighting load.
-    chromatic: { delay: 500 },
-  },
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     await waitForChatMessagesLoaded(canvasElement);
 

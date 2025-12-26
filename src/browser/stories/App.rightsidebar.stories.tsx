@@ -29,6 +29,7 @@ export default {
   parameters: {
     ...appMeta.parameters,
     chromatic: {
+      ...(appMeta.parameters?.chromatic ?? {}),
       modes: {
         dark: { theme: "dark", viewport: 1600 },
         light: { theme: "light", viewport: 1600 },

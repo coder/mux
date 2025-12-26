@@ -9,6 +9,33 @@ import {
 } from "../src/common/constants/storage";
 import { NOW } from "../src/browser/stories/mockFactory";
 
+
+const STORYBOOK_FONTS_READY_TIMEOUT_MS = 2500;
+
+let fontsReadyPromise: Promise<void> | null = null;
+
+function ensureStorybookFontsReady(): Promise<void> {
+  fontsReadyPromise ??= (async () => {
+    if (typeof document === "undefined") {
+      return;
+    }
+
+    const fonts = document.fonts;
+
+    // Trigger load of layout-affecting fonts so Chromatic doesn't snapshot mid font-swap.
+    await Promise.allSettled([
+      fonts.load("400 14px 'Geist'"),
+      fonts.load("600 14px 'Geist'"),
+      fonts.load("400 14px 'Geist Mono'"),
+      fonts.load("600 14px 'Geist Mono'"),
+      fonts.load("400 14px 'Seti'"),
+    ]);
+
+    await fonts.ready;
+  })().catch(() => {});
+
+  return fontsReadyPromise;
+}
 // Mock Date.now() globally for deterministic snapshots
 // Components using Date.now() for elapsed time calculations need stable reference
 Date.now = () => NOW;
@@ -48,6 +75,16 @@ const preview: Preview = {
       },
     },
   },
+  loaders: [
+    async () => {
+      const timeout = new Promise<void>((resolve) => {
+        setTimeout(resolve, STORYBOOK_FONTS_READY_TIMEOUT_MS);
+      });
+
+      await Promise.race([ensureStorybookFontsReady(), timeout]);
+      return {};
+    },
+  ],
   initialGlobals: {
     theme: "dark",
   },

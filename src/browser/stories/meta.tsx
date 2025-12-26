@@ -24,6 +24,7 @@ export const appMeta: Meta<typeof AppLoader> = {
       default: "dark",
       values: [{ name: "dark", value: "#1e1e1e" }],
     },
+    chromatic: { delay: 500 },
   },
 };
 
