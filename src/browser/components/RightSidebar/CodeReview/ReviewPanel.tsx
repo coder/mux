@@ -1174,6 +1174,8 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
                       onComposingChange={(isComposing) =>
                         handleHunkComposingChange(hunk.id, isComposing)
                       }
+                      diffBase={filters.diffBase}
+                      includeUncommitted={filters.includeUncommitted}
                     />
                   );
                 })

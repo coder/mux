@@ -138,11 +138,13 @@ export interface GitDiffFixture {
   diffOutput: string;
   /** The numstat output (additions, deletions per file) */
   numstatOutput?: string;
+  /** File contents for read-more feature (path -> full file content as lines) */
+  fileContents?: Map<string, string[]>;
 }
 
 /**
  * Creates an executeBash function that returns git status and diff output for workspaces.
- * Handles: git status, git show-branch, git diff, git diff --numstat
+ * Handles: git status, git show-branch, git diff, git diff --numstat, git show (for read-more)
  */
 export function createGitStatusExecutor(
   gitStatus?: Map<string, GitStatusFixture>,
@@ -167,6 +169,27 @@ export function createGitStatusExecutor(
       const diff = gitDiff?.get(workspaceId);
       const output = diff?.diffOutput ?? "";
       return Promise.resolve({ success: true as const, output, exitCode: 0, wall_duration_ms: 50 });
+    }
+
+    // Handle git show for read-more feature (e.g., git show "HEAD:file.ts" | sed -n '1,20p')
+    const gitShowMatch = /git show "[^:]+:([^"]+)"/.exec(script);
+    const sedMatch = /sed -n '(\d+),(\d+)p'/.exec(script);
+    if (gitShowMatch && sedMatch) {
+      const filePath = gitShowMatch[1];
+      const startLine = parseInt(sedMatch[1], 10);
+      const endLine = parseInt(sedMatch[2], 10);
+      const diff = gitDiff?.get(workspaceId);
+      const lines = diff?.fileContents?.get(filePath);
+      if (lines) {
+        // sed uses 1-based indexing
+        const output = lines.slice(startLine - 1, endLine).join("\n");
+        return Promise.resolve({
+          success: true as const,
+          output,
+          exitCode: 0,
+          wall_duration_ms: 50,
+        });
+      }
     }
 
     return Promise.resolve({

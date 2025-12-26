@@ -691,3 +691,159 @@ export const DiffPaddingAlignmentModification: AppStory = {
     // Visual verification for mixed diff types
   },
 };
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// READ-MORE CONTEXT EXPANSION STORIES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Sample file content for read-more feature testing.
+ * This simulates a longer file where only a portion is shown in the diff.
+ */
+const BUTTON_FILE_CONTENT = [
+  "// Button component with variants",
+  "// Created for the design system",
+  "//",
+  "// Supports: primary, secondary variants",
+  "// Accessible by default",
+  "",
+  "import React from 'react';",
+  "",
+  "interface ButtonProps {",
+  "  children: React.ReactNode;",
+  "  variant?: 'primary' | 'secondary';",
+  "  onClick?: () => void;",
+  "}",
+  "",
+  "export const Button: React.FC<ButtonProps> = ({ children, variant = 'primary', onClick }) => {",
+  "  return (",
+  "    <button className={`btn btn-${variant}`} onClick={onClick}>",
+  "      {children}",
+  "    </button>",
+  "  );",
+  "};",
+  "",
+  "// Default export for convenience",
+  "export default Button;",
+];
+
+/**
+ * Diff that only shows lines 7-21 of the Button file.
+ * The read-more feature should be able to expand to show lines 1-6 above
+ * and lines 22-24 below.
+ */
+const READ_MORE_DIFF_OUTPUT = `diff --git a/src/components/Button.tsx b/src/components/Button.tsx
+index def5678..ghi9012 100644
+--- a/src/components/Button.tsx
++++ b/src/components/Button.tsx
+@@ -7,8 +7,15 @@ import React from 'react';
+ 
+-export const Button = ({ children }) => {
++interface ButtonProps {
++  children: React.ReactNode;
++  variant?: 'primary' | 'secondary';
++  onClick?: () => void;
++}
++
++export const Button: React.FC<ButtonProps> = ({ children, variant = 'primary', onClick }) => {
+   return (
+-    <button className="btn">
++    <button className={\`btn btn-\${variant}\`} onClick={onClick}>
+       {children}
+     </button>
+   );
+`;
+
+const READ_MORE_NUMSTAT_OUTPUT = `10\t3\tsrc/components/Button.tsx`;
+
+/**
+ * Review tab with read-more feature to expand context above/below hunks.
+ * Click ▲ to show more context above, ▼ to show more context below.
+ */
+export const ReviewTabReadMore: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
+        localStorage.setItem(RIGHT_SIDEBAR_REVIEW_WIDTH_KEY, "700");
+
+        const workspaceId = "ws-read-more";
+
+        const client = setupSimpleChatStory({
+          workspaceId,
+          workspaceName: "feature/button-types",
+          projectName: "my-app",
+          messages: [
+            createUserMessage("msg-1", "Add TypeScript types to Button", { historySequence: 1 }),
+            createAssistantMessage("msg-2", "Done! Added ButtonProps interface.", {
+              historySequence: 2,
+            }),
+          ],
+          gitDiff: {
+            diffOutput: READ_MORE_DIFF_OUTPUT,
+            numstatOutput: READ_MORE_NUMSTAT_OUTPUT,
+            fileContents: new Map([["src/components/Button.tsx", BUTTON_FILE_CONTENT]]),
+          },
+        });
+        expandRightSidebar();
+        return client;
+      }}
+    />
+  ),
+  // No play function - interaction testing covered by tests/ui/readMore.integration.test.ts
+};
+
+/**
+ * Review tab testing boundary behavior (BOF/EOF).
+ * Uses a small file where expanding quickly reaches file boundaries.
+ */
+const SMALL_FILE_CONTENT = [
+  "// Tiny utility",
+  "export const add = (a: number, b: number) => a + b;",
+  "export const sub = (a: number, b: number) => a - b;",
+];
+
+const SMALL_FILE_DIFF_OUTPUT = `diff --git a/src/utils/math.ts b/src/utils/math.ts
+index aaa1111..bbb2222 100644
+--- a/src/utils/math.ts
++++ b/src/utils/math.ts
+@@ -1,2 +1,3 @@
+ // Tiny utility
+ export const add = (a: number, b: number) => a + b;
++export const sub = (a: number, b: number) => a - b;
+`;
+
+const SMALL_FILE_NUMSTAT_OUTPUT = `1\t0\tsrc/utils/math.ts`;
+
+export const ReviewTabReadMoreBoundaries: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
+        localStorage.setItem(RIGHT_SIDEBAR_REVIEW_WIDTH_KEY, "700");
+
+        const workspaceId = "ws-read-more-boundaries";
+
+        const client = setupSimpleChatStory({
+          workspaceId,
+          workspaceName: "feature/math-utils",
+          projectName: "my-app",
+          messages: [
+            createUserMessage("msg-1", "Add subtraction utility", { historySequence: 1 }),
+            createAssistantMessage("msg-2", "Added sub function.", {
+              historySequence: 2,
+            }),
+          ],
+          gitDiff: {
+            diffOutput: SMALL_FILE_DIFF_OUTPUT,
+            numstatOutput: SMALL_FILE_NUMSTAT_OUTPUT,
+            fileContents: new Map([["src/utils/math.ts", SMALL_FILE_CONTENT]]),
+          },
+        });
+        expandRightSidebar();
+        return client;
+      }}
+    />
+  ),
+  // No play function - interaction testing covered by tests/ui/readMore.integration.test.ts
+};

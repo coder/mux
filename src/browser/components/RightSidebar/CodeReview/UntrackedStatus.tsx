@@ -95,7 +95,9 @@ export const UntrackedStatus: React.FC<UntrackedStatusProps> = ({
         console.error("Failed to load untracked files:", err);
       } finally {
         loadingRef.current = false;
-        setIsLoading(false);
+        if (!cancelled) {
+          setIsLoading(false);
+        }
       }
     };
 

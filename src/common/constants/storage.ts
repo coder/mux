@@ -247,6 +247,15 @@ export function getReviewExpandStateKey(workspaceId: string): string {
 }
 
 /**
+ * Get the localStorage key for read-more expansion state per hunk.
+ * Tracks how many lines are expanded up/down for each hunk.
+ * Format: "reviewReadMore:{workspaceId}"
+ */
+export function getReviewReadMoreKey(workspaceId: string): string {
+  return `reviewReadMore:${workspaceId}`;
+}
+
+/**
  * Get the localStorage key for FileTree expand/collapse state in Review tab
  * Stores directory expand/collapse preferences per workspace
  * Format: "fileTreeExpandState:{workspaceId}"
@@ -347,6 +356,7 @@ const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string>
   getReviewStateKey,
   getHunkFirstSeenKey,
   getReviewExpandStateKey,
+  getReviewReadMoreKey,
   getFileTreeExpandStateKey,
   getReviewSearchStateKey,
   getReviewsKey,

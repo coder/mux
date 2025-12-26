@@ -1,5 +1,6 @@
 /**
  * HunkViewer - Displays a single diff hunk with syntax highlighting
+ * Includes read-more feature to expand context above/below the hunk.
  */
 
 import React, { useState, useMemo } from "react";
@@ -15,6 +16,8 @@ import { getReviewExpandStateKey } from "@/common/constants/storage";
 import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 import { formatRelativeTime } from "@/browser/utils/ui/dateTime";
 import { cn } from "@/common/lib/utils";
+import { ContextCollapseIndicator } from "./ContextCollapseIndicator";
+import { useReadMore } from "./useReadMore";
 
 interface HunkViewerProps {
   hunk: DiffHunk;
@@ -31,6 +34,10 @@ interface HunkViewerProps {
   searchConfig?: SearchHighlightConfig;
   /** Callback when review note composition state changes */
   onComposingChange?: (isComposing: boolean) => void;
+  /** Diff base for determining which git ref to read from */
+  diffBase: string;
+  /** Whether uncommitted changes are included in the diff */
+  includeUncommitted: boolean;
 }
 
 export const HunkViewer = React.memo<HunkViewerProps>(
@@ -47,6 +54,8 @@ export const HunkViewer = React.memo<HunkViewerProps>(
     onReviewNote,
     searchConfig,
     onComposingChange,
+    diffBase,
+    includeUncommitted,
   }) => {
     // Ref for the hunk container to track visibility
     const hunkRef = React.useRef<HTMLDivElement>(null);
@@ -155,6 +164,21 @@ export const HunkViewer = React.memo<HunkViewerProps>(
       }
     }, [hasManualState, manualExpandState]);
 
+    // Read-more context expansion
+    const {
+      upContent,
+      downContent,
+      upLoading,
+      downLoading,
+      atBOF,
+      atEOF,
+      readMore,
+      handleExpandUp,
+      handleExpandDown,
+      handleCollapseUp,
+      handleCollapseDown,
+    } = useReadMore({ hunk, hunkId, workspaceId, diffBase, includeUncommitted });
+
     const handleToggleExpand = React.useCallback(
       (e?: React.MouseEvent) => {
         e?.stopPropagation();
@@ -248,26 +272,124 @@ export const HunkViewer = React.memo<HunkViewerProps>(
             Renamed from <code>{hunk.oldPath}</code>
           </div>
         ) : isExpanded ? (
-          <SelectableDiffRenderer
-            content={hunk.content}
-            filePath={hunk.filePath}
-            oldStart={hunk.oldStart}
-            newStart={hunk.newStart}
-            fontSize="11px"
-            maxHeight="none"
-            className="rounded-none border-0"
-            onReviewNote={onReviewNote}
-            onLineClick={() => {
-              // Create synthetic event with data-hunk-id for parent handler
-              const syntheticEvent = {
-                currentTarget: { dataset: { hunkId } },
-              } as unknown as React.MouseEvent<HTMLElement>;
-              onClick?.(syntheticEvent);
-            }}
-            searchConfig={searchConfig}
-            enableHighlighting={isVisible}
-            onComposingChange={onComposingChange}
-          />
+          <div className="font-monospace bg-code-bg overflow-x-auto text-[11px] leading-[1.4]">
+            {/* Expand up control - only show if not at BOF and not loading */}
+            {!atBOF && !upLoading && (
+              <div className="text-muted flex h-[18px] items-center justify-center text-[10px]">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={handleExpandUp}
+                      className="text-link hover:text-link-hover cursor-pointer px-1"
+                      aria-label="Show more context above"
+                    >
+                      ▲
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">Show more context above</TooltipContent>
+                </Tooltip>
+              </div>
+            )}
+            {upLoading && (
+              <div className="text-muted flex h-[18px] items-center justify-center text-[10px]">
+                <span>Loading...</span>
+              </div>
+            )}
+
+            {/* Expanded content above */}
+            {upContent && (
+              <>
+                <SelectableDiffRenderer
+                  content={upContent}
+                  filePath={hunk.filePath}
+                  oldStart={Math.max(1, hunk.oldStart - readMore.up)}
+                  newStart={Math.max(1, hunk.newStart - readMore.up)}
+                  fontSize="11px"
+                  maxHeight="none"
+                  className="rounded-none border-0 [&>div]:overflow-x-visible"
+                  enableHighlighting={isVisible}
+                />
+                {/* Collapse indicator between expanded context and main hunk */}
+                <ContextCollapseIndicator
+                  lineCount={readMore.up}
+                  onCollapse={handleCollapseUp}
+                  position="above"
+                />
+              </>
+            )}
+
+            {/* Original hunk content */}
+            <SelectableDiffRenderer
+              content={hunk.content}
+              filePath={hunk.filePath}
+              oldStart={hunk.oldStart}
+              newStart={hunk.newStart}
+              fontSize="11px"
+              maxHeight="none"
+              className="rounded-none border-0 [&>div]:overflow-x-visible"
+              onReviewNote={onReviewNote}
+              onLineClick={() => {
+                const syntheticEvent = {
+                  currentTarget: { dataset: { hunkId } },
+                } as unknown as React.MouseEvent<HTMLElement>;
+                onClick?.(syntheticEvent);
+              }}
+              searchConfig={searchConfig}
+              enableHighlighting={isVisible}
+              onComposingChange={onComposingChange}
+            />
+
+            {/* Expanded content below */}
+            {downContent && (
+              <>
+                {/* Collapse indicator between main hunk and expanded context */}
+                <ContextCollapseIndicator
+                  lineCount={readMore.down}
+                  onCollapse={handleCollapseDown}
+                  position="below"
+                />
+                <SelectableDiffRenderer
+                  content={downContent}
+                  filePath={hunk.filePath}
+                  oldStart={hunk.oldStart + hunk.oldLines}
+                  newStart={hunk.newStart + hunk.newLines}
+                  fontSize="11px"
+                  maxHeight="none"
+                  className="rounded-none border-0 [&>div]:overflow-x-visible"
+                  enableHighlighting={isVisible}
+                />
+              </>
+            )}
+
+            {/* Expand down control - only show if not at EOF and not loading */}
+            {!atEOF && !downLoading && (
+              <div className="text-muted flex h-[18px] items-center justify-center text-[10px]">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={handleExpandDown}
+                      className="text-link hover:text-link-hover cursor-pointer px-1"
+                      aria-label="Show more context below"
+                    >
+                      ▼
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">Show more context below</TooltipContent>
+                </Tooltip>
+              </div>
+            )}
+            {downLoading && (
+              <div className="text-muted flex h-[18px] items-center justify-center text-[10px]">
+                <span>Loading...</span>
+              </div>
+            )}
+            {/* EOF indicator - show when at EOF with expanded content */}
+            {atEOF && downContent && !downLoading && (
+              <div className="text-dim flex h-[18px] items-center justify-center text-[10px]">
+                — end of file —
+              </div>
+            )}
+          </div>
         ) : (
           <div
             className="text-muted hover:text-foreground cursor-pointer px-3 py-2 text-center text-[11px] italic"
