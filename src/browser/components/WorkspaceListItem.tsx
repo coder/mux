@@ -153,6 +153,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
         aria-disabled={isDisabled}
         data-workspace-path={namedWorkspacePath}
         data-workspace-id={workspaceId}
+        data-git-status={gitStatus ? JSON.stringify(gitStatus) : undefined}
       >
         {/* Archive button - vertically centered against entire item */}
         {!isCreating && !isEditing && (

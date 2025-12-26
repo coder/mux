@@ -1,8 +1,9 @@
 /**
- * Shared UI test helpers for review panel testing.
+ * Shared UI test helpers for review panel and git status testing.
  */
 
 import { waitFor } from "@testing-library/react";
+import type { GitStatus } from "@/common/types/workspace";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -91,4 +92,95 @@ export async function assertRefreshButtonHasLastRefreshInfo(
     },
     { timeout: timeoutMs }
   );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GIT STATUS HELPERS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Get the current git status from a workspace element's data-git-status attribute.
+ * Returns null if the attribute is missing or cannot be parsed.
+ */
+export function getGitStatusFromElement(element: HTMLElement): Partial<GitStatus> | null {
+  const statusAttr = element.getAttribute("data-git-status");
+  if (!statusAttr) return null;
+  try {
+    return JSON.parse(statusAttr) as Partial<GitStatus>;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Wait for the git status indicator to appear in the sidebar workspace row.
+ * The workspace row displays git status via data-git-status attribute.
+ */
+export async function waitForGitStatusElement(
+  container: HTMLElement,
+  workspaceId: string,
+  timeoutMs: number = 30_000
+): Promise<HTMLElement> {
+  return waitFor(
+    () => {
+      const el = container.querySelector(`[data-workspace-id="${workspaceId}"][data-git-status]`);
+      if (!el) throw new Error("Git status element not found");
+      return el as HTMLElement;
+    },
+    { timeout: timeoutMs }
+  );
+}
+
+/**
+ * Wait for git status to indicate dirty (uncommitted changes).
+ */
+export async function waitForDirtyStatus(
+  container: HTMLElement,
+  workspaceId: string,
+  timeoutMs: number = 60_000
+): Promise<GitStatus> {
+  let lastStatus: Partial<GitStatus> | null = null;
+
+  await waitFor(
+    () => {
+      const el = container.querySelector(`[data-workspace-id="${workspaceId}"][data-git-status]`);
+      if (!el) throw new Error("Git status element not found");
+      lastStatus = getGitStatusFromElement(el as HTMLElement);
+      if (!lastStatus) throw new Error("Could not parse git status");
+      if (!lastStatus.dirty) {
+        throw new Error(`Expected dirty status, got: ${JSON.stringify(lastStatus)}`);
+      }
+    },
+    { timeout: timeoutMs }
+  );
+
+  // Type assertion safe because waitFor throws if lastStatus is null or not dirty
+  return lastStatus as unknown as GitStatus;
+}
+
+/**
+ * Wait for git status to indicate clean (no uncommitted changes).
+ */
+export async function waitForCleanStatus(
+  container: HTMLElement,
+  workspaceId: string,
+  timeoutMs: number = 60_000
+): Promise<GitStatus> {
+  let lastStatus: Partial<GitStatus> | null = null;
+
+  await waitFor(
+    () => {
+      const el = container.querySelector(`[data-workspace-id="${workspaceId}"][data-git-status]`);
+      if (!el) throw new Error("Git status element not found");
+      lastStatus = getGitStatusFromElement(el as HTMLElement);
+      if (!lastStatus) throw new Error("Could not parse git status");
+      if (lastStatus.dirty) {
+        throw new Error(`Expected clean status, got: ${JSON.stringify(lastStatus)}`);
+      }
+    },
+    { timeout: timeoutMs }
+  );
+
+  // Type assertion safe because waitFor throws if lastStatus is null or dirty
+  return lastStatus as unknown as GitStatus;
 }
