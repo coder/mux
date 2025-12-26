@@ -66,6 +66,18 @@ function ensureOutDir() {
 
 let webviewCssBuildPromise = null;
 
+
+function copySetiFont() {
+  const src = path.resolve(__dirname, "..", "public", "seti.woff");
+  const dest = path.resolve(__dirname, "out", "seti.woff");
+
+  if (!fs.existsSync(src)) {
+    throw new Error(`Missing Seti icon font at ${src}`);
+  }
+
+  ensureOutDir();
+  fs.copyFileSync(src, dest);
+}
 function copyKatexAssets() {
   const katexCssPath = require.resolve("katex/dist/katex.min.css", {
     paths: [path.resolve(__dirname, "..")],
@@ -236,6 +248,7 @@ const webviewBuild = {
 
 async function main() {
   copyKatexAssets();
+  copySetiFont();
 
   if (isWatch) {
     await buildWebviewCss();
