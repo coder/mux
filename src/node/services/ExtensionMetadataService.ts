@@ -91,6 +91,13 @@ export class ExtensionMetadataService {
       const content = JSON.stringify(data, null, 2);
       await writeFileAtomic(this.filePath, content, "utf-8");
     } catch (error) {
+      const err = error as NodeJS.ErrnoException;
+      // In Jest/browser harness runs we frequently use a temporary config dir that can be
+      // deleted as soon as a test finishes. Ignore ENOENT to avoid noisy "Cannot log after
+      // tests are done" warnings.
+      if (process.env.NODE_ENV === "test" && err.code === "ENOENT") {
+        return;
+      }
       log.error("Failed to save metadata:", error);
     }
   }
