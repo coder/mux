@@ -3,9 +3,8 @@ import type { ToolConfiguration } from "@/common/utils/tools/tools";
 import {
   generateDiff,
   validateFileSize,
-  validatePathInCwd,
   validateAndCorrectPath,
-  isPlanFilePath,
+  validatePlanModeAccess,
 } from "./fileCommon";
 import { RuntimeError } from "@/node/runtime/Runtime";
 import { readFileString, writeFileString } from "@/node/utils/runtime/helpers";
@@ -56,33 +55,10 @@ export async function executeFileEditOperation<TMetadata>({
     // This ensures path resolution uses runtime-specific semantics instead of Node.js path module
     const resolvedPath = config.runtime.normalizePath(filePath, config.cwd);
 
-    // Plan file is always read-only outside plan mode.
-    // This is especially important for SSH runtimes, where cwd validation is intentionally skipped.
-    if ((await isPlanFilePath(filePath, config)) && config.mode !== "plan") {
-      return {
-        success: false,
-        error: `Plan file is read-only outside plan mode: ${filePath}`,
-      };
-    }
-
-    // Plan mode restriction: only allow editing the plan file
-    if (config.mode === "plan" && config.planFilePath) {
-      if (!(await isPlanFilePath(filePath, config))) {
-        return {
-          success: false,
-          error: `In plan mode, only the plan file can be edited. Attempted to edit: ${filePath}`,
-        };
-      }
-      // Skip cwd validation for plan file - it may be outside workspace
-    } else {
-      // Standard cwd validation for non-plan-mode edits
-      const pathValidation = validatePathInCwd(filePath, config.cwd, config.runtime);
-      if (pathValidation) {
-        return {
-          success: false,
-          error: pathValidation.error,
-        };
-      }
+    // Validate plan mode access restrictions
+    const planModeError = await validatePlanModeAccess(filePath, config);
+    if (planModeError) {
+      return planModeError;
     }
 
     // Check if file exists and get stats using runtime

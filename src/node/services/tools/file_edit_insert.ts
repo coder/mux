@@ -3,12 +3,7 @@ import type { FileEditInsertToolArgs, FileEditInsertToolResult } from "@/common/
 import { EDIT_FAILED_NOTE_PREFIX, NOTE_READ_FILE_RETRY } from "@/common/types/tools";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
-import {
-  generateDiff,
-  validateAndCorrectPath,
-  validatePathInCwd,
-  isPlanFilePath,
-} from "./fileCommon";
+import { generateDiff, validateAndCorrectPath, validatePlanModeAccess } from "./fileCommon";
 import { executeFileEditOperation } from "./file_edit_operation";
 import { fileExists } from "@/node/utils/runtime/fileExists";
 import { writeFileString } from "@/node/utils/runtime/helpers";
@@ -63,35 +58,12 @@ export const createFileEditInsertTool: ToolFactory = (config: ToolConfiguration)
           config.runtime
         );
         file_path = correctedPath;
-
-        // Plan file is always read-only outside plan mode.
-        // This is especially important for SSH runtimes, where cwd validation is intentionally skipped.
-        if ((await isPlanFilePath(file_path, config)) && config.mode !== "plan") {
-          return {
-            success: false,
-            error: `Plan file is read-only outside plan mode: ${file_path}`,
-          };
-        }
         const resolvedPath = config.runtime.normalizePath(file_path, config.cwd);
 
-        // Plan mode restriction: only allow editing/creating the plan file
-        if (config.mode === "plan" && config.planFilePath) {
-          if (!(await isPlanFilePath(file_path, config))) {
-            return {
-              success: false,
-              error: `In plan mode, only the plan file can be edited. Attempted to edit: ${file_path}`,
-            };
-          }
-          // Skip cwd validation for plan file - it may be outside workspace
-        } else {
-          // Standard cwd validation for non-plan-mode edits
-          const pathValidation = validatePathInCwd(file_path, config.cwd, config.runtime);
-          if (pathValidation) {
-            return {
-              success: false,
-              error: pathValidation.error,
-            };
-          }
+        // Validate plan mode access restrictions
+        const planModeError = await validatePlanModeAccess(file_path, config);
+        if (planModeError) {
+          return planModeError;
         }
 
         const exists = await fileExists(config.runtime, resolvedPath, abortSignal);
