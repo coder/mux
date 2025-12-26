@@ -331,13 +331,13 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   // DEBUG
   console.log(`[review-refresh] render: workspaceId=${workspaceId}, lastRefreshInfo=`, lastRefreshInfo);
 
-  // Create RefreshController once on mount - handles debouncing, visibility, interaction pausing
-  // NOTE: We do NOT bindListeners() - ReviewPanel doesn't need focus/visibility refresh,
-  // only manual refresh and tool completion triggers.
+  // RefreshController - handles debouncing, in-flight guards, etc.
+  // Created in useEffect to survive React StrictMode double-mount.
   const controllerRef = useRef<RefreshController | null>(null);
-  if (!controllerRef.current) {
+
+  useEffect(() => {
     console.log(`[review-refresh] creating controller for workspace=${workspaceId}`);
-    controllerRef.current = new RefreshController({
+    const controller = new RefreshController({
       debounceMs: 3000,
       isPaused: () => isInteractingRef.current,
       onRefresh: () => {
@@ -351,31 +351,29 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         setLastRefreshInfo(info);
       },
     });
-    // Don't bind focus/visibility listeners - not needed for ReviewPanel
-  }
+    controllerRef.current = controller;
 
-  // Subscribe to tool completions while mounted
-  useEffect(() => {
-    return workspaceStore.subscribeFileModifyingTool((wsId) => {
+    // Subscribe to tool completions
+    const unsubscribe = workspaceStore.subscribeFileModifyingTool((wsId) => {
       if (wsId === workspaceId) {
-        controllerRef.current?.schedule();
+        controller.schedule();
       }
     });
-  }, [workspaceId]);
 
-  // Check for tool completions that happened while unmounted
-  useEffect(() => {
+    // Check for tool completions that happened while unmounted
     const lastToolMs = workspaceStore.getFileModifyingToolMs(workspaceId);
     if (lastToolMs && lastToolMs > lastFetchTimeRef.current) {
-      controllerRef.current?.requestImmediate();
+      controller.requestImmediate();
       workspaceStore.clearFileModifyingToolMs(workspaceId);
     }
-  }, [workspaceId]);
 
-  // Cleanup controller on unmount
-  useEffect(() => {
-    return () => controllerRef.current?.dispose();
-  }, []);
+    return () => {
+      console.log(`[review-refresh] disposing controller`);
+      unsubscribe();
+      controller.dispose();
+      controllerRef.current = null;
+    };
+  }, [workspaceId]);
 
   const handleRefresh = () => {
     console.log(`[review-refresh] handleRefresh, controller=${!!controllerRef.current}`);
