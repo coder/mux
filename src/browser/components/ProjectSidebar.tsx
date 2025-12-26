@@ -200,6 +200,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     archiveWorkspace: onArchiveWorkspace,
     renameWorkspace: onRenameWorkspace,
     beginWorkspaceCreation: onAddWorkspace,
+    archivedCountByProject,
   } = useWorkspaceContext();
 
   // Get project state and operations from context
@@ -518,34 +519,71 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             </TooltipTrigger>
                             <TooltipContent align="end">Manage secrets</TooltipContent>
                           </Tooltip>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <button
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  const buttonElement = event.currentTarget;
-                                  void (async () => {
-                                    const result = await onRemoveProject(projectPath);
-                                    if (!result.success) {
-                                      const error = result.error ?? "Failed to remove project";
-                                      const rect = buttonElement.getBoundingClientRect();
-                                      const anchor = {
-                                        top: rect.top + window.scrollY,
-                                        left: rect.right + 10,
-                                      };
-                                      projectRemoveError.showError(projectPath, error, anchor);
-                                    }
-                                  })();
-                                }}
-                                aria-label={`Remove project ${projectName}`}
-                                data-project-path={projectPath}
-                                className="text-muted-dark hover:text-danger-light hover:bg-danger-light/10 mr-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent text-base opacity-0 transition-all duration-200"
-                              >
-                                ×
-                              </button>
-                            </TooltipTrigger>
-                            <TooltipContent align="end">Remove project</TooltipContent>
-                          </Tooltip>
+                          {(() => {
+                            // Compute workspace counts for removal eligibility
+                            const activeCount =
+                              sortedWorkspacesByProject.get(projectPath)?.length ?? 0;
+                            const archivedCount = archivedCountByProject.get(projectPath) ?? 0;
+                            const canDelete = activeCount === 0 && archivedCount === 0;
+
+                            // Build tooltip based on what's blocking deletion
+                            let tooltip: string;
+                            if (canDelete) {
+                              tooltip = "Remove project";
+                            } else if (archivedCount === 0) {
+                              // Only active workspaces
+                              tooltip =
+                                activeCount === 1
+                                  ? "Delete workspace first"
+                                  : `Delete all ${activeCount} workspaces first`;
+                            } else if (activeCount === 0) {
+                              // Only archived workspaces
+                              tooltip =
+                                archivedCount === 1
+                                  ? "Delete archived workspace first"
+                                  : `Delete ${archivedCount} archived workspaces first`;
+                            } else {
+                              // Both active and archived
+                              tooltip = `Delete ${activeCount} active + ${archivedCount} archived workspaces first`;
+                            }
+
+                            return (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <button
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      if (!canDelete) return;
+                                      const buttonElement = event.currentTarget;
+                                      void (async () => {
+                                        const result = await onRemoveProject(projectPath);
+                                        if (!result.success) {
+                                          const error = result.error ?? "Failed to remove project";
+                                          const rect = buttonElement.getBoundingClientRect();
+                                          const anchor = {
+                                            top: rect.top + window.scrollY,
+                                            left: rect.right + 10,
+                                          };
+                                          projectRemoveError.showError(projectPath, error, anchor);
+                                        }
+                                      })();
+                                    }}
+                                    aria-label={`Remove project ${projectName}`}
+                                    aria-disabled={!canDelete}
+                                    data-project-path={projectPath}
+                                    className={`mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-[3px] border-none bg-transparent text-base opacity-0 transition-all duration-200 ${
+                                      canDelete
+                                        ? "text-muted-dark hover:text-danger-light hover:bg-danger-light/10 cursor-pointer"
+                                        : "text-muted-dark/50 cursor-not-allowed"
+                                    }`}
+                                  >
+                                    ×
+                                  </button>
+                                </TooltipTrigger>
+                                <TooltipContent align="end">{tooltip}</TooltipContent>
+                              </Tooltip>
+                            );
+                          })()}
                           <button
                             onClick={(event) => {
                               event.stopPropagation();
