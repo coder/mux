@@ -10,6 +10,7 @@ import { ThemeProvider } from "mux/browser/contexts/ThemeContext";
 import { TooltipProvider } from "mux/browser/components/ui/tooltip";
 import { Button } from "mux/browser/components/ui/button";
 import { useAutoScroll } from "mux/browser/hooks/useAutoScroll";
+import { applyWorkspaceChatEventToAggregator } from "mux/browser/utils/messages/applyWorkspaceChatEventToAggregator";
 import { StreamingMessageAggregator } from "mux/browser/utils/messages/StreamingMessageAggregator";
 
 import type { ExtensionToWebviewMessage, UiConnectionStatus, UiWorkspace } from "./protocol";
@@ -69,11 +70,72 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
   const [notices, setNotices] = useState<Notice[]>([]);
 
-  const workspacesRef = useRef<UiWorkspace[]>([]);
 
   const aggregatorRef = useRef<StreamingMessageAggregator | null>(null);
   const [displayedMessages, setDisplayedMessages] = useState<DisplayedMessage[]>([]);
+  const workspacesRef = useRef<UiWorkspace[]>([]);
 
+
+  const scheduledRenderRef = useRef<{ kind: "raf" | "timeout"; id: number } | null>(null);
+  const isRenderScheduledRef = useRef(false);
+
+  const cancelScheduledRender = () => {
+    const handle = scheduledRenderRef.current;
+    if (!handle) {
+      return;
+    }
+
+    if (handle.kind === "raf") {
+      if (typeof cancelAnimationFrame === "function") {
+        cancelAnimationFrame(handle.id);
+      }
+    } else {
+      clearTimeout(handle.id);
+    }
+
+    scheduledRenderRef.current = null;
+    isRenderScheduledRef.current = false;
+  };
+
+  const flushDisplayedMessages = () => {
+    cancelScheduledRender();
+
+    const aggregator = aggregatorRef.current;
+    if (!aggregator) {
+      return;
+    }
+
+    setDisplayedMessages(aggregator.getDisplayedMessages());
+  };
+
+  const scheduleDisplayedMessages = () => {
+    if (isRenderScheduledRef.current) {
+      return;
+    }
+
+    isRenderScheduledRef.current = true;
+
+    const run = () => {
+      isRenderScheduledRef.current = false;
+      scheduledRenderRef.current = null;
+
+      const aggregator = aggregatorRef.current;
+      if (!aggregator) {
+        return;
+      }
+
+      setDisplayedMessages(aggregator.getDisplayedMessages());
+    };
+
+    if (typeof requestAnimationFrame === "function") {
+      const id = requestAnimationFrame(run);
+      scheduledRenderRef.current = { kind: "raf", id };
+      return;
+    }
+
+    const id = window.setTimeout(run, 0);
+    scheduledRenderRef.current = { kind: "timeout", id };
+  };
 
   const { contentRef, innerRef, handleScroll, markUserInteraction, jumpToBottom } = useAutoScroll();
 
@@ -124,6 +186,7 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
           // The webview retains React state when hidden, so clear stale transcript
           // when no workspace is selected.
           if (!msg.workspaceId) {
+            cancelScheduledRender();
             aggregatorRef.current = null;
             setDisplayedMessages([]);
             setNotices([]);
@@ -132,6 +195,7 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
           return;
         }
         case "chatReset": {
+          cancelScheduledRender();
           const workspace = workspacesRef.current.find((w) => w.id === msg.workspaceId);
           const createdAt = pickWorkspaceCreatedAt(workspace);
           aggregatorRef.current = new StreamingMessageAggregator(createdAt, msg.workspaceId, workspace?.unarchivedAt);
@@ -141,14 +205,40 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
           return;
         }
         case "chatEvent": {
-          if (!aggregatorRef.current) {
-            const workspace = workspacesRef.current.find((w) => w.id === msg.workspaceId);
-            const createdAt = pickWorkspaceCreatedAt(workspace);
-            aggregatorRef.current = new StreamingMessageAggregator(createdAt, msg.workspaceId, workspace?.unarchivedAt);
+          try {
+            if (!aggregatorRef.current) {
+              const workspace = workspacesRef.current.find((w) => w.id === msg.workspaceId);
+              const createdAt = pickWorkspaceCreatedAt(workspace);
+              aggregatorRef.current = new StreamingMessageAggregator(
+                createdAt,
+                msg.workspaceId,
+                workspace?.unarchivedAt
+              );
+            }
+
+            const aggregator = aggregatorRef.current;
+            if (!aggregator) {
+              return;
+            }
+
+            const hint = applyWorkspaceChatEventToAggregator(aggregator, msg.event);
+
+            if (hint === "ignored") {
+              return;
+            }
+
+            if (hint === "throttled") {
+              scheduleDisplayedMessages();
+              return;
+            }
+
+            flushDisplayedMessages();
+          } catch (error) {
+            const message = `Chat event handling error: ${error instanceof Error ? error.message : String(error)}`;
+            bridge.debugLog("chatEvent processing failed", { error: String(error), event: msg.event });
+            pushNotice({ level: "error", message });
           }
 
-          aggregatorRef.current.handleMessage(msg.event);
-          setDisplayedMessages(aggregatorRef.current.getDisplayedMessages());
           return;
         }
         case "uiNotice": {
