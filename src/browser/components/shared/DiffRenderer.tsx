@@ -153,7 +153,7 @@ function calculateLineNumberWidths(
   };
 }
 
-// Shared line gutter component (line numbers)
+// Shared line gutter component (line numbers) - renders as a CSS Grid cell
 interface DiffLineGutterProps {
   type: DiffLineType;
   oldLineNum: number | null;
@@ -170,7 +170,7 @@ const DiffLineGutter: React.FC<DiffLineGutterProps> = ({
   lineNumberWidths,
 }) => (
   <span
-    className="font-monospace flex shrink-0 items-center gap-0.5 px-1 tabular-nums select-none"
+    className="flex shrink-0 items-center gap-0.5 px-1 tabular-nums select-none"
     style={{ background: getDiffLineGutterBackground(type) }}
   >
     {showLineNumbers && (
@@ -198,9 +198,11 @@ const DiffLineGutter: React.FC<DiffLineGutterProps> = ({
   </span>
 );
 
-// Shared indicator component (+/- with optional hover replacement)
+// Shared indicator component (+/- with optional hover replacement) - renders as a CSS Grid cell
 interface DiffIndicatorProps {
   type: DiffLineType;
+  /** Background color for this cell (matches code background) */
+  background: string;
   /** Render review button overlay on hover */
   reviewButton?: React.ReactNode;
   /** When provided, enables drag-to-select behavior in SelectableDiffRenderer */
@@ -212,6 +214,7 @@ interface DiffIndicatorProps {
 
 const DiffIndicator: React.FC<DiffIndicatorProps> = ({
   type,
+  background,
   reviewButton,
   onMouseDown,
   onMouseEnter,
@@ -221,10 +224,8 @@ const DiffIndicator: React.FC<DiffIndicatorProps> = ({
   <span
     data-diff-indicator={true}
     data-line-index={lineIndex}
-    className={cn(
-      "relative inline-block w-4 shrink-0 text-center select-none",
-      isInteractive && "cursor-pointer"
-    )}
+    className={cn("relative text-center select-none", isInteractive && "cursor-pointer")}
+    style={{ background }}
     onMouseDown={onMouseDown}
     onMouseEnter={onMouseEnter}
   >
@@ -241,6 +242,14 @@ const DiffIndicator: React.FC<DiffIndicatorProps> = ({
 /**
  * Container component for diff rendering - exported for custom diff displays
  * Used by FileEditToolCall for wrapping custom diff content
+ *
+ * Uses CSS Grid for layout alignment:
+ * - Column 1 (gutter): auto-sized to fit line numbers
+ * - Column 2 (indicator): fixed 1rem for +/- symbols
+ * - Column 3 (code): fills remaining space
+ *
+ * This ensures PaddingStrip alignment matches diff lines by construction,
+ * without any JS-side width calculations.
  */
 export const DiffContainer: React.FC<
   React.PropsWithChildren<{
@@ -251,21 +260,8 @@ export const DiffContainer: React.FC<
     firstLineType?: DiffLineType;
     /** Type of the last line in the diff (for bottom padding background) */
     lastLineType?: DiffLineType;
-    /** Line number column widths for accurate gutter sizing */
-    lineNumberWidths?: { oldWidthCh: number; newWidthCh: number };
-    /** Whether line numbers are shown (affects gutter width calculation) */
-    showLineNumbers?: boolean;
   }>
-> = ({
-  children,
-  fontSize,
-  maxHeight,
-  className,
-  firstLineType,
-  lastLineType,
-  lineNumberWidths,
-  showLineNumbers = true,
-}) => {
+> = ({ children, fontSize, maxHeight, className, firstLineType, lastLineType }) => {
   const resolvedMaxHeight = maxHeight ?? "400px";
   const [isExpanded, setIsExpanded] = React.useState(false);
   const contentRef = React.useRef<HTMLDivElement>(null);
@@ -281,32 +277,21 @@ export const DiffContainer: React.FC<
   const isOverflowing = useOverflowDetection(contentRef, { enabled: clampContent });
   const showOverflowControls = clampContent && isOverflowing;
 
-  // Calculate gutter width to match DiffLineGutter + DiffIndicator layout:
-  // DiffLineGutter: px-1 (8px) + oldWidthCh + gap-0.5 (2px) + ml-3 (12px) + newWidthCh
-  // DiffIndicator: w-4 (16px)
-  // Total: 8px + oldWidthCh + 14px + newWidthCh + 16px = 38px + oldWidthCh + newWidthCh
-  // When line numbers hidden: px-1 (8px) + w-4 (16px) = 24px
-  const gutterWidth =
-    showLineNumbers && lineNumberWidths
-      ? `calc(38px + ${lineNumberWidths.oldWidthCh}ch + ${lineNumberWidths.newWidthCh}ch)`
-      : "24px";
-
-  // Padding strip mirrors gutter/content background split of diff lines
-  // Must use font-monospace so ch units match DiffLineGutter's character widths
+  // PaddingStrip uses CSS Grid columns to align with diff lines:
+  // - Gutter cell (col 1): saturated background
+  // - Code cells (cols 2-3): less saturated background
+  // Alignment is guaranteed by CSS Grid - no width calculation needed.
   const PaddingStrip = ({ lineType }: { lineType?: DiffLineType }) => (
-    <div className="font-monospace flex h-1.5">
+    <>
       <div
-        className="shrink-0"
-        style={{
-          width: gutterWidth,
-          background: lineType ? getDiffLineGutterBackground(lineType) : undefined,
-        }}
+        className="h-1.5"
+        style={{ background: lineType ? getDiffLineGutterBackground(lineType) : undefined }}
       />
       <div
-        className="flex-1"
+        className="col-span-2 h-1.5"
         style={{ background: lineType ? getDiffLineBackground(lineType) : undefined }}
       />
-    </div>
+    </>
   );
 
   return (
@@ -316,11 +301,10 @@ export const DiffContainer: React.FC<
         className
       )}
     >
-      <PaddingStrip lineType={firstLineType} />
       <div
         ref={contentRef}
         className={cn(
-          "grid overflow-x-auto",
+          "font-monospace grid overflow-x-auto",
           clampContent ? "overflow-y-hidden" : "overflow-y-visible",
           showOverflowControls && "pb-6"
         )}
@@ -328,12 +312,14 @@ export const DiffContainer: React.FC<
           fontSize: fontSize ?? "12px",
           lineHeight: 1.4,
           maxHeight: clampContent ? resolvedMaxHeight : undefined,
-          gridTemplateColumns: "minmax(min-content, 1fr)",
+          // CSS Grid columns: [gutter] auto | [indicator] 1rem | [code] 1fr
+          gridTemplateColumns: "auto 1rem 1fr",
         }}
       >
+        <PaddingStrip lineType={firstLineType} />
         {children}
+        <PaddingStrip lineType={lastLineType} />
       </div>
-      <PaddingStrip lineType={lastLineType} />
 
       {showOverflowControls && (
         <>
@@ -537,13 +523,13 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
       className={className}
       firstLineType={firstLineType}
       lastLineType={lastLineType}
-      lineNumberWidths={lineNumberWidths}
-      showLineNumbers={showLineNumbers}
     >
       {highlightedChunks.flatMap((chunk) =>
         chunk.lines.map((line) => {
+          const codeBg = getDiffLineBackground(chunk.type);
+          // Each line renders as 3 CSS Grid cells: gutter | indicator | code
           return (
-            <div key={line.originalIndex} className="flex w-full">
+            <React.Fragment key={line.originalIndex}>
               <DiffLineGutter
                 type={chunk.type}
                 oldLineNum={line.oldLineNumber}
@@ -551,17 +537,16 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
                 showLineNumbers={showLineNumbers}
                 lineNumberWidths={lineNumberWidths}
               />
+              <DiffIndicator type={chunk.type} background={codeBg} />
               <span
-                className="font-monospace min-w-0 flex-1 whitespace-pre [&_span:not(.search-highlight)]:!bg-transparent"
+                className="min-w-0 whitespace-pre [&_span:not(.search-highlight)]:!bg-transparent"
                 style={{
-                  background: getDiffLineBackground(chunk.type),
+                  background: codeBg,
                   color: getLineContentColor(chunk.type),
                 }}
-              >
-                <DiffIndicator type={chunk.type} />
-                <span dangerouslySetInnerHTML={{ __html: line.html }} />
-              </span>
-            </div>
+                dangerouslySetInnerHTML={{ __html: line.html }}
+              />
+            </React.Fragment>
           );
         })
       )}
@@ -703,11 +688,14 @@ const ReviewNoteInput: React.FC<ReviewNoteInputProps> = React.memo(
     // Use the last selected line's type (where the input appears)
     const lineType = selectedTypes[selectedTypes.length - 1] ?? "context";
 
+    const codeBg = getDiffLineBackground(lineType);
+
+    // Renders as a subgrid row with 3 cells to align with diff lines: gutter | indicator | input
     return (
-      <div className="flex w-full" style={{ background: getDiffLineBackground(lineType) }}>
+      <div className="col-span-3 grid grid-cols-subgrid">
         {/* Gutter spacer to align with diff lines */}
         <span
-          className="font-monospace flex shrink-0 items-center gap-0.5 px-1 tabular-nums select-none"
+          className="flex shrink-0 items-center gap-0.5 px-1 tabular-nums select-none"
           style={{ background: getDiffLineGutterBackground(lineType) }}
         >
           {showLineNumbers && (
@@ -718,9 +706,9 @@ const ReviewNoteInput: React.FC<ReviewNoteInputProps> = React.memo(
           )}
         </span>
         {/* Indicator spacer */}
-        <span className="inline-block w-4 shrink-0" />
+        <span style={{ background: codeBg }} />
         {/* Input container with accent styling */}
-        <div className="min-w-0 flex-1 py-1.5 pr-3">
+        <div className="min-w-0 py-1.5 pr-3" style={{ background: codeBg }}>
           <div
             className="flex w-full max-w-[560px] overflow-hidden rounded border border-[var(--color-review-accent)]/30 shadow-sm"
             style={{
@@ -935,6 +923,10 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     const firstLineType = highlightedLineData[0]?.type;
     const lastLineType = highlightedLineData[highlightedLineData.length - 1]?.type;
 
+    // Selection highlight overlay - applied via box-shadow to avoid affecting grid layout
+    const selectionHighlight =
+      "inset 0 0 0 100vmax hsl(from var(--color-review-accent) h s l / 0.16)";
+
     return (
       <DiffContainer
         fontSize={fontSize}
@@ -942,22 +934,21 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
         className={className}
         firstLineType={firstLineType}
         lastLineType={lastLineType}
-        lineNumberWidths={lineNumberWidths}
-        showLineNumbers={showLineNumbers}
       >
         {highlightedLineData.map((lineInfo, displayIndex) => {
           const isSelected = isLineSelected(displayIndex);
+          const codeBg = getDiffLineBackground(lineInfo.type);
 
+          // Each line renders as 3 CSS Grid cells: gutter | indicator | code
+          // Use display:contents wrapper for selection state + group hover behavior
           return (
             <React.Fragment key={displayIndex}>
               <div
-                className={cn(SELECTABLE_DIFF_LINE_CLASS, "flex w-full relative cursor-text group")}
+                className={cn(
+                  SELECTABLE_DIFF_LINE_CLASS,
+                  "group relative col-span-3 grid cursor-text grid-cols-subgrid"
+                )}
                 data-selected={isSelected ? "true" : "false"}
-                style={{
-                  background: isSelected
-                    ? "hsl(from var(--color-review-accent) h s l / 0.16)"
-                    : "transparent",
-                }}
               >
                 <DiffLineGutter
                   type={lineInfo.type}
@@ -966,54 +957,55 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
                   showLineNumbers={showLineNumbers}
                   lineNumberWidths={lineNumberWidths}
                 />
-                <span
-                  className="font-monospace min-w-0 flex-1 whitespace-pre [&_span:not(.search-highlight)]:!bg-transparent"
-                  style={{
-                    background: getDiffLineBackground(lineInfo.type),
-                    color: getLineContentColor(lineInfo.type),
+                <DiffIndicator
+                  type={lineInfo.type}
+                  background={codeBg}
+                  lineIndex={displayIndex}
+                  isInteractive={Boolean(onReviewNote)}
+                  onMouseDown={(e) => {
+                    if (!onReviewNote) return;
+                    if (e.button !== 0) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    startDragSelection(displayIndex, e.shiftKey);
                   }}
-                >
-                  <DiffIndicator
-                    type={lineInfo.type}
-                    lineIndex={displayIndex}
-                    isInteractive={Boolean(onReviewNote)}
-                    onMouseDown={(e) => {
-                      if (!onReviewNote) return;
-                      if (e.button !== 0) return;
-                      e.preventDefault();
-                      e.stopPropagation();
-                      startDragSelection(displayIndex, e.shiftKey);
-                    }}
-                    onMouseEnter={() => {
-                      if (!onReviewNote) return;
-                      updateDragSelection(displayIndex);
-                    }}
-                    reviewButton={
-                      onReviewNote && (
-                        <Tooltip open={selection || isDragging ? false : undefined}>
-                          <TooltipTrigger asChild>
-                            <button
-                              className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-sm text-[var(--color-review-accent)]/60 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 hover:text-[var(--color-review-accent)] active:scale-90"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleCommentButtonClick(displayIndex, e.shiftKey);
-                              }}
-                              aria-label="Add review comment"
-                            >
-                              <MessageSquare className="size-3" />
-                            </button>
-                          </TooltipTrigger>
-                          <TooltipContent side="bottom" align="start">
-                            Add review comment
-                            <br />
-                            (Shift-click or drag to select range)
-                          </TooltipContent>
-                        </Tooltip>
-                      )
-                    }
-                  />
-                  <span dangerouslySetInnerHTML={{ __html: lineInfo.html }} />
-                </span>
+                  onMouseEnter={() => {
+                    if (!onReviewNote) return;
+                    updateDragSelection(displayIndex);
+                  }}
+                  reviewButton={
+                    onReviewNote && (
+                      <Tooltip open={selection || isDragging ? false : undefined}>
+                        <TooltipTrigger asChild>
+                          <button
+                            className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-sm text-[var(--color-review-accent)]/60 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 hover:text-[var(--color-review-accent)] active:scale-90"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleCommentButtonClick(displayIndex, e.shiftKey);
+                            }}
+                            aria-label="Add review comment"
+                          >
+                            <MessageSquare className="size-3" />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" align="start">
+                          Add review comment
+                          <br />
+                          (Shift-click or drag to select range)
+                        </TooltipContent>
+                      </Tooltip>
+                    )
+                  }
+                />
+                <span
+                  className="min-w-0 whitespace-pre [&_span:not(.search-highlight)]:!bg-transparent"
+                  style={{
+                    background: codeBg,
+                    color: getLineContentColor(lineInfo.type),
+                    boxShadow: isSelected ? selectionHighlight : undefined,
+                  }}
+                  dangerouslySetInnerHTML={{ __html: lineInfo.html }}
+                />
               </div>
 
               {/* Show textarea after the last selected line */}
