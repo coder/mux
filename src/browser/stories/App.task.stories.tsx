@@ -117,6 +117,11 @@ Key patterns:
       }
     />
   ),
+  parameters: {
+    // Chromatic snapshots can capture mid-scroll while fonts swap/load, causing a small
+    // (<5px) vertical shift. Give the initial auto-scroll a moment to settle.
+    chromatic: { delay: 500 },
+  },
   play: async ({ canvasElement }) => {
     await waitForScrollStabilization(canvasElement);
   },
