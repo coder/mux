@@ -359,14 +359,28 @@ describeIntegration("ReviewPanel auto refresh (UI + ORPC + live LLM)", () => {
       try {
         const refreshButton = await setupReviewPanel(view, metadata, workspaceId);
 
-        // Use LLM to make a file change via task(kind="bash") so we get a tool-call-end event.
         const AUTO_MARKER = "AUTO_REFRESH_MARKER";
+
+        // Make a direct FS change (no tool-call events). The scheduled/tool-completion
+        // refresh should still pick this up.
+        const bashRes = await env.orpc.workspace.executeBash({
+          workspaceId,
+          script: `echo "${AUTO_MARKER}" >> README.md`,
+        });
+        expect(bashRes.success).toBe(true);
+        if (!bashRes.success) return;
+        expect(bashRes.data.success).toBe(true);
+
+        // Without a scheduled refresh, the UI should not pick this up yet.
+        expect(view.queryByText(new RegExp(AUTO_MARKER))).toBeNull();
+
+        // Trigger a tool-call-end event via task(kind="bash").
         const FORCE_TASK: ToolPolicy = [{ regex_match: "task", action: "require" }];
 
         const autoRes = await sendMessageWithModel(
           env,
           workspaceId,
-          `Use task(kind="bash") to append a new line containing "${AUTO_MARKER}" to README.md. Do not spawn a sub-agent task.`,
+          'Use task(kind="bash") to run a quick no-op bash command (e.g. `echo ping`). Do not modify files and do not spawn a sub-agent task.',
           HAIKU_MODEL,
           {
             mode: "exec",
