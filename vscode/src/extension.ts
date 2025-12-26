@@ -24,6 +24,7 @@ import type {
   UiWorkspace,
   WebviewToExtensionMessage,
 } from "./webview/protocol";
+import { isAllowedOrpcPath } from "./orpcAllowlist";
 import { openWorkspace } from "./workspaceOpener";
 
 let sessionPreferredMode: "api" | "file" | null = null;
@@ -957,10 +958,15 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
     }
     this.pendingOrpcCalls.clear();
 
-    for (const stream of this.activeOrpcStreams.values()) {
+    for (const [streamId, stream] of this.activeOrpcStreams.entries()) {
       stream.controller.abort();
       // Best-effort: allow the iterator to clean up server-side.
-      void stream.iterator.return?.();
+      void stream.iterator.return?.().catch((error) => {
+        muxLogWarn("mux.chatView: stream iterator return failed during dispose", {
+          streamId,
+          error: formatError(error),
+        });
+      });
     }
     this.activeOrpcStreams.clear();
   }
@@ -1225,6 +1231,17 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
       if (typeof msg.requestId !== "string") {
         return;
       }
+
+      if (this.pendingOrpcCalls.has(msg.requestId)) {
+        this.postMessage({
+          type: "orpcResponse",
+          requestId: msg.requestId,
+          ok: false,
+          error: "Duplicate ORPC requestId",
+        });
+        return;
+      }
+
       if (!Array.isArray(msg.path) || !msg.path.every((p) => typeof p === "string")) {
         this.postMessage({
           type: "orpcResponse",
@@ -1235,12 +1252,16 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
         return;
       }
 
+      const controller = new AbortController();
+      this.pendingOrpcCalls.set(msg.requestId, controller);
+
       const lastEventId = typeof msg.lastEventId === "string" ? msg.lastEventId : undefined;
       await this.handleOrpcCall({
         requestId: msg.requestId,
         path: msg.path,
         input: msg.input,
         lastEventId,
+        controller,
       });
       return;
     }
@@ -1291,13 +1312,6 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
       return;
     }
 
-    if (type === "sendMessage") {
-      if (typeof msg.workspaceId !== "string" || typeof msg.text !== "string") {
-        return;
-      }
-      await this.sendMessage(msg.workspaceId, msg.text);
-      return;
-    }
 
     if (type === "configureConnection") {
       await configureConnectionCommand(this.context);
@@ -1368,42 +1382,6 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
     }
   }
 
-  private isAllowedOrpcPath(path: string[]): boolean {
-    if (path.length === 0) {
-      return false;
-    }
-
-    const forbiddenSegments = new Set(["__proto__", "prototype", "constructor"]);
-
-    for (const segment of path) {
-      if (!segment || forbiddenSegments.has(segment)) {
-        return false;
-      }
-
-      // Keep the proxy surface tight and predictable.
-      if (!/^[a-zA-Z0-9_]+$/.test(segment)) {
-        return false;
-      }
-    }
-
-    const root = path[0];
-    if (root === "general" || root === "workspace") {
-      return true;
-    }
-
-    // Allow provider discovery/custom models so the webview can reuse the desktop
-    // model picker, but do NOT expose provider secret mutation APIs.
-    if (root === "providers") {
-      if (path.length !== 2) {
-        return false;
-      }
-
-      const allowed = new Set(["list", "getConfig", "onConfigChanged", "setModels"]);
-      return allowed.has(path[1]);
-    }
-
-    return false;
-  }
 
   private resolveOrpcProcedure(client: unknown, path: string[]): ((input: unknown, options?: unknown) => Promise<unknown>) | null {
     let cursor: unknown = client;
@@ -1442,7 +1420,11 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
     }
 
     stream.controller.abort();
-    void stream.iterator.return?.();
+    this.activeOrpcStreams.delete(streamId);
+
+    void stream.iterator.return?.().catch((error) => {
+      muxLogWarn("mux.chatView: stream iterator return failed", { streamId, error: formatError(error) });
+    });
   }
 
   private isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
@@ -1500,59 +1482,70 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
     path: string[];
     input: unknown;
     lastEventId?: string | undefined;
+    controller: AbortController;
   }): Promise<void> {
-    if (!this.isAllowedOrpcPath(args.path)) {
-      this.postMessage({
-        type: "orpcResponse",
-        requestId: args.requestId,
-        ok: false,
-        error: `ORPC path not allowed: ${args.path.join(".")}`,
-      });
-      return;
-    }
-
-    if (this.connectionStatus.mode !== "api") {
-      this.postMessage({
-        type: "orpcResponse",
-        requestId: args.requestId,
-        ok: false,
-        error: "mux server connection required",
-      });
-      return;
-    }
-
-    const api = await tryGetApiClient(this.context);
-    if ("failure" in api) {
-      this.postMessage({
-        type: "orpcResponse",
-        requestId: args.requestId,
-        ok: false,
-        error: `${describeFailure(api.failure)}. (${api.failure.error})`,
-      });
-      return;
-    }
-
-    const procedure = this.resolveOrpcProcedure(api.client, args.path);
-    if (!procedure) {
-      this.postMessage({
-        type: "orpcResponse",
-        requestId: args.requestId,
-        ok: false,
-        error: `Unknown ORPC procedure: ${args.path.join(".")}`,
-      });
-      return;
-    }
-
-    const controller = new AbortController();
-    this.pendingOrpcCalls.set(args.requestId, controller);
+    const controller = args.controller;
 
     try {
+      if (!isAllowedOrpcPath(args.path)) {
+        this.postMessage({
+          type: "orpcResponse",
+          requestId: args.requestId,
+          ok: false,
+          error: `ORPC path not allowed: ${args.path.join(".")}`,
+        });
+        return;
+      }
+
+      if (this.connectionStatus.mode !== "api") {
+        this.postMessage({
+          type: "orpcResponse",
+          requestId: args.requestId,
+          ok: false,
+          error: "mux server connection required",
+        });
+        return;
+      }
+
+      if (controller.signal.aborted) {
+        return;
+      }
+
+      const api = await tryGetApiClient(this.context);
+
+      if (controller.signal.aborted) {
+        return;
+      }
+
+      if ("failure" in api) {
+        this.postMessage({
+          type: "orpcResponse",
+          requestId: args.requestId,
+          ok: false,
+          error: `${describeFailure(api.failure)}. (${api.failure.error})`,
+        });
+        return;
+      }
+
+      const procedure = this.resolveOrpcProcedure(api.client, args.path);
+      if (!procedure) {
+        this.postMessage({
+          type: "orpcResponse",
+          requestId: args.requestId,
+          ok: false,
+          error: `Unknown ORPC procedure: ${args.path.join(".")}`,
+        });
+        return;
+      }
+
       const result = await procedure(args.input, {
         signal: controller.signal,
         lastEventId: args.lastEventId,
       });
 
-      this.pendingOrpcCalls.delete(args.requestId);
+      if (controller.signal.aborted) {
+        return;
+      }
 
       if (this.isAsyncIterable(result)) {
         const streamId = randomBytes(16).toString("hex");
@@ -1583,7 +1576,9 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
         value: result,
       });
     } catch (error) {
-      this.pendingOrpcCalls.delete(args.requestId);
+      if (controller.signal.aborted) {
+        return;
+      }
 
       this.postMessage({
         type: "orpcResponse",
@@ -1591,6 +1586,11 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
         ok: false,
         error: formatError(error),
       });
+    } finally {
+      const pending = this.pendingOrpcCalls.get(args.requestId);
+      if (pending === controller) {
+        this.pendingOrpcCalls.delete(args.requestId);
+      }
     }
   }
 
@@ -1675,49 +1675,6 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
     }
   }
 
-  private async sendMessage(workspaceId: string, text: string): Promise<void> {
-    assert(typeof workspaceId === "string", "sendMessage requires workspaceId");
-    assert(typeof text === "string", "sendMessage requires text");
-
-    const trimmed = text.trim();
-    if (!trimmed) {
-      return;
-    }
-
-    if (this.connectionStatus.mode !== "api") {
-      this.postMessage({
-        type: "uiNotice",
-        level: "error",
-        message: "Chat requires a running mux server.",
-      });
-      return;
-    }
-
-    const api = await tryGetApiClient(this.context);
-    if ("failure" in api) {
-      this.postMessage({
-        type: "uiNotice",
-        level: "error",
-        message: `${describeFailure(api.failure)}. (${api.failure.error})`,
-      });
-      return;
-    }
-
-    const result = await api.client.workspace.sendMessage({
-      workspaceId,
-      message: trimmed,
-    });
-
-    if (!result.success) {
-      const errorString =
-        typeof result.error === "string" ? result.error : JSON.stringify(result.error, null, 2);
-      this.postMessage({
-        type: "uiNotice",
-        level: "error",
-        message: `Send failed: ${errorString}`,
-      });
-    }
-  }
 
   private async openWorkspaceFromView(workspaceId: string): Promise<void> {
     assert(typeof workspaceId === "string", "openWorkspaceFromView requires workspaceId");
