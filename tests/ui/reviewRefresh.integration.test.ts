@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, waitFor } from "@testing-library/react";
+import { fireEvent, waitFor } from "@testing-library/react";
 
 import { shouldRunIntegrationTests, validateApiKeys } from "../testUtils";
 import {
@@ -13,6 +13,8 @@ import type { ToolPolicy } from "../../src/common/utils/tools/toolPolicy";
 import { installDom } from "./dom";
 import { renderReviewPanel, type RenderedApp } from "./renderReviewPanel";
 import {
+  cleanupView,
+  setupWorkspaceView,
   waitForToolCallEnd,
   waitForRefreshButtonIdle,
   assertRefreshButtonHasLastRefreshInfo,
@@ -27,51 +29,17 @@ validateApiKeys(["ANTHROPIC_API_KEY"]);
 
 /**
  * Helper to set up the full App UI and navigate to the Review tab.
- * Returns the view and refresh button for assertions.
+ * Returns the refresh button for assertions.
  */
 async function setupReviewPanel(
   view: RenderedApp,
   metadata: FrontendWorkspaceMetadata,
   workspaceId: string
 ): Promise<HTMLElement> {
-  // Wait for the full App to be ready (loading screen gone)
-  await view.waitForReady();
-
-  // Expand the project first (it starts collapsed)
-  const projectRow = await waitFor(
-    () => {
-      const el = view.container.querySelector(`[data-project-path="${metadata.projectPath}"]`);
-      if (!el) throw new Error("Project not found in sidebar");
-      return el as HTMLElement;
-    },
-    { timeout: 10_000 }
-  );
-
-  // Click the expand button within the project row
-  const expandButton = projectRow.querySelector('[aria-label*="Expand project"]');
-  if (expandButton) {
-    fireEvent.click(expandButton);
-  } else {
-    fireEvent.click(projectRow);
-  }
-
-  // Now find and click the workspace
-  const workspaceElement = await waitFor(
-    () => {
-      const el = view.container.querySelector(`[data-workspace-id="${workspaceId}"]`);
-      if (!el) throw new Error("Workspace not found in sidebar");
-      return el as HTMLElement;
-    },
-    { timeout: 10_000 }
-  );
-  fireEvent.click(workspaceElement);
-
-  // Switch to review tab
+  await setupWorkspaceView(view, metadata, workspaceId);
   await view.selectTab("review");
-
   // Wait for the first diff load to complete
   await view.findAllByText(/No changes found/i, {}, { timeout: 60_000 });
-
   return view.getByTestId("review-refresh");
 }
 
@@ -132,11 +100,7 @@ describeIntegration("ReviewPanel manual refresh (UI + ORPC)", () => {
         await waitForRefreshButtonIdle(refreshButton);
         await assertRefreshButtonHasLastRefreshInfo(refreshButton, "manual");
       } finally {
-        view.unmount();
-        cleanup();
-        // Wait for any pending React updates to settle before destroying DOM
-        await new Promise((r) => setTimeout(r, 100));
-        cleanupDom();
+        await cleanupView(view, cleanupDom);
       }
     });
   }, 120_000);
@@ -163,10 +127,7 @@ describeIntegration("ReviewPanel manual refresh (UI + ORPC)", () => {
         await waitForRefreshButtonIdle(refreshButton);
         await assertRefreshButtonHasLastRefreshInfo(refreshButton, "manual");
       } finally {
-        view.unmount();
-        cleanup();
-        await new Promise((r) => setTimeout(r, 100));
-        cleanupDom();
+        await cleanupView(view, cleanupDom);
       }
     });
   }, 120_000);
@@ -209,10 +170,7 @@ describeIntegration("ReviewPanel manual refresh (UI + ORPC)", () => {
         expect(secondTimestamp).toBeTruthy();
         expect(Number(secondTimestamp)).toBeGreaterThan(Number(firstTimestamp));
       } finally {
-        view.unmount();
-        cleanup();
-        await new Promise((r) => setTimeout(r, 100));
-        cleanupDom();
+        await cleanupView(view, cleanupDom);
       }
     });
   }, 120_000);
@@ -283,11 +241,7 @@ describeIntegration("ReviewPanel auto refresh (UI + ORPC + live LLM)", () => {
         await waitForRefreshButtonIdle(refreshButton);
         await assertRefreshButtonHasLastRefreshInfo(refreshButton, "scheduled");
       } finally {
-        view.unmount();
-        cleanup();
-        // Wait for any pending React updates to settle before destroying DOM
-        await new Promise((r) => setTimeout(r, 100));
-        cleanupDom();
+        await cleanupView(view, cleanupDom);
       }
     });
   }, 180_000);
@@ -375,10 +329,7 @@ describeIntegration("ReviewPanel auto refresh (UI + ORPC + live LLM)", () => {
         // Unit tests in RefreshController.test.ts verify that notifyUnpaused()
         // correctly flushes pending refreshes when composition ends.
       } finally {
-        view.unmount();
-        cleanup();
-        await new Promise((r) => setTimeout(r, 100));
-        cleanupDom();
+        await cleanupView(view, cleanupDom);
       }
     });
   }, 180_000);
