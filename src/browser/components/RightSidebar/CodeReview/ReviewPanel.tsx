@@ -328,28 +328,21 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   // Last refresh info for UI display (tooltip showing trigger reason + time)
   const [lastRefreshInfo, setLastRefreshInfo] = useState<LastRefreshInfo | null>(null);
 
-  // DEBUG
-  console.log(`[review-refresh] render: workspaceId=${workspaceId}, lastRefreshInfo=`, lastRefreshInfo);
-
   // RefreshController - handles debouncing, in-flight guards, etc.
   // Created in useEffect to survive React StrictMode double-mount.
+  // (StrictMode calls cleanup then re-mounts; refs persist but controller would be disposed)
   const controllerRef = useRef<RefreshController | null>(null);
 
   useEffect(() => {
-    console.log(`[review-refresh] creating controller for workspace=${workspaceId}`);
     const controller = new RefreshController({
       debounceMs: 3000,
       isPaused: () => isInteractingRef.current,
       onRefresh: () => {
-        console.log(`[review-refresh] onRefresh called`);
         lastFetchTimeRef.current = Date.now();
         setRefreshTrigger((prev) => prev + 1);
         invalidateGitStatus(workspaceId);
       },
-      onRefreshComplete: (info) => {
-        console.log(`[review-refresh] onRefreshComplete:`, info);
-        setLastRefreshInfo(info);
-      },
+      onRefreshComplete: setLastRefreshInfo,
     });
     controllerRef.current = controller;
 
@@ -368,7 +361,6 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     }
 
     return () => {
-      console.log(`[review-refresh] disposing controller`);
       unsubscribe();
       controller.dispose();
       controllerRef.current = null;
@@ -376,7 +368,6 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   }, [workspaceId]);
 
   const handleRefresh = () => {
-    console.log(`[review-refresh] handleRefresh, controller=${!!controllerRef.current}`);
     controllerRef.current?.requestImmediate();
   };
 

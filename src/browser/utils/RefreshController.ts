@@ -187,7 +187,6 @@ export class RefreshController {
    * Use for manual refresh (user clicked button) which should always execute.
    */
   requestImmediate(): void {
-    console.log(`[review-refresh] requestImmediate, disposed=${this.disposed}`);
     if (this.disposed) return;
 
     // Clear any pending debounce
@@ -273,7 +272,6 @@ export class RefreshController {
    * Execute the refresh, tracking in-flight state.
    */
   private executeRefresh(trigger: RefreshTrigger): void {
-    console.log(`[review-refresh] executeRefresh, trigger=${trigger}, disposed=${this.disposed}`);
     if (this.disposed) return;
 
     // Record refresh start; min-interval enforcement happens in tryRefresh().
@@ -288,20 +286,13 @@ export class RefreshController {
     this.pendingTrigger = null;
 
     const maybePromise = this.onRefresh();
-    console.log(`[review-refresh] onRefresh returned, isPromise=${maybePromise instanceof Promise}`);
 
     const onComplete = () => {
       this.inFlight = false;
       this._lastRefreshInfo = { timestamp: Date.now(), trigger };
-      console.log(`[review-refresh] onComplete:`, this._lastRefreshInfo, `hasCallback=${!!this.onRefreshComplete}`);
 
       // Notify listener (for React state updates)
-      if (this.onRefreshComplete) {
-        console.log(`[review-refresh] calling onRefreshComplete`);
-        this.onRefreshComplete(this._lastRefreshInfo);
-      } else {
-        console.log(`[review-refresh] NO onRefreshComplete callback!`);
-      }
+      this.onRefreshComplete?.(this._lastRefreshInfo);
 
       // Process any queued refresh
       if (this.pendingBecauseInFlight) {

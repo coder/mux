@@ -186,7 +186,7 @@ describeIntegration("ReviewPanel manual refresh (UI + ORPC)", () => {
         // At this point, initial load has completed but no manual refresh yet
         // The button should NOT have lastRefreshInfo (initial load doesn't set it)
         const initialTrigger = refreshButton.getAttribute("data-last-refresh-trigger");
-        
+
         // First manual refresh (no changes to diff, just clicking refresh)
         fireEvent.click(refreshButton);
         await waitForRefreshButtonIdle(refreshButton);
@@ -208,8 +208,6 @@ describeIntegration("ReviewPanel manual refresh (UI + ORPC)", () => {
         const secondTimestamp = refreshButton.getAttribute("data-last-refresh-timestamp");
         expect(secondTimestamp).toBeTruthy();
         expect(Number(secondTimestamp)).toBeGreaterThan(Number(firstTimestamp));
-
-
       } finally {
         view.unmount();
         cleanup();
