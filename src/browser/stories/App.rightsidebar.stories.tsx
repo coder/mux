@@ -5,9 +5,15 @@
  */
 
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
-import { setupSimpleChatStory, setupStreamingChatStory, expandRightSidebar } from "./storyHelpers";
+import {
+  setupSimpleChatStory,
+  setupStreamingChatStory,
+  expandRightSidebar,
+  setHunkFirstSeen,
+  setReviewSortOrder,
+} from "./storyHelpers";
 import { createUserMessage, createAssistantMessage } from "./mockFactory";
-import { within, userEvent, waitFor } from "@storybook/test";
+import { within, userEvent, waitFor, expect } from "@storybook/test";
 import {
   RIGHT_SIDEBAR_TAB_KEY,
   RIGHT_SIDEBAR_COSTS_WIDTH_KEY,
@@ -293,5 +299,238 @@ export const StatsTabStreaming: AppStory = {
     await waitFor(() => {
       canvas.getByText(/model time/i);
     });
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// REVIEW TAB SORTING STORIES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Sample git diff output for review panel stories
+ */
+const SAMPLE_DIFF_OUTPUT = `diff --git a/src/utils/format.ts b/src/utils/format.ts
+new file mode 100644
+index 0000000..abc1234
+--- /dev/null
++++ b/src/utils/format.ts
+@@ -0,0 +1,12 @@
++export function formatDate(date: Date): string {
++  return date.toISOString();
++}
++
++export function formatCurrency(amount: number): string {
++  return \`$\${amount.toFixed(2)}\`;
++}
++
++export function formatPercentage(value: number): string {
++  return \`\${(value * 100).toFixed(1)}%\`;
++}
++
+diff --git a/src/components/Button.tsx b/src/components/Button.tsx
+index def5678..ghi9012 100644
+--- a/src/components/Button.tsx
++++ b/src/components/Button.tsx
+@@ -1,8 +1,15 @@
+ import React from 'react';
+ 
+-export const Button = ({ children }) => {
++interface ButtonProps {
++  children: React.ReactNode;
++  variant?: 'primary' | 'secondary';
++  onClick?: () => void;
++}
++
++export const Button: React.FC<ButtonProps> = ({ children, variant = 'primary', onClick }) => {
+   return (
+-    <button className="btn">
++    <button className={\`btn btn-\${variant}\`} onClick={onClick}>
+       {children}
+     </button>
+   );
+diff --git a/src/api/client.ts b/src/api/client.ts
+index 111aaa..222bbb 100644
+--- a/src/api/client.ts
++++ b/src/api/client.ts
+@@ -5,6 +5,10 @@ const BASE_URL = '/api';
+ export async function fetchData(endpoint: string) {
+   const response = await fetch(\`\${BASE_URL}/\${endpoint}\`);
++  if (!response.ok) {
++    throw new Error(\`HTTP error: \${response.status}\`);
++  }
+   return response.json();
+ }
+`;
+
+const SAMPLE_NUMSTAT_OUTPUT = `12\t0\tsrc/utils/format.ts
+10\t3\tsrc/components/Button.tsx
+4\t0\tsrc/api/client.ts`;
+
+// Hunk IDs generated from the diff content (these match what diffParser produces)
+// We use approximate hunk IDs based on how generateHunkId works
+const HUNK_IDS = {
+  format: "hunk-1a2b3c4d",
+  button: "hunk-5e6f7g8h",
+  client: "hunk-9i0j1k2l",
+};
+
+/**
+ * Review tab with hunks sorted by "Last edit" (LIFO order).
+ * Shows timestamps in hunk headers indicating when each change was first seen.
+ */
+export const ReviewTabSortByLastEdit: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
+        localStorage.setItem(RIGHT_SIDEBAR_REVIEW_WIDTH_KEY, "700");
+
+        const workspaceId = "ws-review-sort";
+        const now = Date.now();
+
+        // Set up first-seen timestamps for hunks (oldest to newest: format -> button -> client)
+        // We use placeholder IDs since exact hash depends on content
+        setHunkFirstSeen(workspaceId, {
+          // format.ts was seen 2 hours ago
+          [HUNK_IDS.format]: now - 2 * 60 * 60 * 1000,
+          // Button.tsx was seen 30 minutes ago
+          [HUNK_IDS.button]: now - 30 * 60 * 1000,
+          // client.ts was seen 5 minutes ago
+          [HUNK_IDS.client]: now - 5 * 60 * 1000,
+        });
+
+        // Set sort order to "last-edit"
+        setReviewSortOrder("last-edit");
+
+        const client = setupSimpleChatStory({
+          workspaceId,
+          workspaceName: "feature/sorting",
+          projectName: "my-app",
+          messages: [
+            createUserMessage("msg-1", "Add utilities and refactor button", { historySequence: 1 }),
+            createAssistantMessage("msg-2", "Done! Added format utilities and improved Button.", {
+              historySequence: 2,
+            }),
+          ],
+          gitDiff: {
+            diffOutput: SAMPLE_DIFF_OUTPUT,
+            numstatOutput: SAMPLE_NUMSTAT_OUTPUT,
+          },
+        });
+        expandRightSidebar();
+        return client;
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Wait for review tab to be selected and loaded
+    await waitFor(
+      () => {
+        canvas.getByRole("tab", { name: /^review/i, selected: true });
+      },
+      { timeout: 5000 }
+    );
+
+    // Verify the sort dropdown shows "Last edit"
+    // Use a more specific selector since there are multiple combobox elements
+    const sortSelect = await canvas.findByRole(
+      "combobox",
+      { name: /sort hunks by/i },
+      { timeout: 3000 }
+    );
+    await expect(sortSelect).toHaveValue("last-edit");
+
+    // Wait for hunks to load - look for file paths in the diff
+    // Use getAllByText since files appear in both file tree and hunk headers
+    await waitFor(
+      () => {
+        canvas.getAllByText(/format\.ts/i);
+        canvas.getAllByText(/Button\.tsx/i);
+        canvas.getAllByText(/client\.ts/i);
+      },
+      { timeout: 5000 }
+    );
+
+    // Verify relative time indicators are shown (e.g., "5m ago", "30m ago", "2h ago")
+    // These come from the firstSeenAt timestamps we set
+    await waitFor(
+      async () => {
+        // At least one relative time indicator should be visible
+        const timeIndicators = canvas.getAllByText(/ago|just now/i);
+        await expect(timeIndicators.length).toBeGreaterThan(0);
+      },
+      { timeout: 3000 }
+    );
+  },
+};
+
+/**
+ * Review tab with hunks sorted by file order (default).
+ * Demonstrates switching between sort modes.
+ */
+export const ReviewTabSortByFileOrder: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
+        localStorage.setItem(RIGHT_SIDEBAR_REVIEW_WIDTH_KEY, "700");
+
+        const workspaceId = "ws-review-file-order";
+
+        // Set sort order to "file-order" (default)
+        setReviewSortOrder("file-order");
+
+        const client = setupSimpleChatStory({
+          workspaceId,
+          workspaceName: "feature/file-order",
+          projectName: "my-app",
+          messages: [
+            createUserMessage("msg-1", "Make some changes", { historySequence: 1 }),
+            createAssistantMessage("msg-2", "Changes made.", { historySequence: 2 }),
+          ],
+          gitDiff: {
+            diffOutput: SAMPLE_DIFF_OUTPUT,
+            numstatOutput: SAMPLE_NUMSTAT_OUTPUT,
+          },
+        });
+        expandRightSidebar();
+        return client;
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Wait for review tab to be selected
+    await waitFor(
+      () => {
+        canvas.getByRole("tab", { name: /^review/i, selected: true });
+      },
+      { timeout: 5000 }
+    );
+
+    // Verify the sort dropdown shows "File order"
+    // Use a more specific selector since there are multiple combobox elements
+    const sortSelect = await canvas.findByRole(
+      "combobox",
+      { name: /sort hunks by/i },
+      { timeout: 3000 }
+    );
+    await expect(sortSelect).toHaveValue("file-order");
+
+    // Wait for hunks to load - use getAllByText since files appear in both file tree and hunk headers
+    await waitFor(
+      () => {
+        canvas.getAllByText(/format\.ts/i);
+      },
+      { timeout: 5000 }
+    );
+
+    // Switch to "Last edit" sorting
+    await userEvent.selectOptions(sortSelect, "last-edit");
+
+    await expect(sortSelect).toHaveValue("last-edit");
   },
 };

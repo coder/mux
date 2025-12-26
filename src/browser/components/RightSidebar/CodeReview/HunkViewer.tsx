@@ -13,6 +13,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "../../ui/tooltip";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { getReviewExpandStateKey } from "@/common/constants/storage";
 import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
+import { formatRelativeTime } from "@/browser/utils/ui/dateTime";
 import { cn } from "@/common/lib/utils";
 
 interface HunkViewerProps {
@@ -21,6 +22,8 @@ interface HunkViewerProps {
   workspaceId: string;
   isSelected?: boolean;
   isRead?: boolean;
+  /** Timestamp when this hunk content was first seen (for "Last edit at" display) */
+  firstSeenAt: number;
   onClick?: (e: React.MouseEvent<HTMLElement>) => void;
   onToggleRead?: (e: React.MouseEvent<HTMLElement>) => void;
   onRegisterToggleExpand?: (hunkId: string, toggleFn: () => void) => void;
@@ -35,6 +38,7 @@ export const HunkViewer = React.memo<HunkViewerProps>(
     workspaceId,
     isSelected,
     isRead = false,
+    firstSeenAt,
     onClick,
     onToggleRead,
     onRegisterToggleExpand,
@@ -222,6 +226,14 @@ export const HunkViewer = React.memo<HunkViewerProps>(
             <span className="text-muted">
               ({lineCount} {lineCount === 1 ? "line" : "lines"})
             </span>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="text-dim cursor-default">{formatRelativeTime(firstSeenAt)}</span>
+              </TooltipTrigger>
+              <TooltipContent align="center" side="top">
+                First seen: {new Date(firstSeenAt).toLocaleString()}
+              </TooltipContent>
+            </Tooltip>
             {onToggleRead && (
               <Tooltip>
                 <TooltipTrigger asChild>

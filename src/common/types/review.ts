@@ -69,6 +69,11 @@ export interface ReviewState {
 }
 
 /**
+ * Sort order options for review panel hunks
+ */
+export type ReviewSortOrder = "file-order" | "last-edit";
+
+/**
  * Filter options for review panel
  */
 export interface ReviewFilters {
@@ -80,6 +85,8 @@ export interface ReviewFilters {
   diffBase: string;
   /** Whether to include uncommitted changes (staged + unstaged) in the diff */
   includeUncommitted: boolean;
+  /** Sort order for hunks */
+  sortOrder: ReviewSortOrder;
 }
 
 /**

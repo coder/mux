@@ -223,6 +223,21 @@ export function getReviewStateKey(workspaceId: string): string {
 }
 
 /**
+ * Get the localStorage key for hunk first-seen timestamps per workspace
+ * Tracks when each hunk content address was first observed (for LIFO sorting)
+ * Format: "hunkFirstSeen:{workspaceId}"
+ */
+export function getHunkFirstSeenKey(workspaceId: string): string {
+  return `hunkFirstSeen:${workspaceId}`;
+}
+
+/**
+ * Get the localStorage key for review sort order preference (global)
+ * Format: "review-sort-order"
+ */
+export const REVIEW_SORT_ORDER_KEY = "review-sort-order";
+
+/**
  * Get the localStorage key for hunk expand/collapse state in Review tab
  * Stores user's manual expand/collapse preferences per hunk
  * Format: "reviewExpandState:{workspaceId}"
@@ -330,6 +345,7 @@ const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string>
   getAutoRetryKey,
   getRetryStateKey,
   getReviewStateKey,
+  getHunkFirstSeenKey,
   getReviewExpandStateKey,
   getFileTreeExpandStateKey,
   getReviewSearchStateKey,

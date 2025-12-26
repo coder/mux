@@ -20,7 +20,11 @@ import {
   getInputKey,
   getModelKey,
   getReviewsKey,
+  getHunkFirstSeenKey,
+  REVIEW_SORT_ORDER_KEY,
 } from "@/common/constants/storage";
+import type { ReviewSortOrder } from "@/common/types/review";
+import type { HunkFirstSeenState } from "@/browser/hooks/useHunkFirstSeen";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import type { Review, ReviewsState } from "@/common/types/review";
 import { DEFAULT_MODEL } from "@/common/constants/knownModels";
@@ -91,6 +95,17 @@ export function setReviews(workspaceId: string, reviews: Review[]): void {
   updatePersistedState(getReviewsKey(workspaceId), state);
 }
 
+/** Set hunk first-seen timestamps for a workspace (for storybook) */
+export function setHunkFirstSeen(workspaceId: string, firstSeen: Record<string, number>): void {
+  const state: HunkFirstSeenState = { firstSeen };
+  updatePersistedState(getHunkFirstSeenKey(workspaceId), state);
+}
+
+/** Set the review panel sort order (global) */
+export function setReviewSortOrder(order: ReviewSortOrder): void {
+  localStorage.setItem(REVIEW_SORT_ORDER_KEY, JSON.stringify(order));
+}
+
 /** Create a sample review for stories */
 export function createReview(
   id: string,
@@ -115,17 +130,45 @@ export function createReview(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// GIT STATUS EXECUTOR
+// GIT STATUS/DIFF EXECUTOR
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/** Creates an executeBash function that returns git status output for workspaces */
-export function createGitStatusExecutor(gitStatus?: Map<string, GitStatusFixture>) {
+export interface GitDiffFixture {
+  /** The raw unified diff output */
+  diffOutput: string;
+  /** The numstat output (additions, deletions per file) */
+  numstatOutput?: string;
+}
+
+/**
+ * Creates an executeBash function that returns git status and diff output for workspaces.
+ * Handles: git status, git show-branch, git diff, git diff --numstat
+ */
+export function createGitStatusExecutor(
+  gitStatus?: Map<string, GitStatusFixture>,
+  gitDiff?: Map<string, GitDiffFixture>
+) {
   return (workspaceId: string, script: string) => {
     if (script.includes("git status") || script.includes("git show-branch")) {
       const status = gitStatus?.get(workspaceId) ?? {};
       const output = createGitStatusOutput(status);
       return Promise.resolve({ success: true as const, output, exitCode: 0, wall_duration_ms: 50 });
     }
+
+    // Handle git diff --numstat
+    if (script.includes("git diff") && script.includes("--numstat")) {
+      const diff = gitDiff?.get(workspaceId);
+      const output = diff?.numstatOutput ?? "";
+      return Promise.resolve({ success: true as const, output, exitCode: 0, wall_duration_ms: 50 });
+    }
+
+    // Handle git diff (regular diff output)
+    if (script.includes("git diff")) {
+      const diff = gitDiff?.get(workspaceId);
+      const output = diff?.diffOutput ?? "";
+      return Promise.resolve({ success: true as const, output, exitCode: 0, wall_duration_ms: 50 });
+    }
+
     return Promise.resolve({
       success: true as const,
       output: "",
@@ -174,6 +217,8 @@ export interface SimpleChatSetupOptions {
   projectName?: string;
   messages: ChatMuxMessage[];
   gitStatus?: GitStatusFixture;
+  /** Git diff output for Review tab */
+  gitDiff?: GitDiffFixture;
   providersConfig?: ProvidersConfigMap;
   backgroundProcesses?: BackgroundProcessFixture[];
   /** Session usage data for Costs tab */
@@ -200,6 +245,9 @@ export function setupSimpleChatStory(opts: SimpleChatSetupOptions): APIClient {
   const chatHandlers = new Map([[workspaceId, createStaticChatHandler(opts.messages)]]);
   const gitStatus = opts.gitStatus
     ? new Map<string, GitStatusFixture>([[workspaceId, opts.gitStatus]])
+    : undefined;
+  const gitDiff = opts.gitDiff
+    ? new Map<string, GitDiffFixture>([[workspaceId, opts.gitDiff]])
     : undefined;
 
   // Set localStorage for workspace selection and collapse right sidebar by default
@@ -231,7 +279,7 @@ export function setupSimpleChatStory(opts: SimpleChatSetupOptions): APIClient {
     projects: groupWorkspacesByProject(workspaces),
     workspaces,
     onChat,
-    executeBash: createGitStatusExecutor(gitStatus),
+    executeBash: createGitStatusExecutor(gitStatus, gitDiff),
     providersConfig: opts.providersConfig,
     backgroundProcesses: bgProcesses,
     statsTabVariant: opts.statsTabEnabled ? "stats" : "control",

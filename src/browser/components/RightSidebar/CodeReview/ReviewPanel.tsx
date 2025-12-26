@@ -29,15 +29,17 @@ import { ReviewControls } from "./ReviewControls";
 import { FileTree } from "./FileTree";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useReviewState } from "@/browser/hooks/useReviewState";
+import { useHunkFirstSeen } from "@/browser/hooks/useHunkFirstSeen";
 import { useReviewRefreshController } from "@/browser/hooks/useReviewRefreshController";
 import { parseDiff, extractAllHunks, buildGitDiffCommand } from "@/common/utils/git/diffParser";
-import { getReviewSearchStateKey } from "@/common/constants/storage";
+import { getReviewSearchStateKey, REVIEW_SORT_ORDER_KEY } from "@/common/constants/storage";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/ui/tooltip";
 import { parseNumstat, buildFileTree, extractNewPath } from "@/common/utils/git/numstatParser";
 import type {
   DiffHunk,
   ReviewFilters as ReviewFiltersType,
   ReviewNoteData,
+  ReviewSortOrder,
 } from "@/common/types/review";
 import type { FileTreeNode } from "@/common/utils/git/numstatParser";
 import { matchesKeybind, KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
@@ -219,8 +221,17 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   // Persist showReadHunks flag globally
   const [showReadHunks, setShowReadHunks] = usePersistedState("review-show-read", true);
 
+  // Persist sort order globally
+  const [sortOrder, setSortOrder] = usePersistedState<ReviewSortOrder>(
+    REVIEW_SORT_ORDER_KEY,
+    "last-edit"
+  );
+
   // Initialize review state hook
   const { isRead, toggleRead, markAsRead, markAsUnread } = useReviewState(workspaceId);
+
+  // Track hunk first-seen timestamps for LIFO sorting
+  const { recordFirstSeen, firstSeenMap } = useHunkFirstSeen(workspaceId);
 
   // Derive hunks from diffState for use in filters and rendering
   const hunks = useMemo(
@@ -233,6 +244,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     showReadHunks: showReadHunks,
     diffBase: diffBase,
     includeUncommitted: includeUncommitted,
+    sortOrder: sortOrder,
   });
 
   // Centralized refresh controller - handles debouncing, visibility, interaction pausing
@@ -507,6 +519,18 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     setShowReadHunks(filters.showReadHunks);
   }, [filters.showReadHunks, setShowReadHunks]);
 
+  // Persist sortOrder when it changes
+  useEffect(() => {
+    setSortOrder(filters.sortOrder);
+  }, [filters.sortOrder, setSortOrder]);
+
+  // Record first-seen timestamps for new hunks
+  useEffect(() => {
+    if (hunks.length > 0) {
+      recordFirstSeen(hunks.map((h) => h.id));
+    }
+  }, [hunks, recordFirstSeen]);
+
   // Get read status for a file
   const getFileReadStatus = useCallback(
     (filePath: string) => {
@@ -521,23 +545,40 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     [hunks, isRead]
   );
 
-  // Apply frontend filters (read state, search term)
+  // Apply frontend filters (read state, search term) and sorting
   // Note: selectedFilePath is a git-level filter, applied when fetching hunks
   const filteredHunks = useMemo(() => {
-    return applyFrontendFilters(hunks, {
+    const filtered = applyFrontendFilters(hunks, {
       showReadHunks: filters.showReadHunks,
       isRead,
       searchTerm: debouncedSearchTerm,
       useRegex: searchState.useRegex,
       matchCase: searchState.matchCase,
     });
+
+    // Apply sorting based on sortOrder
+    if (filters.sortOrder === "last-edit") {
+      // Sort by first-seen timestamp (newest first = LIFO)
+      // Hunks without a first-seen record use current time (treated as newest)
+      const now = Date.now();
+      return [...filtered].sort((a, b) => {
+        const aTime = firstSeenMap[a.id] ?? now;
+        const bTime = firstSeenMap[b.id] ?? now;
+        return bTime - aTime; // Descending (newest first)
+      });
+    }
+
+    // Default: file-order (maintain original order from git diff)
+    return filtered;
   }, [
     hunks,
     filters.showReadHunks,
+    filters.sortOrder,
     isRead,
     debouncedSearchTerm,
     searchState.useRegex,
     searchState.matchCase,
+    firstSeenMap,
   ]);
 
   // Memoize search config to prevent re-creating object on every render
@@ -959,6 +1000,8 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
                 filteredHunks.map((hunk) => {
                   const isSelected = hunk.id === selectedHunkId;
                   const hunkIsRead = isRead(hunk.id);
+                  // Default to now for hunks without first-seen (e.g., old mux versions)
+                  const hunkFirstSeenAt = firstSeenMap[hunk.id] ?? Date.now();
 
                   return (
                     <HunkViewer
@@ -968,6 +1011,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
                       workspaceId={workspaceId}
                       isSelected={isSelected}
                       isRead={hunkIsRead}
+                      firstSeenAt={hunkFirstSeenAt}
                       onClick={handleHunkClick}
                       onToggleRead={handleHunkToggleRead}
                       onRegisterToggleExpand={handleRegisterToggleExpand}

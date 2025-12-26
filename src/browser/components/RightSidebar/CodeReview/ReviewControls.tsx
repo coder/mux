@@ -4,9 +4,14 @@
 
 import React, { useState } from "react";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
-import type { ReviewFilters, ReviewStats } from "@/common/types/review";
+import type { ReviewFilters, ReviewStats, ReviewSortOrder } from "@/common/types/review";
 import { RefreshButton } from "./RefreshButton";
 import { UntrackedStatus } from "./UntrackedStatus";
+
+const SORT_OPTIONS: Array<{ value: ReviewSortOrder; label: string }> = [
+  { value: "file-order", label: "File order" },
+  { value: "last-edit", label: "Last edit" },
+];
 
 interface ReviewControlsProps {
   filters: ReviewFilters;
@@ -74,6 +79,10 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
     onFiltersChange({ ...filters, showReadHunks: e.target.checked });
   };
 
+  const handleSortChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    onFiltersChange({ ...filters, sortOrder: e.target.value as ReviewSortOrder });
+  };
+
   const handleSetDefault = () => {
     setDefaultBase(filters.diffBase);
   };
@@ -127,6 +136,22 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
       <label className="text-foreground flex cursor-pointer items-center gap-1.5 text-[11px] whitespace-nowrap hover:text-[var(--color-hover-foreground)] [&_input[type='checkbox']]:cursor-pointer">
         <input type="checkbox" checked={filters.showReadHunks} onChange={handleShowReadToggle} />
         Show read
+      </label>
+
+      <label className="text-foreground flex cursor-pointer items-center gap-1.5 text-[11px] whitespace-nowrap">
+        <span className="text-muted font-medium">Sort:</span>
+        <select
+          aria-label="Sort hunks by"
+          value={filters.sortOrder}
+          onChange={handleSortChange}
+          className="bg-dark text-foreground border-border-medium hover:border-accent focus:border-accent cursor-pointer rounded border px-1.5 py-0.5 text-[11px] transition-[border-color] duration-200 focus:outline-none"
+        >
+          {SORT_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
       </label>
 
       <UntrackedStatus
