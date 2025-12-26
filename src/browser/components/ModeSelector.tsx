@@ -12,8 +12,6 @@ const FALLBACK_MODES: ModeDefinition[] = [
     name: "exec",
     label: "Exec",
     description: "Full execution mode with all tools enabled",
-    icon: "⚡",
-    color: "var(--color-exec-mode)",
     instructions: "",
     source: "builtin",
     filePath: "",
@@ -22,13 +20,23 @@ const FALLBACK_MODES: ModeDefinition[] = [
     name: "plan",
     label: "Plan",
     description: "Read-only planning mode with propose_plan tool",
-    icon: "📋",
-    color: "var(--color-plan-mode)",
     instructions: "",
     source: "builtin",
     filePath: "",
   },
 ];
+
+/** Get the active class for a mode based on its name */
+function getModeActiveClass(modeName: string): string {
+  switch (modeName) {
+    case "exec":
+      return "bg-exec-mode text-white";
+    case "plan":
+      return "bg-plan-mode text-white";
+    default:
+      return "bg-toggle-active text-toggle-text-active";
+  }
+}
 
 const ModeHelpTooltip: React.FC<{ modes: ModeDefinition[] }> = (props) => (
   <Tooltip>
@@ -44,10 +52,7 @@ const ModeHelpTooltip: React.FC<{ modes: ModeDefinition[] }> = (props) => (
               <br />
             </>
           )}
-          <strong>
-            {m.icon} {m.label}:
-          </strong>{" "}
-          {m.description}
+          <strong>{m.label}:</strong> {m.description}
         </React.Fragment>
       ))}
       <br />
@@ -66,6 +71,7 @@ interface ModeSelectorProps {
 
 /**
  * ModeSelector - Dropdown for selecting agent behavior modes.
+ * Styled to match the original toggle group appearance.
  * Loads custom modes from .mux/modes/ and ~/.mux/modes/ directories.
  */
 export const ModeSelector: React.FC<ModeSelectorProps> = (props) => {
@@ -76,28 +82,28 @@ export const ModeSelector: React.FC<ModeSelectorProps> = (props) => {
   return (
     <div className={cn("flex items-center gap-1.5", props.className)}>
       <Select value={props.mode} onValueChange={props.onChange}>
-        <SelectTrigger className="w-[100px] [@container(max-width:550px)]:w-[80px]">
+        <SelectTrigger
+          className={cn(
+            "h-auto min-w-0 gap-0 border-0 bg-toggle-bg px-0 py-0 shadow-none",
+            "focus:ring-0 focus:ring-offset-0",
+            "[&>svg]:hidden" // Hide the chevron
+          )}
+        >
           <SelectValue>
             <span
-              className="flex items-center gap-1"
-              style={{
-                color: currentMode?.color,
-              }}
+              className={cn(
+                "px-1.5 py-0.5 text-[11px] font-sans rounded-sm font-medium",
+                getModeActiveClass(currentMode?.name ?? props.mode)
+              )}
             >
-              {currentMode?.icon && <span>{currentMode.icon}</span>}
-              <span className="[@container(max-width:550px)]:hidden">
-                {currentMode?.label ?? props.mode}
-              </span>
+              {currentMode?.label ?? props.mode}
             </span>
           </SelectValue>
         </SelectTrigger>
         <SelectContent>
           {modes.map((m) => (
             <SelectItem key={m.name} value={m.name}>
-              <span className="flex items-center gap-1.5" style={{ color: m.color }}>
-                {m.icon && <span>{m.icon}</span>}
-                <span>{m.label}</span>
-              </span>
+              {m.label}
             </SelectItem>
           ))}
         </SelectContent>
