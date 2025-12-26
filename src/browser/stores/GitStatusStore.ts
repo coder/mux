@@ -300,10 +300,7 @@ export class GitStatusStore {
       const result = await this.client.workspace.executeBash({
         workspaceId: metadata.id,
         script: GIT_STATUS_SCRIPT,
-        options: {
-          timeout_secs: 5,
-          niceness: 19,
-        },
+        options: { timeout_secs: 5 },
       });
 
       if (!result.success) {
@@ -449,10 +446,7 @@ export class GitStatusStore {
       const result = await this.client.workspace.executeBash({
         workspaceId,
         script: GIT_FETCH_SCRIPT,
-        options: {
-          timeout_secs: 30,
-          niceness: 19,
-        },
+        options: { timeout_secs: 30 },
       });
 
       if (!result.success) {

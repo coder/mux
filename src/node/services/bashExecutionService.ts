@@ -13,8 +13,6 @@ export interface BashExecutionConfig {
   secrets?: Record<string, string>;
   /** Whether to spawn as detached process group (default: true) */
   detached?: boolean;
-  /** Nice level for process priority (-20 to 19) */
-  niceness?: number;
 }
 
 /**
@@ -121,14 +119,9 @@ export class BashExecutionService {
       `BashExecutionService: Script: ${script.substring(0, 100)}${script.length > 100 ? "..." : ""}`
     );
 
-    // Windows doesn't have nice command, so just spawn bash directly
-    const isWindows = process.platform === "win32";
     const bashPath = getBashPath();
-    const spawnCommand = config.niceness !== undefined && !isWindows ? "nice" : bashPath;
-    const spawnArgs =
-      config.niceness !== undefined && !isWindows
-        ? ["-n", config.niceness.toString(), bashPath, "-c", script]
-        : ["-c", script];
+    const spawnCommand = bashPath;
+    const spawnArgs = ["-c", script];
 
     const child = spawn(spawnCommand, spawnArgs, {
       cwd: config.cwd,

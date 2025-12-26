@@ -55,7 +55,7 @@ export function BranchSelector({ workspaceId, workspaceName, className }: Branch
         const result = await api.workspace.executeBash({
           workspaceId,
           script: `git rev-parse --abbrev-ref HEAD 2>/dev/null`,
-          options: { timeout_secs: 5, niceness: 19 },
+          options: { timeout_secs: 5 },
         });
 
         if (result.success && result.data.success && result.data.output?.trim()) {
@@ -81,12 +81,12 @@ export function BranchSelector({ workspaceId, workspaceName, className }: Branch
         api.workspace.executeBash({
           workspaceId,
           script: `git branch --sort=-committerdate --format='%(refname:short)' 2>/dev/null | head -${MAX_LOCAL_BRANCHES + 1}`,
-          options: { timeout_secs: 5, niceness: 19 },
+          options: { timeout_secs: 5 },
         }),
         api.workspace.executeBash({
           workspaceId,
           script: `git remote 2>/dev/null`,
-          options: { timeout_secs: 5, niceness: 19 },
+          options: { timeout_secs: 5 },
         }),
       ]);
 
@@ -130,7 +130,7 @@ export function BranchSelector({ workspaceId, workspaceName, className }: Branch
         const result = await api.workspace.executeBash({
           workspaceId,
           script: `git branch -r --list '${remote}/*' --sort=-committerdate --format='%(refname:short)' 2>/dev/null | head -${MAX_REMOTE_BRANCHES + 1}`,
-          options: { timeout_secs: 5, niceness: 19 },
+          options: { timeout_secs: 5 },
         });
 
         if (result.success && result.data.success && result.data.output) {

@@ -2011,7 +2011,6 @@ export class WorkspaceService extends EventEmitter {
     script: string,
     options?: {
       timeout_secs?: number;
-      niceness?: number;
     }
   ): Promise<Result<BashToolResult>> {
     try {
@@ -2048,7 +2047,6 @@ export class WorkspaceService extends EventEmitter {
         cwd: workspacePath,
         runtime,
         secrets: secretsToRecord(projectSecrets),
-        niceness: options?.niceness,
         runtimeTempDir: tempDir.path,
         overflow_policy: "truncate",
       });

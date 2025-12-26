@@ -80,8 +80,6 @@ export interface SpawnCommandOptions {
   outputPath: string;
   /** Path to bash executable (defaults to "bash") */
   bashPath?: string;
-  /** Optional niceness value for process priority */
-  niceness?: number;
   /** Function to quote paths for shell (default: shellQuote). Use expandTildeForSSH for SSH. */
   quotePath?: (path: string) => string;
 }
@@ -99,11 +97,10 @@ export interface SpawnCommandOptions {
  */
 export function buildSpawnCommand(options: SpawnCommandOptions): string {
   const bash = options.bashPath ?? "bash";
-  const nicePrefix = options.niceness !== undefined ? `nice -n ${options.niceness} ` : "";
   const quotePath = options.quotePath ?? shellQuote;
 
   return (
-    `(set -m; ${nicePrefix}nohup ${shellQuote(bash)} -c ${shellQuote(options.wrapperScript)} ` +
+    `(set -m; nohup ${shellQuote(bash)} -c ${shellQuote(options.wrapperScript)} ` +
     `> ${quotePath(options.outputPath)} 2>&1 ` +
     `< /dev/null & echo $!)`
   );

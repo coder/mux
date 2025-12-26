@@ -20,9 +20,9 @@ const mockToolCallOptions: ToolCallOptions = {
 // Helper to create bash tool with test configuration
 // Returns both tool and disposable temp directory
 // Use with: using testEnv = createTestBashTool();
-function createTestBashTool(options?: { niceness?: number }) {
+function createTestBashTool() {
   const tempDir = new TestTempDir("test-bash");
-  const config = createTestToolConfig(process.cwd(), { niceness: options?.niceness });
+  const config = createTestToolConfig(process.cwd());
   config.runtimeTempDir = tempDir.path; // Override runtimeTempDir to use test's disposable temp dir
   const tool = createBashTool(config);
 
@@ -1089,96 +1089,7 @@ describe("bash tool", () => {
   // before reaching the execute function, so these cases are handled at the schema level
 });
 
-describe("niceness parameter", () => {
-  it("should execute complex multi-line scripts with niceness", async () => {
-    using testEnv = createTestBashTool({ niceness: 19 });
-    const tool = testEnv.tool;
-
-    // Complex script with conditionals, similar to GIT_STATUS_SCRIPT
-    const args: BashToolArgs = {
-      script: `
-# Test complex script with conditionals
-VALUE=$(echo "test")
-
-if [ -z "$VALUE" ]; then
-  echo "ERROR: Value is empty"
-  exit 1
-fi
-
-# Another conditional check
-RESULT=$(echo "success")
-if [ $? -ne 0 ]; then
-  echo "ERROR: Command failed"
-  exit 2
-fi
-
-echo "---OUTPUT---"
-echo "$VALUE"
-echo "$RESULT"
-`,
-      timeout_secs: 5,
-      run_in_background: false,
-      display_name: "test",
-    };
-
-    const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
-
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.output).toContain("---OUTPUT---");
-      expect(result.output).toContain("test");
-      expect(result.output).toContain("success");
-      expect(result.exitCode).toBe(0);
-    }
-  });
-
-  it("should handle exit codes correctly with niceness", async () => {
-    using testEnv = createTestBashTool({ niceness: 19 });
-    const tool = testEnv.tool;
-
-    // Script that should exit with code 2
-    const args: BashToolArgs = {
-      script: `
-RESULT=$(false)
-if [ $? -ne 0 ]; then
-  echo "Command failed as expected"
-  exit 2
-fi
-`,
-      timeout_secs: 5,
-      run_in_background: false,
-      display_name: "test",
-    };
-
-    const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
-
-    expect(result.success).toBe(false);
-    expect(result.exitCode).toBe(2);
-    // Error message includes stderr output
-    if (!result.success) {
-      expect(result.error).toMatch(/Command failed as expected|Command exited with code 2/);
-    }
-  });
-
-  it("should execute simple commands with niceness", async () => {
-    using testEnv = createTestBashTool({ niceness: 10 });
-    const tool = testEnv.tool;
-    const args: BashToolArgs = {
-      script: "echo hello",
-      timeout_secs: 5,
-      run_in_background: false,
-      display_name: "test",
-    };
-
-    const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
-
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.output).toBe("hello");
-      expect(result.exitCode).toBe(0);
-    }
-  });
-
+describe("zombie process cleanup", () => {
   it("should not create zombie processes when spawning background tasks", async () => {
     using testEnv = createTestBashTool();
     const tool = testEnv.tool;

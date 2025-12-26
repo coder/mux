@@ -59,8 +59,6 @@ export interface ExecOptions {
    * spawning background processes that are designed to run indefinitely.
    */
   timeout?: number;
-  /** Process niceness level (-20 to 19, lower = higher priority) */
-  niceness?: number;
   /** Abort signal for cancellation */
   abortSignal?: AbortSignal;
   /** Force PTY allocation (SSH only - adds -t flag) */

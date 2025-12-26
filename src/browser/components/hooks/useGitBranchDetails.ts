@@ -221,10 +221,7 @@ printf '__MUX_BRANCH_DATA__BEGIN_DIRTY_FILES__\\n%s\\n__MUX_BRANCH_DATA__END_DIR
       const result = await api.workspace.executeBash({
         workspaceId,
         script,
-        options: {
-          timeout_secs: 5,
-          niceness: 19, // Lowest priority - don't interfere with user operations
-        },
+        options: { timeout_secs: 5 },
       });
 
       if (!result.success) {

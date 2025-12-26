@@ -356,7 +356,6 @@ export const workspace = {
       options: z
         .object({
           timeout_secs: z.number().optional(),
-          niceness: z.number().optional(),
         })
         .optional(),
     }),
