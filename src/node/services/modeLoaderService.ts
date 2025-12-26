@@ -118,8 +118,8 @@ export class ModeLoaderService {
 
   private async loadBuiltinModes(): Promise<void> {
     // Built-in modes are bundled with the app in src/node/builtinModes/
-    // At runtime they're in the same relative location from the compiled output
-    const builtinDir = path.join(__dirname, "builtinModes");
+    // This file is in src/node/services/, so we need to go up one level
+    const builtinDir = path.join(__dirname, "..", "builtinModes");
 
     let files: string[];
     try {
