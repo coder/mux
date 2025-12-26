@@ -19,7 +19,7 @@ import { RefreshController } from "@/browser/utils/RefreshController";
  * - Lives outside React lifecycle (stable references)
  * - Event-driven updates (no polling):
  *   - Initial subscription triggers immediate fetch
- *   - File-modifying tools trigger debounced refresh (3s)
+ *   - File-modifying tools trigger debounced refresh (1s active, 3s background)
  *   - Window focus triggers refresh for visible workspaces
  *   - Explicit invalidation (branch switch, etc.)
  * - Manages git fetch with exponential backoff
@@ -31,6 +31,7 @@ import { RefreshController } from "@/browser/utils/RefreshController";
 
 // Configuration
 const MAX_CONCURRENT_GIT_OPS = 5;
+const ACTIVE_WORKSPACE_DEBOUNCE_MS = 1000; // 1s for active workspace (vs 3s background)
 
 // Fetch configuration - aggressive intervals for fresh data
 const FETCH_BASE_INTERVAL_MS = 3 * 1000; // 3 seconds
@@ -53,6 +54,9 @@ export class GitStatusStore {
   // File modification subscription
   private fileModifyUnsubscribe: (() => void) | null = null;
 
+  // Active workspace ID for prioritized refresh (1s vs 3s debounce)
+  private activeWorkspaceId: string | null = null;
+
   // RefreshController handles debouncing, focus/visibility, and in-flight guards
   private readonly refreshController: RefreshController;
 
@@ -64,7 +68,8 @@ export class GitStatusStore {
     // Create refresh controller with proactive focus refresh (catches external git changes)
     this.refreshController = new RefreshController({
       onRefresh: () => this.updateGitStatus(),
-      debounceMs: 3000, // Same as TOOL_REFRESH_DEBOUNCE_MS in ReviewPanel
+      debounceMs: 3000, // Background workspaces
+      priorityDebounceMs: ACTIVE_WORKSPACE_DEBOUNCE_MS, // Active workspace gets faster refresh
       refreshOnFocus: true, // Proactively refresh on focus to catch external changes
       focusDebounceMs: 500, // Prevent spam from rapid alt-tabbing
     });
@@ -111,6 +116,14 @@ export class GitStatusStore {
     return this.statuses.get(workspaceId, () => {
       return this.statusCache.get(workspaceId) ?? null;
     });
+  }
+
+  /**
+   * Set the active workspace for prioritized refresh (1s debounce vs 3s).
+   * Call when workspace selection changes.
+   */
+  setActiveWorkspace(workspaceId: string | null): void {
+    this.activeWorkspaceId = workspaceId;
   }
 
   /**
@@ -490,8 +503,13 @@ export class GitStatusStore {
         return;
       }
 
-      // RefreshController handles debouncing, focus gating, and in-flight guards
-      this.refreshController.schedule();
+      // Active workspace gets faster refresh (1s) via priority debounce
+      if (workspaceId === this.activeWorkspaceId) {
+        this.refreshController.schedulePriority();
+      } else {
+        // Background workspaces use standard 3s debounce
+        this.refreshController.schedule();
+      }
     });
   }
 }
@@ -541,4 +559,12 @@ export function useGitStatusStoreRaw(): GitStatusStore {
 export function invalidateGitStatus(workspaceId: string): void {
   const store = getGitStoreInstance();
   store.invalidateWorkspace(workspaceId);
+}
+
+/**
+ * Set the active workspace for prioritized git status refresh (1s vs 3s debounce).
+ */
+export function setActiveWorkspace(workspaceId: string | null): void {
+  const store = getGitStoreInstance();
+  store.setActiveWorkspace(workspaceId);
 }

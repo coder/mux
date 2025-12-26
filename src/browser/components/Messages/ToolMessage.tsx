@@ -8,6 +8,7 @@ import { FileReadToolCall } from "../tools/FileReadToolCall";
 import { AskUserQuestionToolCall } from "../tools/AskUserQuestionToolCall";
 import { ProposePlanToolCall } from "../tools/ProposePlanToolCall";
 import { TodoToolCall } from "../tools/TodoToolCall";
+import { AgentReportToolCall } from "../tools/AgentReportToolCall";
 import { StatusSetToolCall } from "../tools/StatusSetToolCall";
 import { WebFetchToolCall } from "../tools/WebFetchToolCall";
 import { BashBackgroundListToolCall } from "../tools/BashBackgroundListToolCall";
@@ -432,6 +433,14 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
           result={message.result as TaskTerminateToolSuccessResult | undefined}
           status={message.status}
         />
+      </div>
+    );
+  }
+
+  if (message.toolName === "agent_report") {
+    return (
+      <div className={className}>
+        <AgentReportToolCall args={message.args} result={message.result} status={message.status} />
       </div>
     );
   }

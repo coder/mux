@@ -138,6 +138,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
   const storeRaw = useWorkspaceStoreRaw();
   const meta = workspaceMetadata.get(workspaceId);
   const isQueuedAgentTask = Boolean(meta?.parentWorkspaceId) && meta?.taskStatus === "queued";
+  const isReportedAgentTask = Boolean(meta?.parentWorkspaceId) && meta?.taskStatus === "reported";
   const queuedAgentTaskPrompt =
     isQueuedAgentTask && typeof meta?.taskPrompt === "string" && meta.taskPrompt.trim().length > 0
       ? meta.taskPrompt
@@ -760,6 +761,11 @@ const AIViewInner: React.FC<AIViewProps> = ({
             available.
           </div>
         )}
+        {isReportedAgentTask && (
+          <div className="border-border-medium bg-background-secondary text-muted mb-2 rounded-md border px-3 py-2 text-xs">
+            Completed — this agent task workspace will be deleted in 5 seconds.
+          </div>
+        )}
         <ChatInput
           variant="workspace"
           workspaceId={workspaceId}
@@ -767,11 +773,13 @@ const AIViewInner: React.FC<AIViewProps> = ({
           onMessageSent={handleMessageSent}
           onTruncateHistory={handleClearHistory}
           onProviderConfig={handleProviderConfig}
-          disabled={!projectName || !workspaceName || isQueuedAgentTask}
+          disabled={!projectName || !workspaceName || isQueuedAgentTask || isReportedAgentTask}
           disabledReason={
             isQueuedAgentTask
               ? "Queued — waiting for an available parallel task slot. This will start automatically."
-              : undefined
+              : isReportedAgentTask
+                ? "Completed — this agent task workspace will be deleted in 5 seconds."
+                : undefined
           }
           isCompacting={isCompacting}
           editingMessage={editingMessage}

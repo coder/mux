@@ -33,6 +33,7 @@ import { z } from "zod";
 import { createDeltaStorage, type DeltaRecordStorage } from "./StreamingTPSCalculator";
 import { computeRecencyTimestamp } from "./recency";
 import { assert } from "@/common/utils/assert";
+import { extractAgentReportArgsFromArgsText } from "@/common/utils/tools/agentReportArgsText";
 import { getStatusStateKey } from "@/common/constants/storage";
 
 // Maximum number of messages to display in the DOM for performance
@@ -164,6 +165,12 @@ export class StreamingMessageAggregator {
   private cachedDisplayedMessages: DisplayedMessage[] | null = null;
   private recencyTimestamp: number | null = null;
 
+  // Track streamed tool-call args text (argsTextDelta) for in-flight rendering.
+  // Keyed by `${messageId}:${toolCallId}` to make cleanup on stream end trivial.
+  private readonly pendingToolArgsTextByToolCallKey = new Map<string, string>();
+  // Track which tool calls have already emitted tool-call-delta events so we can avoid
+  // double-counting tool input tokens when the subsequent tool-call-start arrives.
+  private readonly toolCallKeysWithDeltas = new Set<string>();
   // Delta history for token counting and TPS calculation
   private deltaHistory = new Map<string, DeltaRecordStorage>();
 
@@ -526,6 +533,20 @@ export class StreamingMessageAggregator {
       this.sessionTimingStats[statsKey] = modelStats;
     }
 
+    // Clean up any in-flight tool-call-delta arg text we may have accumulated for this stream.
+    // (tool-call-delta events can arrive before tool-call-start, and we keep argsText in memory
+    // only for live UI rendering).
+    const toolCallKeyPrefix = `${messageId}:`;
+    for (const key of Array.from(this.pendingToolArgsTextByToolCallKey.keys())) {
+      if (key.startsWith(toolCallKeyPrefix)) {
+        this.pendingToolArgsTextByToolCallKey.delete(key);
+      }
+    }
+    for (const key of Array.from(this.toolCallKeysWithDeltas.values())) {
+      if (key.startsWith(toolCallKeyPrefix)) {
+        this.toolCallKeysWithDeltas.delete(key);
+      }
+    }
     this.activeStreams.delete(messageId);
     // Clear todos when stream ends - they're stream-scoped state
     // On reload, todos will be reconstructed from completed tool_write calls in history
@@ -1131,6 +1152,12 @@ export class StreamingMessageAggregator {
     const message = this.messages.get(data.messageId);
     if (!message) return;
 
+    const toolCallKey = `${data.messageId}:${data.toolCallId}`;
+    const hadToolCallDeltas = this.toolCallKeysWithDeltas.has(toolCallKey);
+    // Deltas are only useful while the call is being assembled.
+    this.toolCallKeysWithDeltas.delete(toolCallKey);
+    this.pendingToolArgsTextByToolCallKey.delete(toolCallKey);
+
     // If this is a nested call (from PTC code_execution), add to parent's nestedCalls
     if (data.parentToolCallId) {
       const parentPart = message.parts.find(
@@ -1158,16 +1185,33 @@ export class StreamingMessageAggregator {
         part.type === "dynamic-tool" && part.toolCallId === data.toolCallId
     );
 
-    if (existingToolPart) {
-      console.warn(`Tool call ${data.toolCallId} already exists, skipping duplicate`);
-      return;
-    }
-
-    // Track tool start time for execution duration calculation
+    // Track tool start time for execution duration calculation.
+    // NOTE: Some tools (agent_report) may start their timing from tool-call-delta, so preserve the
+    // earliest timestamp.
     const context = this.activeStreams.get(data.messageId);
     if (context) {
       this.updateStreamClock(context, data.timestamp);
-      context.pendingToolStarts.set(data.toolCallId, data.timestamp);
+      if (!context.pendingToolStarts.has(data.toolCallId)) {
+        context.pendingToolStarts.set(data.toolCallId, data.timestamp);
+      }
+    }
+
+    if (existingToolPart) {
+      // If we already created a tool part from tool-call-delta, update it in-place.
+      if (!hadToolCallDeltas) {
+        console.warn(`Tool call ${data.toolCallId} already exists, skipping duplicate`);
+        return;
+      }
+
+      assert(
+        existingToolPart.toolName === data.toolName,
+        "handleToolCallStart: existing tool part has unexpected toolName"
+      );
+
+      existingToolPart.input = data.args;
+
+      this.invalidateCache();
+      return;
     }
 
     // Add tool part to maintain temporal order
@@ -1181,16 +1225,84 @@ export class StreamingMessageAggregator {
     };
     message.parts.push(toolPart as never);
 
-    // Track tokens for tool input
-    this.trackDelta(data.messageId, data.tokens, data.timestamp, "tool-args");
+    // Track tokens for tool input.
+    // tool-call-delta already covers streamed args text, so avoid double-counting.
+    if (!hadToolCallDeltas) {
+      this.trackDelta(data.messageId, data.tokens, data.timestamp, "tool-args");
+    }
 
     this.invalidateCache();
   }
 
   handleToolCallDelta(data: ToolCallDeltaEvent): void {
+    const toolCallKey = `${data.messageId}:${data.toolCallId}`;
+    this.toolCallKeysWithDeltas.add(toolCallKey);
+
     // Track delta for token counting and TPS calculation
     this.trackDelta(data.messageId, data.tokens, data.timestamp, "tool-args");
-    // Tool deltas are for display - args are in dynamic-tool part
+
+    // Only agent_report gets special in-flight rendering today.
+    if (data.toolName !== "agent_report") {
+      return;
+    }
+
+    // tool-call-delta payloads come from the AI SDK and should always be a string argsTextDelta,
+    // but stay defensive to avoid crashing the UI on unexpected inputs.
+    if (typeof data.delta !== "string" || data.delta.length === 0) {
+      return;
+    }
+
+    const message = this.messages.get(data.messageId);
+    if (!message) return;
+
+    const context = this.activeStreams.get(data.messageId);
+    if (context) {
+      this.updateStreamClock(context, data.timestamp);
+      // Start tool timing from the first delta so "report writing" time is visible in the UI.
+      if (!context.pendingToolStarts.has(data.toolCallId)) {
+        context.pendingToolStarts.set(data.toolCallId, data.timestamp);
+      }
+    }
+
+    const nextArgsText =
+      (this.pendingToolArgsTextByToolCallKey.get(toolCallKey) ?? "") + data.delta;
+    this.pendingToolArgsTextByToolCallKey.set(toolCallKey, nextArgsText);
+
+    const extracted = extractAgentReportArgsFromArgsText(nextArgsText);
+
+    // Render args even while incomplete. Tool components treat empty strings as "no data yet".
+    const partialArgs: { reportMarkdown: string; title?: string } = {
+      reportMarkdown: extracted.reportMarkdown ?? "",
+    };
+    if (typeof extracted.title === "string" && extracted.title.length > 0) {
+      partialArgs.title = extracted.title;
+    }
+
+    // Ensure a tool part exists even before tool-call-start so the UI can stream the preview.
+    const existingToolPart = message.parts.find(
+      (part): part is DynamicToolPart =>
+        part.type === "dynamic-tool" && part.toolCallId === data.toolCallId
+    );
+
+    if (existingToolPart) {
+      assert(
+        existingToolPart.toolName === data.toolName,
+        "handleToolCallDelta: existing tool part has unexpected toolName"
+      );
+      existingToolPart.input = partialArgs;
+    } else {
+      const toolPart: DynamicToolPartPending = {
+        type: "dynamic-tool",
+        toolCallId: data.toolCallId,
+        toolName: data.toolName,
+        state: "input-available",
+        input: partialArgs,
+        timestamp: data.timestamp,
+      };
+      message.parts.push(toolPart as never);
+    }
+
+    this.invalidateCache();
   }
 
   /**

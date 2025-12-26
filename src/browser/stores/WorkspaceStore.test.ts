@@ -773,4 +773,151 @@ describe("WorkspaceStore", () => {
       expect(live).toBeNull();
     });
   });
+
+  describe("file-modifying tool subscription", () => {
+    it("notifies subscribers when bash tool completes", async () => {
+      const workspaceId = "file-modify-test-1";
+      const notifications: string[] = [];
+
+      // Subscribe BEFORE creating workspace
+      const unsubscribe = store.subscribeFileModifyingTool((wsId) => {
+        notifications.push(wsId);
+      }, workspaceId);
+
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        yield { type: "caught-up" };
+        await Promise.resolve();
+        yield {
+          type: "tool-call-end",
+          workspaceId,
+          messageId: "m1",
+          toolCallId: "call-1",
+          toolName: "bash",
+          result: { success: true, output: "done", exitCode: 0, wall_duration_ms: 1 },
+          timestamp: 1,
+        };
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(notifications).toContain(workspaceId);
+      expect(notifications.length).toBe(1);
+
+      unsubscribe();
+    });
+
+    it("notifies subscribers when file_edit tool completes", async () => {
+      const workspaceId = "file-modify-test-2";
+      const notifications: string[] = [];
+
+      const unsubscribe = store.subscribeFileModifyingTool((wsId) => {
+        notifications.push(wsId);
+      }, workspaceId);
+
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        yield { type: "caught-up" };
+        await Promise.resolve();
+        yield {
+          type: "tool-call-end",
+          workspaceId,
+          messageId: "m1",
+          toolCallId: "call-1",
+          toolName: "file_edit_replace_string",
+          result: { success: true },
+          timestamp: 1,
+        };
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(notifications).toContain(workspaceId);
+      unsubscribe();
+    });
+
+    it("does NOT notify for non-file-modifying tools", async () => {
+      const workspaceId = "file-modify-test-3";
+      const notifications: string[] = [];
+
+      const unsubscribe = store.subscribeFileModifyingTool((wsId) => {
+        notifications.push(wsId);
+      }, workspaceId);
+
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        yield { type: "caught-up" };
+        await Promise.resolve();
+        yield {
+          type: "tool-call-end",
+          workspaceId,
+          messageId: "m1",
+          toolCallId: "call-1",
+          toolName: "web_search", // Not file-modifying
+          result: { success: true },
+          timestamp: 1,
+        };
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(notifications.length).toBe(0);
+      unsubscribe();
+    });
+
+    it("only notifies subscribers for the specific workspace", async () => {
+      const workspaceId1 = "file-modify-test-4a";
+      const workspaceId2 = "file-modify-test-4b";
+      const notifications1: string[] = [];
+      const notifications2: string[] = [];
+
+      const unsubscribe1 = store.subscribeFileModifyingTool((wsId) => {
+        notifications1.push(wsId);
+      }, workspaceId1);
+
+      const unsubscribe2 = store.subscribeFileModifyingTool((wsId) => {
+        notifications2.push(wsId);
+      }, workspaceId2);
+
+      // Only emit tool completion for workspace1
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        yield { type: "caught-up" };
+        await Promise.resolve();
+        yield {
+          type: "tool-call-end",
+          workspaceId: workspaceId1,
+          messageId: "m1",
+          toolCallId: "call-1",
+          toolName: "bash",
+          result: { success: true, output: "done", exitCode: 0, wall_duration_ms: 1 },
+          timestamp: 1,
+        };
+      });
+
+      createAndAddWorkspace(store, workspaceId1);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(notifications1.length).toBe(1);
+      expect(notifications2.length).toBe(0); // Not notified - different workspace
+
+      unsubscribe1();
+      unsubscribe2();
+    });
+  });
 });

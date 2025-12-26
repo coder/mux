@@ -75,3 +75,16 @@ export function formatRelativeTime(timestamp: number): string {
     return years === 1 ? "1 year ago" : `${years} years ago`;
   }
 }
+
+/**
+ * Compact relative time format for space-constrained UI (tooltips, badges).
+ * Examples: "5s ago", "2m ago", "3h ago", "1d ago"
+ */
+export function formatRelativeTimeCompact(timestamp: number): string {
+  const elapsed = Math.floor((Date.now() - timestamp) / 1000);
+  if (elapsed < 0) return "now";
+  if (elapsed < 60) return `${elapsed}s ago`;
+  if (elapsed < 3600) return `${Math.floor(elapsed / 60)}m ago`;
+  if (elapsed < 86400) return `${Math.floor(elapsed / 3600)}h ago`;
+  return `${Math.floor(elapsed / 86400)}d ago`;
+}

@@ -830,6 +830,13 @@ export class WorkspaceStore {
    *
    * REQUIRES: Workspace must have been added via addWorkspace() first.
    */
+  /**
+   * Get workspace name for logging/debugging. Returns "name" or falls back to ID.
+   */
+  getWorkspaceName(workspaceId: string): string {
+    return this.workspaceMetadata.get(workspaceId)?.name ?? workspaceId;
+  }
+
   getWorkspaceState(workspaceId: string): WorkspaceState {
     return this.states.get(workspaceId, () => {
       const aggregator = this.assertGet(workspaceId);
@@ -1829,6 +1836,8 @@ export const workspaceStore = {
     getStoreInstance().getFileModifyingToolMs(workspaceId),
   clearFileModifyingToolMs: (workspaceId: string) =>
     getStoreInstance().clearFileModifyingToolMs(workspaceId),
+  /** Get workspace name for logging/debugging */
+  getWorkspaceName: (workspaceId: string) => getStoreInstance().getWorkspaceName(workspaceId),
 };
 
 /**
