@@ -78,7 +78,6 @@ export type WebviewToExtensionMessage =
   | { type: "refreshWorkspaces" }
   | { type: "selectWorkspace"; workspaceId: string | null }
   | { type: "openWorkspace"; workspaceId: string }
-  | { type: "sendMessage"; workspaceId: string; text: string }
   | { type: "configureConnection" }
   | { type: "debugLog"; message: string; data?: unknown }
   | { type: "copyDebugLog"; text: string }
