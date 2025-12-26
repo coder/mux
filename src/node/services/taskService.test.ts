@@ -1600,6 +1600,132 @@ describe("TaskService", () => {
     expect(emit).toHaveBeenCalled();
   });
 
+  test('agent_report does not finalize pending task(kind="bash") tool output in parent partial', async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-111";
+    const childId = "child-222";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
+              {
+                path: path.join(projectPath, "child"),
+                id: childId,
+                name: "agent_explore_child",
+                parentWorkspaceId: parentId,
+                agentType: "explore",
+                taskStatus: "running",
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService } = createWorkspaceServiceMocks();
+    const { historyService, partialService, taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+
+    const parentPartial = createMuxMessage(
+      "assistant-parent-partial",
+      "assistant",
+      "Waiting on bash…",
+      { timestamp: Date.now() },
+      [
+        {
+          type: "dynamic-tool",
+          toolCallId: "task-call-1",
+          toolName: "task",
+          input: { kind: "bash", script: "echo hi", timeout_secs: 5 },
+          state: "input-available",
+        },
+      ]
+    );
+    const writeParentPartial = await partialService.writePartial(parentId, parentPartial);
+    expect(writeParentPartial.success).toBe(true);
+
+    const childPartial = createMuxMessage(
+      "assistant-child-partial",
+      "assistant",
+      "",
+      { timestamp: Date.now() },
+      [
+        {
+          type: "dynamic-tool",
+          toolCallId: "agent-report-call-1",
+          toolName: "agent_report",
+          input: { reportMarkdown: "Hello from child", title: "Result" },
+          state: "output-available",
+          output: { success: true },
+        },
+      ]
+    );
+    const writeChildPartial = await partialService.writePartial(childId, childPartial);
+    expect(writeChildPartial.success).toBe(true);
+
+    const internal = taskService as unknown as {
+      handleAgentReport: (event: {
+        type: "tool-call-end";
+        workspaceId: string;
+        messageId: string;
+        toolCallId: string;
+        toolName: string;
+        result: unknown;
+        timestamp: number;
+      }) => Promise<void>;
+    };
+
+    await internal.handleAgentReport({
+      type: "tool-call-end",
+      workspaceId: childId,
+      messageId: "assistant-child-partial",
+      toolCallId: "agent-report-call-1",
+      toolName: "agent_report",
+      result: { success: true },
+      timestamp: Date.now(),
+    });
+
+    const updatedParentPartial = await partialService.readPartial(parentId);
+    expect(updatedParentPartial).not.toBeNull();
+    if (updatedParentPartial) {
+      const toolPart = updatedParentPartial.parts.find(
+        (p) =>
+          p &&
+          typeof p === "object" &&
+          "type" in p &&
+          (p as { type?: unknown }).type === "dynamic-tool"
+      ) as unknown as
+        | {
+            toolName: string;
+            state: string;
+            output?: unknown;
+          }
+        | undefined;
+
+      expect(toolPart?.toolName).toBe("task");
+      expect(toolPart?.state).toBe("input-available");
+      expect(toolPart?.output).toBeUndefined();
+    }
+
+    const parentHistory = await historyService.getHistory(parentId);
+    expect(parentHistory.success).toBe(true);
+    if (parentHistory.success) {
+      const serialized = JSON.stringify(parentHistory.data);
+      expect(serialized).toContain("<mux_subagent_report>");
+      expect(serialized).toContain("Hello from child");
+    }
+  });
+
   test("agent_report updates queued/running task tool output in parent history", async () => {
     const config = await createTestConfig(rootDir);
 
