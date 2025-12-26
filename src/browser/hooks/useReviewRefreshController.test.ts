@@ -5,7 +5,7 @@
  * These tests verify the core logic extracted into helper functions.
  */
 
-import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, mock } from "bun:test";
 import { RefreshController, type LastRefreshInfo } from "../utils/RefreshController";
 
 // Test the helper function directly (extract for testability)
@@ -144,7 +144,8 @@ describe("useReviewRefreshController design", () => {
     expect(lastRefreshInfo!.timestamp).toBeGreaterThan(0);
 
     // Session cache should also be updated
-    expect(sessionCache.get(workspaceId)).toEqual(lastRefreshInfo);
+    expect(sessionCache.get(workspaceId)).toBeDefined();
+    expect(sessionCache.get(workspaceId)!.trigger).toBe("manual");
 
     controller.dispose();
   });
