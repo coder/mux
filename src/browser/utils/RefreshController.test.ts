@@ -252,3 +252,61 @@ describe("RefreshController", () => {
     controller.dispose();
   });
 });
+
+describe("RefreshController manual refresh", () => {
+  it("requestImmediate always calls onRefreshComplete with trigger=manual", () => {
+    const onRefresh = jest.fn();
+    const onRefreshComplete = jest.fn();
+
+    const controller = new RefreshController({
+      debounceMs: 1000,
+      onRefresh,
+      onRefreshComplete,
+    });
+
+    // Request immediate (manual) refresh
+    controller.requestImmediate();
+
+    // onRefresh should be called
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+
+    // onRefreshComplete should be called with trigger=manual
+    expect(onRefreshComplete).toHaveBeenCalledTimes(1);
+    expect(onRefreshComplete).toHaveBeenCalledWith(
+      expect.objectContaining({
+        trigger: "manual",
+        timestamp: expect.any(Number),
+      })
+    );
+
+    controller.dispose();
+  });
+
+  it("requestImmediate updates lastRefreshInfo on every call even when diff unchanged", () => {
+    const onRefresh = jest.fn();
+    const onRefreshComplete = jest.fn();
+
+    const controller = new RefreshController({
+      debounceMs: 1000,
+      onRefresh,
+      onRefreshComplete,
+    });
+
+    // First manual refresh
+    controller.requestImmediate();
+    expect(onRefreshComplete).toHaveBeenCalledTimes(1);
+    expect(onRefreshComplete.mock.calls[0][0].trigger).toBe("manual");
+
+    // Second manual refresh (simulating same diff - onRefresh doesn't change anything)
+    controller.requestImmediate();
+    expect(onRefreshComplete).toHaveBeenCalledTimes(2);
+    expect(onRefreshComplete.mock.calls[1][0].trigger).toBe("manual");
+
+    // Third manual refresh
+    controller.requestImmediate();
+    expect(onRefreshComplete).toHaveBeenCalledTimes(3);
+    expect(onRefreshComplete.mock.calls[2][0].trigger).toBe("manual");
+
+    controller.dispose();
+  });
+});

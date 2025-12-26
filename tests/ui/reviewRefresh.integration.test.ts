@@ -140,6 +140,84 @@ describeIntegration("ReviewPanel manual refresh (UI + ORPC)", () => {
       }
     });
   }, 120_000);
+
+  test("Ctrl+R triggers manual refresh", async () => {
+    await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
+      const cleanupDom = installDom();
+
+      const view = renderReviewPanel({
+        apiClient: env.orpc,
+        metadata,
+      });
+
+      try {
+        const refreshButton = await setupReviewPanel(view, metadata, workspaceId);
+
+        // Initially no lastRefreshInfo
+        expect(refreshButton.getAttribute("data-last-refresh-trigger")).toBe("");
+
+        // Press Ctrl+R (or Cmd+R on mac)
+        fireEvent.keyDown(window, { key: "r", ctrlKey: true });
+
+        // Should trigger refresh and update lastRefreshInfo
+        await waitForRefreshButtonIdle(refreshButton);
+        await assertRefreshButtonHasLastRefreshInfo(refreshButton, "manual");
+      } finally {
+        view.unmount();
+        cleanup();
+        await new Promise((r) => setTimeout(r, 100));
+        cleanupDom();
+      }
+    });
+  }, 120_000);
+
+  test("manual refresh updates lastRefreshInfo even when diff unchanged", async () => {
+    await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
+      const cleanupDom = installDom();
+
+      const view = renderReviewPanel({
+        apiClient: env.orpc,
+        metadata,
+      });
+
+      try {
+        const refreshButton = await setupReviewPanel(view, metadata, workspaceId);
+
+        // At this point, initial load has completed but no manual refresh yet
+        // The button should NOT have lastRefreshInfo (initial load doesn't set it)
+        const initialTrigger = refreshButton.getAttribute("data-last-refresh-trigger");
+        
+        // First manual refresh (no changes to diff, just clicking refresh)
+        fireEvent.click(refreshButton);
+        await waitForRefreshButtonIdle(refreshButton);
+        await assertRefreshButtonHasLastRefreshInfo(refreshButton, "manual");
+
+        // Record the first timestamp
+        const firstTimestamp = refreshButton.getAttribute("data-last-refresh-timestamp");
+        expect(firstTimestamp).toBeTruthy();
+
+        // Wait a moment so timestamp will differ
+        await new Promise((r) => setTimeout(r, 100));
+
+        // Second manual refresh (still no changes - diff is identical)
+        fireEvent.click(refreshButton);
+        await waitForRefreshButtonIdle(refreshButton);
+        await assertRefreshButtonHasLastRefreshInfo(refreshButton, "manual");
+
+        // Timestamp should be updated even though diff is unchanged
+        const secondTimestamp = refreshButton.getAttribute("data-last-refresh-timestamp");
+        expect(secondTimestamp).toBeTruthy();
+        expect(Number(secondTimestamp)).toBeGreaterThan(Number(firstTimestamp));
+
+
+      } finally {
+        view.unmount();
+        cleanup();
+        await new Promise((r) => setTimeout(r, 100));
+        cleanupDom();
+      }
+    });
+  }, 120_000);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
