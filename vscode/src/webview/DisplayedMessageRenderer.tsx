@@ -49,8 +49,10 @@ export function DisplayedMessageRenderer(props: {
     case "tool":
       return <ToolMessage message={message} workspaceId={props.workspaceId ?? undefined} />;
 
-    default:
-      console.error("mux webview: unknown displayed message", message);
+    default: {
+      const _exhaustive: never = message;
+      console.error("mux webview: unknown displayed message", _exhaustive);
       return null;
+    }
   }
 }

@@ -4,6 +4,7 @@ import { formatTimestamp } from "@/browser/utils/ui/dateTime";
 import { Code2Icon } from "lucide-react";
 import type { ReactNode } from "react";
 import React, { useMemo, useState } from "react";
+import { useChatHostContext } from "@/browser/contexts/ChatHostContext";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { Button } from "../ui/button";
 
@@ -37,6 +38,10 @@ export const MessageWindow: React.FC<MessageWindowProps> = ({
   backgroundEffect,
 }) => {
   const [showJson, setShowJson] = useState(false);
+
+  const { uiSupport } = useChatHostContext();
+  const canShowJson = uiSupport.jsonRawView === "supported";
+  const isShowingJson = canShowJson && showJson;
 
   // Get timestamp from message if available
   const timestamp =
@@ -81,7 +86,7 @@ export const MessageWindow: React.FC<MessageWindowProps> = ({
         {backgroundEffect}
         <div className="relative z-10 flex flex-col gap-2">
           <div data-message-content>
-            {showJson ? (
+            {isShowingJson ? (
               <pre className="m-0 overflow-x-auto rounded-xl border border-[var(--color-message-debug-border)] bg-[var(--color-message-debug-bg)] p-3 text-[12px] leading-snug whitespace-pre-wrap text-[var(--color-message-debug-text)]">
                 {JSON.stringify(message, null, 2)}
               </pre>
@@ -103,15 +108,17 @@ export const MessageWindow: React.FC<MessageWindowProps> = ({
             {buttons.map((button, index) => (
               <IconActionButton key={index} button={button} />
             ))}
-            <IconActionButton
-              button={{
-                label: showJson ? "Hide JSON" : "Show JSON",
-                icon: <Code2Icon />,
-                active: showJson,
-                onClick: () => setShowJson(!showJson),
-                tooltip: showJson ? "Hide raw JSON" : "Show raw JSON",
-              }}
-            />
+            {canShowJson && (
+              <IconActionButton
+                button={{
+                  label: isShowingJson ? "Hide JSON" : "Show JSON",
+                  icon: <Code2Icon />,
+                  active: isShowingJson,
+                  onClick: () => setShowJson(!isShowingJson),
+                  tooltip: isShowingJson ? "Hide raw JSON" : "Show raw JSON",
+                }}
+              />
+            )}
           </div>
           <div
             className="text-muted flex min-w-0 flex-1 flex-wrap items-center gap-2 text-xs"

@@ -8,6 +8,7 @@ import { ProviderOptionsProvider } from "mux/browser/contexts/ProviderOptionsCon
 import { SettingsProvider } from "mux/browser/contexts/SettingsContext";
 import { APIProvider } from "mux/browser/contexts/API";
 import { ThemeProvider } from "mux/browser/contexts/ThemeContext";
+import { ChatHostContextProvider } from "mux/browser/contexts/ChatHostContext";
 import { TooltipProvider } from "mux/browser/components/ui/tooltip";
 import { Button } from "mux/browser/components/ui/button";
 import { matchesKeybind, KEYBINDS } from "mux/browser/utils/ui/keybinds";
@@ -19,6 +20,7 @@ import { StreamingMessageAggregator } from "mux/browser/utils/messages/Streaming
 
 import type { ExtensionToWebviewMessage, UiConnectionStatus, UiWorkspace } from "./protocol";
 import { ChatComposer } from "./ChatComposer";
+import { VSCODE_CHAT_UI_SUPPORT } from "./chatUiCapabilities";
 import { VscodeStreamingBarrier } from "./StreamingBarrier";
 import { DisplayedMessageRenderer } from "./DisplayedMessageRenderer";
 import { createVscodeOrpcLink } from "./createVscodeOrpcLink";
@@ -29,6 +31,12 @@ interface Notice {
   level: "info" | "error";
   message: string;
 }
+
+
+const VSCODE_CHAT_HOST_CONTEXT_VALUE = {
+  uiSupport: VSCODE_CHAT_UI_SUPPORT,
+  actions: {},
+} as const;
 
 function formatConnectionStatus(status: UiConnectionStatus | null): string {
   if (!status) {
@@ -215,11 +223,6 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
         return;
       }
 
-      // ORPC messages are handled by the ORPC link.
-      if (type.startsWith("orpc")) {
-        return;
-      }
-
       const msg = raw as ExtensionToWebviewMessage;
 
       switch (msg.type) {
@@ -348,8 +351,19 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
         case "debugProbe":
           bridge.debugLog("debugProbe", msg);
           return;
-        default:
-          bridge.debugLog("unhandled extension message", msg);
+
+        case "orpcResponse":
+        case "orpcStreamData":
+        case "orpcStreamEnd":
+        case "orpcStreamError":
+          // ORPC messages are handled by the ORPC link.
+          return;
+
+        default: {
+          const _exhaustive: never = msg;
+          bridge.debugLog("unhandled extension message", raw);
+          return;
+        }
       }
     });
 
@@ -426,7 +440,8 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
 
 
   return (
-    <APIProvider client={apiClient}>
+    <ChatHostContextProvider value={VSCODE_CHAT_HOST_CONTEXT_VALUE}>
+      <APIProvider client={apiClient}>
       <SettingsProvider>
         <ProviderOptionsProvider>
           <ThemeProvider forcedTheme="dark">
@@ -530,6 +545,7 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
           </ThemeProvider>
         </ProviderOptionsProvider>
       </SettingsProvider>
-    </APIProvider>
+      </APIProvider>
+    </ChatHostContextProvider>
   );
 }

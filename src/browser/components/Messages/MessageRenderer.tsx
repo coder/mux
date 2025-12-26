@@ -103,9 +103,11 @@ export const MessageRenderer = React.memo<MessageRendererProps>(
             className={className}
           />
         );
-      default:
-        console.error("don't know how to render message", message);
+      default: {
+        const _exhaustive: never = message;
+        console.error("don't know how to render message", _exhaustive);
         return null;
+      }
     }
   }
 );
