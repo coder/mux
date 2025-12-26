@@ -1,11 +1,12 @@
 import React from "react";
-import { StreamingBarrierView } from "./StreamingBarrierView";
-import { getModelName } from "@/common/utils/ai/models";
-import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
-import { VIM_ENABLED_KEY, getModelKey } from "@/common/constants/storage";
-import { readPersistedState } from "@/browser/hooks/usePersistedState";
-import { useWorkspaceState, useWorkspaceAggregator } from "@/browser/stores/WorkspaceStore";
-import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
+
+import type { StreamingMessageAggregator } from "mux/browser/utils/messages/StreamingMessageAggregator";
+import { StreamingBarrierView } from "mux/browser/components/Messages/ChatBarrier/StreamingBarrierView";
+import { getModelName } from "mux/common/utils/ai/models";
+import { formatKeybind, KEYBINDS } from "mux/browser/utils/ui/keybinds";
+import { VIM_ENABLED_KEY, getModelKey } from "mux/common/constants/storage";
+import { readPersistedState } from "mux/browser/hooks/usePersistedState";
+import { getDefaultModel } from "mux/browser/hooks/useModelsFromSettings";
 
 type StreamingPhase =
   | "starting" // Message sent, waiting for stream-start
@@ -14,22 +15,23 @@ type StreamingPhase =
   | "compacting" // Compaction in progress
   | "awaiting-input"; // ask_user_question waiting for response
 
-interface StreamingBarrierProps {
+export interface VscodeStreamingBarrierProps {
   workspaceId: string;
+  aggregator: StreamingMessageAggregator | null;
   className?: string;
 }
 
-/**
- * Self-contained streaming status barrier.
- * Computes all state internally from workspaceId - no props drilling needed.
- * Returns null when there's nothing to show.
- */
-export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({ workspaceId, className }) => {
-  const workspaceState = useWorkspaceState(workspaceId);
-  const aggregator = useWorkspaceAggregator(workspaceId);
+export const VscodeStreamingBarrier: React.FC<VscodeStreamingBarrierProps> = (props) => {
+  const aggregator = props.aggregator;
+  if (!aggregator) {
+    return null;
+  }
 
-  const { canInterrupt, isCompacting, awaitingUserQuestion, currentModel, pendingStreamStartTime } =
-    workspaceState;
+  const canInterrupt = Boolean(aggregator.getActiveStreamMessageId());
+  const isCompacting = aggregator.isCompacting();
+  const awaitingUserQuestion = aggregator.hasAwaitingUserQuestion();
+  const currentModel = aggregator.getCurrentModel() ?? null;
+  const pendingStreamStartTime = aggregator.getPendingStreamStartTime();
 
   // Determine if we're in "starting" phase (message sent, waiting for stream-start)
   const isStarting = pendingStreamStartTime !== null && !canInterrupt;
@@ -38,7 +40,7 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({ workspaceId,
   const phase: StreamingPhase | null = (() => {
     if (isStarting) return "starting";
     if (!canInterrupt) return null;
-    if (aggregator?.hasInterruptingStream()) return "interrupting";
+    if (aggregator.hasInterruptingStream()) return "interrupting";
     if (awaitingUserQuestion) return "awaiting-input";
     if (isCompacting) return "compacting";
     return "streaming";
@@ -47,17 +49,18 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({ workspaceId,
   // Only show token count during active streaming/compacting
   const showTokenCount = phase === "streaming" || phase === "compacting";
 
-  // Get live streaming stats from workspace state (updated on each stream-delta)
-  const tokenCount = showTokenCount ? workspaceState.streamingTokenCount : undefined;
-  const tps = showTokenCount ? workspaceState.streamingTPS : undefined;
+  const timingStats = showTokenCount ? aggregator.getActiveStreamTimingStats() : null;
+  const tokenCount = showTokenCount ? timingStats?.liveTokenCount : undefined;
+  const tps = showTokenCount ? timingStats?.liveTPS : undefined;
 
-  // Nothing to show
-  if (!phase) return null;
+  if (!phase) {
+    return null;
+  }
 
   // Model to display: for "starting" read from localStorage (cheap), otherwise use currentModel
   const model =
     phase === "starting"
-      ? (readPersistedState<string | null>(getModelKey(workspaceId), null) ?? getDefaultModel())
+      ? (readPersistedState<string | null>(getModelKey(props.workspaceId), null) ?? getDefaultModel())
       : currentModel;
   const modelName = model ? getModelName(model) : null;
 
@@ -100,7 +103,7 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({ workspaceId,
       tokenCount={tokenCount}
       tps={tps}
       cancelText={cancelText}
-      className={className}
+      className={props.className}
     />
   );
 };

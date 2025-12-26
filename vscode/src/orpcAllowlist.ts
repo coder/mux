@@ -23,7 +23,13 @@ function hasSafeSegments(path: string[]): boolean {
 
 const ALLOWED_PROCEDURES = {
   general: new Set(["listDirectory", "createDirectory", "ping", "tick", "openInEditor"]),
-  workspace: new Set(["sendMessage", "updateAISettings", "answerAskUserQuestion", "getPlanContent"]),
+  workspace: new Set([
+    "sendMessage",
+    "interruptStream",
+    "updateAISettings",
+    "answerAskUserQuestion",
+    "getPlanContent",
+  ]),
   providers: new Set(["list", "getConfig", "onConfigChanged", "setModels"]),
 } as const;
 
