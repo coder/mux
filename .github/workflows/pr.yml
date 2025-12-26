@@ -24,6 +24,7 @@ jobs:
       src: ${{ steps.filter.outputs.src }}
       config: ${{ steps.filter.outputs.config }}
       backend: ${{ steps.filter.outputs.backend }}
+      browser: ${{ steps.filter.outputs.browser }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -41,6 +42,9 @@ jobs:
               - 'src/common/**'
               - 'tests/ipc/**'
               - 'tests/runtime/**'
+            browser:
+              - 'src/browser/**'
+              - 'tests/ui/**'
             config:
               - '.github/**'
               - 'jest.config.cjs'
@@ -116,16 +120,25 @@ jobs:
             exit 0
           fi
           
-          # Skip integration tests when no backend changes
-          # Integration tests in tests/ are backend-focused (IPC, runtime, etc.)
-          # Browser changes are covered by unit tests, storybook, and E2E
-          if [[ "${{ needs.changes.outputs.backend }}" != "true" ]]; then
-            echo "No backend changes - skipping integration tests (browser changes covered by unit/storybook/e2e)"
+          BACKEND="${{ needs.changes.outputs.backend }}"
+          BROWSER="${{ needs.changes.outputs.browser }}"
+          
+          # Skip if no relevant changes
+          if [[ "$BACKEND" != "true" && "$BROWSER" != "true" ]]; then
+            echo "No backend or browser changes - skipping integration tests"
             exit 0
           fi
           
-          # Backend changed: run ALL integration tests
-          TEST_INTEGRATION=1 bun x jest --coverage --maxWorkers=100% --silent tests/
+          # Backend changed: run ALL integration tests (includes tests/ui)
+          if [[ "$BACKEND" == "true" ]]; then
+            echo "Backend changes detected - running all integration tests"
+            TEST_INTEGRATION=1 bun x jest --coverage --maxWorkers=100% --silent tests/
+            exit 0
+          fi
+          
+          # Browser-only changes: run tests/ui
+          echo "Browser changes detected - running tests/ui"
+          TEST_INTEGRATION=1 bun x jest --coverage --maxWorkers=100% --silent tests/ui/
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
