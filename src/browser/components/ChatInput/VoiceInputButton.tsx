@@ -24,6 +24,7 @@ interface VoiceInputButtonProps {
 /** Color classes for each voice input state */
 const STATE_COLORS: Record<VoiceInputState, string> = {
   idle: "text-muted/50 hover:text-muted",
+  requesting: "text-amber-500 animate-pulse",
   recording: "", // Set dynamically based on mode
   transcribing: "text-amber-500",
 };

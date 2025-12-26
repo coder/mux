@@ -1,7 +1,7 @@
 /**
  * Voice input via OpenAI transcription (gpt-4o-transcribe).
  *
- * State machine: idle → recording → transcribing → idle
+ * State machine: idle → requesting → recording → transcribing → idle
  *
  * Hidden on touch devices where native keyboard dictation is available.
  */
@@ -11,7 +11,7 @@ import { matchesKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import type { APIClient } from "@/browser/contexts/API";
 import { trackVoiceTranscription } from "@/common/telemetry";
 
-export type VoiceInputState = "idle" | "recording" | "transcribing";
+export type VoiceInputState = "idle" | "requesting" | "recording" | "transcribing";
 
 export interface UseVoiceInputOptions {
   onTranscript: (text: string) => void;
@@ -212,6 +212,9 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
 
     if (!canStart) return;
 
+    // Show loading state immediately while requesting mic access
+    setState("requesting");
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
@@ -263,6 +266,7 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
           ? "Microphone access denied. Please allow microphone access and try again."
           : `Failed to start recording: ${msg}`
       );
+      setState("idle");
     }
   }, [state, transcribe, releaseStream]);
 
