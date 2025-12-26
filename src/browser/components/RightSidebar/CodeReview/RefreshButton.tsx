@@ -14,6 +14,8 @@ interface RefreshButtonProps {
   isLoading?: boolean;
   /** Debug info about last refresh (timestamp and trigger) */
   lastRefreshInfo?: LastRefreshInfo | null;
+  /** Whether the button should be disabled (e.g., user composing review note) */
+  disabled?: boolean;
 }
 
 /** Human-readable trigger labels */
@@ -28,7 +30,7 @@ const TRIGGER_LABELS: Record<RefreshTrigger, string> = {
 };
 
 export const RefreshButton: React.FC<RefreshButtonProps> = (props) => {
-  const { onClick, isLoading = false, lastRefreshInfo } = props;
+  const { onClick, isLoading = false, lastRefreshInfo, disabled = false } = props;
   // Track animation state for graceful stopping
   const [animationState, setAnimationState] = useState<"idle" | "spinning" | "stopping">("idle");
   const spinOnceTimeoutRef = useRef<number | null>(null);
@@ -64,6 +66,8 @@ export const RefreshButton: React.FC<RefreshButtonProps> = (props) => {
   }, []);
 
   const handleClick = () => {
+    if (disabled) return;
+
     // Manual refresh should always provide immediate feedback, even if the refresh
     // resolves too quickly for isLoading to visibly flip.
     if (!isLoading) {
@@ -85,12 +89,16 @@ export const RefreshButton: React.FC<RefreshButtonProps> = (props) => {
           data-testid="review-refresh"
           data-last-refresh-trigger={lastRefreshInfo?.trigger ?? ""}
           data-last-refresh-timestamp={lastRefreshInfo?.timestamp ?? ""}
+          data-disabled={disabled || undefined}
+          disabled={disabled}
           onClick={handleClick}
           className={cn(
             "flex items-center justify-center bg-transparent border-none p-0.5 transition-colors duration-[1500ms] ease-out",
-            animationState === "spinning"
-              ? "text-accent cursor-default hover:text-accent"
-              : "text-muted cursor-pointer hover:text-foreground",
+            disabled
+              ? "text-muted/40 cursor-not-allowed"
+              : animationState === "spinning"
+                ? "text-accent cursor-default hover:text-accent"
+                : "text-muted cursor-pointer hover:text-foreground",
             animationState === "stopping" && "cursor-default"
           )}
         >
@@ -110,7 +118,9 @@ export const RefreshButton: React.FC<RefreshButtonProps> = (props) => {
         </button>
       </TooltipTrigger>
       <TooltipContent side="bottom" align="start">
-        {animationState !== "idle" ? (
+        {disabled ? (
+          "Finish editing review note to refresh"
+        ) : animationState !== "idle" ? (
           "Refreshing..."
         ) : (
           <span>

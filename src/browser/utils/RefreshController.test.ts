@@ -170,9 +170,59 @@ describe("RefreshController", () => {
     jest.advanceTimersByTime(100);
     expect(onRefresh).not.toHaveBeenCalled();
 
-    // requestImmediate() should bypass isPaused (manual refresh)
+    // requestImmediate() should bypass isPaused (manual refresh still works during interaction)
     controller.requestImmediate();
     expect(onRefresh).toHaveBeenCalledTimes(1);
+
+    controller.dispose();
+  });
+
+  it("requestImmediate() respects isManualBlocked (for composing review note)", () => {
+    const onRefresh = jest.fn<() => void>();
+    let manualBlocked = true;
+    const controller = new RefreshController({
+      onRefresh,
+      debounceMs: 100,
+      isManualBlocked: () => manualBlocked,
+    });
+
+    // requestImmediate() should be blocked when isManualBlocked returns true
+    controller.requestImmediate();
+    expect(onRefresh).not.toHaveBeenCalled();
+
+    // Check that isManualBlocked getter reflects the state
+    expect(controller.isManualBlocked).toBe(true);
+
+    // Unblock and try again
+    manualBlocked = false;
+    expect(controller.isManualBlocked).toBe(false);
+
+    // Notify unpaused should flush the queued manual refresh
+    controller.notifyUnpaused();
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+
+    controller.dispose();
+  });
+
+  it("isManualBlocked blocks both schedule() and requestImmediate()", () => {
+    const onRefresh = jest.fn<() => void>();
+    const manualBlocked = true;
+    const controller = new RefreshController({
+      onRefresh,
+      debounceMs: 100,
+      isManualBlocked: () => manualBlocked,
+      // Also set isPaused to ensure isManualBlocked takes precedence
+      isPaused: () => manualBlocked,
+    });
+
+    // schedule() should be blocked
+    controller.schedule();
+    jest.advanceTimersByTime(100);
+    expect(onRefresh).not.toHaveBeenCalled();
+
+    // requestImmediate() should also be blocked
+    controller.requestImmediate();
+    expect(onRefresh).not.toHaveBeenCalled();
 
     controller.dispose();
   });

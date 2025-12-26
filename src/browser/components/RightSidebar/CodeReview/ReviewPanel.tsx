@@ -327,11 +327,38 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   // Ref to track when user is interacting (pauses auto-refresh)
   const isInteractingRef = useRef(false);
 
+  // Track if user is composing a review note (pauses auto-refresh to prevent losing work)
+  // Uses a Set to track which hunks have active selections (multiple hunks possible)
+  const isComposingReviewNoteRef = useRef(false);
+  const composingHunksRef = useRef(new Set<string>());
+
+  // Handler for when a hunk's composing state changes
+  const handleHunkComposingChange = useCallback((hunkId: string, isComposing: boolean) => {
+    if (isComposing) {
+      composingHunksRef.current.add(hunkId);
+    } else {
+      composingHunksRef.current.delete(hunkId);
+    }
+    const wasComposing = isComposingReviewNoteRef.current;
+    const nowComposing = composingHunksRef.current.size > 0;
+    isComposingReviewNoteRef.current = nowComposing;
+
+    // Update UI state for button disabled state
+    setIsRefreshBlocked(nowComposing);
+
+    // If we just stopped composing and there was a pending refresh, flush it
+    if (wasComposing && !nowComposing) {
+      controllerRef.current?.notifyUnpaused();
+    }
+  }, []);
+
   // Track last fetch time for detecting tool completions while unmounted
   const lastFetchTimeRef = useRef(0);
 
   // Last refresh info for UI display (tooltip showing trigger reason + time)
   const [lastRefreshInfo, setLastRefreshInfo] = useState<LastRefreshInfo | null>(null);
+  // Track if refresh button should be disabled (user composing review note)
+  const [isRefreshBlocked, setIsRefreshBlocked] = useState(false);
 
   // RefreshController - handles debouncing, in-flight guards, etc.
   // Created in useEffect to survive React StrictMode double-mount.
@@ -341,7 +368,11 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   useEffect(() => {
     const controller = new RefreshController({
       debounceMs: 3000,
+      // Pause scheduled refresh while user is interacting (scrolling, hovering)
       isPaused: () => isInteractingRef.current,
+      // Block ALL refresh (including manual) while composing review note
+      // This prevents losing work-in-progress when user clicks refresh or presses Ctrl+R
+      isManualBlocked: () => isComposingReviewNoteRef.current,
       onRefresh: () => {
         lastFetchTimeRef.current = Date.now();
         setRefreshTrigger((prev) => prev + 1);
@@ -966,6 +997,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         isLoading={
           diffState.status === "loading" || diffState.status === "refreshing" || isLoadingTree
         }
+        isRefreshBlocked={isRefreshBlocked}
         workspaceId={workspaceId}
         workspacePath={workspacePath}
         refreshTrigger={refreshTrigger}
@@ -1127,6 +1159,9 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
                       onRegisterToggleExpand={handleRegisterToggleExpand}
                       onReviewNote={onReviewNote}
                       searchConfig={searchConfig}
+                      onComposingChange={(isComposing) =>
+                        handleHunkComposingChange(hunk.id, isComposing)
+                      }
                     />
                   );
                 })

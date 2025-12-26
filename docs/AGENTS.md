@@ -115,6 +115,13 @@ Avoid mock-heavy tests that verify implementation details rather than behavior. 
 - Skip tautological tests (simple mappings, identical copies of implementation); focus on invariants and boundary failures.
 - Keep utils pure or parameterize external effects for easier testing.
 
+### UI Tests (`tests/ui`)
+
+- Tests in `tests/ui` must render the **full app** via `AppLoader` and drive interactions from the **user's perspective** (clicking, typing, navigating).
+- Use `renderReviewPanel()` helper or similar patterns that render `<AppLoader client={apiClient} />`.
+- Never test isolated components or utility functions here—those belong as unit tests beside implementation (`*.test.ts`).
+- These tests require `TEST_INTEGRATION=1` and real API keys; use `shouldRunIntegrationTests()` guard.
+
 ### Integration Testing
 
 - Use `bun x jest` (optionally `TEST_INTEGRATION=1`). Examples:

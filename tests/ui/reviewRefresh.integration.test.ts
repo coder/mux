@@ -291,4 +291,95 @@ describeIntegration("ReviewPanel auto refresh (UI + ORPC + live LLM)", () => {
       }
     });
   }, 180_000);
+
+  test("refresh button is disabled while composing review note", async () => {
+    await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
+      const cleanupDom = installDom();
+
+      const view = renderReviewPanel({
+        apiClient: env.orpc,
+        metadata,
+      });
+
+      try {
+        const refreshButton = await setupReviewPanel(view, metadata, workspaceId);
+
+        // First, create some changes so we have a diff to interact with
+        const INITIAL_MARKER = "COMPOSE_TEST_MARKER";
+        await env.orpc.workspace.executeBash({
+          workspaceId,
+          script: `echo "${INITIAL_MARKER}" >> README.md`,
+        });
+
+        // Manual refresh to pick up the change
+        fireEvent.click(refreshButton);
+        await waitForRefreshButtonIdle(refreshButton);
+        await assertRefreshButtonHasLastRefreshInfo(refreshButton, "manual");
+
+        // Verify the diff is visible
+        await view.findByText(new RegExp(INITIAL_MARKER), {}, { timeout: 30_000 });
+
+        // Record timestamp after initial refresh
+        const initialTimestamp = refreshButton.getAttribute("data-last-refresh-timestamp");
+        expect(initialTimestamp).toBeTruthy();
+
+        // Button should NOT be disabled initially
+        expect(refreshButton.getAttribute("data-disabled")).toBeNull();
+        expect(refreshButton.hasAttribute("disabled")).toBe(false);
+
+        // Find a diff indicator to start selection on
+        const diffIndicator = await waitFor(
+          () => {
+            const indicators = view.container.querySelectorAll("[data-diff-indicator]");
+            if (indicators.length === 0) throw new Error("No diff indicators found");
+            const addIndicator = Array.from(indicators).find((el) =>
+              el.textContent?.trim().startsWith("+")
+            );
+            if (!addIndicator) throw new Error("No add line indicator found");
+            return addIndicator as HTMLElement;
+          },
+          { timeout: 10_000 }
+        );
+
+        // Start selection by mousedown on the diff indicator, then mouseup to complete
+        fireEvent.mouseDown(diffIndicator, { button: 0 });
+        fireEvent.mouseUp(window);
+
+        // Wait for React state update
+        await waitFor(
+          () => {
+            // Button should now be disabled
+            if (!refreshButton.hasAttribute("disabled")) {
+              throw new Error("Button should be disabled during composition");
+            }
+          },
+          { timeout: 5_000 }
+        );
+
+        expect(refreshButton.getAttribute("data-disabled")).toBe("true");
+
+        // Try to click the disabled button - should NOT trigger refresh
+        fireEvent.click(refreshButton);
+
+        // Wait a bit to ensure no refresh happens
+        await new Promise((r) => setTimeout(r, 500));
+
+        // Timestamp should NOT have changed (refresh was blocked)
+        const duringTimestamp = refreshButton.getAttribute("data-last-refresh-timestamp");
+        expect(duringTimestamp).toBe(initialTimestamp);
+
+        // Note: Testing escape/cancel would require complex DOM simulation.
+        // The key behaviors verified by this test:
+        // 1. Button becomes disabled when composing review note
+        // 2. Clicking disabled button does not trigger refresh
+        // Unit tests in RefreshController.test.ts verify that notifyUnpaused()
+        // correctly flushes pending refreshes when composition ends.
+      } finally {
+        view.unmount();
+        cleanup();
+        await new Promise((r) => setTimeout(r, 100));
+        cleanupDom();
+      }
+    });
+  }, 180_000);
 });

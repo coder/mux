@@ -53,9 +53,17 @@ export interface RefreshControllerOptions {
 
   /**
    * Optional callback to check if refresh should be paused (e.g., user is interacting).
-   * If returns true, refresh is deferred until the condition clears.
+   * If returns true, scheduled refresh is deferred until the condition clears.
+   * Manual refresh (requestImmediate) still works unless isManualBlocked is also set.
    */
   isPaused?: () => boolean;
+
+  /**
+   * Optional callback to check if manual refresh should be blocked (e.g., user composing review note).
+   * If returns true, BOTH scheduled AND manual refresh are blocked.
+   * Use for cases where any refresh would disrupt user work-in-progress.
+   */
+  isManualBlocked?: () => boolean;
 
   /** Label for debug logging (e.g., workspace name). If set, enables debug logs. */
   debugLabel?: string;
@@ -72,6 +80,7 @@ export class RefreshController {
   private readonly refreshOnFocus: boolean;
   private readonly focusDebounceMs: number;
   private readonly isPaused: (() => boolean) | null;
+  private readonly isManualBlockedFn: (() => boolean) | null;
   private readonly debugLabel: string | null;
 
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -103,6 +112,7 @@ export class RefreshController {
     this.refreshOnFocus = options.refreshOnFocus ?? false;
     this.focusDebounceMs = options.focusDebounceMs ?? 500;
     this.isPaused = options.isPaused ?? null;
+    this.isManualBlockedFn = options.isManualBlocked ?? null;
     this.debugLabel = options.debugLabel ?? null;
   }
 
@@ -183,11 +193,22 @@ export class RefreshController {
   }
 
   /**
-   * Request immediate refresh, bypassing debounce and pause checks.
-   * Use for manual refresh (user clicked button) which should always execute.
+   * Request immediate refresh, bypassing debounce and normal pause checks.
+   * Use for manual refresh (user clicked button).
+   *
+   * Note: If isManualBlocked() returns true, the refresh is deferred (not executed).
+   * This is for cases like composing a review note where any refresh would be disruptive.
    */
   requestImmediate(): void {
     if (this.disposed) return;
+
+    // Check if manual refresh is blocked (e.g., composing review note)
+    if (this.isManualBlockedFn?.()) {
+      this.debug("manual refresh blocked, queueing");
+      this.pendingBecausePaused = true;
+      this.updatePendingTrigger("manual");
+      return;
+    }
 
     // Clear any pending debounce
     if (this.debounceTimer) {
@@ -379,6 +400,14 @@ export class RefreshController {
    */
   get isRefreshing(): boolean {
     return this.inFlight;
+  }
+
+  /**
+   * Whether manual refresh is currently blocked (e.g., user composing review note).
+   * UI can use this to disable the refresh button.
+   */
+  get isManualBlocked(): boolean {
+    return this.isManualBlockedFn?.() ?? false;
   }
 
   /**

@@ -581,6 +581,8 @@ interface SelectableDiffRendererProps extends Omit<DiffRendererProps, "filePath"
   searchConfig?: SearchHighlightConfig;
   /** Enable syntax highlighting (default: true). Set to false to skip highlighting for off-screen hunks */
   enableHighlighting?: boolean;
+  /** Callback when review note composition state changes (selection active/inactive) */
+  onComposingChange?: (isComposing: boolean) => void;
 }
 
 interface LineSelection {
@@ -782,6 +784,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     onLineClick,
     searchConfig,
     enableHighlighting = true,
+    onComposingChange,
   }) => {
     const dragAnchorRef = React.useRef<number | null>(null);
     const [isDragging, setIsDragging] = React.useState(false);
@@ -802,6 +805,20 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     }, []);
     const { theme } = useTheme();
     const [selection, setSelection] = React.useState<LineSelection | null>(null);
+
+    // Notify parent when composition state changes
+    React.useEffect(() => {
+      onComposingChange?.(selection !== null);
+    }, [selection, onComposingChange]);
+
+    // On unmount, ensure we release the pause if we were composing
+    // (separate effect with empty deps so cleanup only runs on unmount)
+    React.useEffect(() => {
+      return () => {
+        onComposingChange?.(false);
+      };
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally only clean up on unmount
+    }, []);
 
     // Detect language for syntax highlighting (memoized to prevent repeated detection)
     const language = React.useMemo(

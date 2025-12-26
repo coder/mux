@@ -21,6 +21,8 @@ interface ReviewControlsProps {
   onFiltersChange: (filters: ReviewFilters) => void;
   onRefresh?: () => void;
   isLoading?: boolean;
+  /** Whether refresh is blocked (e.g., user composing review note) */
+  isRefreshBlocked?: boolean;
   workspaceId: string;
   workspacePath: string;
   refreshTrigger?: number;
@@ -34,6 +36,7 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
   onFiltersChange,
   onRefresh,
   isLoading = false,
+  isRefreshBlocked = false,
   workspaceId,
   workspacePath,
   refreshTrigger,
@@ -71,6 +74,7 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
         <RefreshButton
           onClick={onRefresh}
           isLoading={isLoading}
+          disabled={isRefreshBlocked}
           lastRefreshInfo={lastRefreshInfo}
         />
       )}

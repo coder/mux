@@ -29,6 +29,8 @@ interface HunkViewerProps {
   onRegisterToggleExpand?: (hunkId: string, toggleFn: () => void) => void;
   onReviewNote?: (data: ReviewNoteData) => void;
   searchConfig?: SearchHighlightConfig;
+  /** Callback when review note composition state changes */
+  onComposingChange?: (isComposing: boolean) => void;
 }
 
 export const HunkViewer = React.memo<HunkViewerProps>(
@@ -44,6 +46,7 @@ export const HunkViewer = React.memo<HunkViewerProps>(
     onRegisterToggleExpand,
     onReviewNote,
     searchConfig,
+    onComposingChange,
   }) => {
     // Ref for the hunk container to track visibility
     const hunkRef = React.useRef<HTMLDivElement>(null);
@@ -263,6 +266,7 @@ export const HunkViewer = React.memo<HunkViewerProps>(
             }}
             searchConfig={searchConfig}
             enableHighlighting={isVisible}
+            onComposingChange={onComposingChange}
           />
         ) : (
           <div
