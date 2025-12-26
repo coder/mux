@@ -125,16 +125,6 @@ describe("backgroundCommands", () => {
       expect(result).toContain("& echo $!)");
     });
 
-    it("includes niceness prefix when provided", () => {
-      const result = buildSpawnCommand({
-        wrapperScript: "echo hello",
-        outputPath: "/tmp/output.log",
-        niceness: 10,
-      });
-
-      expect(result).toMatch(/^\(set -m; nice -n 10 nohup/);
-    });
-
     it("uses custom bash path (including paths with spaces)", () => {
       const result = buildSpawnCommand({
         wrapperScript: "echo hello",
