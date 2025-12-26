@@ -363,7 +363,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
 
     const prevRefreshTrigger = lastFileTreeRefreshTriggerRef.current;
     lastFileTreeRefreshTriggerRef.current = refreshTrigger;
-    const isManualRefresh = prevRefreshTrigger !== null && prevRefreshTrigger !== refreshTrigger;
+    const isManualRefresh = refreshTrigger !== 0 && prevRefreshTrigger !== refreshTrigger;
 
     const numstatCommand = buildGitDiffCommand(
       filters.diffBase,
@@ -452,7 +452,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
 
     const prevRefreshTrigger = lastDiffRefreshTriggerRef.current;
     lastDiffRefreshTriggerRef.current = refreshTrigger;
-    const isManualRefresh = prevRefreshTrigger !== null && prevRefreshTrigger !== refreshTrigger;
+    const isManualRefresh = refreshTrigger !== 0 && prevRefreshTrigger !== refreshTrigger;
 
     const pathFilter = selectedFilePath ? ` -- "${extractNewPath(selectedFilePath)}"` : "";
 

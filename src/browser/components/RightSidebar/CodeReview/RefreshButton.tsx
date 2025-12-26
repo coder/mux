@@ -65,7 +65,7 @@ export const RefreshButton: React.FC<RefreshButtonProps> = (props) => {
 
   const handleClick = () => {
     // Manual refresh should always provide immediate feedback, even if the refresh
-    // ends up being a no-op or resolves too quickly for isLoading to visibly flip.
+    // resolves too quickly for isLoading to visibly flip.
     if (!isLoading) {
       setAnimationState("spinning");
       if (spinOnceTimeoutRef.current) {
