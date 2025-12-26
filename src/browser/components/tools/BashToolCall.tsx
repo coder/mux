@@ -111,6 +111,8 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
   const showLiveOutput =
     !isBackground && (status === "executing" || (Boolean(liveOutput) && !resultHasOutput));
 
+  const truncatedInfo = result && "truncated" in result ? result.truncated : undefined;
+
   return (
     <ToolContainer expanded={expanded}>
       <ToolHeader onClick={toggleExpanded}>
@@ -210,6 +212,13 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
                   <DetailLabel>Error</DetailLabel>
                   <ErrorBox>{result.error}</ErrorBox>
                 </DetailSection>
+              )}
+
+              {truncatedInfo && (
+                <div className="text-muted px-2 text-[10px] italic">
+                  Output truncated — reason: {truncatedInfo.reason} • totalLines:{" "}
+                  {truncatedInfo.totalLines}
+                </div>
               )}
 
               {"backgroundProcessId" in result ? (
