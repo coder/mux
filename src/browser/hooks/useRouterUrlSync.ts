@@ -6,22 +6,10 @@ import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar";
 
 /**
  * Parses the current browser URL into a router-compatible location.
- * Handles backward compatibility with legacy hash URLs and localStorage.
+ * Restores last workspace from localStorage when at root URL.
  */
 export function parseInitialUrl(): string {
-  const { pathname, search, hash } = window.location;
-
-  // Legacy hash URL: #workspace=abc123 → /workspace/abc123
-  if (hash.startsWith("#workspace=")) {
-    const workspaceId = decodeURIComponent(hash.substring("#workspace=".length));
-    return `/workspace/${encodeURIComponent(workspaceId)}`;
-  }
-
-  // Legacy hash URL: #/path/to/project → /project?path=/path/to/project
-  if (hash.length > 1 && !hash.startsWith("#/workspace") && !hash.startsWith("#/project")) {
-    const projectPath = decodeURIComponent(hash.substring(1));
-    return `/project?path=${encodeURIComponent(projectPath)}`;
-  }
+  const { pathname, search } = window.location;
 
   // If URL is at root (dev server), about:blank (tests), file:// path (packaged Electron),
   // or iframe.html (Storybook), check localStorage for saved workspace from previous session
