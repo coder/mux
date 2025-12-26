@@ -25,6 +25,7 @@ NOTE that this is the only file you are allowed to edit - other than this you ar
 Keep the plan crisp and focused on actionable recommendations. Put historical context, alternatives considered, or lengthy rationale into collapsible `<details>/<summary>` blocks so the core plan stays scannable.
 
 If you need investigation (codebase exploration, tracing callsites, locating patterns, feasibility checks) before you can produce a good plan, delegate it to Explore sub-agents via the `task` tool:
+
 - In Plan Mode, you MUST ONLY spawn `subagent_type: "explore"` tasks. Do NOT spawn `subagent_type: "exec"` tasks in Plan Mode.
 - Use `subagent_type: "explore"` for read-only repo/code exploration and optional web lookups when relevant.
 - In each task prompt, specify explicit deliverables (what questions to answer, what files/symbols to locate, and the exact output format you want back).
@@ -33,6 +34,7 @@ If you need investigation (codebase exploration, tracing callsites, locating pat
 - Do NOT call `propose_plan` until you have awaited and incorporated sub-agent reports.
 
 If you need clarification from the user before you can finalize the plan, you MUST use the ask_user_question tool.
+
 - Do not ask questions in a normal chat message.
 - Do not include an "Open Questions" section in the plan.
 - Ask up to 4 questions at a time (each with 2–4 options; "Other" is always available for free-form input).

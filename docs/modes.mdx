@@ -1,0 +1,283 @@
+---
+title: Modes
+description: Configure agent behavior with customizable modes
+---
+
+Modes control how the agent behaves during a session—which tools are available, what restrictions apply, and what instructions guide the agent. mux ships with two built-in modes (**Exec** and **Plan**), but you can create custom modes or override the built-ins.
+
+## Quick Start
+
+**Switch modes:** Press `Cmd+Shift+M` (Mac) or `Ctrl+Shift+M` (Windows/Linux), or use the mode dropdown in the chat input.
+
+**Create a custom mode:** Add a markdown file with YAML frontmatter to `.mux/modes/` in your project:
+
+```markdown
+---
+name: review
+label: Code Review
+description: Focused on reviewing code without making changes
+icon: 🔍
+toolPolicy:
+  - regex: file_edit.*
+    action: disable
+  - regex: bash
+    action: disable
+---
+
+You are in Code Review mode. Focus on analyzing code quality,
+identifying bugs, and suggesting improvements. Do not make
+any changes—only provide feedback.
+```
+
+## Mode File Format
+
+Mode files are markdown with YAML frontmatter. Place them in:
+
+| Location            | Scope   | Priority |
+| ------------------- | ------- | -------- |
+| `.mux/modes/*.md`   | Project | Highest  |
+| `~/.mux/modes/*.md` | Global  | Medium   |
+| Built-in            | System  | Lowest   |
+
+Higher-priority modes override lower-priority ones with the same `name`.
+
+### Frontmatter Schema
+
+```yaml
+---
+# Required
+name: my-mode # Slug (lowercase, hyphens allowed): ^[a-z0-9]+(?:-[a-z0-9]+)*$
+label: My Mode # Display name in UI
+description: ... # Short description for tooltips
+
+# Optional
+color: var(--color-accent) # CSS color for UI elements
+disabled: false # Set to true to hide this mode
+
+# Tool control
+toolPolicy: # Rules applied in order
+  - regex: propose_plan
+    action: disable # "enable" or "disable"
+exclusiveTools: # If set, ONLY these tools are available
+  - tool_name
+
+# Restrictions
+fileRestrictions:
+  onlyPlanFile: true # Only allow editing the plan file
+subagentRestrictions:
+  allowedTypes: # Limit sub-agent types
+    - explore
+---
+```
+
+### Markdown Body (Instructions)
+
+The markdown body after the frontmatter becomes the mode's instructions, injected into the system prompt when that mode is active.
+
+You can use template variables:
+
+- `{{planFileStatus}}` — Replaced with plan file context (path and existence status)
+
+## Disabling or Overriding Built-in Modes
+
+To disable a built-in mode, create a file with `disabled: true`:
+
+```markdown
+---
+name: plan
+disabled: true
+---
+```
+
+To override a built-in mode, create a file with the same `name` and your custom configuration:
+
+```markdown
+---
+name: exec
+label: Exec (Custom)
+description: My customized exec mode
+toolPolicy:
+  - regex: bash
+    action: disable # Disable bash in my exec mode
+---
+
+Custom instructions for exec mode...
+```
+
+## Tool Policy
+
+The `toolPolicy` array controls which tools are available. Rules are evaluated in order:
+
+```yaml
+toolPolicy:
+  - regex: file_edit.* # Matches file_edit, file_edit_replace_string, etc.
+    action: disable
+  - regex: bash
+    action: enable # Later rules can override earlier ones
+```
+
+## CLI Usage
+
+Specify a mode when running mux from the command line:
+
+```bash
+mux run --mode plan "Design a caching strategy"
+mux run --mode review "Check the auth module for security issues"
+```
+
+## Examples
+
+### Read-Only Analysis Mode
+
+```markdown
+---
+name: analyze
+label: Analyze
+description: Read-only analysis and exploration
+icon: 🔬
+toolPolicy:
+  - regex: file_edit.*
+    action: disable
+  - regex: bash
+    action: disable
+subagentRestrictions:
+  allowedTypes:
+    - explore
+---
+
+You are in Analyze mode. Explore the codebase and provide
+insights, but do not make any changes. Use sub-agents for
+parallel investigation when helpful.
+```
+
+### Documentation Mode
+
+```markdown
+---
+name: docs
+label: Docs
+description: Focus on documentation tasks
+icon: 📚
+toolPolicy:
+  - regex: file_edit.*
+    action: enable
+---
+
+You are in Documentation mode. Focus on improving documentation:
+README files, code comments, API docs, and guides. Avoid
+refactoring code unless it's purely for documentation purposes.
+```
+
+### Security Audit Mode
+
+```markdown
+---
+name: security
+label: Security Audit
+description: Security-focused code review
+icon: 🔒
+toolPolicy:
+  - regex: file_edit.*
+    action: disable
+  - regex: bash
+    action: disable
+---
+
+You are in Security Audit mode. Analyze the codebase for:
+
+- Authentication/authorization issues
+- Injection vulnerabilities
+- Data exposure risks
+- Insecure dependencies
+
+Provide a structured report with severity levels.
+```
+
+## Built-in Modes
+
+{/* BEGIN BUILTIN_MODES */}
+
+### ⚡ Exec
+
+**Full execution mode with all tools enabled**
+
+<Accordion title="View exec.md">
+
+```markdown
+---
+name: exec
+label: Exec
+description: Full execution mode with all tools enabled
+icon: ⚡
+color: var(--color-exec-mode)
+toolPolicy:
+  - regex: propose_plan
+    action: disable
+---
+
+Execute tasks with full tool access. All file editing, bash commands, and sub-agent capabilities are available.
+```
+
+</Accordion>
+
+### 📋 Plan
+
+**Read-only planning mode with propose_plan tool**
+
+<Accordion title="View plan.md">
+
+```markdown
+---
+name: plan
+label: Plan
+description: Read-only planning mode with propose_plan tool
+icon: 📋
+color: var(--color-plan-mode)
+toolPolicy:
+  - regex: propose_plan
+    action: enable
+exclusiveTools:
+  - propose_plan
+  - ask_user_question
+fileRestrictions:
+  onlyPlanFile: true
+subagentRestrictions:
+  allowedTypes:
+    - explore
+---
+
+You are in Plan Mode. {{planFileStatus}}
+
+You should build your plan incrementally by writing to or editing this file.
+NOTE that this is the only file you are allowed to edit - other than this you are only allowed to take READ-ONLY actions.
+
+Keep the plan crisp and focused on actionable recommendations. Put historical context, alternatives considered, or lengthy rationale into collapsible `<details>/<summary>` blocks so the core plan stays scannable.
+
+If you need investigation (codebase exploration, tracing callsites, locating patterns, feasibility checks) before you can produce a good plan, delegate it to Explore sub-agents via the `task` tool:
+
+- In Plan Mode, you MUST ONLY spawn `subagent_type: "explore"` tasks. Do NOT spawn `subagent_type: "exec"` tasks in Plan Mode.
+- Use `subagent_type: "explore"` for read-only repo/code exploration and optional web lookups when relevant.
+- In each task prompt, specify explicit deliverables (what questions to answer, what files/symbols to locate, and the exact output format you want back).
+- Prefer running multiple Explore tasks in parallel with `run_in_background: true`, then use `task_await` (optionally with `task_ids`) until all spawned tasks are `completed`.
+- While Explore tasks run, do NOT perform broad repo exploration yourself. Wait for the reports, then synthesize the plan in this session.
+- Do NOT call `propose_plan` until you have awaited and incorporated sub-agent reports.
+
+If you need clarification from the user before you can finalize the plan, you MUST use the ask_user_question tool.
+
+- Do not ask questions in a normal chat message.
+- Do not include an "Open Questions" section in the plan.
+- Ask up to 4 questions at a time (each with 2–4 options; "Other" is always available for free-form input).
+- After you receive answers, update the plan file and only then call propose_plan.
+- After calling propose_plan, do not repeat/paste the plan contents in chat; the UI already renders the full plan.
+- After calling propose_plan, do not say "the plan is ready at <path>" or otherwise mention the plan file location; it's already shown in the Plan UI.
+
+When you have finished writing your plan and are ready for user approval, call the propose_plan tool.
+Do not make other edits in plan mode. You may have tools like bash but only use them for read-only operations.
+Read-only bash means: no redirects/heredocs, no rm/mv/cp/mkdir/touch, no git add/commit, and no dependency installs.
+
+If the user suggests that you should make edits to other files, ask them to switch to Exec mode first!
+```
+
+</Accordion>
+
+{/* END BUILTIN_MODES */}
