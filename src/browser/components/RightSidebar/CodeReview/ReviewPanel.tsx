@@ -328,20 +328,30 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   // Last refresh info for UI display (tooltip showing trigger reason + time)
   const [lastRefreshInfo, setLastRefreshInfo] = useState<LastRefreshInfo | null>(null);
 
+  // DEBUG
+  console.log(`[review-refresh] render: workspaceId=${workspaceId}, lastRefreshInfo=`, lastRefreshInfo);
+
   // Create RefreshController once on mount - handles debouncing, visibility, interaction pausing
+  // NOTE: We do NOT bindListeners() - ReviewPanel doesn't need focus/visibility refresh,
+  // only manual refresh and tool completion triggers.
   const controllerRef = useRef<RefreshController | null>(null);
   if (!controllerRef.current) {
+    console.log(`[review-refresh] creating controller for workspace=${workspaceId}`);
     controllerRef.current = new RefreshController({
       debounceMs: 3000,
       isPaused: () => isInteractingRef.current,
       onRefresh: () => {
+        console.log(`[review-refresh] onRefresh called`);
         lastFetchTimeRef.current = Date.now();
         setRefreshTrigger((prev) => prev + 1);
         invalidateGitStatus(workspaceId);
       },
-      onRefreshComplete: setLastRefreshInfo,
+      onRefreshComplete: (info) => {
+        console.log(`[review-refresh] onRefreshComplete:`, info);
+        setLastRefreshInfo(info);
+      },
     });
-    controllerRef.current.bindListeners();
+    // Don't bind focus/visibility listeners - not needed for ReviewPanel
   }
 
   // Subscribe to tool completions while mounted
@@ -368,6 +378,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   }, []);
 
   const handleRefresh = () => {
+    console.log(`[review-refresh] handleRefresh, controller=${!!controllerRef.current}`);
     controllerRef.current?.requestImmediate();
   };
 
