@@ -160,7 +160,11 @@ const svgReactPlugin = {
   setup(build) {
     build.onResolve({ filter: /\.svg\?react$/ }, async (args) => {
       const withoutQuery = args.path.replace(/\?react$/, "");
-      const resolved = await build.resolve(withoutQuery, { resolveDir: args.resolveDir });
+      const resolved = await build.resolve(withoutQuery, {
+        resolveDir: args.resolveDir,
+        importer: args.importer,
+        kind: args.kind,
+      });
       if (resolved.errors.length > 0) {
         return { errors: resolved.errors };
       }
@@ -177,7 +181,7 @@ const svgReactPlugin = {
 }
 `;
 
-      return { contents, loader: "jsx" };
+      return { contents, loader: "jsx", resolveDir: path.dirname(args.path) };
     });
   },
 };
