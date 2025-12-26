@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, jest } from "@jest/globals";
-import { RefreshController } from "./RefreshController";
+import { RefreshController, type LastRefreshInfo } from "./RefreshController";
 
 describe("RefreshController", () => {
   beforeEach(() => {
@@ -255,8 +255,8 @@ describe("RefreshController", () => {
 
 describe("RefreshController manual refresh", () => {
   it("requestImmediate always calls onRefreshComplete with trigger=manual", () => {
-    const onRefresh = jest.fn();
-    const onRefreshComplete = jest.fn();
+    const onRefresh = jest.fn<() => void>();
+    const onRefreshComplete = jest.fn<(info: LastRefreshInfo) => void>();
 
     const controller = new RefreshController({
       debounceMs: 1000,
@@ -283,8 +283,8 @@ describe("RefreshController manual refresh", () => {
   });
 
   it("requestImmediate updates lastRefreshInfo on every call even when diff unchanged", () => {
-    const onRefresh = jest.fn();
-    const onRefreshComplete = jest.fn();
+    const onRefresh = jest.fn<() => void>();
+    const onRefreshComplete = jest.fn<(info: LastRefreshInfo) => void>();
 
     const controller = new RefreshController({
       debounceMs: 1000,
