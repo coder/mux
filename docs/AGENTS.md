@@ -120,6 +120,7 @@ Avoid mock-heavy tests that verify implementation details rather than behavior. 
 - Tests in `tests/ui` must render the **full app** via `AppLoader` and drive interactions from the **user's perspective** (clicking, typing, navigating).
 - Use `renderReviewPanel()` helper or similar patterns that render `<AppLoader client={apiClient} />`.
 - Never test isolated components or utility functions here—those belong as unit tests beside implementation (`*.test.ts`).
+- **Never call backend APIs directly** (e.g., `env.orpc.workspace.remove()`) to trigger actions that you're testing—always simulate the user action (click the delete button, etc.). Calling the API bypasses frontend logic like navigation, state updates, and error handling, which is often where bugs hide. Backend API calls are fine for setup/teardown or to avoid expensive operations.
 - These tests require `TEST_INTEGRATION=1` and real API keys; use `shouldRunIntegrationTests()` guard.
 
 ### Integration Testing

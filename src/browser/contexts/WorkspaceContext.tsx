@@ -190,6 +190,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       // Handle functional updates by resolving against the ref (always fresh)
       const current = selectedWorkspaceRef.current;
       const newValue = typeof update === "function" ? update(current) : update;
+
       if (newValue) {
         navigateToWorkspace(newValue.workspaceId);
         // Persist to localStorage for next session
@@ -330,45 +331,55 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
             // If the user is currently viewing a deleted child workspace, fall back to its parent.
             // Otherwise, fall back to another workspace in the same project (best effort).
             const deletedMeta = workspaceMetadataRef.current.get(event.workspaceId);
-            setSelectedWorkspace((current) => {
-              if (current?.workspaceId !== event.workspaceId) {
-                return current;
-              }
+            // Only handle navigation if the deleted workspace is currently selected.
+            // Use the ref to get the current selection (avoids stale closure).
+            const currentSelection = selectedWorkspaceRef.current;
+            if (!currentSelection || currentSelection.workspaceId !== event.workspaceId) {
+              // Not viewing the deleted workspace - no navigation needed
+              return;
+            }
 
-              const parentWorkspaceId = deletedMeta?.parentWorkspaceId;
-              if (parentWorkspaceId) {
-                const parentMeta = workspaceMetadataRef.current.get(parentWorkspaceId);
-                if (parentMeta) {
-                  return {
-                    workspaceId: parentMeta.id,
-                    projectPath: parentMeta.projectPath,
-                    projectName: parentMeta.projectName,
-                    namedWorkspacePath: parentMeta.namedWorkspacePath,
-                  };
-                }
+            // The deleted workspace was selected - try to find a fallback
+            const parentWorkspaceId = deletedMeta?.parentWorkspaceId;
+            if (parentWorkspaceId) {
+              const parentMeta = workspaceMetadataRef.current.get(parentWorkspaceId);
+              if (parentMeta) {
+                setSelectedWorkspace({
+                  workspaceId: parentMeta.id,
+                  projectPath: parentMeta.projectPath,
+                  projectName: parentMeta.projectName,
+                  namedWorkspacePath: parentMeta.namedWorkspacePath,
+                });
+                return;
               }
+            }
 
-              const projectPath = deletedMeta?.projectPath;
-              const fallbackMeta =
-                (projectPath
-                  ? Array.from(workspaceMetadataRef.current.values()).find(
-                      (meta) => meta.projectPath === projectPath && meta.id !== event.workspaceId
-                    )
-                  : null) ??
-                Array.from(workspaceMetadataRef.current.values()).find(
-                  (meta) => meta.id !== event.workspaceId
-                );
-              if (!fallbackMeta) {
-                return null;
-              }
+            // Try to find another workspace in the same project
+            const projectPath = deletedMeta?.projectPath;
+            const fallbackMeta =
+              (projectPath
+                ? Array.from(workspaceMetadataRef.current.values()).find(
+                    (meta) => meta.projectPath === projectPath && meta.id !== event.workspaceId
+                  )
+                : null) ??
+              Array.from(workspaceMetadataRef.current.values()).find(
+                (meta) => meta.id !== event.workspaceId
+              );
 
-              return {
+            if (fallbackMeta) {
+              setSelectedWorkspace({
                 workspaceId: fallbackMeta.id,
                 projectPath: fallbackMeta.projectPath,
                 projectName: fallbackMeta.projectName,
                 namedWorkspacePath: fallbackMeta.namedWorkspacePath,
-              };
-            });
+              });
+            } else if (projectPath) {
+              // No fallback workspace - navigate to project page
+              navigateToProject(projectPath);
+            } else {
+              // No project path available - go home as last resort
+              setSelectedWorkspace(null);
+            }
           }
 
           if (event.metadata !== null) {
@@ -411,7 +422,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     return () => {
       controller.abort();
     };
-  }, [refreshProjects, setSelectedWorkspace, setWorkspaceMetadata, api]);
+  }, [navigateToProject, refreshProjects, setSelectedWorkspace, setWorkspaceMetadata, api]);
 
   const createWorkspace = useCallback(
     async (
@@ -465,10 +476,10 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     ): Promise<{ success: boolean; error?: string }> => {
       if (!api) return { success: false, error: "API not connected" };
 
-      // Capture the current selection before the async operation
-      // We need to know if the removed workspace is currently selected
-      // and its projectPath so we can navigate to the project page
-      const wasSelected = selectedWorkspace?.workspaceId === workspaceId;
+      // Capture state before the async operation.
+      // We check currentWorkspaceId (from URL) rather than selectedWorkspace
+      // because it's the source of truth for what's actually selected.
+      const wasSelected = currentWorkspaceId === workspaceId;
       const projectPath = selectedWorkspace?.projectPath;
 
       try {
@@ -483,8 +494,8 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           // Reload workspace metadata
           await loadWorkspaceMetadata();
 
-          // If the removed workspace was selected, navigate to its project page
-          // instead of going home (user likely wants to stay in context)
+          // If the removed workspace was selected (URL was on this workspace),
+          // navigate to its project page instead of going home
           if (wasSelected && projectPath) {
             navigateToProject(projectPath);
           }
@@ -500,7 +511,14 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         return { success: false, error: errorMessage };
       }
     },
-    [loadWorkspaceMetadata, navigateToProject, refreshProjects, selectedWorkspace, api]
+    [
+      currentWorkspaceId,
+      loadWorkspaceMetadata,
+      navigateToProject,
+      refreshProjects,
+      selectedWorkspace,
+      api,
+    ]
   );
 
   /**

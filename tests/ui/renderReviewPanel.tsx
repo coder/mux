@@ -22,8 +22,18 @@ export interface RenderedApp extends RenderResult {
 /**
  * Render the full App via AppLoader for true integration testing.
  * This exercises the real component tree, providers, and state management.
+ *
+ * @deprecated Use renderApp instead - the name better reflects what this does
  */
 export function renderReviewPanel(props: RenderReviewPanelParams): RenderedApp {
+  return renderApp(props);
+}
+
+/**
+ * Render the full App via AppLoader for true integration testing.
+ * This exercises the real component tree, providers, and state management.
+ */
+export function renderApp(props: RenderReviewPanelParams): RenderedApp {
   const result = render(<AppLoader client={props.apiClient} />);
 
   return {

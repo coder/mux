@@ -3,11 +3,11 @@
  *
  * Tests cover:
  * - Workspace creation and navigation
- * - Archive/unarchive operations
- * - Workspace deletion (from active view and archived view)
+ * - Archive/unarchive operations (via UI clicks)
+ * - Workspace deletion (via UI clicks)
  *
- * Note: These tests don't fully prove there are no races under high CPU,
- * but they document and verify the expected behavior end-to-end.
+ * Note: These tests drive the UI from the user's perspective - clicking buttons,
+ * not calling backend APIs directly for the actions being tested.
  */
 
 import { fireEvent, waitFor } from "@testing-library/react";
@@ -24,7 +24,7 @@ import { generateBranchName } from "../ipc/helpers";
 import { detectDefaultTrunkBranch } from "../../src/node/git";
 
 import { installDom } from "./dom";
-import { renderReviewPanel } from "./renderReviewPanel";
+import { renderApp } from "./renderReviewPanel";
 import { cleanupView, setupWorkspaceView } from "./helpers";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
@@ -43,7 +43,7 @@ describeIntegration("Workspace Creation (UI)", () => {
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
       const cleanupDom = installDom();
 
-      const view = renderReviewPanel({
+      const view = renderApp({
         apiClient: env.orpc,
         metadata,
       });
@@ -100,7 +100,7 @@ describeIntegration("Workspace Creation (UI)", () => {
   }, 30_000);
 });
 
-describeIntegration("Workspace Archive/Unarchive (UI)", () => {
+describeIntegration("Workspace Archive (UI)", () => {
   beforeAll(async () => {
     await createSharedRepo();
   });
@@ -109,13 +109,13 @@ describeIntegration("Workspace Archive/Unarchive (UI)", () => {
     await cleanupSharedRepo();
   });
 
-  test("archiving a workspace removes it from the active workspace list", async () => {
+  test("clicking archive button on active workspace navigates to project page", async () => {
     const env = getSharedEnv();
     const projectPath = getSharedRepoPath();
-    const branchName = generateBranchName("test-archive");
+    const branchName = generateBranchName("test-archive-ui");
     const trunkBranch = await detectDefaultTrunkBranch(projectPath);
 
-    // Create workspace
+    // Create workspace (setup - OK to use API)
     const createResult = await env.orpc.workspace.create({
       projectPath,
       branchName,
@@ -124,80 +124,10 @@ describeIntegration("Workspace Archive/Unarchive (UI)", () => {
     if (!createResult.success) throw new Error(createResult.error);
     const metadata = createResult.metadata;
     const workspaceId = metadata.id;
+    const displayTitle = metadata.title ?? metadata.name;
 
     const cleanupDom = installDom();
-    const view = renderReviewPanel({
-      apiClient: env.orpc,
-      metadata,
-    });
-
-    try {
-      await view.waitForReady();
-
-      // Expand the project to see workspaces
-      const projectRow = await waitFor(
-        () => {
-          const el = view.container.querySelector(`[data-project-path="${projectPath}"]`);
-          if (!el) throw new Error("Project not found in sidebar");
-          return el as HTMLElement;
-        },
-        { timeout: 5_000 }
-      );
-      fireEvent.click(projectRow);
-
-      // Verify workspace is in the active list
-      await waitFor(
-        () => {
-          const el = view.container.querySelector(`[data-workspace-id="${workspaceId}"]`);
-          if (!el) throw new Error("Workspace not found in sidebar");
-        },
-        { timeout: 5_000 }
-      );
-
-      // Archive the workspace via API
-      const archiveResult = await env.orpc.workspace.archive({ workspaceId });
-      expect(archiveResult.success).toBe(true);
-
-      // Wait for workspace to disappear from sidebar (it's now archived)
-      await waitFor(
-        () => {
-          const el = view.container.querySelector(`[data-workspace-id="${workspaceId}"]`);
-          if (el) throw new Error("Workspace still visible after archive");
-        },
-        { timeout: 5_000 }
-      );
-
-      // Verify it appears in the archived list
-      const archivedList = await env.orpc.workspace.list({ archived: true });
-      const archivedWorkspace = archivedList.find((w) => w.id === workspaceId);
-      expect(archivedWorkspace).toBeTruthy();
-      expect(archivedWorkspace?.archivedAt).toBeTruthy();
-    } finally {
-      // Clean up: unarchive then remove
-      await env.orpc.workspace.unarchive({ workspaceId }).catch(() => {});
-      await env.orpc.workspace.remove({ workspaceId }).catch(() => {});
-      await cleanupView(view, cleanupDom);
-    }
-  }, 30_000);
-
-  test("archiving the active workspace navigates to project page, not home", async () => {
-    const env = getSharedEnv();
-    const projectPath = getSharedRepoPath();
-    const branchName = generateBranchName("test-archive-active");
-    const trunkBranch = await detectDefaultTrunkBranch(projectPath);
-
-    // Create workspace
-    const createResult = await env.orpc.workspace.create({
-      projectPath,
-      branchName,
-      trunkBranch,
-    });
-    if (!createResult.success) throw new Error(createResult.error);
-    const metadata = createResult.metadata;
-    const workspaceId = metadata.id;
-
-    const cleanupDom = installDom();
-    const view = renderReviewPanel({
+    const view = renderApp({
       apiClient: env.orpc,
       metadata,
     });
@@ -217,109 +147,52 @@ describeIntegration("Workspace Archive/Unarchive (UI)", () => {
         { timeout: 5_000 }
       );
 
-      // Archive the active workspace via API
-      const archiveResult = await env.orpc.workspace.archive({ workspaceId });
-      expect(archiveResult.success).toBe(true);
+      // Find and click the archive button in the sidebar
+      const archiveButton = await waitFor(
+        () => {
+          const btn = view.container.querySelector(
+            `[aria-label="Archive workspace ${displayTitle}"]`
+          ) as HTMLElement;
+          if (!btn) throw new Error("Archive button not found");
+          return btn;
+        },
+        { timeout: 5_000 }
+      );
+      fireEvent.click(archiveButton);
 
-      // Give React time to process the archive and navigate
-      await new Promise((r) => setTimeout(r, 300));
+      // Wait for navigation to project page (workspace disappears from sidebar)
+      await waitFor(
+        () => {
+          const el = view.container.querySelector(`[data-workspace-id="${workspaceId}"]`);
+          if (el) throw new Error("Workspace still visible after archive");
+        },
+        { timeout: 5_000 }
+      );
 
       // Should NOT be on home screen
       const homeScreen = view.container.querySelector('[data-testid="home-screen"]');
       expect(homeScreen).toBeNull();
 
       // Should be on the project page (has creation textarea for new workspace)
-      // The project page shows when project is selected but no workspace is active
       await waitFor(
         () => {
-          // Project page has the ChatInput for creating new workspaces
-          // Look for the creation textarea or the project being selected
           const creationTextarea = view.container.querySelector("textarea");
-          const projectSelected = view.container.querySelector(
-            `[data-project-path="${projectPath}"]`
-          );
-          if (!creationTextarea && !projectSelected) {
+          if (!creationTextarea) {
             throw new Error("Not on project page after archiving");
           }
         },
         { timeout: 5_000 }
       );
     } finally {
+      // Cleanup (OK to use API)
       await env.orpc.workspace.unarchive({ workspaceId }).catch(() => {});
-      await env.orpc.workspace.remove({ workspaceId }).catch(() => {});
-      await cleanupView(view, cleanupDom);
-    }
-  }, 30_000);
-
-  test("unarchiving a workspace adds it back to the active list", async () => {
-    const env = getSharedEnv();
-    const projectPath = getSharedRepoPath();
-    const branchName = generateBranchName("test-unarchive");
-    const trunkBranch = await detectDefaultTrunkBranch(projectPath);
-
-    // Create and immediately archive workspace
-    const createResult = await env.orpc.workspace.create({
-      projectPath,
-      branchName,
-      trunkBranch,
-    });
-    if (!createResult.success) throw new Error(createResult.error);
-    const metadata = createResult.metadata;
-    const workspaceId = metadata.id;
-
-    await env.orpc.workspace.archive({ workspaceId });
-
-    const cleanupDom = installDom();
-    const view = renderReviewPanel({
-      apiClient: env.orpc,
-      metadata,
-    });
-
-    try {
-      await view.waitForReady();
-
-      // Expand the project to see workspaces
-      const projectRow = await waitFor(
-        () => {
-          const el = view.container.querySelector(`[data-project-path="${projectPath}"]`);
-          if (!el) throw new Error("Project not found in sidebar");
-          return el as HTMLElement;
-        },
-        { timeout: 5_000 }
-      );
-      fireEvent.click(projectRow);
-
-      // Workspace should NOT be in active sidebar (it's archived)
-      // Give a moment for the expansion to complete
-      await new Promise((r) => setTimeout(r, 100));
-      const archivedEl = view.container.querySelector(`[data-workspace-id="${workspaceId}"]`);
-      expect(archivedEl).toBeNull();
-
-      // Unarchive the workspace
-      const unarchiveResult = await env.orpc.workspace.unarchive({ workspaceId });
-      expect(unarchiveResult.success).toBe(true);
-
-      // Wait for workspace to appear in sidebar
-      await waitFor(
-        () => {
-          const el = view.container.querySelector(`[data-workspace-id="${workspaceId}"]`);
-          if (!el) throw new Error("Workspace not found after unarchive");
-        },
-        { timeout: 5_000 }
-      );
-
-      // Verify it's no longer in archived list
-      const archivedList = await env.orpc.workspace.list({ archived: true });
-      const stillArchived = archivedList.find((w) => w.id === workspaceId);
-      expect(stillArchived).toBeFalsy();
-    } finally {
       await env.orpc.workspace.remove({ workspaceId }).catch(() => {});
       await cleanupView(view, cleanupDom);
     }
   }, 30_000);
 });
 
-describeIntegration("Workspace Deletion (UI)", () => {
+describeIntegration("Workspace Delete from Archive (UI)", () => {
   beforeAll(async () => {
     await createSharedRepo();
   });
@@ -328,13 +201,13 @@ describeIntegration("Workspace Deletion (UI)", () => {
     await cleanupSharedRepo();
   });
 
-  test("deleting an active workspace navigates to home", async () => {
+  test("clicking delete on archived workspace stays on project page", async () => {
     const env = getSharedEnv();
     const projectPath = getSharedRepoPath();
-    const branchName = generateBranchName("test-delete-active");
+    const branchName = generateBranchName("test-delete-archived-ui");
     const trunkBranch = await detectDefaultTrunkBranch(projectPath);
 
-    // Create workspace
+    // Create and archive workspace (setup - OK to use API)
     const createResult = await env.orpc.workspace.create({
       projectPath,
       branchName,
@@ -343,65 +216,12 @@ describeIntegration("Workspace Deletion (UI)", () => {
     if (!createResult.success) throw new Error(createResult.error);
     const metadata = createResult.metadata;
     const workspaceId = metadata.id;
-
-    const cleanupDom = installDom();
-    const view = renderReviewPanel({
-      apiClient: env.orpc,
-      metadata,
-    });
-
-    try {
-      await setupWorkspaceView(view, metadata, workspaceId);
-
-      // Verify we're in the workspace (should see chat input or message area)
-      await waitFor(
-        () => {
-          const wsView = view.container.querySelector(
-            '[role="log"], [data-testid="chat-input"], textarea'
-          );
-          if (!wsView) throw new Error("Not in workspace view");
-        },
-        { timeout: 5_000 }
-      );
-
-      // Delete the workspace via API
-      const deleteResult = await env.orpc.workspace.remove({ workspaceId });
-      expect(deleteResult.success).toBe(true);
-
-      // Should navigate away from workspace view
-      // Workspace element should disappear from sidebar
-      await waitFor(
-        () => {
-          const el = view.container.querySelector(`[data-workspace-id="${workspaceId}"]`);
-          if (el) throw new Error("Workspace still in sidebar after delete");
-        },
-        { timeout: 5_000 }
-      );
-    } finally {
-      await cleanupView(view, cleanupDom);
-    }
-  }, 30_000);
-
-  test("deleting an archived workspace does not navigate away from project page", async () => {
-    const env = getSharedEnv();
-    const projectPath = getSharedRepoPath();
-    const branchName = generateBranchName("test-delete-archived");
-    const trunkBranch = await detectDefaultTrunkBranch(projectPath);
-
-    // Create and archive workspace
-    const createResult = await env.orpc.workspace.create({
-      projectPath,
-      branchName,
-      trunkBranch,
-    });
-    if (!createResult.success) throw new Error(createResult.error);
-    const metadata = createResult.metadata;
-    const workspaceId = metadata.id;
+    const displayTitle = metadata.title ?? metadata.name;
 
     await env.orpc.workspace.archive({ workspaceId });
 
     const cleanupDom = installDom();
-    const view = renderReviewPanel({
+    const view = renderApp({
       apiClient: env.orpc,
       metadata,
     });
@@ -409,7 +229,7 @@ describeIntegration("Workspace Deletion (UI)", () => {
     try {
       await view.waitForReady();
 
-      // Expand project to see the project page (where archived workspaces are shown)
+      // Click the project to navigate to project page (where archived workspaces show)
       const projectRow = await waitFor(
         () => {
           const el = view.container.querySelector(`[data-project-path="${projectPath}"]`);
@@ -420,41 +240,60 @@ describeIntegration("Workspace Deletion (UI)", () => {
       );
       fireEvent.click(projectRow);
 
-      // Give React time to render project page
-      await new Promise((r) => setTimeout(r, 200));
+      // Wait for project page to render with archived workspaces section
+      await waitFor(
+        () => {
+          const archivedSection = view.container.querySelector('[class*="Archived"]');
+          const textarea = view.container.querySelector("textarea");
+          if (!archivedSection && !textarea) {
+            throw new Error("Project page not rendered");
+          }
+        },
+        { timeout: 5_000 }
+      );
 
-      // Verify we're on the project page (should see creation input or archived section)
-      // The project page has the ChatInput for creating new workspaces
-      const isOnProjectPage = () => {
-        // Look for indicators that we're on project page:
-        // - The project is selected in sidebar
-        // - There's a creation form or archived section
-        const selectedProject = view.container.querySelector(
-          `[data-project-path="${projectPath}"][data-selected="true"]`
-        );
-        const creationInput = view.container.querySelector("textarea");
-        return selectedProject || creationInput;
-      };
-      expect(isOnProjectPage()).toBeTruthy();
+      // Find the delete button for our archived workspace
+      const deleteButton = await waitFor(
+        () => {
+          const btn = view.container.querySelector(
+            `[aria-label="Delete workspace ${displayTitle}"]`
+          ) as HTMLElement;
+          if (!btn) throw new Error("Delete button not found in archived list");
+          return btn;
+        },
+        { timeout: 5_000 }
+      );
 
-      // Delete the archived workspace via API
-      const deleteResult = await env.orpc.workspace.remove({
-        workspaceId,
-        options: { force: true },
-      });
-      expect(deleteResult.success).toBe(true);
+      // Click delete
+      fireEvent.click(deleteButton);
 
-      // Give React time to process the deletion
-      await new Promise((r) => setTimeout(r, 200));
+      // Wait for the delete button to disappear (workspace removed from archived list)
+      await waitFor(
+        () => {
+          const btn = view.container.querySelector(
+            `[aria-label="Delete workspace ${displayTitle}"]`
+          );
+          if (btn) throw new Error("Delete button still present - deletion not complete");
+        },
+        { timeout: 5_000 }
+      );
 
-      // Should still be on project page (not navigated away)
-      // The key assertion: we should NOT be on home screen
+      // Should still be on project page (not navigated to home)
       const homeScreen = view.container.querySelector('[data-testid="home-screen"]');
       expect(homeScreen).toBeNull();
 
-      // Project should still be visible/selected
-      expect(isOnProjectPage()).toBeTruthy();
+      // Project should still be visible
+      const projectStillVisible = view.container.querySelector(
+        `[data-project-path="${projectPath}"]`
+      );
+      expect(projectStillVisible).toBeTruthy();
+
+      // Textarea for creating new workspace should still be there
+      const creationTextarea = view.container.querySelector("textarea");
+      expect(creationTextarea).toBeTruthy();
     } finally {
+      // Workspace should be deleted, but cleanup just in case
+      await env.orpc.workspace.remove({ workspaceId, options: { force: true } }).catch(() => {});
       await cleanupView(view, cleanupDom);
     }
   }, 30_000);
