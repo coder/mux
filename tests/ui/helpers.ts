@@ -1,8 +1,10 @@
 /**
- * Shared UI test helpers for review panel testing.
+ * Shared UI test helpers for review panel and git status testing.
  */
 
-import { waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, waitFor } from "@testing-library/react";
+import type { FrontendWorkspaceMetadata, GitStatus } from "@/common/types/workspace";
+import type { RenderedApp } from "./renderReviewPanel";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -90,5 +92,166 @@ export async function assertRefreshButtonHasLastRefreshInfo(
       }
     },
     { timeout: timeoutMs }
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// WORKSPACE/VIEW SETUP HELPERS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Set up the full App UI and navigate to a workspace.
+ * Expands project tree and selects the workspace.
+ */
+export async function setupWorkspaceView(
+  view: RenderedApp,
+  metadata: FrontendWorkspaceMetadata,
+  workspaceId: string
+): Promise<void> {
+  await view.waitForReady();
+
+  // Expand project tree
+  const projectRow = await waitFor(
+    () => {
+      const el = view.container.querySelector(`[data-project-path="${metadata.projectPath}"]`);
+      if (!el) throw new Error("Project not found in sidebar");
+      return el as HTMLElement;
+    },
+    { timeout: 10_000 }
+  );
+
+  const expandButton = projectRow.querySelector('[aria-label*="Expand project"]');
+  if (expandButton) {
+    fireEvent.click(expandButton);
+  } else {
+    fireEvent.click(projectRow);
+  }
+
+  // Select the workspace
+  const workspaceElement = await waitFor(
+    () => {
+      const el = view.container.querySelector(`[data-workspace-id="${workspaceId}"]`);
+      if (!el) throw new Error("Workspace not found in sidebar");
+      return el as HTMLElement;
+    },
+    { timeout: 10_000 }
+  );
+  fireEvent.click(workspaceElement);
+}
+
+/**
+ * Clean up after a UI test: unmount view, run RTL cleanup, then restore DOM.
+ * Use in finally blocks to ensure consistent cleanup.
+ */
+export async function cleanupView(view: RenderedApp, cleanupDom: () => void): Promise<void> {
+  view.unmount();
+  cleanup();
+  // Wait for any pending React updates to settle before destroying DOM
+  await new Promise((r) => setTimeout(r, 100));
+  cleanupDom();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GIT STATUS HELPERS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Get the current git status from a workspace element's data-git-status attribute.
+ * Returns null if the attribute is missing or cannot be parsed.
+ */
+export function getGitStatusFromElement(element: HTMLElement): Partial<GitStatus> | null {
+  const statusAttr = element.getAttribute("data-git-status");
+  if (!statusAttr) return null;
+  try {
+    return JSON.parse(statusAttr) as Partial<GitStatus>;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Wait for the git status indicator to appear in the sidebar workspace row.
+ * The workspace row displays git status via data-git-status attribute.
+ */
+export async function waitForGitStatusElement(
+  container: HTMLElement,
+  workspaceId: string,
+  timeoutMs: number = 30_000
+): Promise<HTMLElement> {
+  return waitFor(
+    () => {
+      const el = container.querySelector(`[data-workspace-id="${workspaceId}"][data-git-status]`);
+      if (!el) throw new Error("Git status element not found");
+      return el as HTMLElement;
+    },
+    { timeout: timeoutMs }
+  );
+}
+
+/**
+ * Wait for git status to match a condition.
+ */
+async function waitForGitStatus(
+  container: HTMLElement,
+  workspaceId: string,
+  predicate: (status: Partial<GitStatus>) => boolean,
+  description: string,
+  timeoutMs: number
+): Promise<GitStatus> {
+  let lastStatus: Partial<GitStatus> | null = null;
+
+  await waitFor(
+    () => {
+      const el = container.querySelector(`[data-workspace-id="${workspaceId}"][data-git-status]`);
+      if (!el) throw new Error("Git status element not found");
+      lastStatus = getGitStatusFromElement(el as HTMLElement);
+      if (!lastStatus) throw new Error("Could not parse git status");
+      if (!predicate(lastStatus)) {
+        throw new Error(`Expected ${description}, got: ${JSON.stringify(lastStatus)}`);
+      }
+    },
+    { timeout: timeoutMs }
+  );
+
+  return lastStatus as unknown as GitStatus;
+}
+
+/**
+ * Wait for git status to indicate dirty (uncommitted changes).
+ */
+export function waitForDirtyStatus(
+  container: HTMLElement,
+  workspaceId: string,
+  timeoutMs: number = 60_000
+): Promise<GitStatus> {
+  return waitForGitStatus(container, workspaceId, (s) => !!s.dirty, "dirty status", timeoutMs);
+}
+
+/**
+ * Wait for git status to indicate clean (no uncommitted changes).
+ */
+export function waitForCleanStatus(
+  container: HTMLElement,
+  workspaceId: string,
+  timeoutMs: number = 60_000
+): Promise<GitStatus> {
+  return waitForGitStatus(container, workspaceId, (s) => !s.dirty, "clean status", timeoutMs);
+}
+
+/**
+ * Wait for git status to show at least N commits ahead of remote.
+ */
+export function waitForAheadStatus(
+  container: HTMLElement,
+  workspaceId: string,
+  minAhead: number,
+  timeoutMs: number = 60_000
+): Promise<GitStatus> {
+  return waitForGitStatus(
+    container,
+    workspaceId,
+    (s) => (s.ahead ?? 0) >= minAhead,
+    `ahead >= ${minAhead}`,
+    timeoutMs
   );
 }

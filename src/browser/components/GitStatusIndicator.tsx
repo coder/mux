@@ -2,6 +2,7 @@ import React, { useState, useCallback } from "react";
 import type { GitStatus } from "@/common/types/workspace";
 import { GIT_STATUS_INDICATOR_MODE_KEY } from "@/common/constants/storage";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { useGitStatusRefreshing } from "@/browser/stores/GitStatusStore";
 import { GitStatusIndicatorView, type GitStatusIndicatorMode } from "./GitStatusIndicatorView";
 import { useGitBranchDetails } from "./hooks/useGitBranchDetails";
 
@@ -26,6 +27,7 @@ export const GitStatusIndicator: React.FC<GitStatusIndicatorProps> = ({
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const trimmedWorkspaceId = workspaceId.trim();
+  const isRefreshing = useGitStatusRefreshing(trimmedWorkspaceId);
 
   const [mode, setMode] = usePersistedState<GitStatusIndicatorMode>(
     GIT_STATUS_INDICATOR_MODE_KEY,
@@ -66,6 +68,7 @@ export const GitStatusIndicator: React.FC<GitStatusIndicatorProps> = ({
       onOpenChange={setIsOpen}
       onModeChange={handleModeChange}
       isWorking={isWorking}
+      isRefreshing={isRefreshing}
     />
   );
 };
