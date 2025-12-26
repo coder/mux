@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
+import type { WorkspaceChatMessage } from "mux/common/orpc/types";
 import type { DisplayedMessage } from "mux/common/types/message";
 import { createClient } from "mux/common/orpc/client";
 
@@ -55,6 +56,39 @@ function formatConnectionStatus(status: UiConnectionStatus | null): string {
   return parts.join("\n");
 }
 
+
+interface ChatReplayState {
+  workspaceId: string;
+  caughtUp: boolean;
+  historicalMessages: Extract<WorkspaceChatMessage, { type: "message" }>[];
+  pendingStreamEvents: WorkspaceChatMessage[];
+}
+
+function createChatReplayState(workspaceId: string): ChatReplayState {
+  return { workspaceId, caughtUp: false, historicalMessages: [], pendingStreamEvents: [] };
+}
+
+function shouldBufferUntilCaughtUp(event: WorkspaceChatMessage): boolean {
+  switch (event.type) {
+    case "stream-start":
+    case "stream-delta":
+    case "stream-end":
+    case "stream-abort":
+    case "tool-call-start":
+    case "tool-call-delta":
+    case "tool-call-end":
+    case "reasoning-delta":
+    case "reasoning-end":
+    case "usage-delta":
+    case "session-usage-delta":
+    case "init-start":
+    case "init-output":
+    case "init-end":
+      return true;
+    default:
+      return false;
+  }
+}
 function pickWorkspaceCreatedAt(workspace: UiWorkspace | undefined): string {
   // StreamingMessageAggregator expects a timestamp string (backend contract: always present).
   // Default to epoch to preserve stable ordering if we ever get legacy workspace metadata.
@@ -72,6 +106,11 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
   const [connectionStatus, setConnectionStatus] = useState<UiConnectionStatus | null>(null);
   const [workspaces, setWorkspaces] = useState<UiWorkspace[]>([]);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
+
+  const activeWorkspaceIdRef = useRef<string | null>(null);
+  activeWorkspaceIdRef.current = selectedWorkspaceId;
+
+  const chatReplayStateRef = useRef<ChatReplayState | null>(null);
   const [notices, setNotices] = useState<Notice[]>([]);
 
 
@@ -192,30 +231,42 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
           setWorkspaces(msg.workspaces);
           return;
         case "setSelectedWorkspace": {
+          activeWorkspaceIdRef.current = msg.workspaceId;
           setSelectedWorkspaceId(msg.workspaceId);
 
-          // The webview retains React state when hidden, so clear stale transcript
-          // when no workspace is selected.
-          if (!msg.workspaceId) {
-            cancelScheduledRender();
-            aggregatorRef.current = null;
-            setDisplayedMessages([]);
-            setNotices([]);
-          }
+          // The webview retains React state when hidden, so always clear the transcript when
+          // switching workspaces (avoids showing stale messages for a new selection).
+          cancelScheduledRender();
+          aggregatorRef.current = null;
+          chatReplayStateRef.current = msg.workspaceId ? createChatReplayState(msg.workspaceId) : null;
+          setDisplayedMessages([]);
+          setNotices([]);
 
           return;
         }
         case "chatReset": {
+          const activeWorkspaceId = activeWorkspaceIdRef.current;
+          if (activeWorkspaceId && activeWorkspaceId !== msg.workspaceId) {
+            return;
+          }
+
+          activeWorkspaceIdRef.current = msg.workspaceId;
           cancelScheduledRender();
           const workspace = workspacesRef.current.find((w) => w.id === msg.workspaceId);
           const createdAt = pickWorkspaceCreatedAt(workspace);
           aggregatorRef.current = new StreamingMessageAggregator(createdAt, msg.workspaceId, workspace?.unarchivedAt);
+          chatReplayStateRef.current = createChatReplayState(msg.workspaceId);
           setDisplayedMessages([]);
           setNotices([]);
           jumpToBottomRef.current();
           return;
         }
         case "chatEvent": {
+          const activeWorkspaceId = activeWorkspaceIdRef.current;
+          if (activeWorkspaceId && activeWorkspaceId !== msg.workspaceId) {
+            return;
+          }
+
           try {
             if (!aggregatorRef.current) {
               const workspace = workspacesRef.current.find((w) => w.id === msg.workspaceId);
@@ -232,7 +283,45 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
               return;
             }
 
-            const hint = applyWorkspaceChatEventToAggregator(aggregator, msg.event);
+            let replayState = chatReplayStateRef.current;
+            if (!replayState || replayState.workspaceId !== msg.workspaceId) {
+              replayState = createChatReplayState(msg.workspaceId);
+              chatReplayStateRef.current = replayState;
+            }
+
+            const event = msg.event;
+
+            if (event.type === "caught-up") {
+              const hasActiveStream = replayState.pendingStreamEvents.some((event) => event.type === "stream-start");
+
+              if (replayState.historicalMessages.length > 0) {
+                aggregator.loadHistoricalMessages(replayState.historicalMessages, hasActiveStream);
+                replayState.historicalMessages.length = 0;
+              }
+
+              for (const bufferedEvent of replayState.pendingStreamEvents) {
+                applyWorkspaceChatEventToAggregator(aggregator, bufferedEvent);
+              }
+              replayState.pendingStreamEvents.length = 0;
+
+              replayState.caughtUp = true;
+              flushDisplayedMessages();
+              return;
+            }
+
+            if (!replayState.caughtUp) {
+              if (event.type === "message") {
+                replayState.historicalMessages.push(event);
+                return;
+              }
+
+              if (shouldBufferUntilCaughtUp(event)) {
+                replayState.pendingStreamEvents.push(event);
+                return;
+              }
+            }
+
+            const hint = applyWorkspaceChatEventToAggregator(aggregator, event);
 
             if (hint === "ignored") {
               return;
