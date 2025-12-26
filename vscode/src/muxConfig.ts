@@ -97,6 +97,7 @@ export async function getAllWorkspacesFromApi(
       recency: activity.recency,
       streaming: activity.streaming,
       lastModel: activity.lastModel,
+      lastThinkingLevel: activity.lastThinkingLevel,
     });
   }
 

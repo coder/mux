@@ -106,6 +106,9 @@ export const WorkspaceActivitySnapshotSchema = z.object({
   recency: z.number().meta({ description: "Unix ms timestamp of last user interaction" }),
   streaming: z.boolean().meta({ description: "Whether workspace currently has an active stream" }),
   lastModel: z.string().nullable().meta({ description: "Last model sent from this workspace" }),
+  lastThinkingLevel: ThinkingLevelSchema.nullable().meta({
+    description: "Last thinking/reasoning level used in this workspace",
+  }),
 });
 
 export const PostCompactionStateSchema = z.object({

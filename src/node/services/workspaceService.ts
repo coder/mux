@@ -234,7 +234,24 @@ export class WorkspaceService extends EventEmitter {
     model?: string
   ): Promise<void> {
     try {
-      const snapshot = await this.extensionMetadata.setStreaming(workspaceId, streaming, model);
+      let thinkingLevel: WorkspaceAISettings["thinkingLevel"] | undefined;
+      if (model) {
+        const found = this.config.findWorkspace(workspaceId);
+        if (found) {
+          const config = this.config.loadConfigOrDefault();
+          const project = config.projects.get(found.projectPath);
+          const workspace =
+            project?.workspaces.find((w) => w.id === workspaceId) ??
+            project?.workspaces.find((w) => w.path === found.workspacePath);
+          thinkingLevel = workspace?.aiSettings?.thinkingLevel;
+        }
+      }
+      const snapshot = await this.extensionMetadata.setStreaming(
+        workspaceId,
+        streaming,
+        model,
+        thinkingLevel
+      );
       this.emitWorkspaceActivity(workspaceId, snapshot);
     } catch (error) {
       log.error("Failed to update workspace streaming status", { workspaceId, error });

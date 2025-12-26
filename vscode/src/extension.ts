@@ -453,13 +453,28 @@ function formatWorkspaceLabel(workspace: WorkspaceWithContext): string {
 function createWorkspaceQuickPickItem(
   workspace: WorkspaceWithContext
 ): vscode.QuickPickItem & { workspace: WorkspaceWithContext } {
+  const detailParts: string[] = [];
+
   // Prefer recency (last used) over created timestamp
-  let detail: string | undefined;
   if (workspace.extensionMetadata?.recency) {
-    detail = `Last used: ${formatRelativeTime(workspace.extensionMetadata.recency)}`;
+    detailParts.push(`Last used: ${formatRelativeTime(workspace.extensionMetadata.recency)}`);
   } else if (workspace.createdAt) {
-    detail = `Created: ${new Date(workspace.createdAt).toLocaleDateString()}`;
+    detailParts.push(`Created: ${new Date(workspace.createdAt).toLocaleDateString()}`);
   }
+
+  // Prefer activity-derived model/thinking ("last used") but fall back to workspace-scoped settings.
+  const lastModel = workspace.extensionMetadata?.lastModel ?? workspace.aiSettings?.model;
+  if (lastModel) {
+    detailParts.push(`Model: ${lastModel}`);
+  }
+
+  const lastThinkingLevel =
+    workspace.extensionMetadata?.lastThinkingLevel ?? workspace.aiSettings?.thinkingLevel;
+  if (lastThinkingLevel) {
+    detailParts.push(`Reasoning: ${lastThinkingLevel}`);
+  }
+
+  const detail = detailParts.length > 0 ? detailParts.join(" • ") : undefined;
 
   return {
     label: formatWorkspaceLabel(workspace),

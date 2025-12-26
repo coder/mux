@@ -58,6 +58,7 @@ describe("IdleCompactionService", () => {
           recency: now - 25 * oneHourMs, // 25 hours ago
           streaming: false,
           lastModel: null,
+          lastThinkingLevel: null,
           updatedAt: now - 25 * oneHourMs,
         })
       ),
@@ -103,6 +104,7 @@ describe("IdleCompactionService", () => {
         recency: idleTimestamp,
         streaming: true, // Currently streaming
         lastModel: null,
+        lastThinkingLevel: null,
         updatedAt: idleTimestamp,
       });
 
