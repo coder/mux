@@ -147,5 +147,6 @@ export {
   voice,
   window,
   workspace,
+  modes,
 } from "./schemas/api";
 export type { WorkspaceSendMessageOutput } from "./schemas/api";

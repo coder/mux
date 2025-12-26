@@ -1,9 +1,11 @@
-import type { UIMode } from "@/common/types/mode";
+import type { UIMode, ModeDefinition } from "@/common/types/mode";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 
 /**
  * Generate the system instruction for Plan Mode with file path context.
  * The plan file path tells the agent where to write their plan.
+ *
+ * @deprecated Use ModeLoaderService.getInstructionsWithContext() for custom modes
  */
 export function getPlanModeInstruction(planFilePath: string, planExists: boolean): string {
   const fileStatus = planExists
@@ -45,6 +47,8 @@ If the user suggests that you should make edits to other files, ask them to swit
  * Get the tool policy for a given UI mode.
  * In plan mode, file_edit_* tools remain enabled (agent needs them to write plan file),
  * but strict path enforcement in file_edit_operation.ts restricts edits to only the plan file.
+ *
+ * @deprecated Use modeDefinitionToToolPolicy() for custom modes
  */
 export function modeToToolPolicy(mode: UIMode): ToolPolicy {
   if (mode === "plan") {
@@ -55,6 +59,21 @@ export function modeToToolPolicy(mode: UIMode): ToolPolicy {
     ];
   }
 
-  // exec mode
+  // exec mode or custom modes default to disabling propose_plan
   return [{ regex_match: "propose_plan", action: "disable" }];
+}
+
+/**
+ * Convert a ModeDefinition's toolPolicy to the ToolPolicy format used by tool filtering.
+ */
+export function modeDefinitionToToolPolicy(mode: ModeDefinition): ToolPolicy {
+  if (!mode.toolPolicy || mode.toolPolicy.length === 0) {
+    // Default: exec-like behavior
+    return [{ regex_match: "propose_plan", action: "disable" }];
+  }
+
+  return mode.toolPolicy.map((entry) => ({
+    regex_match: entry.regex,
+    action: entry.action,
+  }));
 }

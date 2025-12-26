@@ -799,6 +799,31 @@ export const voice = {
   },
 };
 
+// Modes - custom agent behavior modes defined via markdown files
+import { ModeDefinitionSchema } from "@/common/types/mode";
+
+export const modes = {
+  /**
+   * List all available modes for a workspace (project + global + builtin).
+   */
+  list: {
+    input: z.object({
+      workspaceId: z.string(),
+    }),
+    output: z.array(ModeDefinitionSchema),
+  },
+  /**
+   * Get a specific mode by name.
+   */
+  get: {
+    input: z.object({
+      workspaceId: z.string(),
+      modeName: z.string(),
+    }),
+    output: ModeDefinitionSchema.nullable(),
+  },
+};
+
 // Debug endpoints (test-only, not for production use)
 export const debug = {
   /**

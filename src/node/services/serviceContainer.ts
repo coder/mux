@@ -40,6 +40,7 @@ import { MCPServerManager } from "@/node/services/mcpServerManager";
 import { SessionUsageService } from "@/node/services/sessionUsageService";
 import { IdleCompactionService } from "@/node/services/idleCompactionService";
 import { TaskService } from "@/node/services/taskService";
+import { ModeLoaderService } from "@/node/services/modeLoaderService";
 
 /**
  * ServiceContainer - Central dependency container for all backend services.
@@ -77,6 +78,7 @@ export class ServiceContainer {
   private readonly ptyService: PTYService;
   private readonly backgroundProcessManager: BackgroundProcessManager;
   public readonly idleCompactionService: IdleCompactionService;
+  public readonly modeLoaderService: ModeLoaderService;
 
   constructor(config: Config) {
     this.config = config;
@@ -154,6 +156,7 @@ export class ServiceContainer {
     });
     this.featureFlagService = new FeatureFlagService(config, this.telemetryService);
     this.sessionTimingService = new SessionTimingService(config, this.telemetryService);
+    this.modeLoaderService = new ModeLoaderService(config);
 
     // Backend timing stats (behind feature flag).
     this.aiService.on("stream-start", (data: StreamStartEvent) =>
@@ -187,6 +190,8 @@ export class ServiceContainer {
     await this.extensionMetadata.initialize();
     // Initialize telemetry service
     await this.telemetryService.initialize();
+    // Initialize mode loader with built-in modes
+    await this.modeLoaderService.initialize();
 
     // Initialize feature flag state (don't block startup on network).
     this.featureFlagService

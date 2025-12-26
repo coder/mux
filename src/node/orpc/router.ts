@@ -1501,6 +1501,36 @@ export const router = (authToken?: string) => {
           );
         }),
     },
+    modes: {
+      list: t
+        .input(schemas.modes.list.input)
+        .output(schemas.modes.list.output)
+        .handler(async ({ context, input }) => {
+          const metadata = await context.workspaceService.getInfo(input.workspaceId);
+          if (!metadata) {
+            return [];
+          }
+          const runtime = createRuntime(metadata.runtimeConfig, {
+            projectPath: metadata.projectPath,
+          });
+          const workspacePath = runtime.getWorkspacePath(metadata.projectPath, metadata.name);
+          return context.modeLoaderService.discoverModes(runtime, workspacePath);
+        }),
+      get: t
+        .input(schemas.modes.get.input)
+        .output(schemas.modes.get.output)
+        .handler(async ({ context, input }) => {
+          const metadata = await context.workspaceService.getInfo(input.workspaceId);
+          if (!metadata) {
+            return null;
+          }
+          const runtime = createRuntime(metadata.runtimeConfig, {
+            projectPath: metadata.projectPath,
+          });
+          const workspacePath = runtime.getWorkspacePath(metadata.projectPath, metadata.name);
+          return context.modeLoaderService.getMode(runtime, workspacePath, input.modeName);
+        }),
+    },
     telemetry: {
       track: t
         .input(schemas.telemetry.track.input)
