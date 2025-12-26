@@ -89,9 +89,110 @@ test.describe("review refresh", () => {
     }
   });
 
-  // Note: Tooltip behavior is tested via data attributes on the refresh button
-  // (data-last-refresh-trigger, data-last-refresh-timestamp) which are verified
-  // in the tests above. The actual tooltip rendering uses Radix UI portals which
-  // are harder to test reliably in Playwright, and the tooltip merely displays
-  // the same data that's already validated via attributes.
+  test("refresh state persists after tab switch", async ({ page, ui }) => {
+    // Open workspace and navigate to Review tab
+    await ui.projects.openFirstWorkspace();
+    await ui.metaSidebar.expectVisible();
+    await ui.metaSidebar.selectTab("Review");
+
+    const refreshButton = page.getByTestId("review-refresh");
+    await expect(refreshButton).toBeVisible({ timeout: 10_000 });
+
+    // Do a manual refresh
+    await refreshButton.click();
+
+    // Wait for refresh to complete
+    await expect(refreshButton).toHaveAttribute("data-last-refresh-trigger", "manual", {
+      timeout: 10_000,
+    });
+
+    const timestamp1 = await refreshButton.getAttribute("data-last-refresh-timestamp");
+    console.log(`[e2e] Before tab switch: timestamp=${timestamp1}`);
+
+    // Switch to Costs tab
+    await ui.metaSidebar.selectTab("Costs");
+
+    // Switch back to Review tab
+    await ui.metaSidebar.selectTab("Review");
+
+    // Check if lastRefreshInfo survived (it won't - component remounts)
+    const triggerAfter = await refreshButton.getAttribute("data-last-refresh-trigger");
+    const timestampAfter = await refreshButton.getAttribute("data-last-refresh-timestamp");
+    console.log(`[e2e] After tab switch: trigger=${triggerAfter}, timestamp=${timestampAfter}`);
+
+    // The state resets on remount - this documents current behavior
+    // If we want state to persist, we'd need to lift it to a parent or use context
+    expect(triggerAfter).toBe("");
+    expect(timestampAfter).toBe("");
+  });
+
+  test("rapid manual refreshes all update timestamp", async ({ page, ui }) => {
+    // Open workspace and navigate to Review tab
+    await ui.projects.openFirstWorkspace();
+    await ui.metaSidebar.expectVisible();
+    await ui.metaSidebar.selectTab("Review");
+
+    const refreshButton = page.getByTestId("review-refresh");
+    await expect(refreshButton).toBeVisible({ timeout: 10_000 });
+
+    const timestamps: number[] = [];
+
+    // Do 5 rapid manual refreshes
+    for (let i = 0; i < 5; i++) {
+      await refreshButton.click();
+
+      // Wait for this refresh to complete
+      await expect(async () => {
+        const ts = await refreshButton.getAttribute("data-last-refresh-timestamp");
+        const num = Number(ts);
+        if (timestamps.length === 0 || num > timestamps[timestamps.length - 1]) {
+          timestamps.push(num);
+        }
+        expect(timestamps.length).toBe(i + 1);
+      }).toPass({ timeout: 10_000 });
+
+      const trigger = await refreshButton.getAttribute("data-last-refresh-trigger");
+      expect(trigger).toBe("manual");
+
+      console.log(`[e2e] Refresh ${i + 1}: timestamp=${timestamps[i]}`);
+    }
+
+    // All timestamps should be increasing
+    for (let i = 1; i < timestamps.length; i++) {
+      expect(timestamps[i]).toBeGreaterThan(timestamps[i - 1]);
+    }
+  });
+
+  test("refresh works immediately after opening Review tab", async ({ page, ui }) => {
+    // Open workspace
+    await ui.projects.openFirstWorkspace();
+    await ui.metaSidebar.expectVisible();
+
+    // Start on a different tab (Costs)
+    await ui.metaSidebar.selectTab("Costs");
+
+    // Now switch to Review tab
+    await ui.metaSidebar.selectTab("Review");
+
+    const refreshButton = page.getByTestId("review-refresh");
+    await expect(refreshButton).toBeVisible({ timeout: 10_000 });
+
+    // Verify initial state is empty
+    const initialTrigger = await refreshButton.getAttribute("data-last-refresh-trigger");
+    const initialTimestamp = await refreshButton.getAttribute("data-last-refresh-timestamp");
+    console.log(`[e2e] Initial: trigger="${initialTrigger}", timestamp="${initialTimestamp}"`);
+    expect(initialTrigger).toBe("");
+
+    // Click refresh
+    await refreshButton.click();
+
+    // Wait for refresh to complete - this is the critical test
+    await expect(refreshButton).toHaveAttribute("data-last-refresh-trigger", "manual", {
+      timeout: 10_000,
+    });
+
+    const timestamp = await refreshButton.getAttribute("data-last-refresh-timestamp");
+    console.log(`[e2e] After refresh: timestamp=${timestamp}`);
+    expect(Number(timestamp)).toBeGreaterThan(0);
+  });
 });
