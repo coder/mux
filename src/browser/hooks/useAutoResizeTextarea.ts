@@ -13,13 +13,9 @@ export function useAutoResizeTextarea(
     const el = ref.current;
     if (!el) return;
 
-    // For empty/whitespace content, let CSS min-height handle sizing
-    if (!value.trim()) {
-      el.style.height = "";
-      return;
-    }
-
-    // For non-empty content, measure and set height
+    // Always measure to avoid layout shift when placeholder disappears.
+    // Placeholder text doesn't contribute to scrollHeight, so we need
+    // consistent measurement whether content is empty or not.
     el.style.height = "auto";
     const max = window.innerHeight * (maxHeightVh / 100);
     el.style.height = Math.min(el.scrollHeight, max) + "px";
