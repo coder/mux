@@ -134,6 +134,17 @@ describeIntegration("Workspace Archive/Unarchive (UI)", () => {
     try {
       await view.waitForReady();
 
+      // Expand the project to see workspaces
+      const projectRow = await waitFor(
+        () => {
+          const el = view.container.querySelector(`[data-project-path="${projectPath}"]`);
+          if (!el) throw new Error("Project not found in sidebar");
+          return el as HTMLElement;
+        },
+        { timeout: 5_000 }
+      );
+      fireEvent.click(projectRow);
+
       // Verify workspace is in the active list
       await waitFor(
         () => {
@@ -223,7 +234,7 @@ describeIntegration("Workspace Archive/Unarchive (UI)", () => {
         () => {
           // Project page has the ChatInput for creating new workspaces
           // Look for the creation textarea or the project being selected
-          const creationTextarea = view.container.querySelector('textarea');
+          const creationTextarea = view.container.querySelector("textarea");
           const projectSelected = view.container.querySelector(
             `[data-project-path="${projectPath}"]`
           );
@@ -267,7 +278,20 @@ describeIntegration("Workspace Archive/Unarchive (UI)", () => {
     try {
       await view.waitForReady();
 
+      // Expand the project to see workspaces
+      const projectRow = await waitFor(
+        () => {
+          const el = view.container.querySelector(`[data-project-path="${projectPath}"]`);
+          if (!el) throw new Error("Project not found in sidebar");
+          return el as HTMLElement;
+        },
+        { timeout: 5_000 }
+      );
+      fireEvent.click(projectRow);
+
       // Workspace should NOT be in active sidebar (it's archived)
+      // Give a moment for the expansion to complete
+      await new Promise((r) => setTimeout(r, 100));
       const archivedEl = view.container.querySelector(`[data-workspace-id="${workspaceId}"]`);
       expect(archivedEl).toBeNull();
 
@@ -408,13 +432,16 @@ describeIntegration("Workspace Deletion (UI)", () => {
         const selectedProject = view.container.querySelector(
           `[data-project-path="${projectPath}"][data-selected="true"]`
         );
-        const creationInput = view.container.querySelector('textarea');
+        const creationInput = view.container.querySelector("textarea");
         return selectedProject || creationInput;
       };
       expect(isOnProjectPage()).toBeTruthy();
 
       // Delete the archived workspace via API
-      const deleteResult = await env.orpc.workspace.remove({ workspaceId, options: { force: true } });
+      const deleteResult = await env.orpc.workspace.remove({
+        workspaceId,
+        options: { force: true },
+      });
       expect(deleteResult.success).toBe(true);
 
       // Give React time to process the deletion
