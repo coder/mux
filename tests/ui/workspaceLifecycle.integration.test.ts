@@ -100,8 +100,87 @@ describeIntegration("Workspace Creation (UI)", () => {
   }, 30_000);
 });
 
-// Note: Archive UI test removed - requires shell operations that aren't available in CI.
-// The archive navigation fix is verified by the archiveWorkspace function fix in WorkspaceContext.
+describeIntegration("Workspace Archive (UI)", () => {
+  beforeAll(async () => {
+    await createSharedRepo();
+  });
+
+  afterAll(async () => {
+    await cleanupSharedRepo();
+  });
+
+  test("archiving the active workspace navigates to project page, not home", async () => {
+    // Use withSharedWorkspace to get a properly initialized workspace
+    await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
+      const projectPath = metadata.projectPath;
+      const displayTitle = metadata.title ?? metadata.name;
+
+      const cleanupDom = installDom();
+      const view = renderApp({
+        apiClient: env.orpc,
+        metadata,
+      });
+
+      try {
+        // Navigate to the workspace (make it active)
+        await setupWorkspaceView(view, metadata, workspaceId);
+
+        // Verify we're in the workspace view
+        await waitFor(
+          () => {
+            const wsView = view.container.querySelector(
+              '[role="log"], [data-testid="chat-input"], textarea'
+            );
+            if (!wsView) throw new Error("Not in workspace view");
+          },
+          { timeout: 5_000 }
+        );
+
+        // Find and click the archive button in sidebar
+        const archiveButton = await waitFor(
+          () => {
+            const btn = view.container.querySelector(
+              `[aria-label="Archive workspace ${displayTitle}"]`
+            ) as HTMLElement;
+            if (!btn) throw new Error("Archive button not found");
+            return btn;
+          },
+          { timeout: 5_000 }
+        );
+        fireEvent.click(archiveButton);
+
+        // Wait for workspace to be archived (disappears from active list)
+        await waitFor(
+          () => {
+            const wsEl = view.container.querySelector(`[data-workspace-id="${workspaceId}"]`);
+            if (wsEl) throw new Error("Workspace still in sidebar");
+          },
+          { timeout: 5_000 }
+        );
+
+        // Should NOT be on home screen
+        const homeScreen = view.container.querySelector('[data-testid="home-screen"]');
+        expect(homeScreen).toBeNull();
+
+        // Should be on the project page (has creation textarea for new workspace)
+        await waitFor(
+          () => {
+            const creationTextarea = view.container.querySelector("textarea");
+            const projectSelected = view.container.querySelector(
+              `[data-project-path="${projectPath}"]`
+            );
+            if (!creationTextarea && !projectSelected) {
+              throw new Error("Not on project page after archiving");
+            }
+          },
+          { timeout: 5_000 }
+        );
+      } finally {
+        await cleanupView(view, cleanupDom);
+      }
+    });
+  }, 30_000);
+});
 
 describeIntegration("Workspace Delete from Archive (UI)", () => {
   beforeAll(async () => {
