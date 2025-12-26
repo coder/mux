@@ -8,6 +8,7 @@ import {
   createDisplayUsage,
   extractSyncMetadata,
   extractToolOutputData,
+  getConsumerInfoForToolCall,
   isEncryptedWebSearch,
   mergeResults,
   type TokenCountJob,
@@ -329,6 +330,29 @@ describe("extractSyncMetadata", () => {
   });
 });
 
+describe("getConsumerInfoForToolCall", () => {
+  test("splits task into bash vs agent", () => {
+    expect(getConsumerInfoForToolCall("task", { kind: "bash", script: "echo hi" })).toEqual({
+      consumer: "task (bash)",
+      toolNameForDefinition: "task",
+    });
+
+    expect(getConsumerInfoForToolCall("task", { subagent_type: "exec", prompt: "hi" })).toEqual({
+      consumer: "task (agent)",
+      toolNameForDefinition: "task",
+    });
+  });
+
+  test("defaults to tool name for other tools", () => {
+    expect(
+      getConsumerInfoForToolCall("file_edit_insert", { file_path: "x", content: "y" })
+    ).toEqual({
+      consumer: "file_edit_insert",
+      toolNameForDefinition: "file_edit_insert",
+    });
+  });
+});
+
 describe("mergeResults", () => {
   test("merges job results into consumer map", () => {
     const jobs: TokenCountJob[] = [
@@ -372,6 +396,30 @@ describe("mergeResults", () => {
 
     // Fixed tokens added only once, variable tokens accumulated
     expect(consumerMap.get("Read")).toEqual({ fixed: 25, variable: 150 });
+  });
+
+  test("supports consumer splitting while counting tool definitions once", () => {
+    const jobs: TokenCountJob[] = [
+      {
+        consumer: "task (bash)",
+        toolNameForDefinition: "task",
+        promise: Promise.resolve(100),
+      },
+      {
+        consumer: "task (agent)",
+        toolNameForDefinition: "task",
+        promise: Promise.resolve(50),
+      },
+    ];
+    const results = [100, 50];
+    const toolDefinitions = new Map<string, number>([["task", 25]]);
+    const systemMessageTokens = 0;
+
+    const consumerMap = mergeResults(jobs, results, toolDefinitions, systemMessageTokens);
+
+    // Fixed tokens should be attributed to exactly one bucket.
+    expect(consumerMap.get("task (bash)")).toEqual({ fixed: 25, variable: 100 });
+    expect(consumerMap.get("task (agent)")).toEqual({ fixed: 0, variable: 50 });
   });
 
   test("adds system message tokens", () => {
