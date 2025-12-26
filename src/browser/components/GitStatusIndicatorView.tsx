@@ -342,7 +342,7 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
       </HoverCardTrigger>
       <HoverCardContent
         side={tooltipPosition === "right" ? "right" : "bottom"}
-        align="center"
+        align={tooltipPosition === "right" ? "center" : "start"}
         sideOffset={8}
         collisionPadding={8}
         className="bg-modal-bg text-foreground border-separator-light z-[10000] max-h-[400px] w-auto max-w-96 min-w-0 overflow-auto px-3 py-2 font-mono text-[11px] whitespace-pre shadow-[0_4px_12px_rgba(0,0,0,0.5)]"
