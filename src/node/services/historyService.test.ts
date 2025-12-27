@@ -523,4 +523,131 @@ describe("HistoryService", () => {
       }
     });
   });
+
+  describe("replaceHistoryWithSummary", () => {
+    it("should atomically replace history with summary message", async () => {
+      const workspaceId = "workspace1";
+
+      // Set up existing history with multiple messages
+      const msg1 = createMuxMessage("msg1", "user", "Hello", { historySequence: 0 });
+      const msg2 = createMuxMessage("msg2", "assistant", "Hi there", { historySequence: 1 });
+      const msg3 = createMuxMessage("msg3", "user", "How are you?", { historySequence: 2 });
+      const msg4 = createMuxMessage("msg4", "assistant", "I am fine", { historySequence: 3 });
+
+      await service.appendToHistory(workspaceId, msg1);
+      await service.appendToHistory(workspaceId, msg2);
+      await service.appendToHistory(workspaceId, msg3);
+      await service.appendToHistory(workspaceId, msg4);
+
+      // Create summary message
+      const summary = createMuxMessage("summary1", "assistant", "Summary of conversation", {
+        compacted: "user",
+      });
+
+      // Replace history with summary
+      const result = await service.replaceHistoryWithSummary(workspaceId, summary);
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        // Should return deleted sequence numbers
+        expect(result.data.deletedSequences).toEqual([0, 1, 2, 3]);
+      }
+
+      // Verify history contains only summary
+      const history = await service.getHistory(workspaceId);
+      expect(history.success).toBe(true);
+      if (history.success) {
+        expect(history.data).toHaveLength(1);
+        expect(history.data[0].id).toBe("summary1");
+        expect(history.data[0].metadata?.historySequence).toBe(0);
+      }
+    });
+
+    it("should set next sequence to 1 after replacing with summary", async () => {
+      const workspaceId = "workspace1";
+
+      // Set up existing history
+      const msg1 = createMuxMessage("msg1", "user", "Hello", { historySequence: 0 });
+      await service.appendToHistory(workspaceId, msg1);
+
+      // Replace with summary
+      const summary = createMuxMessage("summary1", "assistant", "Summary");
+      await service.replaceHistoryWithSummary(workspaceId, summary);
+
+      // Append a new message - should get sequence 1
+      const newMsg = createMuxMessage("newMsg", "user", "New message");
+      await service.appendToHistory(workspaceId, newMsg);
+
+      const history = await service.getHistory(workspaceId);
+      expect(history.success).toBe(true);
+      if (history.success) {
+        expect(history.data).toHaveLength(2);
+        expect(history.data[0].metadata?.historySequence).toBe(0); // summary
+        expect(history.data[1].metadata?.historySequence).toBe(1); // new message
+      }
+    });
+
+    it("should work on empty history", async () => {
+      const workspaceId = "workspace1";
+
+      // Replace empty history with summary
+      const summary = createMuxMessage("summary1", "assistant", "Summary of nothing");
+      const result = await service.replaceHistoryWithSummary(workspaceId, summary);
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.deletedSequences).toEqual([]);
+      }
+
+      const history = await service.getHistory(workspaceId);
+      expect(history.success).toBe(true);
+      if (history.success) {
+        expect(history.data).toHaveLength(1);
+        expect(history.data[0].id).toBe("summary1");
+      }
+    });
+
+    it("should preserve summary message metadata except historySequence", async () => {
+      const workspaceId = "workspace1";
+
+      const summary = createMuxMessage("summary1", "assistant", "Summary", {
+        compacted: "idle",
+        timestamp: 12345,
+        model: "test-model",
+      });
+
+      await service.replaceHistoryWithSummary(workspaceId, summary);
+
+      const history = await service.getHistory(workspaceId);
+      expect(history.success).toBe(true);
+      if (history.success) {
+        const msg = history.data[0];
+        expect(msg.metadata?.compacted).toBe("idle");
+        expect(msg.metadata?.timestamp).toBe(12345);
+        expect(msg.metadata?.model).toBe("test-model");
+        expect(msg.metadata?.historySequence).toBe(0); // Always 0 for summary
+      }
+    });
+
+    it("should create workspace directory if it does not exist", async () => {
+      const workspaceId = "new-workspace-for-replace";
+      const workspaceDir = config.getSessionDir(workspaceId);
+
+      // Ensure directory doesn't exist
+      try {
+        await fs.rmdir(workspaceDir, { recursive: true });
+      } catch {
+        // Ignore if doesn't exist
+      }
+
+      const summary = createMuxMessage("summary1", "assistant", "Summary");
+      const result = await service.replaceHistoryWithSummary(workspaceId, summary);
+
+      expect(result.success).toBe(true);
+
+      // Verify file was created
+      const stats = await fs.stat(path.join(workspaceDir, "chat.jsonl"));
+      expect(stats.isFile()).toBe(true);
+    });
+  });
 });

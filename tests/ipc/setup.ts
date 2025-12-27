@@ -104,6 +104,58 @@ export async function createTestEnvironment(): Promise<TestEnvironment> {
 }
 
 /**
+ * Create a test environment using an existing mux root directory.
+ * Useful for simulating an app restart while preserving on-disk state.
+ */
+export async function createTestEnvironmentFromRootDir(rootDir: string): Promise<TestEnvironment> {
+  const config = new Config(rootDir);
+
+  // Create mock BrowserWindow
+  const mockWindow = createMockBrowserWindow();
+
+  // Create ServiceContainer instance
+  const services = new ServiceContainer(config);
+  await services.initialize();
+
+  // Wire services to the mock BrowserWindow
+  // Note: Events are consumed via ORPC subscriptions (StreamCollector), not windowService.send()
+  services.windowService.setMainWindow(mockWindow);
+
+  const orpcContext: ORPCContext = {
+    config: services.config,
+    aiService: services.aiService,
+    projectService: services.projectService,
+    workspaceService: services.workspaceService,
+    taskService: services.taskService,
+    providerService: services.providerService,
+    terminalService: services.terminalService,
+    editorService: services.editorService,
+    windowService: services.windowService,
+    updateService: services.updateService,
+    tokenizerService: services.tokenizerService,
+    serverService: services.serverService,
+    featureFlagService: services.featureFlagService,
+    sessionTimingService: services.sessionTimingService,
+    mcpConfigService: services.mcpConfigService,
+    mcpServerManager: services.mcpServerManager,
+    menuEventService: services.menuEventService,
+    voiceService: services.voiceService,
+    experimentsService: services.experimentsService,
+    telemetryService: services.telemetryService,
+    sessionUsageService: services.sessionUsageService,
+  };
+  const orpc = createOrpcTestClient(orpcContext);
+
+  return {
+    config,
+    services,
+    mockWindow,
+    tempDir: rootDir,
+    orpc,
+  };
+}
+
+/**
  * Cleanup test environment (remove temporary directory) with retry logic
  */
 export async function cleanupTestEnvironment(env: TestEnvironment): Promise<void> {

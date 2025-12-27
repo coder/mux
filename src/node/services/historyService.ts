@@ -422,6 +422,69 @@ export class HistoryService {
     });
   }
 
+  /**
+   * Atomically replace all history with a single summary message.
+   *
+   * This is a crash-safe operation: if power is lost mid-write, either the old
+   * history remains intact or the new summary is fully written. There is no
+   * intermediate state where history is deleted but the summary hasn't been written.
+   *
+   * @param workspaceId The workspace ID
+   * @param summaryMessage The summary message to replace history with
+   * @returns Result containing array of deleted historySequence numbers
+   */
+  async replaceHistoryWithSummary(
+    workspaceId: string,
+    summaryMessage: MuxMessage
+  ): Promise<Result<{ deletedSequences: number[] }, string>> {
+    return this.fileLocks.withLock(workspaceId, async () => {
+      try {
+        const historyPath = this.getChatHistoryPath(workspaceId);
+        const workspaceDir = this.config.getSessionDir(workspaceId);
+
+        // Ensure workspace directory exists
+        await fs.mkdir(workspaceDir, { recursive: true });
+
+        // Read existing messages to get deleted sequences
+        const historyResult = await this.getHistory(workspaceId);
+        const deletedSequences = historyResult.success
+          ? historyResult.data
+              .map((msg) => msg.metadata?.historySequence ?? -1)
+              .filter((s) => s >= 0)
+          : [];
+
+        // Assign historySequence 0 to summary (it's the new "first" message)
+        const summaryWithSequence: MuxMessage = {
+          ...summaryMessage,
+          metadata: {
+            ...summaryMessage.metadata,
+            historySequence: 0,
+          },
+        };
+
+        // Store with workspace context
+        const historyEntry = {
+          ...summaryWithSequence,
+          workspaceId,
+        };
+
+        // Atomic write: either succeeds completely or leaves old file intact
+        await writeFileAtomic(historyPath, JSON.stringify(historyEntry) + "\n");
+
+        // Update sequence counter: next message gets sequence 1
+        this.sequenceCounters.set(workspaceId, 1);
+
+        log.debug(
+          `[HISTORY REPLACE] Atomically replaced ${deletedSequences.length} messages with summary in ${workspaceId}`
+        );
+
+        return Ok({ deletedSequences });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return Err(`Failed to replace history: ${message}`);
+      }
+    });
+  }
   async clearHistory(workspaceId: string): Promise<Result<number[], string>> {
     const result = await this.truncateHistory(workspaceId, 1.0);
     if (!result.success) {

@@ -5,8 +5,12 @@
  * with original /compact command restored for re-editing.
  */
 
-import type { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
 import type { APIClient } from "@/browser/contexts/API";
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+import type { CancelledCompactionMarker } from "@/browser/hooks/useResumeManager";
+import type { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
+import { getCancelledCompactionKey } from "@/common/constants/storage";
+
 import { buildCompactionEditText } from "./format";
 
 /**
@@ -80,6 +84,14 @@ export async function cancelCompaction(
   // Enter edit mode first so any subsequent restore-to-input event from the interrupt can't
   // clobber the edit buffer.
   startEditingMessage(compactionRequestMsg.id, command);
+
+  // Mark this compaction as user-cancelled so auto-retry doesn't pick it up.
+  // This distinguishes intentional Ctrl+C from crash/force-exit.
+  const marker: CancelledCompactionMarker = {
+    messageId: compactionRequestMsg.id,
+    timestamp: Date.now(),
+  };
+  updatePersistedState(getCancelledCompactionKey(workspaceId), () => marker);
 
   // Interrupt stream with abandonPartial flag
   // Backend detects this and skips compaction (Ctrl+C flow)

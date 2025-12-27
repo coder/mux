@@ -197,13 +197,6 @@ export class CompactionHandler {
     // Extract diffs BEFORE clearing history (they'll be gone after clear)
     this.cachedFileDiffs = extractEditedFileDiffs(messages);
 
-    // Clear entire history and get deleted sequences
-    const clearResult = await this.historyService.clearHistory(this.workspaceId);
-    if (!clearResult.success) {
-      return Err(`Failed to clear history: ${clearResult.error}`);
-    }
-    const deletedSequences = clearResult.data;
-
     // For idle compaction, preserve the original recency timestamp so the workspace
     // doesn't appear "recently used" in the sidebar. Use the shared recency utility
     // to ensure consistency with how the sidebar computes recency.
@@ -237,14 +230,15 @@ export class CompactionHandler {
       }
     );
 
-    // Append summary to history
-    const appendResult = await this.historyService.appendToHistory(
+    // Atomically replace history with summary (crash-safe: no window where history is deleted but summary not written)
+    const replaceResult = await this.historyService.replaceHistoryWithSummary(
       this.workspaceId,
       summaryMessage
     );
-    if (!appendResult.success) {
-      return Err(`Failed to append summary: ${appendResult.error}`);
+    if (!replaceResult.success) {
+      return Err(`Failed to replace history: ${replaceResult.error}`);
     }
+    const { deletedSequences } = replaceResult.data;
 
     // Set flag to trigger post-compaction attachment injection on next turn
     this.postCompactionAttachmentsPending = true;
