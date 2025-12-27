@@ -4,18 +4,13 @@
  * The backend's IdleCompactionService detects when workspaces have been idle
  * for a configured period and emits `idle-compaction-needed` events to the stream.
  *
- * This hook listens for these signals and triggers compaction via the frontend's
- * executeCompaction(), which handles gateway, model preferences, etc.
- *
- * Status display is handled data-driven: the compaction request message includes
- * displayStatus metadata, which the aggregator reads to set sidebar status.
- * Status is cleared when the summary message with compacted: "idle" arrives.
+ * This hook listens for these signals and triggers compaction via the control-plane
+ * compactHistory endpoint, which ensures the compaction cannot be dropped or queued.
  */
 
 import { useEffect, useRef } from "react";
 import type { RouterClient } from "@orpc/server";
 import type { AppRouter } from "@/node/orpc/router";
-import { executeCompaction } from "@/browser/utils/chatCommands";
 import { buildSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import { workspaceStore } from "@/browser/stores/WorkspaceStore";
 
@@ -47,22 +42,33 @@ export function useIdleCompactionHandler(params: IdleCompactionHandlerParams): v
       // Use buildSendMessageOptions to get correct model, gateway, thinking level, etc.
       const sendMessageOptions = buildSendMessageOptions(workspaceId);
 
-      // Status is handled data-driven via displayStatus in the message metadata
-      void executeCompaction({
-        api,
-        workspaceId,
-        sendMessageOptions,
-        source: "idle-compaction",
-      }).then((result) => {
-        if (!result.success) {
-          console.error("Idle compaction failed:", result.error);
-        }
-        // Always clear from triggered set after completion (success or failure).
-        // This allows the workspace to be re-triggered on subsequent hourly checks
-        // if it becomes idle again. Backend eligibility checks (already_compacted,
-        // currently_streaming) provide authoritative deduplication.
-        triggeredWorkspacesRef.current.delete(workspaceId);
-      });
+      // Use control-plane compactHistory endpoint for reliability
+      void api.workspace
+        .compactHistory({
+          workspaceId,
+          source: "idle-compaction",
+          sendMessageOptions: {
+            model: sendMessageOptions.model,
+            thinkingLevel: sendMessageOptions.thinkingLevel,
+            providerOptions: sendMessageOptions.providerOptions,
+            experiments: sendMessageOptions.experiments,
+          },
+        })
+        .then((result) => {
+          if (!result.success) {
+            console.error("Idle compaction failed:", result.error);
+          }
+        })
+        .catch((error) => {
+          console.error("Idle compaction error:", error);
+        })
+        .finally(() => {
+          // Always clear from triggered set after completion (success or failure).
+          // This allows the workspace to be re-triggered on subsequent hourly checks
+          // if it becomes idle again. Backend eligibility checks (already_compacted,
+          // currently_streaming) provide authoritative deduplication.
+          triggeredWorkspacesRef.current.delete(workspaceId);
+        });
     };
 
     const unsubscribe = workspaceStore.onIdleCompactionNeeded(handleIdleCompactionNeeded);
