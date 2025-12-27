@@ -415,8 +415,8 @@ describe("WorkspaceStore", () => {
         now = 1300;
         const sidebar1 = store.getWorkspaceSidebarState(workspaceId);
 
-        // Advance time without a store bump. Without snapshot caching, this would
-        // produce a new object due to Date.now()-derived timing stats.
+        // Advance time without a store bump. Sidebar state should remain stable
+        // because it doesn't include timing stats (those use a separate subscription).
         now = 1350;
         const sidebar2 = store.getWorkspaceSidebarState(workspaceId);
 

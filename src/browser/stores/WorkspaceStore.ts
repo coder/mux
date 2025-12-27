@@ -136,46 +136,16 @@ export interface SessionTimingStats {
 /**
  * Subset of WorkspaceState needed for sidebar display.
  * Subscribing to only these fields prevents re-renders when messages update.
+ *
+ * Note: timingStats/sessionStats are intentionally excluded - they update on every
+ * streaming token. Components needing timing should use useWorkspaceStatsSnapshot().
  */
-function shallowEqual(a: object | null | undefined, b: object | null | undefined): boolean {
-  if (a === b) {
-    return true;
-  }
-  if (!a || !b) {
-    return false;
-  }
-
-  const aRecord = a as Record<string, unknown>;
-  const bRecord = b as Record<string, unknown>;
-
-  const aKeys = Object.keys(aRecord);
-  const bKeys = Object.keys(bRecord);
-  if (aKeys.length !== bKeys.length) {
-    return false;
-  }
-
-  for (const key of aKeys) {
-    if (!Object.prototype.hasOwnProperty.call(bRecord, key)) {
-      return false;
-    }
-    if (!Object.is(aRecord[key], bRecord[key])) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
 export interface WorkspaceSidebarState {
   canInterrupt: boolean;
   awaitingUserQuestion: boolean;
   currentModel: string | null;
   recencyTimestamp: number | null;
   agentStatus: { emoji: string; message: string; url?: string } | undefined;
-  /** Timing stats for current/last stream */
-  timingStats: StreamTimingStats | null;
-  /** Aggregate timing stats across all responses in session */
-  sessionStats: SessionTimingStats | null;
 }
 
 /**
@@ -890,44 +860,17 @@ export class WorkspaceStore {
       return cached;
     }
 
-    const aggregator = this.aggregators.get(workspaceId);
-
-    // Get timing stats: prefer active stream, fall back to last completed
-    let timingStats: StreamTimingStats | null = null;
-    const activeStats = aggregator?.getActiveStreamTimingStats();
-    if (activeStats) {
-      timingStats = {
-        ...activeStats,
-        endTime: null,
-        isActive: true,
-      };
-    } else {
-      const completedStats = aggregator?.getLastCompletedStreamStats();
-      if (completedStats) {
-        timingStats = {
-          ...completedStats,
-          isActive: false,
-        };
-      }
-    }
-
-    // Get session-level aggregate stats
-    const sessionStats = aggregator?.getSessionTimingStats() ?? null;
-
     // Return cached if values match.
+    // Note: timingStats/sessionStats are intentionally excluded - they change on every
+    // streaming token and sidebar items don't use them. Components needing timing should
+    // use useWorkspaceStatsSnapshot() which has its own subscription.
     if (
       cached &&
       cached.canInterrupt === fullState.canInterrupt &&
       cached.awaitingUserQuestion === fullState.awaitingUserQuestion &&
       cached.currentModel === fullState.currentModel &&
       cached.recencyTimestamp === fullState.recencyTimestamp &&
-      cached.agentStatus === fullState.agentStatus &&
-      // Timing stats: compare all fields for equality
-      shallowEqual(cached.timingStats, timingStats) &&
-      // Session stats: compare key fields
-      (cached.sessionStats === sessionStats ||
-        (cached.sessionStats?.totalDurationMs === sessionStats?.totalDurationMs &&
-          cached.sessionStats?.responseCount === sessionStats?.responseCount))
+      cached.agentStatus === fullState.agentStatus
     ) {
       // Even if we re-use the cached object, mark it as derived from the current
       // WorkspaceState so repeated getSnapshot() reads during this render are stable.
@@ -942,8 +885,6 @@ export class WorkspaceStore {
       currentModel: fullState.currentModel,
       recencyTimestamp: fullState.recencyTimestamp,
       agentStatus: fullState.agentStatus,
-      timingStats,
-      sessionStats,
     };
     this.sidebarStateCache.set(workspaceId, newState);
     this.sidebarStateSourceState.set(workspaceId, fullState);
