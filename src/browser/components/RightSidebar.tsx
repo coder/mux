@@ -67,8 +67,7 @@ function formatTabDuration(ms: number): string {
 
 interface SidebarContainerProps {
   collapsed: boolean;
-  wide?: boolean;
-  /** Custom width from drag-resize (persisted per-tab by AIView) */
+  /** Custom width from drag-resize (unified across all tabs) */
   customWidth?: number;
   /** Whether actively dragging resize handle (disables transition) */
   isResizing?: boolean;
@@ -82,26 +81,18 @@ interface SidebarContainerProps {
  *
  * Width priority (first match wins):
  * 1. collapsed (20px) - Shows collapse button only
- * 2. customWidth - From drag-resize (always available now)
- * 3. wide - Auto-calculated max width for Review/Terminal tabs (when not resizing)
- * 4. default (300px) - Fallback for Costs tab
+ * 2. customWidth - From drag-resize (unified width from AIView)
+ * 3. default (400px) - Fallback when no custom width set
  */
 const SidebarContainer: React.FC<SidebarContainerProps> = ({
   collapsed,
-  wide,
   customWidth,
   isResizing,
   children,
   role,
   "aria-label": ariaLabel,
 }) => {
-  const width = collapsed
-    ? "20px"
-    : customWidth
-      ? `${customWidth}px`
-      : wide
-        ? "min(1200px, calc(100vw - 400px))"
-        : "300px";
+  const width = collapsed ? "20px" : customWidth ? `${customWidth}px` : "400px";
 
   return (
     <div
@@ -634,8 +625,6 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     return total > 0 ? total : null;
   })();
 
-  const activeTabs = React.useMemo(() => collectActiveTabs(layout.root), [layout.root]);
-
   const renderLayoutNode = (node: RightSidebarLayoutNode): React.ReactNode => {
     if (node.type === "split") {
       // Our layout uses "horizontal" to mean a horizontal divider (top/bottom panes).
@@ -691,16 +680,12 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     );
   };
 
-  // Determine if we should be wide (Review or Terminal visible in any pane)
-  const hasWideTab = activeTabs.some((t) => t === "review" || t === "terminal");
-
   return (
     <DndProvider backend={HTML5Backend}>
       <SidebarContainer
         collapsed={collapsed}
         isResizing={isResizing}
-        wide={hasWideTab && !width} // Auto-wide only if not drag-resizing
-        customWidth={width} // Drag-resized width from AIView
+        customWidth={width} // Unified width from AIView (applies to all tabs)
         role="complementary"
         aria-label="Workspace insights"
       >

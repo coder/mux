@@ -350,4 +350,213 @@ describeIntegration("RightSidebar (UI)", () => {
       }
     });
   }, 60_000);
+
+  test("sidebar width persists consistently across all tabs", async () => {
+    await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
+      const cleanupDom = installDom();
+
+      // Clear any persisted width state
+      localStorage.removeItem("right-sidebar:width");
+
+      const view = renderApp({
+        apiClient: env.orpc,
+        metadata,
+      });
+
+      try {
+        await setupWorkspaceView(view, metadata, workspaceId);
+
+        // Find the right sidebar
+        const sidebar = await waitFor(
+          () => {
+            const el = view.container.querySelector(
+              '[role="complementary"][aria-label="Workspace insights"]'
+            );
+            if (!el) throw new Error("RightSidebar not found");
+            return el as HTMLElement;
+          },
+          { timeout: 10_000 }
+        );
+
+        // Find the resize handle (left edge of sidebar)
+        const resizeHandle = await waitFor(
+          () => {
+            const handle = sidebar.querySelector('[class*="cursor-col-resize"]') as HTMLElement;
+            if (!handle) throw new Error("Resize handle not found");
+            return handle;
+          },
+          { timeout: 5_000 }
+        );
+
+        // Simulate drag resize to 500px
+        // Start on Costs tab (default)
+        const costsTab = sidebar.querySelector(
+          '[role="tab"][aria-controls*="costs"]'
+        ) as HTMLElement;
+        expect(costsTab.getAttribute("aria-selected")).toBe("true");
+
+        // Simulate mousedown on resize handle
+        fireEvent.mouseDown(resizeHandle, { clientX: 1000 });
+
+        // Move mouse to resize (moving left increases width)
+        fireEvent.mouseMove(document, { clientX: 500 }); // Move left by 500px
+
+        // Release mouse
+        fireEvent.mouseUp(document);
+
+        // Wait for width to be persisted
+        await waitFor(() => {
+          const storedWidth = localStorage.getItem("right-sidebar:width");
+          if (!storedWidth) throw new Error("Width not persisted");
+          const parsed = parseInt(storedWidth, 10);
+          // Should have a width greater than default
+          if (parsed < 400) throw new Error(`Expected width >= 400, got ${parsed}`);
+        });
+
+        const persistedWidthOnCosts = parseInt(
+          localStorage.getItem("right-sidebar:width") ?? "300",
+          10
+        );
+
+        // Switch to Review tab
+        const reviewTab = sidebar.querySelector(
+          '[role="tab"][aria-controls*="review"]'
+        ) as HTMLElement;
+        fireEvent.click(reviewTab);
+
+        await waitFor(() => {
+          expect(reviewTab.getAttribute("aria-selected")).toBe("true");
+        });
+
+        // Width should still be the same (unified across tabs)
+        const widthOnReview = parseInt(localStorage.getItem("right-sidebar:width") ?? "300", 10);
+        expect(widthOnReview).toBe(persistedWidthOnCosts);
+
+        // Switch to Terminal tab
+        const terminalTab = sidebar.querySelector(
+          '[role="tab"][aria-controls*="terminal"]'
+        ) as HTMLElement;
+        fireEvent.click(terminalTab);
+
+        await waitFor(() => {
+          expect(terminalTab.getAttribute("aria-selected")).toBe("true");
+        });
+
+        // Width should still be the same
+        const widthOnTerminal = parseInt(localStorage.getItem("right-sidebar:width") ?? "300", 10);
+        expect(widthOnTerminal).toBe(persistedWidthOnCosts);
+      } finally {
+        await cleanupView(view, cleanupDom);
+      }
+    });
+  }, 60_000);
+
+  test("resizing works the same regardless of which tab is active", async () => {
+    await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
+      const cleanupDom = installDom();
+
+      // Clear any persisted state
+      localStorage.removeItem("right-sidebar:width");
+
+      const view = renderApp({
+        apiClient: env.orpc,
+        metadata,
+      });
+
+      try {
+        await setupWorkspaceView(view, metadata, workspaceId);
+
+        const sidebar = await waitFor(
+          () => {
+            const el = view.container.querySelector(
+              '[role="complementary"][aria-label="Workspace insights"]'
+            );
+            if (!el) throw new Error("RightSidebar not found");
+            return el as HTMLElement;
+          },
+          { timeout: 10_000 }
+        );
+
+        // Switch to Review tab first
+        const reviewTab = sidebar.querySelector(
+          '[role="tab"][aria-controls*="review"]'
+        ) as HTMLElement;
+        fireEvent.click(reviewTab);
+
+        await waitFor(() => {
+          expect(reviewTab.getAttribute("aria-selected")).toBe("true");
+        });
+
+        // Find and use resize handle
+        const resizeHandle = await waitFor(
+          () => {
+            const handle = sidebar.querySelector('[class*="cursor-col-resize"]') as HTMLElement;
+            if (!handle) throw new Error("Resize handle not found");
+            return handle;
+          },
+          { timeout: 5_000 }
+        );
+
+        // Resize while on Review tab
+        fireEvent.mouseDown(resizeHandle, { clientX: 1000 });
+        fireEvent.mouseMove(document, { clientX: 600 });
+        fireEvent.mouseUp(document);
+
+        // Wait for width to be stored
+        await waitFor(() => {
+          const width = localStorage.getItem("right-sidebar:width");
+          if (!width) throw new Error("Width not persisted");
+        });
+
+        const widthAfterReviewResize = parseInt(
+          localStorage.getItem("right-sidebar:width") ?? "300",
+          10
+        );
+
+        // Switch to Costs tab
+        const costsTab = sidebar.querySelector(
+          '[role="tab"][aria-controls*="costs"]'
+        ) as HTMLElement;
+        fireEvent.click(costsTab);
+
+        await waitFor(() => {
+          expect(costsTab.getAttribute("aria-selected")).toBe("true");
+        });
+
+        // Width should persist when switching to Costs
+        const widthOnCosts = parseInt(localStorage.getItem("right-sidebar:width") ?? "300", 10);
+        expect(widthOnCosts).toBe(widthAfterReviewResize);
+
+        // Resize again on Costs tab
+        fireEvent.mouseDown(resizeHandle, { clientX: 800 });
+        fireEvent.mouseMove(document, { clientX: 500 });
+        fireEvent.mouseUp(document);
+
+        await waitFor(() => {
+          const width = parseInt(localStorage.getItem("right-sidebar:width") ?? "300", 10);
+          // Width should have changed
+          if (width === widthAfterReviewResize) throw new Error("Width should have changed");
+        });
+
+        const widthAfterCostsResize = parseInt(
+          localStorage.getItem("right-sidebar:width") ?? "300",
+          10
+        );
+
+        // Switch back to Review - should have same new width
+        fireEvent.click(reviewTab);
+        await waitFor(() => {
+          expect(reviewTab.getAttribute("aria-selected")).toBe("true");
+        });
+
+        const finalWidthOnReview = parseInt(
+          localStorage.getItem("right-sidebar:width") ?? "300",
+          10
+        );
+        expect(finalWidthOnReview).toBe(widthAfterCostsResize);
+      } finally {
+        await cleanupView(view, cleanupDom);
+      }
+    });
+  }, 60_000);
 });
