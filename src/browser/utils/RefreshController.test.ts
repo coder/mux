@@ -20,19 +20,21 @@ function deferred<T>() {
 // jest.advanceTimersByTime(), so these tests use real timers.
 
 describe("RefreshController", () => {
-  it("schedule() debounces and resets to the last call", async () => {
+  it("schedule() rate-limits and does not reset to the last call", async () => {
     const onRefresh = mock<() => void>(() => undefined);
-    const controller = new RefreshController({ onRefresh, debounceMs: 50 });
+    const controller = new RefreshController({ onRefresh, debounceMs: 200 });
 
     controller.schedule();
-    await sleep(25);
+    await sleep(100);
     controller.schedule();
 
-    // Only ~35ms after the last schedule() (debounceMs=50), so we should not have refreshed yet.
-    await sleep(35);
-    expect(onRefresh).not.toHaveBeenCalled();
+    // After 230ms total: >200ms since the first call, but only 130ms since the second call.
+    // If schedule() reset the timer, we would not have refreshed yet.
+    await sleep(130);
+    expect(onRefresh).toHaveBeenCalledTimes(1);
 
-    await sleep(40);
+    // Ensure the second call didn't schedule another refresh.
+    await sleep(250);
     expect(onRefresh).toHaveBeenCalledTimes(1);
 
     controller.dispose();
@@ -94,8 +96,8 @@ describe("RefreshController", () => {
     expect(refreshes).toHaveLength(1);
     refreshes[0].resolve();
 
-    // Allow the Promise.finally() callback + the queued setTimeout(0) refresh.
-    await sleep(10);
+    // Allow the Promise.finally() callback + the queued trailing debounce refresh.
+    await sleep(80);
 
     expect(onRefresh).toHaveBeenCalledTimes(2);
 
