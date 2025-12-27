@@ -914,11 +914,14 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
   private traceId: string | null = null;
 
   private readyProbeInterval: ReturnType<typeof setInterval> | null = null;
+  private readyProbeTimeouts: Array<ReturnType<typeof setTimeout>> = [];
   private isWebviewReady = false;
 
   private connectionStatus: UiConnectionStatus = { mode: "file" };
   private workspaces: WorkspaceWithContext[] = [];
   private workspacesById = new Map<string, WorkspaceWithContext>();
+
+  private refreshWorkspacesGeneration = 0;
 
   private selectedWorkspaceId: string | null;
 
@@ -938,12 +941,15 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
   }
 
   private clearReadyProbeInterval(): void {
-    if (!this.readyProbeInterval) {
-      return;
+    if (this.readyProbeInterval) {
+      clearInterval(this.readyProbeInterval);
+      this.readyProbeInterval = null;
     }
 
-    clearInterval(this.readyProbeInterval);
-    this.readyProbeInterval = null;
+    for (const timeoutId of this.readyProbeTimeouts) {
+      clearTimeout(timeoutId);
+    }
+    this.readyProbeTimeouts = [];
   }
 
   dispose(): void {
@@ -1004,7 +1010,10 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
     this.view = view;
     this.isWebviewReady = false;
 
-    view.webview.options = {
+    const viewDisposables: vscode.Disposable[] = [];
+
+    try {
+      view.webview.options = {
       enableScripts: true,
       localResourceRoots: [
         vscode.Uri.joinPath(this.context.extensionUri, "out"),
@@ -1020,6 +1029,7 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
     const visibilityDisposable = view.onDidChangeVisibility(() => {
       muxLogDebug("mux.chatView: view visibility changed", { visible: view.visible });
     });
+    viewDisposables.push(visibilityDisposable);
 
     // Register the message handler before setting HTML to avoid losing the initial
     // "ready" handshake due to a race.
@@ -1053,6 +1063,7 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
         });
       });
     });
+    viewDisposables.push(messageDisposable);
 
     view.onDidDispose(() => {
       muxLogDebug("mux.chatView: disposed");
@@ -1110,7 +1121,7 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
       }
     }, 1_000);
 
-    setTimeout(() => {
+    const readyWarnTimeout = setTimeout(() => {
       if (this.view !== view) {
         return;
       }
@@ -1126,8 +1137,9 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
         hint: "Open Webview Developer Tools and look for CSP/script errors; also check Output > Mux.",
       });
     }, 2_000);
+    this.readyProbeTimeouts.push(readyWarnTimeout);
 
-    setTimeout(() => {
+    const readyErrorTimeout = setTimeout(() => {
       if (this.view !== view) {
         return;
       }
@@ -1143,6 +1155,32 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
         hint: "Open Webview Developer Tools and look for CSP/script errors; also check Output > Mux.",
       });
     }, 10_000);
+    this.readyProbeTimeouts.push(readyErrorTimeout);
+    } catch (error) {
+      muxLogError("mux.chatView: resolveWebviewView failed", {
+        traceId: this.traceId,
+        error: formatError(error),
+      });
+
+      for (const disposable of viewDisposables) {
+        disposable.dispose();
+      }
+
+      if (this.view === view) {
+        this.view = undefined;
+      }
+      this.traceId = null;
+      this.isWebviewReady = false;
+      this.dispose();
+
+      // Best-effort: show something in the UI even if the React bundle fails to load.
+      try {
+        view.webview.html =
+          "<!DOCTYPE html><html lang=\"en\"><body><h3>Failed to load mux chat view</h3><p>Check Output > Mux for details.</p></body></html>";
+      } catch {
+        // Ignore - best effort only.
+      }
+    }
   }
 
   private postMessage(message: ExtensionToWebviewMessage): void {
@@ -1285,9 +1323,11 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
         this.isWebviewReady = true;
         this.clearReadyProbeInterval();
 
-        await this.refreshWorkspaces();
+        // Ensure the webview knows the currently selected workspace before we start
+        // streaming chatReset/chatEvent messages for it.
         this.postMessage({ type: "setSelectedWorkspace", workspaceId: this.selectedWorkspaceId });
-        await this.updateChatSubscription();
+
+        await this.refreshWorkspaces();
       },
 
       refreshWorkspaces: async (_msg) => {
@@ -1324,10 +1364,19 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
 
   private async refreshWorkspaces(): Promise<void> {
     const startedAt = Date.now();
-    muxLogDebug("mux.chatView: refreshWorkspaces start", { traceId: this.traceId });
+    const generation = ++this.refreshWorkspacesGeneration;
+    muxLogDebug("mux.chatView: refreshWorkspaces start", { traceId: this.traceId, generation });
 
     try {
       const result = await getWorkspacesForSidebar(this.context);
+
+      if (generation !== this.refreshWorkspacesGeneration) {
+        muxLogDebug("mux.chatView: refreshWorkspaces stale result discarded", {
+          traceId: this.traceId,
+          generation,
+        });
+        return;
+      }
 
       this.connectionStatus = result.status;
       this.workspaces = result.workspaces;
@@ -1385,24 +1434,29 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
   }
 
 
-  private resolveOrpcProcedure(client: unknown, path: string[]): ((input: unknown, options?: unknown) => Promise<unknown>) | null {
+  private resolveOrpcProcedure(
+    client: unknown,
+    path: string[]
+  ): ((input: unknown, options?: unknown) => Promise<unknown>) | null {
     let cursor: unknown = client;
 
     for (const segment of path) {
-      if (!cursor || typeof cursor !== "object") {
+      if (segment === "__proto__" || segment === "prototype" || segment === "constructor") {
         return null;
       }
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      cursor = (cursor as any)[segment];
+      if (!cursor || (typeof cursor !== "object" && typeof cursor !== "function")) {
+        return null;
+      }
+
+      cursor = (cursor as Record<string, unknown>)[segment];
     }
 
     if (typeof cursor !== "function") {
       return null;
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return cursor as any;
+    return cursor as (input: unknown, options?: unknown) => Promise<unknown>;
   }
 
   private handleOrpcCancel(requestId: string): void {

@@ -30,6 +30,8 @@ import { enforceThinkingPolicy } from "mux/common/utils/thinking/policy";
 import { cn } from "mux/common/lib/utils";
 import { VIM_ENABLED_KEY, getInputKey, getModelKey } from "mux/common/constants/storage";
 
+const SEND_MESSAGE_TIMEOUT_MS = 30_000;
+
 function getLastContextUsage(
   aggregator: StreamingMessageAggregator,
   fallbackModel: string | null
@@ -214,14 +216,22 @@ function ChatComposerInner(props: {
     setIsSending(true);
     setInput("");
 
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => {
+      controller.abort();
+    }, SEND_MESSAGE_TIMEOUT_MS);
+
     try {
       const options = getSendOptionsFromStorage(props.workspaceId);
 
-      const result = await api.workspace.sendMessage({
-        workspaceId: props.workspaceId,
-        message: trimmed,
-        options,
-      });
+      const result = await api.workspace.sendMessage(
+        {
+          workspaceId: props.workspaceId,
+          message: trimmed,
+          options,
+        },
+        { signal: controller.signal }
+      );
 
       if (!result.success) {
         const errorString =
@@ -233,10 +243,20 @@ function ChatComposerInner(props: {
 
       props.onSendComplete();
     } catch (error) {
+      if (controller.signal.aborted) {
+        props.onNotice({
+          level: "error",
+          message: `Send timed out after ${SEND_MESSAGE_TIMEOUT_MS / 1000}s. Try again.`,
+        });
+        setInput(trimmed);
+        return;
+      }
+
       const errorString = error instanceof Error ? error.message : String(error);
       props.onNotice({ level: "error", message: `Send failed: ${errorString}` });
       setInput(trimmed);
     } finally {
+      clearTimeout(timeoutId);
       setIsSending(false);
     }
   };

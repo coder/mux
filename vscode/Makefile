@@ -2,7 +2,7 @@
 # ==============================
 # Isolated build system for the mux VS Code/Cursor extension
 
-.PHONY: all build install clean test test-integration help
+.PHONY: all build install clean test test-integration test-orpc help
 
 # Default target
 all: build
@@ -45,6 +45,14 @@ install: build ## Build and install extension locally
 		echo "⚠ Cursor CLI (cursor) not found, skipping"; \
 	fi
 	@echo "✓ Installation complete. Reload your editor to use the extension."
+
+## Run extension unit tests
+test: node_modules/.installed ## Run extension unit tests
+	@bun test
+
+## Run extension integration tests (requires running mux server)
+test-integration: node_modules/.installed ## Run extension integration tests (requires mux server)
+	@TEST_INTEGRATION=1 bun test
 
 ## Run oRPC connection smoke test (requires running mux server)
 test-orpc: ## Connect to mux server and list workspaces via oRPC

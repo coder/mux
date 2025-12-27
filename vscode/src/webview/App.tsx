@@ -65,15 +65,25 @@ function formatConnectionStatus(status: UiConnectionStatus | null): string {
 }
 
 
+const MAX_BUFFERED_HISTORICAL_MESSAGES = 500;
+const MAX_BUFFERED_STREAM_EVENTS = 5_000;
+
 interface ChatReplayState {
   workspaceId: string;
   caughtUp: boolean;
   historicalMessages: Extract<WorkspaceChatMessage, { type: "message" }>[];
   pendingStreamEvents: WorkspaceChatMessage[];
+  didWarnBufferOverflow: boolean;
 }
 
 function createChatReplayState(workspaceId: string): ChatReplayState {
-  return { workspaceId, caughtUp: false, historicalMessages: [], pendingStreamEvents: [] };
+  return {
+    workspaceId,
+    caughtUp: false,
+    historicalMessages: [],
+    pendingStreamEvents: [],
+    didWarnBufferOverflow: false,
+  };
 }
 
 function shouldBufferUntilCaughtUp(event: WorkspaceChatMessage): boolean {
@@ -292,6 +302,49 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
               chatReplayStateRef.current = replayState;
             }
 
+
+            const forceCatchUp = () => {
+              if (
+                replayState.caughtUp ||
+                (replayState.historicalMessages.length <= MAX_BUFFERED_HISTORICAL_MESSAGES &&
+                  replayState.pendingStreamEvents.length <= MAX_BUFFERED_STREAM_EVENTS)
+              ) {
+                return;
+              }
+
+              if (!replayState.didWarnBufferOverflow) {
+                replayState.didWarnBufferOverflow = true;
+
+                bridge.debugLog("chat replay buffer overflow; forcing caught-up", {
+                  workspaceId: replayState.workspaceId,
+                  historicalMessages: replayState.historicalMessages.length,
+                  pendingStreamEvents: replayState.pendingStreamEvents.length,
+                });
+
+                pushNotice({
+                  level: "error",
+                  message:
+                    "Mux chat did not finish loading (missing caught-up). Showing a partial transcript; try Refresh if messages look incomplete.",
+                });
+              }
+
+              const hasActiveStream = replayState.pendingStreamEvents.some(
+                (bufferedEvent) => bufferedEvent.type === "stream-start"
+              );
+
+              if (replayState.historicalMessages.length > 0) {
+                aggregator.loadHistoricalMessages(replayState.historicalMessages, hasActiveStream);
+                replayState.historicalMessages.length = 0;
+              }
+
+              for (const bufferedEvent of replayState.pendingStreamEvents) {
+                applyWorkspaceChatEventToAggregator(aggregator, bufferedEvent);
+              }
+              replayState.pendingStreamEvents.length = 0;
+
+              replayState.caughtUp = true;
+              flushDisplayedMessages();
+            };
             const event = msg.event;
 
             if (event.type === "caught-up") {
@@ -315,11 +368,13 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
             if (!replayState.caughtUp) {
               if (event.type === "message") {
                 replayState.historicalMessages.push(event);
+                forceCatchUp();
                 return;
               }
 
               if (shouldBufferUntilCaughtUp(event)) {
                 replayState.pendingStreamEvents.push(event);
+                forceCatchUp();
                 return;
               }
             }
@@ -369,7 +424,10 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
 
     bridge.postMessage({ type: "ready" });
 
-    return unsubscribe;
+    return () => {
+      cancelScheduledRender();
+      unsubscribe();
+    };
     // Only depend on the bridge instance; other state is read via refs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bridge]);
