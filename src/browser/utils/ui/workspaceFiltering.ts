@@ -185,6 +185,13 @@ export interface AgePartitionResult {
 }
 
 /**
+ * Build the storage key for a tier's expanded state.
+ */
+export function getTierKey(projectPath: string, tierIndex: number): string {
+  return `${projectPath}:${tierIndex}`;
+}
+
+/**
  * Find the next non-empty tier starting from a given index.
  * @returns The index of the next non-empty bucket, or -1 if none found.
  */
@@ -277,8 +284,7 @@ export function getVisibleWorkspaces(
   // Traverse expanded tiers in order
   let currentTier = findNextNonEmptyTier(buckets, 0);
   while (currentTier !== -1) {
-    const key = `${projectPath}:${currentTier}`;
-    const isExpanded = expandedOldWorkspaces[key] ?? false;
+    const isExpanded = expandedOldWorkspaces[getTierKey(projectPath, currentTier)] ?? false;
 
     if (!isExpanded) {
       // Tier is collapsed, stop traversing

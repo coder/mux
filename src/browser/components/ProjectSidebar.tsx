@@ -19,6 +19,7 @@ import {
   AGE_THRESHOLDS_DAYS,
   computeWorkspaceDepthMap,
   findNextNonEmptyTier,
+  getTierKey,
 } from "@/browser/utils/ui/workspaceFiltering";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { SidebarCollapseButton } from "./ui/SidebarCollapseButton";
@@ -250,7 +251,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   );
 
   // Track which projects have old workspaces expanded (per-project, per-tier)
-  // Key format: `${projectPath}:${tierIndex}` where tierIndex is 0, 1, 2 for 1/7/30 days
+  // Key format: getTierKey(projectPath, tierIndex) where tierIndex is 0, 1, 2 for 1/7/30 days
   const [expandedOldWorkspaces, setExpandedOldWorkspaces] = usePersistedState<
     Record<string, boolean>
   >("expandedOldWorkspaces", {});
@@ -288,7 +289,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   );
 
   const toggleOldWorkspaces = (projectPath: string, tierIndex: number) => {
-    const key = `${projectPath}:${tierIndex}`;
+    const key = getTierKey(projectPath, tierIndex);
     setExpandedOldWorkspaces((prev) => ({
       ...prev,
       [key]: !prev[key],
@@ -605,8 +606,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
                                 if (remainingCount === 0) return null;
 
-                                const key = `${projectPath}:${tierIndex}`;
-                                const isExpanded = expandedOldWorkspaces[key] ?? false;
+                                const isExpanded =
+                                  expandedOldWorkspaces[getTierKey(projectPath, tierIndex)] ??
+                                  false;
                                 const thresholdDays = AGE_THRESHOLDS_DAYS[tierIndex];
                                 const thresholdLabel = formatDaysThreshold(thresholdDays);
                                 // When expanded, show only this tier's count; when collapsed, show cumulative
