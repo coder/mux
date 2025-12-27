@@ -5,6 +5,7 @@ import {
   AGE_THRESHOLDS_DAYS,
   buildSortedWorkspacesByProject,
   getVisibleWorkspaces,
+  getAllVisibleWorkspaces,
 } from "./workspaceFiltering";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { ProjectConfig } from "@/common/types/project";
@@ -316,6 +317,94 @@ describe("getVisibleWorkspaces", () => {
 
     expect(visible).toHaveLength(2);
     expect(visible.map((w) => w.id)).toEqual(["recent", "tier1"]);
+  });
+});
+
+describe("getAllVisibleWorkspaces", () => {
+  const now = Date.now();
+  const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+  const createWorkspace = (id: string, projectPath: string): FrontendWorkspaceMetadata => ({
+    id,
+    name: `workspace-${id}`,
+    projectName: projectPath.split("/").pop() ?? "unknown",
+    projectPath,
+    namedWorkspacePath: `${projectPath}/workspace-${id}`,
+    runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+  });
+
+  it("should return workspaces from all expanded projects in order", () => {
+    const projectA = "/project/a";
+    const projectB = "/project/b";
+
+    const sortedWorkspacesByProject = new Map([
+      [projectA, [createWorkspace("a1", projectA), createWorkspace("a2", projectA)]],
+      [projectB, [createWorkspace("b1", projectB), createWorkspace("b2", projectB)]],
+    ]);
+
+    const recency = { a1: now, a2: now, b1: now, b2: now };
+
+    const visible = getAllVisibleWorkspaces(
+      [projectA, projectB],
+      sortedWorkspacesByProject,
+      new Set([projectA, projectB]),
+      recency,
+      {}
+    );
+
+    expect(visible.map((w) => w.id)).toEqual(["a1", "a2", "b1", "b2"]);
+  });
+
+  it("should skip collapsed projects", () => {
+    const projectA = "/project/a";
+    const projectB = "/project/b";
+
+    const sortedWorkspacesByProject = new Map([
+      [projectA, [createWorkspace("a1", projectA)]],
+      [projectB, [createWorkspace("b1", projectB)]],
+    ]);
+
+    const recency = { a1: now, b1: now };
+
+    // Only project B is expanded
+    const visible = getAllVisibleWorkspaces(
+      [projectA, projectB],
+      sortedWorkspacesByProject,
+      new Set([projectB]),
+      recency,
+      {}
+    );
+
+    expect(visible.map((w) => w.id)).toEqual(["b1"]);
+  });
+
+  it("should respect age tier expansion within projects", () => {
+    const projectA = "/project/a";
+
+    const sortedWorkspacesByProject = new Map([
+      [projectA, [createWorkspace("recent", projectA), createWorkspace("old", projectA)]],
+    ]);
+
+    const recency = {
+      recent: now - 1000,
+      old: now - 3 * ONE_DAY_MS,
+    };
+
+    // Project expanded but old tier collapsed
+    const visible = getAllVisibleWorkspaces(
+      [projectA],
+      sortedWorkspacesByProject,
+      new Set([projectA]),
+      recency,
+      {}
+    );
+
+    expect(visible.map((w) => w.id)).toEqual(["recent"]);
+  });
+
+  it("should handle empty project list", () => {
+    const visible = getAllVisibleWorkspaces([], new Map(), new Set(), {}, {});
+    expect(visible).toHaveLength(0);
   });
 });
 

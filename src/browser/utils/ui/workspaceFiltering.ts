@@ -192,6 +192,43 @@ export function getTierKey(projectPath: string, tierIndex: number): string {
 }
 
 /**
+ * Compute all visible workspaces across all projects in sidebar display order.
+ * Respects project ordering, project expansion, and age-tier expansion.
+ *
+ * @param sortedProjectPaths - Project paths in display order
+ * @param sortedWorkspacesByProject - Workspaces per project in display order
+ * @param expandedProjects - Set of expanded project paths
+ * @param workspaceRecency - Recency timestamps
+ * @param expandedOldWorkspaces - Record of expanded tier states
+ * @returns Array of visible workspaces in sidebar display order
+ */
+export function getAllVisibleWorkspaces(
+  sortedProjectPaths: string[],
+  sortedWorkspacesByProject: Map<string, FrontendWorkspaceMetadata[]>,
+  expandedProjects: Set<string>,
+  workspaceRecency: Record<string, number>,
+  expandedOldWorkspaces: Record<string, boolean>
+): FrontendWorkspaceMetadata[] {
+  const allVisible: FrontendWorkspaceMetadata[] = [];
+
+  for (const projectPath of sortedProjectPaths) {
+    // Skip collapsed projects
+    if (!expandedProjects.has(projectPath)) continue;
+
+    const workspaces = sortedWorkspacesByProject.get(projectPath) ?? [];
+    const visible = getVisibleWorkspaces(
+      projectPath,
+      workspaces,
+      workspaceRecency,
+      expandedOldWorkspaces
+    );
+    allVisible.push(...visible);
+  }
+
+  return allVisible;
+}
+
+/**
  * Find the next non-empty tier starting from a given index.
  * @returns The index of the next non-empty bucket, or -1 if none found.
  */

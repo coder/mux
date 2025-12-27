@@ -15,7 +15,7 @@ import {
 import { matchesKeybind, KEYBINDS } from "./utils/ui/keybinds";
 import {
   buildSortedWorkspacesByProject,
-  getVisibleWorkspaces,
+  getAllVisibleWorkspaces,
 } from "./utils/ui/workspaceFiltering";
 import { useResumeManager } from "./hooks/useResumeManager";
 import { useUnreadTracking } from "./hooks/useUnreadTracking";
@@ -36,7 +36,9 @@ import {
   getThinkingLevelByModelKey,
   getThinkingLevelKey,
   getModelKey,
+  EXPANDED_PROJECTS_KEY,
 } from "@/common/constants/storage";
+import { sortProjectsByOrder } from "@/common/utils/projectOrdering";
 import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
@@ -215,34 +217,38 @@ function AppInner() {
 
   const handleNavigateWorkspace = useCallback(
     (direction: "next" | "prev") => {
-      if (!selectedWorkspace) return;
-
-      // Use sorted workspaces to match visual order in sidebar
-      const sortedWorkspaces = sortedWorkspacesByProject.get(selectedWorkspace.projectPath);
-      if (!sortedWorkspaces || sortedWorkspaces.length <= 1) return;
-
-      // Only navigate through visible workspaces (respecting collapsed "Older than" sections)
+      // Build list of all visible workspaces across all projects (matching sidebar order)
+      const projectOrder = readPersistedState<string[]>("mux:projectOrder", []);
+      const expandedProjectsArray = readPersistedState<string[]>(EXPANDED_PROJECTS_KEY, []);
+      const expandedProjects = new Set(expandedProjectsArray);
       const expandedOldWorkspaces = readPersistedState<Record<string, boolean>>(
         "expandedOldWorkspaces",
         {}
       );
-      const visibleWorkspaces = getVisibleWorkspaces(
-        selectedWorkspace.projectPath,
-        sortedWorkspaces,
+
+      // Get sorted project paths (respecting user's drag order)
+      const sortedProjectPaths = sortProjectsByOrder(projects, projectOrder).map(([p]) => p);
+
+      const visibleWorkspaces = getAllVisibleWorkspaces(
+        sortedProjectPaths,
+        sortedWorkspacesByProject,
+        expandedProjects,
         workspaceRecency,
         expandedOldWorkspaces
       );
-      if (visibleWorkspaces.length <= 1) return;
 
-      // Find current workspace index in visible list
-      const currentIndex = visibleWorkspaces.findIndex(
-        (metadata) => metadata.id === selectedWorkspace.workspaceId
-      );
-      if (currentIndex === -1) return;
+      if (visibleWorkspaces.length === 0) return;
 
-      // Calculate next/prev index with wrapping
+      // Find current workspace index (or start from beginning/end if not found)
+      const currentIndex = selectedWorkspace
+        ? visibleWorkspaces.findIndex((m) => m.id === selectedWorkspace.workspaceId)
+        : -1;
+
       let targetIndex: number;
-      if (direction === "next") {
+      if (currentIndex === -1) {
+        // Current workspace not visible - go to first/last visible
+        targetIndex = direction === "next" ? 0 : visibleWorkspaces.length - 1;
+      } else if (direction === "next") {
         targetIndex = (currentIndex + 1) % visibleWorkspaces.length;
       } else {
         targetIndex = currentIndex === 0 ? visibleWorkspaces.length - 1 : currentIndex - 1;
@@ -253,7 +259,7 @@ function AppInner() {
 
       setSelectedWorkspace(toWorkspaceSelection(targetMetadata));
     },
-    [selectedWorkspace, sortedWorkspacesByProject, workspaceRecency, setSelectedWorkspace]
+    [selectedWorkspace, projects, sortedWorkspacesByProject, workspaceRecency, setSelectedWorkspace]
   );
 
   // Register command sources with registry
