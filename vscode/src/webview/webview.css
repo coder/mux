@@ -112,8 +112,12 @@
     --color-token-completion: hsl(207 100% 40%);
     --color-token-variable: hsl(207 100% 40%);
     --color-token-fixed: hsl(0 0% 40%);
-    --color-token-input: hsl(120 40% 35%);
-    --color-token-output: hsl(207 100% 40%);
+    /*
+     * VS Code already defines accessible chart colors (var(--vscode-charts-*)).
+     * Use them when available so the tiny context meter stays readable across themes.
+     */
+    --color-token-input: var(--vscode-charts-green, hsl(120 40% 35%));
+    --color-token-output: var(--vscode-charts-blue, hsl(207 100% 40%));
     --color-token-cached: hsl(0 0% 50%);
     --color-token-cache-create: hsl(140 20% 55%);
 
