@@ -163,57 +163,67 @@ const DraggableTab: React.FC<{
 
   drag(drop(tabRef));
 
-  const button = (
-    <div className="relative">
-      {isOver && canDrop && dropIndicator !== null && (
-        <div
-          className={cn(
-            "pointer-events-none absolute top-0 z-10 h-full w-0.5 bg-accent",
-            dropIndicator === "before" ? "-left-1" : "-right-1"
-          )}
-        />
+  const dropIndicatorEl = isOver && canDrop && dropIndicator !== null && (
+    <div
+      className={cn(
+        "pointer-events-none absolute top-0 z-10 h-full w-0.5 bg-accent",
+        dropIndicator === "before" ? "-left-1" : "-right-1"
       )}
-      <button
-        ref={tabRef}
-        className={cn(
-          "rounded-md px-3 py-1 text-xs font-medium transition-all duration-150 flex items-baseline gap-1.5 cursor-grab active:cursor-grabbing",
-          item.selected
-            ? "bg-hover text-foreground"
-            : "bg-transparent text-muted hover:bg-hover/50 hover:text-foreground",
-          item.disabled && "opacity-50 pointer-events-none",
-          isDragging && "opacity-50"
-        )}
-        onClick={() => {
-          // Suppress selection if this click is the mouseup after a drag
-          if (didDragRef.current) {
-            didDragRef.current = false;
-            return;
-          }
-          item.onSelect();
-        }}
-        id={item.id}
-        role="tab"
-        type="button"
-        aria-selected={item.selected}
-        aria-controls={item.panelId}
-        disabled={item.disabled}
-      >
-        {item.label}
-      </button>
-    </div>
+    />
   );
 
+  const buttonEl = (
+    <button
+      ref={tabRef}
+      className={cn(
+        "rounded-md px-3 py-1 text-xs font-medium transition-all duration-150 flex items-baseline gap-1.5 cursor-grab active:cursor-grabbing",
+        item.selected
+          ? "bg-hover text-foreground"
+          : "bg-transparent text-muted hover:bg-hover/50 hover:text-foreground",
+        item.disabled && "opacity-50 pointer-events-none",
+        isDragging && "opacity-50"
+      )}
+      onClick={() => {
+        // Suppress selection if this click is the mouseup after a drag
+        if (didDragRef.current) {
+          didDragRef.current = false;
+          return;
+        }
+        item.onSelect();
+      }}
+      id={item.id}
+      role="tab"
+      type="button"
+      aria-selected={item.selected}
+      aria-controls={item.panelId}
+      disabled={item.disabled}
+    >
+      {item.label}
+    </button>
+  );
+
+  // When dragging, skip the Tooltip wrapper to avoid interference with drag events
   if (isDragging) {
-    return button;
+    return (
+      <div className="relative">
+        {dropIndicatorEl}
+        {buttonEl}
+      </div>
+    );
   }
 
+  // Wrap in Tooltip, but put the button directly under TooltipTrigger
+  // so the drag ref on the button receives all pointer events
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>{button}</TooltipTrigger>
-      <TooltipContent side="bottom" align="center">
-        {item.tooltip}
-      </TooltipContent>
-    </Tooltip>
+    <div className="relative">
+      {dropIndicatorEl}
+      <Tooltip>
+        <TooltipTrigger asChild>{buttonEl}</TooltipTrigger>
+        <TooltipContent side="bottom" align="center">
+          {item.tooltip}
+        </TooltipContent>
+      </Tooltip>
+    </div>
   );
 };
 

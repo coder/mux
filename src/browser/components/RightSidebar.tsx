@@ -26,6 +26,7 @@ import { TerminalTab } from "./RightSidebar/TerminalTab";
 import { RIGHT_SIDEBAR_TABS, isTabType, type TabType } from "@/browser/types/rightSidebar";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import {
+  addTabToFocusedTabset,
   collectActiveTabs,
   dockTabToEdge,
   getDefaultRightSidebarLayoutState,
@@ -560,15 +561,23 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     [layoutRaw, initialActiveTab]
   );
 
-  // If the Stats tab feature is disabled, ensure it doesn't linger in persisted layouts.
+  // If the Stats tab feature is enabled, ensure it exists in the layout.
+  // If disabled, ensure it doesn't linger in persisted layouts.
   React.useEffect(() => {
-    if (statsTabEnabled) return;
-
     setLayoutRaw((prevRaw) => {
       const prev = parseRightSidebarLayoutState(prevRaw, initialActiveTab);
       const hasStats = collectActiveTabs(prev.root).includes("stats");
-      if (!hasStats) return prev;
-      return removeTabEverywhere(prev, "stats");
+
+      if (statsTabEnabled && !hasStats) {
+        // Add stats tab to the focused tabset
+        return addTabToFocusedTabset(prev, "stats");
+      }
+
+      if (!statsTabEnabled && hasStats) {
+        return removeTabEverywhere(prev, "stats");
+      }
+
+      return prev;
     });
   }, [initialActiveTab, setLayoutRaw, statsTabEnabled]);
   // If we ever deserialize an invalid layout (e.g. schema changes), reset to defaults.

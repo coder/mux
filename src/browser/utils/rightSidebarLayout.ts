@@ -388,6 +388,33 @@ export function addToolToFocusedTabset(
 }
 
 /**
+ * Add a tab to the focused tabset without changing the active tab.
+ * Used for feature-flagged tabs that should be available but not auto-selected.
+ */
+export function addTabToFocusedTabset(
+  state: RightSidebarLayoutState,
+  tab: TabType
+): RightSidebarLayoutState {
+  const focused = findTabset(state.root, state.focusedTabsetId);
+  if (focused?.type !== "tabset") {
+    return state;
+  }
+
+  // Already has the tab
+  if (focused.tabs.includes(tab)) {
+    return state;
+  }
+
+  return {
+    ...state,
+    root: updateNode(state.root, focused.id, (ts) => ({
+      ...ts,
+      tabs: [...ts.tabs, tab],
+    })),
+  };
+}
+
+/**
  * Move a tab from one tabset to another.
  * Handles edge cases:
  * - If source tabset becomes empty, it gets removed (along with its parent split if needed)
