@@ -262,4 +262,12 @@ export const ExperimentsToggleOff: AppStory = {
   },
 };
 
+/** Keybinds section - shows keyboard shortcuts reference */
+export const Keybinds: AppStory = {
+  render: () => <AppWithMocks setup={() => setupSettingsStory({})} />,
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await openSettingsToSection(canvasElement, "keybinds");
+  },
+};
+
 // NOTE: Projects section stories live in App.projectSettings.stories.tsx
