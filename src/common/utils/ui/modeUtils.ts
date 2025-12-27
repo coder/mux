@@ -15,7 +15,10 @@ export function getPlanModeInstruction(planFilePath: string, planExists: boolean
 You should build your plan incrementally by writing to or editing this file.
 NOTE that this is the only file you are allowed to edit - other than this you are only allowed to take READ-ONLY actions.
 
-Keep the plan crisp and focused on actionable recommendations. Put historical context, alternatives considered, or lengthy rationale into collapsible \`<details>/<summary>\` blocks so the core plan stays scannable.
+Keep the plan crisp and focused on actionable recommendations:
+- Put historical context, alternatives considered, or lengthy rationale into collapsible \`<details>/<summary>\` blocks so the core plan stays scannable.
+- **Aggressively prune completed or irrelevant content.** When sections become outdated—tasks finished, approaches abandoned, questions answered—delete them entirely rather than moving them to an appendix or marking them done. The plan should reflect current state, not accumulate history.
+- Each revision should leave the plan shorter or unchanged in scope, never longer unless the actual work grew.
 
 If you need investigation (codebase exploration, tracing callsites, locating patterns, feasibility checks) before you can produce a good plan, delegate it to Explore sub-agents via the \`task\` tool:
 - In Plan Mode, you MUST ONLY spawn \`subagent_type: "explore"\` tasks. Do NOT spawn \`subagent_type: "exec"\` tasks in Plan Mode.
