@@ -132,6 +132,27 @@ interface RightSidebarProps {
   isCreating?: boolean;
 }
 
+/**
+ * Wrapper component for PanelResizeHandle that disables pointer events during tab drag.
+ * Must be rendered inside DndProvider to use useDragLayer.
+ */
+const DragAwarePanelResizeHandle: React.FC<{
+  direction: "horizontal" | "vertical";
+}> = ({ direction }) => {
+  const isDraggingTab = useDragLayer(
+    (monitor) => monitor.isDragging() && monitor.getItemType() === SIDEBAR_TAB_DRAG_TYPE
+  );
+
+  const className = cn(
+    direction === "horizontal"
+      ? "w-0.5 flex-shrink-0 z-10 transition-[background] duration-150 cursor-col-resize bg-border-light hover:bg-accent"
+      : "h-0.5 flex-shrink-0 z-10 transition-[background] duration-150 cursor-row-resize bg-border-light hover:bg-accent",
+    isDraggingTab && "pointer-events-none"
+  );
+
+  return <PanelResizeHandle className={className} />;
+};
+
 type TabsetNode = Extract<RightSidebarLayoutNode, { type: "tabset" }>;
 
 interface RightSidebarTabsetNodeProps {
@@ -391,43 +412,55 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
             "bg-accent/10 ring-1 ring-accent/50"
         )}
       >
-        {/* Edge docking zones - only active while dragging a sidebar tab */}
-        {isDraggingSidebarTab && (
-          <>
-            <div
-              ref={topDrop}
-              className={cn(
-                "absolute inset-x-0 top-0 z-10 h-10 transition-opacity",
-                showDockHints ? "opacity-100" : "opacity-0",
-                isOverTop ? "bg-accent/20 border-b border-accent" : "bg-accent/5"
-              )}
-            />
-            <div
-              ref={bottomDrop}
-              className={cn(
-                "absolute inset-x-0 bottom-0 z-10 h-10 transition-opacity",
-                showDockHints ? "opacity-100" : "opacity-0",
-                isOverBottom ? "bg-accent/20 border-t border-accent" : "bg-accent/5"
-              )}
-            />
-            <div
-              ref={leftDrop}
-              className={cn(
-                "absolute inset-y-0 left-0 z-10 w-10 transition-opacity",
-                showDockHints ? "opacity-100" : "opacity-0",
-                isOverLeft ? "bg-accent/20 border-r border-accent" : "bg-accent/5"
-              )}
-            />
-            <div
-              ref={rightDrop}
-              className={cn(
-                "absolute inset-y-0 right-0 z-10 w-10 transition-opacity",
-                showDockHints ? "opacity-100" : "opacity-0",
-                isOverRight ? "bg-accent/20 border-l border-accent" : "bg-accent/5"
-              )}
-            />
-          </>
-        )}
+        {/* Edge docking zones - always rendered but only visible/interactive during drag */}
+        <div
+          ref={topDrop}
+          className={cn(
+            "absolute inset-x-0 top-0 z-10 h-10 transition-opacity",
+            isDraggingSidebarTab
+              ? showDockHints
+                ? "opacity-100"
+                : "opacity-0"
+              : "opacity-0 pointer-events-none",
+            isOverTop ? "bg-accent/20 border-b border-accent" : "bg-accent/5"
+          )}
+        />
+        <div
+          ref={bottomDrop}
+          className={cn(
+            "absolute inset-x-0 bottom-0 z-10 h-10 transition-opacity",
+            isDraggingSidebarTab
+              ? showDockHints
+                ? "opacity-100"
+                : "opacity-0"
+              : "opacity-0 pointer-events-none",
+            isOverBottom ? "bg-accent/20 border-t border-accent" : "bg-accent/5"
+          )}
+        />
+        <div
+          ref={leftDrop}
+          className={cn(
+            "absolute inset-y-0 left-0 z-10 w-10 transition-opacity",
+            isDraggingSidebarTab
+              ? showDockHints
+                ? "opacity-100"
+                : "opacity-0"
+              : "opacity-0 pointer-events-none",
+            isOverLeft ? "bg-accent/20 border-r border-accent" : "bg-accent/5"
+          )}
+        />
+        <div
+          ref={rightDrop}
+          className={cn(
+            "absolute inset-y-0 right-0 z-10 w-10 transition-opacity",
+            isDraggingSidebarTab
+              ? showDockHints
+                ? "opacity-100"
+                : "opacity-0"
+              : "opacity-0 pointer-events-none",
+            isOverRight ? "bg-accent/20 border-l border-accent" : "bg-accent/5"
+          )}
+        />
 
         {props.node.activeTab === "costs" && (
           <div role="tabpanel" id={costsPanelId} aria-labelledby={costsTabId}>
@@ -632,11 +665,6 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       // react-resizable-panels uses "vertical" for top/bottom.
       const groupDirection = node.direction === "horizontal" ? "vertical" : "horizontal";
 
-      const handleClassName =
-        groupDirection === "horizontal"
-          ? "w-0.5 flex-shrink-0 z-10 transition-[background] duration-150 cursor-col-resize bg-border-light hover:bg-accent"
-          : "h-0.5 flex-shrink-0 z-10 transition-[background] duration-150 cursor-row-resize bg-border-light hover:bg-accent";
-
       return (
         <PanelGroup
           direction={groupDirection}
@@ -653,7 +681,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
           <Panel defaultSize={node.sizes[0]} minSize={15} className="flex min-h-0 min-w-0 flex-col">
             {renderLayoutNode(node.children[0])}
           </Panel>
-          <PanelResizeHandle className={handleClassName} />
+          <DragAwarePanelResizeHandle direction={groupDirection} />
           <Panel defaultSize={node.sizes[1]} minSize={15} className="flex min-h-0 min-w-0 flex-col">
             {renderLayoutNode(node.children[1])}
           </Panel>
