@@ -1,12 +1,13 @@
 /**
- * Generic refresh controller with debouncing, focus/visibility handling, and in-flight guards.
+ * Generic refresh controller with rate-limiting, trailing debounce, focus/visibility handling,
+ * and in-flight guards.
  *
  * Handles common patterns for event-driven refresh:
- * - Debounces rapid trigger events (trailing edge)
+ * - Rate-limits rapid trigger events (first event starts timer, subsequent coalesce)
+ * - Applies trailing debounce after activity stops to capture final state
  * - Pauses refresh while document is hidden, flushes when visible
  * - Optionally triggers proactive refresh on focus (for catching external changes)
  * - Guards against concurrent refresh operations
- * - Debounces rapid focus/blur cycles
  *
  * Used by GitStatusStore and ReviewPanel.
  */
@@ -143,14 +144,14 @@ export class RefreshController {
   }
 
   /**
-   * Schedule a rate-limited refresh. Multiple calls within the rate limit window
-   * coalesce, but don't reset the timer (unlike pure debounce).
+   * Schedule a rate-limited refresh with trailing debounce.
    *
-   * Behavior:
+   * Behavior (rate-limit + trailing debounce):
    * - First call starts timer for delayMs
-   * - Subsequent calls mark "pending" but don't reset timer
+   * - Subsequent calls mark "pending" but don't reset timer (rate-limit)
    * - When timer fires, refresh runs
-   * - If calls came in during refresh, a new timer starts after completion
+   * - If calls came in during refresh, a trailing debounce timer starts after completion
+   * - This captures final state after activity stops, while rate-limiting during constant activity
    */
   schedule(): void {
     this.scheduleWithDelay(this.debounceMs, "scheduled");
@@ -315,12 +316,14 @@ export class RefreshController {
       // Notify listener (for React state updates)
       this.onRefreshComplete?.(this._lastRefreshInfo);
 
-      // Process any queued refresh
+      // Process any queued refresh with trailing debounce.
+      // This captures the final state after activity stops while still rate-limiting
+      // during constant activity (since scheduleWithDelay won't reset the timer).
       if (this.pendingBecauseInFlight) {
         this.pendingBecauseInFlight = false;
-        // Defer to avoid recursive stack; use the queued trigger
         const followupTrigger = this.pendingTrigger ?? "in-flight-followup";
-        setTimeout(() => this.tryRefresh({ trigger: followupTrigger }), 0);
+        this.pendingTrigger = null;
+        this.scheduleWithDelay(this.debounceMs, followupTrigger);
       }
     };
 
