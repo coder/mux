@@ -18,6 +18,7 @@ import {
   waitForToolCallEnd,
   waitForRefreshButtonIdle,
   assertRefreshButtonHasLastRefreshInfo,
+  simulateFileModifyingToolEnd,
 } from "./helpers";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 
@@ -169,6 +170,163 @@ describeIntegration("ReviewPanel manual refresh (UI + ORPC)", () => {
         const secondTimestamp = refreshButton.getAttribute("data-last-refresh-timestamp");
         expect(secondTimestamp).toBeTruthy();
         expect(Number(secondTimestamp)).toBeGreaterThan(Number(firstTimestamp));
+      } finally {
+        await cleanupView(view, cleanupDom);
+      }
+    });
+  }, 120_000);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SIMULATED TOOL COMPLETION TEST (fast, no LLM)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describeIntegration("ReviewPanel simulated tool refresh (UI + ORPC, no LLM)", () => {
+  beforeAll(async () => {
+    await createSharedRepo();
+  });
+
+  afterAll(async () => {
+    await cleanupSharedRepo();
+  });
+
+  test("simulated file-modifying tool triggers scheduled refresh", async () => {
+    await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
+      const cleanupDom = installDom();
+
+      const view = renderReviewPanel({
+        apiClient: env.orpc,
+        metadata,
+      });
+
+      try {
+        const refreshButton = await setupReviewPanel(view, metadata, workspaceId);
+
+        // Make a direct FS change (simulating what a tool would do)
+        const SIMULATED_MARKER = "SIMULATED_TOOL_MARKER";
+        const bashRes = await env.orpc.workspace.executeBash({
+          workspaceId,
+          script: `echo "${SIMULATED_MARKER}" >> README.md`,
+        });
+        expect(bashRes.success).toBe(true);
+        if (!bashRes.success) return;
+        expect(bashRes.data.success).toBe(true);
+
+        // Verify the change is NOT visible yet (no refresh)
+        expect(view.queryByText(new RegExp(SIMULATED_MARKER))).toBeNull();
+
+        // Simulate a file-modifying tool completion (this triggers the debounced refresh)
+        simulateFileModifyingToolEnd(workspaceId);
+
+        // Wait for the debounced refresh to complete (3s debounce + refresh time)
+        await view.findByText(new RegExp(SIMULATED_MARKER), {}, { timeout: 60_000 });
+
+        // Verify lastRefreshInfo reflects the scheduled refresh
+        await waitForRefreshButtonIdle(refreshButton);
+        await assertRefreshButtonHasLastRefreshInfo(refreshButton, "scheduled");
+      } finally {
+        await cleanupView(view, cleanupDom);
+      }
+    });
+  }, 120_000);
+
+  test("multiple simulated tool completions are rate-limited with trailing debounce", async () => {
+    await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
+      const cleanupDom = installDom();
+
+      const view = renderReviewPanel({
+        apiClient: env.orpc,
+        metadata,
+      });
+
+      try {
+        const refreshButton = await setupReviewPanel(view, metadata, workspaceId);
+
+        // Make first file change
+        const MARKER_1 = "RATE_LIMIT_MARKER_1";
+        await env.orpc.workspace.executeBash({
+          workspaceId,
+          script: `echo "${MARKER_1}" >> README.md`,
+        });
+
+        // Simulate first tool completion - starts the rate-limit timer
+        simulateFileModifyingToolEnd(workspaceId);
+
+        // Immediately make more changes and simulate more completions
+        // These should be coalesced (rate-limited)
+        const MARKER_2 = "RATE_LIMIT_MARKER_2";
+        await env.orpc.workspace.executeBash({
+          workspaceId,
+          script: `echo "${MARKER_2}" >> README.md`,
+        });
+        simulateFileModifyingToolEnd(workspaceId);
+
+        const MARKER_3 = "RATE_LIMIT_MARKER_3";
+        await env.orpc.workspace.executeBash({
+          workspaceId,
+          script: `echo "${MARKER_3}" >> README.md`,
+        });
+        simulateFileModifyingToolEnd(workspaceId);
+
+        // Wait for all markers to appear (proving trailing debounce captured final state)
+        await view.findByText(new RegExp(MARKER_1), {}, { timeout: 60_000 });
+        await view.findByText(new RegExp(MARKER_2), {}, { timeout: 5_000 });
+        await view.findByText(new RegExp(MARKER_3), {}, { timeout: 5_000 });
+
+        // Verify lastRefreshInfo
+        await waitForRefreshButtonIdle(refreshButton);
+        await assertRefreshButtonHasLastRefreshInfo(refreshButton, "scheduled");
+      } finally {
+        await cleanupView(view, cleanupDom);
+      }
+    });
+  }, 120_000);
+
+  test("refresh paused while panel focused, flushed on blur", async () => {
+    await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
+      const cleanupDom = installDom();
+
+      const view = renderReviewPanel({
+        apiClient: env.orpc,
+        metadata,
+      });
+
+      try {
+        const refreshButton = await setupReviewPanel(view, metadata, workspaceId);
+
+        // Find the review panel container
+        const reviewPanel = view.container.querySelector('[data-testid="review-panel"]');
+        expect(reviewPanel).not.toBeNull();
+
+        // Focus the panel (simulates user interacting with the review)
+        fireEvent.focus(reviewPanel!);
+
+        // Make a file change while panel is focused
+        const FOCUS_MARKER = "FOCUS_BLUR_TEST_MARKER";
+        await env.orpc.workspace.executeBash({
+          workspaceId,
+          script: `echo "${FOCUS_MARKER}" >> README.md`,
+        });
+
+        // Simulate tool completion - this should be PAUSED because panel is focused
+        simulateFileModifyingToolEnd(workspaceId);
+
+        // Wait a bit for debounce timer to fire (if it wasn't paused, it would refresh)
+        await new Promise((r) => setTimeout(r, 4000));
+
+        // Verify the change is NOT visible yet (refresh was paused)
+        expect(view.queryByText(new RegExp(FOCUS_MARKER))).toBeNull();
+
+        // Now blur the panel - this should flush the pending refresh
+        fireEvent.blur(reviewPanel!);
+
+        // Wait for the refresh to complete
+        await view.findByText(new RegExp(FOCUS_MARKER), {}, { timeout: 60_000 });
+
+        // Verify lastRefreshInfo - trigger is "scheduled" since it was originally scheduled,
+        // just deferred by the pause. notifyUnpaused() uses the pending trigger.
+        await waitForRefreshButtonIdle(refreshButton);
+        await assertRefreshButtonHasLastRefreshInfo(refreshButton, "scheduled");
       } finally {
         await cleanupView(view, cleanupDom);
       }

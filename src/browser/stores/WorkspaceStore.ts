@@ -1529,6 +1529,15 @@ export class WorkspaceStore {
     this.fileModifyingToolMs.delete(workspaceId);
   }
 
+  /**
+   * Simulate a file-modifying tool completion for testing.
+   * Triggers the same subscription as a real tool-call-end for file_edit_* or bash.
+   */
+  simulateFileModifyingToolEnd(workspaceId: string): void {
+    this.fileModifyingToolMs.set(workspaceId, Date.now());
+    this.fileModifyingToolSubs.bump(workspaceId);
+  }
+
   // Private methods
 
   /**
@@ -1770,6 +1779,12 @@ export const workspaceStore = {
     getStoreInstance().getFileModifyingToolMs(workspaceId),
   clearFileModifyingToolMs: (workspaceId: string) =>
     getStoreInstance().clearFileModifyingToolMs(workspaceId),
+  /**
+   * Simulate a file-modifying tool completion for testing.
+   * Triggers the same subscription as a real tool-call-end for file_edit_* or bash.
+   */
+  simulateFileModifyingToolEnd: (workspaceId: string) =>
+    getStoreInstance().simulateFileModifyingToolEnd(workspaceId),
 };
 
 /**

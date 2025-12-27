@@ -5,6 +5,7 @@
 import { cleanup, fireEvent, waitFor } from "@testing-library/react";
 import type { FrontendWorkspaceMetadata, GitStatus } from "@/common/types/workspace";
 import type { RenderedApp } from "./renderReviewPanel";
+import { workspaceStore } from "@/browser/stores/WorkspaceStore";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -93,6 +94,14 @@ export async function assertRefreshButtonHasLastRefreshInfo(
     },
     { timeout: timeoutMs }
   );
+}
+
+/**
+ * Simulate a file-modifying tool completion (e.g., file_edit_*, bash).
+ * This triggers the RefreshController's schedule() without requiring actual AI calls.
+ */
+export function simulateFileModifyingToolEnd(workspaceId: string): void {
+  workspaceStore.simulateFileModifyingToolEnd(workspaceId);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

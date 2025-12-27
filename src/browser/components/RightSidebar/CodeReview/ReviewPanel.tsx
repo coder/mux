@@ -413,7 +413,13 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
 
   // Sync panel focus with interaction tracking (pauses auto-refresh while user is focused)
   useEffect(() => {
+    const wasFocused = isInteractingRef.current;
     isInteractingRef.current = isPanelFocused;
+
+    // If focus was lost, flush any pending refresh that was paused during interaction
+    if (wasFocused && !isPanelFocused) {
+      controllerRef.current?.notifyUnpaused();
+    }
   }, [isPanelFocused]);
 
   // Focus panel when focusTrigger changes (preserves current hunk selection)
@@ -996,6 +1002,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     <div
       ref={panelRef}
       tabIndex={0}
+      data-testid="review-panel"
       onFocus={() => setIsPanelFocused(true)}
       onBlur={() => setIsPanelFocused(false)}
       className="bg-dark [container-type:inline-size] flex h-full min-h-0 flex-col outline-none [container-name:review-panel]"
