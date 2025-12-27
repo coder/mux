@@ -1,7 +1,7 @@
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { ProjectConfig } from "@/common/types/project";
 
-export function flattenWorkspaceTree(
+function flattenWorkspaceTree(
   workspaces: FrontendWorkspaceMetadata[]
 ): FrontendWorkspaceMetadata[] {
   if (workspaces.length === 0) return [];
