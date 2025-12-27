@@ -27,6 +27,7 @@ describe("ExtensionMetadataService", () => {
     expect(snapshot.recency).toBe(123);
     expect(snapshot.streaming).toBe(false);
     expect(snapshot.lastModel).toBeNull();
+    expect(snapshot.lastThinkingLevel).toBeNull();
 
     const snapshots = await service.getAllSnapshots();
     expect(snapshots.get("workspace-1")).toEqual(snapshot);
@@ -34,13 +35,15 @@ describe("ExtensionMetadataService", () => {
 
   test("setStreaming toggles status and remembers last model", async () => {
     await service.updateRecency("workspace-2", 200);
-    const streaming = await service.setStreaming("workspace-2", true, "anthropic/sonnet");
+    const streaming = await service.setStreaming("workspace-2", true, "anthropic/sonnet", "high");
     expect(streaming.streaming).toBe(true);
     expect(streaming.lastModel).toBe("anthropic/sonnet");
+    expect(streaming.lastThinkingLevel).toBe("high");
 
     const cleared = await service.setStreaming("workspace-2", false);
     expect(cleared.streaming).toBe(false);
     expect(cleared.lastModel).toBe("anthropic/sonnet");
+    expect(cleared.lastThinkingLevel).toBe("high");
 
     const snapshots = await service.getAllSnapshots();
     expect(snapshots.get("workspace-2")).toEqual(cleared);

@@ -14,6 +14,7 @@ import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCod
 
 import type { BashOutputEvent } from "@/common/types/stream";
 import type { BashToolResult } from "@/common/types/tools";
+import { resolveBashDisplayName } from "@/common/utils/tools/bashDisplayName";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import { migrateToBackground } from "@/node/services/backgroundProcessExecutor";
@@ -236,6 +237,9 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
       { abortSignal, toolCallId }
     ): Promise<BashToolResult> => {
       // Validate script input
+
+      // Treat display_name as untrusted input: it ends up in filesystem paths.
+      const safeDisplayName = resolveBashDisplayName(script, display_name);
       const validationError = validateScript(script, config);
       if (validationError) return validationError;
 
@@ -260,7 +264,7 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
             cwd: config.cwd,
             // Match foreground bash behavior: muxEnv is present and secrets override it.
             env: { ...(config.muxEnv ?? {}), ...(config.secrets ?? {}) },
-            displayName: display_name,
+            displayName: safeDisplayName,
             isForeground: false, // Explicit background
             timeoutSecs: timeout_secs, // Auto-terminate after this duration
           }
@@ -315,7 +319,7 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
               config.workspaceId,
               toolCallId,
               script,
-              display_name,
+              safeDisplayName,
               () => {
                 backgrounded = true;
                 // Resolve the background promise to unblock the wait
@@ -505,6 +509,7 @@ ${script}`;
             const text = decoder.decode(value, { stream: true });
             appendLiveOutput(isError, text);
             carry += text;
+
             // Split into lines; support both \n and \r\n
             let start = 0;
             while (true) {
@@ -522,6 +527,23 @@ ${script}`;
                   /* ignore */ return;
                 });
                 break;
+              }
+            }
+
+            // Defensive: if output never emits newlines, carry can grow without bound.
+            // If the incomplete line already violates hard limits, stop early.
+            if (carry.length > 0 && !truncationState.fileTruncated) {
+              const carryBytes = Buffer.byteLength(carry, "utf-8");
+              const bytesAfterCarry = totalBytesRef.current + carryBytes + 1; // +1 for newline
+              if (carryBytes > maxLineBytes || bytesAfterCarry > maxFileBytes) {
+                // Delegate to lineHandler to keep truncation reasons consistent.
+                lineHandler(carry);
+                if (truncationState.fileTruncated) {
+                  await reader.cancel().catch(() => {
+                    /* ignore */ return;
+                  });
+                  break;
+                }
               }
             }
             if (truncationState.fileTruncated) break;
@@ -568,6 +590,10 @@ ${script}`;
 
         // Check if we were backgrounded
         if (result === "backgrounded" || backgrounded) {
+          // Detach from abort signal as early as possible - process should continue running
+          // even when the stream ends and fires abort.
+          abortDetached = true;
+
           // Unregister foreground process
           fgRegistration?.unregister();
 
@@ -586,15 +612,11 @@ ${script}`;
           // the foreground consumption promise to reject after we return.
           void foregroundCompletion.catch(() => undefined);
 
-          // Detach from abort signal - process should continue running
-          // even when the stream ends and fires abort
-          abortDetached = true;
-
           const wall_duration_ms = Math.round(performance.now() - startTime);
 
           // Migrate to background tracking if manager is available
           if (config.backgroundProcessManager && config.workspaceId) {
-            const processId = display_name;
+            const processId = safeDisplayName;
 
             // Create a synthetic ExecStream for the migration streams
             // The UI streams are still being consumed, migration streams continue to files

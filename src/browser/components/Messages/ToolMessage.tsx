@@ -1,4 +1,5 @@
 import React from "react";
+import { resolveBashDisplayName } from "@/common/utils/tools/bashDisplayName";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { DisplayedMessage } from "@/common/types/message";
 import { GenericToolCall } from "../tools/GenericToolCall";
@@ -173,6 +174,75 @@ function isTaskAwaitTool(toolName: string, args: unknown): args is TaskAwaitTool
 function isTaskListTool(toolName: string, args: unknown): args is TaskListToolArgs {
   if (toolName !== "task_list") return false;
   return TOOL_DEFINITIONS.task_list.schema.safeParse(args).success;
+}
+
+function isTaskBashArgs(args: TaskToolArgs): args is TaskToolArgs & {
+  kind: "bash";
+  script: string;
+  timeout_secs: number;
+  display_name?: string;
+} {
+  return (
+    args.kind === "bash" && typeof args.script === "string" && typeof args.timeout_secs === "number"
+  );
+}
+
+function taskBashResultToBashToolResult(
+  result: TaskToolSuccessResult | undefined
+): BashToolResult | undefined {
+  if (!result) return undefined;
+
+  if (result.status !== "completed") {
+    const taskId = result.taskId;
+    if (typeof taskId === "string" && taskId.startsWith("bash:")) {
+      const processId = taskId.slice("bash:".length).trim() || taskId;
+      return {
+        success: true,
+        output: "",
+        exitCode: 0,
+        wall_duration_ms: 0,
+        backgroundProcessId: processId,
+      };
+    }
+    return undefined;
+  }
+
+  const report = result.reportMarkdown ?? "";
+
+  const exitCodeMatch = /exitCode:\s*(-?\d+)/.exec(report);
+  const parsedExitCode = exitCodeMatch ? Number(exitCodeMatch[1]) : undefined;
+  const exitCode = result.exitCode ?? (Number.isFinite(parsedExitCode) ? parsedExitCode! : 0);
+
+  const wallDurationMatch = /wall_duration_ms:\s*(\d+)/.exec(report);
+  const parsedWallDuration = wallDurationMatch ? Number(wallDurationMatch[1]) : undefined;
+  const wall_duration_ms = Number.isFinite(parsedWallDuration) ? parsedWallDuration! : 0;
+
+  const textBlockMatch = /```text\n([\s\S]*?)\n```/.exec(report);
+  const output = textBlockMatch ? textBlockMatch[1] : "";
+
+  const errorLineMatch = /^error:\s*(.*)$/m.exec(report);
+  const error = errorLineMatch?.[1] ?? `Command exited with code ${exitCode}`;
+
+  if (exitCode === 0) {
+    return {
+      success: true,
+      output,
+      exitCode: 0,
+      wall_duration_ms,
+      note: result.note,
+      truncated: result.truncated,
+    };
+  }
+
+  return {
+    success: false,
+    output: output.length > 0 ? output : undefined,
+    exitCode,
+    error,
+    wall_duration_ms,
+    note: result.note,
+    truncated: result.truncated,
+  };
 }
 
 function isTaskTerminateTool(toolName: string, args: unknown): args is TaskTerminateToolArgs {
@@ -389,6 +459,39 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
   }
 
   if (isTaskTool(message.toolName, message.args)) {
+    if (isTaskBashArgs(message.args)) {
+      const canSendToBackground = foregroundBashToolCallIds?.has(message.toolCallId) ?? false;
+      const toolCallId = message.toolCallId;
+
+      const bashArgs: BashToolArgs = {
+        script: message.args.script,
+        timeout_secs: message.args.timeout_secs,
+        run_in_background: message.args.run_in_background,
+        display_name: resolveBashDisplayName(message.args.script, message.args.display_name),
+      };
+
+      const bashResult = taskBashResultToBashToolResult(
+        message.result as TaskToolSuccessResult | undefined
+      );
+
+      return (
+        <div className={className}>
+          <BashToolCall
+            workspaceId={workspaceId}
+            toolCallId={message.toolCallId}
+            args={bashArgs}
+            result={bashResult}
+            status={message.status}
+            startedAt={message.timestamp}
+            canSendToBackground={canSendToBackground}
+            onSendToBackground={
+              onSendBashToBackground ? () => onSendBashToBackground(toolCallId) : undefined
+            }
+          />
+        </div>
+      );
+    }
+
     return (
       <div className={className}>
         <TaskToolCall

@@ -17,6 +17,7 @@ import { log } from "@/node/services/log";
  * - recency: Unix timestamp (ms) of last user interaction
  * - streaming: Boolean indicating if workspace has an active stream
  * - lastModel: Last model used in this workspace
+ * - lastThinkingLevel: Last thinking/reasoning level used in this workspace
  *
  * File location: ~/.mux/extensionMetadata.json
  *
@@ -38,6 +39,7 @@ export class ExtensionMetadataService {
       recency: entry.recency,
       streaming: entry.streaming,
       lastModel: entry.lastModel ?? null,
+      lastThinkingLevel: entry.lastThinkingLevel ?? null,
     };
   }
 
@@ -110,6 +112,7 @@ export class ExtensionMetadataService {
         recency: timestamp,
         streaming: false,
         lastModel: null,
+        lastThinkingLevel: null,
       };
     } else {
       data.workspaces[workspaceId].recency = timestamp;
@@ -130,7 +133,8 @@ export class ExtensionMetadataService {
   async setStreaming(
     workspaceId: string,
     streaming: boolean,
-    model?: string
+    model?: string,
+    thinkingLevel?: ExtensionMetadata["lastThinkingLevel"]
   ): Promise<WorkspaceActivitySnapshot> {
     const data = await this.load();
     const now = Date.now();
@@ -140,11 +144,15 @@ export class ExtensionMetadataService {
         recency: now,
         streaming,
         lastModel: model ?? null,
+        lastThinkingLevel: thinkingLevel ?? null,
       };
     } else {
       data.workspaces[workspaceId].streaming = streaming;
       if (model) {
         data.workspaces[workspaceId].lastModel = model;
+      }
+      if (thinkingLevel !== undefined) {
+        data.workspaces[workspaceId].lastThinkingLevel = thinkingLevel;
       }
     }
 

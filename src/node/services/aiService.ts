@@ -1263,7 +1263,7 @@ export class AIService extends EventEmitter {
               "",
               "Nesting:",
               `- Task delegation is disabled in this workspace (taskDepth=${taskDepth}, maxTaskNestingDepth=${taskSettings.maxTaskNestingDepth}).`,
-              "- Do not call task/task_await/task_list/task_terminate.",
+              "- You MUST NOT spawn additional sub-agent tasks.",
             ].join("\n")
           : agentPreset.systemPrompt
         : undefined;
@@ -1371,12 +1371,9 @@ export class AIService extends EventEmitter {
         mcpTools
       );
 
-      const depthToolPolicy: ToolPolicy = shouldDisableTaskToolsForDepth
-        ? [
-            { regex_match: "task", action: "disable" },
-            { regex_match: "task_.*", action: "disable" },
-          ]
-        : [];
+      // Note: task is the unified abstraction for both agent delegation and bash execution.
+      // Do not disable it at max depth; rely on TaskService/createTaskTool to reject delegation.
+      const depthToolPolicy: ToolPolicy = [];
 
       // Preset + depth tool policies must be applied last so callers cannot re-enable restricted tools.
       const effectiveToolPolicy =

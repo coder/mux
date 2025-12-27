@@ -20,23 +20,18 @@ import * as path from "path";
 import { createTestEnvironment, cleanupTestEnvironment, type TestEnvironment } from "./setup";
 import { createTempGitRepo, cleanupTempGitRepo, generateBranchName } from "./helpers";
 import { detectDefaultTrunkBranch } from "../../src/node/git";
-import { getToolsForModel } from "../../src/common/utils/tools/tools";
 import { LocalRuntime } from "../../src/node/runtime/LocalRuntime";
 import { BackgroundProcessManager } from "../../src/node/services/backgroundProcessManager";
-import type { InitStateManager } from "../../src/node/services/initStateManager";
+import { createBashTool } from "../../src/node/services/tools/bash";
+import { createBashOutputTool } from "../../src/node/services/tools/bash_output";
 
 // Access private fields from ServiceContainer for direct testing
 interface ServiceContainerPrivates {
   backgroundProcessManager: BackgroundProcessManager;
-  initStateManager: InitStateManager;
 }
 
 function getBackgroundProcessManager(env: TestEnvironment): BackgroundProcessManager {
   return (env.services as unknown as ServiceContainerPrivates).backgroundProcessManager;
-}
-
-function getInitStateManager(env: TestEnvironment): InitStateManager {
-  return (env.services as unknown as ServiceContainerPrivates).initStateManager;
 }
 
 interface ToolExecuteResult {
@@ -82,31 +77,30 @@ describe("Background Bash Direct Integration", () => {
   });
 
   it("should retrieve output after tools are recreated (multi-message flow)", async () => {
-    // Simulates production flow where tools are recreated between messages
+    // Simulates production flow where tool instances are recreated between messages
     const manager = getBackgroundProcessManager(env);
-    const initStateManager = getInitStateManager(env);
     const runtime = new LocalRuntime(workspacePath);
     const marker = `MULTI_MSG_${Date.now()}`;
 
-    // Message 1: Spawn background process
-    const tools1 = await getToolsForModel(
-      "anthropic:claude-sonnet-4-20250514",
-      {
-        cwd: workspacePath,
-        runtime,
-        secrets: {},
-        muxEnv: {},
-        runtimeTempDir: "/tmp",
-        backgroundProcessManager: manager,
-        workspaceId,
-      },
+    const toolConfig = {
+      cwd: workspacePath,
+      runtime,
+      secrets: {},
+      muxEnv: {},
+      runtimeTempDir: "/tmp",
+      backgroundProcessManager: manager,
       workspaceId,
-      initStateManager,
-      {}
-    );
+    };
 
-    const spawnResult = (await tools1.bash.execute!(
-      { script: `echo "${marker}"`, run_in_background: true },
+    // Message 1: Spawn background process
+    const bash1 = createBashTool(toolConfig);
+    const spawnResult = (await bash1.execute!(
+      {
+        script: `echo "${marker}"`,
+        run_in_background: true,
+        display_name: `spawn_${Date.now()}`,
+        timeout_secs: 30,
+      },
       { toolCallId: "spawn", messages: [] }
     )) as ToolExecuteResult;
 
@@ -116,24 +110,9 @@ describe("Background Bash Direct Integration", () => {
     await new Promise((resolve) => setTimeout(resolve, 200));
 
     // Message 2: Read with NEW tool instances (same manager)
-    const tools2 = await getToolsForModel(
-      "anthropic:claude-sonnet-4-20250514",
-      {
-        cwd: workspacePath,
-        runtime,
-        secrets: {},
-        muxEnv: {},
-        runtimeTempDir: "/tmp",
-        backgroundProcessManager: manager,
-        workspaceId,
-      },
-      workspaceId,
-      initStateManager,
-      {}
-    );
-
-    const outputResult = (await tools2.bash_output.execute!(
-      { process_id: processId },
+    const bashOutput2 = createBashOutputTool(toolConfig);
+    const outputResult = (await bashOutput2.execute!(
+      { process_id: processId, timeout_secs: 0 },
       { toolCallId: "read", messages: [] }
     )) as ToolExecuteResult;
 
@@ -416,34 +395,29 @@ describe("Foreground to Background Migration", () => {
     // 4. Process continues running and output is accessible via bash_output
 
     const manager = getBackgroundProcessManager(env);
-    const initStateManager = getInitStateManager(env);
     const runtime = new LocalRuntime(workspacePath);
+
+    const toolConfig = {
+      cwd: workspacePath,
+      runtime,
+      secrets: {},
+      muxEnv: {},
+      runtimeTempDir: "/tmp",
+      backgroundProcessManager: manager,
+      workspaceId,
+    };
 
     const testId = `fg_to_bg_${Date.now()}`;
     const marker1 = `BEFORE_BG_${testId}`;
     const marker2 = `AFTER_BG_${testId}`;
 
     // Create tools for "message 1"
-    const tools1 = await getToolsForModel(
-      "anthropic:claude-sonnet-4-20250514",
-      {
-        cwd: workspacePath,
-        runtime,
-        secrets: {},
-        muxEnv: {},
-        runtimeTempDir: "/tmp",
-        backgroundProcessManager: manager,
-        workspaceId,
-      },
-      workspaceId,
-      initStateManager,
-      {}
-    );
+    const bash1 = createBashTool(toolConfig);
 
     // Start foreground bash that runs for ~3 seconds
     // Script: output marker1, sleep, output marker2
     const toolCallId = `tool_${testId}`;
-    const bashPromise = tools1.bash.execute!(
+    const bashPromise = bash1.execute!(
       {
         script: `echo "${marker1}"; sleep 2; echo "${marker2}"`,
         run_in_background: false,
@@ -487,27 +461,13 @@ describe("Foreground to Background Migration", () => {
 
     // === Simulate new message (stream ends, new stream begins) ===
     // Create NEW tool instances (same manager reference, fresh tools)
-    const tools2 = await getToolsForModel(
-      "anthropic:claude-sonnet-4-20250514",
-      {
-        cwd: workspacePath,
-        runtime,
-        secrets: {},
-        muxEnv: {},
-        runtimeTempDir: "/tmp",
-        backgroundProcessManager: manager,
-        workspaceId,
-      },
-      workspaceId,
-      initStateManager,
-      {}
-    );
+    const bashOutput2 = createBashOutputTool(toolConfig);
 
     // Wait for process to complete (marker2 should appear)
     await new Promise((resolve) => setTimeout(resolve, 2500));
 
     // Get output via bash_output tool (new tool instance)
-    const outputResult = (await tools2.bash_output.execute!(
+    const outputResult = (await bashOutput2.execute!(
       { process_id: testId, timeout_secs: 0 },
       { toolCallId: "output_read", messages: [] }
     )) as ToolExecuteResult;
@@ -525,34 +485,29 @@ describe("Foreground to Background Migration", () => {
     // after migration and accessible in subsequent messages
 
     const manager = getBackgroundProcessManager(env);
-    const initStateManager = getInitStateManager(env);
     const runtime = new LocalRuntime(workspacePath);
+
+    const toolConfig = {
+      cwd: workspacePath,
+      runtime,
+      secrets: {},
+      muxEnv: {},
+      runtimeTempDir: "/tmp",
+      backgroundProcessManager: manager,
+      workspaceId,
+    };
 
     const testId = `preserve_output_${Date.now()}`;
     const marker1 = `EARLY_${testId}`;
     const marker2 = `LATE_${testId}`;
 
-    const tools1 = await getToolsForModel(
-      "anthropic:claude-sonnet-4-20250514",
-      {
-        cwd: workspacePath,
-        runtime,
-        secrets: {},
-        muxEnv: {},
-        runtimeTempDir: "/tmp",
-        backgroundProcessManager: manager,
-        workspaceId,
-      },
-      workspaceId,
-      initStateManager,
-      {}
-    );
+    const bash1 = createBashTool(toolConfig);
 
     const toolCallId = `tool_${testId}`;
     // Script outputs marker1, sleeps, then outputs marker2
     const script = `echo "${marker1}"; sleep 2; echo "${marker2}"`;
 
-    const bashPromise = tools1.bash.execute!(
+    const bashPromise = bash1.execute!(
       {
         script,
         run_in_background: false,
@@ -592,32 +547,27 @@ describe("Foreground to Background Migration", () => {
   it("should handle migration when process exits during send", async () => {
     // Edge case: process exits right as we try to background it
     const manager = getBackgroundProcessManager(env);
-    const initStateManager = getInitStateManager(env);
     const runtime = new LocalRuntime(workspacePath);
+
+    const toolConfig = {
+      cwd: workspacePath,
+      runtime,
+      secrets: {},
+      muxEnv: {},
+      runtimeTempDir: "/tmp",
+      backgroundProcessManager: manager,
+      workspaceId,
+    };
 
     const testId = `fast_exit_${Date.now()}`;
     const marker = `QUICK_${testId}`;
 
-    const tools = await getToolsForModel(
-      "anthropic:claude-sonnet-4-20250514",
-      {
-        cwd: workspacePath,
-        runtime,
-        secrets: {},
-        muxEnv: {},
-        runtimeTempDir: "/tmp",
-        backgroundProcessManager: manager,
-        workspaceId,
-      },
-      workspaceId,
-      initStateManager,
-      {}
-    );
+    const bash = createBashTool(toolConfig);
 
     const toolCallId = `tool_${testId}`;
 
     // Very fast script
-    const bashPromise = tools.bash.execute!(
+    const bashPromise = bash.execute!(
       {
         script: `echo "${marker}"`,
         run_in_background: false,
@@ -646,8 +596,17 @@ describe("Foreground to Background Migration", () => {
     // new message), the abort signal would kill the process with exit code -997.
 
     const manager = getBackgroundProcessManager(env);
-    const initStateManager = getInitStateManager(env);
     const runtime = new LocalRuntime(workspacePath);
+
+    const toolConfig = {
+      cwd: workspacePath,
+      runtime,
+      secrets: {},
+      muxEnv: {},
+      runtimeTempDir: "/tmp",
+      backgroundProcessManager: manager,
+      workspaceId,
+    };
 
     const testId = `abort_after_bg_${Date.now()}`;
     const marker1 = `BEFORE_${testId}`;
@@ -656,26 +615,12 @@ describe("Foreground to Background Migration", () => {
     // Create an AbortController to simulate stream abort
     const abortController = new AbortController();
 
-    const tools = await getToolsForModel(
-      "anthropic:claude-sonnet-4-20250514",
-      {
-        cwd: workspacePath,
-        runtime,
-        secrets: {},
-        muxEnv: {},
-        runtimeTempDir: "/tmp",
-        backgroundProcessManager: manager,
-        workspaceId,
-      },
-      workspaceId,
-      initStateManager,
-      {}
-    );
+    const bash = createBashTool(toolConfig);
 
     const toolCallId = `tool_${testId}`;
 
     // Start a foreground bash with the abort signal
-    const bashPromise = tools.bash.execute!(
+    const bashPromise = bash.execute!(
       {
         script: `echo "${marker1}"; sleep 2; echo "${marker2}"`,
         run_in_background: false,

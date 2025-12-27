@@ -2,12 +2,14 @@ import type { ChatUsageDisplay } from "./usageAggregator";
 import { getModelStats } from "./modelStats";
 import { supports1MContext } from "../ai/models";
 
+// NOTE: Provide theme-matching fallbacks so token meters render consistently
+// even if a host environment doesn't define the CSS variables (e.g., an embedded UI).
 export const TOKEN_COMPONENT_COLORS = {
-  cached: "var(--color-token-cached)",
-  cacheCreate: "var(--color-token-cache-create)",
-  input: "var(--color-token-input)",
-  output: "var(--color-token-output)",
-  thinking: "var(--color-thinking-mode)",
+  cached: "var(--color-token-cached, hsl(0 0% 50%))",
+  cacheCreate: "var(--color-token-cache-create, hsl(140 20% 55%))",
+  input: "var(--color-token-input, hsl(120 40% 35%))",
+  output: "var(--color-token-output, hsl(207 100% 40%))",
+  thinking: "var(--color-thinking-mode, hsl(271 76% 53%))",
 } as const;
 
 export interface TokenSegment {
