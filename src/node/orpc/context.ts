@@ -21,6 +21,7 @@ import type { FeatureFlagService } from "@/node/services/featureFlagService";
 import type { SessionTimingService } from "@/node/services/sessionTimingService";
 import type { SessionUsageService } from "@/node/services/sessionUsageService";
 import type { TaskService } from "@/node/services/taskService";
+import type { ModeLoaderService } from "@/node/services/modeLoaderService";
 
 export interface ORPCContext {
   config: Config;
@@ -45,5 +46,6 @@ export interface ORPCContext {
   telemetryService: TelemetryService;
   experimentsService: ExperimentsService;
   sessionUsageService: SessionUsageService;
+  modeLoaderService: ModeLoaderService;
   headers?: IncomingHttpHeaders;
 }

@@ -82,6 +82,7 @@ async function createTestServer(): Promise<TestServerHandle> {
     voiceService: services.voiceService,
     telemetryService: services.telemetryService,
     sessionUsageService: services.sessionUsageService,
+    modeLoaderService: services.modeLoaderService,
   };
 
   // Use the actual createOrpcServer function

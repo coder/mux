@@ -13,8 +13,10 @@
 
 import * as fs from "fs";
 import * as path from "path";
+import * as yaml from "yaml";
 import { KNOWN_MODELS, DEFAULT_MODEL } from "../src/common/constants/knownModels";
 import { formatModelDisplayName } from "../src/common/utils/ai/modelDisplay";
+import { ModeFrontmatterSchema, type ModeFrontmatter } from "../src/common/types/mode";
 
 const MODE = process.argv[2] === "check" ? "check" : "write";
 const DOCS_DIR = path.join(import.meta.dir, "..", "docs");
@@ -168,11 +170,108 @@ async function syncKnownModels(): Promise<boolean> {
 }
 
 // ---------------------------------------------------------------------------
+// Built-in modes sync
+// ---------------------------------------------------------------------------
+
+interface ParsedMode {
+  frontmatter: ModeFrontmatter;
+  instructions: string;
+  filename: string;
+}
+
+function parseModeFrontmatter(content: string): { frontmatter: unknown; body: string } | null {
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+  if (!match) return null;
+  return {
+    frontmatter: yaml.parse(match[1]),
+    body: match[2].trim(),
+  };
+}
+
+function loadBuiltinModes(): ParsedMode[] {
+  const modesDir = path.join(import.meta.dir, "..", "src", "node", "builtinModes");
+  const files = fs.readdirSync(modesDir).filter((f) => f.endsWith(".md"));
+
+  const modes: ParsedMode[] = [];
+  for (const filename of files) {
+    const content = fs.readFileSync(path.join(modesDir, filename), "utf-8");
+    const parsed = parseModeFrontmatter(content);
+    if (!parsed) {
+      throw new Error(`Failed to parse frontmatter in ${filename}`);
+    }
+
+    const result = ModeFrontmatterSchema.safeParse(parsed.frontmatter);
+    if (!result.success) {
+      throw new Error(`Invalid frontmatter in ${filename}: ${result.error.message}`);
+    }
+
+    modes.push({
+      frontmatter: result.data,
+      instructions: parsed.body,
+      filename,
+    });
+  }
+
+  // Sort by name for consistent output
+  return modes.sort((a, b) => a.frontmatter.name.localeCompare(b.frontmatter.name));
+}
+
+function generateBuiltinModesBlock(): string {
+  const modes = loadBuiltinModes();
+  const sections: string[] = [];
+
+  for (const mode of modes) {
+    const { frontmatter, instructions, filename } = mode;
+    const lines: string[] = [];
+
+    // Header with icon
+    const icon = frontmatter.icon ? `${frontmatter.icon} ` : "";
+    lines.push(`### ${icon}${frontmatter.label}`);
+    lines.push("");
+    lines.push(`**${frontmatter.description}**`);
+    lines.push("");
+
+    // Show the full mode file as an example
+    lines.push(`<Accordion title="View ${filename}">`);
+    lines.push("");
+    lines.push("```markdown");
+
+    // Reconstruct the file content
+    const yamlContent = yaml.stringify(frontmatter, { lineWidth: 0 }).trim();
+    lines.push("---");
+    lines.push(yamlContent);
+    lines.push("---");
+    if (instructions) {
+      lines.push("");
+      // Normalize blank lines (collapse multiple to single) for Prettier compatibility
+      const normalizedInstructions = instructions.replace(/\n\n+/g, "\n\n").trim();
+      lines.push(normalizedInstructions);
+    }
+    lines.push("```");
+    lines.push("");
+    lines.push("</Accordion>");
+
+    sections.push(lines.join("\n"));
+  }
+
+  return sections.join("\n\n");
+}
+
+async function syncBuiltinModes(): Promise<boolean> {
+  return syncDoc({
+    docsFile: "modes.mdx",
+    sourceLabel: "src/node/builtinModes/*.md",
+    markerName: "BUILTIN_MODES",
+    generateBlock: generateBuiltinModesBlock,
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
-  const results = await Promise.all([syncSystemPrompt(), syncKnownModels()]);
+  const results = await Promise.all([syncSystemPrompt(), syncKnownModels(), syncBuiltinModes()]);
 
   if (results.some((r) => !r)) {
     process.exit(1);

@@ -1792,7 +1792,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     autoCompaction={autoCompactionProps}
                   />
                 )}
-                <ModeSelector mode={mode} onChange={setMode} />
+                <ModeSelector
+                  mode={mode}
+                  onChange={setMode}
+                  workspaceId={workspaceId ?? undefined}
+                />
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button

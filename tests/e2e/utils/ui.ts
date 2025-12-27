@@ -110,13 +110,15 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
 
     async setMode(mode: ChatMode): Promise<void> {
       const normalizedMode = sanitizeMode(mode);
-      const button = page.getByRole("button", { name: normalizedMode, exact: true });
-      await expect(button).toBeVisible();
-      await button.click();
-      const pressed = await button.getAttribute("aria-pressed");
-      if (pressed !== "true") {
-        throw new Error(`"${normalizedMode}" button did not toggle into active state`);
-      }
+      // Mode selector is now a dropdown (Radix Select)
+      // Click the trigger to open it, then click the option
+      const trigger = page.locator('[data-component="ModelControls"] button[role="combobox"]');
+      await expect(trigger).toBeVisible();
+      await trigger.click();
+      // Wait for dropdown to open and click the option
+      const option = page.getByRole("option", { name: new RegExp(normalizedMode, "i") });
+      await expect(option).toBeVisible();
+      await option.click();
     },
 
     async setThinkingLevel(value: number): Promise<void> {

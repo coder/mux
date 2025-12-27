@@ -1,25 +1,60 @@
 import React from "react";
-import { ToggleGroup, type ToggleOption } from "./ToggleGroup";
+import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "./ui/select";
 import { Tooltip, TooltipTrigger, TooltipContent, HelpIndicator } from "./ui/tooltip";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
-import type { UIMode } from "@/common/types/mode";
+import { useModes } from "@/browser/hooks/useModes";
+import type { UIMode, ModeDefinition } from "@/common/types/mode";
 import { cn } from "@/common/lib/utils";
 
-const MODE_OPTIONS: Array<ToggleOption<UIMode>> = [
-  { value: "exec", label: "Exec", activeClassName: "bg-exec-mode text-white" },
-  { value: "plan", label: "Plan", activeClassName: "bg-plan-mode text-white" },
+/** Fallback modes when API hasn't loaded yet */
+const FALLBACK_MODES: ModeDefinition[] = [
+  {
+    name: "exec",
+    label: "Exec",
+    description: "Full execution mode with all tools enabled",
+    instructions: "",
+    source: "builtin",
+    filePath: "",
+  },
+  {
+    name: "plan",
+    label: "Plan",
+    description: "Read-only planning mode with propose_plan tool",
+    instructions: "",
+    source: "builtin",
+    filePath: "",
+  },
 ];
 
-const ModeHelpTooltip: React.FC = () => (
+/** Get the active class for a mode based on its name */
+function getModeActiveClass(modeName: string): string {
+  switch (modeName) {
+    case "exec":
+      return "bg-exec-mode text-white";
+    case "plan":
+      return "bg-plan-mode text-white";
+    default:
+      return "bg-toggle-active text-toggle-text-active";
+  }
+}
+
+const ModeHelpTooltip: React.FC<{ modes: ModeDefinition[] }> = (props) => (
   <Tooltip>
     <TooltipTrigger asChild>
       <HelpIndicator>?</HelpIndicator>
     </TooltipTrigger>
     <TooltipContent align="center" className="max-w-80 whitespace-normal">
-      <strong>Exec Mode:</strong> AI edits files and executes commands
-      <br />
-      <br />
-      <strong>Plan Mode:</strong> AI proposes plans but does not edit files
+      {props.modes.map((m, i) => (
+        <React.Fragment key={m.name}>
+          {i > 0 && (
+            <>
+              <br />
+              <br />
+            </>
+          )}
+          <strong>{m.label}:</strong> {m.description}
+        </React.Fragment>
+      ))}
       <br />
       <br />
       Toggle with: {formatKeybind(KEYBINDS.TOGGLE_MODE)}
@@ -30,39 +65,50 @@ const ModeHelpTooltip: React.FC = () => (
 interface ModeSelectorProps {
   mode: UIMode;
   onChange: (mode: UIMode) => void;
+  workspaceId?: string;
   className?: string;
 }
 
 /**
- * ModeSelector - UI control for switching between Exec and Plan modes
- * Renders responsive layouts with different sizing for different container widths
+ * ModeSelector - Dropdown for selecting agent behavior modes.
+ * Styled to match the original toggle group appearance.
+ * Loads custom modes from .mux/modes/ and ~/.mux/modes/ directories.
  */
-export const ModeSelector: React.FC<ModeSelectorProps> = ({ mode, onChange, className }) => {
+export const ModeSelector: React.FC<ModeSelectorProps> = (props) => {
+  const { modes: loadedModes } = useModes(props.workspaceId);
+  const modes = loadedModes.length > 0 ? loadedModes : FALLBACK_MODES;
+  const currentMode = modes.find((m) => m.name === props.mode);
+
   return (
-    <>
-      {/* Full mode selector with labels - visible on wider containers */}
-      <div
-        className={cn("flex items-center gap-1.5 [@container(max-width:550px)]:hidden", className)}
-      >
-        <div
+    <div className={cn("flex items-center gap-1.5", props.className)}>
+      <Select value={props.mode} onValueChange={props.onChange}>
+        <SelectTrigger
           className={cn(
-            "rounded-md transition-colors",
-            mode === "exec" &&
-              "[&>button:first-of-type]:bg-exec-mode [&>button:first-of-type]:text-white [&>button:first-of-type]:hover:bg-exec-mode-hover",
-            mode === "plan" &&
-              "[&>button:last-of-type]:bg-plan-mode [&>button:last-of-type]:text-white [&>button:last-of-type]:hover:bg-plan-mode-hover"
+            "h-auto min-w-0 gap-0 border-0 bg-toggle-bg px-0 py-0 shadow-none",
+            "focus:ring-0 focus:ring-offset-0",
+            "[&>svg]:hidden" // Hide the chevron
           )}
         >
-          <ToggleGroup<UIMode> options={MODE_OPTIONS} value={mode} onChange={onChange} />
-        </div>
-        <ModeHelpTooltip />
-      </div>
-
-      {/* Mode Switch - compact version for narrow containers */}
-      <div className="ml-auto hidden items-center gap-1.5 [@container(max-width:550px)]:flex">
-        <ToggleGroup<UIMode> options={MODE_OPTIONS} value={mode} onChange={onChange} compact />
-        <ModeHelpTooltip />
-      </div>
-    </>
+          <SelectValue>
+            <span
+              className={cn(
+                "px-1.5 py-0.5 text-[11px] font-sans rounded-sm font-medium",
+                getModeActiveClass(currentMode?.name ?? props.mode)
+              )}
+            >
+              {currentMode?.label ?? props.mode}
+            </span>
+          </SelectValue>
+        </SelectTrigger>
+        <SelectContent>
+          {modes.map((m) => (
+            <SelectItem key={m.name} value={m.name}>
+              {m.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <ModeHelpTooltip modes={modes} />
+    </div>
   );
 };
