@@ -36,6 +36,9 @@ interface RightSidebarTabStripProps {
   onTabDrop?: (tab: TabType, sourceTabsetId: string) => void;
   /** Called when a tab is reordered within this tabset */
   onTabReorder?: (fromIndex: number, toIndex: number) => void;
+  /** Called when any tab drag starts/ends (used to defer persistence) */
+  onTabDragStart?: () => void;
+  onTabDragEnd?: () => void;
 }
 
 function getTabName(tab: TabType): string {
@@ -61,23 +64,36 @@ export const SidebarDragLayer: React.FC = () => {
     isDragging: monitor.isDragging(),
     itemType: monitor.getItemType(),
     item: monitor.getItem<TabDragItem | null>(),
-    currentOffset: monitor.getSourceClientOffset(),
+    currentOffset: monitor.getClientOffset(),
   }));
+
+  React.useEffect(() => {
+    if (!isDragging || itemType !== SIDEBAR_TAB_DRAG_TYPE) return;
+    const originalBody = document.body.style.cursor;
+    const originalHtml = document.documentElement.style.cursor;
+    document.body.style.cursor = "grabbing";
+    document.documentElement.style.cursor = "grabbing";
+    return () => {
+      document.body.style.cursor = originalBody;
+      document.documentElement.style.cursor = originalHtml;
+    };
+  }, [isDragging, itemType]);
 
   if (!isDragging || itemType !== SIDEBAR_TAB_DRAG_TYPE || !item || !currentOffset) {
     return null;
   }
 
   return (
-    <div
-      className="pointer-events-none fixed top-0 left-0 z-50"
-      style={{
-        transform: `translate(${currentOffset.x}px, ${currentOffset.y}px)`,
-      }}
-      data-testid="sidebar-drag-preview"
-    >
-      <div className="bg-background/95 border-border rounded-md border px-3 py-1 text-xs font-medium shadow">
-        {getTabName(item.tab)}
+    <div className="pointer-events-none fixed inset-0 z-[9999] cursor-grabbing">
+      <div
+        style={{
+          transform: `translate(${currentOffset.x + 10}px, ${currentOffset.y + 10}px)`,
+        }}
+        data-testid="sidebar-drag-preview"
+      >
+        <div className="bg-background/95 border-border rounded-md border px-3 py-1 text-xs font-medium shadow">
+          {getTabName(item.tab)}
+        </div>
       </div>
     </div>
   );
@@ -89,7 +105,9 @@ const DraggableTab: React.FC<{
   index: number;
   tabsetId: string;
   onReorder?: (fromIndex: number, toIndex: number) => void;
-}> = ({ item, index, tabsetId, onReorder }) => {
+  onDragStart?: () => void;
+  onDragEnd?: () => void;
+}> = ({ item, index, tabsetId, onReorder, onDragStart, onDragEnd }) => {
   const [dropIndicator, setDropIndicator] = React.useState<"before" | "after" | null>(null);
   const tabRef = React.useRef<HTMLButtonElement | null>(null);
   // Track if a drag occurred to suppress click-to-select after drag ends
@@ -100,7 +118,16 @@ const DraggableTab: React.FC<{
       type: SIDEBAR_TAB_DRAG_TYPE,
       item: () => {
         didDragRef.current = true;
+        onDragStart?.();
         return { type: SIDEBAR_TAB_DRAG_TYPE, tab: item.tab, sourceTabsetId: tabsetId, index };
+      },
+      end: () => {
+        onDragEnd?.();
+        // Clear didDrag even if no click fires (but keep it set long enough to suppress
+        // the mouseup click that can happen after an HTML5 drag).
+        window.setTimeout(() => {
+          didDragRef.current = false;
+        }, 0);
       },
       collect: (monitor) => ({
         isDragging: monitor.isDragging(),
@@ -233,6 +260,8 @@ export const RightSidebarTabStrip: React.FC<RightSidebarTabStripProps> = ({
   tabsetId,
   onTabDrop,
   onTabReorder,
+  onTabDragStart,
+  onTabDragEnd,
 }) => {
   // Track if we're dragging from this tabset (for visual feedback on source)
   const isDraggingFromHere = useDragLayer(
@@ -278,6 +307,8 @@ export const RightSidebarTabStrip: React.FC<RightSidebarTabStripProps> = ({
           index={index}
           tabsetId={tabsetId}
           onReorder={onTabReorder}
+          onDragStart={onTabDragStart}
+          onDragEnd={onTabDragEnd}
         />
       ))}
     </div>

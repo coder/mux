@@ -170,6 +170,8 @@ interface RightSidebarTabsetNodeProps {
   sessionCost: number | null;
   statsTabEnabled: boolean;
   sessionDuration: number | null;
+  onTabDragStart: () => void;
+  onTabDragEnd: () => void;
   setLayout: (updater: (prev: RightSidebarLayoutState) => RightSidebarLayoutState) => void;
 }
 
@@ -402,6 +404,8 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
         tabsetId={props.node.id}
         onTabDrop={handleTabDrop}
         onTabReorder={handleTabReorder}
+        onTabDragStart={props.onTabDragStart}
+        onTabDragEnd={props.onTabDragEnd}
       />
       <div
         ref={contentDrop}
@@ -556,9 +560,33 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     }
   );
 
+  // While dragging tabs (hover-based reorder), keep layout changes in-memory and
+  // commit once on drop to avoid localStorage writes on every mousemove.
+  const [layoutDraft, setLayoutDraft] = React.useState<RightSidebarLayoutState | null>(null);
+  const layoutDraftRef = React.useRef<RightSidebarLayoutState | null>(null);
+
+  const isSidebarTabDragInProgressRef = React.useRef(false);
+
+  const handleSidebarTabDragStart = React.useCallback(() => {
+    isSidebarTabDragInProgressRef.current = true;
+    layoutDraftRef.current = null;
+  }, []);
+
+  const handleSidebarTabDragEnd = React.useCallback(() => {
+    isSidebarTabDragInProgressRef.current = false;
+
+    const draft = layoutDraftRef.current;
+    if (draft) {
+      setLayoutRaw(draft);
+    }
+
+    layoutDraftRef.current = null;
+    setLayoutDraft(null);
+  }, [setLayoutRaw]);
+
   const layout = React.useMemo(
-    () => parseRightSidebarLayoutState(layoutRaw, initialActiveTab),
-    [layoutRaw, initialActiveTab]
+    () => parseRightSidebarLayoutState(layoutDraft ?? layoutRaw, initialActiveTab),
+    [layoutDraft, layoutRaw, initialActiveTab]
   );
 
   // If the Stats tab feature is enabled, ensure it exists in the layout.
@@ -589,9 +617,18 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
 
   const setLayout = React.useCallback(
     (updater: (prev: RightSidebarLayoutState) => RightSidebarLayoutState) => {
+      if (isSidebarTabDragInProgressRef.current) {
+        const base =
+          layoutDraftRef.current ?? parseRightSidebarLayoutState(layoutRaw, initialActiveTab);
+        const next = updater(base);
+        layoutDraftRef.current = next;
+        setLayoutDraft(next);
+        return;
+      }
+
       setLayoutRaw((prevRaw) => updater(parseRightSidebarLayoutState(prevRaw, initialActiveTab)));
     },
-    [initialActiveTab, setLayoutRaw]
+    [initialActiveTab, layoutRaw, setLayoutRaw]
   );
 
   const focusedActiveTab = React.useMemo(
@@ -712,6 +749,8 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         statsTabEnabled={statsTabEnabled}
         sessionDuration={sessionDuration}
         onReviewStatsChange={setReviewStats}
+        onTabDragStart={handleSidebarTabDragStart}
+        onTabDragEnd={handleSidebarTabDragEnd}
         sessionCost={sessionCost}
         setLayout={setLayout}
       />
