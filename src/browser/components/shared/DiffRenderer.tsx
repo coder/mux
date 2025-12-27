@@ -297,14 +297,14 @@ export const DiffContainer: React.FC<
   return (
     <div
       className={cn(
-        "relative m-0 rounded-sm border border-border-light bg-code-bg [&_*]:text-[inherit]",
+        "relative m-0 overflow-x-auto rounded-sm border border-border-light bg-code-bg [&_*]:text-[inherit]",
         className
       )}
     >
       <div
         ref={contentRef}
         className={cn(
-          "font-monospace grid overflow-x-auto",
+          "font-monospace grid",
           clampContent ? "overflow-y-hidden" : "overflow-y-visible",
           showOverflowControls && "pb-6"
         )}

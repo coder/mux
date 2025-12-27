@@ -1014,6 +1014,65 @@ export const DiffPaddingAlignment: AppStory = {
 };
 
 /**
+ * Story to verify diff horizontal scrolling with long lines.
+ * When code lines exceed container width, the diff should scroll horizontally
+ * rather than overflow outside its container. The background colors for
+ * additions/deletions should span the full scrollable width.
+ */
+export const DiffHorizontalScroll: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-diff-scroll",
+          messages: [
+            createUserMessage("msg-1", "Show me a diff with very long lines", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 100000,
+            }),
+            createAssistantMessage(
+              "msg-2",
+              "Here's a diff with lines that require horizontal scrolling:",
+              {
+                historySequence: 2,
+                timestamp: STABLE_TIMESTAMP - 90000,
+                toolCalls: [
+                  createFileEditTool(
+                    "call-1",
+                    "src/config/longLines.ts",
+                    [
+                      "--- src/config/longLines.ts",
+                      "+++ src/config/longLines.ts",
+                      "@@ -1,4 +1,4 @@",
+                      " // Short context line",
+                      "-export const VERY_LONG_CONFIG_OPTION_NAME_THAT_EXCEEDS_NORMAL_WIDTH = { description: 'This is an extremely long configuration value that should definitely cause horizontal scrolling in the diff viewer component', defaultValue: false };",
+                      "+export const VERY_LONG_CONFIG_OPTION_NAME_THAT_EXCEEDS_NORMAL_WIDTH = { description: 'This is an extremely long configuration value that should definitely cause horizontal scrolling in the diff viewer component', defaultValue: true, enabled: true };",
+                      " // Another short line",
+                      " export const SHORT = 1;",
+                    ].join("\n")
+                  ),
+                ],
+              }
+            ),
+          ],
+        })
+      }
+    />
+  ),
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Verifies diff container scrolls horizontally for long lines. " +
+          "The diff should NOT overflow outside its container. " +
+          "Background colors (red for deletions, green for additions) should " +
+          "extend to the full scrollable width when scrolling right.",
+      },
+    },
+  },
+};
+
+/**
  * Story showing the InitMessage component in success state.
  * Tests the workspace init hook display with completed status.
  */
