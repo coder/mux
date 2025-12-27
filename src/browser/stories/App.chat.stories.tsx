@@ -529,6 +529,139 @@ export const GenericTool: AppStory = {
   },
 };
 
+/** Shows auto-compact warning when context usage approaches threshold */
+export const AutoCompactWarning: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-compaction-warning",
+          messages: [
+            createUserMessage("msg-1", "Help me set up authentication for this app", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 600000,
+            }),
+            createAssistantMessage(
+              "msg-2",
+              "I'll help you set up authentication. Let me first examine your current project structure and dependencies.",
+              {
+                historySequence: 2,
+                timestamp: STABLE_TIMESTAMP - 580000,
+                toolCalls: [
+                  createFileReadTool(
+                    "call-1",
+                    "package.json",
+                    '{\n  "name": "my-app",\n  "dependencies": {\n    "express": "^4.18.0",\n    "mongoose": "^7.0.0"\n  }\n}'
+                  ),
+                ],
+              }
+            ),
+            createUserMessage("msg-3", "I want to use JWT tokens for the auth", {
+              historySequence: 3,
+              timestamp: STABLE_TIMESTAMP - 500000,
+            }),
+            createAssistantMessage(
+              "msg-4",
+              "Great choice! I'll implement JWT-based authentication. Let me create the auth middleware and user routes.",
+              {
+                historySequence: 4,
+                timestamp: STABLE_TIMESTAMP - 480000,
+                toolCalls: [
+                  createFileEditTool(
+                    "call-2",
+                    "src/middleware/auth.ts",
+                    "+ import jwt from 'jsonwebtoken';\n+ export const authenticate = (req, res, next) => {\n+   const token = req.headers.authorization?.split(' ')[1];\n+   // ... verification logic\n+ };"
+                  ),
+                ],
+              }
+            ),
+            createUserMessage("msg-5", "Add password hashing too", {
+              historySequence: 5,
+              timestamp: STABLE_TIMESTAMP - 400000,
+            }),
+            createAssistantMessage(
+              "msg-6",
+              "I'll add bcrypt for secure password hashing. Here's the updated user model with password hashing on save.",
+              {
+                historySequence: 6,
+                timestamp: STABLE_TIMESTAMP - 380000,
+                toolCalls: [
+                  createTerminalTool("call-3", "bun add bcrypt", "added bcrypt@5.1.0"),
+                  createFileEditTool(
+                    "call-4",
+                    "src/models/user.ts",
+                    "+ import bcrypt from 'bcrypt';\n+ userSchema.pre('save', async function() {\n+   this.password = await bcrypt.hash(this.password, 10);\n+ });"
+                  ),
+                ],
+              }
+            ),
+            createUserMessage("msg-7", "Now add refresh token support", {
+              historySequence: 7,
+              timestamp: STABLE_TIMESTAMP - 300000,
+            }),
+            createAssistantMessage(
+              "msg-8",
+              "I've implemented refresh token support with secure rotation. The access token expires in 15 minutes and the refresh token in 7 days.",
+              {
+                historySequence: 8,
+                timestamp: STABLE_TIMESTAMP - 280000,
+                // High context usage to trigger warning (65% of 200k)
+                contextUsage: { inputTokens: 130000, outputTokens: 5000, totalTokens: 135000 },
+              }
+            ),
+          ],
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    const canvas = within(canvasElement);
+
+    // Wait for last assistant message to render (unique text from assistant)
+    await waitFor(() => {
+      canvas.getByText(/access token expires in 15 minutes/);
+    });
+
+    // Wait for initial auto-scroll and all ResizeObserver callbacks to complete
+    await new Promise((r) => setTimeout(r, 500));
+
+    const messageWindow = canvasElement.querySelector(
+      '[data-testid="message-window"]'
+    ) as HTMLElement | null;
+    if (messageWindow) {
+      // Simulate user scroll interaction multiple times to ensure auto-scroll is disabled.
+      // The useAutoScroll hook only processes scroll as "user-initiated" if it happens
+      // within 100ms of a wheel/touch event. We need to:
+      // 1. Mark user interaction via wheel event
+      // 2. Scroll up (which disables auto-scroll)
+      // 3. Wait and repeat to ensure the state sticks
+      for (let i = 0; i < 3; i++) {
+        messageWindow.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -100 }));
+        // Scroll to show ~200px of content above the input area
+        const targetScroll = Math.max(0, messageWindow.scrollHeight - messageWindow.clientHeight - 200);
+        messageWindow.scrollTop = targetScroll;
+        messageWindow.dispatchEvent(new Event("scroll", { bubbles: true }));
+        await new Promise((r) => setTimeout(r, 50));
+      }
+
+      // Final wait to let any pending ResizeObserver callbacks fire and see disabled auto-scroll
+      await new Promise((r) => setTimeout(r, 200));
+
+      // Set final scroll position
+      const finalScroll = Math.max(0, messageWindow.scrollHeight - messageWindow.clientHeight - 200);
+      messageWindow.scrollTop = finalScroll;
+    }
+  },
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Displays the auto-compact warning indicator above the chat input when context usage is approaching the compaction threshold. The indicator shows remaining headroom and is clickable to insert /compact command.",
+      },
+    },
+  },
+};
+
 /** Streaming compaction with shimmer effect - tests GPU-accelerated animation */
 export const StreamingCompaction: AppStory = {
   render: () => (
