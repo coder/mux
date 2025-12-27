@@ -19,7 +19,7 @@ export function SettingsButton() {
           data-testid="settings-button"
           data-tutorial="settings-button"
         >
-          <Settings className="h-3.5 w-3.5" aria-hidden />
+          <Settings className="!size-3.5" aria-hidden />
         </Button>
       </TooltipTrigger>
       <TooltipContent align="end">
