@@ -164,7 +164,6 @@ interface RightSidebarTabsetNodeProps {
   isCreating: boolean;
   focusTrigger: number;
   onReviewNote?: (data: ReviewNoteData) => void;
-  onReviewSelected: () => void;
   reviewStats: ReviewStats | null;
   onReviewStatsChange: (stats: ReviewStats | null) => void;
   sessionCost: number | null;
@@ -203,9 +202,6 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
       props.setLayout((prev) =>
         moveTabToTabset(prev, dragItem.tab, dragItem.sourceTabsetId, props.node.id)
       );
-      if (dragItem.tab === "review") {
-        props.onReviewSelected();
-      }
     },
     canDrop: () => true,
     collect: (monitor) => ({
@@ -222,9 +218,6 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
       props.setLayout((prev) =>
         dockTabToEdge(prev, dragItem.tab, dragItem.sourceTabsetId, props.node.id, "top")
       );
-      if (dragItem.tab === "review") {
-        props.onReviewSelected();
-      }
     },
     canDrop: () => true,
     collect: (monitor) => ({
@@ -240,9 +233,6 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
         props.setLayout((prev) =>
           dockTabToEdge(prev, dragItem.tab, dragItem.sourceTabsetId, props.node.id, "bottom")
         );
-        if (dragItem.tab === "review") {
-          props.onReviewSelected();
-        }
       },
       canDrop: () => true,
       collect: (monitor) => ({
@@ -259,9 +249,6 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
         props.setLayout((prev) =>
           dockTabToEdge(prev, dragItem.tab, dragItem.sourceTabsetId, props.node.id, "left")
         );
-        if (dragItem.tab === "review") {
-          props.onReviewSelected();
-        }
       },
       canDrop: () => true,
       collect: (monitor) => ({
@@ -278,9 +265,6 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
         props.setLayout((prev) =>
           dockTabToEdge(prev, dragItem.tab, dragItem.sourceTabsetId, props.node.id, "right")
         );
-        if (dragItem.tab === "review") {
-          props.onReviewSelected();
-        }
       },
       canDrop: () => true,
       collect: (monitor) => ({
@@ -302,10 +286,6 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
       const withFocus = setFocusedTabset(prev, props.node.id);
       return selectTabInTabset(withFocus, props.node.id, tab);
     });
-
-    if (tab === "review") {
-      props.onReviewSelected();
-    }
   };
 
   const items = props.node.tabs.flatMap((tab) => {
@@ -380,10 +360,6 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
   };
   const handleTabDrop = (droppedTab: TabType, sourceTabsetId: string) => {
     props.setLayout((prev) => moveTabToTabset(prev, droppedTab, sourceTabsetId, props.node.id));
-
-    if (droppedTab === "review") {
-      props.onReviewSelected();
-    }
   };
 
   const costsPanelId = `${tabsetBaseId}-panel-costs`;
@@ -744,7 +720,6 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         isCreating={Boolean(isCreating)}
         focusTrigger={focusTrigger}
         onReviewNote={onReviewNote}
-        onReviewSelected={() => setFocusTrigger((prev) => prev + 1)}
         reviewStats={reviewStats}
         statsTabEnabled={statsTabEnabled}
         sessionDuration={sessionDuration}
