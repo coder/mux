@@ -51,6 +51,38 @@ function getTabName(tab: TabType): string {
   }
 }
 
+/**
+ * Global drag layer for sidebar tabs.
+ * Renders the drag preview at cursor position during any sidebar tab drag.
+ * Must be rendered inside a DndProvider.
+ */
+export const SidebarDragLayer: React.FC = () => {
+  const { isDragging, itemType, item, currentOffset } = useDragLayer((monitor) => ({
+    isDragging: monitor.isDragging(),
+    itemType: monitor.getItemType(),
+    item: monitor.getItem<TabDragItem | null>(),
+    currentOffset: monitor.getSourceClientOffset(),
+  }));
+
+  if (!isDragging || itemType !== SIDEBAR_TAB_DRAG_TYPE || !item || !currentOffset) {
+    return null;
+  }
+
+  return (
+    <div
+      className="pointer-events-none fixed top-0 left-0 z-50"
+      style={{
+        transform: `translate(${currentOffset.x}px, ${currentOffset.y}px)`,
+      }}
+      data-testid="sidebar-drag-preview"
+    >
+      <div className="bg-background/95 border-border rounded-md border px-3 py-1 text-xs font-medium shadow">
+        {getTabName(item.tab)}
+      </div>
+    </div>
+  );
+};
+
 /** Individual draggable tab button */
 const DraggableTab: React.FC<{
   item: RightSidebarTabStripItem;
@@ -192,18 +224,13 @@ export const RightSidebarTabStrip: React.FC<RightSidebarTabStripProps> = ({
   onTabDrop,
   onTabReorder,
 }) => {
-  const dragLayer = useDragLayer((monitor) => ({
-    isDragging: monitor.isDragging(),
-    itemType: monitor.getItemType(),
-    item: monitor.getItem<TabDragItem | null>(),
-    currentOffset: monitor.getSourceClientOffset(),
-  }));
-
-  const isDraggingTab =
-    dragLayer.isDragging &&
-    dragLayer.itemType === SIDEBAR_TAB_DRAG_TYPE &&
-    dragLayer.item !== null &&
-    dragLayer.item.sourceTabsetId === tabsetId;
+  // Track if we're dragging from this tabset (for visual feedback on source)
+  const isDraggingFromHere = useDragLayer(
+    (monitor) =>
+      monitor.isDragging() &&
+      monitor.getItemType() === SIDEBAR_TAB_DRAG_TYPE &&
+      (monitor.getItem<TabDragItem | null>()?.sourceTabsetId ?? "") === tabsetId
+  );
 
   const [{ isOver, canDrop }, drop] = useDrop<
     TabDragItem,
@@ -224,39 +251,25 @@ export const RightSidebarTabStrip: React.FC<RightSidebarTabStripProps> = ({
   }));
 
   return (
-    <>
-      <div
-        ref={drop}
-        className={cn(
-          "border-border-light flex gap-1 border-b px-2 py-1.5 transition-colors",
-          isOver && canDrop && "bg-accent/30",
-          isDraggingTab && "bg-accent/10"
-        )}
-        role="tablist"
-        aria-label={ariaLabel}
-      >
-        {items.map((item, index) => (
-          <DraggableTab
-            key={item.id}
-            item={item}
-            index={index}
-            tabsetId={tabsetId}
-            onReorder={onTabReorder}
-          />
-        ))}
-      </div>
-      {isDraggingTab && dragLayer.currentOffset !== null && dragLayer.item !== null && (
-        <div
-          className="pointer-events-none fixed top-0 left-0 z-50"
-          style={{
-            transform: `translate(${dragLayer.currentOffset.x}px, ${dragLayer.currentOffset.y}px)`,
-          }}
-        >
-          <div className="bg-background/95 border-border rounded-md border px-3 py-1 text-xs font-medium shadow">
-            {getTabName(dragLayer.item.tab)}
-          </div>
-        </div>
+    <div
+      ref={drop}
+      className={cn(
+        "border-border-light flex gap-1 border-b px-2 py-1.5 transition-colors",
+        isOver && canDrop && "bg-accent/30",
+        isDraggingFromHere && "bg-accent/10"
       )}
-    </>
+      role="tablist"
+      aria-label={ariaLabel}
+    >
+      {items.map((item, index) => (
+        <DraggableTab
+          key={item.id}
+          item={item}
+          index={index}
+          tabsetId={tabsetId}
+          onReorder={onTabReorder}
+        />
+      ))}
+    </div>
   );
 };

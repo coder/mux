@@ -27,6 +27,7 @@ import {
   RIGHT_SIDEBAR_COLLAPSED_KEY,
   RIGHT_SIDEBAR_LAYOUT_KEY,
 } from "@/common/constants/storage";
+import type { RightSidebarLayoutState } from "@/browser/utils/rightSidebarLayout";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
@@ -554,6 +555,79 @@ describeIntegration("RightSidebar (UI)", () => {
           10
         );
         expect(finalWidthOnReview).toBe(widthAfterCostsResize);
+      } finally {
+        await cleanupView(view, cleanupDom);
+      }
+    });
+  }, 60_000);
+
+  test("split layout renders multiple panes with separate tablists", async () => {
+    await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
+      const cleanupDom = installDom();
+
+      // Set up a split layout with two panes (top: costs, bottom: review)
+      const splitLayout: RightSidebarLayoutState = {
+        version: 1,
+        nextId: 10,
+        root: {
+          type: "split",
+          id: "split-1",
+          direction: "horizontal",
+          sizes: [50, 50],
+          children: [
+            { type: "tabset", id: "tabset-top", tabs: ["costs"], activeTab: "costs" },
+            { type: "tabset", id: "tabset-bottom", tabs: ["review"], activeTab: "review" },
+          ],
+        },
+        focusedTabsetId: "tabset-top",
+      };
+      localStorage.setItem(RIGHT_SIDEBAR_LAYOUT_KEY, JSON.stringify(splitLayout));
+
+      const view = renderApp({
+        apiClient: env.orpc,
+        metadata,
+      });
+
+      try {
+        await setupWorkspaceView(view, metadata, workspaceId);
+
+        const sidebar = await waitFor(
+          () => {
+            const el = view.container.querySelector(
+              '[role="complementary"][aria-label="Workspace insights"]'
+            );
+            if (!el) throw new Error("RightSidebar not found");
+            return el as HTMLElement;
+          },
+          { timeout: 10_000 }
+        );
+
+        // Wait for both tablists (two panes)
+        await waitFor(() => {
+          const tablists = sidebar.querySelectorAll('[role="tablist"]');
+          if (tablists.length < 2) throw new Error(`Expected 2 tablists, found ${tablists.length}`);
+        });
+
+        const tablists = sidebar.querySelectorAll('[role="tablist"]');
+        expect(tablists.length).toBe(2);
+
+        // Verify top pane has Costs tab selected
+        const topTablist = tablists[0] as HTMLElement;
+        const costsTab = topTablist.querySelector('[role="tab"]') as HTMLElement;
+        expect(costsTab).toBeTruthy();
+        expect(costsTab.getAttribute("aria-selected")).toBe("true");
+
+        // Verify bottom pane has Review tab selected
+        const bottomTablist = tablists[1] as HTMLElement;
+        const reviewTab = bottomTablist.querySelector('[role="tab"]') as HTMLElement;
+        expect(reviewTab).toBeTruthy();
+        expect(reviewTab.getAttribute("aria-selected")).toBe("true");
+
+        // Verify both tabpanels are rendered
+        const costsPanel = sidebar.querySelector('[role="tabpanel"][id*="costs"]');
+        const reviewPanel = sidebar.querySelector('[role="tabpanel"][id*="review"]');
+        expect(costsPanel).toBeTruthy();
+        expect(reviewPanel).toBeTruthy();
       } finally {
         await cleanupView(view, cleanupDom);
       }

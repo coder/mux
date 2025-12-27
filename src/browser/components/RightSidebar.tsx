@@ -44,6 +44,7 @@ import {
 } from "@/browser/utils/rightSidebarLayout";
 import {
   RightSidebarTabStrip,
+  SidebarDragLayer,
   SIDEBAR_TAB_DRAG_TYPE,
   type TabDragItem,
 } from "./RightSidebar/RightSidebarTabStrip";
@@ -682,6 +683,8 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
 
   return (
     <DndProvider backend={HTML5Backend}>
+      {/* Global drag layer for smooth cross-pane dragging */}
+      <SidebarDragLayer />
       <SidebarContainer
         collapsed={collapsed}
         isResizing={isResizing}
