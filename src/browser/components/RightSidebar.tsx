@@ -27,7 +27,7 @@ import { RIGHT_SIDEBAR_TABS, isTabType, type TabType } from "@/browser/types/rig
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import {
   addTabToFocusedTabset,
-  collectActiveTabs,
+  collectAllTabs,
   dockTabToEdge,
   getDefaultRightSidebarLayoutState,
   getFocusedActiveTab,
@@ -566,7 +566,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   React.useEffect(() => {
     setLayoutRaw((prevRaw) => {
       const prev = parseRightSidebarLayoutState(prevRaw, initialActiveTab);
-      const hasStats = collectActiveTabs(prev.root).includes("stats");
+      const hasStats = collectAllTabs(prev.root).includes("stats");
 
       if (statsTabEnabled && !hasStats) {
         // Add stats tab to the focused tabset
