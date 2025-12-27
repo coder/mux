@@ -314,6 +314,8 @@ export const DiffContainer: React.FC<
           maxHeight: clampContent ? resolvedMaxHeight : undefined,
           // CSS Grid columns: [gutter] auto | [indicator] 1rem | [code] 1fr
           gridTemplateColumns: "auto 1rem 1fr",
+          // Ensure grid expands to content width so backgrounds span full width when scrolling
+          minWidth: "max-content",
         }}
       >
         <PaddingStrip lineType={firstLineType} />
