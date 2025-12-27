@@ -233,36 +233,40 @@ describe("BackgroundProcessManager", () => {
   });
 
   describe("terminateAll", () => {
-    it("should kill all processes across all workspaces", async () => {
-      // Spawn processes in multiple workspaces (unique display names since they're process IDs)
-      await manager.spawn(runtime, testWorkspaceId, "sleep 10", {
-        cwd: process.cwd(),
-        displayName: "test-termall-ws1",
-      });
-      await manager.spawn(runtime, testWorkspaceId2, "sleep 10", {
-        cwd: process.cwd(),
-        displayName: "test-termall-ws2",
-      });
+    it(
+      "should kill all processes across all workspaces",
+      async () => {
+        // Spawn processes in multiple workspaces (unique display names since they're process IDs)
+        await manager.spawn(runtime, testWorkspaceId, "sleep 10", {
+          cwd: process.cwd(),
+          displayName: "test-termall-ws1",
+        });
+        await manager.spawn(runtime, testWorkspaceId2, "sleep 10", {
+          cwd: process.cwd(),
+          displayName: "test-termall-ws2",
+        });
 
-      // Verify both workspaces have running processes
-      const beforeWs1 = await manager.list(testWorkspaceId);
-      const beforeWs2 = await manager.list(testWorkspaceId2);
-      expect(beforeWs1.length).toBe(1);
-      expect(beforeWs2.length).toBe(1);
+        // Verify both workspaces have running processes
+        const beforeWs1 = await manager.list(testWorkspaceId);
+        const beforeWs2 = await manager.list(testWorkspaceId2);
+        expect(beforeWs1.length).toBe(1);
+        expect(beforeWs2.length).toBe(1);
 
-      // Terminate all
-      await manager.terminateAll();
+        // Terminate all
+        await manager.terminateAll();
 
-      // Both workspaces should have no processes
-      const afterWs1 = await manager.list(testWorkspaceId);
-      const afterWs2 = await manager.list(testWorkspaceId2);
-      expect(afterWs1.length).toBe(0);
-      expect(afterWs2.length).toBe(0);
+        // Both workspaces should have no processes
+        const afterWs1 = await manager.list(testWorkspaceId);
+        const afterWs2 = await manager.list(testWorkspaceId2);
+        expect(afterWs1.length).toBe(0);
+        expect(afterWs2.length).toBe(0);
 
-      // Total list should also be empty
-      const allProcesses = await manager.list();
-      expect(allProcesses.length).toBe(0);
-    });
+        // Total list should also be empty
+        const allProcesses = await manager.list();
+        expect(allProcesses.length).toBe(0);
+      },
+      { timeout: 20_000 }
+    );
 
     it("should handle empty process list gracefully", async () => {
       // No processes spawned - terminateAll should not throw

@@ -689,6 +689,7 @@ export class AgentSession {
       options?.maxOutputTokens,
       options?.providerOptions,
       options?.mode,
+      options?.agentId,
       recordFileState,
       changedFileAttachments.length > 0 ? changedFileAttachments : undefined,
       postCompactionAttachments,

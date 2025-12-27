@@ -66,6 +66,7 @@ void mock.module("@orpc/client/message-port", () => ({
 }));
 
 void mock.module("@/browser/components/AuthTokenModal", () => ({
+  AuthTokenModal: () => null,
   getStoredAuthToken: () => null,
   // eslint-disable-next-line @typescript-eslint/no-empty-function
   clearStoredAuthToken: () => {},

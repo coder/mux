@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { RuntimeConfigSchema } from "./runtime";
 import { WorkspaceMCPOverridesSchema } from "./mcp";
-import { WorkspaceAISettingsSchema } from "./workspaceAiSettings";
+import { WorkspaceAISettingsByModeSchema, WorkspaceAISettingsSchema } from "./workspaceAiSettings";
 
 const ThinkingLevelSchema = z.enum(["off", "low", "medium", "high", "xhigh"]);
 
@@ -26,6 +26,9 @@ export const WorkspaceConfigSchema = z.object({
   runtimeConfig: RuntimeConfigSchema.optional().meta({
     description: "Runtime configuration (local vs SSH) - optional, defaults to local",
   }),
+  aiSettingsByMode: WorkspaceAISettingsByModeSchema.optional().meta({
+    description: "Per-mode workspace-scoped AI settings (plan/exec)",
+  }),
   aiSettings: WorkspaceAISettingsSchema.optional().meta({
     description: "Workspace-scoped AI settings (model + thinking level)",
   }),
@@ -35,6 +38,10 @@ export const WorkspaceConfigSchema = z.object({
   }),
   agentType: z.string().optional().meta({
     description: 'If set, selects an agent preset for this workspace (e.g., "explore" or "exec").',
+  }),
+  agentId: z.string().optional().meta({
+    description:
+      'If set, selects an agent definition for this workspace (e.g., "explore" or "exec").',
   }),
   taskStatus: z.enum(["queued", "running", "awaiting_report", "reported"]).optional().meta({
     description:

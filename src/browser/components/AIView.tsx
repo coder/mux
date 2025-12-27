@@ -34,6 +34,7 @@ import {
 import { BashOutputCollapsedIndicator } from "./tools/BashOutputCollapsedIndicator";
 import { hasInterruptedStream } from "@/browser/utils/messages/retryEligibility";
 import { ThinkingProvider } from "@/browser/contexts/ThinkingContext";
+import { WorkspaceModeAISync } from "@/browser/components/WorkspaceModeAISync";
 import { ModeProvider } from "@/browser/contexts/ModeContext";
 import { ProviderOptionsProvider } from "@/browser/contexts/ProviderOptionsContext";
 
@@ -843,6 +844,7 @@ export const AIView: React.FC<AIViewProps> = (props) => {
 
   return (
     <ModeProvider workspaceId={props.workspaceId}>
+      <WorkspaceModeAISync workspaceId={props.workspaceId} />
       <ProviderOptionsProvider>
         <ThinkingProvider workspaceId={props.workspaceId}>
           <AIViewInner {...props} />

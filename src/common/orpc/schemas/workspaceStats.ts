@@ -1,7 +1,8 @@
 import { z } from "zod";
+import { AgentModeSchema } from "../../types/mode";
 
-// Mode is a string to support any mode value (plan, exec, compact, etc.)
-const ModeSchema = z.string();
+// Mode is an enum, but we defensively drop unknown values when replaying old history.
+const ModeSchema = AgentModeSchema.optional().catch(undefined);
 
 export const TimingAnomalySchema = z.enum([
   "negative_duration",
@@ -14,7 +15,7 @@ export const TimingAnomalySchema = z.enum([
 export const ActiveStreamStatsSchema = z.object({
   messageId: z.string(),
   model: z.string(),
-  mode: ModeSchema.optional(),
+  mode: ModeSchema,
 
   elapsedMs: z.number(),
   ttftMs: z.number().nullable(),
@@ -37,7 +38,7 @@ export const ActiveStreamStatsSchema = z.object({
 export const CompletedStreamStatsSchema = z.object({
   messageId: z.string(),
   model: z.string(),
-  mode: ModeSchema.optional(),
+  mode: ModeSchema,
 
   totalDurationMs: z.number(),
   ttftMs: z.number().nullable(),
@@ -54,7 +55,7 @@ export const CompletedStreamStatsSchema = z.object({
 
 export const ModelTimingStatsSchema = z.object({
   model: z.string(),
-  mode: ModeSchema.optional(),
+  mode: ModeSchema,
 
   totalDurationMs: z.number(),
   totalToolExecutionMs: z.number(),

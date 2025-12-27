@@ -79,6 +79,34 @@ export function readPersistedState<T>(key: string, defaultValue: T): T {
 }
 
 /**
+ * Read a persisted string value from localStorage.
+ *
+ * Unlike readPersistedState(), this tolerates values that were written as raw
+ * strings (not JSON) by legacy code.
+ */
+export function readPersistedString(key: string): string | undefined {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return undefined;
+  }
+
+  const storedValue = window.localStorage.getItem(key);
+  if (storedValue === null || storedValue === "undefined") {
+    return undefined;
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(storedValue);
+    if (typeof parsed === "string") {
+      return parsed;
+    }
+  } catch {
+    // Fall through to raw string.
+  }
+
+  return storedValue;
+}
+
+/**
  * Update a persisted state value from outside the hook.
  * This is useful when you need to update state from a different component/context
  * that doesn't have access to the setter (e.g., command palette updating workspace state).

@@ -40,8 +40,13 @@ const BLUE_PIXEL = {
 };
 
 // Test both providers with their respective models
+// NOTE: Some OpenAI Codex-focused models are vision-capable but can be unreliable at
+// ultra-small image classification (e.g. a 4x4 solid-color PNG). Use a general-purpose
+// vision model to keep this test stable.
+const OPENAI_VISION_MODEL = "gpt-5-mini";
+
 const PROVIDER_CONFIGS: Array<[string, string]> = [
-  ["openai", KNOWN_MODELS.GPT_MINI.providerModelId],
+  ["openai", OPENAI_VISION_MODEL],
   ["anthropic", KNOWN_MODELS.HAIKU.providerModelId],
 ];
 
@@ -145,7 +150,7 @@ describeIntegration("sendMessage image handling tests", () => {
         await withSharedWorkspace("openai", async ({ env, workspaceId, collector }) => {
           // Send first message with image
           const result1 = await sendMessage(env, workspaceId, "Remember this image", {
-            model: modelString("openai", KNOWN_MODELS.GPT_MINI.providerModelId),
+            model: modelString("openai", OPENAI_VISION_MODEL),
             imageParts: [RED_PIXEL],
           });
 
@@ -163,7 +168,7 @@ describeIntegration("sendMessage image handling tests", () => {
             workspaceId,
             "What color was the image I showed you?",
             {
-              model: modelString("openai", KNOWN_MODELS.GPT_MINI.providerModelId),
+              model: modelString("openai", OPENAI_VISION_MODEL),
             }
           );
 

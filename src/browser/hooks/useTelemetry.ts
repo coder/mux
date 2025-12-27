@@ -11,6 +11,7 @@ import {
   trackErrorOccurred,
   trackExperimentOverridden,
 } from "@/common/telemetry";
+import type { AgentMode } from "@/common/types/mode";
 import type {
   ErrorContext,
   TelemetryRuntimeType,
@@ -53,7 +54,7 @@ export function useTelemetry() {
     (
       workspaceId: string,
       model: string,
-      mode: string,
+      mode: AgentMode,
       messageLength: number,
       runtimeType: TelemetryRuntimeType,
       thinkingLevel: TelemetryThinkingLevel
