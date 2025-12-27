@@ -457,16 +457,46 @@ export class WorkspaceStore {
           transient?.liveBashOutput.delete(toolCallEnd.toolCallId);
         }
       }
+
+      // `tool-call-end` doesn't include tool args, so to detect task(kind="bash") we need to
+      // consult the aggregated tool input (from tool-call-start), falling back to result heuristics.
+      let isTaskBashToolCall = false;
+      if (toolCallEnd.toolName === "task") {
+        const message = aggregator.getAllMessages().find((m) => m.id === toolCallEnd.messageId);
+        const toolPart = message?.parts.find(
+          (part) => part.type === "dynamic-tool" && part.toolCallId === toolCallEnd.toolCallId
+        ) as { input?: unknown } | undefined;
+
+        const input = toolPart?.input;
+        isTaskBashToolCall =
+          input !== null &&
+          typeof input === "object" &&
+          (input as { kind?: unknown }).kind === "bash";
+
+        if (!isTaskBashToolCall) {
+          const taskResult = toolCallEnd.result as
+            | { taskId?: unknown; reportMarkdown?: unknown }
+            | undefined;
+          const taskId = typeof taskResult?.taskId === "string" ? taskResult.taskId : undefined;
+          const reportMarkdown =
+            typeof taskResult?.reportMarkdown === "string" ? taskResult.reportMarkdown : undefined;
+          if (taskId?.startsWith("bash:") || reportMarkdown?.startsWith("### Bash:")) {
+            isTaskBashToolCall = true;
+          }
+        }
+      }
+
       this.states.bump(workspaceId);
       this.consumerManager.scheduleCalculation(workspaceId, aggregator);
 
       // Track file-modifying tools for ReviewPanel diff refresh.
-      // NOTE: `task` can also run bash commands via task(kind="bash"), so it should trigger refreshes.
-      if (
+      // NOTE: `task` can run both agent and bash work; only task(kind="bash") should trigger refreshes.
+      const shouldTriggerReviewPanelRefresh =
         toolCallEnd.toolName.startsWith("file_edit_") ||
         toolCallEnd.toolName === "bash" ||
-        toolCallEnd.toolName === "task"
-      ) {
+        (toolCallEnd.toolName === "task" && isTaskBashToolCall);
+
+      if (shouldTriggerReviewPanelRefresh) {
         this.fileModifyingToolMs.set(workspaceId, Date.now());
         this.fileModifyingToolSubs.bump(workspaceId);
       }

@@ -9,15 +9,9 @@ const MAX_BASH_DISPLAY_NAME_CHARS = 80;
 const INVALID_FILENAME_CHARS = /[<>:"/\\|?*]/g;
 const TRAILING_DOTS_OR_SPACES = /[. ]+$/g;
 
-export function getDefaultBashDisplayName(script: string): string {
-  const firstNonEmptyLine =
-    script
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .find((line) => line.length > 0) ?? "";
-
+function sanitizeBashDisplayName(rawName: string): string {
   // Collapse whitespace to keep IDs readable and stable.
-  let name = firstNonEmptyLine.replace(/\s+/g, " ");
+  let name = rawName.replace(/\s+/g, " ").trim();
 
   if (name.length === 0) return DEFAULT_BASH_DISPLAY_NAME;
 
@@ -35,6 +29,7 @@ export function getDefaultBashDisplayName(script: string): string {
   name = controlCharsStripped;
 
   // Replace characters that are illegal in Windows filenames (and also problematic on Unix).
+  // This includes path separators, preventing path traversal via display_name.
   name = name.replace(INVALID_FILENAME_CHARS, "_");
   // Windows disallows trailing dots/spaces in file/dir names.
   name = name.replace(TRAILING_DOTS_OR_SPACES, "").trim();
@@ -44,9 +39,21 @@ export function getDefaultBashDisplayName(script: string): string {
   return name;
 }
 
+export function getDefaultBashDisplayName(script: string): string {
+  const firstNonEmptyLine =
+    script
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => line.length > 0) ?? "";
+
+  return sanitizeBashDisplayName(firstNonEmptyLine);
+}
+
 export function resolveBashDisplayName(script: string, displayName: string | undefined): string {
   const trimmed = displayName?.trim();
-  if (trimmed && trimmed.length > 0) return trimmed;
+  if (trimmed && trimmed.length > 0) {
+    return sanitizeBashDisplayName(trimmed);
+  }
 
   return getDefaultBashDisplayName(script);
 }

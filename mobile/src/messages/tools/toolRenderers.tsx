@@ -3,6 +3,7 @@ import React from "react";
 import { View, Text, ScrollView, StyleSheet, Pressable } from "react-native";
 import { Link } from "expo-router";
 import { parsePatch } from "diff";
+import { resolveBashDisplayName } from "@/common/utils/tools/bashDisplayName";
 import type { DisplayedMessage } from "@/common/types/message";
 import {
   FILE_EDIT_TOOL_NAMES,
@@ -87,6 +88,9 @@ export function renderSpecializedToolCard(message: ToolDisplayedMessage): ToolCa
     case "task":
       if (!isTaskToolArgs(message.args)) {
         return null;
+      }
+      if (isTaskBashArgs(message.args)) {
+        return buildTaskBashViewModel(message as ToolDisplayedMessage & { args: TaskToolArgs });
       }
       return buildTaskViewModel(message as ToolDisplayedMessage & { args: TaskToolArgs });
     case "task_await":
@@ -399,6 +403,164 @@ function BashBackgroundTerminateContent({
   }
 
   return <ThemedText>{result.message}</ThemedText>;
+}
+
+function taskBashResultToBashToolResult(result: TaskToolResult | null): BashToolResult | null {
+  if (!result) {
+    return null;
+  }
+
+  // Some tool failures may still return a { success: false, error } shape.
+  if ("success" in result) {
+    const success = (result as { success?: unknown }).success;
+    if (success === false) {
+      const error = (result as { error?: unknown }).error;
+      return {
+        success: false,
+        error: typeof error === "string" ? error : "Task failed",
+        exitCode: -1,
+        wall_duration_ms: 0,
+      };
+    }
+  }
+
+  const status = (result as { status?: unknown }).status;
+  if (typeof status !== "string") {
+    return null;
+  }
+
+  // Background bash tasks return early with status=running and taskId=bash:<processId>.
+  if (status !== "completed") {
+    const taskId = (result as { taskId?: unknown }).taskId;
+    if (typeof taskId === "string" && taskId.startsWith("bash:")) {
+      const processId = taskId.slice("bash:".length).trim() || taskId;
+      return {
+        success: true,
+        output: "",
+        exitCode: 0,
+        wall_duration_ms: 0,
+        backgroundProcessId: processId,
+      };
+    }
+    return null;
+  }
+
+  const reportMarkdown =
+    typeof (result as { reportMarkdown?: unknown }).reportMarkdown === "string"
+      ? ((result as { reportMarkdown: string }).reportMarkdown ?? "")
+      : "";
+
+  const explicitExitCode =
+    typeof (result as { exitCode?: unknown }).exitCode === "number"
+      ? (result as { exitCode: number }).exitCode
+      : undefined;
+  const exitCodeMatch = /exitCode:\s*(-?\d+)/.exec(reportMarkdown);
+  const parsedExitCode = exitCodeMatch ? Number(exitCodeMatch[1]) : undefined;
+  const exitCode =
+    explicitExitCode ?? (Number.isFinite(parsedExitCode) ? (parsedExitCode as number) : 0);
+
+  const wallDurationMatch = /wall_duration_ms:\s*(\d+)/.exec(reportMarkdown);
+  const parsedWallDuration = wallDurationMatch ? Number(wallDurationMatch[1]) : undefined;
+  const wall_duration_ms = Number.isFinite(parsedWallDuration) ? (parsedWallDuration as number) : 0;
+
+  const textBlockMatch = /```text\n([\s\S]*?)\n```/.exec(reportMarkdown);
+  const output = textBlockMatch ? textBlockMatch[1] : "";
+
+  const errorLineMatch = /^error:\s*(.*)$/m.exec(reportMarkdown);
+  const error = errorLineMatch?.[1] ?? `Command exited with code ${exitCode}`;
+
+  const note =
+    typeof (result as { note?: unknown }).note === "string"
+      ? (result as { note: string }).note
+      : undefined;
+  const truncated =
+    typeof (result as { truncated?: unknown }).truncated === "object"
+      ? (result as { truncated: BashToolResult["truncated"] }).truncated
+      : undefined;
+
+  if (exitCode === 0 && !errorLineMatch) {
+    return {
+      success: true,
+      output,
+      exitCode: 0,
+      wall_duration_ms,
+      note,
+      truncated,
+    };
+  }
+
+  return {
+    success: false,
+    output: output.length > 0 ? output : undefined,
+    exitCode,
+    error,
+    wall_duration_ms,
+    note,
+    truncated,
+  };
+}
+
+function buildTaskBashViewModel(
+  message: ToolDisplayedMessage & { args: TaskToolArgs }
+): ToolCardViewModel {
+  const args = message.args;
+  if (!isTaskBashArgs(args)) {
+    return {
+      icon: "💻",
+      caption: "bash",
+      title: "bash",
+      content: <ThemedText variant="muted">Invalid bash task args</ThemedText>,
+      defaultExpanded: true,
+    };
+  }
+
+  const displayName = resolveBashDisplayName(args.script, args.display_name);
+
+  const bashArgs: BashToolArgs = {
+    script: args.script,
+    timeout_secs: args.timeout_secs,
+    run_in_background: Boolean(args.run_in_background),
+    display_name: displayName,
+  };
+
+  const taskResult = coerceTaskToolResult(message.result);
+  const bashResult = taskBashResultToBashToolResult(taskResult);
+
+  const preview = truncate(args.script.trim().split("\n")[0], 80) || "bash";
+
+  const metadata: MetadataItem[] = [];
+  metadata.push({ label: "name", value: displayName });
+
+  if (typeof args.timeout_secs === "number") {
+    metadata.push({ label: "timeout", value: `${args.timeout_secs}s` });
+  }
+  if (bashResult && bashResult.exitCode !== undefined) {
+    metadata.push({ label: "exit code", value: String(bashResult.exitCode) });
+  }
+  if (bashResult && "truncated" in bashResult && bashResult.truncated) {
+    metadata.push({
+      label: "truncated",
+      value: bashResult.truncated.reason,
+      tone: "warning",
+    });
+  }
+
+  return {
+    icon: "💻",
+    caption: "bash",
+    title: preview,
+    summary: metadata.length > 0 ? <MetadataList items={metadata} /> : undefined,
+    content: (
+      <BashToolContent
+        args={bashArgs}
+        result={bashResult}
+        status={message.status}
+        toolCallId={message.toolCallId}
+      />
+    ),
+    defaultExpanded:
+      message.status !== "completed" || Boolean(bashResult && bashResult.success === false),
+  };
 }
 
 function buildTaskViewModel(
@@ -1502,9 +1664,30 @@ function isBashBackgroundTerminateArgs(value: unknown): value is BashBackgroundT
   return Boolean(value && typeof (value as BashBackgroundTerminateArgs).process_id === "string");
 }
 
-function isTaskToolArgs(value: unknown): value is TaskToolArgs {
+function isTaskBashArgs(value: unknown): value is TaskToolArgs & {
+  kind: "bash";
+  script: string;
+  timeout_secs: number;
+  display_name?: string;
+} {
   return (
     Boolean(value && typeof value === "object") &&
+    (value as { kind?: unknown }).kind === "bash" &&
+    typeof (value as { script?: unknown }).script === "string" &&
+    typeof (value as { timeout_secs?: unknown }).timeout_secs === "number"
+  );
+}
+
+function isTaskToolArgs(value: unknown): value is TaskToolArgs {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  if (isTaskBashArgs(value)) {
+    return true;
+  }
+
+  return (
     typeof (value as TaskToolArgs).prompt === "string" &&
     typeof (value as TaskToolArgs).title === "string" &&
     typeof (value as TaskToolArgs).subagent_type === "string"

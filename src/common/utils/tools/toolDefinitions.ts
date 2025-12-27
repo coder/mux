@@ -250,7 +250,16 @@ export const TaskAwaitToolArgsSchema = z
           "Optional, defaults to 10 minutes."
       ),
   })
-  .strict();
+  .strict()
+  .superRefine((args, ctx) => {
+    if (args.filter_exclude && !args.filter) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "filter_exclude requires filter to be set",
+        path: ["filter_exclude"],
+      });
+    }
+  });
 
 export const TaskAwaitToolCompletedResultSchema = z
   .object({
