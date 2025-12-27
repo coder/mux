@@ -13,7 +13,10 @@ import {
   readPersistedState,
 } from "./hooks/usePersistedState";
 import { matchesKeybind, KEYBINDS } from "./utils/ui/keybinds";
-import { buildSortedWorkspacesByProject } from "./utils/ui/workspaceFiltering";
+import {
+  buildSortedWorkspacesByProject,
+  getVisibleWorkspaces,
+} from "./utils/ui/workspaceFiltering";
 import { useResumeManager } from "./hooks/useResumeManager";
 import { useUnreadTracking } from "./hooks/useUnreadTracking";
 import { useWorkspaceStoreRaw, useWorkspaceRecency } from "./stores/WorkspaceStore";
@@ -218,8 +221,21 @@ function AppInner() {
       const sortedWorkspaces = sortedWorkspacesByProject.get(selectedWorkspace.projectPath);
       if (!sortedWorkspaces || sortedWorkspaces.length <= 1) return;
 
-      // Find current workspace index in sorted list
-      const currentIndex = sortedWorkspaces.findIndex(
+      // Only navigate through visible workspaces (respecting collapsed "Older than" sections)
+      const expandedOldWorkspaces = readPersistedState<Record<string, boolean>>(
+        "expandedOldWorkspaces",
+        {}
+      );
+      const visibleWorkspaces = getVisibleWorkspaces(
+        selectedWorkspace.projectPath,
+        sortedWorkspaces,
+        workspaceRecency,
+        expandedOldWorkspaces
+      );
+      if (visibleWorkspaces.length <= 1) return;
+
+      // Find current workspace index in visible list
+      const currentIndex = visibleWorkspaces.findIndex(
         (metadata) => metadata.id === selectedWorkspace.workspaceId
       );
       if (currentIndex === -1) return;
@@ -227,17 +243,17 @@ function AppInner() {
       // Calculate next/prev index with wrapping
       let targetIndex: number;
       if (direction === "next") {
-        targetIndex = (currentIndex + 1) % sortedWorkspaces.length;
+        targetIndex = (currentIndex + 1) % visibleWorkspaces.length;
       } else {
-        targetIndex = currentIndex === 0 ? sortedWorkspaces.length - 1 : currentIndex - 1;
+        targetIndex = currentIndex === 0 ? visibleWorkspaces.length - 1 : currentIndex - 1;
       }
 
-      const targetMetadata = sortedWorkspaces[targetIndex];
+      const targetMetadata = visibleWorkspaces[targetIndex];
       if (!targetMetadata) return;
 
       setSelectedWorkspace(toWorkspaceSelection(targetMetadata));
     },
-    [selectedWorkspace, sortedWorkspacesByProject, setSelectedWorkspace]
+    [selectedWorkspace, sortedWorkspacesByProject, workspaceRecency, setSelectedWorkspace]
   );
 
   // Register command sources with registry

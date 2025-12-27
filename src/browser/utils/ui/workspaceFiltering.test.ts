@@ -4,6 +4,7 @@ import {
   formatDaysThreshold,
   AGE_THRESHOLDS_DAYS,
   buildSortedWorkspacesByProject,
+  getVisibleWorkspaces,
 } from "./workspaceFiltering";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { ProjectConfig } from "@/common/types/project";
@@ -162,6 +163,159 @@ describe("partitionWorkspacesByAge", () => {
 
     expect(buckets[2]).toHaveLength(1);
     expect(buckets[2][0].id).toBe("bucket2");
+  });
+});
+
+describe("getVisibleWorkspaces", () => {
+  const now = Date.now();
+  const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+  const projectPath = "/test/project";
+
+  const createWorkspace = (id: string): FrontendWorkspaceMetadata => ({
+    id,
+    name: `workspace-${id}`,
+    projectName: "test-project",
+    projectPath,
+    namedWorkspacePath: `${projectPath}/workspace-${id}`,
+    runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+  });
+
+  it("should return only recent workspaces when no tiers are expanded", () => {
+    const workspaces = [
+      createWorkspace("recent1"),
+      createWorkspace("recent2"),
+      createWorkspace("old1"),
+      createWorkspace("old2"),
+    ];
+
+    const recency = {
+      recent1: now - 1000,
+      recent2: now - 2000,
+      old1: now - 2 * ONE_DAY_MS,
+      old2: now - 3 * ONE_DAY_MS,
+    };
+
+    const visible = getVisibleWorkspaces(projectPath, workspaces, recency, {});
+
+    expect(visible).toHaveLength(2);
+    expect(visible.map((w) => w.id)).toEqual(["recent1", "recent2"]);
+  });
+
+  it("should include old workspaces when their tier is expanded", () => {
+    const workspaces = [
+      createWorkspace("recent"),
+      createWorkspace("old1"),
+      createWorkspace("old2"),
+    ];
+
+    const recency = {
+      recent: now - 1000,
+      old1: now - 2 * ONE_DAY_MS, // bucket 0 (1-7 days)
+      old2: now - 3 * ONE_DAY_MS, // bucket 0 (1-7 days)
+    };
+
+    // Expand tier 0
+    const expandedOldWorkspaces = { [`${projectPath}:0`]: true };
+
+    const visible = getVisibleWorkspaces(projectPath, workspaces, recency, expandedOldWorkspaces);
+
+    expect(visible).toHaveLength(3);
+    expect(visible.map((w) => w.id)).toEqual(["recent", "old1", "old2"]);
+  });
+
+  it("should stop at first collapsed tier", () => {
+    const workspaces = [
+      createWorkspace("recent"),
+      createWorkspace("tier0"), // 1-7 days
+      createWorkspace("tier1"), // 7-30 days
+      createWorkspace("tier2"), // >30 days
+    ];
+
+    const recency = {
+      recent: now - 1000,
+      tier0: now - 3 * ONE_DAY_MS, // bucket 0
+      tier1: now - 15 * ONE_DAY_MS, // bucket 1
+      tier2: now - 60 * ONE_DAY_MS, // bucket 2
+    };
+
+    // Only expand tier 0, not tier 1
+    const expandedOldWorkspaces = { [`${projectPath}:0`]: true };
+
+    const visible = getVisibleWorkspaces(projectPath, workspaces, recency, expandedOldWorkspaces);
+
+    expect(visible).toHaveLength(2);
+    expect(visible.map((w) => w.id)).toEqual(["recent", "tier0"]);
+  });
+
+  it("should include all tiers when all are expanded", () => {
+    const workspaces = [
+      createWorkspace("recent"),
+      createWorkspace("tier0"),
+      createWorkspace("tier1"),
+      createWorkspace("tier2"),
+    ];
+
+    const recency = {
+      recent: now - 1000,
+      tier0: now - 3 * ONE_DAY_MS,
+      tier1: now - 15 * ONE_DAY_MS,
+      tier2: now - 60 * ONE_DAY_MS,
+    };
+
+    const expandedOldWorkspaces = {
+      [`${projectPath}:0`]: true,
+      [`${projectPath}:1`]: true,
+      [`${projectPath}:2`]: true,
+    };
+
+    const visible = getVisibleWorkspaces(projectPath, workspaces, recency, expandedOldWorkspaces);
+
+    expect(visible).toHaveLength(4);
+    expect(visible.map((w) => w.id)).toEqual(["recent", "tier0", "tier1", "tier2"]);
+  });
+
+  it("should handle empty workspace list", () => {
+    const visible = getVisibleWorkspaces(projectPath, [], {}, {});
+    expect(visible).toHaveLength(0);
+  });
+
+  it("should handle all workspaces being old with none expanded", () => {
+    // When all workspaces are old, partitionWorkspacesByAge moves one to recent
+    const workspaces = [createWorkspace("old1"), createWorkspace("old2")];
+
+    const recency = {
+      old1: now - 2 * ONE_DAY_MS,
+      old2: now - 3 * ONE_DAY_MS,
+    };
+
+    const visible = getVisibleWorkspaces(projectPath, workspaces, recency, {});
+
+    // old1 should be moved to recent by partitionWorkspacesByAge
+    expect(visible).toHaveLength(1);
+    expect(visible[0].id).toBe("old1");
+  });
+
+  it("should skip empty tiers and respect expansion of later tiers", () => {
+    const workspaces = [
+      createWorkspace("recent"),
+      // No tier 0 workspaces (1-7 days)
+      createWorkspace("tier1"), // 7-30 days
+      createWorkspace("tier2"), // >30 days
+    ];
+
+    const recency = {
+      recent: now - 1000,
+      tier1: now - 15 * ONE_DAY_MS,
+      tier2: now - 60 * ONE_DAY_MS,
+    };
+
+    // Expand tier 1 (first non-empty tier after recent)
+    const expandedOldWorkspaces = { [`${projectPath}:1`]: true };
+
+    const visible = getVisibleWorkspaces(projectPath, workspaces, recency, expandedOldWorkspaces);
+
+    expect(visible).toHaveLength(2);
+    expect(visible.map((w) => w.id)).toEqual(["recent", "tier1"]);
   });
 });
 

@@ -18,6 +18,7 @@ import {
   formatDaysThreshold,
   AGE_THRESHOLDS_DAYS,
   computeWorkspaceDepthMap,
+  findNextNonEmptyTier,
 } from "@/browser/utils/ui/workspaceFiltering";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { SidebarCollapseButton } from "./ui/SidebarCollapseButton";
@@ -592,14 +593,6 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 />
                               );
 
-                              // Find the next tier with workspaces (skip empty tiers)
-                              const findNextNonEmptyTier = (startIndex: number): number => {
-                                for (let i = startIndex; i < buckets.length; i++) {
-                                  if (buckets[i].length > 0) return i;
-                                }
-                                return -1;
-                              };
-
                               // Render a tier and all subsequent tiers recursively
                               // Each tier only shows if the previous tier is expanded
                               // Empty tiers are skipped automatically
@@ -650,7 +643,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                       <>
                                         {bucket.map(renderWorkspace)}
                                         {(() => {
-                                          const nextTier = findNextNonEmptyTier(tierIndex + 1);
+                                          const nextTier = findNextNonEmptyTier(
+                                            buckets,
+                                            tierIndex + 1
+                                          );
                                           return nextTier !== -1 ? renderTier(nextTier) : null;
                                         })()}
                                       </>
@@ -660,7 +656,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               };
 
                               // Find first non-empty tier to start rendering
-                              const firstTier = findNextNonEmptyTier(0);
+                              const firstTier = findNextNonEmptyTier(buckets, 0);
 
                               return (
                                 <>

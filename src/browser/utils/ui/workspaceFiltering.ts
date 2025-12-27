@@ -185,6 +185,20 @@ export interface AgePartitionResult {
 }
 
 /**
+ * Find the next non-empty tier starting from a given index.
+ * @returns The index of the next non-empty bucket, or -1 if none found.
+ */
+export function findNextNonEmptyTier(
+  buckets: FrontendWorkspaceMetadata[][],
+  startIndex: number
+): number {
+  for (let i = startIndex; i < buckets.length; i++) {
+    if (buckets[i].length > 0) return i;
+  }
+  return -1;
+}
+
+/**
  * Partition workspaces into age-based buckets.
  * Always shows at least one workspace in the recent section (the most recent one).
  */
@@ -237,4 +251,45 @@ export function partitionWorkspacesByAge(
   }
 
   return { recent, buckets };
+}
+
+/**
+ * Compute which workspaces are currently visible in the sidebar.
+ * Respects the expanded/collapsed state of age-based tier sections.
+ *
+ * @param projectPath - The project path (used to build tier keys)
+ * @param workspaces - All workspaces for the project (in display order)
+ * @param workspaceRecency - Recency timestamps
+ * @param expandedOldWorkspaces - Record of expanded tier states (keys: "projectPath:tierIndex")
+ * @returns Array of visible workspaces in display order
+ */
+export function getVisibleWorkspaces(
+  projectPath: string,
+  workspaces: FrontendWorkspaceMetadata[],
+  workspaceRecency: Record<string, number>,
+  expandedOldWorkspaces: Record<string, boolean>
+): FrontendWorkspaceMetadata[] {
+  if (workspaces.length === 0) return [];
+
+  const { recent, buckets } = partitionWorkspacesByAge(workspaces, workspaceRecency);
+  const visible: FrontendWorkspaceMetadata[] = [...recent];
+
+  // Traverse expanded tiers in order
+  let currentTier = findNextNonEmptyTier(buckets, 0);
+  while (currentTier !== -1) {
+    const key = `${projectPath}:${currentTier}`;
+    const isExpanded = expandedOldWorkspaces[key] ?? false;
+
+    if (!isExpanded) {
+      // Tier is collapsed, stop traversing
+      break;
+    }
+
+    // Add this tier's workspaces
+    visible.push(...buckets[currentTier]);
+    // Move to next non-empty tier
+    currentTier = findNextNonEmptyTier(buckets, currentTier + 1);
+  }
+
+  return visible;
 }
