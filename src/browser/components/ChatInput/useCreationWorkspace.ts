@@ -136,19 +136,26 @@ export function useCreationWorkspace({
     if (!projectPath.length || !api) {
       return;
     }
+    let mounted = true;
     setBranchesLoaded(false);
     const loadBranches = async () => {
       try {
         const result = await api.projects.listBranches({ projectPath });
+        if (!mounted) return;
         setBranches(result.branches);
         setRecommendedTrunk(result.recommendedTrunk);
       } catch (err) {
         console.error("Failed to load branches:", err);
       } finally {
-        setBranchesLoaded(true);
+        if (mounted) {
+          setBranchesLoaded(true);
+        }
       }
     };
     void loadBranches();
+    return () => {
+      mounted = false;
+    };
   }, [projectPath, api]);
 
   const handleSend = useCallback(
