@@ -79,7 +79,7 @@ describe("RefreshController", () => {
     controller.dispose();
   });
 
-  it("schedule() during in-flight queues refresh for after completion", async () => {
+  it("schedule() during in-flight queues refresh with trailing debounce", async () => {
     let resolveRefresh: () => void;
     const onRefresh = jest.fn(
       () =>
@@ -88,7 +88,8 @@ describe("RefreshController", () => {
         })
     );
 
-    const controller = new RefreshController({ onRefresh, debounceMs: 100 });
+    // Use debounceMs longer than MIN_REFRESH_INTERVAL_MS (500ms) to avoid cooldown interference
+    const controller = new RefreshController({ onRefresh, debounceMs: 1000 });
 
     // Start first refresh
     controller.requestImmediate();
@@ -102,9 +103,68 @@ describe("RefreshController", () => {
     await Promise.resolve();
     await Promise.resolve(); // Extra tick for .finally()
 
-    // Should trigger follow-up refresh, but never more frequently than the minimum interval.
-    // First tick runs the post-flight setTimeout(0), then we wait out the min interval.
+    // After in-flight completes, a trailing debounce timer should start.
+    // It should NOT immediately refresh.
     jest.advanceTimersByTime(0);
+    expect(onRefresh).toHaveBeenCalledTimes(1); // Still 1, waiting for debounce
+
+    // Halfway through debounce - still not refreshed
+    jest.advanceTimersByTime(500);
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+
+    // After full debounce period, should refresh
+    jest.advanceTimersByTime(500);
+    expect(onRefresh).toHaveBeenCalledTimes(2);
+
+    controller.dispose();
+  });
+
+  it("trailing debounce captures final state (rate-limit with trailing debounce)", async () => {
+    // This test verifies the key behavior: constant updates don't infinitely delay
+    // the next refresh, but there's still a trailing debounce to capture final state.
+    let resolveRefresh: (() => void) | null = null;
+    const onRefresh = jest.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveRefresh = resolve;
+        })
+    );
+
+    // Use debounceMs longer than MIN_REFRESH_INTERVAL_MS (500ms) to avoid cooldown interference
+    const controller = new RefreshController({ onRefresh, debounceMs: 1000 });
+
+    // 1. First schedule() starts the rate-limit timer
+    controller.schedule();
+    expect(onRefresh).not.toHaveBeenCalled();
+
+    // 2. More schedule() calls during rate-limit window are coalesced (don't reset timer)
+    jest.advanceTimersByTime(500);
+    controller.schedule();
+    controller.schedule();
+
+    // Timer fires at 1000ms, not 1500ms (rate-limited, not pure debounced)
+    jest.advanceTimersByTime(500);
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+
+    // 3. Now refresh is in-flight. More schedule() calls queue a follow-up.
+    controller.schedule();
+    controller.schedule();
+    controller.schedule();
+
+    // 4. Complete the refresh
+    resolveRefresh!();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // 5. Should start a NEW trailing debounce timer (not immediate refresh)
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+
+    // 6. More calls during trailing debounce don't reset it
+    jest.advanceTimersByTime(500);
+    controller.schedule();
+    controller.schedule();
+
+    // Timer fires at 1000ms from when trailing debounce started
     jest.advanceTimersByTime(500);
     expect(onRefresh).toHaveBeenCalledTimes(2);
 
