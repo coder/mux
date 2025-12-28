@@ -79,6 +79,71 @@ describe("getToolsForModel - model-only notifications", () => {
     }
   });
 
+  test("does not re-wrap cached MCP tools across getToolsForModel() calls", async () => {
+    const workspaceSessionDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-ws-"));
+
+    try {
+      await setTodosForSessionDir("ws-1", workspaceSessionDir, [
+        { content: "In progress", status: "in_progress" },
+      ]);
+
+      const runtime = new LocalRuntime(process.cwd());
+      const initStateManager = {
+        waitForInit: () => Promise.resolve(),
+      } as unknown as InitStateManager;
+
+      const cachedMcpTool = {
+        // eslint-disable-next-line @typescript-eslint/require-await
+        execute: async () => ({ ok: true }),
+      } as unknown as Tool;
+
+      const tools1 = await getToolsForModel(
+        "noop:model",
+        {
+          cwd: process.cwd(),
+          runtime,
+          runtimeTempDir: "/tmp",
+          workspaceSessionDir,
+        },
+        "ws-1",
+        initStateManager,
+        undefined,
+        { mcp_dummy: cachedMcpTool }
+      );
+
+      const execute1 = getExecute(tools1.mcp_dummy);
+      for (let i = 0; i < 4; i += 1) {
+        const result = asRecord(await execute1());
+        expect(MODEL_ONLY_TOOL_NOTIFICATIONS_FIELD in result).toBe(false);
+      }
+
+      const tools2 = await getToolsForModel(
+        "noop:model",
+        {
+          cwd: process.cwd(),
+          runtime,
+          runtimeTempDir: "/tmp",
+          workspaceSessionDir,
+        },
+        "ws-1",
+        initStateManager,
+        undefined,
+        { mcp_dummy: cachedMcpTool }
+      );
+
+      const execute2 = getExecute(tools2.mcp_dummy);
+      for (let i = 0; i < 4; i += 1) {
+        const result = asRecord(await execute2());
+        expect(MODEL_ONLY_TOOL_NOTIFICATIONS_FIELD in result).toBe(false);
+      }
+
+      const fifth = asRecord(await execute2());
+      expect(Array.isArray(fifth[MODEL_ONLY_TOOL_NOTIFICATIONS_FIELD])).toBe(true);
+    } finally {
+      await fs.rm(workspaceSessionDir, { recursive: true, force: true });
+    }
+  });
+
   test("does not enable notification injection when workspaceSessionDir is missing", async () => {
     const runtime = new LocalRuntime(process.cwd());
     const initStateManager = {

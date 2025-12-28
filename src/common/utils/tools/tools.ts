@@ -1,4 +1,5 @@
 import { type Tool } from "ai";
+import assert from "@/common/utils/assert";
 import { createFileReadTool } from "@/node/services/tools/file_read";
 import { createBashTool } from "@/node/services/tools/bash";
 import { createBashOutputTool } from "@/node/services/tools/bash_output";
@@ -99,6 +100,21 @@ function augmentToolDescription(baseTool: Tool, additionalInstructions: string):
   return baseTool;
 }
 
+function cloneToolPreservingDescriptors(tool: unknown): Tool {
+  assert(tool && typeof tool === "object", "tool must be an object");
+
+  // Clone the tool without invoking getters (important for some dynamic tools).
+  const prototype = Object.getPrototypeOf(tool) as unknown;
+  assert(
+    prototype === null || typeof prototype === "object",
+    "tool prototype must be an object or null"
+  );
+
+  const clone = Object.create(prototype) as object;
+  Object.defineProperties(clone, Object.getOwnPropertyDescriptors(tool));
+  return clone as Tool;
+}
+
 function wrapToolExecuteWithModelOnlyNotifications(
   toolName: string,
   baseTool: Tool,
@@ -115,7 +131,13 @@ function wrapToolExecuteWithModelOnlyNotifications(
 
   const executeFn = originalExecute as (this: unknown, args: unknown, options: unknown) => unknown;
 
-  baseToolRecord.execute = async (args: unknown, options: unknown) => {
+  // Avoid mutating cached tools in place (e.g. MCP tools cached per workspace).
+  // Repeated getToolsForModel() calls should not stack wrappers.
+  const wrappedTool = cloneToolPreservingDescriptors(baseTool);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const wrappedToolRecord = wrappedTool as any as Record<string, unknown>;
+
+  wrappedToolRecord.execute = async (args: unknown, options: unknown) => {
     try {
       const result: unknown = await executeFn.call(baseTool, args, options);
 
@@ -146,7 +168,7 @@ function wrapToolExecuteWithModelOnlyNotifications(
     }
   };
 
-  return baseTool;
+  return wrappedTool;
 }
 
 function wrapToolsWithModelOnlyNotifications(
@@ -161,11 +183,12 @@ function wrapToolsWithModelOnlyNotifications(
     new TodoListReminderSource({ workspaceSessionDir: config.workspaceSessionDir }),
   ]);
 
+  const wrappedTools: Record<string, Tool> = {};
   for (const [toolName, tool] of Object.entries(tools)) {
-    wrapToolExecuteWithModelOnlyNotifications(toolName, tool, engine);
+    wrappedTools[toolName] = wrapToolExecuteWithModelOnlyNotifications(toolName, tool, engine);
   }
 
-  return tools;
+  return wrappedTools;
 }
 
 /**
