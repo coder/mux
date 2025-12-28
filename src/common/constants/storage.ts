@@ -138,6 +138,14 @@ export function getCancelledCompactionKey(workspaceId: string): string {
 export function getAgentIdKey(scopeId: string): string {
   return `agentId:${scopeId}`;
 }
+
+/**
+ * Get the localStorage key for the pinned third agent id for a scope.
+ * Format: "pinnedAgentId:{scopeId}"
+ */
+export function getPinnedAgentIdKey(scopeId: string): string {
+  return `pinnedAgentId:${scopeId}`;
+}
 /**
  * Get the localStorage key for the UI mode for a workspace
  * Format: "mode:{workspaceId}"
@@ -372,6 +380,7 @@ const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string>
   getInputKey,
   getInputImagesKey,
   getAgentIdKey,
+  getPinnedAgentIdKey,
   getModeKey,
   getThinkingLevelKey,
   getAutoRetryKey,

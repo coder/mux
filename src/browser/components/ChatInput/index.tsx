@@ -56,7 +56,7 @@ import {
   type SlashSuggestion,
 } from "@/browser/utils/slashCommands/suggestions";
 import { Tooltip, TooltipTrigger, TooltipContent, HelpIndicator } from "../ui/tooltip";
-import { AgentSelector } from "../AgentSelector";
+import { AgentModePicker } from "../AgentModePicker";
 import { ContextUsageIndicatorButton } from "../ContextUsageIndicatorButton";
 import { useWorkspaceUsage } from "@/browser/stores/WorkspaceStore";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
@@ -1849,7 +1849,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     autoCompaction={autoCompactionProps}
                   />
                 )}
-                <AgentSelector />
+                <AgentModePicker
+                  workspaceId={variant === "workspace" ? props.workspaceId : undefined}
+                  projectPath={
+                    variant === "creation" ? props.projectPath : selectedWorkspace?.projectPath
+                  }
+                  onComplete={() => inputRef.current?.focus()}
+                />
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
