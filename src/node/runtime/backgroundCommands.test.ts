@@ -41,9 +41,8 @@ describe("backgroundCommands", () => {
         script: "echo hello",
       });
 
-      // Double quotes around trap command allow nested single-quoted paths
       expect(result).toBe(
-        `trap "echo \\$? > '/tmp/exit_code'" EXIT && cd '/home/user/project' && echo hello`
+        `__MUX_EXIT_CODE_PATH='/tmp/exit_code' && trap 'echo $? > "$__MUX_EXIT_CODE_PATH"' EXIT && cd '/home/user/project' && echo hello`
       );
     });
 
