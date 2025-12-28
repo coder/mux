@@ -16,8 +16,8 @@ import { createUserMessage, createAssistantMessage } from "./mockFactory";
 import { within, userEvent, waitFor, expect } from "@storybook/test";
 import {
   RIGHT_SIDEBAR_TAB_KEY,
-  RIGHT_SIDEBAR_COSTS_WIDTH_KEY,
-  RIGHT_SIDEBAR_REVIEW_WIDTH_KEY,
+  RIGHT_SIDEBAR_WIDTH_KEY,
+  RIGHT_SIDEBAR_LAYOUT_KEY,
 } from "@/common/constants/storage";
 import type { ComponentType } from "react";
 import type { MockSessionUsage } from "@/browser/stories/mocks/orpc";
@@ -76,9 +76,8 @@ export const CostsTab: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("costs"));
-        // Set per-tab widths: costs at 350px, review at 700px
-        localStorage.setItem(RIGHT_SIDEBAR_COSTS_WIDTH_KEY, "350");
-        localStorage.setItem(RIGHT_SIDEBAR_REVIEW_WIDTH_KEY, "700");
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "400");
+        localStorage.removeItem(RIGHT_SIDEBAR_LAYOUT_KEY);
 
         const client = setupSimpleChatStory({
           workspaceId: "ws-costs",
@@ -120,7 +119,8 @@ export const CostsTabWithCacheCreate: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("costs"));
-        localStorage.setItem(RIGHT_SIDEBAR_COSTS_WIDTH_KEY, "350");
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "350");
+        localStorage.removeItem(RIGHT_SIDEBAR_LAYOUT_KEY);
 
         const client = setupSimpleChatStory({
           workspaceId: "ws-cache-create",
@@ -175,9 +175,8 @@ export const ReviewTab: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("costs"));
-        // Set distinct widths per tab to verify switching behavior
-        localStorage.setItem(RIGHT_SIDEBAR_COSTS_WIDTH_KEY, "350");
-        localStorage.setItem(RIGHT_SIDEBAR_REVIEW_WIDTH_KEY, "700");
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "700");
+        localStorage.removeItem(RIGHT_SIDEBAR_LAYOUT_KEY);
 
         const client = setupSimpleChatStory({
           workspaceId: "ws-review",
@@ -222,11 +221,14 @@ export const StatsTabIdle: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("stats"));
+        // Clear persisted layout to ensure stats tab appears in fresh default layout
+        localStorage.removeItem(RIGHT_SIDEBAR_LAYOUT_KEY);
 
         const client = setupSimpleChatStory({
           workspaceId: "ws-stats-idle",
           workspaceName: "feature/stats",
           projectName: "my-app",
+          statsTabEnabled: true,
           messages: [
             createUserMessage("msg-1", "Help me with something", { historySequence: 1 }),
             createAssistantMessage("msg-2", "Sure, I can help with that.", { historySequence: 2 }),
@@ -259,6 +261,8 @@ export const StatsTabStreaming: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("stats"));
+        // Clear persisted layout to ensure stats tab appears in fresh default layout
+        localStorage.removeItem(RIGHT_SIDEBAR_LAYOUT_KEY);
 
         const client = setupStreamingChatStory({
           workspaceId: "ws-stats-streaming",
@@ -384,7 +388,9 @@ export const ReviewTabSortByLastEdit: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
-        localStorage.setItem(RIGHT_SIDEBAR_REVIEW_WIDTH_KEY, "700");
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "700");
+        // Clear persisted layout to ensure review tab appears in fresh default layout
+        localStorage.removeItem(RIGHT_SIDEBAR_LAYOUT_KEY);
 
         const workspaceId = "ws-review-sort";
         const now = Date.now();
@@ -476,7 +482,8 @@ export const ReviewTabSortByFileOrder: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
-        localStorage.setItem(RIGHT_SIDEBAR_REVIEW_WIDTH_KEY, "700");
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "700");
+        localStorage.removeItem(RIGHT_SIDEBAR_LAYOUT_KEY);
 
         const workspaceId = "ws-review-file-order";
 
@@ -580,7 +587,8 @@ export const DiffPaddingAlignment: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
-        localStorage.setItem(RIGHT_SIDEBAR_REVIEW_WIDTH_KEY, "700");
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "700");
+        localStorage.removeItem(RIGHT_SIDEBAR_LAYOUT_KEY);
 
         const client = setupSimpleChatStory({
           workspaceId: "ws-diff-alignment",
@@ -657,7 +665,8 @@ export const DiffPaddingAlignmentModification: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
-        localStorage.setItem(RIGHT_SIDEBAR_REVIEW_WIDTH_KEY, "700");
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "700");
+        localStorage.removeItem(RIGHT_SIDEBAR_LAYOUT_KEY);
 
         const client = setupSimpleChatStory({
           workspaceId: "ws-diff-modification",
@@ -765,7 +774,8 @@ export const ReviewTabReadMore: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
-        localStorage.setItem(RIGHT_SIDEBAR_REVIEW_WIDTH_KEY, "700");
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "700");
+        localStorage.removeItem(RIGHT_SIDEBAR_LAYOUT_KEY);
 
         const workspaceId = "ws-read-more";
 
@@ -891,7 +901,8 @@ export const ReviewTabReadMoreBoundaries: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
-        localStorage.setItem(RIGHT_SIDEBAR_REVIEW_WIDTH_KEY, "700");
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "700");
+        localStorage.removeItem(RIGHT_SIDEBAR_LAYOUT_KEY);
 
         const workspaceId = "ws-read-more-boundaries";
 

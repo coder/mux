@@ -345,17 +345,16 @@ export const RIGHT_SIDEBAR_TAB_KEY = "right-sidebar-tab";
 export const RIGHT_SIDEBAR_COLLAPSED_KEY = "right-sidebar:collapsed";
 
 /**
- * Right sidebar width for Costs tab (global)
- * Format: "right-sidebar:width:costs"
+ * Right sidebar width (unified across all tabs)
+ * Format: "right-sidebar:width"
  */
-export const RIGHT_SIDEBAR_COSTS_WIDTH_KEY = "right-sidebar:width:costs";
+export const RIGHT_SIDEBAR_WIDTH_KEY = "right-sidebar:width";
 
 /**
- * Right sidebar width for Review tab (global)
- * Reuses legacy key to preserve existing user preferences
- * Format: "review-sidebar-width"
+ * Right sidebar dock-lite layout (global)
+ * Format: "right-sidebar:layout"
  */
-export const RIGHT_SIDEBAR_REVIEW_WIDTH_KEY = "review-sidebar-width";
+export const RIGHT_SIDEBAR_LAYOUT_KEY = "right-sidebar:layout";
 
 /**
  * Get the localStorage key for unified Review search state per workspace

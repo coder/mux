@@ -79,11 +79,6 @@ describe("ServerService.startServer", () => {
   }
 
   test("cleans up server when lockfile acquisition fails", async () => {
-    // Skip on Windows where chmod doesn't work the same way
-    if (process.platform === "win32") {
-      return;
-    }
-
     const service = new ServerService();
 
     // Make muxHome a *file* (not a directory) so lockfile.acquire() fails reliably,
@@ -91,7 +86,7 @@ describe("ServerService.startServer", () => {
     const muxHomeFile = path.join(tempDir, "muxHome-not-a-dir");
     await fs.writeFile(muxHomeFile, "not a directory");
 
-    let thrownError: Error | null = null;
+    let thrownError: unknown = null;
 
     try {
       // Start server - this should fail when trying to write lockfile
@@ -102,12 +97,15 @@ describe("ServerService.startServer", () => {
         port: 0, // random port
       });
     } catch (err) {
-      thrownError = err as Error;
+      thrownError = err;
     }
 
     // Verify that an error was thrown
     expect(thrownError).not.toBeNull();
-    expect(thrownError!.message).toMatch(/EACCES|permission denied|ENOTDIR|not a directory/i);
+    expect(thrownError).toBeInstanceOf(Error);
+    expect((thrownError as Error).message).toMatch(
+      /EACCES|permission denied|ENOTDIR|not a directory/i
+    );
 
     // Verify the server is NOT left running
     expect(service.isServerRunning()).toBe(false);

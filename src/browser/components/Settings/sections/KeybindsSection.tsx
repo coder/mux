@@ -29,6 +29,7 @@ const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
   FOCUS_CHAT: "Focus chat input",
   COSTS_TAB: "Costs tab",
   REVIEW_TAB: "Review tab",
+  TERMINAL_TAB: "Terminal tab",
   STATS_TAB: "Stats tab",
   REFRESH_REVIEW: "Refresh diff",
   FOCUS_REVIEW_SEARCH: "Search in review",

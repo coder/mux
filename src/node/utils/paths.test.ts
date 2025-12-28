@@ -116,6 +116,28 @@ describe("PlatformPaths", () => {
       const testPath = path.join("/", "home", "user", "project");
       expect(PlatformPaths.expandHome(testPath)).toBe(testPath);
     });
+    test("expands ~/.mux to MUX_ROOT when set", () => {
+      const originalMuxRoot = process.env.MUX_ROOT;
+      const testMuxRoot = path.join(os.tmpdir(), "mux-root-test");
+      process.env.MUX_ROOT = testMuxRoot;
+
+      try {
+        const sep = path.sep;
+        const muxPath = `~${sep}.mux${sep}src${sep}project`;
+        expect(PlatformPaths.expandHome(muxPath)).toBe(path.join(testMuxRoot, "src", "project"));
+
+        // Other ~ paths should still resolve to the actual OS home directory.
+        const home = os.homedir();
+        const homePath = `~${sep}projects${sep}mux`;
+        expect(PlatformPaths.expandHome(homePath)).toBe(path.join(home, "projects", "mux"));
+      } finally {
+        if (originalMuxRoot === undefined) {
+          delete process.env.MUX_ROOT;
+        } else {
+          process.env.MUX_ROOT = originalMuxRoot;
+        }
+      }
+    });
 
     test("handles empty input", () => {
       expect(PlatformPaths.expandHome("")).toBe("");
