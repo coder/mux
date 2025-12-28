@@ -216,6 +216,11 @@ function ChatComposerInner(props: {
     setIsSending(true);
     setInput("");
 
+    const restoreTrimmedIfSafe = () => {
+      // Avoid clobbering a new draft typed while the request is in flight.
+      setInput((current) => (current.trim().length === 0 ? trimmed : current));
+    };
+
     const controller = new AbortController();
     const timeoutId = window.setTimeout(() => {
       controller.abort();
@@ -237,7 +242,7 @@ function ChatComposerInner(props: {
         const errorString =
           typeof result.error === "string" ? result.error : JSON.stringify(result.error, null, 2);
         props.onNotice({ level: "error", message: `Send failed: ${errorString}` });
-        setInput(trimmed);
+        restoreTrimmedIfSafe();
         return;
       }
 
@@ -248,13 +253,13 @@ function ChatComposerInner(props: {
           level: "error",
           message: `Send timed out after ${SEND_MESSAGE_TIMEOUT_MS / 1000}s. Try again.`,
         });
-        setInput(trimmed);
+        restoreTrimmedIfSafe();
         return;
       }
 
       const errorString = error instanceof Error ? error.message : String(error);
       props.onNotice({ level: "error", message: `Send failed: ${errorString}` });
-      setInput(trimmed);
+      restoreTrimmedIfSafe();
     } finally {
       clearTimeout(timeoutId);
       setIsSending(false);
