@@ -73,7 +73,7 @@ export function renderApp(props: RenderReviewPanelParams): RenderedApp {
       );
     },
 
-    async selectTab(tab: "costs" | "review" | "stats"): Promise<void> {
+    async selectTab(tab: "costs" | "review" | "terminal" | "stats"): Promise<void> {
       await waitFor(
         () => {
           // Find tab button by role and name

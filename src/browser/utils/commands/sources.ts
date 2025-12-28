@@ -4,7 +4,16 @@ import type { APIClient } from "@/browser/contexts/API";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
+import { RIGHT_SIDEBAR_LAYOUT_KEY, RIGHT_SIDEBAR_TAB_KEY } from "@/common/constants/storage";
+import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { CommandIds } from "@/browser/utils/commandIds";
+import { isTabType, type TabType } from "@/browser/types/rightSidebar";
+import {
+  addToolToFocusedTabset,
+  getDefaultRightSidebarLayoutState,
+  parseRightSidebarLayoutState,
+  splitFocusedTabset,
+} from "@/browser/utils/rightSidebarLayout";
 
 import type { ProjectConfig } from "@/node/config";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
@@ -82,6 +91,25 @@ const section = {
   settings: COMMAND_SECTIONS.SETTINGS,
 };
 
+const getRightSidebarTabFallback = (): TabType => {
+  const raw = readPersistedState<string>(RIGHT_SIDEBAR_TAB_KEY, "costs");
+  return isTabType(raw) ? raw : "costs";
+};
+
+const updateRightSidebarLayout = (
+  updater: (
+    state: ReturnType<typeof parseRightSidebarLayoutState>
+  ) => ReturnType<typeof parseRightSidebarLayoutState>
+) => {
+  const fallback = getRightSidebarTabFallback();
+  const defaultLayout = getDefaultRightSidebarLayoutState(fallback);
+
+  updatePersistedState<ReturnType<typeof parseRightSidebarLayoutState>>(
+    RIGHT_SIDEBAR_LAYOUT_KEY,
+    (prev) => updater(parseRightSidebarLayoutState(prev, fallback)),
+    defaultLayout
+  );
+};
 export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandAction[]> {
   const actions: Array<() => CommandAction[]> = [];
 
@@ -348,6 +376,53 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
       section: section.navigation,
       shortcutHint: formatKeybind(KEYBINDS.TOGGLE_SIDEBAR),
       run: () => p.onToggleSidebar(),
+    },
+    {
+      id: CommandIds.navRightSidebarFocusTerminal(),
+      title: "Right Sidebar: Focus Terminal",
+      section: section.navigation,
+      shortcutHint: formatKeybind(KEYBINDS.TERMINAL_TAB),
+      run: () => updateRightSidebarLayout((s) => addToolToFocusedTabset(s, "terminal")),
+    },
+    {
+      id: CommandIds.navRightSidebarSplitHorizontal(),
+      title: "Right Sidebar: Split Horizontally",
+      section: section.navigation,
+      run: () => updateRightSidebarLayout((s) => splitFocusedTabset(s, "horizontal")),
+    },
+    {
+      id: CommandIds.navRightSidebarSplitVertical(),
+      title: "Right Sidebar: Split Vertically",
+      section: section.navigation,
+      run: () => updateRightSidebarLayout((s) => splitFocusedTabset(s, "vertical")),
+    },
+    {
+      id: CommandIds.navRightSidebarAddTool(),
+      title: "Right Sidebar: Add Tool…",
+      section: section.navigation,
+      run: () => undefined,
+      prompt: {
+        title: "Add Right Sidebar Tool",
+        fields: [
+          {
+            type: "select",
+            name: "tool",
+            label: "Tool",
+            placeholder: "Select a tool…",
+            getOptions: () =>
+              (["costs", "review", "terminal"] as TabType[]).map((tab) => ({
+                id: tab,
+                label: tab === "costs" ? "Costs" : tab === "review" ? "Review" : "Terminal",
+                keywords: [tab],
+              })),
+          },
+        ],
+        onSubmit: (vals) => {
+          const tool = vals.tool;
+          if (!isTabType(tool)) return;
+          updateRightSidebarLayout((s) => addToolToFocusedTabset(s, tool));
+        },
+      },
     },
   ]);
 
