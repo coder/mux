@@ -247,22 +247,19 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   const handleOpenInEditor = async (event: React.MouseEvent) => {
     if (!planPath || !workspaceId) return;
 
-    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    // Capture primitive positioning data synchronously. We intentionally avoid holding onto
+    // DOM elements (or a DOMRect) across the await boundary.
+    const { bottom, left } = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    const anchorPosition = { top: bottom + 8, left };
 
     try {
       const result = await openInEditor(workspaceId, planPath, runtimeConfig);
       if (!result.success && result.error) {
-        editorError.showError("plan-editor", result.error, {
-          top: rect.bottom + 8,
-          left: rect.left,
-        });
+        editorError.showError("plan-editor", result.error, anchorPosition);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      editorError.showError("plan-editor", message, {
-        top: rect.bottom + 8,
-        left: rect.left,
-      });
+      editorError.showError("plan-editor", message, anchorPosition);
     }
   };
 

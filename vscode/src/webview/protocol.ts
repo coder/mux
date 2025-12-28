@@ -1,3 +1,10 @@
+/**
+ * VS Code webview ↔ extension host message protocol.
+ *
+ * - Webview → extension: {@link WebviewToExtensionMessage} (includes oRPC call/cancel messages)
+ * - Extension → webview: {@link ExtensionToWebviewMessage} (includes oRPC responses + chat updates)
+ */
+
 import type { WorkspaceChatMessage } from "mux/common/orpc/types";
 
 export type UiWorkspaceRuntimeType = "local" | "worktree" | "ssh";

@@ -13,6 +13,7 @@ import * as Comlink from "comlink";
 import type { Highlighter } from "shiki";
 import type { HighlightWorkerAPI } from "@/browser/workers/highlightWorker";
 import { mapToShikiLang, SHIKI_DARK_THEME, SHIKI_LIGHT_THEME } from "./shiki-shared";
+import { isVscodeWebview } from "@/browser/utils/env";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Main-thread Shiki (fallback only)
@@ -53,8 +54,7 @@ function getWorkerAPI(): Comlink.Remote<HighlightWorkerAPI> | null {
   // worker will fail to start and Comlink calls can hang.
   //
   // Prefer correctness and responsiveness: fall back to the main-thread highlighter.
-  const acquireVsCodeApi = (globalThis as { acquireVsCodeApi?: unknown }).acquireVsCodeApi;
-  if (typeof acquireVsCodeApi === "function") {
+  if (isVscodeWebview()) {
     if (!warnedVscodeWorkerDisabled) {
       warnedVscodeWorkerDisabled = true;
       console.warn("[highlightWorkerClient] Worker highlighting disabled in VS Code webview");

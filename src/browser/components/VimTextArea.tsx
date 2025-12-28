@@ -1,17 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useAutoResizeTextarea } from "@/browser/hooks/useAutoResizeTextarea";
 import type { UIMode } from "@/common/types/mode";
+import { isVscodeWebview } from "@/browser/utils/env";
 import * as vim from "@/browser/utils/vim";
 import { Tooltip, TooltipTrigger, TooltipContent, HelpIndicator } from "./ui/tooltip";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { cn } from "@/common/lib/utils";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { VIM_ENABLED_KEY } from "@/common/constants/storage";
-
-function isVscodeWebview(): boolean {
-  const acquireVsCodeApi = (globalThis as { acquireVsCodeApi?: unknown }).acquireVsCodeApi;
-  return typeof acquireVsCodeApi === "function";
-}
 
 /**
  * VimTextArea – minimal Vim-like editing for a textarea.
