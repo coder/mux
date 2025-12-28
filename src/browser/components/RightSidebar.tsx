@@ -1,8 +1,8 @@
 import React from "react";
 import {
   RIGHT_SIDEBAR_COLLAPSED_KEY,
-  RIGHT_SIDEBAR_LAYOUT_KEY,
   RIGHT_SIDEBAR_TAB_KEY,
+  getRightSidebarLayoutKey,
 } from "@/common/constants/storage";
 import {
   readPersistedState,
@@ -58,7 +58,7 @@ import {
   type DragStartEvent,
   type DragEndEvent,
 } from "@dnd-kit/core";
-import { SortableContext, horizontalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
+import { SortableContext, horizontalListSortingStrategy } from "@dnd-kit/sortable";
 
 /** Stats reported by ReviewPanel for tab display */
 export interface ReviewStats {
@@ -476,8 +476,11 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     [initialActiveTab]
   );
 
+  // Layout is per-workspace so each workspace can have its own split/tab configuration
+  // (e.g., different numbers of terminals). Width and collapsed state remain global.
+  const layoutKey = getRightSidebarLayoutKey(workspaceId);
   const [layoutRaw, setLayoutRaw] = usePersistedState<RightSidebarLayoutState>(
-    RIGHT_SIDEBAR_LAYOUT_KEY,
+    layoutKey,
     defaultLayout,
     {
       listener: true,
@@ -818,7 +821,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       {/* Drag overlay - shows tab being dragged at cursor position */}
       <DragOverlay>
         {activeDragData ? (
-          <div className="bg-background/95 border-border rounded-md border px-3 py-1 text-xs font-medium shadow cursor-grabbing">
+          <div className="border-border bg-background/95 cursor-grabbing rounded-md border px-3 py-1 text-xs font-medium shadow">
             {getTabName(activeDragData.tab)}
           </div>
         ) : null}
