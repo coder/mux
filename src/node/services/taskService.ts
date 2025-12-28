@@ -1064,11 +1064,23 @@ export class TaskService {
     const cfg = this.config.loadConfigOrDefault();
     const parentById = this.buildAgentTaskIndex(cfg).parentById;
 
+    const nowMs = Date.now();
+    this.cleanupExpiredCompletedReports(nowMs);
+
     const result: string[] = [];
     for (const taskId of taskIds) {
       if (typeof taskId !== "string" || taskId.length === 0) continue;
       if (this.isDescendantAgentTaskUsingParentById(parentById, ancestorWorkspaceId, taskId)) {
         result.push(taskId);
+        continue;
+      }
+
+      // Preserve scope checks for tasks whose workspace was cleaned up after completion.
+      const cached = this.completedReportsByTaskId.get(taskId);
+      if (cached && cached.expiresAtMs > nowMs) {
+        if (cached.ancestorWorkspaceIds.includes(ancestorWorkspaceId)) {
+          result.push(taskId);
+        }
       }
     }
 
