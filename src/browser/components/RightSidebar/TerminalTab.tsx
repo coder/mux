@@ -14,18 +14,18 @@ interface TerminalTabProps {
 }
 
 export const TerminalTab: React.FC<TerminalTabProps> = ({ workspaceId, visible }) => {
-  const [existingSessionId, setExistingSessionId] = React.useState<string | undefined>(() =>
-    terminalSessionsByWorkspaceId.get(workspaceId)
-  );
+  // Dummy state to trigger re-render when session is set (since Map mutation doesn't cause re-render)
+  const [, forceUpdate] = React.useReducer((x: number) => x + 1, 0);
 
-  React.useEffect(() => {
-    setExistingSessionId(terminalSessionsByWorkspaceId.get(workspaceId));
-  }, [workspaceId]);
+  // Read sessionId directly from the Map to ensure it always matches the current workspaceId.
+  // Using useState with useEffect caused a timing bug: when workspaceId changed, the old sessionId
+  // was passed to TerminalView before the effect could sync the new value.
+  const existingSessionId = terminalSessionsByWorkspaceId.get(workspaceId);
 
   const handleSessionId = React.useCallback(
     (sid: string) => {
       terminalSessionsByWorkspaceId.set(workspaceId, sid);
-      setExistingSessionId(sid);
+      forceUpdate();
     },
     [workspaceId]
   );
