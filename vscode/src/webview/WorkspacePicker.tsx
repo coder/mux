@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown } from "lucide-react";
 
 import { cn } from "mux/common/lib/utils";
+import { LocalIcon, SSHIcon, WorktreeIcon } from "mux/browser/components/icons/RuntimeIcons";
 import { Shimmer } from "mux/browser/components/ai-elements/shimmer";
 import { Button } from "mux/browser/components/ui/button";
 import { Input } from "mux/browser/components/ui/input";
@@ -10,10 +11,37 @@ import { Popover, PopoverContent, PopoverTrigger } from "mux/browser/components/
 
 import type { UiWorkspace } from "./protocol";
 
-const RUNTIME_BADGE_CLASSNAME: Record<UiWorkspace["runtimeType"], string> = {
-  local: "border-[var(--color-runtime-local)]/50 text-muted",
-  worktree: "border-[var(--color-runtime-worktree)]/50 text-muted",
-  ssh: "border-[var(--color-runtime-ssh)]/50 text-muted",
+const RUNTIME_BADGE_STYLES: Record<
+  UiWorkspace["runtimeType"],
+  {
+    idle: string;
+    working: string;
+  }
+> = {
+  ssh: {
+    idle: "bg-transparent text-muted border-[var(--color-runtime-ssh)]/50",
+    working:
+      "bg-[var(--color-runtime-ssh)]/20 text-[var(--color-runtime-ssh-text)] border-[var(--color-runtime-ssh)]/60 animate-pulse",
+  },
+  worktree: {
+    idle: "bg-transparent text-muted border-[var(--color-runtime-worktree)]/50",
+    working:
+      "bg-[var(--color-runtime-worktree)]/20 text-[var(--color-runtime-worktree-text)] border-[var(--color-runtime-worktree)]/60 animate-pulse",
+  },
+  local: {
+    idle: "bg-transparent text-muted border-[var(--color-runtime-local)]/50",
+    working:
+      "bg-[var(--color-runtime-local)]/30 text-[var(--color-runtime-local)] border-[var(--color-runtime-local)]/60 animate-pulse",
+  },
+} as const;
+
+const RUNTIME_ICON: Record<
+  UiWorkspace["runtimeType"],
+  React.ComponentType<{ size?: number; className?: string }>
+> = {
+  local: LocalIcon,
+  ssh: SSHIcon,
+  worktree: WorktreeIcon,
 } as const;
 
 function formatWorkspaceTriggerLabel(workspace: UiWorkspace): string {
@@ -116,14 +144,17 @@ export function WorkspacePicker(props: {
           ) : (
             filteredWorkspaces.map((workspace) => {
               const isSelected = workspace.id === props.selectedWorkspaceId;
-              const runtimeBadgeClassName = RUNTIME_BADGE_CLASSNAME[workspace.runtimeType];
+              const runtimeBadgeClassName = workspace.streaming
+                ? RUNTIME_BADGE_STYLES[workspace.runtimeType].working
+                : RUNTIME_BADGE_STYLES[workspace.runtimeType].idle;
+              const RuntimeIcon = RUNTIME_ICON[workspace.runtimeType];
 
               return (
                 <button
                   key={workspace.id}
                   type="button"
                   className={cn(
-                    "hover:bg-hover flex w-full items-center gap-2 rounded-md px-2 py-2 text-left",
+                    "hover:bg-hover flex w-full items-start gap-2 rounded-md px-2 py-2 text-left",
                     isSelected && "bg-hover"
                   )}
                   onClick={() => {
@@ -131,18 +162,24 @@ export function WorkspacePicker(props: {
                     setOpen(false);
                   }}
                 >
+                  <span
+                    className={cn(
+                      "mt-0.5 inline-flex shrink-0 items-center rounded border px-1 py-0.5 transition-colors",
+                      runtimeBadgeClassName
+                    )}
+                  >
+                    <RuntimeIcon />
+                  </span>
+
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="min-w-0 flex-1 truncate text-sm">
-                        {workspace.streaming ? (
-                          <Shimmer className="w-full truncate" colorClass="var(--color-foreground)">
-                            {workspace.workspaceName}
-                          </Shimmer>
-                        ) : (
-                          workspace.workspaceName
-                        )}
-                      </span>
-                      {workspace.streaming ? <span className="text-muted text-xs">streaming</span> : null}
+                    <div className="min-w-0 truncate text-sm">
+                      {workspace.streaming ? (
+                        <Shimmer className="w-full truncate" colorClass="var(--color-foreground)">
+                          {workspace.workspaceName}
+                        </Shimmer>
+                      ) : (
+                        workspace.workspaceName
+                      )}
                     </div>
                     <div className="text-muted truncate text-xs">
                       {workspace.projectName}
@@ -152,16 +189,11 @@ export function WorkspacePicker(props: {
                     </div>
                   </div>
 
-                  <span
-                    className={cn(
-                      "shrink-0 rounded border px-1 py-0.5 text-[10px] uppercase",
-                      runtimeBadgeClassName
-                    )}
-                  >
-                    {workspace.runtimeType}
-                  </span>
-
-                  {isSelected ? <Check className="shrink-0" /> : <span className="size-4 shrink-0" />}
+                  {isSelected ? (
+                    <Check className="size-4 shrink-0 self-center" />
+                  ) : (
+                    <span className="size-4 shrink-0 self-center" />
+                  )}
                 </button>
               );
             })
