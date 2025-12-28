@@ -73,6 +73,10 @@ test("buildCoreSources includes create/switch workspace actions", () => {
   const titles = actions.map((a) => a.title);
   expect(titles.some((t) => t.startsWith("Create New Workspace"))).toBe(true);
   expect(titles.some((t) => t.includes("Switch to "))).toBe(true);
+  expect(titles.includes("Right Sidebar: Split Horizontally")).toBe(true);
+  expect(titles.includes("Right Sidebar: Split Vertically")).toBe(true);
+  expect(titles.includes("Right Sidebar: Add Tool…")).toBe(true);
+  expect(titles.includes("Right Sidebar: Focus Terminal")).toBe(true);
   expect(titles.includes("Open Current Workspace in Terminal")).toBe(true);
   expect(titles.includes("Open Workspace in Terminal…")).toBe(true);
 });
