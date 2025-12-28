@@ -72,6 +72,37 @@ function sanitizeForPath(value: string): string {
 function shouldSkipBuild(): boolean {
   return process.env.MUX_E2E_SKIP_BUILD === "1";
 }
+
+export function parseEnvVarFromPsCommand(command: string, name: string): string | undefined {
+  if (!name) {
+    throw new Error("Expected env var name");
+  }
+  if (!command) {
+    return undefined;
+  }
+
+  // `ps eww -o command=` appends the environment as space-delimited `KEY=value` pairs.
+  // Values can contain spaces, so we have to parse until the next ` KEY=` boundary.
+  const needle = `${name}=`;
+  for (
+    let index = command.indexOf(needle);
+    index !== -1;
+    index = command.indexOf(needle, index + needle.length)
+  ) {
+    if (index !== 0 && !/\s/.test(command[index - 1] ?? "")) {
+      continue;
+    }
+
+    const valueStart = index + needle.length;
+    const remainder = command.slice(valueStart);
+    const boundaryIndex = remainder.search(/\s+[A-Za-z_][A-Za-z0-9_]*=/);
+    const valueEnd = boundaryIndex === -1 ? command.length : valueStart + boundaryIndex;
+    return command.slice(valueStart, valueEnd);
+  }
+
+  return undefined;
+}
+
 function readEnvVarFromProcess(pid: number, name: string): string | undefined {
   if (!Number.isFinite(pid) || pid <= 0) {
     throw new Error(`Expected a positive pid, got ${pid}`);
@@ -101,8 +132,7 @@ function readEnvVarFromProcess(pid: number, name: string): string | undefined {
     }
 
     const command = result.stdout.trim();
-    const match = new RegExp(`\\b${name}=([^ ]+)`).exec(command);
-    return match?.[1];
+    return parseEnvVarFromPsCommand(command, name);
   }
 
   return undefined;
