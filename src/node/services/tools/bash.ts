@@ -616,7 +616,8 @@ ${script}`;
 
           // Migrate to background tracking if manager is available
           if (config.backgroundProcessManager && config.workspaceId) {
-            const processId = safeDisplayName;
+            const processId =
+              config.backgroundProcessManager.generateUniqueProcessId(safeDisplayName);
 
             // Create a synthetic ExecStream for the migration streams
             // The UI streams are still being consumed, migration streams continue to files
@@ -647,7 +648,8 @@ ${script}`;
                 processId,
                 config.workspaceId,
                 script,
-                migrateResult.outputDir
+                migrateResult.outputDir,
+                safeDisplayName
               );
 
               return {

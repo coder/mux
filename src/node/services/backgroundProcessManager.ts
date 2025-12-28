@@ -1,5 +1,6 @@
 import type { Runtime, BackgroundHandle } from "@/node/runtime/Runtime";
 import { spawnProcess } from "./backgroundProcessExecutor";
+import assert from "@/common/utils/assert";
 import { getErrorMessage } from "@/common/utils/errors";
 import { log } from "./log";
 import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
@@ -145,6 +146,30 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
   }
 
   /**
+   * Generate a unique background process ID.
+   *
+   * Background process IDs are used as tool-visible identifiers (e.g. task_await with bash: IDs),
+   * so they must be globally unique across all running processes.
+   *
+   * If the base ID is already in use, we append " (1)", " (2)", etc.
+   */
+  generateUniqueProcessId(baseId: string): string {
+    assert(
+      typeof baseId === "string" && baseId.length > 0,
+      "BackgroundProcessManager.generateUniqueProcessId requires a non-empty baseId"
+    );
+
+    let processId = baseId;
+    let suffix = 1;
+    while (this.processes.has(processId)) {
+      processId = `${baseId} (${suffix})`;
+      suffix++;
+    }
+
+    return processId;
+  }
+
+  /**
    * Spawn a new process with background-style infrastructure.
    *
    * All processes are spawned with nohup/setsid and file-based output,
@@ -175,13 +200,7 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
   > {
     log.debug(`BackgroundProcessManager.spawn() called for workspace ${workspaceId}`);
 
-    // Generate unique processId, appending (1), (2), etc. on collision
-    let processId = config.displayName;
-    let suffix = 1;
-    while (this.processes.has(processId)) {
-      processId = `${config.displayName} (${suffix})`;
-      suffix++;
-    }
+    const processId = this.generateUniqueProcessId(config.displayName);
 
     // Spawn via executor with background infrastructure
     // spawnProcess uses runtime.tempDir() internally for output directory
