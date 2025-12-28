@@ -8,12 +8,23 @@ import { ChatInput } from "./ChatInput/index";
 import type { ChatInputAPI } from "./ChatInput/types";
 import { ArchivedWorkspaces } from "./ArchivedWorkspaces";
 import { useAPI } from "@/browser/contexts/API";
+import { isWorkspaceArchived } from "@/common/utils/archive";
 
 interface ProjectPageProps {
   projectPath: string;
   projectName: string;
   onProviderConfig: (provider: string, keyPath: string[], value: string) => Promise<void>;
   onWorkspaceCreated: (metadata: FrontendWorkspaceMetadata) => void;
+}
+
+/** Compare archived workspace lists by ID set (order doesn't matter for equality) */
+function archivedListsEqual(
+  prev: FrontendWorkspaceMetadata[],
+  next: FrontendWorkspaceMetadata[]
+): boolean {
+  if (prev.length !== next.length) return false;
+  const prevIds = new Set(prev.map((w) => w.id));
+  return next.every((w) => prevIds.has(w.id));
 }
 
 /**
@@ -30,7 +41,15 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
   const chatInputRef = useRef<ChatInputAPI | null>(null);
   const [archivedWorkspaces, setArchivedWorkspaces] = useState<FrontendWorkspaceMetadata[]>([]);
 
-  // Fetch archived workspaces for this project
+  // Track archived workspaces in a ref; only update state when the list actually changes
+  const archivedMapRef = useRef<Map<string, FrontendWorkspaceMetadata>>(new Map());
+
+  const syncArchivedState = useCallback(() => {
+    const next = Array.from(archivedMapRef.current.values());
+    setArchivedWorkspaces((prev) => (archivedListsEqual(prev, next) ? prev : next));
+  }, []);
+
+  // Fetch archived workspaces for this project on mount
   useEffect(() => {
     if (!api) return;
     let cancelled = false;
@@ -39,9 +58,9 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
       try {
         const allArchived = await api.workspace.list({ archived: true });
         if (cancelled) return;
-        // Filter to just this project's archived workspaces
         const projectArchived = allArchived.filter((w) => w.projectPath === projectPath);
-        setArchivedWorkspaces(projectArchived);
+        archivedMapRef.current = new Map(projectArchived.map((w) => [w.id, w]));
+        syncArchivedState();
       } catch (error) {
         console.error("Failed to load archived workspaces:", error);
       }
@@ -51,7 +70,44 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [api, projectPath]);
+  }, [api, projectPath, syncArchivedState]);
+
+  // Subscribe to metadata events to reactively update archived list
+  useEffect(() => {
+    if (!api) return;
+    const controller = new AbortController();
+
+    (async () => {
+      try {
+        const iterator = await api.workspace.onMetadata(undefined, { signal: controller.signal });
+        for await (const event of iterator) {
+          if (controller.signal.aborted) break;
+
+          const meta = event.metadata;
+          // Only care about workspaces in this project
+          if (meta && meta.projectPath !== projectPath) continue;
+          // For deletions, check if it was in our map (i.e., was in this project)
+          if (!meta && !archivedMapRef.current.has(event.workspaceId)) continue;
+
+          const isArchived = meta && isWorkspaceArchived(meta.archivedAt, meta.unarchivedAt);
+
+          if (isArchived) {
+            archivedMapRef.current.set(meta.id, meta);
+          } else {
+            archivedMapRef.current.delete(event.workspaceId);
+          }
+
+          syncArchivedState();
+        }
+      } catch (err) {
+        if (!controller.signal.aborted) {
+          console.error("Failed to subscribe to metadata for archived workspaces:", err);
+        }
+      }
+    })();
+
+    return () => controller.abort();
+  }, [api, projectPath, syncArchivedState]);
 
   const didAutoFocusRef = useRef(false);
   const handleChatReady = useCallback((api: ChatInputAPI) => {

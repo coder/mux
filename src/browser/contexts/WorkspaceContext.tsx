@@ -324,37 +324,71 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         for await (const event of iterator) {
           if (signal.aborted) break;
 
+          // 1. ALWAYS update metadata map first - this is the critical data update
+          if (event.metadata !== null) {
+            ensureCreatedAt(event.metadata);
+            seedWorkspaceLocalStorageFromBackend(event.metadata);
+          }
+
+          // Capture deleted workspace info before removing from map (needed for navigation)
+          const deletedMeta =
+            event.metadata === null ? workspaceMetadataRef.current.get(event.workspaceId) : null;
+
+          setWorkspaceMetadata((prev) => {
+            const updated = new Map(prev);
+            const isNewWorkspace = !prev.has(event.workspaceId) && event.metadata !== null;
+            const existingMeta = prev.get(event.workspaceId);
+            const wasCreating = existingMeta?.status === "creating";
+            const isNowReady = event.metadata !== null && event.metadata.status !== "creating";
+
+            // Check if workspace is/became archived (consistent with initial load filtering)
+            const isNowArchived =
+              event.metadata !== null &&
+              isWorkspaceArchived(event.metadata.archivedAt, event.metadata.unarchivedAt);
+
+            if (event.metadata === null || isNowArchived) {
+              // Remove deleted or newly-archived workspaces from active map
+              updated.delete(event.workspaceId);
+            } else if (!isNowArchived) {
+              // Only add/update non-archived workspaces (including unarchived ones)
+              updated.set(event.workspaceId, event.metadata);
+            }
+
+            // Reload projects when:
+            // 1. New workspace appears (e.g., from fork)
+            // 2. Workspace transitions from "creating" to ready (now saved to config)
+            if (isNewWorkspace || (wasCreating && isNowReady)) {
+              void refreshProjects();
+            }
+
+            return updated;
+          });
+
+          // 2. THEN handle side effects (cleanup, navigation) - these can't break data updates
           if (event.metadata === null) {
-            // Workspace deleted - clean up workspace-scoped persisted state.
             deleteWorkspaceStorage(event.workspaceId);
 
-            // If the user is currently viewing a deleted child workspace, fall back to its parent.
-            // Otherwise, fall back to another workspace in the same project (best effort).
-            const deletedMeta = workspaceMetadataRef.current.get(event.workspaceId);
-            // Only handle navigation if the deleted workspace is currently selected.
-            // Use the ref to get the current selection (avoids stale closure).
+            // Navigate away only if the deleted workspace was selected
             const currentSelection = selectedWorkspaceRef.current;
-            if (!currentSelection || currentSelection.workspaceId !== event.workspaceId) {
-              // Not viewing the deleted workspace - no navigation needed
-              return;
-            }
+            if (currentSelection?.workspaceId !== event.workspaceId) continue;
 
-            // The deleted workspace was selected - try to find a fallback
+            // Try parent workspace first
             const parentWorkspaceId = deletedMeta?.parentWorkspaceId;
-            if (parentWorkspaceId) {
-              const parentMeta = workspaceMetadataRef.current.get(parentWorkspaceId);
-              if (parentMeta) {
-                setSelectedWorkspace({
-                  workspaceId: parentMeta.id,
-                  projectPath: parentMeta.projectPath,
-                  projectName: parentMeta.projectName,
-                  namedWorkspacePath: parentMeta.namedWorkspacePath,
-                });
-                return;
-              }
+            const parentMeta = parentWorkspaceId
+              ? workspaceMetadataRef.current.get(parentWorkspaceId)
+              : null;
+
+            if (parentMeta) {
+              setSelectedWorkspace({
+                workspaceId: parentMeta.id,
+                projectPath: parentMeta.projectPath,
+                projectName: parentMeta.projectName,
+                namedWorkspacePath: parentMeta.namedWorkspacePath,
+              });
+              continue;
             }
 
-            // Try to find another workspace in the same project
+            // Try sibling workspace in same project
             const projectPath = deletedMeta?.projectPath;
             const fallbackMeta =
               (projectPath
@@ -374,43 +408,11 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
                 namedWorkspacePath: fallbackMeta.namedWorkspacePath,
               });
             } else if (projectPath) {
-              // No fallback workspace - navigate to project page
               navigateToProject(projectPath);
             } else {
-              // No project path available - go home as last resort
               setSelectedWorkspace(null);
             }
           }
-
-          if (event.metadata !== null) {
-            ensureCreatedAt(event.metadata);
-            seedWorkspaceLocalStorageFromBackend(event.metadata);
-          }
-
-          setWorkspaceMetadata((prev) => {
-            const updated = new Map(prev);
-            const isNewWorkspace = !prev.has(event.workspaceId) && event.metadata !== null;
-            // Detect transition from "creating" to ready for pending workspace state
-            const existingMeta = prev.get(event.workspaceId);
-            const wasCreating = existingMeta?.status === "creating";
-            const isNowReady = event.metadata !== null && event.metadata.status !== "creating";
-
-            if (event.metadata === null) {
-              // Workspace deleted - remove from map
-              updated.delete(event.workspaceId);
-            } else {
-              updated.set(event.workspaceId, event.metadata);
-            }
-
-            // Reload projects when:
-            // 1. New workspace appears (e.g., from fork)
-            // 2. Workspace transitions from "creating" to ready (now saved to config)
-            if (isNewWorkspace || (wasCreating && isNowReady)) {
-              void refreshProjects();
-            }
-
-            return updated;
-          });
         }
       } catch (err) {
         if (!signal.aborted) {

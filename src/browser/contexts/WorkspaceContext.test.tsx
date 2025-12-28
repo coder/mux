@@ -166,6 +166,82 @@ describe("WorkspaceContext", () => {
     await waitFor(() => expect(ctx().selectedWorkspace?.workspaceId).toBe(parentId));
   });
 
+  test("removes non-selected child workspace from metadata map when deleted", async () => {
+    // Bug regression: when a sub-agent workspace is deleted while not selected,
+    // it was staying in the metadata map due to early return in the handler.
+    const parentId = "ws-parent";
+    const childId = "ws-child";
+
+    const workspaces: FrontendWorkspaceMetadata[] = [
+      createWorkspaceMetadata({
+        id: parentId,
+        projectPath: "/alpha",
+        projectName: "alpha",
+        name: "main",
+        namedWorkspacePath: "/alpha-main",
+      }),
+      createWorkspaceMetadata({
+        id: childId,
+        projectPath: "/alpha",
+        projectName: "alpha",
+        name: "agent_explore_ws-child",
+        namedWorkspacePath: "/alpha-agent",
+        parentWorkspaceId: parentId,
+      }),
+    ];
+
+    let emitDelete:
+      | ((event: { workspaceId: string; metadata: FrontendWorkspaceMetadata | null }) => void)
+      | null = null;
+
+    createMockAPI({
+      workspace: {
+        list: () => Promise.resolve(workspaces),
+        onMetadata: () =>
+          Promise.resolve(
+            (async function* () {
+              const event = await new Promise<{
+                workspaceId: string;
+                metadata: FrontendWorkspaceMetadata | null;
+              }>((resolve) => {
+                emitDelete = resolve;
+              });
+              yield event;
+            })() as unknown as Awaited<ReturnType<APIClient["workspace"]["onMetadata"]>>
+          ),
+      },
+      projects: {
+        list: () => Promise.resolve([]),
+      },
+      // Parent is selected, not the child
+      localStorage: {
+        [SELECTED_WORKSPACE_KEY]: JSON.stringify({
+          workspaceId: parentId,
+          projectPath: "/alpha",
+          projectName: "alpha",
+          namedWorkspacePath: "/alpha-main",
+        }),
+      },
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().workspaceMetadata.size).toBe(2));
+    await waitFor(() => expect(ctx().selectedWorkspace?.workspaceId).toBe(parentId));
+    await waitFor(() => expect(emitDelete).toBeTruthy());
+
+    // Delete the non-selected child workspace
+    act(() => {
+      emitDelete?.({ workspaceId: childId, metadata: null });
+    });
+
+    // Child should be removed from metadata map (this was the bug - it stayed)
+    await waitFor(() => expect(ctx().workspaceMetadata.size).toBe(1));
+    expect(ctx().workspaceMetadata.has(childId)).toBe(false);
+    // Parent should still be selected
+    expect(ctx().selectedWorkspace?.workspaceId).toBe(parentId);
+  });
+
   test("seeds model + thinking localStorage from backend metadata", async () => {
     const initialWorkspaces: FrontendWorkspaceMetadata[] = [
       createWorkspaceMetadata({

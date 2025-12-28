@@ -182,6 +182,122 @@ describeIntegration("Workspace Archive (UI)", () => {
   }, 30_000);
 });
 
+describeIntegration("Workspace Archive List Reactivity (UI)", () => {
+  beforeAll(async () => {
+    await createSharedRepo();
+  });
+
+  afterAll(async () => {
+    await cleanupSharedRepo();
+  });
+
+  test("newly archived workspace appears immediately in archive list when already on project page", async () => {
+    // Bug regression: archiving a workspace while viewing the Archive page
+    // didn't update the list - required a refresh.
+    const env = getSharedEnv();
+    const projectPath = getSharedRepoPath();
+    const trunkBranch = await detectDefaultTrunkBranch(projectPath);
+
+    // Create TWO workspaces - one to archive first (so archive section exists),
+    // and one to archive while viewing the archive list
+    const firstBranch = generateBranchName("test-archive-reactivity-first");
+    const secondBranch = generateBranchName("test-archive-reactivity-second");
+
+    const firstResult = await env.orpc.workspace.create({
+      projectPath,
+      branchName: firstBranch,
+      trunkBranch,
+    });
+    if (!firstResult.success) throw new Error(firstResult.error);
+    const firstWorkspace = firstResult.metadata;
+
+    const secondResult = await env.orpc.workspace.create({
+      projectPath,
+      branchName: secondBranch,
+      trunkBranch,
+    });
+    if (!secondResult.success) throw new Error(secondResult.error);
+    const secondWorkspace = secondResult.metadata;
+    const secondDisplayTitle = secondWorkspace.title ?? secondWorkspace.name;
+
+    // Archive the first workspace so the archive section will be visible
+    await env.orpc.workspace.archive({ workspaceId: firstWorkspace.id });
+
+    const cleanupDom = installDom();
+    const view = renderApp({
+      apiClient: env.orpc,
+      metadata: secondWorkspace,
+    });
+
+    try {
+      // Select the second workspace so its archive button is visible
+      await setupWorkspaceView(view, secondWorkspace, secondWorkspace.id);
+
+      // Verify we're in the workspace view
+      await waitFor(
+        () => {
+          const wsView = view.container.querySelector(
+            '[role="log"], [data-testid="chat-input"], textarea'
+          );
+          if (!wsView) throw new Error("Not in workspace view");
+        },
+        { timeout: 5_000 }
+      );
+
+      // Now archive the second workspace via sidebar button (user action)
+      // This should navigate us to project page AND the workspace should appear in archive list
+      const archiveButton = await waitFor(
+        () => {
+          const btn = view.container.querySelector(
+            `[aria-label="Archive workspace ${secondDisplayTitle}"]`
+          ) as HTMLElement;
+          if (!btn) throw new Error("Archive button not found for second workspace");
+          return btn;
+        },
+        { timeout: 5_000 }
+      );
+      fireEvent.click(archiveButton);
+
+      // Wait for navigation to project page (archive redirects there)
+      await waitFor(
+        () => {
+          const textarea = view.container.querySelector("textarea");
+          if (!textarea) throw new Error("Project page not rendered");
+        },
+        { timeout: 5_000 }
+      );
+
+      // KEY ASSERTION: The newly archived workspace should appear in the archive list
+      // immediately WITHOUT requiring a manual refresh
+      await waitFor(
+        () => {
+          const deleteBtn = view.container.querySelector(
+            `[aria-label="Delete workspace ${secondDisplayTitle}"]`
+          );
+          if (!deleteBtn) {
+            throw new Error("Newly archived workspace not found in archive list - reactivity bug!");
+          }
+        },
+        { timeout: 5_000 }
+      );
+
+      // Also verify it's no longer in the active sidebar
+      const stillInSidebar = view.container.querySelector(
+        `[data-workspace-id="${secondWorkspace.id}"]`
+      );
+      expect(stillInSidebar).toBeNull();
+    } finally {
+      await env.orpc.workspace
+        .remove({ workspaceId: firstWorkspace.id, options: { force: true } })
+        .catch(() => {});
+      await env.orpc.workspace
+        .remove({ workspaceId: secondWorkspace.id, options: { force: true } })
+        .catch(() => {});
+      await cleanupView(view, cleanupDom);
+    }
+  }, 60_000);
+});
+
 describeIntegration("Workspace Delete from Archive (UI)", () => {
   beforeAll(async () => {
     await createSharedRepo();
