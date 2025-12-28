@@ -18,12 +18,6 @@ function coerceTimeoutMs(timeoutSecs: unknown): number | undefined {
   return timeoutMs;
 }
 
-function coerceTimeoutSecs(timeoutSecs: unknown): number | undefined {
-  if (typeof timeoutSecs !== "number" || !Number.isFinite(timeoutSecs)) return undefined;
-  if (timeoutSecs < 0) return undefined;
-  return timeoutSecs;
-}
-
 function formatBashOutputReport(args: {
   processId: string;
   status: string;
@@ -59,7 +53,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
       const taskService = requireTaskService(config, "task_await");
 
       const timeoutMs = coerceTimeoutMs(args.timeout_secs);
-      const timeoutSecsForBash = coerceTimeoutSecs(args.timeout_secs) ?? 10 * 60;
+      const timeoutSecsForBash = args.timeout_secs;
 
       const requestedIds: string[] | null =
         args.task_ids && args.task_ids.length > 0 ? args.task_ids : null;

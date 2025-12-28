@@ -50,9 +50,16 @@ export interface WrapperScriptOptions {
 export function buildWrapperScript(options: WrapperScriptOptions): string {
   const parts: string[] = [];
 
-  // Set up trap first to capture exit code
-  // Use double quotes for the trap command to allow nested single-quoted paths
-  parts.push(`trap "echo \\$? > ${shellQuote(options.exitCodePath)}" EXIT`);
+  // Set up trap first to capture exit code.
+  //
+  // IMPORTANT: Do NOT inline shellQuote(exitCodePath) inside a double-quoted trap string.
+  // If the path contains a single quote (e.g. processId derived from script contains quotes),
+  // shellQuote() will emit the POSIX escape pattern '\''"'"'\'', which contains double quotes
+  // and will break the surrounding double quotes.
+  //
+  // Instead, assign the (quoted) path to a variable and reference it from the trap.
+  parts.push(`__MUX_EXIT_CODE_PATH=${shellQuote(options.exitCodePath)}`);
+  parts.push(`trap 'echo $? > "$__MUX_EXIT_CODE_PATH"' EXIT`);
 
   // Change to working directory
   parts.push(`cd ${shellQuote(options.cwd)}`);

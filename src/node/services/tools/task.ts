@@ -4,6 +4,7 @@ import type { BashToolResult } from "@/common/types/tools";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { resolveBashDisplayName } from "@/common/utils/tools/bashDisplayName";
 import { TaskToolResultSchema, TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
+import { log } from "@/node/services/log";
 import { coerceThinkingLevel } from "@/common/types/thinking";
 
 import { createBashTool } from "./bash";
@@ -57,6 +58,15 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
       // but keep runtime validation here to preserve type-safety.
       const parsedArgs = TOOL_DEFINITIONS.task.schema.safeParse(args);
       if (!parsedArgs.success) {
+        const keys =
+          args && typeof args === "object" ? Object.keys(args as Record<string, unknown>) : [];
+        log.warn(
+          "[task tool] Unexpected input validation failure (should have been caught by AI SDK)",
+          {
+            issues: parsedArgs.error.issues,
+            keys,
+          }
+        );
         throw new Error(`task tool input validation failed: ${parsedArgs.error.message}`);
       }
       const validatedArgs = parsedArgs.data;

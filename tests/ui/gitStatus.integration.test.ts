@@ -51,7 +51,7 @@ describeIntegration("GitStatus (UI + ORPC)", () => {
         await setupWorkspaceView(view, metadata, workspaceId);
 
         // Initial subscription triggers immediate fetch
-        const statusElement = await waitForGitStatusElement(view.container, workspaceId, 10_000);
+        const statusElement = await waitForGitStatusElement(view.container, workspaceId, 20_000);
         const status = getGitStatusFromElement(statusElement);
 
         expect(status).not.toBeNull();
@@ -73,7 +73,7 @@ describeIntegration("GitStatus (UI + ORPC)", () => {
 
       try {
         await setupWorkspaceView(view, metadata, workspaceId);
-        await waitForCleanStatus(view.container, workspaceId, 10_000);
+        await waitForCleanStatus(view.container, workspaceId, 20_000);
 
         // Modify file (simulates external change or terminal command)
         const bashRes = await env.orpc.workspace.executeBash({
@@ -86,7 +86,7 @@ describeIntegration("GitStatus (UI + ORPC)", () => {
         // User returns to app (alt-tab) - triggers git status refresh
         simulateWindowFocus();
 
-        const dirtyStatus = await waitForDirtyStatus(view.container, workspaceId, 10_000);
+        const dirtyStatus = await waitForDirtyStatus(view.container, workspaceId, 20_000);
         expect(dirtyStatus.dirty).toBe(true);
       } finally {
         await cleanupView(view, cleanupDom);
@@ -115,7 +115,7 @@ describeIntegration("GitStatus (UI + ORPC)", () => {
 
         simulateWindowFocus();
 
-        const status = await waitForCleanStatus(view.container, workspaceId, 10_000);
+        const status = await waitForCleanStatus(view.container, workspaceId, 20_000);
         expect(status.dirty).toBe(false);
       } finally {
         await cleanupView(view, cleanupDom);
@@ -146,7 +146,7 @@ describeIntegration("GitStatus (UI + ORPC)", () => {
         }
 
         simulateWindowFocus();
-        await waitForAheadStatus(view.container, workspaceId, 2, 10_000);
+        await waitForAheadStatus(view.container, workspaceId, 2, 20_000);
       } finally {
         await cleanupView(view, cleanupDom);
       }

@@ -248,11 +248,13 @@ export const TaskAwaitToolArgsSchema = z
       .number()
       .min(0)
       .optional()
+      .default(600)
       .describe(
         "Maximum time to wait in seconds for each task. " +
           "For bash tasks, this waits for NEW output (or process exit). " +
           "If exceeded, the result returns status=queued|running|awaiting_report (task is still active). " +
-          "Optional, defaults to 10 minutes."
+          "Defaults to 600 seconds (10 minutes) if not specified. " +
+          "Set to 0 for a non-blocking status check."
       ),
   })
   .strict()
@@ -640,6 +642,7 @@ export const TOOL_DEFINITIONS = {
       "Unified task tool for (1) spawning sub-agent tasks and (2) running bash commands. " +
       "\n\nAgent tasks: provide subagent_type, prompt, title, run_in_background. " +
       '\nBash tasks: set kind="bash" and provide script, timeout_secs, run_in_background (display_name optional). ' +
+      '\nFor kind="bash", full output is returned in the bashResult field; reportMarkdown may omit it to save context tokens. ' +
       "\n\nIf run_in_background is false, returns a completed reportMarkdown. " +
       "If run_in_background is true, returns a running taskId; use task_await to read incremental output and task_terminate to stop it.",
     schema: TaskToolArgsSchema,
@@ -748,6 +751,7 @@ export const TOOL_DEFINITIONS = {
   },
   bash_output: {
     description:
+      'DEPRECATED: use task_await instead (pass bash-prefixed taskId like "bash:<processId>"). ' +
       "Retrieve output from a running or completed background bash process. " +
       "Returns only NEW output since the last check (incremental). " +
       "Returns stdout and stderr output along with process status. " +
@@ -788,6 +792,7 @@ export const TOOL_DEFINITIONS = {
   },
   bash_background_list: {
     description:
+      "DEPRECATED: use task_list instead. " +
       "List all background processes started with bash(run_in_background=true). " +
       "Returns process_id, status, script for each process. " +
       "Use to find process_id for termination or check output with bash_output.",
@@ -795,6 +800,7 @@ export const TOOL_DEFINITIONS = {
   },
   bash_background_terminate: {
     description:
+      "DEPRECATED: use task_terminate instead. " +
       "Terminate a background process started with bash(run_in_background=true). " +
       "Use process_id from the original bash response or from bash_background_list. " +
       "Sends SIGTERM, waits briefly, then SIGKILL if needed. " +

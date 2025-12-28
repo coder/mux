@@ -17,6 +17,7 @@ import {
   toWorkspaceSelection,
 } from "@/browser/contexts/WorkspaceContext";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
+import { isTaskBashArgs } from "@/common/utils/tools/taskToolTypeGuards";
 import type {
   TaskToolArgs,
   TaskToolSuccessResult,
@@ -168,16 +169,6 @@ const TaskId: React.FC<{ id: string; className?: string }> = ({ id, className })
 // TASK TOOL CALL (spawn sub-agent)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function isBashTaskArgs(args: TaskToolArgs): args is TaskToolArgs & {
-  kind: "bash";
-  script: string;
-  timeout_secs: number;
-  display_name?: string;
-} {
-  return (
-    args.kind === "bash" && typeof args.script === "string" && typeof args.timeout_secs === "number"
-  );
-}
 interface TaskToolCallProps {
   args: TaskToolArgs;
   result?: TaskToolSuccessResult;
@@ -196,7 +187,7 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({ args, result, status
   let promptOrScript: string;
   let kindBadge: React.ReactNode;
 
-  if (isBashTaskArgs(args)) {
+  if (isTaskBashArgs(args)) {
     isBashTask = true;
     title = args.display_name ?? "Bash task";
     promptOrScript = args.script ?? "";

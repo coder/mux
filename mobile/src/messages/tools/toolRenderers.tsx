@@ -3,6 +3,11 @@ import React from "react";
 import { View, Text, ScrollView, StyleSheet, Pressable } from "react-native";
 import { Link } from "expo-router";
 import { parsePatch } from "diff";
+import {
+  coerceBashToolResult,
+  convertTaskBashResult,
+} from "@/common/utils/tools/taskResultConverters";
+import { isTaskBashArgs, isTaskBashArgsFromUnknown } from "@/common/utils/tools/taskToolTypeGuards";
 import { resolveBashDisplayName } from "@/common/utils/tools/bashDisplayName";
 import type { DisplayedMessage } from "@/common/types/message";
 import {
@@ -405,111 +410,6 @@ function BashBackgroundTerminateContent({
   return <ThemedText>{result.message}</ThemedText>;
 }
 
-function taskBashResultToBashToolResult(result: TaskToolResult | null): BashToolResult | null {
-  if (!result) {
-    return null;
-  }
-
-  // Some tool failures may still return a { success: false, error } shape.
-  if ("success" in result) {
-    const success = (result as { success?: unknown }).success;
-    if (success === false) {
-      const error = (result as { error?: unknown }).error;
-      return {
-        success: false,
-        error: typeof error === "string" ? error : "Task failed",
-        exitCode: -1,
-        wall_duration_ms: 0,
-      };
-    }
-  }
-
-  const status = (result as { status?: unknown }).status;
-  if (typeof status !== "string") {
-    return null;
-  }
-
-  // Background bash tasks return early with status=running and taskId=bash:<processId>.
-  // Newer task(kind="bash") results include the raw bash tool result directly.
-  // Prefer that over parsing reportMarkdown.
-  const structuredBashResult = coerceBashToolResult(
-    (result as { bashResult?: unknown }).bashResult
-  );
-  if (structuredBashResult) {
-    return structuredBashResult;
-  }
-
-  // Legacy fallback for older sessions that only persisted reportMarkdown.
-  if (status !== "completed") {
-    const taskId = (result as { taskId?: unknown }).taskId;
-    if (typeof taskId === "string" && taskId.startsWith("bash:")) {
-      const processId = taskId.slice("bash:".length).trim() || taskId;
-      return {
-        success: true,
-        output: "",
-        exitCode: 0,
-        wall_duration_ms: 0,
-        backgroundProcessId: processId,
-      };
-    }
-    return null;
-  }
-
-  const reportMarkdown =
-    typeof (result as { reportMarkdown?: unknown }).reportMarkdown === "string"
-      ? ((result as { reportMarkdown: string }).reportMarkdown ?? "")
-      : "";
-
-  const explicitExitCode =
-    typeof (result as { exitCode?: unknown }).exitCode === "number"
-      ? (result as { exitCode: number }).exitCode
-      : undefined;
-  const exitCodeMatch = /exitCode:\s*(-?\d+)/.exec(reportMarkdown);
-  const parsedExitCode = exitCodeMatch ? Number(exitCodeMatch[1]) : undefined;
-  const exitCode =
-    explicitExitCode ?? (Number.isFinite(parsedExitCode) ? (parsedExitCode as number) : 0);
-
-  const wallDurationMatch = /wall_duration_ms:\s*(\d+)/.exec(reportMarkdown);
-  const parsedWallDuration = wallDurationMatch ? Number(wallDurationMatch[1]) : undefined;
-  const wall_duration_ms = Number.isFinite(parsedWallDuration) ? (parsedWallDuration as number) : 0;
-
-  const textBlockMatch = /```text\n([\s\S]*?)\n```/.exec(reportMarkdown);
-  const output = textBlockMatch ? textBlockMatch[1] : "";
-
-  const errorLineMatch = /^error:\s*(.*)$/m.exec(reportMarkdown);
-  const error = errorLineMatch?.[1] ?? `Command exited with code ${exitCode}`;
-
-  const note =
-    typeof (result as { note?: unknown }).note === "string"
-      ? (result as { note: string }).note
-      : undefined;
-  const truncated =
-    typeof (result as { truncated?: unknown }).truncated === "object"
-      ? (result as { truncated: BashToolResult["truncated"] }).truncated
-      : undefined;
-
-  if (exitCode === 0 && !errorLineMatch) {
-    return {
-      success: true,
-      output,
-      exitCode: 0,
-      wall_duration_ms,
-      note,
-      truncated,
-    };
-  }
-
-  return {
-    success: false,
-    output: output.length > 0 ? output : undefined,
-    exitCode,
-    error,
-    wall_duration_ms,
-    note,
-    truncated,
-  };
-}
-
 function buildTaskBashViewModel(
   message: ToolDisplayedMessage & { args: TaskToolArgs }
 ): ToolCardViewModel {
@@ -534,7 +434,7 @@ function buildTaskBashViewModel(
   };
 
   const taskResult = coerceTaskToolResult(message.result);
-  const bashResult = taskBashResultToBashToolResult(taskResult);
+  const bashResult = convertTaskBashResult(taskResult, { legacySuccessCheckInclErrorLine: true });
 
   const preview = truncate(args.script.trim().split("\n")[0], 80) || "bash";
 
@@ -1674,26 +1574,12 @@ function isBashBackgroundTerminateArgs(value: unknown): value is BashBackgroundT
   return Boolean(value && typeof (value as BashBackgroundTerminateArgs).process_id === "string");
 }
 
-function isTaskBashArgs(value: unknown): value is TaskToolArgs & {
-  kind: "bash";
-  script: string;
-  timeout_secs: number;
-  display_name?: string;
-} {
-  return (
-    Boolean(value && typeof value === "object") &&
-    (value as { kind?: unknown }).kind === "bash" &&
-    typeof (value as { script?: unknown }).script === "string" &&
-    typeof (value as { timeout_secs?: unknown }).timeout_secs === "number"
-  );
-}
-
 function isTaskToolArgs(value: unknown): value is TaskToolArgs {
   if (!value || typeof value !== "object") {
     return false;
   }
 
-  if (isTaskBashArgs(value)) {
+  if (isTaskBashArgsFromUnknown(value)) {
     return true;
   }
 
@@ -1735,18 +1621,6 @@ function isAgentReportToolArgs(value: unknown): value is AgentReportToolArgs {
 }
 function isFileEditArgsUnion(value: unknown): value is FileEditArgsUnion {
   return Boolean(value && typeof (value as FileEditArgsUnion).file_path === "string");
-}
-
-function coerceBashToolResult(value: unknown): BashToolResult | null {
-  if (
-    value &&
-    typeof value === "object" &&
-    "success" in value &&
-    typeof (value as BashToolResult).success === "boolean"
-  ) {
-    return value as BashToolResult;
-  }
-  return null;
 }
 
 function coerceWebFetchToolResult(value: unknown): WebFetchToolResult | null {

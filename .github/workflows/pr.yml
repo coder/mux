@@ -161,7 +161,16 @@ jobs:
       - run: make storybook-build
       - run: |
           bun x http-server storybook-static -p 6006 &
-          sleep 5
+          for i in {1..30}; do
+            if curl -sf http://127.0.0.1:6006 >/dev/null; then
+              echo "Storybook ready"
+              break
+            fi
+            echo "Waiting for Storybook... ($i/30)"
+            sleep 0.5
+          done
+          # Fail the step if Storybook never became reachable.
+          curl -sf http://127.0.0.1:6006 >/dev/null
       - run: make test-storybook
 
   test-e2e:
