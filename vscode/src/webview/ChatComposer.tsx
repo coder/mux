@@ -324,8 +324,9 @@ function ChatComposerInner(props: {
           />
         </div>
 
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex shrink-0 items-center overflow-hidden">
+        <div className="@container flex items-center justify-between gap-2">
+          {/* Thinking slider: hide the track on narrow sidebars; the label remains clickable and cycles. */}
+          <div className="flex shrink-0 items-center overflow-hidden [&_.thinking-slider]:[@container(max-width:360px)]:hidden">
             <ThinkingSliderComponent modelString={baseModel} />
           </div>
 
