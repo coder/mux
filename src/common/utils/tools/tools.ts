@@ -1,4 +1,5 @@
 import { type Tool } from "ai";
+import assert from "@/common/utils/assert";
 import { createFileReadTool } from "@/node/services/tools/file_read";
 import { createBashTool } from "@/node/services/tools/bash";
 import { createBashOutputTool } from "@/node/services/tools/bash_output";
@@ -20,6 +21,9 @@ import { createAgentSkillReadFileTool } from "@/node/services/tools/agent_skill_
 import { createAgentReportTool } from "@/node/services/tools/agent_report";
 import { wrapWithInitWait } from "@/node/services/tools/wrapWithInitWait";
 import { log } from "@/node/services/log";
+import { attachModelOnlyToolNotifications } from "@/common/utils/tools/internalToolResultFields";
+import { NotificationEngine } from "@/node/services/agentNotifications/NotificationEngine";
+import { TodoListReminderSource } from "@/node/services/agentNotifications/sources/TodoListReminderSource";
 import { sanitizeMCPToolsForOpenAI } from "@/common/utils/tools/schemaSanitizer";
 
 import type { Runtime } from "@/node/runtime/Runtime";
@@ -94,6 +98,97 @@ function augmentToolDescription(baseTool: Tool, additionalInstructions: string):
   baseToolRecord.description = augmentedDescription;
 
   return baseTool;
+}
+
+function cloneToolPreservingDescriptors(tool: unknown): Tool {
+  assert(tool && typeof tool === "object", "tool must be an object");
+
+  // Clone the tool without invoking getters (important for some dynamic tools).
+  const prototype = Object.getPrototypeOf(tool) as unknown;
+  assert(
+    prototype === null || typeof prototype === "object",
+    "tool prototype must be an object or null"
+  );
+
+  const clone = Object.create(prototype) as object;
+  Object.defineProperties(clone, Object.getOwnPropertyDescriptors(tool));
+  return clone as Tool;
+}
+
+function wrapToolExecuteWithModelOnlyNotifications(
+  toolName: string,
+  baseTool: Tool,
+  engine: NotificationEngine
+): Tool {
+  // Access the tool as a record to get its properties.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const baseToolRecord = baseTool as any as Record<string, unknown>;
+  const originalExecute = baseToolRecord.execute;
+
+  if (typeof originalExecute !== "function") {
+    return baseTool;
+  }
+
+  const executeFn = originalExecute as (this: unknown, args: unknown, options: unknown) => unknown;
+
+  // Avoid mutating cached tools in place (e.g. MCP tools cached per workspace).
+  // Repeated getToolsForModel() calls should not stack wrappers.
+  const wrappedTool = cloneToolPreservingDescriptors(baseTool);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const wrappedToolRecord = wrappedTool as any as Record<string, unknown>;
+
+  wrappedToolRecord.execute = async (args: unknown, options: unknown) => {
+    try {
+      const result: unknown = await executeFn.call(baseTool, args, options);
+
+      let notifications: string[] = [];
+      try {
+        notifications = await engine.pollAfterToolCall({
+          toolName,
+          toolSucceeded: true,
+          now: Date.now(),
+        });
+      } catch (error) {
+        log.debug("[getToolsForModel] notification poll failed", { error, toolName });
+      }
+
+      return attachModelOnlyToolNotifications(result, notifications);
+    } catch (error) {
+      try {
+        await engine.pollAfterToolCall({
+          toolName,
+          toolSucceeded: false,
+          now: Date.now(),
+        });
+      } catch (pollError) {
+        log.debug("[getToolsForModel] notification poll failed", { pollError, toolName });
+      }
+
+      throw error;
+    }
+  };
+
+  return wrappedTool;
+}
+
+function wrapToolsWithModelOnlyNotifications(
+  tools: Record<string, Tool>,
+  config: ToolConfiguration
+): Record<string, Tool> {
+  if (!config.workspaceSessionDir) {
+    return tools;
+  }
+
+  const engine = new NotificationEngine([
+    new TodoListReminderSource({ workspaceSessionDir: config.workspaceSessionDir }),
+  ]);
+
+  const wrappedTools: Record<string, Tool> = {};
+  for (const [toolName, tool] of Object.entries(tools)) {
+    wrappedTools[toolName] = wrapToolExecuteWithModelOnlyNotifications(toolName, tool, engine);
+  }
+
+  return wrappedTools;
 }
 
 /**
@@ -220,6 +315,8 @@ export async function getToolsForModel(
     log.error(`No web search tools available for ${provider}:`, error);
   }
 
+  let finalTools = allTools;
+
   // Apply tool-specific instructions if provided
   if (toolInstructions) {
     const augmentedTools: Record<string, Tool> = {};
@@ -231,8 +328,10 @@ export async function getToolsForModel(
         augmentedTools[toolName] = baseTool;
       }
     }
-    return augmentedTools;
+    finalTools = augmentedTools;
   }
 
-  return allTools;
+  finalTools = wrapToolsWithModelOnlyNotifications(finalTools, config);
+
+  return finalTools;
 }

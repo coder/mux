@@ -4,6 +4,7 @@ import type {
   TodoListAttachment,
   EditedFilesReferenceAttachment,
 } from "@/common/types/attachment";
+import { renderTodoItemsAsMarkdownList } from "@/common/utils/todoList";
 
 /**
  * Render a plan file reference attachment to content string.
@@ -21,14 +22,7 @@ If this plan is relevant to the current work and not already complete, continue 
  * Render a todo list attachment to a content string.
  */
 function renderTodoListAttachment(attachment: TodoListAttachment): string {
-  const items = attachment.todos
-    .map((todo) => {
-      const statusMarker =
-        todo.status === "completed" ? "[x]" : todo.status === "in_progress" ? "[>]" : "[ ]";
-      return `- ${statusMarker} ${todo.content}`;
-    })
-    .join("\n");
-
+  const items = renderTodoItemsAsMarkdownList(attachment.todos);
   return `TODO list (persisted; \`todo_read\` will return this):\n${items || "- (empty)"}`;
 }
 

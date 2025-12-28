@@ -30,6 +30,7 @@ import type { PartialService } from "./partialService";
 import type { HistoryService } from "./historyService";
 import { addUsage, accumulateProviderMetadata } from "@/common/utils/tokens/usageHelpers";
 import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
+import { stripInternalToolResultFields } from "@/common/utils/tools/internalToolResultFields";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import { StreamingTokenTracker } from "@/node/utils/main/StreamingTokenTracker";
 import type { Runtime } from "@/node/runtime/Runtime";
@@ -1037,7 +1038,9 @@ export class StreamManager extends EventEmitter {
             const toolCall = toolCalls.get(part.toolCallId);
             if (toolCall) {
               // Strip encrypted content from web search results before storing
-              const strippedOutput = stripEncryptedContent(part.output);
+              const strippedOutput = stripInternalToolResultFields(
+                stripEncryptedContent(part.output)
+              );
               toolCall.output = strippedOutput;
 
               // Use shared completion logic (await to ensure partial is flushed before event)
