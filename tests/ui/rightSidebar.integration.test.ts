@@ -25,7 +25,7 @@ import { cleanupView, setupWorkspaceView } from "./helpers";
 import {
   RIGHT_SIDEBAR_TAB_KEY,
   RIGHT_SIDEBAR_COLLAPSED_KEY,
-  RIGHT_SIDEBAR_LAYOUT_KEY,
+  getRightSidebarLayoutKey,
 } from "@/common/constants/storage";
 import type { RightSidebarLayoutState } from "@/browser/utils/rightSidebarLayout";
 
@@ -42,10 +42,10 @@ describeIntegration("RightSidebar (UI)", () => {
 
   beforeEach(() => {
     // Clear persisted state before each test
+    // Note: layout is per-workspace now, so cleared inside tests with workspace context
     if (typeof localStorage !== "undefined") {
       localStorage.removeItem(RIGHT_SIDEBAR_TAB_KEY);
       localStorage.removeItem(RIGHT_SIDEBAR_COLLAPSED_KEY);
-      localStorage.removeItem(RIGHT_SIDEBAR_LAYOUT_KEY);
     }
   });
 
@@ -55,7 +55,7 @@ describeIntegration("RightSidebar (UI)", () => {
 
       // Clear any persisted state
       localStorage.removeItem(RIGHT_SIDEBAR_TAB_KEY);
-      localStorage.removeItem(RIGHT_SIDEBAR_LAYOUT_KEY);
+      localStorage.removeItem(getRightSidebarLayoutKey(workspaceId));
 
       const view = renderApp({
         apiClient: env.orpc,
@@ -581,7 +581,7 @@ describeIntegration("RightSidebar (UI)", () => {
         },
         focusedTabsetId: "tabset-top",
       };
-      localStorage.setItem(RIGHT_SIDEBAR_LAYOUT_KEY, JSON.stringify(splitLayout));
+      localStorage.setItem(getRightSidebarLayoutKey(workspaceId), JSON.stringify(splitLayout));
 
       const view = renderApp({
         apiClient: env.orpc,
