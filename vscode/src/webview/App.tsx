@@ -19,6 +19,7 @@ import { applyWorkspaceChatEventToAggregator } from "mux/browser/utils/messages/
 import { StreamingMessageAggregator } from "mux/browser/utils/messages/StreamingMessageAggregator";
 
 import type { ExtensionToWebviewMessage, UiConnectionStatus, UiWorkspace } from "./protocol";
+import { WorkspacePicker } from "./WorkspacePicker";
 import { ChatComposer } from "./ChatComposer";
 import { VSCODE_CHAT_UI_SUPPORT } from "./chatUiCapabilities";
 import { VscodeStreamingBarrier } from "./StreamingBarrier";
@@ -509,23 +510,13 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
               <div className="text-muted whitespace-pre-wrap text-xs">{formatConnectionStatus(connectionStatus)}</div>
 
               <div className="mt-3 flex items-center gap-2">
-                <select
-                  className="border-input bg-background text-foreground flex-1 rounded-md border px-2 py-1 text-sm"
-                  value={selectedWorkspaceId ?? ""}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    bridge.postMessage({ type: "selectWorkspace", workspaceId: value ? value : null });
+                <WorkspacePicker
+                  workspaces={workspaces}
+                  selectedWorkspaceId={selectedWorkspaceId}
+                  onSelectWorkspace={(workspaceId) => {
+                    bridge.postMessage({ type: "selectWorkspace", workspaceId });
                   }}
-                >
-                  <option value="" disabled>
-                    {workspaces.length > 0 ? "Select workspace…" : "No workspaces found"}
-                  </option>
-                  {workspaces.map((ws) => (
-                    <option key={ws.id} value={ws.id}>
-                      {ws.label}
-                    </option>
-                  ))}
-                </select>
+                />
 
                 <Button type="button" variant="secondary" size="sm" onClick={onRefresh}>
                   Refresh

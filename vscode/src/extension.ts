@@ -117,14 +117,17 @@ function toUiWorkspace(workspace: WorkspaceWithContext): UiWorkspace {
         ? "worktree"
         : "local";
 
-  const sshSuffix = workspace.runtimeConfig.type === "ssh" ? ` (ssh: ${workspace.runtimeConfig.host})` : "";
+  const sshHost = workspace.runtimeConfig.type === "ssh" ? workspace.runtimeConfig.host : undefined;
+  const workspaceName = workspace.title ?? workspace.name;
 
   return {
     id: workspace.id,
-    label: `[${workspace.projectName}] ${workspace.name}${sshSuffix}`,
-    description: workspace.projectPath,
+    projectName: workspace.projectName,
+    workspaceName,
+    projectPath: workspace.projectPath,
     streaming: workspace.extensionMetadata?.streaming ?? false,
     runtimeType,
+    sshHost,
     // Backend guarantees createdAt for new workspaces, but keep a stable fallback for legacy ones.
     createdAt: workspace.createdAt ?? new Date(0).toISOString(),
     unarchivedAt: workspace.unarchivedAt,
@@ -469,7 +472,12 @@ function createWorkspaceQuickPickItem(
 /**
  * Command: Open a mux workspace
  */
-async function openWorkspaceCommand(context: vscode.ExtensionContext) {
+async function openWorkspaceCommand(
+  context: vscode.ExtensionContext,
+  options?: {
+    chatViewProvider?: MuxChatViewProvider;
+  }
+): Promise<void> {
   // Get all workspaces, this is intentionally not cached.
   const workspaces = await getWorkspacesForCommand(context);
   if (!workspaces) {
@@ -536,6 +544,11 @@ async function openWorkspaceCommand(context: vscode.ExtensionContext) {
 
   if (!selected) {
     return;
+  }
+
+  if (options?.chatViewProvider) {
+    await options.chatViewProvider.setSelectedWorkspaceId(selected.workspace.id);
+    await revealChatView();
   }
 
   // Open the selected workspace
@@ -1794,7 +1807,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("mux.openWorkspace", () => openWorkspaceCommand(context))
+    vscode.commands.registerCommand("mux.openWorkspace", () =>
+      openWorkspaceCommand(context, { chatViewProvider: chatViewProvider })
+    )
   );
 
   context.subscriptions.push(

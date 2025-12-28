@@ -1,11 +1,19 @@
 import type { WorkspaceChatMessage } from "mux/common/orpc/types";
 
+export type UiWorkspaceRuntimeType = "local" | "worktree" | "ssh";
+
 export interface UiWorkspace {
   id: string;
-  label: string;
-  description: string;
+
+  // Split fields so the webview can render without parsing a formatted label.
+  projectName: string;
+  workspaceName: string;
+  projectPath: string;
+
   streaming: boolean;
-  runtimeType: string;
+  runtimeType: UiWorkspaceRuntimeType;
+  sshHost?: string | undefined;
+
   createdAt: string;
   unarchivedAt?: string | undefined;
 }

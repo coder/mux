@@ -932,3 +932,37 @@ pre code {
   padding: 12px;
   overflow: auto;
 }
+
+/* Shimmer text effect (desktop parity). */
+.shimmer-text {
+  --shimmer-color: var(--color-muted-foreground);
+  --shimmer-dark: color-mix(in srgb, var(--shimmer-color) 25%, black);
+  display: inline; /* Prevent layout shift - behave like normal text */
+  background: linear-gradient(
+    90deg,
+    var(--shimmer-color) 0%,
+    var(--shimmer-color) 35%,
+    var(--shimmer-dark) 50%,
+    var(--shimmer-color) 65%,
+    var(--shimmer-color) 100%
+  );
+  background-size: 300% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  /* Cap at ~30fps (42 steps over 1.4s) to reduce repaints on high-refresh displays */
+  animation: shimmer-text-sweep var(--shimmer-duration, 1.4s) steps(42, end) infinite;
+  /* Decoration inheritance must be explicit for background-clip: text */
+  text-decoration: inherit;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+@keyframes shimmer-text-sweep {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0% 0;
+  }
+}
