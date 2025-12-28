@@ -48,6 +48,7 @@ import { applyFrontendFilters } from "@/browser/utils/review/filterHunks";
 import { findNextHunkId, findNextHunkIdAfterFileRemoval } from "@/browser/utils/review/navigation";
 import { cn } from "@/common/lib/utils";
 import { useAPI, type APIClient } from "@/browser/contexts/API";
+import { Loader2 } from "lucide-react";
 import { workspaceStore } from "@/browser/stores/WorkspaceStore";
 import { invalidateGitStatus } from "@/browser/stores/GitStatusStore";
 
@@ -1028,8 +1029,8 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
           {diffState.message}
         </div>
       ) : diffState.status === "loading" ? (
-        <div className="text-muted flex h-full items-center justify-center text-sm">
-          Loading diff...
+        <div className="flex h-full items-center justify-center">
+          <Loader2 className="text-muted h-6 w-6 animate-spin" />
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">

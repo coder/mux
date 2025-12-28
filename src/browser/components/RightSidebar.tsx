@@ -1,5 +1,5 @@
 import React from "react";
-import { RIGHT_SIDEBAR_TAB_KEY, RIGHT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
+import { RIGHT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useWorkspaceUsage, useWorkspaceStatsSnapshot } from "@/browser/stores/WorkspaceStore";
 import { useFeatureFlags } from "@/browser/contexts/FeatureFlagsContext";
@@ -91,6 +91,10 @@ export type { TabType };
 interface RightSidebarProps {
   workspaceId: string;
   workspacePath: string;
+  /** Currently selected tab (owned by AIView to sync with width) */
+  selectedTab: TabType;
+  /** Tab change handler */
+  onTabChange: (tab: TabType) => void;
   /** Custom width in pixels (persisted per-tab, provided by AIView) */
   width?: number;
   /** Drag start handler for resize */
@@ -106,15 +110,14 @@ interface RightSidebarProps {
 const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   workspaceId,
   workspacePath,
+  selectedTab,
+  onTabChange,
   width,
   onStartResize,
   isResizing = false,
   onReviewNote,
   isCreating = false,
 }) => {
-  // Global tab preference (not per-workspace)
-  const [selectedTab, setSelectedTab] = usePersistedState<TabType>(RIGHT_SIDEBAR_TAB_KEY, "costs");
-
   // Manual collapse state (persisted globally)
   const [collapsed, setCollapsed] = usePersistedState<boolean>(RIGHT_SIDEBAR_COLLAPSED_KEY, false);
 
@@ -123,9 +126,9 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
 
   React.useEffect(() => {
     if (!statsTabEnabled && selectedTab === "stats") {
-      setSelectedTab("costs");
+      onTabChange("costs");
     }
-  }, [statsTabEnabled, selectedTab, setSelectedTab]);
+  }, [statsTabEnabled, selectedTab, onTabChange]);
 
   // Trigger for focusing Review panel (preserves hunk selection)
   const [focusTrigger, setFocusTrigger] = React.useState(0);
@@ -138,23 +141,23 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (matchesKeybind(e, KEYBINDS.COSTS_TAB)) {
         e.preventDefault();
-        setSelectedTab("costs");
+        onTabChange("costs");
         setCollapsed(false);
       } else if (matchesKeybind(e, KEYBINDS.REVIEW_TAB)) {
         e.preventDefault();
-        setSelectedTab("review");
+        onTabChange("review");
         setCollapsed(false);
         setFocusTrigger((prev) => prev + 1);
       } else if (statsTabEnabled && matchesKeybind(e, KEYBINDS.STATS_TAB)) {
         e.preventDefault();
-        setSelectedTab("stats");
+        onTabChange("stats");
         setCollapsed(false);
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [setSelectedTab, setCollapsed, statsTabEnabled]);
+  }, [onTabChange, setCollapsed, statsTabEnabled]);
 
   const usage = useWorkspaceUsage(workspaceId);
 
@@ -232,7 +235,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
                       ? "bg-hover text-foreground"
                       : "bg-transparent text-muted hover:bg-hover/50 hover:text-foreground"
                   )}
-                  onClick={() => setSelectedTab("costs")}
+                  onClick={() => onTabChange("costs")}
                   id={costsTabId}
                   role="tab"
                   type="button"
@@ -260,7 +263,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
                       ? "bg-hover text-foreground"
                       : "bg-transparent text-muted hover:bg-hover/50 hover:text-foreground"
                   )}
-                  onClick={() => setSelectedTab("review")}
+                  onClick={() => onTabChange("review")}
                   id={reviewTabId}
                   role="tab"
                   type="button"
@@ -296,7 +299,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
                         ? "bg-hover text-foreground"
                         : "bg-transparent text-muted hover:bg-hover/50 hover:text-foreground"
                     )}
-                    onClick={() => setSelectedTab("stats")}
+                    onClick={() => onTabChange("stats")}
                     id={statsTabId}
                     role="tab"
                     type="button"

@@ -105,10 +105,11 @@ const AIViewInner: React.FC<AIViewProps> = ({
   const { workspaceMetadata } = useWorkspaceContext();
   const chatAreaRef = useRef<HTMLDivElement>(null);
 
-  // Track which right sidebar tab is selected (listener: true to sync with RightSidebar changes)
-  const [selectedRightTab] = usePersistedState<TabType>(RIGHT_SIDEBAR_TAB_KEY, "costs", {
-    listener: true,
-  });
+  // AIView owns tab state to ensure tab + width update atomically (prevents jank during tab switch)
+  const [selectedRightTab, setSelectedRightTab] = usePersistedState<TabType>(
+    RIGHT_SIDEBAR_TAB_KEY,
+    "costs"
+  );
 
   // Resizable RightSidebar width - separate hooks per tab for independent persistence
   const costsSidebar = useResizableSidebar({
@@ -794,6 +795,8 @@ const AIViewInner: React.FC<AIViewProps> = ({
         key={workspaceId}
         workspaceId={workspaceId}
         workspacePath={namedWorkspacePath}
+        selectedTab={selectedRightTab}
+        onTabChange={setSelectedRightTab}
         width={sidebarWidth}
         onStartResize={startResize}
         isResizing={isResizing}
