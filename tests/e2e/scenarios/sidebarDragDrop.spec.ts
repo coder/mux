@@ -31,11 +31,9 @@ test.describe("sidebar drag and drop", () => {
     const reviewIndex = initialLabels.findIndex((l) => l?.includes("Review"));
     expect(costsIndex).toBeLessThan(reviewIndex);
 
-    const costsHandle = costsTab.locator("[data-sidebar-tab-drag-handle]");
-    await expect(costsHandle).toBeVisible({ timeout: 5000 });
-
     // Drag active costs tab to after review tab position (reorder)
-    await ui.dragElement(costsHandle, reviewTab, { targetPosition: "after" });
+    // Tabs are directly draggable without needing a handle
+    await ui.dragElement(costsTab, reviewTab, { targetPosition: "after" });
 
     // Verify tabs were reordered: review now comes before costs
     const reorderedTabs = await tablist.getByRole("tab").all();
@@ -70,12 +68,9 @@ test.describe("sidebar drag and drop", () => {
     const terminalIndex = initialLabels.findIndex((l) => l?.includes("Terminal"));
     expect(reviewIndex).toBeLessThan(terminalIndex);
 
-    const terminalHandle = terminalTab.locator("[data-sidebar-tab-drag-handle]");
-    await expect(terminalHandle).toBeVisible({ timeout: 5000 });
-
     // Drag INACTIVE terminal tab to before review tab (reorder)
     // This tests that inactive tabs can be dragged just like active tabs
-    await ui.dragElement(terminalHandle, reviewTab, { targetPosition: "before" });
+    await ui.dragElement(terminalTab, reviewTab, { targetPosition: "before" });
 
     // Verify tabs were reordered: terminal now comes before review
     const reorderedTabs = await tablist.getByRole("tab").all();

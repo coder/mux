@@ -1,4 +1,3 @@
-import { GripVertical } from "lucide-react";
 import React from "react";
 import { cn } from "@/common/lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
@@ -110,7 +109,6 @@ const DraggableTab: React.FC<{
   onDragEnd?: () => void;
 }> = ({ item, index, tabsetId, onReorder, onDragStart, onDragEnd }) => {
   const [dropIndicator, setDropIndicator] = React.useState<"before" | "after" | null>(null);
-  const dragHandleRef = React.useRef<HTMLSpanElement | null>(null);
   const tabRef = React.useRef<HTMLButtonElement | null>(null);
   // Track if a drag occurred to suppress click-to-select after drag ends
   const didDragRef = React.useRef(false);
@@ -190,8 +188,9 @@ const DraggableTab: React.FC<{
     }
   }, [isOver]);
 
+  // Attach both drag and drop to the tab button - tabs are directly draggable
   drop(tabRef);
-  drag(dragHandleRef);
+  drag(tabRef);
 
   const dropIndicatorEl = isOver && canDrop && dropIndicator !== null && (
     <div
@@ -206,12 +205,12 @@ const DraggableTab: React.FC<{
     <button
       ref={tabRef}
       className={cn(
-        "rounded-md px-3 py-1 text-xs font-medium transition-all duration-150 flex items-baseline gap-1.5 cursor-pointer",
+        "rounded-md px-3 py-1 text-xs font-medium transition-all duration-150 cursor-grab active:cursor-grabbing",
         item.selected
           ? "bg-hover text-foreground"
           : "bg-transparent text-muted hover:bg-hover/50 hover:text-foreground",
         item.disabled && "opacity-50 pointer-events-none",
-        isDragging && "opacity-50"
+        isDragging && "opacity-50 cursor-grabbing"
       )}
       onClick={() => {
         // Suppress selection if this click is the mouseup after a drag
@@ -228,17 +227,6 @@ const DraggableTab: React.FC<{
       aria-controls={item.panelId}
       disabled={item.disabled}
     >
-      <span
-        ref={dragHandleRef}
-        data-sidebar-tab-drag-handle
-        aria-hidden="true"
-        className={cn(
-          "text-muted-foreground/60 hover:text-muted-foreground flex h-4 w-4 shrink-0 items-center justify-center self-center cursor-grab active:cursor-grabbing",
-          isDragging && "cursor-grabbing"
-        )}
-      >
-        <GripVertical size={12} />
-      </span>
       {item.label}
     </button>
   );
