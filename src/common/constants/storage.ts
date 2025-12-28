@@ -353,10 +353,14 @@ export const RIGHT_SIDEBAR_COLLAPSED_KEY = "right-sidebar:collapsed";
 export const RIGHT_SIDEBAR_WIDTH_KEY = "right-sidebar:width";
 
 /**
- * Right sidebar dock-lite layout (global)
- * Format: "right-sidebar:layout"
+ * Get the localStorage key for right sidebar dock-lite layout per workspace.
+ * Each workspace can have its own split/tab configuration (e.g., different
+ * numbers of terminals). Width and collapsed state remain global.
+ * Format: "right-sidebar:layout:{workspaceId}"
  */
-export const RIGHT_SIDEBAR_LAYOUT_KEY = "right-sidebar:layout";
+export function getRightSidebarLayoutKey(workspaceId: string): string {
+  return `right-sidebar:layout:${workspaceId}`;
+}
 
 /**
  * Get the localStorage key for unified Review search state per workspace
