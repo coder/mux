@@ -430,6 +430,16 @@ function taskBashResultToBashToolResult(result: TaskToolResult | null): BashTool
   }
 
   // Background bash tasks return early with status=running and taskId=bash:<processId>.
+  // Newer task(kind="bash") results include the raw bash tool result directly.
+  // Prefer that over parsing reportMarkdown.
+  const structuredBashResult = coerceBashToolResult(
+    (result as { bashResult?: unknown }).bashResult
+  );
+  if (structuredBashResult) {
+    return structuredBashResult;
+  }
+
+  // Legacy fallback for older sessions that only persisted reportMarkdown.
   if (status !== "completed") {
     const taskId = (result as { taskId?: unknown }).taskId;
     if (typeof taskId === "string" && taskId.startsWith("bash:")) {

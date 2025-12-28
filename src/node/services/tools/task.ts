@@ -39,12 +39,9 @@ function formatBashReport(
     lines.push(`error: ${result.error}`);
   }
 
-  if (typeof result.output === "string" && result.output.length > 0) {
-    lines.push("");
-    lines.push("```text");
-    lines.push(result.output.trimEnd());
-    lines.push("```");
-  }
+  // NOTE: We intentionally omit the full command output from reportMarkdown.
+  // For task(kind="bash"), the raw result (including output) is returned separately as
+  // TaskToolCompletedResult.bashResult to avoid duplicating tokens in the model context.
 
   return lines.join("\n");
 }
@@ -109,6 +106,7 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
               bashResult
             ),
             title: resolvedDisplayName,
+            bashResult,
             exitCode: bashResult.exitCode,
             note: "note" in bashResult ? bashResult.note : undefined,
             truncated: "truncated" in bashResult ? bashResult.truncated : undefined,

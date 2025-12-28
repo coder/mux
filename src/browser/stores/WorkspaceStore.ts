@@ -475,12 +475,17 @@ export class WorkspaceStore {
 
         if (!isTaskBashToolCall) {
           const taskResult = toolCallEnd.result as
-            | { taskId?: unknown; reportMarkdown?: unknown }
+            | { taskId?: unknown; bashResult?: unknown }
             | undefined;
           const taskId = typeof taskResult?.taskId === "string" ? taskResult.taskId : undefined;
-          const reportMarkdown =
-            typeof taskResult?.reportMarkdown === "string" ? taskResult.reportMarkdown : undefined;
-          if (taskId?.startsWith("bash:") || reportMarkdown?.startsWith("### Bash:")) {
+          const bashResult = taskResult?.bashResult;
+          const hasBashResult =
+            bashResult !== null &&
+            typeof bashResult === "object" &&
+            "success" in bashResult &&
+            typeof (bashResult as { success?: unknown }).success === "boolean";
+
+          if (taskId?.startsWith("bash:") || hasBashResult) {
             isTaskBashToolCall = true;
           }
         }

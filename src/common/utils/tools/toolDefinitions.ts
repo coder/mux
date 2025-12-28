@@ -196,6 +196,11 @@ export const TaskToolCompletedResultSchema = z
     title: z.string().optional(),
     agentId: z.string().optional(),
     agentType: z.string().optional(),
+
+    // task(kind="bash") optionally includes the raw bash result so the UI can render
+    // output without having to parse reportMarkdown.
+    bashResult: z.lazy(() => BashToolResultSchema).optional(),
+
     exitCode: z.number().optional(),
     note: z.string().optional(),
     truncated: z
