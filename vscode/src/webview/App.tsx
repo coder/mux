@@ -479,6 +479,20 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
 
                 <Tooltip>
                   <TooltipTrigger asChild>
+                    <span
+                      className="inline-flex shrink-0 items-center rounded border border-border-light bg-background px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted"
+                      aria-label="Preview feature"
+                    >
+                      Preview
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent align="center">
+                    Preview feature — under active development; may contain bugs.
+                  </TooltipContent>
+                </Tooltip>
+
+                <Tooltip>
+                  <TooltipTrigger asChild>
                     <Button
                       type="button"
                       variant="ghost"
