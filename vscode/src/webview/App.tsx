@@ -39,33 +39,6 @@ const VSCODE_CHAT_HOST_CONTEXT_VALUE = {
   actions: {},
 } as const;
 
-function formatConnectionStatus(status: UiConnectionStatus | null): string {
-  if (!status) {
-    return "Loading mux…";
-  }
-
-  const parts: string[] = [];
-
-  if (status.mode === "api") {
-    parts.push("Connected to mux server");
-    if (status.baseUrl) {
-      parts.push(status.baseUrl);
-    }
-  } else {
-    parts.push("Using local file access");
-    if (status.baseUrl) {
-      parts.push(`Server: ${status.baseUrl}`);
-    }
-  }
-
-  if (status.error) {
-    parts.push(status.error);
-  }
-
-  return parts.join("\n");
-}
-
-
 const MAX_BUFFERED_HISTORICAL_MESSAGES = 500;
 const MAX_BUFFERED_STREAM_EVENTS = 5_000;
 
@@ -485,10 +458,6 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
     bridge.postMessage({ type: "refreshWorkspaces" });
   };
 
-  const onConfigure = () => {
-    bridge.postMessage({ type: "configureConnection" });
-  };
-
   const onOpenWorkspace = () => {
     if (!selectedWorkspaceId) {
       return;
@@ -507,9 +476,7 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
             <TooltipProvider>
           <div className="flex h-screen flex-col">
             <div className="border-b border-border bg-background-secondary p-3">
-              <div className="text-muted whitespace-pre-wrap text-xs">{formatConnectionStatus(connectionStatus)}</div>
-
-              <div className="mt-3 flex items-center gap-2">
+              <div className="flex items-center gap-2">
                 <WorkspacePicker
                   workspaces={workspaces}
                   selectedWorkspaceId={selectedWorkspaceId}
@@ -523,12 +490,6 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
                 </Button>
                 <Button type="button" size="sm" onClick={onOpenWorkspace} disabled={!selectedWorkspaceId}>
                   Open
-                </Button>
-              </div>
-
-              <div className="mt-2">
-                <Button type="button" variant="outline" size="sm" onClick={onConfigure}>
-                  Configure Connection
                 </Button>
               </div>
             </div>
