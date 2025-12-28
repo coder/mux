@@ -68,6 +68,7 @@ export function WorkspacePicker(props: {
   workspaces: UiWorkspace[];
   selectedWorkspaceId: string | null;
   onSelectWorkspace: (workspaceId: string | null) => void;
+  onRequestRefresh?: (() => void) | undefined;
 }): JSX.Element {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -110,6 +111,10 @@ export function WorkspacePicker(props: {
     <Popover
       open={open}
       onOpenChange={(next) => {
+        if (next) {
+          props.onRequestRefresh?.();
+        }
+
         setOpen(next);
         if (!next) {
           setQuery("");

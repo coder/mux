@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
+import { Pencil } from "lucide-react";
+
 import type { WorkspaceChatMessage } from "mux/common/orpc/types";
 import type { DisplayedMessage } from "mux/common/types/message";
 import { createClient } from "mux/common/orpc/client";
@@ -9,7 +11,7 @@ import { SettingsProvider } from "mux/browser/contexts/SettingsContext";
 import { APIProvider } from "mux/browser/contexts/API";
 import { ThemeProvider } from "mux/browser/contexts/ThemeContext";
 import { ChatHostContextProvider } from "mux/browser/contexts/ChatHostContext";
-import { TooltipProvider } from "mux/browser/components/ui/tooltip";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "mux/browser/components/ui/tooltip";
 import { Button } from "mux/browser/components/ui/button";
 import { matchesKeybind, KEYBINDS } from "mux/browser/utils/ui/keybinds";
 import { readPersistedState } from "mux/browser/hooks/usePersistedState";
@@ -454,7 +456,7 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [apiClient, bridge, canChat, selectedWorkspaceId]);
 
-  const onRefresh = () => {
+  const requestRefreshWorkspaces = () => {
     bridge.postMessage({ type: "refreshWorkspaces" });
   };
 
@@ -483,14 +485,24 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
                   onSelectWorkspace={(workspaceId) => {
                     bridge.postMessage({ type: "selectWorkspace", workspaceId });
                   }}
+                  onRequestRefresh={requestRefreshWorkspaces}
                 />
 
-                <Button type="button" variant="secondary" size="sm" onClick={onRefresh}>
-                  Refresh
-                </Button>
-                <Button type="button" size="sm" onClick={onOpenWorkspace} disabled={!selectedWorkspaceId}>
-                  Open
-                </Button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={onOpenWorkspace}
+                      disabled={!selectedWorkspaceId}
+                      className="text-muted hover:text-foreground h-8 w-8 shrink-0"
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent align="center">Open workspace</TooltipContent>
+                </Tooltip>
               </div>
             </div>
 

@@ -1016,8 +1016,18 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
       localResourceRoots: (view.webview.options.localResourceRoots ?? []).map((uri) => uri.toString()),
     });
 
-    const visibilityDisposable = view.onDidChangeVisibility(() => {
+    const visibilityDisposable = view.onDidChangeVisibility(async () => {
       muxLogDebug("mux.chatView: view visibility changed", { visible: view.visible });
+
+      if (!view.visible) {
+        return;
+      }
+
+      if (!this.isWebviewReady) {
+        return;
+      }
+
+      await this.refreshWorkspaces();
     });
     viewDisposables.push(visibilityDisposable);
 
