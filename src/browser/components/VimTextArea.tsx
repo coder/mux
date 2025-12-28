@@ -8,6 +8,11 @@ import { cn } from "@/common/lib/utils";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { VIM_ENABLED_KEY } from "@/common/constants/storage";
 
+function isVscodeWebview(): boolean {
+  const acquireVsCodeApi = (globalThis as { acquireVsCodeApi?: unknown }).acquireVsCodeApi;
+  return typeof acquireVsCodeApi === "function";
+}
+
 /**
  * VimTextArea – minimal Vim-like editing for a textarea.
  *
@@ -178,7 +183,7 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
     // Build mode indicator content
     const showVimMode = vimEnabled && vimMode === "normal";
     const pendingCommand = showVimMode ? vim.formatPendingCommand(pendingOp) : "";
-    const showFocusHint = !isFocused;
+    const showFocusHint = !isFocused && !isVscodeWebview();
 
     return (
       <div style={{ width: "100%" }} data-component="VimTextAreaContainer">
