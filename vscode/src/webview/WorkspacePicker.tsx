@@ -214,6 +214,9 @@ export function WorkspacePicker(props: {
           variant="secondary"
           size="sm"
           disabled={isTriggerDisabled}
+          aria-label={`Select workspace (currently ${triggerLabel})`}
+          aria-expanded={open}
+          aria-haspopup="listbox"
           className="min-w-0 flex-1 justify-between"
         >
           <span className="min-w-0 flex-1 truncate text-left">{triggerLabel}</span>
@@ -226,6 +229,7 @@ export function WorkspacePicker(props: {
           ref={inputRef}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
+          aria-label="Search workspaces"
           placeholder="Search workspaces…"
           className="h-8"
         />

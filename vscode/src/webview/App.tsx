@@ -26,6 +26,7 @@ import { ChatComposer } from "./ChatComposer";
 import { VSCODE_CHAT_UI_SUPPORT } from "./chatUiCapabilities";
 import { VscodeStreamingBarrier } from "./StreamingBarrier";
 import { DisplayedMessageRenderer } from "./DisplayedMessageRenderer";
+import { CHAT_BUFFER_LIMITS } from "./config";
 import { createVscodeOrpcLink } from "./createVscodeOrpcLink";
 import type { VscodeBridge } from "./vscodeBridge";
 
@@ -41,8 +42,8 @@ const VSCODE_CHAT_HOST_CONTEXT_VALUE = {
   actions: {},
 } as const;
 
-const MAX_BUFFERED_HISTORICAL_MESSAGES = 500;
-const MAX_BUFFERED_STREAM_EVENTS = 5_000;
+const MAX_BUFFERED_HISTORICAL_MESSAGES = CHAT_BUFFER_LIMITS.MAX_HISTORICAL_MESSAGES;
+const MAX_BUFFERED_STREAM_EVENTS = CHAT_BUFFER_LIMITS.MAX_STREAM_EVENTS;
 
 interface ChatReplayState {
   workspaceId: string;
@@ -107,11 +108,9 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
   const chatReplayStateRef = useRef<ChatReplayState | null>(null);
   const [notices, setNotices] = useState<Notice[]>([]);
 
-
   const aggregatorRef = useRef<StreamingMessageAggregator | null>(null);
   const [displayedMessages, setDisplayedMessages] = useState<DisplayedMessage[]>([]);
   const workspacesRef = useRef<UiWorkspace[]>([]);
-
 
   const scheduledRenderRef = useRef<{ kind: "raf" | "timeout"; id: number } | null>(null);
   const isRenderScheduledRef = useRef(false);
@@ -278,6 +277,24 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
               chatReplayStateRef.current = replayState;
             }
 
+            const flushReplayBuffer = () => {
+              const hasActiveStream = replayState.pendingStreamEvents.some(
+                (bufferedEvent) => bufferedEvent.type === "stream-start"
+              );
+
+              if (replayState.historicalMessages.length > 0) {
+                aggregator.loadHistoricalMessages(replayState.historicalMessages, hasActiveStream);
+                replayState.historicalMessages.length = 0;
+              }
+
+              for (const bufferedEvent of replayState.pendingStreamEvents) {
+                applyWorkspaceChatEventToAggregator(aggregator, bufferedEvent);
+              }
+              replayState.pendingStreamEvents.length = 0;
+
+              replayState.caughtUp = true;
+              flushDisplayedMessages();
+            };
 
             const forceCatchUp = () => {
               if (
@@ -304,40 +321,12 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
                 });
               }
 
-              const hasActiveStream = replayState.pendingStreamEvents.some(
-                (bufferedEvent) => bufferedEvent.type === "stream-start"
-              );
-
-              if (replayState.historicalMessages.length > 0) {
-                aggregator.loadHistoricalMessages(replayState.historicalMessages, hasActiveStream);
-                replayState.historicalMessages.length = 0;
-              }
-
-              for (const bufferedEvent of replayState.pendingStreamEvents) {
-                applyWorkspaceChatEventToAggregator(aggregator, bufferedEvent);
-              }
-              replayState.pendingStreamEvents.length = 0;
-
-              replayState.caughtUp = true;
-              flushDisplayedMessages();
+              flushReplayBuffer();
             };
             const event = msg.event;
 
             if (event.type === "caught-up") {
-              const hasActiveStream = replayState.pendingStreamEvents.some((event) => event.type === "stream-start");
-
-              if (replayState.historicalMessages.length > 0) {
-                aggregator.loadHistoricalMessages(replayState.historicalMessages, hasActiveStream);
-                replayState.historicalMessages.length = 0;
-              }
-
-              for (const bufferedEvent of replayState.pendingStreamEvents) {
-                applyWorkspaceChatEventToAggregator(aggregator, bufferedEvent);
-              }
-              replayState.pendingStreamEvents.length = 0;
-
-              replayState.caughtUp = true;
-              flushDisplayedMessages();
+              flushReplayBuffer();
               return;
             }
 
@@ -496,6 +485,7 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
                       size="icon"
                       onClick={onOpenWorkspace}
                       disabled={!selectedWorkspaceId}
+                      aria-label="Open workspace"
                       className="text-muted hover:text-foreground h-8 w-8 shrink-0"
                     >
                       <Pencil className="h-4 w-4" />

@@ -653,9 +653,6 @@ async function configureConnectionCommand(context: vscode.ExtensionContext): Pro
   }
 }
 
-
-
-
 async function debugConnectionCommand(context: vscode.ExtensionContext): Promise<void> {
   assert(context, "debugConnectionCommand requires context");
 
@@ -893,6 +890,99 @@ function renderChatViewHtml(webview: vscode.Webview, extensionUri: vscode.Uri, t
   });
 
   return html;
+}
+
+
+function parseWebviewToExtensionMessage(raw: unknown): WebviewToExtensionMessage | null {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+
+  const record = raw as Record<string, unknown>;
+  const type = record.type;
+  if (typeof type !== "string") {
+    return null;
+  }
+
+  switch (type) {
+    case "ready":
+    case "refreshWorkspaces":
+    case "configureConnection":
+      return { type };
+
+    case "selectWorkspace": {
+      const workspaceId = record.workspaceId;
+      if (typeof workspaceId !== "string" && workspaceId !== null) {
+        return null;
+      }
+
+      return { type, workspaceId };
+    }
+
+    case "openWorkspace": {
+      if (typeof record.workspaceId !== "string") {
+        return null;
+      }
+
+      return { type, workspaceId: record.workspaceId };
+    }
+
+    case "debugLog": {
+      if (typeof record.message !== "string") {
+        return null;
+      }
+
+      return { type, message: record.message, data: record.data };
+    }
+
+    case "copyDebugLog": {
+      if (typeof record.text !== "string") {
+        return null;
+      }
+
+      return { type, text: record.text };
+    }
+
+    case "orpcCall": {
+      if (typeof record.requestId !== "string") {
+        return null;
+      }
+
+      const path = record.path;
+      if (!Array.isArray(path) || !path.every((segment) => typeof segment === "string")) {
+        return null;
+      }
+
+      const lastEventId = typeof record.lastEventId === "string" ? record.lastEventId : undefined;
+
+      return {
+        type,
+        requestId: record.requestId,
+        path: path as string[],
+        input: record.input,
+        lastEventId,
+      };
+    }
+
+    case "orpcCancel": {
+      if (typeof record.requestId !== "string") {
+        return null;
+      }
+
+      return { type, requestId: record.requestId };
+    }
+
+    case "orpcStreamCancel": {
+      if (typeof record.streamId !== "string") {
+        return null;
+      }
+
+      return { type, streamId: record.streamId };
+    }
+
+    default:
+      return null;
+  }
 }
 
 
@@ -1232,43 +1322,26 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
   }
 
   private async onWebviewMessage(raw: unknown): Promise<void> {
-    if (typeof raw !== "object" || raw === null || !("type" in raw)) {
+    const msg = parseWebviewToExtensionMessage(raw);
+    if (!msg) {
       return;
     }
 
-    const msg = raw as { type: unknown; [key: string]: unknown };
-    if (typeof msg.type !== "string") {
-      return;
-    }
-
-    const type = msg.type;
-
-    const handlers = {
-      debugLog: async (msg) => {
-        if (typeof msg.message !== "string") {
-          return;
-        }
-
+    switch (msg.type) {
+      case "debugLog":
         muxLogDebug(`mux.chatView(webview): ${msg.message}`, msg.data);
-      },
+        return;
 
-      copyDebugLog: async (msg) => {
-        if (typeof msg.text !== "string") {
-          return;
-        }
-
+      case "copyDebugLog": {
         const text = msg.text;
         muxLogInfo("mux.chatView: copyDebugLog requested", { traceId: this.traceId, length: text.length });
 
         await vscode.env.clipboard.writeText(text);
         this.postMessage({ type: "uiNotice", level: "info", message: "Copied mux debug log to clipboard." });
-      },
+        return;
+      }
 
-      orpcCall: async (msg) => {
-        if (typeof msg.requestId !== "string") {
-          return;
-        }
-
+      case "orpcCall": {
         if (this.pendingOrpcCalls.has(msg.requestId)) {
           this.postMessage({
             type: "orpcResponse",
@@ -1279,46 +1352,28 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
           return;
         }
 
-        if (!Array.isArray(msg.path) || !msg.path.every((p) => typeof p === "string")) {
-          this.postMessage({
-            type: "orpcResponse",
-            requestId: msg.requestId,
-            ok: false,
-            error: "Invalid ORPC path",
-          });
-          return;
-        }
-
         const controller = new AbortController();
         this.pendingOrpcCalls.set(msg.requestId, controller);
 
-        const lastEventId = typeof msg.lastEventId === "string" ? msg.lastEventId : undefined;
         await this.handleOrpcCall({
           requestId: msg.requestId,
           path: msg.path,
           input: msg.input,
-          lastEventId,
+          lastEventId: msg.lastEventId,
           controller,
         });
-      },
+        return;
+      }
 
-      orpcCancel: async (msg) => {
-        if (typeof msg.requestId !== "string") {
-          return;
-        }
-
+      case "orpcCancel":
         this.handleOrpcCancel(msg.requestId);
-      },
+        return;
 
-      orpcStreamCancel: async (msg) => {
-        if (typeof msg.streamId !== "string") {
-          return;
-        }
-
+      case "orpcStreamCancel":
         this.handleOrpcStreamCancel(msg.streamId);
-      },
+        return;
 
-      ready: async (_msg) => {
+      case "ready":
         muxLogDebug("mux.chatView: ready handshake received", { traceId: this.traceId });
         this.isWebviewReady = true;
         this.clearReadyProbeInterval();
@@ -1328,38 +1383,25 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
         this.postMessage({ type: "setSelectedWorkspace", workspaceId: this.selectedWorkspaceId });
 
         await this.refreshWorkspaces();
-      },
+        return;
 
-      refreshWorkspaces: async (_msg) => {
+      case "refreshWorkspaces":
         await this.refreshWorkspaces();
-      },
+        return;
 
-      selectWorkspace: async (msg) => {
-        const workspaceId = typeof msg.workspaceId === "string" ? msg.workspaceId : null;
-        await this.setSelectedWorkspaceId(workspaceId);
-      },
+      case "selectWorkspace":
+        await this.setSelectedWorkspaceId(msg.workspaceId);
+        return;
 
-      openWorkspace: async (msg) => {
-        if (typeof msg.workspaceId !== "string") {
-          return;
-        }
-
+      case "openWorkspace":
         await this.openWorkspaceFromView(msg.workspaceId);
-      },
+        return;
 
-      configureConnection: async (_msg) => {
+      case "configureConnection":
         await configureConnectionCommand(this.context);
         await this.refreshWorkspaces();
-      },
-    } satisfies Record<WebviewToExtensionMessage["type"], (msg: typeof msg) => Promise<void>>;
-
-    const handler = (handlers as Record<string, ((msg: typeof msg) => Promise<void>) | undefined>)[type];
-    if (!handler) {
-      muxLogDebug("mux.chatView: unknown webview message type", { traceId: this.traceId, type });
-      return;
+        return;
     }
-
-    await handler(msg);
   }
 
   private async refreshWorkspaces(): Promise<void> {

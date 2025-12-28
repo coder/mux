@@ -4,6 +4,14 @@ import assert from "mux/common/utils/assert";
 import type { OrpcResponse, OrpcStreamData, OrpcStreamEnd, OrpcStreamError } from "./protocol";
 import type { VscodeBridge } from "./vscodeBridge";
 
+/**
+ * ORPC ClientLink implementation for the VS Code webview.
+ *
+ * Message protocol (via {@link VscodeBridge}):
+ * - Webview → extension: `orpcCall`, `orpcCancel`, `orpcStreamCancel`
+ * - Extension → webview: `orpcResponse`, `orpcStreamData`, `orpcStreamEnd`, `orpcStreamError`
+ */
+
 function createRequestId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();

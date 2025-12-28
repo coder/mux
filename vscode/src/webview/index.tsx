@@ -1,6 +1,7 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 
+import { ErrorBoundary } from "mux/browser/components/ErrorBoundary";
 import { App } from "./App";
 import { getVscodeBridge } from "./vscodeBridge";
 
@@ -14,6 +15,8 @@ if (!rootEl) {
 
 createRoot(rootEl).render(
   <React.StrictMode>
-    <App bridge={bridge} />
+    <ErrorBoundary workspaceInfo="VS Code webview">
+      <App bridge={bridge} />
+    </ErrorBoundary>
   </React.StrictMode>
 );
