@@ -839,29 +839,6 @@ async function getWorkspacesForSidebar(
   }
 }
 
-function findWorkspaceIdMatchingCurrentFolder(workspaces: WorkspaceWithContext[]): string | null {
-  assert(Array.isArray(workspaces), "findWorkspaceIdMatchingCurrentFolder requires workspaces array");
-
-  const folderUri = getPrimaryWorkspaceFolderUri();
-  if (!folderUri) {
-    return null;
-  }
-
-  const folderUriString = folderUri.toString();
-  for (const workspace of workspaces) {
-    try {
-      const expected = getOpenFolderUri(workspace).toString();
-      if (expected === folderUriString) {
-        return workspace.id;
-      }
-    } catch {
-      // Best-effort: ignore auto-detection failures.
-    }
-  }
-
-  return null;
-}
-
 function renderChatViewHtml(webview: vscode.Webview, extensionUri: vscode.Uri, traceId: string): string {
   assert(typeof traceId === "string" && traceId.length > 0, "traceId must be a non-empty string");
 
@@ -1402,14 +1379,7 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
         await this.setSelectedWorkspaceId(null);
       }
 
-      if (!this.selectedWorkspaceId) {
-        const match = findWorkspaceIdMatchingCurrentFolder(this.workspaces);
-        if (match) {
-          muxLogDebug("mux.chatView: auto-selected workspace", { workspaceId: match });
-          await this.setSelectedWorkspaceId(match);
-        }
-      }
-
+      // Intentionally do not auto-select a workspace; the user must explicitly choose one.
       await this.updateChatSubscription();
 
       muxLogDebug("mux.chatView: refreshWorkspaces done", {
