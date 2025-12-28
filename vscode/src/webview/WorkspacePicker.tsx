@@ -99,6 +99,93 @@ export function WorkspacePicker(props: {
     ? props.workspaces.filter((workspace) => workspaceMatchesQuery(workspace, normalizedQuery))
     : props.workspaces;
 
+  const projectGroups = (() => {
+    const groups: Array<{ projectName: string; projectPath: string; workspaces: UiWorkspace[] }> = [];
+    const byProjectPath = new Map<string, (typeof groups)[number]>();
+
+    for (const workspace of filteredWorkspaces) {
+      const existing = byProjectPath.get(workspace.projectPath);
+      if (existing) {
+        existing.workspaces.push(workspace);
+        continue;
+      }
+
+      const next = {
+        projectName: workspace.projectName,
+        projectPath: workspace.projectPath,
+        workspaces: [workspace],
+      };
+
+      groups.push(next);
+      byProjectPath.set(workspace.projectPath, next);
+    }
+
+    return groups;
+  })();
+
+
+  const shouldGroupByProject = projectGroups.length > 1;
+  const showProjectNameInRow = !shouldGroupByProject;
+
+  const renderWorkspaceRow = (workspace: UiWorkspace): JSX.Element => {
+    const isSelected = workspace.id === props.selectedWorkspaceId;
+    const runtimeBadgeClassName = workspace.streaming
+      ? RUNTIME_BADGE_STYLES[workspace.runtimeType].working
+      : RUNTIME_BADGE_STYLES[workspace.runtimeType].idle;
+    const RuntimeIcon = RUNTIME_ICON[workspace.runtimeType];
+
+    return (
+      <button
+        key={workspace.id}
+        type="button"
+        className={cn(
+          "hover:bg-hover flex w-full items-start gap-2 rounded-md px-2 py-2 text-left",
+          isSelected && "bg-hover"
+        )}
+        onClick={() => {
+          props.onSelectWorkspace(workspace.id);
+          setOpen(false);
+        }}
+      >
+        <span
+          className={cn(
+            "mt-0.5 inline-flex shrink-0 items-center rounded border px-1 py-0.5 transition-colors",
+            runtimeBadgeClassName
+          )}
+        >
+          <RuntimeIcon />
+        </span>
+
+        <div className="min-w-0 flex-1">
+          <div className="min-w-0 truncate text-sm">
+            {workspace.streaming ? (
+              <Shimmer className="w-full truncate" colorClass="var(--color-foreground)">
+                {workspace.workspaceName}
+              </Shimmer>
+            ) : (
+              workspace.workspaceName
+            )}
+          </div>
+
+          {showProjectNameInRow ? (
+            <div className="text-muted truncate text-xs">
+              {workspace.projectName}
+              {workspace.runtimeType === "ssh" && workspace.sshHost ? ` · ssh:${workspace.sshHost}` : null}
+            </div>
+          ) : workspace.runtimeType === "ssh" && workspace.sshHost ? (
+            <div className="text-muted truncate text-xs">ssh:{workspace.sshHost}</div>
+          ) : null}
+        </div>
+
+        {isSelected ? (
+          <Check className="size-4 shrink-0 self-center" />
+        ) : (
+          <span className="size-4 shrink-0 self-center" />
+        )}
+      </button>
+    );
+  };
+
   const triggerLabel = selectedWorkspace
     ? formatWorkspaceTriggerLabel(selectedWorkspace)
     : props.workspaces.length > 0
@@ -146,62 +233,21 @@ export function WorkspacePicker(props: {
         <div className="mt-2 max-h-72 overflow-y-auto">
           {filteredWorkspaces.length === 0 ? (
             <div className="text-muted px-2 py-6 text-center text-sm">No matching workspaces.</div>
-          ) : (
-            filteredWorkspaces.map((workspace) => {
-              const isSelected = workspace.id === props.selectedWorkspaceId;
-              const runtimeBadgeClassName = workspace.streaming
-                ? RUNTIME_BADGE_STYLES[workspace.runtimeType].working
-                : RUNTIME_BADGE_STYLES[workspace.runtimeType].idle;
-              const RuntimeIcon = RUNTIME_ICON[workspace.runtimeType];
-
-              return (
-                <button
-                  key={workspace.id}
-                  type="button"
-                  className={cn(
-                    "hover:bg-hover flex w-full items-start gap-2 rounded-md px-2 py-2 text-left",
-                    isSelected && "bg-hover"
-                  )}
-                  onClick={() => {
-                    props.onSelectWorkspace(workspace.id);
-                    setOpen(false);
-                  }}
+          ) : shouldGroupByProject ? (
+            projectGroups.map((group, groupIndex) => (
+              <div key={group.projectPath}>
+                {groupIndex > 0 ? <div className="my-1 border-t border-border-light" /> : null}
+                <div
+                  className="text-muted px-2 py-1 text-[10px] font-semibold uppercase tracking-wide"
+                  title={group.projectPath}
                 >
-                  <span
-                    className={cn(
-                      "mt-0.5 inline-flex shrink-0 items-center rounded border px-1 py-0.5 transition-colors",
-                      runtimeBadgeClassName
-                    )}
-                  >
-                    <RuntimeIcon />
-                  </span>
-
-                  <div className="min-w-0 flex-1">
-                    <div className="min-w-0 truncate text-sm">
-                      {workspace.streaming ? (
-                        <Shimmer className="w-full truncate" colorClass="var(--color-foreground)">
-                          {workspace.workspaceName}
-                        </Shimmer>
-                      ) : (
-                        workspace.workspaceName
-                      )}
-                    </div>
-                    <div className="text-muted truncate text-xs">
-                      {workspace.projectName}
-                      {workspace.runtimeType === "ssh" && workspace.sshHost
-                        ? ` · ssh:${workspace.sshHost}`
-                        : null}
-                    </div>
-                  </div>
-
-                  {isSelected ? (
-                    <Check className="size-4 shrink-0 self-center" />
-                  ) : (
-                    <span className="size-4 shrink-0 self-center" />
-                  )}
-                </button>
-              );
-            })
+                  {group.projectName}
+                </div>
+                {group.workspaces.map(renderWorkspaceRow)}
+              </div>
+            ))
+          ) : (
+            filteredWorkspaces.map(renderWorkspaceRow)
           )}
         </div>
       </PopoverContent>
