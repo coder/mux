@@ -7,56 +7,8 @@ import type { ToolFactory } from "@/common/utils/tools/tools";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { TodoItem } from "@/common/types/tools";
 import { MAX_TODOS } from "@/common/constants/toolLimits";
+import { getTodoFilePath, readTodosForSessionDir } from "@/node/services/todos/todoStorage";
 import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks";
-
-const TODO_FILE_NAME = "todos.json";
-
-/**
- * Get path to todos.json file in the workspace's session directory
- */
-function getTodoFilePath(workspaceSessionDir: string): string {
-  return path.join(workspaceSessionDir, TODO_FILE_NAME);
-}
-
-function coerceTodoItems(value: unknown): TodoItem[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  const result: TodoItem[] = [];
-  for (const item of value) {
-    if (!item || typeof item !== "object") continue;
-
-    const content = (item as { content?: unknown }).content;
-    const status = (item as { status?: unknown }).status;
-
-    if (typeof content !== "string") continue;
-    if (status !== "pending" && status !== "in_progress" && status !== "completed") continue;
-
-    result.push({ content, status });
-  }
-
-  return result;
-}
-
-/**
- * Read todos from the workspace session directory.
- */
-async function readTodos(workspaceSessionDir: string): Promise<TodoItem[]> {
-  const todoFile = getTodoFilePath(workspaceSessionDir);
-
-  try {
-    const content = await fs.readFile(todoFile, "utf-8");
-    const parsed: unknown = JSON.parse(content);
-    return coerceTodoItems(parsed);
-  } catch (error) {
-    // File doesn't exist yet or is invalid
-    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
-      return [];
-    }
-    return [];
-  }
-}
 
 /**
  * Validate todo sequencing rules before persisting.
@@ -190,7 +142,7 @@ export const createTodoReadTool: ToolFactory = (config) => {
     inputSchema: TOOL_DEFINITIONS.todo_read.schema,
     execute: async () => {
       assert(config.workspaceSessionDir, "todo_read requires workspaceSessionDir");
-      const todos = await readTodos(config.workspaceSessionDir);
+      const todos = await readTodosForSessionDir(config.workspaceSessionDir);
       return {
         todos,
       };
@@ -213,7 +165,7 @@ export async function setTodosForSessionDir(
  * Get todos for a workspace session directory (useful for testing)
  */
 export async function getTodosForSessionDir(workspaceSessionDir: string): Promise<TodoItem[]> {
-  return readTodos(workspaceSessionDir);
+  return readTodosForSessionDir(workspaceSessionDir);
 }
 
 /**

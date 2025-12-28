@@ -20,6 +20,9 @@ import { createAgentSkillReadFileTool } from "@/node/services/tools/agent_skill_
 import { createAgentReportTool } from "@/node/services/tools/agent_report";
 import { wrapWithInitWait } from "@/node/services/tools/wrapWithInitWait";
 import { log } from "@/node/services/log";
+import { attachModelOnlyToolNotifications } from "@/common/utils/tools/internalToolResultFields";
+import { NotificationEngine } from "@/node/services/agentNotifications/NotificationEngine";
+import { TodoListReminderSource } from "@/node/services/agentNotifications/sources/TodoListReminderSource";
 import { sanitizeMCPToolsForOpenAI } from "@/common/utils/tools/schemaSanitizer";
 
 import type { Runtime } from "@/node/runtime/Runtime";
@@ -94,6 +97,75 @@ function augmentToolDescription(baseTool: Tool, additionalInstructions: string):
   baseToolRecord.description = augmentedDescription;
 
   return baseTool;
+}
+
+function wrapToolExecuteWithModelOnlyNotifications(
+  toolName: string,
+  baseTool: Tool,
+  engine: NotificationEngine
+): Tool {
+  // Access the tool as a record to get its properties.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const baseToolRecord = baseTool as any as Record<string, unknown>;
+  const originalExecute = baseToolRecord.execute;
+
+  if (typeof originalExecute !== "function") {
+    return baseTool;
+  }
+
+  const executeFn = originalExecute as (this: unknown, args: unknown, options: unknown) => unknown;
+
+  baseToolRecord.execute = async (args: unknown, options: unknown) => {
+    try {
+      const result: unknown = await executeFn.call(baseTool, args, options);
+
+      let notifications: string[] = [];
+      try {
+        notifications = await engine.pollAfterToolCall({
+          toolName,
+          toolSucceeded: true,
+          now: Date.now(),
+        });
+      } catch (error) {
+        log.debug("[getToolsForModel] notification poll failed", { error, toolName });
+      }
+
+      return attachModelOnlyToolNotifications(result, notifications);
+    } catch (error) {
+      try {
+        await engine.pollAfterToolCall({
+          toolName,
+          toolSucceeded: false,
+          now: Date.now(),
+        });
+      } catch (pollError) {
+        log.debug("[getToolsForModel] notification poll failed", { pollError, toolName });
+      }
+
+      throw error;
+    }
+  };
+
+  return baseTool;
+}
+
+function wrapToolsWithModelOnlyNotifications(
+  tools: Record<string, Tool>,
+  config: ToolConfiguration
+): Record<string, Tool> {
+  if (!config.workspaceSessionDir) {
+    return tools;
+  }
+
+  const engine = new NotificationEngine([
+    new TodoListReminderSource({ workspaceSessionDir: config.workspaceSessionDir }),
+  ]);
+
+  for (const [toolName, tool] of Object.entries(tools)) {
+    wrapToolExecuteWithModelOnlyNotifications(toolName, tool, engine);
+  }
+
+  return tools;
 }
 
 /**
@@ -220,6 +292,8 @@ export async function getToolsForModel(
     log.error(`No web search tools available for ${provider}:`, error);
   }
 
+  let finalTools = allTools;
+
   // Apply tool-specific instructions if provided
   if (toolInstructions) {
     const augmentedTools: Record<string, Tool> = {};
@@ -231,8 +305,10 @@ export async function getToolsForModel(
         augmentedTools[toolName] = baseTool;
       }
     }
-    return augmentedTools;
+    finalTools = augmentedTools;
   }
 
-  return allTools;
+  finalTools = wrapToolsWithModelOnlyNotifications(finalTools, config);
+
+  return finalTools;
 }
