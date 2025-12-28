@@ -78,6 +78,40 @@ describe("taskResultConverters", () => {
     });
   });
 
+  test("convertTaskBashResult returns failure for malformed exitCode in legacy reportMarkdown", () => {
+    expect(
+      convertTaskBashResult({
+        status: "completed",
+        reportMarkdown: "exitCode: abc\nwall_duration_ms: 7\n```text\nhi\n```",
+      })
+    ).toEqual({
+      success: false,
+      output: "hi",
+      exitCode: -1,
+      error: "Failed to parse exitCode from legacy reportMarkdown: abc",
+      wall_duration_ms: 7,
+      note: undefined,
+      truncated: undefined,
+    });
+  });
+
+  test("convertTaskBashResult tolerates unterminated ```text block in legacy reportMarkdown", () => {
+    expect(
+      convertTaskBashResult({
+        status: "completed",
+        reportMarkdown: "exitCode: 1\nwall_duration_ms: 7\n```text\nhi",
+      })
+    ).toEqual({
+      success: false,
+      output: undefined,
+      exitCode: 1,
+      error: "Command exited with code 1",
+      wall_duration_ms: 7,
+      note: undefined,
+      truncated: undefined,
+    });
+  });
+
   test("convertTaskBashResult legacy success semantics can treat error: line as failure", () => {
     // Desktop semantics: success iff exitCode===0
     expect(

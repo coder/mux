@@ -203,6 +203,41 @@ describe("BackgroundProcessManager", () => {
         expect(result2.success).toBe(true);
       }
     });
+
+    it("should deliver SIGTERM to the bash process (TERM trap executes)", async () => {
+      const sentinelPath = path.join(bgOutputDir, `term-sentinel-${Date.now()}`);
+      const displayName = `test-term-trap-${Date.now()}`;
+
+      const spawnResult = await manager.spawn(
+        runtime,
+        testWorkspaceId,
+        `trap "echo term > '${sentinelPath}'; exit 0" TERM; sleep 60`,
+        {
+          cwd: process.cwd(),
+          displayName,
+        }
+      );
+
+      expect(spawnResult.success).toBe(true);
+      if (!spawnResult.success) return;
+
+      const terminateResult = await manager.terminate(spawnResult.processId);
+      expect(terminateResult.success).toBe(true);
+
+      // Wait briefly for the trap to write the sentinel file.
+      let sentinel: string | null = null;
+      for (let attempt = 0; attempt < 20; attempt++) {
+        try {
+          sentinel = await fs.readFile(sentinelPath, "utf-8");
+          break;
+        } catch {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+      }
+
+      expect(sentinel).not.toBeNull();
+      expect(sentinel!).toContain("term");
+    });
   });
 
   describe("cleanup", () => {

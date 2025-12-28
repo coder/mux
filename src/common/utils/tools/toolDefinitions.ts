@@ -652,6 +652,8 @@ export const TOOL_DEFINITIONS = {
       "Wait for one or more tasks to produce output. " +
       "Agent tasks return reports when completed. " +
       "Bash tasks return incremental output while running and a final reportMarkdown when they exit. " +
+      "For bash tasks, you may optionally pass filter/filter_exclude to include/exclude output lines by regex. " +
+      "WARNING: when using filter, non-matching lines are permanently discarded. " +
       "Use this tool to WAIT; do not poll task_list in a loop to wait for task completion (that is misuse and wastes tool calls). " +
       "This is similar to Promise.allSettled(): you always get per-task results. " +
       "Possible statuses: completed, queued, running, awaiting_report, not_found, invalid_scope, error.",

@@ -87,24 +87,6 @@ export function convertTaskBashResult(
       ? ((result as { reportMarkdown: string }).reportMarkdown ?? "")
       : "";
 
-  const explicitExitCode =
-    typeof (result as { exitCode?: unknown }).exitCode === "number"
-      ? (result as { exitCode: number }).exitCode
-      : undefined;
-  const exitCodeMatch = /exitCode:\s*(-?\d+)/.exec(reportMarkdown);
-  const parsedExitCode = exitCodeMatch ? Number(exitCodeMatch[1]) : undefined;
-  const exitCode = explicitExitCode ?? (Number.isFinite(parsedExitCode) ? parsedExitCode! : 0);
-
-  const wallDurationMatch = /wall_duration_ms:\s*(\d+)/.exec(reportMarkdown);
-  const parsedWallDuration = wallDurationMatch ? Number(wallDurationMatch[1]) : undefined;
-  const wall_duration_ms = Number.isFinite(parsedWallDuration) ? parsedWallDuration! : 0;
-
-  const textBlockMatch = /```text\n([\s\S]*?)\n```/.exec(reportMarkdown);
-  const output = textBlockMatch ? textBlockMatch[1] : "";
-
-  const errorLineMatch = /^error:\s*(.*)$/m.exec(reportMarkdown);
-  const error = errorLineMatch?.[1] ?? `Command exited with code ${exitCode}`;
-
   const note =
     typeof (result as { note?: unknown }).note === "string"
       ? (result as { note: string }).note
@@ -114,6 +96,49 @@ export function convertTaskBashResult(
     truncatedValue !== null && typeof truncatedValue === "object"
       ? (truncatedValue as TruncatedInfo)
       : undefined;
+
+  const wallDurationMatch = /wall_duration_ms:\s*(\d+)/.exec(reportMarkdown);
+  const parsedWallDuration = wallDurationMatch ? Number(wallDurationMatch[1]) : undefined;
+  const wall_duration_ms = Number.isFinite(parsedWallDuration) ? parsedWallDuration! : 0;
+
+  const textBlockMatch = /```text\n([\s\S]*?)\n```/.exec(reportMarkdown);
+  const output = textBlockMatch ? textBlockMatch[1] : "";
+
+  const errorLineMatch = /^error:\s*(.*)$/m.exec(reportMarkdown);
+  const errorFromMarkdown = errorLineMatch?.[1];
+
+  const rawExplicitExitCode = (result as { exitCode?: unknown }).exitCode;
+  const explicitExitCode =
+    typeof rawExplicitExitCode === "number" && Number.isFinite(rawExplicitExitCode)
+      ? rawExplicitExitCode
+      : undefined;
+
+  const exitCodeLineMatch = /^exitCode:\s*(.*)$/m.exec(reportMarkdown);
+  const rawExitCodeFromMarkdown = exitCodeLineMatch ? exitCodeLineMatch[1].trim() : undefined;
+
+  let exitCode: number;
+  if (explicitExitCode !== undefined) {
+    exitCode = explicitExitCode;
+  } else if (rawExitCodeFromMarkdown !== undefined) {
+    if (!/^-?\d+$/.test(rawExitCodeFromMarkdown)) {
+      return {
+        success: false,
+        output: output.length > 0 ? output : undefined,
+        exitCode: -1,
+        error:
+          errorFromMarkdown ??
+          `Failed to parse exitCode from legacy reportMarkdown: ${rawExitCodeFromMarkdown}`,
+        wall_duration_ms,
+        note,
+        truncated,
+      };
+    }
+    exitCode = Number(rawExitCodeFromMarkdown);
+  } else {
+    exitCode = 0;
+  }
+
+  const error = errorFromMarkdown ?? `Command exited with code ${exitCode}`;
 
   const legacyTreatErrorLineAsFailure = options?.legacySuccessCheckInclErrorLine ?? false;
   const isSuccess = legacyTreatErrorLineAsFailure
