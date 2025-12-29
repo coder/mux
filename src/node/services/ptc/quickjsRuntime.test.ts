@@ -163,7 +163,7 @@ describe("QuickJSRuntime", () => {
 
       const result = await runtime.eval('mux.fileRead("test.txt");');
       expect(result.toolCalls).toHaveLength(1);
-      expect(result.toolCalls[0].toolName).toBe("mux.fileRead");
+      expect(result.toolCalls[0].toolName).toBe("fileRead");
     });
   });
 

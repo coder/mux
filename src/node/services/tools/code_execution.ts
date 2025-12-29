@@ -18,7 +18,8 @@ import { getCachedMuxTypes, clearTypeCache } from "@/node/services/ptc/typeGener
 
 // Default limits
 const DEFAULT_MEMORY_BYTES = 64 * 1024 * 1024; // 64MB
-const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+const DEFAULT_TIMEOUT_SECS = 5 * 60; // 5 minutes
+const MAX_TIMEOUT_SECS = 60 * 60; // 1 hour
 
 /**
  * Clear all type caches. Call for test isolation or when tool schemas might have changed.
@@ -85,9 +86,21 @@ ${muxTypes}
         .describe(
           "JavaScript code to execute. All mux.* functions are async. Use 'return' for final result."
         ),
+      timeout_secs: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe(
+          "Execution timeout in seconds (default: 300, max: 3600). " +
+            "Increase when spawning subagents that may take 5-15+ minutes."
+        ),
     }),
 
-    execute: async ({ code }, { abortSignal, toolCallId }): Promise<PTCExecutionResult> => {
+    execute: async (
+      { code, timeout_secs },
+      { abortSignal, toolCallId }
+    ): Promise<PTCExecutionResult> => {
       const execStartTime = Date.now();
 
       // Static analysis before execution - catch syntax errors, forbidden patterns, and type errors
@@ -115,10 +128,11 @@ ${muxTypes}
       const runtime = await runtimeFactory.create();
 
       try {
-        // Set resource limits
+        // Set resource limits (clamp timeout to max)
+        const timeoutSecs = Math.min(timeout_secs ?? DEFAULT_TIMEOUT_SECS, MAX_TIMEOUT_SECS);
         runtime.setLimits({
           memoryBytes: DEFAULT_MEMORY_BYTES,
-          timeoutMs: DEFAULT_TIMEOUT_MS,
+          timeoutMs: timeoutSecs * 1000,
         });
 
         // Subscribe to events for UI streaming

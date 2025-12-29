@@ -6,6 +6,12 @@ import { BashToolCall } from "../BashToolCall";
 import { FileEditToolCall } from "../FileEditToolCall";
 import { FileReadToolCall } from "../FileReadToolCall";
 import { WebFetchToolCall } from "../WebFetchToolCall";
+import {
+  TaskToolCall,
+  TaskAwaitToolCall,
+  TaskListToolCall,
+  TaskTerminateToolCall,
+} from "../TaskToolCall";
 import type {
   BashToolArgs,
   BashToolResult,
@@ -17,6 +23,14 @@ import type {
   FileEditInsertToolResult,
   WebFetchToolArgs,
   WebFetchToolResult,
+  TaskToolArgs,
+  TaskToolSuccessResult,
+  TaskAwaitToolArgs,
+  TaskAwaitToolSuccessResult,
+  TaskListToolArgs,
+  TaskListToolSuccessResult,
+  TaskTerminateToolArgs,
+  TaskTerminateToolSuccessResult,
 } from "@/common/types/tools";
 
 interface NestedToolRendererProps {
@@ -26,41 +40,52 @@ interface NestedToolRendererProps {
   status: ToolStatus;
 }
 
-/**
- * Strip "mux." prefix from tool names.
- * PTC bridge exposes tools as mux.bash, mux.file_read, etc.
- */
-function normalizeToolName(toolName: string): string {
-  return toolName.startsWith("mux.") ? toolName.slice(4) : toolName;
-}
-
 // Type guards - reuse schemas from TOOL_DEFINITIONS for validation
 function isBashTool(toolName: string, args: unknown): args is BashToolArgs {
-  if (normalizeToolName(toolName) !== "bash") return false;
-  return TOOL_DEFINITIONS.bash.schema.safeParse(args).success;
+  return toolName === "bash" && TOOL_DEFINITIONS.bash.schema.safeParse(args).success;
 }
 
 function isFileReadTool(toolName: string, args: unknown): args is FileReadToolArgs {
-  if (normalizeToolName(toolName) !== "file_read") return false;
-  return TOOL_DEFINITIONS.file_read.schema.safeParse(args).success;
+  return toolName === "file_read" && TOOL_DEFINITIONS.file_read.schema.safeParse(args).success;
 }
 
 function isFileEditReplaceStringTool(
   toolName: string,
   args: unknown
 ): args is FileEditReplaceStringToolArgs {
-  if (normalizeToolName(toolName) !== "file_edit_replace_string") return false;
-  return TOOL_DEFINITIONS.file_edit_replace_string.schema.safeParse(args).success;
+  return (
+    toolName === "file_edit_replace_string" &&
+    TOOL_DEFINITIONS.file_edit_replace_string.schema.safeParse(args).success
+  );
 }
 
 function isFileEditInsertTool(toolName: string, args: unknown): args is FileEditInsertToolArgs {
-  if (normalizeToolName(toolName) !== "file_edit_insert") return false;
-  return TOOL_DEFINITIONS.file_edit_insert.schema.safeParse(args).success;
+  return (
+    toolName === "file_edit_insert" &&
+    TOOL_DEFINITIONS.file_edit_insert.schema.safeParse(args).success
+  );
 }
 
 function isWebFetchTool(toolName: string, args: unknown): args is WebFetchToolArgs {
-  if (normalizeToolName(toolName) !== "web_fetch") return false;
-  return TOOL_DEFINITIONS.web_fetch.schema.safeParse(args).success;
+  return toolName === "web_fetch" && TOOL_DEFINITIONS.web_fetch.schema.safeParse(args).success;
+}
+
+function isTaskTool(toolName: string, args: unknown): args is TaskToolArgs {
+  return toolName === "task" && TOOL_DEFINITIONS.task.schema.safeParse(args).success;
+}
+
+function isTaskAwaitTool(toolName: string, args: unknown): args is TaskAwaitToolArgs {
+  return toolName === "task_await" && TOOL_DEFINITIONS.task_await.schema.safeParse(args).success;
+}
+
+function isTaskListTool(toolName: string, args: unknown): args is TaskListToolArgs {
+  return toolName === "task_list" && TOOL_DEFINITIONS.task_list.schema.safeParse(args).success;
+}
+
+function isTaskTerminateTool(toolName: string, args: unknown): args is TaskTerminateToolArgs {
+  return (
+    toolName === "task_terminate" && TOOL_DEFINITIONS.task_terminate.schema.safeParse(args).success
+  );
 }
 
 /**
@@ -73,8 +98,6 @@ export const NestedToolRenderer: React.FC<NestedToolRendererProps> = ({
   output,
   status,
 }) => {
-  const normalizedName = normalizeToolName(toolName);
-
   // Bash - full styling with icons
   if (isBashTool(toolName, input)) {
     return (
@@ -128,6 +151,47 @@ export const NestedToolRenderer: React.FC<NestedToolRendererProps> = ({
     );
   }
 
-  // Fallback for MCP tools and other unsupported tools - use normalized name for display
-  return <GenericToolCall toolName={normalizedName} args={input} result={output} status={status} />;
+  // Task tools - for spawning/managing subagents from within code_execution
+  if (isTaskTool(toolName, input)) {
+    return (
+      <TaskToolCall
+        args={input}
+        result={output as TaskToolSuccessResult | undefined}
+        status={status}
+      />
+    );
+  }
+
+  if (isTaskAwaitTool(toolName, input)) {
+    return (
+      <TaskAwaitToolCall
+        args={input}
+        result={output as TaskAwaitToolSuccessResult | undefined}
+        status={status}
+      />
+    );
+  }
+
+  if (isTaskListTool(toolName, input)) {
+    return (
+      <TaskListToolCall
+        args={input}
+        result={output as TaskListToolSuccessResult | undefined}
+        status={status}
+      />
+    );
+  }
+
+  if (isTaskTerminateTool(toolName, input)) {
+    return (
+      <TaskTerminateToolCall
+        args={input}
+        result={output as TaskTerminateToolSuccessResult | undefined}
+        status={status}
+      />
+    );
+  }
+
+  // Fallback for MCP tools and other unsupported tools
+  return <GenericToolCall toolName={toolName} args={input} result={output} status={status} />;
 };

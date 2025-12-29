@@ -904,7 +904,11 @@ export type BridgeableToolName =
   | "agent_skill_read_file"
   | "file_edit_insert"
   | "file_edit_replace_string"
-  | "web_fetch";
+  | "web_fetch"
+  | "task"
+  | "task_await"
+  | "task_list"
+  | "task_terminate";
 
 /**
  * Lookup map for result schemas by tool name.
@@ -923,6 +927,10 @@ export const RESULT_SCHEMAS: Record<BridgeableToolName, z.ZodType> = {
   file_edit_insert: FileEditInsertToolResultSchema,
   file_edit_replace_string: FileEditReplaceStringToolResultSchema,
   web_fetch: WebFetchToolResultSchema,
+  task: TaskToolResultSchema,
+  task_await: TaskAwaitToolResultSchema,
+  task_list: TaskListToolResultSchema,
+  task_terminate: TaskTerminateToolResultSchema,
 };
 
 /**

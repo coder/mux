@@ -84,12 +84,12 @@ describe("code_execution integration tests", () => {
       expect(fileReadResult.content).toContain("hello from integration test");
       expect(fileReadResult.lines_read).toBe(3);
 
-      // Verify tool call event was emitted (toolName includes mux. prefix from registerObject)
+      // Verify tool call event was emitted
       const toolCallEndEvents = events.filter(
         (e): e is PTCToolCallEndEvent => e.type === "tool-call-end"
       );
       expect(toolCallEndEvents.length).toBe(1);
-      expect(toolCallEndEvents[0].toolName).toBe("mux.file_read");
+      expect(toolCallEndEvents[0].toolName).toBe("file_read");
       expect(toolCallEndEvents[0].error).toBeUndefined();
     });
 
@@ -163,12 +163,12 @@ describe("code_execution integration tests", () => {
       expect(bashResult.success).toBe(true);
       expect(bashResult.output).toContain("hello from sandbox");
 
-      // Verify event (toolName includes mux. prefix from registerObject)
+      // Verify event
       const toolCallEndEvents = events.filter(
         (e): e is PTCToolCallEndEvent => e.type === "tool-call-end"
       );
       expect(toolCallEndEvents.length).toBe(1);
-      expect(toolCallEndEvents[0].toolName).toBe("mux.bash");
+      expect(toolCallEndEvents[0].toolName).toBe("bash");
 
       tempDir[Symbol.dispose]();
     });
@@ -236,15 +236,12 @@ describe("code_execution integration tests", () => {
       expect(combinedResult.readResult.success).toBe(true);
       expect(combinedResult.fileWasCreated).toBe(true);
 
-      // Verify both tool calls were recorded (toolNames include mux. prefix)
+      // Verify both tool calls were recorded
       const toolCallEndEvents = events.filter(
         (e): e is PTCToolCallEndEvent => e.type === "tool-call-end"
       );
       expect(toolCallEndEvents.length).toBe(2);
-      expect(toolCallEndEvents.map((e) => e.toolName).sort()).toEqual([
-        "mux.bash",
-        "mux.file_read",
-      ]);
+      expect(toolCallEndEvents.map((e) => e.toolName).sort()).toEqual(["bash", "file_read"]);
 
       // Verify file actually exists on disk
       const fileExists = await fs

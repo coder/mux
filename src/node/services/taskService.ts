@@ -45,6 +45,8 @@ export interface TaskCreateArgs {
   title: string;
   modelString?: string;
   thinkingLevel?: ThinkingLevel;
+  /** PTC experiments to inherit to subagent */
+  experiments?: { programmaticToolCalling?: boolean; programmaticToolCallingExclusive?: boolean };
 }
 
 export interface TaskCreateResult {
@@ -309,7 +311,7 @@ export class TaskService {
         task.id,
         "Mux restarted while this task was running. Continue where you left off. " +
           "When you have a final answer, call agent_report exactly once.",
-        { model, thinkingLevel: task.taskThinkingLevel }
+        { model, thinkingLevel: task.taskThinkingLevel, experiments: task.taskExperiments }
       );
     }
   }
@@ -466,6 +468,7 @@ export class TaskService {
           taskTrunkBranch: trunkBranch,
           taskModelString,
           taskThinkingLevel: effectiveThinkingLevel,
+          taskExperiments: args.experiments,
         });
         return config;
       });
@@ -564,6 +567,7 @@ export class TaskService {
         taskTrunkBranch: trunkBranch,
         taskModelString,
         taskThinkingLevel: effectiveThinkingLevel,
+        taskExperiments: args.experiments,
       });
       return config;
     });
@@ -590,6 +594,7 @@ export class TaskService {
     const sendResult = await this.workspaceService.sendMessage(taskId, prompt, {
       model: taskModelString,
       thinkingLevel: effectiveThinkingLevel,
+      experiments: args.experiments,
     });
     if (!sendResult.success) {
       const message =
@@ -1454,7 +1459,7 @@ export class TaskService {
         const sendResult = await this.workspaceService.sendMessage(
           taskId,
           queuedPrompt,
-          { model, thinkingLevel: task.taskThinkingLevel },
+          { model, thinkingLevel: task.taskThinkingLevel, experiments: task.taskExperiments },
           { allowQueuedAgentTask: true }
         );
         if (!sendResult.success) {
@@ -1472,7 +1477,7 @@ export class TaskService {
         });
         const resumeResult = await this.workspaceService.resumeStream(
           taskId,
-          { model, thinkingLevel: task.taskThinkingLevel },
+          { model, thinkingLevel: task.taskThinkingLevel, experiments: task.taskExperiments },
           { allowQueuedAgentTask: true }
         );
 

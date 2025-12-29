@@ -674,7 +674,7 @@ describe("StreamingMessageAggregator", () => {
         workspaceId: "test-workspace",
         messageId: "msg-1",
         toolCallId: "nested-tool-1",
-        toolName: "mux.file_read",
+        toolName: "file_read",
         args: { filePath: "test.txt" },
         tokens: 0,
         timestamp: 1100,
@@ -690,7 +690,7 @@ describe("StreamingMessageAggregator", () => {
         expect(toolMsg.nestedCalls).toHaveLength(1);
         expect(toolMsg.nestedCalls![0]).toEqual({
           toolCallId: "nested-tool-1",
-          toolName: "mux.file_read",
+          toolName: "file_read",
           state: "input-available",
           input: { filePath: "test.txt" },
           timestamp: 1100,
@@ -727,7 +727,7 @@ describe("StreamingMessageAggregator", () => {
         workspaceId: "test-workspace",
         messageId: "msg-1",
         toolCallId: "nested-tool-1",
-        toolName: "mux.file_read",
+        toolName: "file_read",
         args: { filePath: "test.txt" },
         tokens: 0,
         timestamp: 1100,
@@ -740,7 +740,7 @@ describe("StreamingMessageAggregator", () => {
         workspaceId: "test-workspace",
         messageId: "msg-1",
         toolCallId: "nested-tool-1",
-        toolName: "mux.file_read",
+        toolName: "file_read",
         result: { success: true, content: "file content" },
         timestamp: 1200,
         parentToolCallId: "parent-tool-1",
@@ -788,7 +788,7 @@ describe("StreamingMessageAggregator", () => {
         workspaceId: "test-workspace",
         messageId: "msg-1",
         toolCallId: "nested-1",
-        toolName: "mux.file_read",
+        toolName: "file_read",
         args: { filePath: "a.txt" },
         tokens: 0,
         timestamp: 1100,
@@ -800,7 +800,7 @@ describe("StreamingMessageAggregator", () => {
         workspaceId: "test-workspace",
         messageId: "msg-1",
         toolCallId: "nested-1",
-        toolName: "mux.file_read",
+        toolName: "file_read",
         result: { success: true, content: "content A" },
         timestamp: 1150,
         parentToolCallId: "parent-tool-1",
@@ -812,7 +812,7 @@ describe("StreamingMessageAggregator", () => {
         workspaceId: "test-workspace",
         messageId: "msg-1",
         toolCallId: "nested-2",
-        toolName: "mux.bash",
+        toolName: "bash",
         args: { script: "echo hello" },
         tokens: 0,
         timestamp: 1200,
@@ -824,7 +824,7 @@ describe("StreamingMessageAggregator", () => {
         workspaceId: "test-workspace",
         messageId: "msg-1",
         toolCallId: "nested-2",
-        toolName: "mux.bash",
+        toolName: "bash",
         result: { success: true, output: "hello" },
         timestamp: 1250,
         parentToolCallId: "parent-tool-1",
@@ -836,10 +836,10 @@ describe("StreamingMessageAggregator", () => {
       if (toolMsg?.type === "tool") {
         expect(toolMsg.nestedCalls).toHaveLength(2);
 
-        expect(toolMsg.nestedCalls![0].toolName).toBe("mux.file_read");
+        expect(toolMsg.nestedCalls![0].toolName).toBe("file_read");
         expect(toolMsg.nestedCalls![0].state).toBe("output-available");
 
-        expect(toolMsg.nestedCalls![1].toolName).toBe("mux.bash");
+        expect(toolMsg.nestedCalls![1].toolName).toBe("bash");
         expect(toolMsg.nestedCalls![1].state).toBe("output-available");
       }
     });
@@ -865,7 +865,7 @@ describe("StreamingMessageAggregator", () => {
         workspaceId: "test-workspace",
         messageId: "msg-1",
         toolCallId: "nested-orphan",
-        toolName: "mux.file_read",
+        toolName: "file_read",
         args: { filePath: "test.txt" },
         tokens: 0,
         timestamp: 1000,
@@ -908,7 +908,7 @@ describe("StreamingMessageAggregator", () => {
         workspaceId: "test-workspace",
         messageId: "msg-1",
         toolCallId: "unknown-nested",
-        toolName: "mux.file_read",
+        toolName: "file_read",
         result: { success: true },
         timestamp: 1100,
         parentToolCallId: "parent-tool-1",

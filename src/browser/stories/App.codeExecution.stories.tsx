@@ -59,13 +59,13 @@ export const Completed: AppStory = {
                     result: "Done!",
                     toolCalls: [
                       {
-                        toolName: "mux.file_read",
+                        toolName: "file_read",
                         args: { filePath: "src/config.ts" },
                         result: { success: true, lines_read: 42 },
                         duration_ms: 15,
                       },
                       {
-                        toolName: "mux.file_edit_replace_string",
+                        toolName: "file_edit_replace_string",
                         args: {
                           file_path: "src/config.ts",
                           old_string: "debug: false",
@@ -75,7 +75,7 @@ export const Completed: AppStory = {
                         duration_ms: 23,
                       },
                       {
-                        toolName: "mux.bash",
+                        toolName: "bash",
                         args: {
                           script: "echo 'Config updated!'",
                           timeout_secs: 5,
@@ -98,7 +98,7 @@ export const Completed: AppStory = {
                   [
                     {
                       toolCallId: "nested-1",
-                      toolName: "mux.file_read",
+                      toolName: "file_read",
                       input: { filePath: "src/config.ts" },
                       output: {
                         success: true,
@@ -110,7 +110,7 @@ export const Completed: AppStory = {
                     },
                     {
                       toolCallId: "nested-2",
-                      toolName: "mux.file_edit_replace_string",
+                      toolName: "file_edit_replace_string",
                       input: {
                         file_path: "src/config.ts",
                         old_string: "debug: false",
@@ -134,7 +134,7 @@ export const Completed: AppStory = {
                     },
                     {
                       toolCallId: "nested-3",
-                      toolName: "mux.bash",
+                      toolName: "bash",
                       input: {
                         script: "echo 'Config updated!'",
                         timeout_secs: 5,
@@ -178,7 +178,7 @@ export const Executing: AppStory = {
                 createPendingCodeExecutionTool("call-1", SAMPLE_CODE, [
                   {
                     toolCallId: "nested-1",
-                    toolName: "mux.file_read",
+                    toolName: "file_read",
                     input: { filePath: "src/config.ts" },
                     output: {
                       success: true,
@@ -189,7 +189,7 @@ export const Executing: AppStory = {
                   },
                   {
                     toolCallId: "nested-2",
-                    toolName: "mux.file_edit_replace_string",
+                    toolName: "file_edit_replace_string",
                     input: {
                       file_path: "src/config.ts",
                       old_string: "debug: false",
@@ -253,7 +253,7 @@ export const Failed: AppStory = {
                     error: "Tool execution failed: file not found",
                     toolCalls: [
                       {
-                        toolName: "mux.bash",
+                        toolName: "bash",
                         args: { script: "cat /nonexistent" },
                         error: "file not found",
                         duration_ms: 12,
@@ -265,7 +265,7 @@ export const Failed: AppStory = {
                   [
                     {
                       toolCallId: "nested-1",
-                      toolName: "mux.bash",
+                      toolName: "bash",
                       input: {
                         script: "cat /nonexistent",
                         timeout_secs: 30,

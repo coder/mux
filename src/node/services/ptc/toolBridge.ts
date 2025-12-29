@@ -17,6 +17,7 @@ const EXCLUDED_TOOLS = new Set([
   "todo_write", // UI-specific
   "todo_read", // UI-specific
   "status_set", // UI-specific
+  "agent_report", // Must be top-level for taskService to read args from history
 ]);
 
 /**

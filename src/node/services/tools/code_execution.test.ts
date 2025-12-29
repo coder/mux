@@ -300,7 +300,7 @@ describe("createCodeExecutionTool", () => {
 
       expect(result.success).toBe(true);
       expect(result.toolCalls).toHaveLength(1);
-      expect(result.toolCalls[0].toolName).toBe("mux.file_read");
+      expect(result.toolCalls[0].toolName).toBe("file_read");
       expect(result.toolCalls[0].args).toEqual({ filePath: "a.txt" });
       expect(result.toolCalls[0].result).toMatchObject({
         content: "mock file content",

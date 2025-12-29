@@ -53,6 +53,15 @@ export const WorkspaceConfigSchema = z.object({
     description:
       "Initial prompt for a queued agent task (persisted only until the task actually starts).",
   }),
+  taskExperiments: z
+    .object({
+      programmaticToolCalling: z.boolean().optional(),
+      programmaticToolCallingExclusive: z.boolean().optional(),
+    })
+    .optional()
+    .meta({
+      description: "PTC experiments inherited from parent for restart-safe resumptions.",
+    }),
   taskTrunkBranch: z.string().optional().meta({
     description:
       "Trunk branch used to create/init this agent task workspace (used for restart-safe init on queued tasks).",

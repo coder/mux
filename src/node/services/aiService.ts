@@ -1364,6 +1364,8 @@ export class AIService extends EventEmitter {
           // External edit detection callback
           recordFileState,
           taskService: this.taskService,
+          // PTC experiments for inheritance to subagents
+          experiments,
         },
         workspaceId,
         this.initStateManager,

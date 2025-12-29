@@ -161,8 +161,6 @@ export class QuickJSRuntime implements IJSRuntime {
     const objHandle = this.ctx.newObject();
 
     for (const [methodName, fn] of Object.entries(obj)) {
-      const fullName = `${name}.${methodName}`;
-
       const fnHandle = this.ctx.newAsyncifiedFunction(methodName, async (...argHandles) => {
         if (this.abortController?.signal.aborted) {
           throw new Error("Execution aborted");
@@ -177,7 +175,7 @@ export class QuickJSRuntime implements IJSRuntime {
         this.eventHandler?.({
           type: "tool-call-start",
           callId,
-          toolName: fullName,
+          toolName: methodName,
           args: args[0],
           startTime,
         });
@@ -188,13 +186,13 @@ export class QuickJSRuntime implements IJSRuntime {
           const duration_ms = endTime - startTime;
 
           // Record tool call
-          this.toolCalls.push({ toolName: fullName, args: args[0], result, duration_ms });
+          this.toolCalls.push({ toolName: methodName, args: args[0], result, duration_ms });
 
           // Emit end event
           this.eventHandler?.({
             type: "tool-call-end",
             callId,
-            toolName: fullName,
+            toolName: methodName,
             args: args[0],
             result,
             startTime,
@@ -208,7 +206,7 @@ export class QuickJSRuntime implements IJSRuntime {
           const errorStr = error instanceof Error ? error.message : String(error);
 
           this.toolCalls.push({
-            toolName: fullName,
+            toolName: methodName,
             args: args[0],
             error: errorStr,
             duration_ms,
@@ -217,7 +215,7 @@ export class QuickJSRuntime implements IJSRuntime {
           this.eventHandler?.({
             type: "tool-call-end",
             callId,
-            toolName: fullName,
+            toolName: methodName,
             args: args[0],
             error: errorStr,
             startTime,
