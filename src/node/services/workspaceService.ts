@@ -1117,6 +1117,18 @@ export class WorkspaceService extends EventEmitter {
 
     const mode: UIMode = options?.mode === "plan" ? "plan" : "exec";
 
+    // With user-defined agents, the frontend always sends a base plan/exec `mode` to the backend,
+    // even if a custom agent is active. Persisting in that case would overwrite the base
+    // plan/exec defaults (which other agents may inherit), so only persist when agentId matches.
+    const rawAgentId = options?.agentId;
+    const normalizedAgentId =
+      typeof rawAgentId === "string" && rawAgentId.trim().length > 0
+        ? rawAgentId.trim().toLowerCase()
+        : null;
+    if (normalizedAgentId && normalizedAgentId !== mode) {
+      return;
+    }
+
     const persistResult = await this.persistWorkspaceAISettingsForMode(
       workspaceId,
       mode,
