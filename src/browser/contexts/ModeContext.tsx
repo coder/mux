@@ -1,13 +1,5 @@
 import type { Dispatch, ReactNode, SetStateAction } from "react";
-import React, {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
 import { useAPI } from "@/browser/contexts/API";
 import { AgentProvider } from "@/browser/contexts/AgentContext";
@@ -16,10 +8,12 @@ import {
   updatePersistedState,
   usePersistedState,
 } from "@/browser/hooks/usePersistedState";
+import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { matchesKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import {
   getAgentIdKey,
   getModeKey,
+  getPinnedAgentIdKey,
   getProjectScopeId,
   GLOBAL_SCOPE_ID,
 } from "@/common/constants/storage";
@@ -38,6 +32,10 @@ interface ModeProviderProps {
 
 function getScopeId(workspaceId: string | undefined, projectPath: string | undefined): string {
   return workspaceId ?? (projectPath ? getProjectScopeId(projectPath) : GLOBAL_SCOPE_ID);
+}
+
+function normalizeOptionalAgentId(value: unknown): string {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim().toLowerCase() : "";
 }
 
 function coerceAgentId(value: unknown): string {
@@ -75,10 +73,28 @@ export const ModeProvider: React.FC<ModeProviderProps> = (props) => {
 
   const [agents, setAgents] = useState<AgentDefinitionDescriptor[]>([]);
   const [loaded, setLoaded] = useState(false);
-
-  // Track the last two UI-selectable agents so TOGGLE_MODE can swap between them.
-  const uiAgentHistoryRef = useRef<string[]>([]);
   const [loadFailed, setLoadFailed] = useState(false);
+
+  const [pinnedAgentIdRaw] = usePersistedState<string>(getPinnedAgentIdKey(scopeId), "", {
+    listener: true,
+  });
+
+  const cycleOtherAgentId = useMemo(() => {
+    const pinnedAgentId = normalizeOptionalAgentId(pinnedAgentIdRaw);
+    if (!pinnedAgentId || pinnedAgentId === "exec" || pinnedAgentId === "plan") {
+      return "";
+    }
+
+    // If we have a resolved agent list, ensure the pinned agent is still selectable.
+    if (agents.length > 0) {
+      const descriptor = agents.find((entry) => entry.id === pinnedAgentId);
+      if (!descriptor?.uiSelectable) {
+        return "";
+      }
+    }
+
+    return pinnedAgentId;
+  }, [agents, pinnedAgentIdRaw]);
 
   useEffect(() => {
     if (!api) return;
@@ -108,21 +124,6 @@ export const ModeProvider: React.FC<ModeProviderProps> = (props) => {
       });
   }, [api, props.workspaceId]);
 
-  useEffect(() => {
-    const normalizedAgentId = coerceAgentId(agentId);
-    const descriptor = agents.find((entry) => entry.id === normalizedAgentId);
-    const isUiSelectable =
-      descriptor?.uiSelectable ?? (normalizedAgentId === "plan" || normalizedAgentId === "exec");
-
-    if (!isUiSelectable) {
-      return;
-    }
-
-    uiAgentHistoryRef.current = [
-      normalizedAgentId,
-      ...uiAgentHistoryRef.current.filter((id) => id !== normalizedAgentId),
-    ].slice(0, 2);
-  }, [agentId, agents]);
   const mode = useMemo(() => resolveModeFromAgentId(agentId, agents), [agentId, agents]);
 
   // Keep legacy mode key in sync so older code paths (and downgrade clients) behave consistently.
@@ -144,17 +145,37 @@ export const ModeProvider: React.FC<ModeProviderProps> = (props) => {
   // Global keybind handler
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (matchesKeybind(e, KEYBINDS.TOGGLE_MODE)) {
-        e.preventDefault();
-        const previousUiAgentId = uiAgentHistoryRef.current[1];
-        const fallback = mode === "plan" ? "exec" : "plan";
-        setAgentId(previousUiAgentId ?? fallback);
+      if (!matchesKeybind(e, KEYBINDS.TOGGLE_MODE)) {
+        return;
       }
+
+      e.preventDefault();
+
+      // Best-effort: if the agent picker is open, close it before cycling.
+      window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.CLOSE_AGENT_PICKER));
+
+      const normalizedAgentId = coerceAgentId(agentId);
+
+      // Cycle Exec -> Plan -> Other (pinned) -> Exec.
+      if (normalizedAgentId === "exec") {
+        setAgentId("plan");
+        return;
+      }
+
+      if (normalizedAgentId === "plan") {
+        if (cycleOtherAgentId) {
+          setAgentId(cycleOtherAgentId);
+        }
+        window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.OPEN_AGENT_PICKER));
+        return;
+      }
+
+      setAgentId("exec");
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [mode, setAgentId]);
+  }, [agentId, cycleOtherAgentId, setAgentId]);
 
   const agentContextValue = useMemo(
     () => ({

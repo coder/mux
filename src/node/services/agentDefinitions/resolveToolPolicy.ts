@@ -49,7 +49,9 @@ function normalizeToolPattern(value: string): string | null {
 }
 
 function normalizeToolPatterns(values: readonly string[] | undefined): string[] {
-  return values?.map(normalizeToolPattern).filter(Boolean) as string[];
+  return (values ?? [])
+    .map(normalizeToolPattern)
+    .filter((value): value is string => value !== null);
 }
 
 function buildPermissionModePolicy(args: {

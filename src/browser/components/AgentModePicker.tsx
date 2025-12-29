@@ -3,6 +3,7 @@ import { ChevronDown } from "lucide-react";
 
 import { useAgent } from "@/browser/contexts/AgentContext";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { CUSTOM_EVENTS } from "@/common/constants/events";
 import {
   getPinnedAgentIdKey,
   getProjectScopeId,
@@ -31,6 +32,8 @@ interface AgentModePickerProps {
   onComplete?: () => void;
 }
 
+type PickerOpenReason = "manual" | "modeCycle";
+
 interface AgentOption {
   id: string;
   name: string;
@@ -55,7 +58,7 @@ const AgentHelpTooltip: React.FC = () => (
       Selects an agent definition (system prompt + tool policy).
       <br />
       <br />
-      Toggle between your last two agents with: {formatKeybind(KEYBINDS.TOGGLE_MODE)}
+      Cycle between Exec → Plan → Other with: {formatKeybind(KEYBINDS.TOGGLE_MODE)}
     </TooltipContent>
   </Tooltip>
 );
@@ -139,6 +142,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
 
   const effectivePinnedAgentId = pinnedOption?.id ?? "";
 
+  const [openReason, setOpenReason] = useState<PickerOpenReason | null>(null);
   const [isPickerOpen, setIsPickerOpen] = useState(false);
   const [filter, setFilter] = useState("");
   const [highlightedIndex, setHighlightedIndex] = useState<number>(-1);
@@ -164,19 +168,53 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
 
   const closePicker = useCallback(() => {
     setIsPickerOpen(false);
+    setOpenReason(null);
     setFilter("");
     setHighlightedIndex(-1);
     onComplete?.();
   }, [onComplete]);
 
-  const openPicker = useCallback(() => {
-    setIsPickerOpen(true);
-    setFilter("");
+  const openPicker = useCallback(
+    (opts?: { reason?: PickerOpenReason; highlightAgentId?: string }) => {
+      setIsPickerOpen(true);
+      setFilter("");
+      setOpenReason(opts?.reason ?? "manual");
 
-    // Start with current agent highlighted (if present in the list).
-    const currentIndex = options.findIndex((opt) => opt.id === normalizedAgentId);
-    setHighlightedIndex(currentIndex);
-  }, [normalizedAgentId, options]);
+      const highlightId = normalizeAgentId(opts?.highlightAgentId) || normalizedAgentId;
+
+      // Start with selected agent highlighted (if present in the list).
+      const currentIndex = options.findIndex((opt) => opt.id === highlightId);
+      setHighlightedIndex(currentIndex);
+    },
+    [normalizedAgentId, options]
+  );
+
+  // Hotkey integration (open/close via ModeContext).
+  useEffect(() => {
+    const handleOpen = () => {
+      openPicker({
+        reason: "modeCycle",
+        highlightAgentId: effectivePinnedAgentId || normalizedAgentId,
+      });
+    };
+
+    window.addEventListener(CUSTOM_EVENTS.OPEN_AGENT_PICKER, handleOpen as EventListener);
+    return () =>
+      window.removeEventListener(CUSTOM_EVENTS.OPEN_AGENT_PICKER, handleOpen as EventListener);
+  }, [effectivePinnedAgentId, normalizedAgentId, openPicker]);
+
+  useEffect(() => {
+    const handleClose = () => {
+      if (!isPickerOpen) {
+        return;
+      }
+      closePicker();
+    };
+
+    window.addEventListener(CUSTOM_EVENTS.CLOSE_AGENT_PICKER, handleClose as EventListener);
+    return () =>
+      window.removeEventListener(CUSTOM_EVENTS.CLOSE_AGENT_PICKER, handleClose as EventListener);
+  }, [closePicker, isPickerOpen]);
 
   // Focus input when picker opens.
   useEffect(() => {
@@ -250,6 +288,9 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
   const handlePickerKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Escape") {
       e.preventDefault();
+      if (openReason === "modeCycle" && effectivePinnedAgentId) {
+        setAgentId(effectivePinnedAgentId);
+      }
       closePicker();
       return;
     }

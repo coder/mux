@@ -22,7 +22,7 @@ const ModeHelpTooltip: React.FC = () => (
       <strong>Plan Mode:</strong> AI proposes plans but does not edit files
       <br />
       <br />
-      Toggle with: {formatKeybind(KEYBINDS.TOGGLE_MODE)}
+      Cycle agents with: {formatKeybind(KEYBINDS.TOGGLE_MODE)}
     </TooltipContent>
   </Tooltip>
 );

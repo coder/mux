@@ -190,7 +190,7 @@ export function formatKeybind(keybind: Keybind): string {
  * We also like vim keybinds.
  */
 export const KEYBINDS = {
-  /** Toggle between Plan and Exec modes */
+  /** Cycle between Exec / Plan / Other agents */
   TOGGLE_MODE: { key: "M", ctrl: true, shift: true },
 
   /** Send message / Submit form */

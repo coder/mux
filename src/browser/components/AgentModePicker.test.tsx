@@ -6,6 +6,7 @@ import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { AgentProvider } from "@/browser/contexts/AgentContext";
 import { TooltipProvider } from "@/browser/components/ui/tooltip";
 import { AgentModePicker } from "./AgentModePicker";
+import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { getPinnedAgentIdKey } from "@/common/constants/storage";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 
@@ -49,6 +50,52 @@ describe("AgentModePicker", () => {
     cleanup();
     globalThis.window = undefined as unknown as Window & typeof globalThis;
     globalThis.document = undefined as unknown as Document;
+  });
+
+  test("when auto-opened via hotkey, Escape selects the pinned agent", async () => {
+    const pinnedKey = getPinnedAgentIdKey("ws-123");
+    window.localStorage.setItem(pinnedKey, JSON.stringify("review"));
+
+    function Harness() {
+      const [agentId, setAgentId] = React.useState("plan");
+      return (
+        <AgentProvider
+          value={{
+            agentId,
+            setAgentId,
+            agents: [...BUILT_INS, CUSTOM_AGENT],
+            loaded: true,
+            loadFailed: false,
+          }}
+        >
+          <TooltipProvider>
+            <div>
+              <div data-testid="agentId">{agentId}</div>
+              <AgentModePicker workspaceId="ws-123" />
+            </div>
+          </TooltipProvider>
+        </AgentProvider>
+      );
+    }
+
+    const { getByPlaceholderText, getByTestId, queryByPlaceholderText } = render(<Harness />);
+
+    // Simulate ModeContext auto-opening the picker.
+    window.dispatchEvent(new CustomEvent(CUSTOM_EVENTS.OPEN_AGENT_PICKER));
+
+    await waitFor(() => {
+      expect(getByPlaceholderText("Search agents…")).toBeTruthy();
+    });
+
+    fireEvent.keyDown(getByPlaceholderText("Search agents…"), { key: "Escape" });
+
+    await waitFor(() => {
+      expect(getByTestId("agentId").textContent).toBe("review");
+    });
+
+    await waitFor(() => {
+      expect(queryByPlaceholderText("Search agents…")).toBeNull();
+    });
   });
 
   test("pins a custom agent and keeps it available when switching back to Exec/Plan", async () => {

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useAPI } from "@/browser/contexts/API";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui/tooltip";
 import { Input } from "@/browser/components/ui/input";
 import { ModelSelector } from "@/browser/components/ModelSelector";
 import {
@@ -96,16 +97,64 @@ function updateAgentDefaultEntry(
   return next;
 }
 
-function getPolicySummary(agent: AgentDefinitionDescriptor): string {
-  const pieces: string[] = [`base: ${agent.policyBase}`];
+function renderPolicySummary(agent: AgentDefinitionDescriptor): React.ReactNode {
+  const pieces: React.ReactNode[] = [`base: ${agent.policyBase}`];
 
-  if (agent.toolFilter?.only && agent.toolFilter.only.length > 0) {
-    pieces.push(`tools: only (${agent.toolFilter.only.length})`);
-  } else if (agent.toolFilter?.deny && agent.toolFilter.deny.length > 0) {
-    pieces.push(`tools: deny (${agent.toolFilter.deny.length})`);
+  const toolFilter = agent.toolFilter;
+  if (toolFilter?.only && toolFilter.only.length > 0) {
+    const only = toolFilter.only;
+    pieces.push(
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="cursor-help underline decoration-dotted underline-offset-2">
+            tools: only ({only.length})
+          </span>
+        </TooltipTrigger>
+        <TooltipContent align="start" className="max-w-80 whitespace-normal">
+          <div className="font-medium">Allowed tools</div>
+          <ul className="mt-1 space-y-0.5">
+            {only.map((tool) => (
+              <li key={tool}>
+                <code>{tool}</code>
+              </li>
+            ))}
+          </ul>
+        </TooltipContent>
+      </Tooltip>
+    );
+  } else if (toolFilter?.deny && toolFilter.deny.length > 0) {
+    const deny = toolFilter.deny;
+    pieces.push(
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="cursor-help underline decoration-dotted underline-offset-2">
+            tools: deny ({deny.length})
+          </span>
+        </TooltipTrigger>
+        <TooltipContent align="start" className="max-w-80 whitespace-normal">
+          <div className="font-medium">Denied tools</div>
+          <ul className="mt-1 space-y-0.5">
+            {deny.map((tool) => (
+              <li key={tool}>
+                <code>{tool}</code>
+              </li>
+            ))}
+          </ul>
+        </TooltipContent>
+      </Tooltip>
+    );
   }
 
-  return pieces.join(" • ");
+  return (
+    <>
+      {pieces.map((piece, idx) => (
+        <React.Fragment key={idx}>
+          {idx > 0 ? " • " : null}
+          {piece}
+        </React.Fragment>
+      ))}
+    </>
+  );
 }
 
 export function TasksSection() {
@@ -367,7 +416,7 @@ export function TasksSection() {
           <div className="min-w-0 flex-1">
             <div className="text-foreground text-sm font-medium">{agent.name}</div>
             <div className="text-muted text-xs">
-              {agent.id} • {agent.scope} • {getPolicySummary(agent)}
+              {agent.id} • {agent.scope} • {renderPolicySummary(agent)}
             </div>
             {agent.description ? (
               <div className="text-muted mt-1 text-xs">{agent.description}</div>

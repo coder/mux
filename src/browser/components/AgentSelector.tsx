@@ -30,7 +30,7 @@ const AgentHelpTooltip: React.FC = () => (
       Selects an agent definition (system prompt + tool policy).
       <br />
       <br />
-      Toggle Plan/Exec with: {formatKeybind(KEYBINDS.TOGGLE_MODE)}
+      Cycle agents with: {formatKeybind(KEYBINDS.TOGGLE_MODE)}
     </TooltipContent>
   </Tooltip>
 );
