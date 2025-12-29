@@ -283,6 +283,7 @@ export type DisplayedMessage =
       exitCode: number | null; // Final exit code (null while running)
       timestamp: number;
       durationMs: number | null; // Duration in milliseconds (null while running)
+      truncatedLines?: number; // Number of lines dropped from middle when output was too long
     }
   | {
       type: "plan-display"; // Ephemeral plan display from /plan command

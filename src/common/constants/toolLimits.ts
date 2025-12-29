@@ -16,6 +16,10 @@ export const BASH_MAX_LINE_BYTES = 1024; // 1KB per line for AI agent
 
 export const MAX_TODOS = 7; // Maximum number of TODO items in a list
 
+// Init hook output limits (prevents OOM/freeze with large rsync output)
+// Keep only the most recent lines (tail), drop older lines
+export const INIT_HOOK_MAX_LINES = 500;
+
 export const STATUS_MESSAGE_MAX_LENGTH = 60; // Maximum length for status messages (auto-truncated)
 
 // Web fetch tool limits

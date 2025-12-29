@@ -264,6 +264,8 @@ export const InitEndEventSchema = z.object({
   type: z.literal("init-end"),
   exitCode: z.number(),
   timestamp: z.number(),
+  /** Number of lines dropped from middle when output exceeded limit (omitted if 0) */
+  truncatedLines: z.number().optional(),
 });
 
 // Composite schema for backwards compatibility

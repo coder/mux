@@ -3,6 +3,7 @@ import type { Config } from "@/node/config";
 import { EventStore } from "@/node/utils/eventStore";
 import type { WorkspaceInitEvent } from "@/common/orpc/types";
 import { log } from "@/node/services/log";
+import { INIT_HOOK_MAX_LINES } from "@/common/constants/toolLimits";
 
 /**
  * Output line with timestamp for replay timing.
@@ -24,6 +25,8 @@ export interface InitStatus {
   lines: TimedLine[];
   exitCode: number | null;
   endTime: number | null; // When init-end event occurred
+  /** Number of lines dropped from middle when output exceeded INIT_HOOK_MAX_LINES */
+  truncatedLines?: number;
 }
 
 /**
@@ -124,6 +127,8 @@ export class InitStateManager extends EventEmitter {
         workspaceId,
         exitCode: state.exitCode,
         timestamp: state.endTime ?? state.startTime,
+        // Include truncation info so frontend can show indicator
+        ...(state.truncatedLines ? { truncatedLines: state.truncatedLines } : {}),
       });
     }
 
@@ -176,7 +181,10 @@ export class InitStateManager extends EventEmitter {
 
   /**
    * Append output line from init hook.
-   * Accumulates in state and emits init-output event.
+   * Accumulates in state (with truncation for long output) and emits init-output event.
+   *
+   * Truncation strategy: Keep only the most recent INIT_HOOK_MAX_LINES lines (tail).
+   * Older lines are dropped to prevent OOM with large rsync/build output.
    */
   appendOutput(workspaceId: string, line: string, isError: boolean): void {
     const state = this.store.getState(workspaceId);
@@ -187,11 +195,16 @@ export class InitStateManager extends EventEmitter {
     }
 
     const timestamp = Date.now();
+    const timedLine: TimedLine = { line, isError, timestamp };
 
-    // Store line with isError flag and timestamp
-    state.lines.push({ line, isError, timestamp });
+    // Truncation: keep only the most recent MAX_LINES
+    if (state.lines.length >= INIT_HOOK_MAX_LINES) {
+      state.lines.shift(); // Drop oldest line
+      state.truncatedLines = (state.truncatedLines ?? 0) + 1;
+    }
+    state.lines.push(timedLine);
 
-    // Emit init-output event
+    // Emit init-output event (always emit for live streaming, even if truncated from storage)
     this.emit("init-output", {
       type: "init-output",
       workspaceId,
@@ -246,6 +259,8 @@ export class InitStateManager extends EventEmitter {
       workspaceId,
       exitCode,
       timestamp: endTime,
+      // Include truncation info so frontend can show indicator
+      ...(state.truncatedLines ? { truncatedLines: state.truncatedLines } : {}),
     } satisfies WorkspaceInitEvent & { workspaceId: string });
 
     // Resolve completion promise for waiting tools

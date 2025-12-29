@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useMemo } from "react";
 import { cn } from "@/common/lib/utils";
 import type { DisplayedMessage } from "@/common/types/message";
 import { Loader2, Wrench, CheckCircle2, AlertCircle } from "lucide-react";
@@ -18,6 +18,13 @@ function formatDuration(ms: number): string {
   return `${mins}m ${secs}s`;
 }
 
+function formatLineCount(count: number): string {
+  if (count >= 1000) {
+    return `${(count / 1000).toFixed(1)}k`;
+  }
+  return String(count);
+}
+
 export const InitMessage = React.memo<InitMessageProps>(({ message, className }) => {
   const isError = message.status === "error";
   const isRunning = message.status === "running";
@@ -33,6 +40,16 @@ export const InitMessage = React.memo<InitMessageProps>(({ message, className })
 
   const durationText =
     message.durationMs !== null ? ` in ${formatDuration(message.durationMs)}` : "";
+
+  // Build output text with truncation marker at top if needed
+  const outputText = useMemo(() => {
+    if (!message.truncatedLines) {
+      return message.lines.join("\n");
+    }
+    // Show truncation notice at the top, then all remaining lines
+    const truncationMarker = `... ${formatLineCount(message.truncatedLines)} earlier lines truncated ...\n`;
+    return truncationMarker + message.lines.join("\n");
+  }, [message.lines, message.truncatedLines]);
 
   return (
     <div
@@ -81,7 +98,7 @@ export const InitMessage = React.memo<InitMessageProps>(({ message, className })
             isError ? "text-danger-soft" : "text-light"
           )}
         >
-          {message.lines.join("\n")}
+          {outputText}
         </pre>
       )}
     </div>

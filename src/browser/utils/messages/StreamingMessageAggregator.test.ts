@@ -4,9 +4,12 @@ import { StreamingMessageAggregator } from "./StreamingMessageAggregator";
 // Test helper: create aggregator with default createdAt for tests
 const TEST_CREATED_AT = "2024-01-01T00:00:00.000Z";
 
+// Helper to wait for throttled init output updates (100ms throttle + buffer)
+const waitForInitThrottle = () => new Promise((r) => setTimeout(r, 120));
+
 describe("StreamingMessageAggregator", () => {
   describe("init state reference stability", () => {
-    test("should return new array reference when state changes", () => {
+    test("should return new array reference when state changes", async () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 
       // Start init hook
@@ -26,13 +29,16 @@ describe("StreamingMessageAggregator", () => {
         timestamp: Date.now(),
       });
 
+      // Wait for throttled cache invalidation
+      await waitForInitThrottle();
+
       const messages2 = aggregator.getDisplayedMessages();
 
       // Array references should be different when state changes
       expect(messages1).not.toBe(messages2);
     });
 
-    test("should return new lines array reference when init state changes", () => {
+    test("should return new lines array reference when init state changes", async () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 
       // Start init hook
@@ -54,6 +60,9 @@ describe("StreamingMessageAggregator", () => {
         timestamp: Date.now(),
       });
 
+      // Wait for throttled cache invalidation
+      await waitForInitThrottle();
+
       const messages2 = aggregator.getDisplayedMessages();
       const initMsg2 = messages2.find((m) => m.type === "workspace-init");
       expect(initMsg2).toBeDefined();
@@ -66,7 +75,7 @@ describe("StreamingMessageAggregator", () => {
       }
     });
 
-    test("should create new init message object on each state change", () => {
+    test("should create new init message object on each state change", async () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 
       // Start init hook
@@ -79,7 +88,7 @@ describe("StreamingMessageAggregator", () => {
       const messages1 = aggregator.getDisplayedMessages();
       const initMsg1 = messages1.find((m) => m.type === "workspace-init");
 
-      // Add multiple outputs
+      // Add first output
       aggregator.handleMessage({
         type: "init-output",
         line: "Line 1",
@@ -87,15 +96,22 @@ describe("StreamingMessageAggregator", () => {
         timestamp: Date.now(),
       });
 
+      // Wait for throttled cache invalidation
+      await waitForInitThrottle();
+
       const messages2 = aggregator.getDisplayedMessages();
       const initMsg2 = messages2.find((m) => m.type === "workspace-init");
 
+      // Add second output
       aggregator.handleMessage({
         type: "init-output",
         line: "Line 2",
         isError: false,
         timestamp: Date.now(),
       });
+
+      // Wait for throttled cache invalidation
+      await waitForInitThrottle();
 
       const messages3 = aggregator.getDisplayedMessages();
       const initMsg3 = messages3.find((m) => m.type === "workspace-init");

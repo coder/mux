@@ -28,6 +28,7 @@ import type {
   DynamicToolPartPending,
   DynamicToolPartAvailable,
 } from "@/common/types/toolParts";
+import { INIT_HOOK_MAX_LINES } from "@/common/constants/toolLimits";
 import { isDynamicToolPart } from "@/common/types/toolParts";
 import { z } from "zod";
 import { createDeltaStorage, type DeltaRecordStorage } from "./StreamingTPSCalculator";
@@ -202,7 +203,12 @@ export class StreamingMessageAggregator {
     exitCode: number | null;
     startTime: number;
     endTime: number | null;
+    truncatedLines?: number; // Lines dropped from middle when output exceeded limit
   } | null = null;
+
+  // Throttle init-output cache invalidation to avoid re-render per line during fast streaming
+  private initOutputThrottleTimer: ReturnType<typeof setTimeout> | null = null;
+  private static readonly INIT_OUTPUT_THROTTLE_MS = 100;
 
   // Track when we're waiting for stream-start after user message
   // Prevents retry barrier flash during normal send flow
@@ -1357,8 +1363,18 @@ export class StreamingMessageAggregator {
         console.error("Init-output line is not a string", { line, data });
         return;
       }
+      // Truncation: keep only the most recent MAX_LINES (matches backend)
+      if (this.initState.lines.length >= INIT_HOOK_MAX_LINES) {
+        this.initState.lines.shift(); // Drop oldest line
+        this.initState.truncatedLines = (this.initState.truncatedLines ?? 0) + 1;
+      }
       this.initState.lines.push(line.trimEnd());
-      this.invalidateCache();
+
+      // Throttle cache invalidation during fast streaming to avoid re-render per line
+      this.initOutputThrottleTimer ??= setTimeout(() => {
+        this.initOutputThrottleTimer = null;
+        this.invalidateCache();
+      }, StreamingMessageAggregator.INIT_OUTPUT_THROTTLE_MS);
       return;
     }
 
@@ -1370,6 +1386,15 @@ export class StreamingMessageAggregator {
       this.initState.exitCode = data.exitCode;
       this.initState.status = data.exitCode === 0 ? "success" : "error";
       this.initState.endTime = data.timestamp;
+      // Capture truncation info from init-end event
+      if (data.truncatedLines) {
+        this.initState.truncatedLines = data.truncatedLines;
+      }
+      // Cancel any pending throttled update and flush immediately
+      if (this.initOutputThrottleTimer) {
+        clearTimeout(this.initOutputThrottleTimer);
+        this.initOutputThrottleTimer = null;
+      }
       this.invalidateCache();
       return;
     }
@@ -1691,6 +1716,7 @@ export class StreamingMessageAggregator {
           exitCode: this.initState.exitCode,
           timestamp: this.initState.startTime,
           durationMs,
+          truncatedLines: this.initState.truncatedLines,
         };
         displayedMessages.unshift(initMessage);
       }
