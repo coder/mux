@@ -97,8 +97,8 @@ export async function createOrpcServer({
   authToken,
   context,
   serveStatic = false,
-  // From dist/node/orpc/, go up 2 levels to reach dist/ where index.html lives
-  staticDir = path.join(__dirname, "../.."),
+  // From dist/node/orpc/, go up 2 levels to reach dist/renderer/ where index.html lives
+  staticDir = path.join(__dirname, "../../renderer"),
   onOrpcError = (error) => {
     // Auth failures are expected in browser mode while the user enters the token.
     // Avoid spamming error logs with stack traces on every unauthenticated request.

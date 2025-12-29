@@ -214,7 +214,8 @@ export class ServerService {
 
     this.apiAuthToken = options.authToken;
 
-    const staticDir = path.join(__dirname, "../..");
+    // Renderer output is in dist/renderer/ (2 levels up from dist/node/services/, then into renderer/)
+    const staticDir = path.join(__dirname, "../../renderer");
     let serveStatic = options.serveStatic ?? false;
     if (serveStatic) {
       const indexPath = path.join(staticDir, "index.html");

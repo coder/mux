@@ -240,7 +240,6 @@
     ],
     "asarUnpack": [
       "dist/**/*.wasm",
-      "dist/**/*.map",
       "**/node_modules/node-pty/build/**/*"
     ],
     "mac": {

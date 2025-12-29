@@ -235,17 +235,36 @@ export function useResumeManager() {
 
     window.addEventListener(CUSTOM_EVENTS.RESUME_CHECK_REQUESTED, handleResumeCheck);
 
-    // Backup polling mechanism - check all workspaces every 1 second
+    // Backup polling mechanism - check all workspaces periodically
     // This is defense-in-depth in case events are missed
-    const pollInterval = setInterval(() => {
-      for (const [workspaceId] of workspaceStatesRef.current) {
-        void attemptResume(workspaceId);
-      }
-    }, 1000);
+    // Uses adaptive interval: 1s when there are eligible workspaces, 5s otherwise
+    let pollInterval: ReturnType<typeof setInterval> | null = null;
+    let currentDelay = 1000;
+
+    const schedulePoll = (delay: number) => {
+      if (pollInterval) clearInterval(pollInterval);
+      currentDelay = delay;
+      pollInterval = setInterval(() => {
+        let hasEligibleWorkspace = false;
+        for (const [workspaceId] of workspaceStatesRef.current) {
+          if (isEligibleForResume(workspaceId)) {
+            hasEligibleWorkspace = true;
+            void attemptResume(workspaceId);
+          }
+        }
+        // Slow down polling when no workspaces need attention
+        const nextDelay = hasEligibleWorkspace ? 1000 : 5000;
+        if (nextDelay !== currentDelay) {
+          schedulePoll(nextDelay);
+        }
+      }, delay);
+    };
+
+    schedulePoll(1000);
 
     return () => {
       window.removeEventListener(CUSTOM_EVENTS.RESUME_CHECK_REQUESTED, handleResumeCheck);
-      clearInterval(pollInterval);
+      if (pollInterval) clearInterval(pollInterval);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Stable effect - no deps, uses refs

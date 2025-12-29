@@ -513,8 +513,8 @@ function createWindow() {
       });
     }
   } else {
-    // Production mode: load built files
-    const htmlPath = path.join(__dirname, "../index.html");
+    // Production mode: load built files from dist/renderer/
+    const htmlPath = path.join(__dirname, "../renderer/index.html");
     console.log(`[${timestamp()}] [window] Loading from file: ${htmlPath}`);
     void mainWindow.loadFile(htmlPath);
   }

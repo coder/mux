@@ -28,7 +28,7 @@ import { useResizableSidebar } from "@/browser/hooks/useResizableSidebar";
 import {
   shouldShowInterruptedBarrier,
   mergeConsecutiveStreamErrors,
-  computeBashOutputGroupInfo,
+  precomputeBashOutputGroups,
   getEditableUserMessageText,
 } from "@/browser/utils/messages/messageUtils";
 import { BashOutputCollapsedIndicator } from "./tools/BashOutputCollapsedIndicator";
@@ -206,6 +206,12 @@ const AIViewInner: React.FC<AIViewProps> = ({
     hasActiveStream || transformedMessages.length !== deferredTransformedMessages.length
       ? transformedMessages
       : deferredTransformedMessages;
+
+  // Precompute bash output group boundaries in O(n) instead of O(n²)
+  const bashOutputGroups = useMemo(
+    () => precomputeBashOutputGroups(deferredMessages),
+    [deferredMessages]
+  );
 
   const autoCompactionResult = useMemo(
     () => checkAutoCompaction(workspaceUsage, pendingModel, use1M, autoCompactionThreshold / 100),
@@ -629,8 +635,8 @@ const AIViewInner: React.FC<AIViewProps> = ({
               ) : (
                 <>
                   {deferredMessages.map((msg, index) => {
-                    // Compute bash_output grouping at render-time
-                    const bashOutputGroup = computeBashOutputGroupInfo(deferredMessages, index);
+                    // Look up precomputed bash_output group info (O(1) instead of O(n))
+                    const bashOutputGroup = bashOutputGroups.get(index);
 
                     // For bash_output groups, use first message ID as expansion key
                     const groupKey = bashOutputGroup

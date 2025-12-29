@@ -1,32 +1,44 @@
 import type { CSSProperties, ReactNode } from "react";
+import type { Mermaid as MermaidAPI } from "mermaid";
 import React, { useContext, useEffect, useRef, useState } from "react";
-import mermaid from "mermaid";
 import { StreamingContext } from "./StreamingContext";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 
 const MIN_HEIGHT = 300;
 const MAX_HEIGHT = 1200;
 
-// Initialize mermaid
-mermaid.initialize({
-  startOnLoad: false,
-  theme: "dark",
-  layout: "elk",
-  securityLevel: "loose",
-  fontFamily: "var(--font-monospace)",
-  darkMode: true,
-  elk: {
-    nodePlacementStrategy: "LINEAR_SEGMENTS",
-    mergeEdges: true,
-  },
-  wrap: true,
-  markdownAutoWrap: true,
-  flowchart: {
-    nodeSpacing: 60,
-    curve: "linear",
-    defaultRenderer: "elk",
-  },
-});
+// SVG cache keyed by chart source to avoid re-rendering identical diagrams
+const svgCache = new Map<string, string>();
+
+// Mermaid instance loaded on-demand
+let mermaidInstance: MermaidAPI | null = null;
+
+async function getMermaid(): Promise<MermaidAPI> {
+  if (!mermaidInstance) {
+    const module = await import("mermaid");
+    mermaidInstance = module.default;
+    mermaidInstance.initialize({
+      startOnLoad: false,
+      theme: "dark",
+      layout: "elk",
+      securityLevel: "loose",
+      fontFamily: "var(--font-monospace)",
+      darkMode: true,
+      elk: {
+        nodePlacementStrategy: "LINEAR_SEGMENTS",
+        mergeEdges: true,
+      },
+      wrap: true,
+      markdownAutoWrap: true,
+      flowchart: {
+        nodeSpacing: 60,
+        curve: "linear",
+        defaultRenderer: "elk",
+      },
+    });
+  }
+  return mermaidInstance;
+}
 
 // Common button styles
 const getButtonStyle = (disabled = false): CSSProperties => ({
@@ -109,9 +121,11 @@ export const Mermaid: React.FC<{ chart: string }> = ({ chart }) => {
   const { isStreaming } = useContext(StreamingContext);
   const containerRef = useRef<HTMLDivElement>(null);
   const modalContainerRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [svg, setSvg] = useState<string>("");
+  const [isVisible, setIsVisible] = useState(false);
   const [diagramMaxHeight, setDiagramMaxHeight] = usePersistedState(
     "mermaid-diagram-max-height",
     MIN_HEIGHT,
@@ -133,28 +147,75 @@ export const Mermaid: React.FC<{ chart: string }> = ({ chart }) => {
     }
   };
 
+  // Track visibility with IntersectionObserver - only render when visible
   useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          setIsVisible(true);
+          // Once visible, stop observing (we keep it rendered)
+          observer.disconnect();
+        }
+      },
+      { rootMargin: "100px" } // Start loading slightly before visible
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    // Don't render until visible
+    if (!isVisible) return;
+
     let id: string | undefined;
+    let cancelled = false;
 
     const renderDiagram = async () => {
+      // Check cache first
+      const cached = svgCache.get(chart);
+      if (cached) {
+        setSvg(cached);
+        if (containerRef.current) {
+          containerRef.current.innerHTML = cached;
+        }
+        return;
+      }
+
       id = `mermaid-${Math.random().toString(36).substr(2, 9)}`;
       try {
         setError(null);
 
+        const mermaid = await getMermaid();
+        if (cancelled) return;
+
         // Parse first to validate syntax without rendering
         await mermaid.parse(chart);
+        if (cancelled) return;
 
         // If parse succeeds, render the diagram
         const { svg: renderedSvg } = await mermaid.render(id, chart);
+        if (cancelled) return;
+
+        // Cache the result
+        svgCache.set(chart, renderedSvg);
+
         setSvg(renderedSvg);
         if (containerRef.current) {
           containerRef.current.innerHTML = renderedSvg;
         }
       } catch (err) {
+        if (cancelled) return;
+
         // Clean up any DOM elements mermaid might have created with our ID
-        const errorElement = document.getElementById(id);
-        if (errorElement) {
-          errorElement.remove();
+        if (id) {
+          const errorElement = document.getElementById(id);
+          if (errorElement) {
+            errorElement.remove();
+          }
         }
 
         setError(err instanceof Error ? err.message : "Failed to render diagram");
@@ -169,6 +230,7 @@ export const Mermaid: React.FC<{ chart: string }> = ({ chart }) => {
 
     // Cleanup on unmount or when chart changes
     return () => {
+      cancelled = true;
       if (id) {
         const element = document.getElementById(id);
         if (element) {
@@ -176,7 +238,7 @@ export const Mermaid: React.FC<{ chart: string }> = ({ chart }) => {
         }
       }
     };
-  }, [chart]);
+  }, [chart, isVisible]);
 
   // Update modal container when opened
   useEffect(() => {
@@ -218,6 +280,8 @@ export const Mermaid: React.FC<{ chart: string }> = ({ chart }) => {
 
   return (
     <>
+      {/* Sentinel for IntersectionObserver - placed before content for early detection */}
+      <div ref={sentinelRef} style={{ height: 1, marginBottom: -1 }} />
       <div
         style={{
           position: "relative",
@@ -225,50 +289,66 @@ export const Mermaid: React.FC<{ chart: string }> = ({ chart }) => {
           background: "var(--color-code-bg)",
           borderRadius: "4px",
           padding: "16px",
+          minHeight: isVisible ? undefined : "100px", // Reserve space while loading
         }}
       >
-        <div
-          style={{
-            position: "absolute",
-            top: "8px",
-            right: "8px",
-            display: "flex",
-            gap: "4px",
-          }}
-        >
-          <button
-            onClick={handleDecreaseHeight}
-            disabled={atMinHeight}
-            style={getButtonStyle(atMinHeight)}
-            title="Decrease diagram height"
+        {isVisible && (
+          <div
+            style={{
+              position: "absolute",
+              top: "8px",
+              right: "8px",
+              display: "flex",
+              gap: "4px",
+            }}
           >
-            −
-          </button>
-          <button
-            onClick={handleIncreaseHeight}
-            disabled={atMaxHeight}
-            style={getButtonStyle(atMaxHeight)}
-            title="Increase diagram height"
+            <button
+              onClick={handleDecreaseHeight}
+              disabled={atMinHeight}
+              style={getButtonStyle(atMinHeight)}
+              title="Decrease diagram height"
+            >
+              −
+            </button>
+            <button
+              onClick={handleIncreaseHeight}
+              disabled={atMaxHeight}
+              style={getButtonStyle(atMaxHeight)}
+              title="Increase diagram height"
+            >
+              +
+            </button>
+            <button
+              onClick={() => setIsModalOpen(true)}
+              style={getButtonStyle()}
+              title="Expand diagram"
+            >
+              ⤢
+            </button>
+          </div>
+        )}
+        {!isVisible ? (
+          <div
+            style={{
+              color: "var(--color-text-secondary)",
+              fontStyle: "italic",
+              textAlign: "center",
+              padding: "24px",
+            }}
           >
-            +
-          </button>
-          <button
-            onClick={() => setIsModalOpen(true)}
-            style={getButtonStyle()}
-            title="Expand diagram"
-          >
-            ⤢
-          </button>
-        </div>
-        <div
-          ref={containerRef}
-          className="mermaid-container"
-          style={{
-            maxWidth: "70%",
-            margin: "0 auto",
-            ["--diagram-max-height" as string]: `${diagramMaxHeight}px`,
-          }}
-        />
+            Loading diagram...
+          </div>
+        ) : (
+          <div
+            ref={containerRef}
+            className="mermaid-container"
+            style={{
+              maxWidth: "70%",
+              margin: "0 auto",
+              ["--diagram-max-height" as string]: `${diagramMaxHeight}px`,
+            }}
+          />
+        )}
       </div>
       {isModalOpen && (
         <DiagramModal onClose={() => setIsModalOpen(false)}>
