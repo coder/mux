@@ -131,55 +131,7 @@ const TaskToolAgentArgsSchema = z
     }
   });
 
-const TaskToolBashArgsSchema = z
-  .object({
-    kind: z.literal("bash"),
-    script: z.string().min(1),
-    timeout_secs: z.number().positive(),
-    run_in_background: z.boolean().default(false),
-    // Optional: if omitted we'll derive a filesystem-safe name from the script.
-    display_name: z.string().min(1).optional(),
-  })
-  .strict();
-
-// NOTE: Several providers require tool schemas to be a *single* JSON Schema object.
-// In particular, Anthropic rejects union/anyOf schemas for tool input.
-//
-// To keep the provider-facing schema as `type: "object"` while still enforcing a strict
-// agent-vs-bash split, we validate via superRefine against the appropriate strict schema.
-export const TaskToolArgsSchema = z
-  .object({
-    // Discriminator for bash tasks. Omit for agent tasks.
-    kind: z.literal("bash").optional(),
-
-    // Agent task args
-    agentId: TaskAgentIdSchema.optional(),
-    subagent_type: SubagentTypeSchema.optional(),
-    prompt: z.string().min(1).optional(),
-    title: z.string().min(1).optional(),
-
-    // Shared
-    run_in_background: z.boolean().default(false),
-
-    // Bash task args
-    script: z.string().min(1).optional(),
-    timeout_secs: z.number().positive().optional(),
-    display_name: z.string().min(1).optional(),
-  })
-  .strict()
-  .superRefine((args, ctx) => {
-    const strictSchema = args.kind === "bash" ? TaskToolBashArgsSchema : TaskToolAgentArgsSchema;
-    const parsed = strictSchema.safeParse(args);
-    if (!parsed.success) {
-      for (const issue of parsed.error.issues) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: issue.message,
-          path: issue.path,
-        });
-      }
-    }
-  });
+export const TaskToolArgsSchema = TaskToolAgentArgsSchema;
 
 export const TaskToolQueuedResultSchema = z
   .object({
@@ -196,19 +148,6 @@ export const TaskToolCompletedResultSchema = z
     title: z.string().optional(),
     agentId: z.string().optional(),
     agentType: z.string().optional(),
-
-    // task(kind="bash") optionally includes the raw bash result so the UI can render
-    // output without having to parse reportMarkdown.
-    bashResult: z.lazy(() => BashToolResultSchema).optional(),
-
-    exitCode: z.number().optional(),
-    note: z.string().optional(),
-    truncated: z
-      .object({
-        reason: z.string(),
-        totalLines: z.number(),
-      })
-      .optional(),
   })
   .strict();
 
@@ -481,12 +420,13 @@ export const TOOL_DEFINITIONS = {
             "Use for processes running >5s (dev servers, builds, file watchers). " +
             "Do NOT use for quick commands (<5s), interactive processes (no stdin support), " +
             "or processes requiring real-time output (use foreground with larger timeout instead). " +
-            "Returns immediately with process_id. " +
-            "Read output with bash_output (returns only new output since last check). " +
-            "Terminate with bash_background_terminate using the process_id. " +
+            "Returns immediately with a taskId (bash:<processId>) and backgroundProcessId. " +
+            "Read output with task_await (returns only new output since last check). " +
+            "Terminate with task_terminate using the taskId. " +
+            "List active tasks with task_list. " +
             "Process persists until timeout_secs expires, terminated, or workspace is removed." +
             "\\n\\nFor long-running tasks like builds or compilations, prefer background mode to continue productive work in parallel. " +
-            "Check back periodically with bash_output rather than blocking on completion."
+            "Check back periodically with task_await rather than blocking on completion."
         ),
       display_name: z
         .string()
@@ -639,12 +579,11 @@ export const TOOL_DEFINITIONS = {
   },
   task: {
     description:
-      "Unified task tool for (1) spawning sub-agent tasks and (2) running bash commands. " +
-      "\n\nAgent tasks: provide subagent_type, prompt, title, run_in_background. " +
-      '\nBash tasks: set kind="bash" and provide script, timeout_secs, run_in_background (display_name optional). ' +
-      '\nFor kind="bash", full output is returned in the bashResult field; reportMarkdown may omit it to save context tokens. ' +
-      "\n\nIf run_in_background is false, returns a completed reportMarkdown. " +
-      "If run_in_background is true, returns a running taskId; use task_await to read incremental output and task_terminate to stop it.",
+      "Spawn a sub-agent task (child workspace). " +
+      "\n\nProvide subagent_type, prompt, title, run_in_background. " +
+      "\n\nIf run_in_background is false, waits for the sub-agent to finish and returns a completed reportMarkdown. " +
+      "If run_in_background is true, returns a queued/running taskId; use task_await to wait for completion, task_list to rediscover active tasks, and task_terminate to stop it. " +
+      "Use the bash tool to run shell commands.",
     schema: TaskToolArgsSchema,
   },
   task_await: {
@@ -866,6 +805,7 @@ export const BashToolResultSchema = z.union([
     output: z.string(),
     exitCode: z.literal(0),
     wall_duration_ms: z.number(),
+    taskId: z.string(),
     backgroundProcessId: z.string(),
   }),
   // Failure
@@ -1114,6 +1054,7 @@ export function getAvailableTools(
     // ask_user_question only available in plan mode
     ...(mode === "plan" ? ["ask_user_question"] : []),
     "propose_plan",
+    "bash",
     "task",
     "task_await",
     "task_terminate",

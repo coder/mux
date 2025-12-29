@@ -238,14 +238,16 @@ export async function getToolsForModel(
     // and line number miscalculations. Use file_edit_replace_string instead.
     // file_edit_replace_lines: wrap(createFileEditReplaceLinesTool(config)),
 
-    // Unified task abstraction (agent + bash)
+    // Sub-agent task orchestration (child workspaces)
     task: wrap(createTaskTool(config)),
     task_await: wrap(createTaskAwaitTool(config)),
     task_terminate: wrap(createTaskTerminateTool(config)),
     task_list: wrap(createTaskListTool(config)),
 
-    // Legacy bash tools (deprecated: prefer task(kind="bash"))
+    // Bash execution (foreground/background). Manage background output via task_await/task_list/task_terminate.
     bash: wrap(createBashTool(config)),
+
+    // Legacy bash process tools (deprecated)
     bash_output: wrap(createBashOutputTool(config)),
     bash_background_list: wrap(createBashBackgroundListTool(config)),
     bash_background_terminate: wrap(createBashBackgroundTerminateTool(config)),

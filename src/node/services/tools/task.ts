@@ -1,59 +1,17 @@
 import { tool } from "ai";
 
-import type { BashToolResult } from "@/common/types/tools";
+import { coerceThinkingLevel } from "@/common/types/thinking";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
-import { resolveBashDisplayName } from "@/common/utils/tools/bashDisplayName";
 import { TaskToolResultSchema, TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import { log } from "@/node/services/log";
-import { coerceThinkingLevel } from "@/common/types/thinking";
 
-import { createBashTool } from "./bash";
-import { toBashTaskId } from "./taskId";
 import { parseToolResult, requireTaskService, requireWorkspaceId } from "./toolUtils";
 
-function formatBashReport(
-  args: { script: string; display_name: string },
-  result: BashToolResult
-): string {
-  const lines: string[] = [];
-
-  lines.push(`### Bash: ${args.display_name}`);
-  lines.push("");
-
-  lines.push("```bash");
-  lines.push(args.script.trimEnd());
-  lines.push("```");
-  lines.push("");
-
-  lines.push(`exitCode: ${result.exitCode}`);
-  lines.push(`wall_duration_ms: ${result.wall_duration_ms}`);
-
-  if ("truncated" in result && result.truncated) {
-    lines.push("");
-    lines.push("WARNING: output truncated");
-    lines.push(`reason: ${result.truncated.reason}`);
-    lines.push(`totalLines: ${result.truncated.totalLines}`);
-  }
-
-  if (!result.success) {
-    lines.push("");
-    lines.push(`error: ${result.error}`);
-  }
-
-  // NOTE: We intentionally omit the full command output from reportMarkdown.
-  // For task(kind="bash"), the raw result (including output) is returned separately as
-  // TaskToolCompletedResult.bashResult to avoid duplicating tokens in the model context.
-
-  return lines.join("\n");
-}
-
 export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
-  let bashTool: ReturnType<typeof createBashTool> | null = null;
-
   return tool({
     description: TOOL_DEFINITIONS.task.description,
     inputSchema: TOOL_DEFINITIONS.task.schema,
-    execute: async (args, { abortSignal, toolCallId, messages }): Promise<unknown> => {
+    execute: async (args, { abortSignal }): Promise<unknown> => {
       // Defensive: tool() should have already validated args via inputSchema,
       // but keep runtime validation here to preserve type-safety.
       const parsedArgs = TOOL_DEFINITIONS.task.schema.safeParse(args);
@@ -72,57 +30,6 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
       const validatedArgs = parsedArgs.data;
       if (abortSignal?.aborted) {
         throw new Error("Interrupted");
-      }
-
-      // task(kind="bash") - run bash commands via the task abstraction.
-      if (validatedArgs.kind === "bash") {
-        const { script, timeout_secs, run_in_background, display_name } = validatedArgs;
-        if (!script || timeout_secs === undefined) {
-          throw new Error("task tool input validation failed: expected bash task args");
-        }
-
-        const resolvedDisplayName = resolveBashDisplayName(script, display_name);
-
-        bashTool ??= createBashTool(config);
-
-        const bashResult = (await bashTool.execute!(
-          {
-            script,
-            timeout_secs,
-            run_in_background,
-            display_name: resolvedDisplayName,
-          },
-          { abortSignal, toolCallId, messages }
-        )) as BashToolResult;
-
-        if (
-          bashResult.success &&
-          "backgroundProcessId" in bashResult &&
-          bashResult.backgroundProcessId
-        ) {
-          return parseToolResult(
-            TaskToolResultSchema,
-            { status: "running" as const, taskId: toBashTaskId(bashResult.backgroundProcessId) },
-            "task"
-          );
-        }
-
-        return parseToolResult(
-          TaskToolResultSchema,
-          {
-            status: "completed" as const,
-            reportMarkdown: formatBashReport(
-              { script, display_name: resolvedDisplayName },
-              bashResult
-            ),
-            title: resolvedDisplayName,
-            bashResult,
-            exitCode: bashResult.exitCode,
-            note: "note" in bashResult ? bashResult.note : undefined,
-            truncated: "truncated" in bashResult ? bashResult.truncated : undefined,
-          },
-          "task"
-        );
       }
 
       const { agentId, subagent_type, prompt, title, run_in_background } = validatedArgs;

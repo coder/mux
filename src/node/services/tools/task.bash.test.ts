@@ -1,7 +1,7 @@
 import { describe, it, expect, mock } from "bun:test";
 import type { ToolCallOptions } from "ai";
 
-import { createTaskTool } from "./task";
+import { createBashTool } from "./bash";
 import { createTaskAwaitTool } from "./task_await";
 import { createTaskListTool } from "./task_list";
 import { createTaskTerminateTool } from "./task_terminate";
@@ -14,9 +14,9 @@ const mockToolCallOptions: ToolCallOptions = {
   messages: [],
 };
 
-describe("task_* bash tasks", () => {
-  it("task(kind=bash) returns a running taskId for background commands", async () => {
-    using tempDir = new TestTempDir("test-task-bash");
+describe("bash + task_* (background bash tasks)", () => {
+  it("bash(run_in_background=true) returns a taskId for background commands", async () => {
+    using tempDir = new TestTempDir("test-bash-background");
 
     const spawn = mock(() => ({
       success: true as const,
@@ -27,7 +27,7 @@ describe("task_* bash tasks", () => {
 
     const backgroundProcessManager = { spawn } as unknown as BackgroundProcessManager;
 
-    const tool = createTaskTool({
+    const tool = createBashTool({
       ...createTestToolConfig(tempDir.path, { workspaceId: "ws-1" }),
       backgroundProcessManager,
     });
@@ -35,7 +35,6 @@ describe("task_* bash tasks", () => {
     const result: unknown = await Promise.resolve(
       tool.execute!(
         {
-          kind: "bash",
           script: "echo hi",
           timeout_secs: 10,
           run_in_background: true,
@@ -46,45 +45,14 @@ describe("task_* bash tasks", () => {
     );
 
     expect(spawn).toHaveBeenCalled();
-    expect(result).toEqual({ status: "running", taskId: "bash:proc-1" });
-  });
-
-  it("task(kind=bash) derives display_name when omitted", async () => {
-    using tempDir = new TestTempDir("test-task-bash-default-display-name");
-
-    const spawn = mock(() => ({
-      success: true as const,
-      processId: "proc-1",
-      outputDir: "ignored",
-      pid: 123,
-    }));
-
-    const backgroundProcessManager = { spawn } as unknown as BackgroundProcessManager;
-
-    const tool = createTaskTool({
-      ...createTestToolConfig(tempDir.path, { workspaceId: "ws-1" }),
-      backgroundProcessManager,
-    });
-
-    const result: unknown = await Promise.resolve(
-      tool.execute!(
-        {
-          kind: "bash",
-          script: "echo hi",
-          timeout_secs: 10,
-          run_in_background: true,
-        },
-        mockToolCallOptions
-      )
+    expect(result).toEqual(
+      expect.objectContaining({
+        success: true,
+        exitCode: 0,
+        backgroundProcessId: "proc-1",
+        taskId: "bash:proc-1",
+      })
     );
-
-    expect(spawn).toHaveBeenCalledWith(
-      expect.anything(),
-      "ws-1",
-      "echo hi",
-      expect.objectContaining({ displayName: "echo hi" })
-    );
-    expect(result).toEqual({ status: "running", taskId: "bash:proc-1" });
   });
 
   it("task_await returns incremental output for bash tasks", async () => {

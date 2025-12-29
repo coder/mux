@@ -2149,18 +2149,13 @@ export class TaskService {
     }
 
     const toolCallId = pendingParts[0].toolCallId;
+
     const parsedInput = TaskToolArgsSchema.safeParse(pendingParts[0].input);
     if (!parsedInput.success) {
       log.error("tryFinalizePendingTaskToolCallInPartial: task input validation failed", {
         workspaceId,
         error: parsedInput.error.message,
       });
-      return false;
-    }
-
-    // Only sub-agent tasks are eligible for restart-safe finalization.
-    // Avoid overwriting a pending `task(kind="bash")` call with an unrelated agent_report.
-    if (parsedInput.data.kind === "bash") {
       return false;
     }
 

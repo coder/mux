@@ -17,6 +17,7 @@ import type { BashToolResult } from "@/common/types/tools";
 import { resolveBashDisplayName } from "@/common/utils/tools/bashDisplayName";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
+import { toBashTaskId } from "./taskId";
 import { migrateToBackground } from "@/node/services/backgroundProcessExecutor";
 
 /**
@@ -284,6 +285,7 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
           output: `Background process started with ID: ${spawnResult.processId}`,
           exitCode: 0,
           wall_duration_ms: Math.round(performance.now() - startTime),
+          taskId: toBashTaskId(spawnResult.processId),
           backgroundProcessId: spawnResult.processId,
         };
       }
@@ -657,6 +659,7 @@ ${script}`;
                 output: `Process sent to background with ID: ${processId}\n\nOutput so far (${lines.length} lines):\n${lines.slice(-20).join("\n")}${lines.length > 20 ? "\n...(showing last 20 lines)" : ""}`,
                 exitCode: 0,
                 wall_duration_ms,
+                taskId: toBashTaskId(processId),
                 backgroundProcessId: processId,
               };
             }

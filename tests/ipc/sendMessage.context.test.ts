@@ -152,7 +152,7 @@ describeIntegration("sendMessage context handling tests", () => {
 
   describe("tool calls", () => {
     test.concurrent(
-      'should execute task(kind="bash") tool when requested',
+      "should execute bash tool when requested",
       async () => {
         await withSharedWorkspace("anthropic", async ({ env, workspaceId, collector }) => {
           const repoPath = getSharedRepoPath();
@@ -162,14 +162,14 @@ describeIntegration("sendMessage context handling tests", () => {
           await fs.writeFile(testFilePath, "Hello from test file!");
 
           try {
-            // Ask to read the file using task(kind="bash")
+            // Ask to read the file using bash
             const result = await sendMessageWithModel(
               env,
               workspaceId,
-              `Use task(kind="bash") to run: cat ${testFilePath}. Set display_name="read-file" and timeout_secs=30. Do not spawn a sub-agent.`,
+              `Use bash to run: cat ${testFilePath}. Set display_name="read-file" and timeout_secs=30. Do not spawn a sub-agent.`,
               modelString("anthropic", KNOWN_MODELS.HAIKU.providerModelId),
               {
-                toolPolicy: [{ regex_match: "task", action: "require" }],
+                toolPolicy: [{ regex_match: "bash", action: "require" }],
               }
             );
 
@@ -184,12 +184,12 @@ describeIntegration("sendMessage context handling tests", () => {
               (e) => "type" in e && (e as { type: string }).type === "tool-call-start"
             );
 
-            // Should have at least one task(kind="bash") tool call
-            const bashTaskCall = toolCallStarts.find((e) => {
-              if (!("toolName" in e) || e.toolName !== "task") return false;
-              return (e as { args?: { kind?: string } }).args?.kind === "bash";
+            // Should have at least one bash tool call
+            const bashCall = toolCallStarts.find((e) => {
+              if (!("toolName" in e) || e.toolName !== "bash") return false;
+              return true;
             });
-            expect(bashTaskCall).toBeDefined();
+            expect(bashCall).toBeDefined();
           } finally {
             // Cleanup test file
             try {
@@ -212,7 +212,7 @@ describeIntegration("sendMessage context handling tests", () => {
           const result = await sendMessageWithModel(
             env,
             workspaceId,
-            "Run the command 'echo test' using task(kind=\"bash\").",
+            "Run the command 'echo test' using bash.",
             modelString("anthropic", KNOWN_MODELS.HAIKU.providerModelId),
             {
               toolPolicy: [{ regex_match: ".*", action: "disable" }],

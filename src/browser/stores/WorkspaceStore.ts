@@ -9,7 +9,6 @@ import { applyWorkspaceChatEventToAggregator } from "@/browser/utils/messages/ap
 import { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getRetryStateKey } from "@/common/constants/storage";
-import { isBashToolResult } from "@/common/utils/tools/taskResultConverters";
 import { BASH_TRUNCATE_MAX_TOTAL_BYTES } from "@/common/constants/toolLimits";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { useSyncExternalStore } from "react";
@@ -271,45 +270,6 @@ function formatValidationError(error: IteratorValidationFailedError): string {
   return `${issuesSummary}${moreCount}${eventType}`;
 }
 
-/**
- * Detect task(kind="bash") tool calls.
- *
- * `tool-call-end` events do not include tool arguments, so we use a 3-stage fallback:
- * 1) Aggregated tool input from the corresponding tool-call-start (authoritative, if present)
- * 2) taskId prefix "bash:" (structural fallback; survives missing args)
- * 3) bashResult shape (payload fallback; survives missing args and taskId)
- */
-function isTaskKindBashToolCall(
-  toolCallEnd: Extract<WorkspaceChatMessage, { type: "tool-call-end" }>,
-  aggregator: StreamingMessageAggregator
-): boolean {
-  if (toolCallEnd.toolName !== "task") return false;
-
-  // Stage 1: Consult aggregated tool input (from tool-call-start).
-  const message = aggregator.getAllMessages().find((m) => m.id === toolCallEnd.messageId);
-  const toolPart = message?.parts.find(
-    (part) => part.type === "dynamic-tool" && part.toolCallId === toolCallEnd.toolCallId
-  ) as { input?: unknown } | undefined;
-
-  const input = toolPart?.input;
-  if (
-    input !== null &&
-    typeof input === "object" &&
-    (input as { kind?: unknown }).kind === "bash"
-  ) {
-    return true;
-  }
-
-  // Stage 2/3: Fall back to result heuristics.
-  const taskResult = toolCallEnd.result as { taskId?: unknown; bashResult?: unknown } | undefined;
-  const taskId = typeof taskResult?.taskId === "string" ? taskResult.taskId : undefined;
-  if (taskId?.startsWith("bash:")) {
-    return true;
-  }
-
-  return isBashToolResult(taskResult?.bashResult);
-}
-
 function calculateOnChatBackoffMs(attempt: number): number {
   return Math.min(ON_CHAT_RETRY_BASE_MS * 2 ** attempt, ON_CHAT_RETRY_MAX_MS);
 }
@@ -487,28 +447,12 @@ export class WorkspaceStore {
 
       applyWorkspaceChatEventToAggregator(aggregator, data);
 
-      // task(kind="bash") uses the bash tool under the hood, but emits tool-call-end with toolName="task".
-      // If the completed task result includes output, drop the live tail buffer.
-      if (toolCallEnd.toolName === "task") {
-        const bashResult = (toolCallEnd.result as { bashResult?: unknown } | undefined)?.bashResult;
-        const output = (bashResult as { output?: unknown } | undefined)?.output;
-        if (typeof output === "string") {
-          const transient = this.chatTransientState.get(workspaceId);
-          transient?.liveBashOutput.delete(toolCallEnd.toolCallId);
-        }
-      }
-
-      const isTaskBashToolCall = isTaskKindBashToolCall(toolCallEnd, aggregator);
-
       this.states.bump(workspaceId);
       this.consumerManager.scheduleCalculation(workspaceId, aggregator);
 
       // Track file-modifying tools for ReviewPanel diff refresh.
-      // NOTE: `task` can run both agent and bash work; only task(kind="bash") should trigger refreshes.
       const shouldTriggerReviewPanelRefresh =
-        toolCallEnd.toolName.startsWith("file_edit_") ||
-        toolCallEnd.toolName === "bash" ||
-        (toolCallEnd.toolName === "task" && isTaskBashToolCall);
+        toolCallEnd.toolName.startsWith("file_edit_") || toolCallEnd.toolName === "bash";
 
       if (shouldTriggerReviewPanelRefresh) {
         this.fileModifyingToolMs.set(workspaceId, Date.now());

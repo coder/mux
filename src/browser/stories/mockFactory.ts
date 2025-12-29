@@ -426,6 +426,7 @@ export function createBackgroundBashTool(
       output: `Background process started with ID: ${processId}`,
       exitCode: 0,
       wall_duration_ms: 50,
+      taskId: `bash:${processId}`,
       backgroundProcessId: processId,
     },
   };
@@ -462,6 +463,7 @@ export function createMigratedBashTool(
       output: `Process sent to background with ID: ${processId}\n\nOutput so far (${outputLines.length} lines):\n${outputSummary}`,
       exitCode: 0,
       wall_duration_ms: 5000,
+      taskId: `bash:${processId}`,
       backgroundProcessId: processId, // This triggers the "backgrounded" status
     },
   };

@@ -17,7 +17,6 @@ import {
   toWorkspaceSelection,
 } from "@/browser/contexts/WorkspaceContext";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
-import { isTaskBashArgs } from "@/common/utils/tools/taskToolTypeGuards";
 import type {
   TaskToolArgs,
   TaskToolSuccessResult,
@@ -182,36 +181,19 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({ args, result, status
 
   const isBackground = args.run_in_background;
 
-  let isBashTask: boolean;
-  let title: string;
-  let promptOrScript: string;
-  let kindBadge: React.ReactNode;
-
-  if (isTaskBashArgs(args)) {
-    isBashTask = true;
-    title = args.display_name ?? "Bash task";
-    promptOrScript = args.script ?? "";
-    kindBadge = <AgentTypeBadge type="bash" />;
-  } else {
-    isBashTask = false;
-    title = args.title ?? "Task";
-    promptOrScript = args.prompt ?? "";
-    const agentType = args.agentId ?? args.subagent_type ?? "unknown";
-    kindBadge = <AgentTypeBadge type={agentType} />;
-  }
+  const title = args.title ?? "Task";
+  const prompt = args.prompt ?? "";
+  const agentType = args.agentId ?? args.subagent_type ?? "unknown";
+  const kindBadge = <AgentTypeBadge type={agentType} />;
 
   // Derive task state from result
   const taskId = result?.taskId;
   const taskStatus = result?.status;
   const reportMarkdown = result?.status === "completed" ? result.reportMarkdown : undefined;
   const reportTitle = result?.status === "completed" ? result.title : undefined;
-  const exitCode = result?.status === "completed" ? result.exitCode : undefined;
 
   // Show preview (first line or truncated)
-  const preview =
-    promptOrScript.length > 60
-      ? promptOrScript.slice(0, 60).trim() + "…"
-      : promptOrScript.split("\n")[0];
+  const preview = prompt.length > 60 ? prompt.slice(0, 60).trim() + "…" : prompt.split("\n")[0];
 
   return (
     <ToolContainer expanded={expanded}>
@@ -236,27 +218,20 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({ args, result, status
               </span>
               {taskId && <TaskId id={taskId} />}
               {taskStatus && <TaskStatusBadge status={taskStatus} />}
-              {exitCode !== undefined && (
-                <span className="text-muted text-[10px]">exit {exitCode}</span>
-              )}
             </div>
 
             {/* Prompt / script */}
             <div className="mb-2">
-              <div className="text-muted mb-1 text-[10px] tracking-wide uppercase">
-                {isBashTask ? "Script" : "Prompt"}
-              </div>
+              <div className="text-muted mb-1 text-[10px] tracking-wide uppercase">Prompt</div>
               <div className="text-foreground bg-code-bg max-h-[140px] overflow-y-auto rounded-sm p-2 text-[11px] break-words whitespace-pre-wrap">
-                {promptOrScript}
+                {prompt}
               </div>
             </div>
 
             {/* Report section */}
             {reportMarkdown && (
               <div className="task-divider border-t pt-2">
-                <div className="text-muted mb-1 text-[10px] tracking-wide uppercase">
-                  {isBashTask ? "Output" : "Report"}
-                </div>
+                <div className="text-muted mb-1 text-[10px] tracking-wide uppercase">Report</div>
                 <div className="text-[11px]">
                   <MarkdownRenderer content={reportMarkdown} />
                 </div>

@@ -27,22 +27,23 @@ import {
 import type { WorkspaceChatMessage } from "../../src/common/orpc/types";
 import type { ToolPolicy } from "../../src/common/utils/tools/toolPolicy";
 
-// Tool policy: Enable only task* tools (task, task_list, task_await, task_terminate).
+// Tool policy: Enable only bash + task_* tools (task_await, task_list, task_terminate).
 const TASK_TOOLS: ToolPolicy = [
   { regex_match: ".*", action: "disable" },
-  { regex_match: "task.*", action: "enable" },
+  { regex_match: "bash", action: "enable" },
+  { regex_match: "task_.*", action: "enable" },
 ];
 
 // Extended timeout for tests making multiple AI calls
 const BACKGROUND_TEST_TIMEOUT_MS = 75000;
 
 /**
- * Extract a bash taskId (e.g. "bash:<processId>") from task(kind="bash") results.
+ * Extract a bash taskId (e.g. "bash:<processId>") from bash(run_in_background=true) results.
  */
 function extractBashTaskId(events: WorkspaceChatMessage[]): string | null {
   for (const event of events) {
     if (!("type" in event) || event.type !== "tool-call-end") continue;
-    if (!("toolName" in event) || event.toolName !== "task") continue;
+    if (!("toolName" in event) || event.toolName !== "bash") continue;
 
     const taskId = (event as { result?: { taskId?: string } }).result?.taskId;
     if (typeof taskId !== "string") continue;
@@ -163,11 +164,11 @@ describeIntegration("Background Bash Execution", () => {
         );
 
         try {
-          // Start a background bash task via task(kind="bash")
+          // Start a background bash process via bash(run_in_background=true)
           const startEvents = await sendMessageAndWait(
             env,
             workspaceId,
-            'Use the task tool with args: { kind: "bash", script: "true && sleep 30", timeout_secs: 60, run_in_background: true, display_name: "bg-basic" }. Do not spawn a sub-agent.',
+            'Use the bash tool with args: { script: "true && sleep 30", timeout_secs: 60, run_in_background: true, display_name: "bg-basic" }. Do not spawn a sub-agent.',
             HAIKU_MODEL,
             TASK_TOOLS,
             30000
@@ -241,7 +242,7 @@ describeIntegration("Background Bash Execution", () => {
           const startEvents = await sendMessageAndWait(
             env,
             workspaceId,
-            'Use the task tool with args: { kind: "bash", script: "true && sleep 300", timeout_secs: 600, run_in_background: true, display_name: "bg-terminate" }. Do not spawn a sub-agent.',
+            'Use the bash tool with args: { script: "true && sleep 300", timeout_secs: 600, run_in_background: true, display_name: "bg-terminate" }. Do not spawn a sub-agent.',
             HAIKU_MODEL,
             TASK_TOOLS,
             30000
@@ -316,7 +317,7 @@ describeIntegration("Background Bash Execution", () => {
           const startEvents = await sendMessageAndWait(
             env,
             workspaceId,
-            `Use the task tool with args: { kind: "bash", script: "echo \"${marker}\" && sleep 1", timeout_secs: 30, run_in_background: true, display_name: "bg-output" }. Do not spawn a sub-agent.`,
+            `Use the bash tool with args: { script: "echo \"${marker}\" && sleep 1", timeout_secs: 30, run_in_background: true, display_name: "bg-output" }. Do not spawn a sub-agent.`,
             HAIKU_MODEL,
             TASK_TOOLS,
             30000

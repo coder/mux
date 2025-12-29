@@ -374,24 +374,24 @@ describeIntegration("ReviewPanel auto refresh (UI + ORPC + live LLM)", () => {
         // Without a scheduled refresh, the UI should not pick this up yet.
         expect(view.queryByText(new RegExp(AUTO_MARKER))).toBeNull();
 
-        // Trigger a tool-call-end event via task(kind="bash").
-        const FORCE_TASK: ToolPolicy = [{ regex_match: "task", action: "require" }];
+        // Trigger a tool-call-end event via bash.
+        const FORCE_BASH: ToolPolicy = [{ regex_match: "bash", action: "require" }];
 
         const autoRes = await sendMessageWithModel(
           env,
           workspaceId,
-          'Use task(kind="bash") to run a quick no-op bash command (e.g. `echo ping`). Do not modify files and do not spawn a sub-agent task.',
+          'Use bash to run: echo ping. Set display_name="ping" and timeout_secs=30. Do not modify files.',
           HAIKU_MODEL,
           {
             mode: "exec",
             thinkingLevel: "off",
-            toolPolicy: FORCE_TASK,
+            toolPolicy: FORCE_BASH,
           }
         );
         expect(autoRes.success).toBe(true);
 
         await collector.waitForEvent("stream-end", 30_000);
-        await waitForToolCallEnd(collector, "task");
+        await waitForToolCallEnd(collector, "bash");
 
         // Verify the workspace actually changed
         const statusRes = await env.orpc.workspace.executeBash({

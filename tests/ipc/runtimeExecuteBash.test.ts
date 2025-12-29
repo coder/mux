@@ -35,8 +35,8 @@ import type { RuntimeConfig } from "../../src/common/types/runtime";
 import type { WorkspaceChatMessage } from "../../src/common/orpc/types";
 import type { ToolPolicy } from "../../src/common/utils/tools/toolPolicy";
 
-// Tool policy: Only allow the unified task tool (used as task(kind="bash")).
-const TASK_BASH_ONLY: ToolPolicy = [{ regex_match: "task", action: "require" }];
+// Tool policy: Only allow the bash tool.
+const BASH_ONLY: ToolPolicy = [{ regex_match: "bash", action: "require" }];
 
 /**
  * Collect tool outputs from stream events
@@ -51,8 +51,8 @@ function collectToolOutputs(events: WorkspaceChatMessage[], toolName: string): s
         event.toolName === toolName
     )
     .map((event) => {
-      const result = (event as { result?: { output?: string; reportMarkdown?: string } }).result;
-      const text = toolName === "task" ? result?.reportMarkdown : result?.output;
+      const result = (event as { result?: { output?: string } }).result;
+      const text = result?.output;
       return typeof text === "string" ? text : "";
     })
     .join("\n");
@@ -169,33 +169,33 @@ describeIntegration("Runtime Bash Execution", () => {
               const events = await sendMessageAndWait(
                 env,
                 workspaceId,
-                'Use the task tool with args: { kind: "bash", script: "echo Hello World", timeout_secs: 30, run_in_background: false, display_name: "echo-hello" }. Do not spawn a sub-agent.',
+                'Use the bash tool with args: { script: "echo Hello World", timeout_secs: 30, run_in_background: false, display_name: "echo-hello" }. Do not spawn a sub-agent.',
                 HAIKU_MODEL,
-                TASK_BASH_ONLY
+                BASH_ONLY
               );
 
               // Extract response text
               const responseText = extractTextFromEvents(events);
 
-              // Verify the command output appears in the task tool result.
-              const taskOutput = collectToolOutputs(events, "task");
-              expect(taskOutput.toLowerCase()).toContain("hello world");
+              // Verify the command output appears in the bash tool result.
+              const bashOutput = collectToolOutputs(events, "bash");
+              expect(bashOutput.toLowerCase()).toContain("hello world");
 
               // responseText might be empty if the model doesn't comment on the output.
               if (responseText) {
                 expect(responseText.toLowerCase()).toContain("hello world");
               }
 
-              // Verify task(kind="bash") was called
+              // Verify bash was called
               const toolCallStarts = events.filter(
                 (e) => "type" in e && e.type === "tool-call-start"
               );
-              const taskCall = toolCallStarts.find((e) => {
-                if (!("toolName" in e) || e.toolName !== "task") return false;
-                const args = (e as { args?: { kind?: string } }).args;
-                return args?.kind === "bash";
+              const bashCall = toolCallStarts.find((e) => {
+                if (!("toolName" in e) || e.toolName !== "bash") return false;
+                const args = (e as { args?: { script?: string } }).args;
+                return typeof args?.script === "string" && args.script.includes("echo Hello World");
               });
-              expect(taskCall).toBeDefined();
+              expect(bashCall).toBeDefined();
             } finally {
               await cleanup();
             }
@@ -238,33 +238,36 @@ describeIntegration("Runtime Bash Execution", () => {
               const events = await sendMessageAndWait(
                 env,
                 workspaceId,
-                'Use the task tool with args: { kind: "bash", script: "export TEST_VAR=test123 && echo Value:$TEST_VAR", timeout_secs: 30, run_in_background: false, display_name: "env-var" }. Do not spawn a sub-agent.',
+                'Use the bash tool with args: { script: "export TEST_VAR=test123 && echo Value:$TEST_VAR", timeout_secs: 30, run_in_background: false, display_name: "env-var" }. Do not spawn a sub-agent.',
                 HAIKU_MODEL,
-                TASK_BASH_ONLY
+                BASH_ONLY
               );
 
               // Extract response text
               const responseText = extractTextFromEvents(events);
 
-              // Verify the env var value appears in the task tool output.
-              const taskOutput = collectToolOutputs(events, "task");
-              expect(taskOutput).toContain("test123");
+              // Verify the env var value appears in the bash tool output.
+              const bashOutput = collectToolOutputs(events, "bash");
+              expect(bashOutput).toContain("test123");
 
               // responseText might be empty if the model doesn't comment on the output.
               if (responseText) {
                 expect(responseText).toContain("test123");
               }
 
-              // Verify task(kind="bash") was called
+              // Verify bash was called
               const toolCallStarts = events.filter(
                 (e) => "type" in e && e.type === "tool-call-start"
               );
-              const taskCall = toolCallStarts.find((e) => {
-                if (!("toolName" in e) || e.toolName !== "task") return false;
-                const args = (e as { args?: { kind?: string } }).args;
-                return args?.kind === "bash";
+              const bashCall = toolCallStarts.find((e) => {
+                if (!("toolName" in e) || e.toolName !== "bash") return false;
+                const args = (e as { args?: { script?: string } }).args;
+                return (
+                  typeof args?.script === "string" &&
+                  args.script.includes("export TEST_VAR=test123")
+                );
               });
-              expect(taskCall).toBeDefined();
+              expect(bashCall).toBeDefined();
             } finally {
               await cleanup();
             }
@@ -309,21 +312,21 @@ describeIntegration("Runtime Bash Execution", () => {
               const events = await sendMessageAndWait(
                 env,
                 workspaceId,
-                'Use the task tool with args: { kind: "bash", script: "echo testdata > /tmp/test.txt && cat /tmp/test.txt | grep test", timeout_secs: 30, run_in_background: false, display_name: "stdin-grep" }. Do not spawn a sub-agent.',
+                'Use the bash tool with args: { script: "echo testdata > /tmp/test.txt && cat /tmp/test.txt | grep test", timeout_secs: 30, run_in_background: false, display_name: "stdin-grep" }. Do not spawn a sub-agent.',
                 HAIKU_MODEL,
-                TASK_BASH_ONLY,
+                BASH_ONLY,
                 30000 // Relaxed timeout for CI stability (was 10s)
               );
 
               // Calculate actual tool execution duration
-              const toolDuration = getToolDuration(events, "task");
+              const toolDuration = getToolDuration(events, "bash");
 
               // Extract response text
               const responseText = extractTextFromEvents(events);
 
               // Verify command completed successfully (not timeout)
               // We primarily check bashOutput to ensure the tool executed and didn't hang
-              const bashOutput = collectToolOutputs(events, "task");
+              const bashOutput = collectToolOutputs(events, "bash");
               expect(bashOutput).toContain("testdata");
 
               // responseText might be empty if the model decides not to comment on the output
@@ -337,16 +340,14 @@ describeIntegration("Runtime Bash Execution", () => {
               const maxDuration = 10000;
               expect(toolDuration).toBeLessThan(maxDuration);
 
-              // Verify task(kind="bash") was called
+              // Verify bash was called
               const toolCallStarts = events.filter(
                 (e) => "type" in e && e.type === "tool-call-start"
               );
-              const taskCalls = toolCallStarts.filter((e) => {
-                if (!("toolName" in e) || e.toolName !== "task") return false;
-                const args = (e as { args?: { kind?: string } }).args;
-                return args?.kind === "bash";
-              });
-              expect(taskCalls.length).toBeGreaterThan(0);
+              const bashCalls = toolCallStarts.filter(
+                (e) => "toolName" in e && e.toolName === "bash"
+              );
+              expect(bashCalls.length).toBeGreaterThan(0);
             } finally {
               await cleanup();
             }
@@ -390,23 +391,23 @@ describeIntegration("Runtime Bash Execution", () => {
               const events = await sendMessageAndWait(
                 env,
                 workspaceId,
-                'Use the task tool with args: { kind: "bash", script: "for i in {1..1000}; do echo \"terminal bench line $i\" >> testfile.txt; done && grep -n \"terminal bench\" testfile.txt | head -n 200", timeout_secs: 60, run_in_background: false, display_name: "grep-head" }. Do not spawn a sub-agent.',
+                'Use the bash tool with args: { script: "for i in {1..1000}; do echo \"terminal bench line $i\" >> testfile.txt; done && grep -n \"terminal bench\" testfile.txt | head -n 200", timeout_secs: 60, run_in_background: false, display_name: "grep-head" }. Do not spawn a sub-agent.',
                 HAIKU_MODEL,
-                TASK_BASH_ONLY,
+                BASH_ONLY,
                 30000 // Relaxed timeout for CI stability (was 15s)
               );
 
               // Calculate actual tool execution duration
-              const toolDuration = getToolDuration(events, "task");
+              const toolDuration = getToolDuration(events, "bash");
 
               // Verify command completed successfully (not timeout)
-              // Check that task(kind="bash") completed (tool-call-end events exist)
+              // Check that bash completed (tool-call-end events exist)
               const toolCallEnds = events.filter(
                 (e) =>
                   "type" in e &&
                   e.type === "tool-call-end" &&
                   "toolName" in e &&
-                  e.toolName === "task"
+                  e.toolName === "bash"
               );
               expect(toolCallEnds.length).toBeGreaterThan(0);
 
@@ -416,16 +417,14 @@ describeIntegration("Runtime Bash Execution", () => {
               const maxDuration = 15000;
               expect(toolDuration).toBeLessThan(maxDuration);
 
-              // Verify task(kind="bash") was called
+              // Verify bash was called
               const toolCallStarts = events.filter(
                 (e) => "type" in e && e.type === "tool-call-start"
               );
-              const taskCalls = toolCallStarts.filter((e) => {
-                if (!("toolName" in e) || e.toolName !== "task") return false;
-                const args = (e as { args?: { kind?: string } }).args;
-                return args?.kind === "bash";
-              });
-              expect(taskCalls.length).toBeGreaterThan(0);
+              const bashCalls = toolCallStarts.filter(
+                (e) => "toolName" in e && e.toolName === "bash"
+              );
+              expect(bashCalls.length).toBeGreaterThan(0);
             } finally {
               await cleanup();
             }

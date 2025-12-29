@@ -85,19 +85,11 @@ export function countEncryptedWebSearchTokens(data: unknown[]): number {
  */
 export function getConsumerInfoForToolCall(
   toolName: string,
-  input: unknown
+  _input: unknown
 ): { consumer: string; toolNameForDefinition: string } {
   if (toolName === "task") {
-    const kind =
-      input !== null &&
-      typeof input === "object" &&
-      "kind" in input &&
-      typeof (input as Record<string, unknown>).kind === "string"
-        ? ((input as Record<string, unknown>).kind as string)
-        : undefined;
-
     return {
-      consumer: kind ? `task (${kind})` : "task (agent)",
+      consumer: "task",
       toolNameForDefinition: "task",
     };
   }

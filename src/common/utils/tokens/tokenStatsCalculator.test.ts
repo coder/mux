@@ -331,14 +331,11 @@ describe("extractSyncMetadata", () => {
 });
 
 describe("getConsumerInfoForToolCall", () => {
-  test("splits task into bash vs agent", () => {
-    expect(getConsumerInfoForToolCall("task", { kind: "bash", script: "echo hi" })).toEqual({
-      consumer: "task (bash)",
-      toolNameForDefinition: "task",
-    });
-
-    expect(getConsumerInfoForToolCall("task", { subagent_type: "exec", prompt: "hi" })).toEqual({
-      consumer: "task (agent)",
+  test("labels task tool calls as task", () => {
+    expect(
+      getConsumerInfoForToolCall("task", { subagent_type: "exec", prompt: "hi", title: "t" })
+    ).toEqual({
+      consumer: "task",
       toolNameForDefinition: "task",
     });
   });
@@ -396,30 +393,6 @@ describe("mergeResults", () => {
 
     // Fixed tokens added only once, variable tokens accumulated
     expect(consumerMap.get("Read")).toEqual({ fixed: 25, variable: 150 });
-  });
-
-  test("supports consumer splitting while counting tool definitions once", () => {
-    const jobs: TokenCountJob[] = [
-      {
-        consumer: "task (bash)",
-        toolNameForDefinition: "task",
-        promise: Promise.resolve(100),
-      },
-      {
-        consumer: "task (agent)",
-        toolNameForDefinition: "task",
-        promise: Promise.resolve(50),
-      },
-    ];
-    const results = [100, 50];
-    const toolDefinitions = new Map<string, number>([["task", 25]]);
-    const systemMessageTokens = 0;
-
-    const consumerMap = mergeResults(jobs, results, toolDefinitions, systemMessageTokens);
-
-    // Fixed tokens should be attributed to exactly one bucket.
-    expect(consumerMap.get("task (bash)")).toEqual({ fixed: 25, variable: 100 });
-    expect(consumerMap.get("task (agent)")).toEqual({ fixed: 0, variable: 50 });
   });
 
   test("adds system message tokens", () => {

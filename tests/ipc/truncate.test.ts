@@ -221,10 +221,10 @@ describeIntegration("truncateHistory", () => {
         void sendMessageWithModel(
           env,
           workspaceId,
-          'Use task(kind="bash") to run: for i in {1..60}; do sleep 0.5; done && echo done. Set display_name="truncate-stream" and timeout_secs=120. Do not spawn a sub-agent.',
+          'Use bash to run: for i in {1..60}; do sleep 0.5; done && echo done. Set display_name="truncate-stream" and timeout_secs=120. Do not spawn a sub-agent.',
           modelString("anthropic", "claude-sonnet-4-5"),
           {
-            toolPolicy: [{ regex_match: "task", action: "require" }],
+            toolPolicy: [{ regex_match: "bash", action: "require" }],
           }
         );
 

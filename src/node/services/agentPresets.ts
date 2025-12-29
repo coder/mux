@@ -68,7 +68,7 @@ const EXPLORE_PRESET: AgentPreset = {
   agentType: "explore",
   toolPolicy: enableOnly(
     "file_read",
-    "task",
+    "bash",
     "task_await",
     "task_list",
     "task_terminate",
@@ -89,7 +89,7 @@ const EXPLORE_PRESET: AgentPreset = {
       "- You MUST NOT create temporary files anywhere (including /tmp).",
       "- You MUST NOT use redirect operators (>, >>, |) or heredocs to write to files.",
       "- You MUST NOT run commands that change system state (rm, mv, cp, mkdir, touch, git add/commit, installs, etc.).",
-      '- Use task(kind="bash") only for read-only operations (rg, ls, cat, git diff/show/log, etc.).',
+      "- Use bash only for read-only operations (rg, ls, cat, git diff/show/log, etc.).",
       "- You MUST NOT spawn additional sub-agent tasks.",
     ],
   }),
