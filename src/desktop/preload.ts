@@ -16,7 +16,6 @@
  */
 
 import { contextBridge, ipcRenderer } from "electron";
-import { execSync } from "child_process";
 
 // Forward ORPC MessagePort from renderer to main process
 window.addEventListener("message", (event) => {
@@ -24,27 +23,6 @@ window.addEventListener("message", (event) => {
     ipcRenderer.postMessage("start-orpc-server", null, [...event.ports]);
   }
 });
-
-/**
- * Detect if running under Rosetta 2 translation on Apple Silicon.
- * Returns true if the process is x64 but running on an arm64 Mac.
- */
-function detectRosetta(): boolean {
-  if (process.platform !== "darwin" || process.arch === "arm64") {
-    return false;
-  }
-  try {
-    // sysctl.proc_translated returns 1 if running under Rosetta
-    const result = execSync("sysctl -n sysctl.proc_translated", {
-      encoding: "utf8",
-      timeout: 1000,
-    }).trim();
-    return result === "1";
-  } catch {
-    // If the sysctl key doesn't exist (Intel Mac), we're not under Rosetta
-    return false;
-  }
-}
 
 contextBridge.exposeInMainWorld("api", {
   platform: process.platform,
@@ -55,5 +33,7 @@ contextBridge.exposeInMainWorld("api", {
   },
   isE2E: process.env.MUX_E2E === "1",
   enableTelemetryInDev: process.env.MUX_ENABLE_TELEMETRY_IN_DEV === "1",
-  isRosetta: detectRosetta(),
+  // NOTE: This is intentionally async so the preload script does not rely on Node builtins
+  // like `child_process` (which can break in hardened/sandboxed environments).
+  getIsRosetta: () => ipcRenderer.invoke("mux:get-is-rosetta"),
 });

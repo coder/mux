@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { AlertTriangle, X } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
@@ -16,13 +16,45 @@ export const RosettaBanner: React.FC = () => {
     null
   );
 
-  // Only show on macOS running under Rosetta
-  const isRosetta = window.api?.isRosetta === true;
+  const [isRosetta, setIsRosetta] = useState<boolean | null>(() => {
+    if (window.api?.isRosetta === true) {
+      return true;
+    }
+    if (window.api?.isRosetta === false) {
+      return false;
+    }
+    return null;
+  });
+
+  useEffect(() => {
+    if (isRosetta !== null) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        const result = await window.api?.getIsRosetta?.();
+        if (cancelled) return;
+        setIsRosetta(result === true);
+      } catch {
+        if (cancelled) return;
+        setIsRosetta(false);
+      }
+    };
+
+    void load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isRosetta]);
 
   // Check if dismissal has expired (30 days)
   const isDismissed = dismissedAt !== null && Date.now() - dismissedAt < DISMISS_DURATION_MS;
 
-  if (!isRosetta || isDismissed) {
+  if (isRosetta !== true || isDismissed) {
     return null;
   }
 

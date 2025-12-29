@@ -349,6 +349,21 @@ async function loadServices(): Promise<void> {
     sessionUsageService: services.sessionUsageService,
   };
 
+  electronIpcMain.handle("mux:get-is-rosetta", async () => {
+    if (process.platform !== "darwin") {
+      return false;
+    }
+
+    try {
+      // Intentionally lazy import to keep startup fast and avoid bundling concerns.
+      // eslint-disable-next-line no-restricted-syntax -- main-process-only builtin
+      const { execSync } = await import("node:child_process");
+      const result = execSync("sysctl -n sysctl.proc_translated", { encoding: "utf8" }).trim();
+      return result === "1";
+    } catch {
+      return false;
+    }
+  });
   electronIpcMain.on("start-orpc-server", (event) => {
     const [serverPort] = event.ports;
     orpcHandler.upgrade(serverPort, {
