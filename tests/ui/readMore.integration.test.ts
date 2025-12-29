@@ -9,7 +9,7 @@
  * - Persist expansion state across re-renders
  */
 
-import { fireEvent, waitFor } from "@testing-library/react";
+import { waitFor } from "@testing-library/react";
 
 import { shouldRunIntegrationTests } from "../testUtils";
 import {
@@ -56,7 +56,6 @@ git add test-readmore.ts && git commit -m "Add test file"`,
   const modifiedLines = [...lines];
   modifiedLines[14] = "// Line 15: MODIFIED FOR TEST";
   const modifiedContent = modifiedLines.join("\n");
-
   await orpc.workspace.executeBash({
     workspaceId,
     script: `cat > test-readmore.ts << 'EOF'
@@ -69,7 +68,7 @@ EOF`,
 
   // Wait for the diff to appear - refresh may be needed
   const refreshButton = view.getByTestId("review-refresh");
-  fireEvent.click(refreshButton);
+  refreshButton.click();
 
   // Wait for the diff content to appear
   await waitFor(
@@ -79,7 +78,6 @@ EOF`,
     },
     { timeout: 60_000 }
   );
-
   await waitForRefreshButtonIdle(refreshButton);
 
   return { refreshButton, container: view.container };
@@ -121,7 +119,7 @@ describeIntegration("ReadMore context expansion (UI + ORPC)", () => {
         );
 
         // Click expand up
-        fireEvent.click(expandUpButton);
+        expandUpButton.click();
 
         // Wait for expanded content to appear - should contain lines from before line 15
         await waitFor(
@@ -173,7 +171,7 @@ describeIntegration("ReadMore context expansion (UI + ORPC)", () => {
         );
 
         // Click expand down
-        fireEvent.click(expandDownButton);
+        expandDownButton.click();
 
         // Wait for expanded content to appear - should contain lines after line 15
         await waitFor(
@@ -226,7 +224,7 @@ describeIntegration("ReadMore context expansion (UI + ORPC)", () => {
         // Switch to review tab and refresh
         await view.selectTab("review");
         const refreshButton = view.getByTestId("review-refresh");
-        fireEvent.click(refreshButton);
+        refreshButton.click();
 
         // Wait for hunk to appear
         await waitFor(
@@ -280,7 +278,7 @@ describeIntegration("ReadMore context expansion (UI + ORPC)", () => {
         // Switch to review tab and refresh
         await view.selectTab("review");
         const refreshButton = view.getByTestId("review-refresh");
-        fireEvent.click(refreshButton);
+        refreshButton.click();
 
         // Wait for hunk to appear
         await waitFor(
@@ -345,7 +343,7 @@ EOF`,
         // Switch to review tab and refresh
         await view.selectTab("review");
         const refreshButton = view.getByTestId("review-refresh");
-        fireEvent.click(refreshButton);
+        refreshButton.click();
 
         // Wait for hunk to appear
         await waitFor(
@@ -370,7 +368,7 @@ EOF`,
           { timeout: 10_000 }
         );
 
-        fireEvent.click(expandDownButton);
+        expandDownButton.click();
 
         // After reaching EOF, expand-down button should be gone (replaced by collapse only)
         await waitFor(
@@ -432,7 +430,7 @@ EOF`,
         // Switch to review tab and refresh
         await view.selectTab("review");
         const refreshButton = view.getByTestId("review-refresh");
-        fireEvent.click(refreshButton);
+        refreshButton.click();
 
         await waitFor(
           () => {
@@ -456,7 +454,7 @@ EOF`,
           { timeout: 10_000 }
         );
 
-        fireEvent.click(expandDownButton);
+        expandDownButton.click();
 
         // Wait for EOF state - button should be gone
         await waitFor(
@@ -508,7 +506,7 @@ EOF`,
           { timeout: 10_000 }
         );
 
-        fireEvent.click(expandUpButton);
+        expandUpButton.click();
 
         // Wait for first expansion
         await waitFor(
@@ -563,7 +561,7 @@ EOF`,
           { timeout: 10_000 }
         );
 
-        fireEvent.click(expandUpButton);
+        expandUpButton.click();
 
         // Wait for the per-side collapse button to appear (indicates expansion completed)
         const collapseButton = await waitFor(
@@ -576,7 +574,7 @@ EOF`,
         );
 
         // Click collapse
-        fireEvent.click(collapseButton);
+        collapseButton.click();
 
         // Wait for collapse button to disappear (no more expanded content above)
         await waitFor(
@@ -622,7 +620,7 @@ EOF`,
           { timeout: 10_000 }
         );
 
-        fireEvent.click(expandUpButton);
+        expandUpButton.click();
 
         // Wait for expansion to complete
         await waitFor(
@@ -637,14 +635,14 @@ EOF`,
 
         // Switch away from review tab - use costs tab which is always available
         const costsTab = container.querySelector('[role="tab"][aria-controls*="costs"]');
-        if (costsTab) fireEvent.click(costsTab);
+        if (costsTab instanceof HTMLElement) costsTab.click();
 
         // Give time for tab switch
         await new Promise((r) => setTimeout(r, 500));
 
         // Switch back to review tab
         const reviewTab = container.querySelector('[role="tab"][aria-controls*="review"]');
-        if (reviewTab) fireEvent.click(reviewTab);
+        if (reviewTab instanceof HTMLElement) reviewTab.click();
 
         // The expanded state should be restored (hunk should still be visible)
         await waitFor(
