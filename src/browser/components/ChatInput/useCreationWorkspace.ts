@@ -8,12 +8,10 @@ import { useDraftWorkspaceSettings } from "@/browser/hooks/useDraftWorkspaceSett
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
 import {
-  getInputKey,
-  getInputImagesKey,
+  getCreationDraftKeys,
   getModelKey,
   getModeKey,
   getThinkingLevelKey,
-  getPendingScopeId,
   getProjectScopeId,
 } from "@/common/constants/storage";
 import type { Toast } from "@/browser/components/ChatInputToast";
@@ -121,6 +119,7 @@ export function useCreationWorkspace({
 
   // Workspace name generation with debounce
   const workspaceNameState = useWorkspaceName({
+    projectPath,
     message,
     debounceMs: 500,
     fallbackModel: fallbackModel ?? undefined,
@@ -225,10 +224,10 @@ export function useCreationWorkspace({
           });
         // Sync preferences immediately (before switching)
         syncCreationPreferences(projectPath, metadata.id);
-        if (projectPath) {
-          const pendingScopeId = getPendingScopeId(projectPath);
-          updatePersistedState(getInputKey(pendingScopeId), "");
-          updatePersistedState(getInputImagesKey(pendingScopeId), undefined);
+        // Clear draft state now that workspace is created (use updatePersistedState
+        // so subscribers using usePersistedState({ listener: true }) update immediately)
+        for (const key of getCreationDraftKeys(projectPath)) {
+          updatePersistedState(key, undefined);
         }
 
         // Switch to the workspace IMMEDIATELY after creation to exit splash faster.

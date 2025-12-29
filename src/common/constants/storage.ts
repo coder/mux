@@ -141,6 +141,54 @@ export function getRuntimeKey(projectPath: string): string {
 }
 
 /**
+ * Get the localStorage key for the draft runtime selection for a project
+ * Stores the currently selected runtime during workspace creation (may differ from default).
+ * Cleared when workspace is created.
+ * Format: "draftRuntime:{projectPath}"
+ */
+export function getDraftRuntimeKey(projectPath: string): string {
+  return `draftRuntime:${projectPath}`;
+}
+
+/**
+ * Get the localStorage key for the draft workspace name for a project.
+ * Stores the manually entered or auto-generated name during workspace creation.
+ * Cleared when workspace is created.
+ * Format: "draftName:{projectPath}"
+ */
+export function getDraftNameKey(projectPath: string): string {
+  return `draftName:${projectPath}`;
+}
+
+/**
+ * Get the localStorage key for the draft auto-generate toggle for a project.
+ * Stores whether auto-generation is enabled during workspace creation.
+ * Cleared when workspace is created.
+ * Format: "draftAutoGenerate:{projectPath}"
+ */
+export function getDraftAutoGenerateKey(projectPath: string): string {
+  return `draftAutoGenerate:${projectPath}`;
+}
+
+/**
+ * Get the localStorage key for the draft name generation loading state.
+ * Ephemeral UI state cleared when workspace is created.
+ * Format: "draftNameGenerating:{projectPath}"
+ */
+export function getDraftNameGeneratingKey(projectPath: string): string {
+  return `draftNameGenerating:${projectPath}`;
+}
+
+/**
+ * Get the localStorage key for the draft name generation error.
+ * Ephemeral UI state cleared when workspace is created.
+ * Format: "draftNameError:{projectPath}"
+ */
+export function getDraftNameErrorKey(projectPath: string): string {
+  return `draftNameError:${projectPath}`;
+}
+
+/**
  * Get the localStorage key for trunk branch preference for a project
  * Stores the last used trunk branch when creating a workspace
  * Format: "trunkBranch:{projectPath}"
@@ -420,4 +468,23 @@ export function deleteWorkspaceStorage(workspaceId: string): void {
 export function migrateWorkspaceStorage(oldWorkspaceId: string, newWorkspaceId: string): void {
   copyWorkspaceStorage(oldWorkspaceId, newWorkspaceId);
   deleteWorkspaceStorage(oldWorkspaceId);
+}
+
+/**
+ * Get all storage keys that should be cleared when workspace creation completes.
+ * Returns both project-scoped draft keys and pending-scoped input keys.
+ */
+export function getCreationDraftKeys(projectPath: string): string[] {
+  const pendingScopeId = getPendingScopeId(projectPath);
+  return [
+    // Project-scoped draft keys
+    getDraftRuntimeKey(projectPath),
+    getDraftNameKey(projectPath),
+    getDraftAutoGenerateKey(projectPath),
+    getDraftNameGeneratingKey(projectPath),
+    getDraftNameErrorKey(projectPath),
+    // Pending-scoped input keys
+    getInputKey(pendingScopeId),
+    getInputImagesKey(pendingScopeId),
+  ];
 }
