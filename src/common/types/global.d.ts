@@ -19,6 +19,8 @@ declare global {
     enableTelemetryInDev?: boolean;
     // E2E test mode flag - used to adjust UI behavior (e.g., longer toast durations)
     isE2E?: boolean;
+    // True if running under Rosetta 2 translation on Apple Silicon
+    isRosetta?: boolean;
     // Optional ORPC-backed API surfaces populated in tests/storybook mocks
     tokenizer?: unknown;
     providers?: unknown;
