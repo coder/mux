@@ -12,6 +12,7 @@ import {
   SelectValue,
 } from "@/browser/components/ui/select";
 import { useModelsFromSettings } from "@/browser/hooks/useModelsFromSettings";
+import { copyToClipboard } from "@/browser/utils/clipboard";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { MODE_AI_DEFAULTS_KEY } from "@/common/constants/storage";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
@@ -91,6 +92,17 @@ const DEFAULT_EXEC_BASE_TOOLS = [
   "status_set",
   "web_fetch",
 ] as const;
+
+function getAgentDefinitionPath(agent: AgentDefinitionDescriptor): string | null {
+  switch (agent.scope) {
+    case "project":
+      return `.mux/agents/${agent.id}.md`;
+    case "global":
+      return `~/.mux/agents/${agent.id}.md`;
+    default:
+      return null;
+  }
+}
 
 const DEFAULT_PLAN_BASE_TOOLS = [
   ...DEFAULT_EXEC_BASE_TOOLS,
@@ -482,7 +494,7 @@ export function TasksSection() {
   const subagents = useMemo(
     () =>
       [...listedAgents]
-        .filter((agent) => agent.subagentRunnable && !agent.uiSelectable)
+        .filter((agent) => agent.subagentRunnable)
         .sort((a, b) => a.name.localeCompare(b.name)),
     [listedAgents]
   );
@@ -509,6 +521,46 @@ export function TasksSection() {
     const allowedThinkingLevels =
       modelValue !== INHERIT ? getThinkingPolicyForModel(modelValue) : ALL_THINKING_LEVELS;
 
+    const agentDefinitionPath = getAgentDefinitionPath(agent);
+    const scopeNode = agentDefinitionPath ? (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            className="hover:text-foreground cursor-copy bg-transparent p-0 underline decoration-dotted underline-offset-2"
+            onClick={(e) => {
+              e.stopPropagation();
+              void copyToClipboard(agentDefinitionPath);
+            }}
+          >
+            {agent.scope}
+          </button>
+        </TooltipTrigger>
+        <TooltipContent align="start" className="max-w-80 whitespace-normal">
+          <div className="font-medium">Agent file</div>
+          <div className="mt-1">
+            <code>{agentDefinitionPath}</code>
+          </div>
+          <div className="text-muted mt-2 text-xs">Click to copy</div>
+        </TooltipContent>
+      </Tooltip>
+    ) : (
+      <span>{agent.scope}</span>
+    );
+
+    const subagentNode = agent.subagentRunnable ? (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="cursor-help underline decoration-dotted underline-offset-2">
+            sub-agent
+          </span>
+        </TooltipTrigger>
+        <TooltipContent align="start" className="max-w-80 whitespace-normal">
+          Runnable as a sub-agent (task workspace).
+        </TooltipContent>
+      </Tooltip>
+    ) : null;
+
     return (
       <div
         key={agent.id}
@@ -518,7 +570,8 @@ export function TasksSection() {
           <div className="min-w-0 flex-1">
             <div className="text-foreground text-sm font-medium">{agent.name}</div>
             <div className="text-muted text-xs">
-              {agent.id} • {agent.scope} • {renderPolicySummary(agent)}
+              {agent.id} • {scopeNode}
+              {subagentNode ? <> • {subagentNode}</> : null} • {renderPolicySummary(agent)}
             </div>
             {agent.description ? (
               <div className="text-muted mt-1 text-xs">{agent.description}</div>
