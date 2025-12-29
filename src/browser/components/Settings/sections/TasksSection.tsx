@@ -72,6 +72,32 @@ const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
   },
 ];
 
+const DEFAULT_EXEC_BASE_TOOLS = [
+  "bash",
+  "bash_output",
+  "bash_background_list",
+  "bash_background_terminate",
+  "file_read",
+  "agent_skill_read",
+  "agent_skill_read_file",
+  "file_edit_replace_string",
+  "file_edit_insert",
+  "task",
+  "task_await",
+  "task_terminate",
+  "task_list",
+  "todo_write",
+  "todo_read",
+  "status_set",
+  "web_fetch",
+] as const;
+
+const DEFAULT_PLAN_BASE_TOOLS = [
+  ...DEFAULT_EXEC_BASE_TOOLS,
+  "ask_user_question",
+  "propose_plan",
+] as const;
+
 function updateAgentDefaultEntry(
   previous: AgentAiDefaults,
   agentId: string,
@@ -98,7 +124,83 @@ function updateAgentDefaultEntry(
 }
 
 function renderPolicySummary(agent: AgentDefinitionDescriptor): React.ReactNode {
-  const pieces: React.ReactNode[] = [`base: ${agent.policyBase}`];
+  const base = agent.policyBase;
+
+  const baseDescription = (() => {
+    switch (base) {
+      case "exec":
+        return {
+          title: "Base policy: exec",
+          allowedTools: DEFAULT_EXEC_BASE_TOOLS,
+          hardDeniedTools: ["propose_plan"] as const,
+          note: "Allowed tools assume permissionMode: default. Custom agents may start with no tool permissions.",
+        };
+      case "plan":
+        return {
+          title: "Base policy: plan",
+          allowedTools: DEFAULT_PLAN_BASE_TOOLS,
+          hardDeniedTools: [] as const,
+          note: "Allowed tools assume permissionMode: default. Custom agents may start with no tool permissions.",
+        };
+      case "compact":
+        return {
+          title: "Base policy: compact",
+          allowedTools: [] as const,
+          hardDeniedTools: [".*"] as const,
+          note: "Internal no-tools mode.",
+        };
+      default:
+        return {
+          title: `Base policy: ${String(base)}`,
+          allowedTools: [] as const,
+          hardDeniedTools: [] as const,
+          note: "Tool permissions depend on permissionMode and tool allow/deny rules.",
+        };
+    }
+  })();
+
+  const pieces: React.ReactNode[] = [
+    <Tooltip key="base-policy">
+      <TooltipTrigger asChild>
+        <span className="cursor-help underline decoration-dotted underline-offset-2">
+          base: {base}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent align="start" className="max-w-80 whitespace-normal">
+        <div className="font-medium">{baseDescription.title}</div>
+
+        {baseDescription.allowedTools.length > 0 ? (
+          <>
+            <div className="mt-1 font-medium">Allowed tools (default)</div>
+            <ul className="mt-1 space-y-0.5">
+              {baseDescription.allowedTools.map((tool) => (
+                <li key={tool}>
+                  <code>{tool}</code>
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : (
+          <div className="mt-1">(No tools)</div>
+        )}
+
+        {baseDescription.hardDeniedTools.length > 0 ? (
+          <>
+            <div className="mt-2 font-medium">Always denied</div>
+            <ul className="mt-1 space-y-0.5">
+              {baseDescription.hardDeniedTools.map((tool) => (
+                <li key={tool}>
+                  <code>{tool}</code>
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : null}
+
+        <div className="text-muted mt-2 text-xs">{baseDescription.note}</div>
+      </TooltipContent>
+    </Tooltip>,
+  ];
 
   const toolFilter = agent.toolFilter;
   if (toolFilter?.only && toolFilter.only.length > 0) {
