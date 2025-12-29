@@ -155,7 +155,6 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
                 exitCode: outputResult.exitCode,
                 output: outputResult.output,
               }),
-              output: outputResult.output,
               elapsed_ms: outputResult.elapsed_ms,
               exitCode: outputResult.exitCode,
               note: outputResult.note,
