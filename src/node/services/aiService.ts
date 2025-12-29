@@ -1420,14 +1420,11 @@ export class AIService extends EventEmitter {
           );
 
           if (experiments?.programmaticToolCallingExclusive) {
-            // Exclusive mode: only nonBridgeable tools + code_execution are exposed to the model.
-            // Bridged tools are accessed through code_execution. Apply policy to final set so
-            // admin/preset policies can still disable code_execution if needed.
+            // Exclusive mode: code_execution is mandatory — it's the only way to use bridged
+            // tools. The experiment flag is the opt-in; policy cannot disable it here since
+            // that would leave no way to access tools. nonBridgeable is already policy-filtered.
             const nonBridgeable = toolBridge.getNonBridgeableTools();
-            toolsForModel = applyToolPolicy(
-              { ...nonBridgeable, code_execution: codeExecutionTool },
-              effectiveToolPolicy
-            );
+            toolsForModel = { ...nonBridgeable, code_execution: codeExecutionTool };
           } else {
             // Supplement mode: add code_execution, then apply policy to determine final set.
             // This correctly handles all policy combinations (require, enable, disable).
