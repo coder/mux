@@ -153,6 +153,33 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
 
   const normalizedAgentId = useMemo(() => normalizeAgentId(agentId), [agentId]);
 
+  const activeOption = useMemo(() => {
+    if (!normalizedAgentId) {
+      return null;
+    }
+
+    const descriptor = agents.find((entry) => entry.id === normalizedAgentId);
+    if (!descriptor) {
+      return null;
+    }
+
+    return {
+      id: descriptor.id,
+      name: descriptor.name,
+      policyBase: descriptor.policyBase,
+      uiColor: descriptor.uiColor,
+    } satisfies AgentOption;
+  }, [agents, normalizedAgentId]);
+
+  const activeIsSelectable = useMemo(() => {
+    if (!normalizedAgentId) {
+      return false;
+    }
+
+    return options.some((opt) => opt.id === normalizedAgentId);
+  }, [normalizedAgentId, options]);
+  const isBuiltinAgent = normalizedAgentId === "exec" || normalizedAgentId === "plan";
+
   const filteredOptions = useMemo(() => {
     const query = filter.trim().toLowerCase();
     if (query.length === 0) {
@@ -332,18 +359,28 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
     }
   };
 
-  const thirdLabel = pinnedOption?.name ?? "Other…";
-  const thirdIsActive =
-    Boolean(effectivePinnedAgentId) && normalizedAgentId === effectivePinnedAgentId;
+  const thirdDisplayOption = isBuiltinAgent ? pinnedOption : activeOption;
 
-  const thirdActiveClassName = pinnedOption
-    ? pinnedOption.uiColor
+  const thirdLabel = isBuiltinAgent
+    ? (pinnedOption?.name ?? "Other…")
+    : (thirdDisplayOption?.name ?? (normalizedAgentId ? normalizedAgentId : "Other…"));
+
+  const thirdIsActive = isBuiltinAgent
+    ? Boolean(effectivePinnedAgentId) && normalizedAgentId === effectivePinnedAgentId
+    : Boolean(normalizedAgentId);
+
+  const thirdPolicyBase = thirdDisplayOption?.policyBase ?? "exec";
+
+  const thirdActiveClassName = thirdIsActive
+    ? thirdDisplayOption?.uiColor
       ? "text-white"
-      : resolveActiveClassName(pinnedOption.policyBase)
+      : resolveActiveClassName(thirdPolicyBase)
     : "";
 
   const thirdActiveStyle: React.CSSProperties | undefined =
-    thirdIsActive && pinnedOption?.uiColor ? { backgroundColor: pinnedOption.uiColor } : undefined;
+    thirdIsActive && thirdDisplayOption?.uiColor
+      ? { backgroundColor: thirdDisplayOption.uiColor }
+      : undefined;
 
   const buttonBaseClassName =
     "px-1.5 py-0.5 text-[11px] font-sans rounded-sm border-none cursor-pointer transition-all duration-150 bg-transparent";
@@ -394,11 +431,25 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
         <button
           type="button"
           onClick={() => {
+            // If we're currently on a non-builtin agent (including non-selectable agents like
+            // Explore in subagent workspaces), this segment is already selected.
+            //
+            // For non-selectable agents, allow clicking to open the picker so the user can
+            // switch away.
+            if (!isBuiltinAgent) {
+              if (!activeIsSelectable) {
+                openPicker();
+              }
+              return;
+            }
+
+            // In exec/plan, clicking the third segment selects the pinned agent (if present).
             if (effectivePinnedAgentId) {
               setAgentId(effectivePinnedAgentId);
               onComplete?.();
               return;
             }
+
             openPicker();
           }}
           aria-pressed={thirdIsActive}

@@ -29,6 +29,14 @@ const BUILT_INS: AgentDefinitionDescriptor[] = [
   },
 ];
 
+const HIDDEN_AGENT: AgentDefinitionDescriptor = {
+  id: "explore",
+  scope: "built-in",
+  name: "Explore",
+  uiSelectable: false,
+  subagentRunnable: true,
+  policyBase: "exec",
+};
 const CUSTOM_AGENT: AgentDefinitionDescriptor = {
   id: "review",
   scope: "project",
@@ -138,6 +146,44 @@ describe("AgentModePicker", () => {
     });
 
     expect(getByTestId("agentId").textContent).toBe("exec");
+  });
+
+  test("shows a non-selectable active agent in the segmented control", async () => {
+    function Harness() {
+      const [agentId, setAgentId] = React.useState("explore");
+      return (
+        <AgentProvider
+          value={{
+            agentId,
+            setAgentId,
+            agents: [...BUILT_INS, HIDDEN_AGENT, CUSTOM_AGENT],
+            loaded: true,
+            loadFailed: false,
+          }}
+        >
+          <TooltipProvider>
+            <div>
+              <div data-testid="agentId">{agentId}</div>
+              <AgentModePicker workspaceId="ws-123" />
+            </div>
+          </TooltipProvider>
+        </AgentProvider>
+      );
+    }
+
+    const { getAllByText, getByLabelText, getByPlaceholderText, getByText } = render(<Harness />);
+
+    const exploreButton = getByText("Explore").closest("button");
+    expect(exploreButton?.getAttribute("aria-pressed")).toBe("true");
+
+    fireEvent.click(getByLabelText("Choose agent"));
+
+    await waitFor(() => {
+      expect(getByPlaceholderText("Search agents…")).toBeTruthy();
+    });
+
+    // Explore should not appear as a selectable option.
+    expect(getAllByText("Explore").length).toBe(1);
   });
 
   test("pins a custom agent and keeps it available when switching back to Exec/Plan", async () => {
