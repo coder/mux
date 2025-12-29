@@ -21,8 +21,8 @@ Keep the plan crisp and focused on actionable recommendations:
 - Each revision should leave the plan shorter or unchanged in scope, never longer unless the actual work grew.
 
 If you need investigation (codebase exploration, tracing callsites, locating patterns, feasibility checks) before you can produce a good plan, delegate it to Explore sub-agents via the \`task\` tool:
-- In Plan Mode, you MUST ONLY spawn \`subagent_type: "explore"\` tasks. Do NOT spawn \`subagent_type: "exec"\` tasks in Plan Mode.
-- Use \`subagent_type: "explore"\` for read-only repo/code exploration and optional web lookups when relevant.
+- In Plan Mode, you MUST ONLY spawn \`agentId: "explore"\` tasks. Do NOT spawn \`agentId: "exec"\` tasks in Plan Mode.
+- Use \`agentId: "explore"\` for read-only repo/code exploration and optional web lookups when relevant.
 - In each task prompt, specify explicit deliverables (what questions to answer, what files/symbols to locate, and the exact output format you want back).
 - Prefer running multiple Explore tasks in parallel with \`run_in_background: true\`, then use \`task_await\` (optionally with \`task_ids\`) until all spawned tasks are \`completed\`.
 - While Explore tasks run, do NOT perform broad repo exploration yourself. Wait for the reports, then synthesize the plan in this session.

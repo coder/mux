@@ -60,6 +60,32 @@ describe("AgentModePicker", () => {
     globalThis.document = undefined as unknown as Document;
   });
 
+  test("renders a stable label for explore before agent definitions load", () => {
+    function Harness() {
+      const [agentId, setAgentId] = React.useState("explore");
+      return (
+        <AgentProvider
+          value={{
+            agentId,
+            setAgentId,
+            agents: [],
+            loaded: false,
+            loadFailed: false,
+          }}
+        >
+          <TooltipProvider>
+            <AgentModePicker workspaceId="ws-123" />
+          </TooltipProvider>
+        </AgentProvider>
+      );
+    }
+
+    const { getByText } = render(<Harness />);
+
+    // Regression: avoid "explore" -> "Explore" flicker while agents load.
+    expect(getByText("Explore")).toBeTruthy();
+  });
+
   test("when auto-opened via hotkey, Escape selects the pinned agent", async () => {
     const pinnedKey = getPinnedAgentIdKey("ws-123");
     window.localStorage.setItem(pinnedKey, JSON.stringify("review"));

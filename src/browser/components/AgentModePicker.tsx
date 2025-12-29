@@ -41,6 +41,33 @@ interface AgentOption {
   uiColor?: string;
 }
 
+function formatAgentIdLabel(agentId: string): string {
+  if (!agentId) {
+    return "Other…";
+  }
+
+  // Avoid label flicker while agent definitions are still loading.
+  switch (agentId) {
+    case "exec":
+      return "Exec";
+    case "plan":
+      return "Plan";
+    case "explore":
+      return "Explore";
+    case "compact":
+      return "Compact";
+  }
+
+  // Best-effort humanization for custom IDs (e.g. "code-review" -> "Code Review").
+  const parts = agentId.split(/[-_]+/g).filter((part) => part.length > 0);
+  if (parts.length === 0) {
+    return agentId;
+  }
+
+  return parts
+    .map((part) => (part.length > 0 ? part[0].toUpperCase() + part.slice(1) : part))
+    .join(" ");
+}
 function normalizeAgentId(value: unknown): string {
   return typeof value === "string" && value.trim().length > 0 ? value.trim().toLowerCase() : "";
 }
@@ -363,7 +390,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
 
   const thirdLabel = isBuiltinAgent
     ? (pinnedOption?.name ?? "Other…")
-    : (thirdDisplayOption?.name ?? (normalizedAgentId ? normalizedAgentId : "Other…"));
+    : (thirdDisplayOption?.name ?? formatAgentIdLabel(normalizedAgentId));
 
   const thirdIsActive = isBuiltinAgent
     ? Boolean(effectivePinnedAgentId) && normalizedAgentId === effectivePinnedAgentId

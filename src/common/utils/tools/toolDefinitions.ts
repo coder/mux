@@ -14,7 +14,6 @@ import {
   STATUS_MESSAGE_MAX_LENGTH,
   WEB_FETCH_MAX_OUTPUT_BYTES,
 } from "@/common/constants/toolLimits";
-import { BUILT_IN_SUBAGENT_TYPES } from "@/common/constants/agents";
 import { TOOL_EDIT_WARNING } from "@/common/types/tools";
 
 import { zodToJsonSchema } from "zod-to-json-schema";
@@ -91,7 +90,7 @@ export const AskUserQuestionToolResultSchema = z
 
 const SubagentTypeSchema = z.preprocess(
   (value) => (typeof value === "string" ? value.trim().toLowerCase() : value),
-  z.enum(BUILT_IN_SUBAGENT_TYPES)
+  AgentIdSchema
 );
 
 const TaskAgentIdSchema = z.preprocess(
