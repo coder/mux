@@ -1424,27 +1424,12 @@ export class AIService extends EventEmitter {
             const nonBridgeable = toolBridge.getNonBridgeableTools();
             toolsForModel = { ...nonBridgeable, code_execution: codeExecutionTool };
           } else {
-            // Supplement mode: add code_execution if policy allows (experiment is additive).
-            // Handle require policies: if code_execution is required, return only it.
-            // If another tool is required, don't add code_execution (would violate require).
-            const requireFilter = effectiveToolPolicy?.find((f) => f.action === "require");
-            const requiresCodeExecution =
-              requireFilter && new RegExp(`^${requireFilter.regex_match}$`).test("code_execution");
-            if (requiresCodeExecution) {
-              toolsForModel = { code_execution: codeExecutionTool };
-            } else if (requireFilter) {
-              // Another tool is required — don't add code_execution
-              toolsForModel = policyFilteredTools;
-            } else {
-              // No require policy — add code_execution if policy allows
-              const codeExecAllowed =
-                Object.keys(
-                  applyToolPolicy({ code_execution: codeExecutionTool }, effectiveToolPolicy)
-                ).length > 0;
-              toolsForModel = codeExecAllowed
-                ? { ...policyFilteredTools, code_execution: codeExecutionTool }
-                : policyFilteredTools;
-            }
+            // Supplement mode: add code_execution, then apply policy to determine final set.
+            // This correctly handles all policy combinations (require, enable, disable).
+            toolsForModel = applyToolPolicy(
+              { ...policyFilteredTools, code_execution: codeExecutionTool },
+              effectiveToolPolicy
+            );
           }
         } catch (error) {
           // Fall back to policy-filtered tools if PTC creation fails
