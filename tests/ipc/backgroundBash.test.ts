@@ -22,16 +22,32 @@ import {
   generateBranchName,
   createWorkspaceWithInit,
   sendMessageAndWait,
+  configureTestRetries,
   HAIKU_MODEL,
 } from "./helpers";
 import type { WorkspaceChatMessage } from "../../src/common/orpc/types";
 import type { ToolPolicy } from "../../src/common/utils/tools/toolPolicy";
 
-// Tool policy: Enable only bash + task_* tools (task_await, task_list, task_terminate).
-const TASK_TOOLS: ToolPolicy = [
+// Tool policies: Keep each step pinned to a single tool to avoid the LLM
+// "helpfully" calling task_await early and consuming background output.
+const BASH_ONLY: ToolPolicy = [
   { regex_match: ".*", action: "disable" },
-  { regex_match: "bash", action: "enable" },
-  { regex_match: "task_.*", action: "enable" },
+  { regex_match: "bash", action: "require" },
+];
+
+const TASK_LIST_ONLY: ToolPolicy = [
+  { regex_match: ".*", action: "disable" },
+  { regex_match: "task_list", action: "require" },
+];
+
+const TASK_TERMINATE_ONLY: ToolPolicy = [
+  { regex_match: ".*", action: "disable" },
+  { regex_match: "task_terminate", action: "require" },
+];
+
+const TASK_AWAIT_ONLY: ToolPolicy = [
+  { regex_match: ".*", action: "disable" },
+  { regex_match: "task_await", action: "require" },
 ];
 
 // Extended timeout for tests making multiple AI calls
@@ -138,6 +154,9 @@ if (shouldRunIntegrationTests()) {
   validateApiKeys(["ANTHROPIC_API_KEY"]);
 }
 
+// Retry flaky tests in CI (API latency / rate limiting)
+configureTestRetries(3);
+
 describeIntegration("Background Bash Execution", () => {
   test.concurrent(
     "should start a background process and list it",
@@ -170,7 +189,7 @@ describeIntegration("Background Bash Execution", () => {
             workspaceId,
             'Use the bash tool with args: { script: "true && sleep 30", timeout_secs: 60, run_in_background: true, display_name: "bg-basic" }. Do not spawn a sub-agent.',
             HAIKU_MODEL,
-            TASK_TOOLS,
+            BASH_ONLY,
             30000
           );
 
@@ -184,7 +203,7 @@ describeIntegration("Background Bash Execution", () => {
             workspaceId,
             "Use task_list to show running tasks.",
             HAIKU_MODEL,
-            TASK_TOOLS,
+            TASK_LIST_ONLY,
             20000
           );
 
@@ -197,7 +216,7 @@ describeIntegration("Background Bash Execution", () => {
             workspaceId,
             `Use task_terminate with task_ids: ["${taskId}"] to terminate the task.`,
             HAIKU_MODEL,
-            TASK_TOOLS,
+            TASK_TERMINATE_ONLY,
             20000
           );
           const terminatedTaskIds = extractTerminatedTaskIds(terminateEvents);
@@ -244,7 +263,7 @@ describeIntegration("Background Bash Execution", () => {
             workspaceId,
             'Use the bash tool with args: { script: "true && sleep 300", timeout_secs: 600, run_in_background: true, display_name: "bg-terminate" }. Do not spawn a sub-agent.',
             HAIKU_MODEL,
-            TASK_TOOLS,
+            BASH_ONLY,
             30000
           );
 
@@ -257,7 +276,7 @@ describeIntegration("Background Bash Execution", () => {
             workspaceId,
             `Use task_terminate with task_ids: ["${taskId}"] to terminate the task.`,
             HAIKU_MODEL,
-            TASK_TOOLS,
+            TASK_TERMINATE_ONLY,
             20000
           );
 
@@ -270,7 +289,7 @@ describeIntegration("Background Bash Execution", () => {
             workspaceId,
             'Use task_list with statuses: ["queued", "running", "awaiting_report", "reported"].',
             HAIKU_MODEL,
-            TASK_TOOLS,
+            TASK_LIST_ONLY,
             20000
           );
 
@@ -319,7 +338,7 @@ describeIntegration("Background Bash Execution", () => {
             workspaceId,
             `Use the bash tool with args: { script: "echo \"${marker}\" && sleep 1", timeout_secs: 30, run_in_background: true, display_name: "bg-output" }. Do not spawn a sub-agent.`,
             HAIKU_MODEL,
-            TASK_TOOLS,
+            BASH_ONLY,
             30000
           );
 
@@ -332,7 +351,7 @@ describeIntegration("Background Bash Execution", () => {
             workspaceId,
             `Use task_await with task_ids: ["${taskId}"] and timeout_secs: 10 to retrieve output.`,
             HAIKU_MODEL,
-            TASK_TOOLS,
+            TASK_AWAIT_ONLY,
             20000
           );
 

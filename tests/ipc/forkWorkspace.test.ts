@@ -11,6 +11,7 @@ import {
   sendMessageWithModel,
   createStreamCollector,
   assertStreamSuccess,
+  configureTestRetries,
   modelString,
   resolveOrpcClient,
 } from "./helpers";
@@ -25,6 +26,9 @@ const describeIntegration = shouldRunIntegrationTests() ? describe : describe.sk
 if (shouldRunIntegrationTests()) {
   validateApiKeys(["ANTHROPIC_API_KEY"]);
 }
+
+// Retry flaky tests in CI (API latency / rate limiting)
+configureTestRetries(3);
 
 describeIntegration("Workspace fork", () => {
   test.concurrent(
