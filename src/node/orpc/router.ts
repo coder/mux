@@ -1109,6 +1109,16 @@ export const router = (authToken?: string) => {
           }
           return { success: true, data: result.data };
         }),
+      getFileCompletions: t
+        .input(schemas.workspace.getFileCompletions.input)
+        .output(schemas.workspace.getFileCompletions.output)
+        .handler(async ({ context, input }) => {
+          return context.workspaceService.getFileCompletions(
+            input.workspaceId,
+            input.query,
+            input.limit
+          );
+        }),
       onChat: t
         .input(schemas.workspace.onChat.input)
         .output(schemas.workspace.onChat.output)

@@ -30,6 +30,7 @@ import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import type { FileState, EditedFileAttachment } from "@/node/services/agentSession";
 import { log } from "./log";
+import { injectFileAtMentions } from "./fileAtMentions";
 import {
   transformModelMessages,
   validateAnthropicCompliance,
@@ -1269,9 +1270,17 @@ export class AIService extends EventEmitter {
         postCompactionAttachments
       );
 
+      // Expand @file mentions (e.g. @src/foo.ts#L1-20) into an in-memory synthetic user message.
+      // This keeps chat history clean while giving the model immediate file context.
+      const messagesWithFileAtMentions = await injectFileAtMentions(messagesWithPostCompaction, {
+        runtime,
+        workspacePath,
+        abortSignal,
+      });
+
       // Apply centralized tool-output redaction BEFORE converting to provider ModelMessages
       // This keeps the persisted/UI history intact while trimming heavy fields for the request
-      const redactedForProvider = applyToolOutputRedaction(messagesWithPostCompaction);
+      const redactedForProvider = applyToolOutputRedaction(messagesWithFileAtMentions);
       log.debug_obj(`${workspaceId}/2a_redacted_messages.json`, redactedForProvider);
 
       // Sanitize tool inputs to ensure they are valid objects (not strings or arrays)

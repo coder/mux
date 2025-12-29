@@ -375,6 +375,16 @@ export const workspace = {
     }),
     output: ResultSchema(BashToolResultSchema, z.string()),
   },
+  getFileCompletions: {
+    input: z
+      .object({
+        workspaceId: z.string(),
+        query: z.string(),
+        limit: z.number().int().positive().max(50).optional(),
+      })
+      .strict(),
+    output: z.object({ paths: z.array(z.string()) }),
+  },
   // Subscriptions
   onChat: {
     input: z.object({ workspaceId: z.string() }),

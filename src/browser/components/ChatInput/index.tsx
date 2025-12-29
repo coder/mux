@@ -52,6 +52,7 @@ import {
 } from "@/browser/utils/chatCommands";
 import { shouldTriggerAutoCompaction } from "@/browser/utils/compaction/shouldTriggerAutoCompaction";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
+import { findAtMentionAtCursor } from "@/common/utils/atMentions";
 import {
   getSlashCommandSuggestions,
   type SlashSuggestion,
@@ -184,6 +185,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const [input, setInput] = usePersistedState(storageKeys.inputKey, "", { listener: true });
   const [isSending, setIsSending] = useState(false);
   const [hideReviewsDuringSend, setHideReviewsDuringSend] = useState(false);
+  const [showAtMentionSuggestions, setShowAtMentionSuggestions] = useState(false);
+  const [atMentionSuggestions, setAtMentionSuggestions] = useState<SlashSuggestion[]>([]);
+  const atMentionDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const atMentionRequestIdRef = useRef(0);
   const [showCommandSuggestions, setShowCommandSuggestions] = useState(false);
   const [commandSuggestions, setCommandSuggestions] = useState<SlashSuggestion[]>([]);
   const [providerNames, setProviderNames] = useState<string[]>([]);
@@ -294,6 +299,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       listener: true,
     }
   );
+  const atMentionListId = useId();
   const commandListId = useId();
   const telemetry = useTelemetry();
   const [vimEnabled, setVimEnabled] = usePersistedState<boolean>(VIM_ENABLED_KEY, false, {
@@ -650,6 +656,81 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only run when editingMessage changes
   }, [editingMessage]);
 
+  // Watch input for @file mentions (workspace variant only)
+  useEffect(() => {
+    if (atMentionDebounceRef.current) {
+      clearTimeout(atMentionDebounceRef.current);
+      atMentionDebounceRef.current = null;
+    }
+
+    if (!api || variant !== "workspace" || !workspaceId) {
+      setAtMentionSuggestions([]);
+      setShowAtMentionSuggestions(false);
+      return;
+    }
+
+    // Prefer slash command suggestions when the input is a command.
+    if (input.trimStart().startsWith("/")) {
+      setAtMentionSuggestions([]);
+      setShowAtMentionSuggestions(false);
+      return;
+    }
+
+    const cursor = inputRef.current?.selectionStart ?? input.length;
+    const match = findAtMentionAtCursor(input, cursor);
+
+    if (!match) {
+      setAtMentionSuggestions([]);
+      setShowAtMentionSuggestions(false);
+      return;
+    }
+
+    if (match.query.length === 0) {
+      setAtMentionSuggestions([]);
+      setShowAtMentionSuggestions(false);
+      return;
+    }
+
+    const requestId = ++atMentionRequestIdRef.current;
+    atMentionDebounceRef.current = setTimeout(() => {
+      void (async () => {
+        try {
+          const result = await api.workspace.getFileCompletions({
+            workspaceId,
+            query: match.query,
+            limit: 20,
+          });
+
+          if (atMentionRequestIdRef.current !== requestId) {
+            return;
+          }
+
+          const nextSuggestions = result.paths.map((p) => ({
+            id: `file:${p}`,
+            display: p,
+            description: "File",
+            replacement: `@${p}`,
+          }));
+
+          setAtMentionSuggestions(nextSuggestions);
+          setShowAtMentionSuggestions(nextSuggestions.length > 0);
+        } catch {
+          if (atMentionRequestIdRef.current === requestId) {
+            setAtMentionSuggestions([]);
+            setShowAtMentionSuggestions(false);
+          }
+        }
+      })();
+    }, 150);
+
+    return () => {
+      if (atMentionDebounceRef.current) {
+        clearTimeout(atMentionDebounceRef.current);
+        atMentionDebounceRef.current = null;
+      }
+    };
+  }, [api, input, variant, workspaceId]);
+
   // Watch input for slash commands
   useEffect(() => {
     const suggestions = getSlashCommandSuggestions(input, { providerNames, variant });
@@ -929,7 +1010,37 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     [editingMessage, pushToast, setImageAttachments]
   );
 
-  // Handle command selection
+  // Handle suggestion selection
+
+  const handleAtMentionSelect = useCallback(
+    (suggestion: SlashSuggestion) => {
+      const cursor = inputRef.current?.selectionStart ?? input.length;
+      const match = findAtMentionAtCursor(input, cursor);
+      if (!match) {
+        return;
+      }
+
+      const next =
+        input.slice(0, match.startIndex) + suggestion.replacement + input.slice(match.endIndex);
+
+      setInput(next);
+      setAtMentionSuggestions([]);
+      setShowAtMentionSuggestions(false);
+
+      requestAnimationFrame(() => {
+        const el = inputRef.current;
+        if (!el || el.disabled) {
+          return;
+        }
+
+        el.focus();
+        const newCursor = match.startIndex + suggestion.replacement.length;
+        el.selectionStart = newCursor;
+        el.selectionEnd = newCursor;
+      });
+    },
+    [input, setInput]
+  );
   const handleCommandSelect = useCallback(
     (suggestion: SlashSuggestion) => {
       setInput(suggestion.replacement);
@@ -1546,11 +1657,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
     // Note: ESC handled by VimTextArea (for mode transitions) and CommandSuggestions (for dismissal)
 
-    // Don't handle keys if command suggestions are visible
+    // Don't handle keys if suggestions are visible
     if (
-      showCommandSuggestions &&
-      commandSuggestions.length > 0 &&
-      COMMAND_SUGGESTION_KEYS.includes(e.key)
+      COMMAND_SUGGESTION_KEYS.includes(e.key) &&
+      ((showCommandSuggestions && commandSuggestions.length > 0) ||
+        (showAtMentionSuggestions && atMentionSuggestions.length > 0))
     ) {
       return; // Let CommandSuggestions handle it
     }
@@ -1711,7 +1822,18 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             />
           )}
 
-          {/* Command suggestions - available in both variants */}
+          {/* File path suggestions (@src/foo.ts) - workspace variant only */}
+          <CommandSuggestions
+            suggestions={atMentionSuggestions}
+            onSelectSuggestion={handleAtMentionSelect}
+            onDismiss={() => setShowAtMentionSuggestions(false)}
+            isVisible={showAtMentionSuggestions}
+            ariaLabel="File path suggestions"
+            listId={atMentionListId}
+            anchorRef={variant === "creation" ? inputRef : undefined}
+          />
+
+          {/* Slash command suggestions - available in both variants */}
           {/* In creation mode, use portal (anchorRef) to escape overflow:hidden containers */}
           <CommandSuggestions
             suggestions={commandSuggestions}
@@ -1745,7 +1867,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   onDragOver={handleDragOver}
                   onDrop={handleDrop}
                   onEscapeInNormalMode={handleEscapeInNormalMode}
-                  suppressKeys={showCommandSuggestions ? COMMAND_SUGGESTION_KEYS : undefined}
+                  suppressKeys={
+                    showCommandSuggestions || showAtMentionSuggestions
+                      ? COMMAND_SUGGESTION_KEYS
+                      : undefined
+                  }
                   placeholder={placeholder}
                   disabled={!editingMessage && (disabled || isSendInFlight)}
                   aria-label={editingMessage ? "Edit your last message" : "Message Claude"}
@@ -1753,9 +1879,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   aria-controls={
                     showCommandSuggestions && commandSuggestions.length > 0
                       ? commandListId
-                      : undefined
+                      : showAtMentionSuggestions && atMentionSuggestions.length > 0
+                        ? atMentionListId
+                        : undefined
                   }
-                  aria-expanded={showCommandSuggestions && commandSuggestions.length > 0}
+                  aria-expanded={
+                    (showCommandSuggestions && commandSuggestions.length > 0) ||
+                    (showAtMentionSuggestions && atMentionSuggestions.length > 0)
+                  }
                   className={variant === "creation" ? "min-h-24" : undefined}
                 />
                 {/* Token count - positioned to left of mic */}

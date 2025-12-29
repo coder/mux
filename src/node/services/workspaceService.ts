@@ -61,7 +61,7 @@ import { createBashTool } from "@/node/services/tools/bash";
 import type { AskUserQuestionToolSuccessResult, BashToolResult } from "@/common/types/tools";
 import { secretsToRecord } from "@/common/types/secrets";
 
-import { movePlanFile, copyPlanFile } from "@/node/utils/runtime/helpers";
+import { execBuffered, movePlanFile, copyPlanFile } from "@/node/utils/runtime/helpers";
 import { taskQueueDebug } from "@/node/services/taskQueueDebug";
 
 /** Maximum number of retry attempts when workspace name collides */
@@ -115,6 +115,9 @@ export class WorkspaceService extends EventEmitter {
   private readonly postCompactionRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
   // Tracks workspaces currently being renamed to prevent streaming during rename
   private readonly renamingWorkspaces = new Set<string>();
+
+  // Cache for @file mention autocomplete (git ls-files output).
+  private readonly fileCompletionsCache = new Map<string, { files: string[]; fetchedAt: number }>();
   // Tracks workspaces currently being removed to prevent new sessions/streams during deletion.
   private readonly removingWorkspaces = new Set<string>();
 
@@ -2112,6 +2115,91 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  async getFileCompletions(
+    workspaceId: string,
+    query: string,
+    limit = 20
+  ): Promise<{ paths: string[] }> {
+    assert(workspaceId, "workspaceId is required");
+    assert(typeof query === "string", "query must be a string");
+
+    const resolvedLimit = Math.min(Math.max(1, Math.trunc(limit)), 50);
+
+    const metadata = await this.getInfo(workspaceId);
+    if (!metadata) {
+      return { paths: [] };
+    }
+
+    const runtimeConfig = metadata.runtimeConfig ?? {
+      type: "local" as const,
+      srcBaseDir: this.config.srcDir,
+    };
+
+    const runtime = createRuntime(runtimeConfig, { projectPath: metadata.projectPath });
+    const isInPlace = metadata.projectPath === metadata.name;
+    const workspacePath = isInPlace
+      ? metadata.projectPath
+      : runtime.getWorkspacePath(metadata.projectPath, metadata.name);
+
+    const now = Date.now();
+    const CACHE_TTL_MS = 10_000;
+
+    let cached = this.fileCompletionsCache.get(workspaceId);
+    if (!cached || now - cached.fetchedAt > CACHE_TTL_MS) {
+      try {
+        const result = await execBuffered(runtime, "git ls-files -co --exclude-standard", {
+          cwd: workspacePath,
+          timeout: 5,
+        });
+
+        if (result.exitCode !== 0) {
+          cached = { files: [], fetchedAt: now };
+        } else {
+          const files = result.stdout
+            .split("\n")
+            .map((line) => line.trim())
+            .filter(Boolean);
+          cached = { files, fetchedAt: now };
+        }
+      } catch (error) {
+        log.debug("getFileCompletions: failed to list files", {
+          workspaceId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        cached = { files: [], fetchedAt: now };
+      }
+
+      this.fileCompletionsCache.set(workspaceId, cached);
+    }
+
+    const normalizedQuery = query.replace(/\\/g, "/").trim().toLowerCase();
+    if (!normalizedQuery) {
+      return { paths: cached.files.slice(0, resolvedLimit) };
+    }
+
+    const score = (candidate: string): number | null => {
+      const haystack = candidate.toLowerCase();
+      if (haystack.startsWith(normalizedQuery)) return 0;
+      if (haystack.includes(`/${normalizedQuery}`)) return 1;
+      if (haystack.includes(normalizedQuery)) return 2;
+      return null;
+    };
+
+    const matches: Array<{ path: string; score: number }> = [];
+    for (const filePath of cached.files) {
+      const s = score(filePath);
+      if (s === null) continue;
+      matches.push({ path: filePath, score: s });
+    }
+
+    matches.sort((a, b) => {
+      if (a.score !== b.score) return a.score - b.score;
+      if (a.path.length !== b.path.length) return a.path.length - b.path.length;
+      return a.path.localeCompare(b.path);
+    });
+
+    return { paths: matches.slice(0, resolvedLimit).map((m) => m.path) };
+  }
   async getFullReplay(workspaceId: string): Promise<WorkspaceChatMessage[]> {
     try {
       const session = this.getOrCreateSession(workspaceId);
