@@ -494,7 +494,9 @@ export function TasksSection() {
   const subagents = useMemo(
     () =>
       [...listedAgents]
-        .filter((agent) => agent.subagentRunnable)
+        // Keep the sections mutually exclusive: UI agents belong under "UI agents" even if they
+        // can also run as sub-agents.
+        .filter((agent) => agent.subagentRunnable && !agent.uiSelectable)
         .sort((a, b) => a.name.localeCompare(b.name)),
     [listedAgents]
   );
