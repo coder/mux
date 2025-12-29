@@ -620,6 +620,7 @@ export class StreamManager extends EventEmitter {
     abortSignal: AbortSignal | undefined,
     system: string,
     historySequence: number,
+    messageId: string,
     tools?: Record<string, Tool>,
     initialMetadata?: Partial<MuxMetadata>,
     providerOptions?: Record<string, unknown>,
@@ -719,8 +720,6 @@ export class StreamManager extends EventEmitter {
       // Re-throw the error to be caught by startStream
       throw error;
     }
-
-    const messageId = `assistant-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
     const streamInfo: WorkspaceStreamInfo = {
       state: StreamState.STARTING,
@@ -1512,6 +1511,7 @@ export class StreamManager extends EventEmitter {
     historySequence: number,
     system: string,
     runtime: Runtime,
+    messageId: string,
     abortSignal?: AbortSignal,
     tools?: Record<string, Tool>,
     initialMetadata?: Partial<MuxMetadata>,
@@ -1568,6 +1568,7 @@ export class StreamManager extends EventEmitter {
         abortSignal,
         system,
         historySequence,
+        messageId,
         tools,
         initialMetadata,
         providerOptions,

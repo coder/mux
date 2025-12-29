@@ -90,6 +90,7 @@ describe("StreamManager - Concurrent Stream Prevention", () => {
         1,
         "You are a helpful assistant",
         runtime,
+        "test-msg-1",
         undefined,
         {}
       );
@@ -108,6 +109,7 @@ describe("StreamManager - Concurrent Stream Prevention", () => {
         2,
         "You are a helpful assistant",
         runtime,
+        "test-msg-2",
         undefined,
         {}
       );
@@ -280,6 +282,7 @@ describe("StreamManager - Concurrent Stream Prevention", () => {
         1,
         "system",
         runtime,
+        "test-msg-1",
         undefined,
         {}
       ),
@@ -291,6 +294,7 @@ describe("StreamManager - Concurrent Stream Prevention", () => {
         2,
         "system",
         runtime,
+        "test-msg-2",
         undefined,
         {}
       ),
@@ -302,6 +306,7 @@ describe("StreamManager - Concurrent Stream Prevention", () => {
         3,
         "system",
         runtime,
+        "test-msg-3",
         undefined,
         {}
       ),

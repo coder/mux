@@ -1269,15 +1269,23 @@ export class StreamingMessageAggregator {
     if (message) {
       // If nested, update in parent's nestedCalls array
       if (data.parentToolCallId) {
-        const parentPart = message.parts.find(
+        const parentIndex = message.parts.findIndex(
           (part): part is DynamicToolPart =>
             part.type === "dynamic-tool" && part.toolCallId === data.parentToolCallId
         );
+        const parentPart = message.parts[parentIndex] as DynamicToolPart | undefined;
         if (parentPart?.nestedCalls) {
-          const nestedCall = parentPart.nestedCalls.find((nc) => nc.toolCallId === data.toolCallId);
-          if (nestedCall) {
-            nestedCall.state = "output-available";
-            nestedCall.output = data.result;
+          const nestedIndex = parentPart.nestedCalls.findIndex(
+            (nc) => nc.toolCallId === data.toolCallId
+          );
+          if (nestedIndex !== -1) {
+            // Create new objects to trigger React re-render (immutable update pattern)
+            const updatedNestedCalls = parentPart.nestedCalls.map((nc, i) =>
+              i === nestedIndex
+                ? { ...nc, state: "output-available" as const, output: data.result }
+                : nc
+            );
+            message.parts[parentIndex] = { ...parentPart, nestedCalls: updatedNestedCalls };
             this.invalidateCache();
             return;
           }

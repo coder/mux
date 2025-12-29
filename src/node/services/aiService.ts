@@ -1735,6 +1735,7 @@ export class AIService extends EventEmitter {
         historySequence,
         systemMessage,
         runtime,
+        assistantMessageId, // Shared messageId ensures nested tool events match stream events
         abortSignal,
         tools,
         {
