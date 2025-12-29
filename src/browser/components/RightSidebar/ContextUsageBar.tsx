@@ -40,7 +40,7 @@ const ContextUsageBarComponent: React.FC<ContextUsageBarProps> = ({
         </span>
       </div>
 
-      <div className="relative w-full py-2">
+      <div className="relative w-full overflow-hidden py-2">
         <TokenMeter segments={data.segments} orientation="horizontal" />
         {autoCompaction && data.maxTokens && <HorizontalThresholdSlider config={autoCompaction} />}
       </div>
