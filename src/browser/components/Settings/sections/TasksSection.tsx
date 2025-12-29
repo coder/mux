@@ -560,7 +560,24 @@ export function TasksSection() {
             <div className="text-foreground text-sm font-medium">{agent.name}</div>
             <div className="text-muted text-xs">
               {agent.id} • {scopeNode} • {renderPolicySummary(agent)}
+              {agent.uiSelectable && agent.subagentRunnable ? (
+                <>
+                  {" "}
+                  •{" "}
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="cursor-help underline decoration-dotted underline-offset-2">
+                        sub-agent
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent align="start" className="max-w-80 whitespace-normal">
+                      Can be invoked as a sub-agent.
+                    </TooltipContent>
+                  </Tooltip>
+                </>
+              ) : null}
             </div>
+
             {agent.description ? (
               <div className="text-muted mt-1 text-xs">{agent.description}</div>
             ) : null}
