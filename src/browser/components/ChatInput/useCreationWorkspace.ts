@@ -76,7 +76,6 @@ function syncCreationPreferences(projectPath: string, workspaceId: string): void
         const record = prev && typeof prev === "object" ? prev : {};
         return {
           ...(record as Partial<Record<string, { model: string; thinkingLevel: ThinkingLevel }>>),
-          [effectiveMode]: { model: projectModel, thinkingLevel: effectiveThinking },
           [normalizedAgentId]: { model: projectModel, thinkingLevel: effectiveThinking },
         };
       },

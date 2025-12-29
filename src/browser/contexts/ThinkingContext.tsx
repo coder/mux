@@ -105,14 +105,15 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
             prev && typeof prev === "object" ? prev : {};
           return {
             ...record,
-            [mode]: { model, thinkingLevel: effective },
             [agentId]: { model, thinkingLevel: effective },
           };
         },
         {}
       );
 
-      if (!api) {
+      // Only persist when the active agent matches the base mode so custom-agent overrides
+      // don't clobber exec/plan defaults that other agents inherit.
+      if (!api || agentId !== mode) {
         return;
       }
 

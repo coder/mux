@@ -378,6 +378,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
       const effectiveThinkingLevel = enforceThinkingPolicy(canonicalModel, thinkingLevel);
 
+      const normalizedAgentId =
+        typeof agentId === "string" && agentId.trim().length > 0
+          ? agentId.trim().toLowerCase()
+          : mode;
+
       updatePersistedState<WorkspaceAISettingsByModeCache>(
         getWorkspaceAISettingsByModeKey(workspaceId),
         (prev) => {
@@ -385,15 +390,16 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             prev && typeof prev === "object" ? prev : {};
           return {
             ...record,
-            [mode]: { model: canonicalModel, thinkingLevel: effectiveThinkingLevel },
-            [agentId]: { model: canonicalModel, thinkingLevel: effectiveThinkingLevel },
+            [normalizedAgentId]: { model: canonicalModel, thinkingLevel: effectiveThinkingLevel },
           };
         },
         {}
       );
 
       // Workspace variant: persist to backend for cross-device consistency.
-      if (!api) {
+      // Only persist when the active agent matches the base mode so custom-agent overrides
+      // don't clobber exec/plan defaults that other agents inherit.
+      if (!api || normalizedAgentId !== mode) {
         return;
       }
 

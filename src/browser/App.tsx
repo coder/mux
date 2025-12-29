@@ -347,7 +347,6 @@ function AppInner() {
             prev && typeof prev === "object" ? prev : {};
           return {
             ...record,
-            [mode]: { model, thinkingLevel: effective },
             [agentId]: { model, thinkingLevel: effective },
           };
         },
@@ -355,7 +354,9 @@ function AppInner() {
       );
 
       // Persist to backend so the palette change follows the workspace across devices.
-      if (api) {
+      // Only persist when the active agent matches the base mode so custom-agent overrides
+      // don't clobber exec/plan defaults that other agents inherit.
+      if (api && agentId === mode) {
         api.workspace
           .updateModeAISettings({
             workspaceId,
