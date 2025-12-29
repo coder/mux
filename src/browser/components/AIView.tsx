@@ -75,6 +75,7 @@ import { ReviewsBanner } from "./ReviewsBanner";
 import type { ReviewNoteData } from "@/common/types/review";
 import { PopoverError } from "./PopoverError";
 import { ConnectionStatusIndicator } from "./ConnectionStatusIndicator";
+import { SubscriptionStatusIndicator } from "./SubscriptionStatusIndicator";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 
 interface AIViewProps {
@@ -754,6 +755,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
         />
         <ReviewsBanner workspaceId={workspaceId} />
         <ConnectionStatusIndicator />
+        <SubscriptionStatusIndicator workspaceId={workspaceId} />
         {isQueuedAgentTask && (
           <div className="border-border-medium bg-background-secondary text-muted mb-2 rounded-md border px-3 py-2 text-xs">
             This agent task is queued and will start automatically when a parallel slot is

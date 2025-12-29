@@ -57,6 +57,8 @@ export interface WorkspaceState {
   // Live streaming stats (updated on each stream-delta)
   streamingTokenCount: number | undefined;
   streamingTPS: number | undefined;
+  /** Subscription health status - "reconnecting" when watchdog is restarting a stalled subscription */
+  subscriptionStatus: "ok" | "reconnecting";
 }
 
 /**
@@ -200,6 +202,11 @@ interface WorkspaceChatTransientState {
   replayingHistory: boolean;
   queuedMessage: QueuedMessage | null;
   liveBashOutput: Map<string, LiveBashOutputInternal>;
+  // Watchdog state for detecting stalled subscriptions
+  subscriptionStartedAt: number | null;
+  lastEventAt: number | null;
+  /** Subscription health status for UI feedback */
+  subscriptionStatus: "ok" | "reconnecting";
 }
 
 function createInitialChatTransientState(): WorkspaceChatTransientState {
@@ -210,8 +217,16 @@ function createInitialChatTransientState(): WorkspaceChatTransientState {
     replayingHistory: false,
     queuedMessage: null,
     liveBashOutput: new Map(),
+    subscriptionStartedAt: null,
+    lastEventAt: null,
+    subscriptionStatus: "ok",
   };
 }
+
+// Watchdog constants
+const CAUGHT_UP_TIMEOUT_MS = 15000; // Restart if no caught-up received within 15s
+const ACTIVE_STREAM_STALL_MS = 30000; // Restart if active stream has no events for 30s
+const WATCHDOG_INTERVAL_MS = 5000; // Check every 5s
 
 const ON_CHAT_RETRY_BASE_MS = 250;
 const ON_CHAT_RETRY_MAX_MS = 5000;
@@ -303,6 +318,10 @@ export class WorkspaceStore {
   private aggregators = new Map<string, StreamingMessageAggregator>();
   private ipcUnsubscribers = new Map<string, () => void>();
 
+  // Connection epoch tracking: when API reconnects, we restart all subscriptions
+  // to avoid "stale iterator" issues after sleep/wake or network changes.
+  private connectionEpoch = 0;
+
   // Per-workspace ephemeral chat state (buffering, queued message, live bash output, etc.)
   private chatTransientState = new Map<string, WorkspaceChatTransientState>();
 
@@ -331,6 +350,9 @@ export class WorkspaceStore {
   // Data is always updated immediately in the aggregator; only UI notification is scheduled.
   // Using requestIdleCallback adapts to actual CPU availability rather than a fixed timer.
   private deltaIdleHandles = new Map<string, number>();
+
+  // Watchdog interval for detecting stalled subscriptions
+  private watchdogIntervalId: ReturnType<typeof setInterval> | null = null;
 
   /**
    * Map of event types to their handlers. This is the single source of truth for:
@@ -581,8 +603,170 @@ export class WorkspaceStore {
       this.subscribeToStats(workspaceId);
     }
   }
-  setClient(client: RouterClient<AppRouter>) {
+  /**
+   * Set the ORPC client and connection epoch.
+   * When the epoch changes, all existing subscriptions are aborted and restarted
+   * to ensure we don't have stale iterators from the old connection.
+   */
+  setClient(client: RouterClient<AppRouter>, epoch: number) {
     this.client = client;
+
+    // Start the watchdog if not already running
+    this.startWatchdog();
+
+    // If epoch changed (new connection), restart all subscriptions
+    if (epoch !== this.connectionEpoch) {
+      const previousEpoch = this.connectionEpoch;
+      this.connectionEpoch = epoch;
+
+      // Log the restart for debugging
+      console.debug(
+        `[WorkspaceStore] Connection epoch changed (${previousEpoch} → ${epoch}), restarting ${this.ipcUnsubscribers.size} subscriptions`
+      );
+
+      // Restart all active workspace subscriptions
+      this.restartAllSubscriptions();
+    }
+  }
+
+  /**
+   * Abort and restart all workspace subscriptions.
+   * Used when the connection epoch changes to avoid stale iterators.
+   */
+  private restartAllSubscriptions(): void {
+    // Collect workspaces to restart (we'll modify ipcUnsubscribers during iteration)
+    const workspacesToRestart = Array.from(this.ipcUnsubscribers.keys());
+
+    for (const workspaceId of workspacesToRestart) {
+      const metadata = this.workspaceMetadata.get(workspaceId);
+      if (!metadata) {
+        continue;
+      }
+
+      // Abort old subscription
+      const oldUnsubscribe = this.ipcUnsubscribers.get(workspaceId);
+      oldUnsubscribe?.();
+      this.ipcUnsubscribers.delete(workspaceId);
+
+      // Also abort old stats subscription if any
+      const oldStatsUnsubscribe = this.statsUnsubscribers.get(workspaceId);
+      oldStatsUnsubscribe?.();
+      this.statsUnsubscribers.delete(workspaceId);
+
+      // Reset chat state for replay
+      this.resetChatStateForReplay(workspaceId);
+
+      // Re-subscribe with new AbortController
+      const controller = new AbortController();
+      this.ipcUnsubscribers.set(workspaceId, () => controller.abort());
+      void this.runOnChatSubscription(workspaceId, controller.signal);
+
+      if (this.statsEnabled) {
+        this.subscribeToStats(workspaceId);
+      }
+    }
+  }
+
+  /**
+   * Start the watchdog timer that monitors subscription health.
+   * Automatically restarts stalled subscriptions (no caught-up, or active stream with no events).
+   */
+  startWatchdog(): void {
+    if (this.watchdogIntervalId !== null) {
+      return; // Already running
+    }
+
+    this.watchdogIntervalId = setInterval(() => {
+      this.checkStalledSubscriptions();
+    }, WATCHDOG_INTERVAL_MS);
+  }
+
+  /**
+   * Stop the watchdog timer.
+   */
+  stopWatchdog(): void {
+    if (this.watchdogIntervalId !== null) {
+      clearInterval(this.watchdogIntervalId);
+      this.watchdogIntervalId = null;
+    }
+  }
+
+  /**
+   * Check all active subscriptions for stalls and restart if needed.
+   */
+  private checkStalledSubscriptions(): void {
+    const now = Date.now();
+
+    for (const workspaceId of this.ipcUnsubscribers.keys()) {
+      const transient = this.chatTransientState.get(workspaceId);
+      if (!transient) {
+        continue;
+      }
+
+      const aggregator = this.aggregators.get(workspaceId);
+      const hasActiveStreams = aggregator && aggregator.getActiveStreams().length > 0;
+
+      // Case 1: Waiting for caught-up too long
+      if (
+        !transient.caughtUp &&
+        transient.subscriptionStartedAt !== null &&
+        now - transient.subscriptionStartedAt > CAUGHT_UP_TIMEOUT_MS
+      ) {
+        console.warn(
+          `[WorkspaceStore] Subscription for ${workspaceId} stalled (no caught-up in ${CAUGHT_UP_TIMEOUT_MS}ms), restarting`
+        );
+        this.restartWorkspaceSubscription(workspaceId, "no caught-up");
+        continue;
+      }
+
+      // Case 2: Active stream with no events for too long
+      if (
+        hasActiveStreams &&
+        transient.lastEventAt !== null &&
+        now - transient.lastEventAt > ACTIVE_STREAM_STALL_MS
+      ) {
+        console.warn(
+          `[WorkspaceStore] Subscription for ${workspaceId} stalled (active stream, no events in ${ACTIVE_STREAM_STALL_MS}ms), restarting`
+        );
+        this.restartWorkspaceSubscription(workspaceId, "stream stalled");
+        continue;
+      }
+    }
+  }
+
+  /**
+   * Restart a single workspace subscription.
+   * Used by the watchdog when a subscription appears stalled.
+   */
+  private restartWorkspaceSubscription(workspaceId: string, reason: string): void {
+    const metadata = this.workspaceMetadata.get(workspaceId);
+    if (!metadata) {
+      return;
+    }
+
+    // Update status to "reconnecting" for UI feedback
+    const transient = this.chatTransientState.get(workspaceId);
+    if (transient) {
+      transient.subscriptionStatus = "reconnecting";
+      this.states.bump(workspaceId);
+    }
+
+    // Abort old subscription
+    const oldUnsubscribe = this.ipcUnsubscribers.get(workspaceId);
+    oldUnsubscribe?.();
+    this.ipcUnsubscribers.delete(workspaceId);
+
+    // Reset chat state for replay
+    this.resetChatStateForReplay(workspaceId);
+
+    // Re-subscribe with new AbortController
+    const controller = new AbortController();
+    this.ipcUnsubscribers.set(workspaceId, () => controller.abort());
+
+    console.debug(
+      `[WorkspaceStore] Restarting subscription for ${workspaceId} (reason: ${reason})`
+    );
+    void this.runOnChatSubscription(workspaceId, controller.signal);
   }
 
   /**
@@ -834,6 +1018,7 @@ export class WorkspaceStore {
         pendingStreamStartTime: aggregator.getPendingStreamStartTime(),
         streamingTokenCount,
         streamingTPS,
+        subscriptionStatus: transient.subscriptionStatus,
       };
     });
   }
@@ -1244,6 +1429,13 @@ export class WorkspaceStore {
         return;
       }
 
+      // Track subscription start time for watchdog
+      const transient = this.chatTransientState.get(workspaceId);
+      if (transient) {
+        transient.subscriptionStartedAt = Date.now();
+        transient.subscriptionStatus = "ok";
+      }
+
       try {
         const iterator = await client.workspace.onChat({ workspaceId }, { signal });
 
@@ -1254,6 +1446,12 @@ export class WorkspaceStore {
 
           // Connection is alive again - don't carry old backoff into the next failure.
           attempt = 0;
+
+          // Track last event time for watchdog
+          const t = this.chatTransientState.get(workspaceId);
+          if (t) {
+            t.lastEventAt = Date.now();
+          }
 
           queueMicrotask(() => {
             this.handleChatMessage(workspaceId, data);
@@ -1537,6 +1735,18 @@ export class WorkspaceStore {
     this.fileModifyingToolSubs.bump(workspaceId);
   }
 
+  /**
+   * Set subscription status for a workspace (for testing/storybook).
+   * Triggers a state bump so UI reflects the change.
+   */
+  setSubscriptionStatus(workspaceId: string, status: "ok" | "reconnecting"): void {
+    const transient = this.chatTransientState.get(workspaceId);
+    if (transient) {
+      transient.subscriptionStatus = status;
+      this.states.bump(workspaceId);
+    }
+  }
+
   // Private methods
 
   /**
@@ -1784,6 +1994,11 @@ export const workspaceStore = {
    */
   simulateFileModifyingToolEnd: (workspaceId: string) =>
     getStoreInstance().simulateFileModifyingToolEnd(workspaceId),
+  /**
+   * Set subscription status for a workspace (for testing/storybook).
+   */
+  setSubscriptionStatus: (workspaceId: string, status: "ok" | "reconnecting") =>
+    getStoreInstance().setSubscriptionStatus(workspaceId, status),
 };
 
 /**

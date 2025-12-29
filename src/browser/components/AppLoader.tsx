@@ -60,7 +60,7 @@ function AppLoaderInner() {
   // Sync stores when metadata finishes loading
   useEffect(() => {
     if (api) {
-      workspaceStoreInstance.setClient(api);
+      workspaceStoreInstance.setClient(api, apiState.connectionEpoch);
       gitStatusStore.setClient(api);
     }
 
@@ -83,6 +83,7 @@ function AppLoaderInner() {
     workspaceStoreInstance,
     gitStatusStore,
     api,
+    apiState.connectionEpoch,
   ]);
 
   // If we're in browser mode and auth is required, show the token prompt before any data loads.

@@ -785,7 +785,7 @@ async function setup() {
   );
 
   // Inject client immediately to handle race conditions where effects run before store update
-  getWorkspaceStoreRaw().setClient(currentClientMock as APIClient);
+  getWorkspaceStoreRaw().setClient(currentClientMock as APIClient, 1);
 
   await waitFor(() => expect(contextRef.current).toBeTruthy());
   return () => contextRef.current!;

@@ -15,6 +15,7 @@ import {
   createStaticChatHandler,
 } from "./mockFactory";
 import { getAutoRetryKey } from "@/common/constants/storage";
+import { workspaceStore } from "@/browser/stores/WorkspaceStore";
 import {
   selectWorkspace,
   setupSimpleChatStory,
@@ -22,7 +23,7 @@ import {
   expandProjects,
 } from "./storyHelpers";
 import { createMockORPCClient } from "../../../.storybook/mocks/orpc";
-import { userEvent, waitFor } from "@storybook/test";
+import { userEvent, waitFor, within } from "@storybook/test";
 
 export default {
   ...appMeta,
@@ -305,6 +306,59 @@ export const ProjectRemovalError: AppStory = {
       () => {
         const errorPopover = document.querySelector('[role="alert"]');
         if (!errorPopover) throw new Error("Error popover not found");
+      },
+      { timeout: 2000 }
+    );
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SUBSCRIPTION STATUS BANNER
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** Shows the "Reconnecting chat stream..." banner when subscription is restarting */
+export const SubscriptionReconnecting: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          messages: [
+            createUserMessage("msg-1", "Hello, can you help me?", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 60000,
+            }),
+            createAssistantMessage("msg-2", "Of course! What do you need help with?", {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP - 50000,
+            }),
+          ],
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Wait for the app to render and messages to appear
+    await waitFor(
+      () => {
+        const messages = canvas.getAllByText(/Hello|Of course/);
+        if (messages.length < 2) throw new Error("Messages not rendered yet");
+      },
+      { timeout: 3000 }
+    );
+
+    // The workspace ID from setupSimpleChatStory defaults to "ws-chat"
+    const testWorkspaceId = "ws-chat";
+
+    // Set the subscription status to reconnecting
+    workspaceStore.setSubscriptionStatus(testWorkspaceId, "reconnecting");
+
+    // Wait for the banner to appear
+    await waitFor(
+      () => {
+        const banner = canvas.getByText(/Reconnecting chat stream/);
+        if (!banner) throw new Error("Reconnecting banner not found");
       },
       { timeout: 2000 }
     );
