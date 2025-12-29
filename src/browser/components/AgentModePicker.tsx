@@ -319,7 +319,15 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
 
     if (e.key === "ArrowUp") {
       e.preventDefault();
-      setHighlightedIndex((prev) => Math.max(prev - 1, -1));
+
+      // When we're already at the top (or nothing is highlighted), treat ArrowUp
+      // as a close/cancel action.
+      if (highlightedIndex <= 0) {
+        closePicker();
+        return;
+      }
+
+      setHighlightedIndex((prev) => Math.max(prev - 1, 0));
       return;
     }
   };

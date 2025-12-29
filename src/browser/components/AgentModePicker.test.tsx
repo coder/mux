@@ -98,6 +98,48 @@ describe("AgentModePicker", () => {
     });
   });
 
+  test("ArrowUp closes the picker without selecting an agent", async () => {
+    function Harness() {
+      const [agentId, setAgentId] = React.useState("exec");
+      return (
+        <AgentProvider
+          value={{
+            agentId,
+            setAgentId,
+            agents: [...BUILT_INS, CUSTOM_AGENT],
+            loaded: true,
+            loadFailed: false,
+          }}
+        >
+          <TooltipProvider>
+            <div>
+              <div data-testid="agentId">{agentId}</div>
+              <AgentModePicker workspaceId="ws-123" />
+            </div>
+          </TooltipProvider>
+        </AgentProvider>
+      );
+    }
+
+    const { getByPlaceholderText, getByTestId, getByText, queryByPlaceholderText } = render(
+      <Harness />
+    );
+
+    fireEvent.click(getByText("Other…"));
+
+    await waitFor(() => {
+      expect(getByPlaceholderText("Search agents…")).toBeTruthy();
+    });
+
+    fireEvent.keyDown(getByPlaceholderText("Search agents…"), { key: "ArrowUp" });
+
+    await waitFor(() => {
+      expect(queryByPlaceholderText("Search agents…")).toBeNull();
+    });
+
+    expect(getByTestId("agentId").textContent).toBe("exec");
+  });
+
   test("pins a custom agent and keeps it available when switching back to Exec/Plan", async () => {
     function Harness() {
       const [agentId, setAgentId] = React.useState("exec");

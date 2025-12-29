@@ -11,8 +11,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/browser/components/ui/select";
-import { useModelsFromSettings } from "@/browser/hooks/useModelsFromSettings";
 import { copyToClipboard } from "@/browser/utils/clipboard";
+import { useModelsFromSettings } from "@/browser/hooks/useModelsFromSettings";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { MODE_AI_DEFAULTS_KEY } from "@/common/constants/storage";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
@@ -548,19 +548,6 @@ export function TasksSection() {
       <span>{agent.scope}</span>
     );
 
-    const subagentNode = agent.subagentRunnable ? (
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span className="cursor-help underline decoration-dotted underline-offset-2">
-            sub-agent
-          </span>
-        </TooltipTrigger>
-        <TooltipContent align="start" className="max-w-80 whitespace-normal">
-          Runnable as a sub-agent (task workspace).
-        </TooltipContent>
-      </Tooltip>
-    ) : null;
-
     return (
       <div
         key={agent.id}
@@ -570,8 +557,7 @@ export function TasksSection() {
           <div className="min-w-0 flex-1">
             <div className="text-foreground text-sm font-medium">{agent.name}</div>
             <div className="text-muted text-xs">
-              {agent.id} • {scopeNode}
-              {subagentNode ? <> • {subagentNode}</> : null} • {renderPolicySummary(agent)}
+              {agent.id} • {scopeNode} • {renderPolicySummary(agent)}
             </div>
             {agent.description ? (
               <div className="text-muted mt-1 text-xs">{agent.description}</div>
