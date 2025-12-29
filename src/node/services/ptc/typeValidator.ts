@@ -9,7 +9,28 @@
  * - Calling non-existent tools
  */
 
+/* eslint-disable local/no-sync-fs-methods -- TypeScript's CompilerHost API requires synchronous file operations */
+import fs from "fs";
+import path from "path";
 import ts from "typescript";
+
+/**
+ * In production builds, lib files are copied to dist/typescript-lib/ with .d.ts.txt extension
+ * because electron-builder ignores .d.ts files by default (hardcoded, cannot override):
+ * https://github.com/electron-userland/electron-builder/issues/5064
+ *
+ * These constants are computed once at module load time.
+ */
+const BUNDLED_LIB_DIR = path.resolve(__dirname, "../../../typescript-lib");
+const IS_PRODUCTION = fs.existsSync(path.join(BUNDLED_LIB_DIR, "lib.es2020.d.ts.txt"));
+const LIB_DIR = IS_PRODUCTION
+  ? BUNDLED_LIB_DIR
+  : path.dirname(require.resolve("typescript/lib/lib.d.ts"));
+
+/** Convert lib filename for production: lib.X.d.ts → lib.X.d.ts.txt */
+function toProductionLibName(fileName: string): string {
+  return fileName + ".txt";
+}
 
 export interface TypeValidationError {
   message: string;
@@ -52,18 +73,54 @@ ${muxTypes}
 
   const sourceFile = ts.createSourceFile("agent.ts", wrappedCode, ts.ScriptTarget.ES2020, true);
 
-  // Use real compiler host (provides lib files) with our source file injected
+  // Create compiler host with custom lib directory resolution.
+  // In production, lib files are in dist/typescript-lib/ with .d-ts extension.
   const host = ts.createCompilerHost(compilerOptions);
+
+  // Override to read lib files from our bundled directory
+  host.getDefaultLibLocation = () => LIB_DIR;
+  host.getDefaultLibFileName = (options) => path.join(LIB_DIR, ts.getDefaultLibFileName(options));
+
   const originalGetSourceFile = host.getSourceFile.bind(host);
   const originalFileExists = host.fileExists.bind(host);
+  const originalReadFile = host.readFile.bind(host);
+
+  /** Resolve lib file path, accounting for .d-ts rename in production */
+  const resolveLibPath = (fileName: string): string => {
+    const libFileName = path.basename(fileName);
+    const actualName = IS_PRODUCTION ? toProductionLibName(libFileName) : libFileName;
+    return path.join(LIB_DIR, actualName);
+  };
 
   host.getSourceFile = (fileName, languageVersion) => {
     if (fileName === "agent.ts") return sourceFile;
+    // Redirect lib file requests to our bundled directory
+    if (fileName.includes("lib.") && fileName.endsWith(".d.ts")) {
+      const libPath = resolveLibPath(fileName);
+      const content = fs.existsSync(libPath) ? fs.readFileSync(libPath, "utf-8") : undefined;
+      if (content) {
+        return ts.createSourceFile(fileName, content, languageVersion, true);
+      }
+    }
     return originalGetSourceFile(fileName, languageVersion);
   };
   host.fileExists = (fileName) => {
     if (fileName === "agent.ts") return true;
+    // Check bundled lib directory for lib files
+    if (fileName.includes("lib.") && fileName.endsWith(".d.ts")) {
+      return fs.existsSync(resolveLibPath(fileName));
+    }
     return originalFileExists(fileName);
+  };
+  host.readFile = (fileName) => {
+    // Read lib files from bundled directory
+    if (fileName.includes("lib.") && fileName.endsWith(".d.ts")) {
+      const libPath = resolveLibPath(fileName);
+      if (fs.existsSync(libPath)) {
+        return fs.readFileSync(libPath, "utf-8");
+      }
+    }
+    return originalReadFile(fileName);
   };
 
   const program = ts.createProgram(["agent.ts"], compilerOptions, host);

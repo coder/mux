@@ -16,9 +16,6 @@ interface CodeExecutionToolCallProps {
   nestedCalls?: NestedToolCall[];
 }
 
-// Threshold for auto-collapsing long results (characters)
-const LONG_RESULT_THRESHOLD = 200;
-
 export const CodeExecutionToolCall: React.FC<CodeExecutionToolCallProps> = ({
   args,
   result,
@@ -36,9 +33,7 @@ export const CodeExecutionToolCall: React.FC<CodeExecutionToolCallProps> = ({
       : JSON.stringify(result.result, null, 2);
   }, [result]);
 
-  // Auto-expand result if it's short
-  const isLongResult = formattedResult ? formattedResult.length > LONG_RESULT_THRESHOLD : false;
-  const [resultExpanded, setResultExpanded] = useState(!isLongResult);
+  const [resultExpanded, setResultExpanded] = useState(false);
 
   // Use streaming nested calls if available, otherwise fall back to result
   const toolCalls = nestedCalls ?? [];
@@ -47,7 +42,7 @@ export const CodeExecutionToolCall: React.FC<CodeExecutionToolCallProps> = ({
   const isComplete = status === "completed" || status === "failed";
 
   return (
-    <fieldset className="border-foreground/20 flex flex-col gap-3 rounded-lg border border-dashed px-3 pt-2 pb-3">
+    <fieldset className="border-foreground/20 mt-3 flex flex-col gap-3 rounded-lg border border-dashed px-3 pt-2 pb-3">
       {/* Legend title with status - sits on the border */}
       <legend className="flex items-center gap-2 px-2">
         <span className="text-foreground text-sm font-medium">Code Execution</span>

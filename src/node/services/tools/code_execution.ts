@@ -64,6 +64,8 @@ export async function createCodeExecutionTool(
   return tool({
     description: `Execute JavaScript code in a sandboxed environment with access to Mux tools.
 
+Important: Batch multiple tool calls in one invocation to minimize round trips.
+
 **Available tools (TypeScript definitions):**
 \`\`\`typescript
 ${muxTypes}
@@ -75,7 +77,6 @@ ${muxTypes}
 - Use \`console.log/warn/error\` for debugging - output is captured
 - Results are JSON-serialized; non-serializable values return \`{ error: "..." }\`
 - On failure, partial results (completed tool calls) are returned for debugging
-- \`Promise.all()\` executes tools sequentially (sandbox limitation), not in parallel
 
 **Security:** The sandbox has no access to \`require\`, \`import\`, \`process\`, \`fetch\`, or filesystem outside of \`mux.*\` tools.`,
 

@@ -224,6 +224,20 @@ build-static: ## Copy static assets to dist
 	@mkdir -p dist
 	@cp static/splash.html dist/splash.html
 	@cp -r public/* dist/
+	# Copy TypeScript lib files for PTC runtime type validation (es5 through es2020).
+	# electron-builder ignores .d.ts files by default and this cannot be overridden:
+	# https://github.com/electron-userland/electron-builder/issues/5064
+	# Workaround: rename to .d.ts.txt extension to bypass the filter.
+	@mkdir -p dist/typescript-lib
+	@for f in node_modules/typescript/lib/lib.es5.d.ts \
+	          node_modules/typescript/lib/lib.es2015*.d.ts \
+	          node_modules/typescript/lib/lib.es2016*.d.ts \
+	          node_modules/typescript/lib/lib.es2017*.d.ts \
+	          node_modules/typescript/lib/lib.es2018*.d.ts \
+	          node_modules/typescript/lib/lib.es2019*.d.ts \
+	          node_modules/typescript/lib/lib.es2020*.d.ts; do \
+		cp "$$f" "dist/typescript-lib/$$(basename $$f).txt"; \
+	done
 
 # Always regenerate version file (marked as .PHONY above)
 version: ## Generate version file

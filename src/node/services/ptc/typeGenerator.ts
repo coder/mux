@@ -188,10 +188,7 @@ async function getResultTypeString(toolName: string): Promise<string | null> {
  * @returns `.d.ts` content as a string
  */
 export async function generateMuxTypes(tools: Record<string, Tool>): Promise<string> {
-  const lines: string[] = [
-    "declare namespace mux {",
-    "  // NOTE: Promise.all() executes sequentially in this sandbox (not parallel)",
-  ];
+  const lines: string[] = ["declare namespace mux {"];
   let mcpToolsPresent = false;
 
   // Sort tool names for deterministic output

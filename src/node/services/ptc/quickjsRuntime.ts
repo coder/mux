@@ -11,7 +11,7 @@ import {
   type QuickJSHandle,
 } from "quickjs-emscripten-core";
 import { QuickJSAsyncFFI } from "@jitl/quickjs-wasmfile-release-asyncify/ffi";
-import { nanoid } from "nanoid";
+import crypto from "crypto";
 import type { IJSRuntime, IJSRuntimeFactory, RuntimeLimits } from "./runtime";
 import type { PTCEvent, PTCExecutionResult, PTCToolCallRecord, PTCConsoleRecord } from "./types";
 import { UNAVAILABLE_IDENTIFIERS } from "./staticAnalysis";
@@ -19,6 +19,11 @@ import { UNAVAILABLE_IDENTIFIERS } from "./staticAnalysis";
 // Default limits
 const DEFAULT_MEMORY_BYTES = 64 * 1024 * 1024; // 64MB
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+
+/** Generate a short random ID for PTC nested tool calls (10 hex chars). */
+function generateCallId(): string {
+  return crypto.randomBytes(5).toString("hex");
+}
 
 /**
  * QuickJS-based JavaScript runtime for PTC.
@@ -86,7 +91,7 @@ export class QuickJSRuntime implements IJSRuntime {
       // Generate our own callId for nested tool calls. Regular tool calls get IDs from
       // the model (e.g. Anthropic's toolu_*, OpenAI's call_*), but PTC nested calls are
       // executed in our sandbox, not requested by the model.
-      const callId = nanoid();
+      const callId = generateCallId();
 
       // Emit start event
       this.eventHandler?.({
@@ -169,7 +174,7 @@ export class QuickJSRuntime implements IJSRuntime {
         // Convert QuickJS handles to JS values - cast to unknown at the FFI boundary
         const args: unknown[] = argHandles.map((h) => this.ctx.dump(h) as unknown);
         const startTime = Date.now();
-        const callId = nanoid();
+        const callId = generateCallId();
 
         // Emit start event
         this.eventHandler?.({
