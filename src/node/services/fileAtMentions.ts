@@ -24,8 +24,10 @@ function isAbsolutePathAny(filePath: string): boolean {
 }
 
 function isLikelyFilePathToken(filePath: string): boolean {
-  // Heuristic to avoid expanding things like "@codex".
-  // Most repo paths include a separator or an extension.
+  // Heuristic to decide whether an @mention is likely intended to be a file reference.
+  //
+  // Note: We still allow root files like "@Makefile" if they exist; this only controls whether we
+  // emit error blocks when a mention doesn't resolve.
   return filePath.includes("/") || filePath.includes("\\") || filePath.includes(".");
 }
 
@@ -199,9 +201,7 @@ export async function injectFileAtMentions(
     return messages;
   }
 
-  const mentionCandidates = extractAtMentions(textParts.join("\n"))
-    .filter((m) => isLikelyFilePathToken(m.path))
-    .slice(0, MAX_MENTION_FILES);
+  const mentionCandidates = extractAtMentions(textParts.join("\n")).slice(0, MAX_MENTION_FILES * 5);
 
   if (mentionCandidates.length === 0) {
     return messages;
@@ -219,7 +219,12 @@ export async function injectFileAtMentions(
   let totalBytes = 0;
 
   for (const mention of mentions) {
+    if (blocks.length >= MAX_MENTION_FILES) {
+      break;
+    }
+
     const displayPath = mention.path;
+    const pathLooksLikeFilePath = isLikelyFilePathToken(displayPath) || mention.range !== undefined;
 
     if (mention.rangeError) {
       const block = renderMuxFileError(displayPath, mention.rangeError);
@@ -251,6 +256,10 @@ export async function injectFileAtMentions(
     try {
       stat = await options.runtime.stat(resolvedPath, options.abortSignal);
     } catch (error) {
+      if (!pathLooksLikeFilePath) {
+        continue;
+      }
+
       const message = error instanceof Error ? error.message : String(error);
       const block = renderMuxFileError(displayPath, `Failed to stat file: ${message}`);
       const blockBytes = Buffer.byteLength(block, "utf8");
@@ -263,6 +272,10 @@ export async function injectFileAtMentions(
     }
 
     if (stat.isDirectory) {
+      if (!pathLooksLikeFilePath) {
+        continue;
+      }
+
       const block = renderMuxFileError(displayPath, "Path is a directory, not a file.");
       const blockBytes = Buffer.byteLength(block, "utf8");
       if (totalBytes + blockBytes > MAX_TOTAL_BYTES) {

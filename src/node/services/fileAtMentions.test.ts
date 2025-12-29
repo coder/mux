@@ -44,4 +44,34 @@ describe("injectFileAtMentions", () => {
       await fsPromises.rm(tmpDir, { recursive: true, force: true });
     }
   });
+
+  it("injects root files like @Makefile", async () => {
+    const tmpDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), "mux-file-at-mentions-"));
+
+    try {
+      await fsPromises.writeFile(
+        path.join(tmpDir, "Makefile"),
+        ["line1", "line2"].join("\n"),
+        "utf8"
+      );
+
+      const runtime = createRuntime({ type: "local" }, { projectPath: tmpDir });
+      const messages = [createMuxMessage("u1", "user", "Please check @Makefile")];
+
+      const result = await injectFileAtMentions(messages, {
+        runtime,
+        workspacePath: tmpDir,
+      });
+
+      expect(result).toHaveLength(2);
+      expect(result[0]?.metadata?.synthetic).toBe(true);
+
+      const injectedText = result[0]?.parts.find((p) => p.type === "text")?.text ?? "";
+      expect(injectedText).toContain('<mux-file path="Makefile" range="L1-L2"');
+      expect(injectedText).toContain("line1");
+      expect(injectedText).toContain("line2");
+    } finally {
+      await fsPromises.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
 });
