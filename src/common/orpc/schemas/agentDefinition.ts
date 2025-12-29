@@ -27,6 +27,9 @@ const AgentDefinitionUiSchema = z
 
     // Legacy: selectable was opt-in. Keep for backwards compatibility.
     selectable: z.boolean().optional(),
+
+    // When true, completely hides this agent (useful for disabling built-ins)
+    disabled: z.boolean().optional(),
   })
   .strip();
 

@@ -28,7 +28,9 @@ import {
 
 const GLOBAL_AGENTS_ROOT = "~/.mux/agents";
 
-function resolveUiSelectable(ui: { hidden?: boolean; selectable?: boolean } | undefined): boolean {
+function resolveUiSelectable(
+  ui: { hidden?: boolean; selectable?: boolean; disabled?: boolean } | undefined
+): boolean {
   if (!ui) {
     return true;
   }
@@ -42,6 +44,19 @@ function resolveUiSelectable(ui: { hidden?: boolean; selectable?: boolean } | un
   }
 
   return true;
+}
+
+function resolveUiDisabled(ui: { disabled?: boolean } | undefined): boolean {
+  return ui?.disabled === true;
+}
+
+/**
+ * Internal type for tracking agent definitions during discovery.
+ * Includes the `disabled` flag which is used to filter agents but not exposed in the final result.
+ */
+interface AgentDiscoveryEntry {
+  descriptor: AgentDefinitionDescriptor;
+  disabled: boolean;
 }
 
 export interface AgentDefinitionsRoots {
@@ -120,12 +135,12 @@ function getAgentIdFromFilename(filename: string): AgentId | null {
   return idParsed.data;
 }
 
-async function readAgentDescriptorFromFile(
+async function readAgentDescriptorFromFileWithDisabled(
   runtime: Runtime,
   filePath: string,
   agentId: AgentId,
   scope: Exclude<AgentDefinitionScope, "built-in">
-): Promise<AgentDefinitionDescriptor | null> {
+): Promise<AgentDiscoveryEntry | null> {
   let stat;
   try {
     stat = await runtime.stat(filePath);
@@ -158,6 +173,7 @@ async function readAgentDescriptorFromFile(
     const uiColor = parsed.frontmatter.color;
     const subagentRunnable = parsed.frontmatter.subagent?.runnable ?? false;
     const policyBase = parsed.frontmatter.policy?.base ?? "exec";
+    const disabled = resolveUiDisabled(parsed.frontmatter.ui);
 
     const descriptor: AgentDefinitionDescriptor = {
       id: agentId,
@@ -178,7 +194,7 @@ async function readAgentDescriptorFromFile(
       return null;
     }
 
-    return validated.data;
+    return { descriptor: validated.data, disabled };
   } catch (err) {
     const message = err instanceof AgentDefinitionParseError ? err.message : formatError(err);
     log.warn(`Skipping invalid agent definition '${agentId}' (${scope}): ${message}`);
@@ -197,26 +213,30 @@ export async function discoverAgentDefinitions(
 
   const roots = options?.roots ?? getDefaultAgentDefinitionsRoots(runtime, workspacePath);
 
-  const byId = new Map<AgentId, AgentDefinitionDescriptor>();
+  const byId = new Map<AgentId, AgentDiscoveryEntry>();
 
   // Seed built-ins (lowest precedence).
-  for (const pkg of getBuiltInAgentDefinitions()) {
+  for (const pkg of await getBuiltInAgentDefinitions()) {
     const uiSelectable = resolveUiSelectable(pkg.frontmatter.ui);
     const uiColor = pkg.frontmatter.color;
     const subagentRunnable = pkg.frontmatter.subagent?.runnable ?? false;
     const policyBase = pkg.frontmatter.policy?.base ?? "exec";
+    const disabled = resolveUiDisabled(pkg.frontmatter.ui);
 
     byId.set(pkg.id, {
-      id: pkg.id,
-      scope: "built-in",
-      name: pkg.frontmatter.name,
-      description: pkg.frontmatter.description,
-      uiSelectable,
-      uiColor,
-      subagentRunnable,
-      policyBase,
-      aiDefaults: pkg.frontmatter.ai,
-      toolFilter: pkg.frontmatter.policy?.tools,
+      descriptor: {
+        id: pkg.id,
+        scope: "built-in",
+        name: pkg.frontmatter.name,
+        description: pkg.frontmatter.description,
+        uiSelectable,
+        uiColor,
+        subagentRunnable,
+        policyBase,
+        aiDefaults: pkg.frontmatter.ai,
+        toolFilter: pkg.frontmatter.policy?.tools,
+      },
+      disabled,
     });
   }
 
@@ -247,14 +267,23 @@ export async function discoverAgentDefinitions(
       }
 
       const filePath = runtime.normalizePath(filename, resolvedRoot);
-      const descriptor = await readAgentDescriptorFromFile(runtime, filePath, agentId, scan.scope);
-      if (!descriptor) continue;
+      const result = await readAgentDescriptorFromFileWithDisabled(
+        runtime,
+        filePath,
+        agentId,
+        scan.scope
+      );
+      if (!result) continue;
 
-      byId.set(agentId, descriptor);
+      byId.set(agentId, result);
     }
   }
 
-  return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name));
+  // Filter out disabled agents and return only the descriptors
+  return Array.from(byId.values())
+    .filter((entry) => !entry.disabled)
+    .map((entry) => entry.descriptor)
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export async function readAgentDefinition(
@@ -319,7 +348,8 @@ export async function readAgentDefinition(
     }
   }
 
-  const builtIn = getBuiltInAgentDefinitions().find((pkg) => pkg.id === agentId);
+  const builtIns = await getBuiltInAgentDefinitions();
+  const builtIn = builtIns.find((pkg) => pkg.id === agentId);
   if (builtIn) {
     const validated = AgentDefinitionPackageSchema.safeParse(builtIn);
     if (!validated.success) {

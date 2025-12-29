@@ -13,8 +13,10 @@
 
 import * as fs from "fs";
 import * as path from "path";
+import * as yaml from "yaml";
 import { KNOWN_MODELS, DEFAULT_MODEL } from "../src/common/constants/knownModels";
 import { formatModelDisplayName } from "../src/common/utils/ai/modelDisplay";
+import { AgentDefinitionFrontmatterSchema } from "../src/common/orpc/schemas/agentDefinition";
 
 const MODE = process.argv[2] === "check" ? "check" : "write";
 const DOCS_DIR = path.join(import.meta.dir, "..", "docs");
@@ -168,11 +170,113 @@ async function syncKnownModels(): Promise<boolean> {
 }
 
 // ---------------------------------------------------------------------------
+// Built-in agents sync
+// ---------------------------------------------------------------------------
+
+interface ParsedAgent {
+  id: string;
+  frontmatter: ReturnType<typeof AgentDefinitionFrontmatterSchema.parse>;
+  body: string;
+}
+
+function parseFrontmatter(content: string): { frontmatter: unknown; body: string } | null {
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+  if (!match) return null;
+  return {
+    frontmatter: yaml.parse(match[1]),
+    body: match[2].trim(),
+  };
+}
+
+function loadBuiltinAgents(): ParsedAgent[] {
+  const agentsDir = path.join(import.meta.dir, "..", "src", "node", "builtinAgents");
+  const files = fs.readdirSync(agentsDir).filter((f) => f.endsWith(".md"));
+
+  const agents: ParsedAgent[] = [];
+  for (const filename of files) {
+    const content = fs.readFileSync(path.join(agentsDir, filename), "utf-8");
+    const parsed = parseFrontmatter(content);
+    if (!parsed) {
+      throw new Error(`Failed to parse frontmatter in ${filename}`);
+    }
+
+    const result = AgentDefinitionFrontmatterSchema.safeParse(parsed.frontmatter);
+    if (!result.success) {
+      throw new Error(`Invalid frontmatter in ${filename}: ${result.error.message}`);
+    }
+
+    agents.push({
+      id: filename.slice(0, -3), // Remove .md extension
+      frontmatter: result.data,
+      body: parsed.body,
+    });
+  }
+
+  // Sort: visible agents first (exec, plan), then hidden ones
+  return agents.sort((a, b) => {
+    const aHidden = a.frontmatter.ui?.hidden ?? false;
+    const bHidden = b.frontmatter.ui?.hidden ?? false;
+    if (aHidden !== bHidden) return aHidden ? 1 : -1;
+    return a.frontmatter.name.localeCompare(b.frontmatter.name);
+  });
+}
+
+function generateBuiltinAgentsBlock(): string {
+  const agents = loadBuiltinAgents();
+  const sections: string[] = [];
+
+  for (const agent of agents) {
+    const { id, frontmatter, body } = agent;
+    const lines: string[] = [];
+
+    // Header
+    const hiddenBadge = frontmatter.ui?.hidden ? " (internal)" : "";
+    lines.push(`### ${frontmatter.name}${hiddenBadge}`);
+    lines.push("");
+    if (frontmatter.description) {
+      lines.push(`**${frontmatter.description}**`);
+      lines.push("");
+    }
+
+    // Show the full agent file as an example
+    lines.push(`<Accordion title="View ${id}.md">`);
+    lines.push("");
+    lines.push("```md");
+
+    // Reconstruct the file content
+    const yamlContent = yaml.stringify(frontmatter, { lineWidth: 0 }).trim();
+    lines.push("---");
+    lines.push(yamlContent);
+    lines.push("---");
+    if (body) {
+      lines.push("");
+      lines.push(body);
+    }
+    lines.push("```");
+    lines.push("");
+    lines.push("</Accordion>");
+
+    sections.push(lines.join("\n"));
+  }
+
+  return sections.join("\n\n");
+}
+
+async function syncBuiltinAgents(): Promise<boolean> {
+  return syncDoc({
+    docsFile: "agents.mdx",
+    sourceLabel: "src/node/builtinAgents/*.md",
+    markerName: "BUILTIN_AGENTS",
+    generateBlock: generateBuiltinAgentsBlock,
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
-  const results = await Promise.all([syncSystemPrompt(), syncKnownModels()]);
+  const results = await Promise.all([syncSystemPrompt(), syncKnownModels(), syncBuiltinAgents()]);
 
   if (results.some((r) => !r)) {
     process.exit(1);
