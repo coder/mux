@@ -49,11 +49,29 @@ REPO_INFO=$(gh repo view --json owner,name --jq '{owner: .owner.login, name: .na
 OWNER=$(echo "$REPO_INFO" | jq -r '.owner')
 REPO=$(echo "$REPO_INFO" | jq -r '.name')
 
-RESULT=$(gh api graphql \
-  -f query="$GRAPHQL_QUERY" \
-  -F owner="$OWNER" \
-  -F repo="$REPO" \
-  -F pr="$PR_NUMBER")
+# Depot runners sometimes hit transient network timeouts to api.github.com.
+# Retry the GraphQL request a few times before failing the required check.
+MAX_ATTEMPTS=5
+BACKOFF_SECS=2
+
+for ((attempt = 1; attempt <= MAX_ATTEMPTS; attempt++)); do
+  if RESULT=$(gh api graphql \
+    -f query="$GRAPHQL_QUERY" \
+    -F owner="$OWNER" \
+    -F repo="$REPO" \
+    -F pr="$PR_NUMBER"); then
+    break
+  fi
+
+  if [ $attempt -eq $MAX_ATTEMPTS ]; then
+    echo "❌ GraphQL query failed after ${MAX_ATTEMPTS} attempts"
+    exit 1
+  fi
+
+  echo "⚠️ GraphQL query failed (attempt ${attempt}/${MAX_ATTEMPTS}); retrying in ${BACKOFF_SECS}s..."
+  sleep "$BACKOFF_SECS"
+  BACKOFF_SECS=$((BACKOFF_SECS * 2))
+done
 
 # Filter regular comments from bot that aren't minimized, excluding:
 # - "Didn't find any major issues" (no issues found)
