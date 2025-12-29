@@ -1425,19 +1425,26 @@ export class AIService extends EventEmitter {
             toolsForModel = { ...nonBridgeable, code_execution: codeExecutionTool };
           } else {
             // Supplement mode: add code_execution if policy allows (experiment is additive).
-            // If policy requires a different tool, don't add code_execution (would violate require).
+            // Handle require policies: if code_execution is required, return only it.
+            // If another tool is required, don't add code_execution (would violate require).
             const requiredToolName = effectiveToolPolicy?.find(
               (f) => f.action === "require"
             )?.regex_match;
-            const requiresOtherTool = requiredToolName && requiredToolName !== "code_execution";
-            const codeExecAllowed =
-              !requiresOtherTool &&
-              Object.keys(
-                applyToolPolicy({ code_execution: codeExecutionTool }, effectiveToolPolicy)
-              ).length > 0;
-            toolsForModel = codeExecAllowed
-              ? { ...policyFilteredTools, code_execution: codeExecutionTool }
-              : policyFilteredTools;
+            if (requiredToolName === "code_execution") {
+              toolsForModel = { code_execution: codeExecutionTool };
+            } else if (requiredToolName) {
+              // Another tool is required — don't add code_execution
+              toolsForModel = policyFilteredTools;
+            } else {
+              // No require policy — add code_execution if policy allows
+              const codeExecAllowed =
+                Object.keys(
+                  applyToolPolicy({ code_execution: codeExecutionTool }, effectiveToolPolicy)
+                ).length > 0;
+              toolsForModel = codeExecAllowed
+                ? { ...policyFilteredTools, code_execution: codeExecutionTool }
+                : policyFilteredTools;
+            }
           }
         } catch (error) {
           // Fall back to policy-filtered tools if PTC creation fails
