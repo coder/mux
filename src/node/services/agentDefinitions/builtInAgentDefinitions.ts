@@ -7,7 +7,7 @@ const BUILT_IN_PACKAGES: AgentDefinitionPackage[] = [
     frontmatter: {
       name: "Plan",
       description: "Create a plan before coding",
-      ui: { selectable: true },
+      permissionMode: "default",
       subagent: { runnable: false },
       policy: { base: "plan" },
     },
@@ -26,7 +26,7 @@ const BUILT_IN_PACKAGES: AgentDefinitionPackage[] = [
     frontmatter: {
       name: "Exec",
       description: "Implement changes in the repository",
-      ui: { selectable: true },
+      permissionMode: "default",
       subagent: { runnable: true },
       policy: { base: "exec" },
     },
@@ -48,7 +48,7 @@ const BUILT_IN_PACKAGES: AgentDefinitionPackage[] = [
     frontmatter: {
       name: "Compact",
       description: "History compaction (internal)",
-      ui: { selectable: false },
+      ui: { hidden: true },
       subagent: { runnable: false },
       policy: { base: "compact" },
     },
@@ -60,7 +60,7 @@ const BUILT_IN_PACKAGES: AgentDefinitionPackage[] = [
     frontmatter: {
       name: "Explore",
       description: "Read-only repository exploration",
-      ui: { selectable: false },
+      ui: { hidden: true },
       subagent: { runnable: true },
       policy: {
         base: "exec",

@@ -35,6 +35,7 @@ interface AgentOption {
   id: string;
   name: string;
   policyBase: AgentDefinitionDescriptor["policyBase"];
+  uiColor?: string;
 }
 
 function normalizeAgentId(value: unknown): string {
@@ -69,6 +70,7 @@ function resolveAgentOptions(agents: AgentDefinitionDescriptor[]): AgentOption[]
           id: entry.id,
           name: entry.name,
           policyBase: entry.policyBase,
+          uiColor: entry.uiColor,
         }))
       : [
           { id: "exec", name: "Exec", policyBase: "exec" },
@@ -284,7 +286,15 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
   const thirdLabel = pinnedOption?.name ?? "Other…";
   const thirdIsActive =
     Boolean(effectivePinnedAgentId) && normalizedAgentId === effectivePinnedAgentId;
-  const thirdActiveClassName = pinnedOption ? resolveActiveClassName(pinnedOption.policyBase) : "";
+
+  const thirdActiveClassName = pinnedOption
+    ? pinnedOption.uiColor
+      ? "text-white"
+      : resolveActiveClassName(pinnedOption.policyBase)
+    : "";
+
+  const thirdActiveStyle: React.CSSProperties | undefined =
+    thirdIsActive && pinnedOption?.uiColor ? { backgroundColor: pinnedOption.uiColor } : undefined;
 
   const buttonBaseClassName =
     "px-1.5 py-0.5 text-[11px] font-sans rounded-sm border-none cursor-pointer transition-all duration-150 bg-transparent";
@@ -343,6 +353,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
             openPicker();
           }}
           aria-pressed={thirdIsActive}
+          style={thirdActiveStyle}
           className={cn(
             buttonBaseClassName,
             "flex items-center gap-1",
@@ -357,6 +368,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
           onClick={() => {
             openPicker();
           }}
+          style={thirdActiveStyle}
           className={cn(
             buttonBaseClassName,
             "px-1",

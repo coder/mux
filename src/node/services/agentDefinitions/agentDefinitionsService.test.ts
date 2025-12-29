@@ -12,8 +12,6 @@ async function writeAgent(root: string, id: string, name: string): Promise<void>
   await fs.mkdir(root, { recursive: true });
   const content = `---
 name: ${name}
-ui:
-  selectable: true
 policy:
   base: exec
 ---

@@ -21,46 +21,80 @@ const DEPTH_HARD_DENY: ToolPolicy = [
   { regex_match: "task_.*", action: "disable" },
 ];
 
-function normalizeToolName(value: string): string | null {
+const READ_ONLY_TOOL_ALLOWLIST: readonly string[] = [
+  "file_read",
+  "agent_skill_read",
+  "agent_skill_read_file",
+  "web_fetch",
+];
+
+function normalizeToolPattern(value: string): string | null {
   const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  const normalized = trimmed.toLowerCase();
+  switch (normalized) {
+    case "read":
+      return "file_read";
+    case "edit":
+      return "file_edit_.*";
+    case "bash":
+      // NOTE: applyToolPolicy wraps patterns in ^...$, so alternation must be grouped.
+      return "(?:bash|bash_output|bash_background_.*)";
+    default:
+      return normalized;
+  }
 }
 
-function buildPolicyFromToolFilter(args: {
+function normalizeToolPatterns(values: readonly string[] | undefined): string[] {
+  return values?.map(normalizeToolPattern).filter(Boolean) as string[];
+}
+
+function buildPermissionModePolicy(args: {
   base: AgentMode;
-  filter: NonNullable<NonNullable<AgentDefinitionFrontmatter["policy"]>["tools"]>;
+  permissionMode: AgentDefinitionFrontmatter["permissionMode"];
+}): ToolPolicy {
+  if (args.base === "compact") {
+    // Compact is an internal no-tools flow.
+    return [{ regex_match: ".*", action: "disable" }];
+  }
+
+  switch (args.permissionMode) {
+    case "default":
+      return [];
+    case "readOnly":
+      return [
+        { regex_match: ".*", action: "disable" },
+        ...READ_ONLY_TOOL_ALLOWLIST.map((name) => ({
+          regex_match: name,
+          action: "enable" as const,
+        })),
+      ];
+    case undefined:
+      // Safe-by-default: custom agents grant no permissions unless explicitly enabled.
+      return [{ regex_match: ".*", action: "disable" }];
+  }
+}
+
+function buildPolicyFromOnlyAllowlist(args: {
+  base: AgentMode;
+  only: readonly string[];
 }): ToolPolicy {
   if (args.base === "compact") {
     // Compact baseline is already "no tools". Do not allow overrides.
     return [{ regex_match: ".*", action: "disable" }];
   }
 
-  // Baseline restrictions that must never be re-enabled.
   const baselineDenied: string[] = args.base === "exec" ? ["propose_plan"] : [];
 
-  const deny = args.filter.deny?.map(normalizeToolName).filter(Boolean) as string[];
-  const only = args.filter.only?.map(normalizeToolName).filter(Boolean) as string[];
+  const allowed = normalizeToolPatterns(args.only).filter((name) => !baselineDenied.includes(name));
 
-  if (only && only.length > 0) {
-    const allowed = only.filter((name) => !baselineDenied.includes(name));
-    return [
-      { regex_match: ".*", action: "disable" },
-      ...allowed.map((name) => ({ regex_match: name, action: "enable" as const })),
-    ];
-  }
-
-  const policy: ToolPolicy = [];
-
-  for (const name of deny ?? []) {
-    policy.push({ regex_match: name, action: "disable" });
-  }
-
-  // Apply baseline denies last so callers cannot re-enable them.
-  for (const name of baselineDenied) {
-    policy.push({ regex_match: name, action: "disable" });
-  }
-
-  return policy;
+  return [
+    { regex_match: ".*", action: "disable" },
+    ...allowed.map((name) => ({ regex_match: name, action: "enable" as const })),
+  ];
 }
 
 export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): ToolPolicy {
@@ -71,17 +105,38 @@ export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): To
     return [{ regex_match: ".*", action: "disable" }];
   }
 
-  // Start with agent-specific filter policy.
-  const agentPolicy: ToolPolicy = options.frontmatter.policy?.tools
-    ? buildPolicyFromToolFilter({ base, filter: options.frontmatter.policy.tools })
-    : // Baseline: exec disables propose_plan; plan allows all tools.
-      base === "exec"
-      ? [{ regex_match: "propose_plan", action: "disable" as const }]
-      : [];
-
+  // NOTE: Hard-denies must be applied last so callers cannot re-enable them.
+  const baseHardDeny: ToolPolicy =
+    base === "exec" ? [{ regex_match: "propose_plan", action: "disable" }] : [];
   const depthPolicy: ToolPolicy = options.disableTaskToolsForDepth ? DEPTH_HARD_DENY : [];
   const subagentPolicy: ToolPolicy = options.isSubagent ? SUBAGENT_HARD_DENY : [];
 
-  // IMPORTANT: depth + subagent policies must be applied last.
-  return [...agentPolicy, ...depthPolicy, ...subagentPolicy];
+  const toolFilter = options.frontmatter.policy?.tools;
+
+  // Ground-up allowlist override.
+  if (toolFilter?.only && toolFilter.only.length > 0) {
+    const agentPolicy = buildPolicyFromOnlyAllowlist({ base, only: toolFilter.only });
+    return [...agentPolicy, ...baseHardDeny, ...depthPolicy, ...subagentPolicy];
+  }
+
+  const agentPolicy: ToolPolicy = [
+    ...buildPermissionModePolicy({ base, permissionMode: options.frontmatter.permissionMode }),
+
+    ...normalizeToolPatterns(options.frontmatter.tools).map((name) => ({
+      regex_match: name,
+      action: "enable" as const,
+    })),
+
+    ...normalizeToolPatterns(options.frontmatter.disallowedTools).map((name) => ({
+      regex_match: name,
+      action: "disable" as const,
+    })),
+
+    ...normalizeToolPatterns(toolFilter?.deny).map((name) => ({
+      regex_match: name,
+      action: "disable" as const,
+    })),
+  ];
+
+  return [...agentPolicy, ...baseHardDeny, ...depthPolicy, ...subagentPolicy];
 }

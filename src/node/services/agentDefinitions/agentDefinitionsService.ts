@@ -28,6 +28,22 @@ import {
 
 const GLOBAL_AGENTS_ROOT = "~/.mux/agents";
 
+function resolveUiSelectable(ui: { hidden?: boolean; selectable?: boolean } | undefined): boolean {
+  if (!ui) {
+    return true;
+  }
+
+  if (typeof ui.hidden === "boolean") {
+    return !ui.hidden;
+  }
+
+  if (typeof ui.selectable === "boolean") {
+    return ui.selectable;
+  }
+
+  return true;
+}
+
 export interface AgentDefinitionsRoots {
   projectRoot: string;
   globalRoot: string;
@@ -138,7 +154,8 @@ async function readAgentDescriptorFromFile(
   try {
     const parsed = parseAgentDefinitionMarkdown({ content, byteSize: stat.size });
 
-    const uiSelectable = parsed.frontmatter.ui?.selectable ?? false;
+    const uiSelectable = resolveUiSelectable(parsed.frontmatter.ui);
+    const uiColor = parsed.frontmatter.color;
     const subagentRunnable = parsed.frontmatter.subagent?.runnable ?? false;
     const policyBase = parsed.frontmatter.policy?.base ?? "exec";
 
@@ -148,6 +165,7 @@ async function readAgentDescriptorFromFile(
       name: parsed.frontmatter.name,
       description: parsed.frontmatter.description,
       uiSelectable,
+      uiColor,
       subagentRunnable,
       policyBase,
       aiDefaults: parsed.frontmatter.ai,
@@ -183,7 +201,8 @@ export async function discoverAgentDefinitions(
 
   // Seed built-ins (lowest precedence).
   for (const pkg of getBuiltInAgentDefinitions()) {
-    const uiSelectable = pkg.frontmatter.ui?.selectable ?? false;
+    const uiSelectable = resolveUiSelectable(pkg.frontmatter.ui);
+    const uiColor = pkg.frontmatter.color;
     const subagentRunnable = pkg.frontmatter.subagent?.runnable ?? false;
     const policyBase = pkg.frontmatter.policy?.base ?? "exec";
 
@@ -193,6 +212,7 @@ export async function discoverAgentDefinitions(
       name: pkg.frontmatter.name,
       description: pkg.frontmatter.description,
       uiSelectable,
+      uiColor,
       subagentRunnable,
       policyBase,
       aiDefaults: pkg.frontmatter.ai,

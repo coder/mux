@@ -18,31 +18,37 @@ const AgentPolicyBaseSchema = z.preprocess(
 
 const ThinkingLevelSchema = z.enum(["off", "low", "medium", "high", "xhigh"]);
 
+const PermissionModeSchema = z.enum(["default", "readOnly"]);
+
 const AgentDefinitionUiSchema = z
   .object({
+    // New: hidden is opt-out. Default: visible.
+    hidden: z.boolean().optional(),
+
+    // Legacy: selectable was opt-in. Keep for backwards compatibility.
     selectable: z.boolean().optional(),
   })
-  .strict();
+  .strip();
 
 const AgentDefinitionSubagentSchema = z
   .object({
     runnable: z.boolean().optional(),
   })
-  .strict();
+  .strip();
 
 const AgentDefinitionAiDefaultsSchema = z
   .object({
     modelString: z.string().min(1).optional(),
     thinkingLevel: ThinkingLevelSchema.optional(),
   })
-  .strict();
+  .strip();
 
 const AgentDefinitionToolFilterSchema = z
   .object({
     deny: z.array(z.string().min(1)).optional(),
     only: z.array(z.string().min(1)).optional(),
   })
-  .strict()
+  .strip()
   .superRefine((value, ctx) => {
     const hasDeny = Array.isArray(value.deny) && value.deny.length > 0;
     const hasOnly = Array.isArray(value.only) && value.only.length > 0;
@@ -62,18 +68,27 @@ const AgentDefinitionPolicySchema = z
     base: AgentPolicyBaseSchema.optional(),
     tools: AgentDefinitionToolFilterSchema.optional(),
   })
-  .strict();
+  .strip();
 
 export const AgentDefinitionFrontmatterSchema = z
   .object({
     name: z.string().min(1).max(128),
     description: z.string().min(1).max(1024).optional(),
+
+    // UI metadata
+    color: z.string().min(1).optional(),
     ui: AgentDefinitionUiSchema.optional(),
+
     subagent: AgentDefinitionSubagentSchema.optional(),
     ai: AgentDefinitionAiDefaultsSchema.optional(),
     policy: AgentDefinitionPolicySchema.optional(),
+
+    // Tool policy presets + tweaks
+    permissionMode: PermissionModeSchema.optional(),
+    tools: z.array(z.string().min(1)).optional(),
+    disallowedTools: z.array(z.string().min(1)).optional(),
   })
-  .strict();
+  .strip();
 
 export const AgentDefinitionDescriptorSchema = z
   .object({
@@ -82,6 +97,7 @@ export const AgentDefinitionDescriptorSchema = z
     name: z.string().min(1).max(128),
     description: z.string().min(1).max(1024).optional(),
     uiSelectable: z.boolean(),
+    uiColor: z.string().min(1).optional(),
     subagentRunnable: z.boolean(),
     policyBase: AgentModeSchema,
     aiDefaults: AgentDefinitionAiDefaultsSchema.optional(),

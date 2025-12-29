@@ -4,13 +4,30 @@ import { resolveToolPolicyForAgent } from "./resolveToolPolicy";
 
 import type { AgentDefinitionFrontmatter } from "@/common/types/agentDefinition";
 
-const baseFrontmatter: AgentDefinitionFrontmatter = { name: "Test Agent" };
-
 describe("resolveToolPolicyForAgent", () => {
-  test("exec baseline disables propose_plan", () => {
+  test("missing permissionMode denies all tools (exec)", () => {
     const policy = resolveToolPolicyForAgent({
       base: "exec",
-      frontmatter: baseFrontmatter,
+      frontmatter: { name: "Test Agent" },
+      isSubagent: false,
+      disableTaskToolsForDepth: false,
+    });
+
+    expect(policy).toEqual([
+      { regex_match: ".*", action: "disable" },
+      { regex_match: "propose_plan", action: "disable" },
+    ]);
+  });
+
+  test("permissionMode: default preserves prior exec baseline (hard-deny propose_plan)", () => {
+    const frontmatter: AgentDefinitionFrontmatter = {
+      name: "Test Agent",
+      permissionMode: "default",
+    };
+
+    const policy = resolveToolPolicyForAgent({
+      base: "exec",
+      frontmatter,
       isSubagent: false,
       disableTaskToolsForDepth: false,
     });
@@ -18,11 +35,84 @@ describe("resolveToolPolicyForAgent", () => {
     expect(policy).toEqual([{ regex_match: "propose_plan", action: "disable" }]);
   });
 
+  test("permissionMode: default preserves prior plan baseline (no policy)", () => {
+    const policy = resolveToolPolicyForAgent({
+      base: "plan",
+      frontmatter: { name: "Plan", permissionMode: "default" },
+      isSubagent: false,
+      disableTaskToolsForDepth: false,
+    });
+
+    expect(policy).toEqual([]);
+  });
+
+  test("permissionMode: readOnly enables only the read-only allowlist", () => {
+    const policy = resolveToolPolicyForAgent({
+      base: "exec",
+      frontmatter: { name: "Read-only", permissionMode: "readOnly" },
+      isSubagent: false,
+      disableTaskToolsForDepth: false,
+    });
+
+    expect(policy).toEqual([
+      { regex_match: ".*", action: "disable" },
+      { regex_match: "file_read", action: "enable" },
+      { regex_match: "agent_skill_read", action: "enable" },
+      { regex_match: "agent_skill_read_file", action: "enable" },
+      { regex_match: "web_fetch", action: "enable" },
+      { regex_match: "propose_plan", action: "disable" },
+    ]);
+  });
+
+  test("tools/disallowedTools compose with the permissionMode baseline", () => {
+    const policy = resolveToolPolicyForAgent({
+      base: "exec",
+      frontmatter: {
+        name: "Tweaks",
+        permissionMode: "readOnly",
+        tools: ["Edit"],
+        disallowedTools: ["file_read"],
+      },
+      isSubagent: false,
+      disableTaskToolsForDepth: false,
+    });
+
+    expect(policy).toEqual([
+      { regex_match: ".*", action: "disable" },
+      { regex_match: "file_read", action: "enable" },
+      { regex_match: "agent_skill_read", action: "enable" },
+      { regex_match: "agent_skill_read_file", action: "enable" },
+      { regex_match: "web_fetch", action: "enable" },
+      { regex_match: "file_edit_.*", action: "enable" },
+      { regex_match: "file_read", action: "disable" },
+      { regex_match: "propose_plan", action: "disable" },
+    ]);
+  });
+
+  test("policy.tools.only is a ground-up allowlist override", () => {
+    const policy = resolveToolPolicyForAgent({
+      base: "exec",
+      frontmatter: {
+        name: "Allowlist",
+        policy: { tools: { only: ["Bash", "propose_plan"] } },
+      },
+      isSubagent: false,
+      disableTaskToolsForDepth: false,
+    });
+
+    expect(policy).toEqual([
+      { regex_match: ".*", action: "disable" },
+      { regex_match: "(?:bash|bash_output|bash_background_.*)", action: "enable" },
+      { regex_match: "propose_plan", action: "disable" },
+    ]);
+  });
+
   test("compact always disables all tools", () => {
     const policy = resolveToolPolicyForAgent({
       base: "compact",
       frontmatter: {
         name: "Compact",
+        permissionMode: "default",
         policy: { tools: { only: ["bash"] } },
       },
       isSubagent: false,
@@ -32,44 +122,10 @@ describe("resolveToolPolicyForAgent", () => {
     expect(policy).toEqual([{ regex_match: ".*", action: "disable" }]);
   });
 
-  test("tools.only disables everything then enables the allowlist (cannot re-enable propose_plan in exec)", () => {
-    const policy = resolveToolPolicyForAgent({
-      base: "exec",
-      frontmatter: {
-        name: "Allowlist",
-        policy: { tools: { only: ["bash", "propose_plan"] } },
-      },
-      isSubagent: false,
-      disableTaskToolsForDepth: false,
-    });
-
-    expect(policy).toEqual([
-      { regex_match: ".*", action: "disable" },
-      { regex_match: "bash", action: "enable" },
-    ]);
-  });
-
-  test("tools.deny disables listed tools and applies baseline denies last", () => {
-    const policy = resolveToolPolicyForAgent({
-      base: "exec",
-      frontmatter: {
-        name: "Deny",
-        policy: { tools: { deny: ["bash"] } },
-      },
-      isSubagent: false,
-      disableTaskToolsForDepth: false,
-    });
-
-    expect(policy).toEqual([
-      { regex_match: "bash", action: "disable" },
-      { regex_match: "propose_plan", action: "disable" },
-    ]);
-  });
-
   test("subagents always hard-deny task recursion and propose_plan", () => {
     const policy = resolveToolPolicyForAgent({
       base: "plan",
-      frontmatter: baseFrontmatter,
+      frontmatter: { name: "Subagent", permissionMode: "default" },
       isSubagent: true,
       disableTaskToolsForDepth: false,
     });
@@ -85,7 +141,7 @@ describe("resolveToolPolicyForAgent", () => {
   test("depth limit hard-denies task tools (even for the main agent)", () => {
     const policy = resolveToolPolicyForAgent({
       base: "exec",
-      frontmatter: baseFrontmatter,
+      frontmatter: { name: "Depth", permissionMode: "default" },
       isSubagent: false,
       disableTaskToolsForDepth: true,
     });
