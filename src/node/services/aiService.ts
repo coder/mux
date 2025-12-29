@@ -1427,12 +1427,12 @@ export class AIService extends EventEmitter {
             // Supplement mode: add code_execution if policy allows (experiment is additive).
             // Handle require policies: if code_execution is required, return only it.
             // If another tool is required, don't add code_execution (would violate require).
-            const requiredToolName = effectiveToolPolicy?.find(
-              (f) => f.action === "require"
-            )?.regex_match;
-            if (requiredToolName === "code_execution") {
+            const requireFilter = effectiveToolPolicy?.find((f) => f.action === "require");
+            const requiresCodeExecution =
+              requireFilter && new RegExp(`^${requireFilter.regex_match}$`).test("code_execution");
+            if (requiresCodeExecution) {
               toolsForModel = { code_execution: codeExecutionTool };
-            } else if (requiredToolName) {
+            } else if (requireFilter) {
               // Another tool is required — don't add code_execution
               toolsForModel = policyFilteredTools;
             } else {
