@@ -663,7 +663,8 @@ export class WorkspaceService extends EventEmitter {
           { projectPath }
         );
 
-        // Delete workspace from runtime
+        // Delete workspace from runtime first - if this fails with force=false, we abort
+        // and keep workspace in config so user can retry. This prevents orphaned directories.
         const deleteResult = await runtime.deleteWorkspace(
           projectPath,
           metadata.name, // use branch name
@@ -2013,6 +2014,15 @@ export class WorkspaceService extends EventEmitter {
       timeout_secs?: number;
     }
   ): Promise<Result<BashToolResult>> {
+    // Block bash execution while workspace is being removed to prevent races with directory deletion.
+    // A common case: subagent calls agent_report → frontend's GitStatusStore triggers a git status
+    // refresh → executeBash arrives while remove() is deleting the directory → spawn fails with ENOENT.
+    // removingWorkspaces is set for the entire duration of remove(), covering the window between
+    // disk deletion and metadata invalidation.
+    if (this.removingWorkspaces.has(workspaceId)) {
+      return Err(`Workspace ${workspaceId} is being removed`);
+    }
+
     try {
       // Get workspace metadata
       const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
