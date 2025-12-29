@@ -29,7 +29,10 @@ export const RosettaBanner: React.FC = () => {
   return (
     <div
       className={cn(
-        "bg-warning/10 border-warning/30 text-warning flex items-center justify-between gap-3 border-b px-4 py-2 text-sm"
+        "flex items-center justify-between gap-3 border-b px-4 py-2 text-sm",
+        "bg-warning/10 border-warning/30",
+        // Use amber-800 equivalent for good contrast in both themes
+        "text-[hsl(38_80%_30%)] dark:text-warning"
       )}
     >
       <div className="flex items-center gap-2">
@@ -50,7 +53,7 @@ export const RosettaBanner: React.FC = () => {
       <button
         type="button"
         onClick={() => setDismissedAt(Date.now())}
-        className="hover:text-warning/80 shrink-0 p-1 transition-colors"
+        className="shrink-0 p-1 opacity-70 transition-opacity hover:opacity-100"
         aria-label="Dismiss Rosetta warning"
       >
         <X className="size-4" />
