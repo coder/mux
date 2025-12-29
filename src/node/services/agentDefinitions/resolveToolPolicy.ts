@@ -112,13 +112,22 @@ export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): To
     base === "exec" ? [{ regex_match: "propose_plan", action: "disable" }] : [];
   const depthPolicy: ToolPolicy = options.disableTaskToolsForDepth ? DEPTH_HARD_DENY : [];
   const subagentPolicy: ToolPolicy = options.isSubagent ? SUBAGENT_HARD_DENY : [];
+  const subagentAlwaysAllow: ToolPolicy = options.isSubagent
+    ? [{ regex_match: "agent_report", action: "enable" }]
+    : [];
 
   const toolFilter = options.frontmatter.policy?.tools;
 
   // Ground-up allowlist override.
   if (toolFilter?.only && toolFilter.only.length > 0) {
     const agentPolicy = buildPolicyFromOnlyAllowlist({ base, only: toolFilter.only });
-    return [...agentPolicy, ...baseHardDeny, ...depthPolicy, ...subagentPolicy];
+    return [
+      ...agentPolicy,
+      ...baseHardDeny,
+      ...depthPolicy,
+      ...subagentPolicy,
+      ...subagentAlwaysAllow,
+    ];
   }
 
   const agentPolicy: ToolPolicy = [
@@ -140,5 +149,11 @@ export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): To
     })),
   ];
 
-  return [...agentPolicy, ...baseHardDeny, ...depthPolicy, ...subagentPolicy];
+  return [
+    ...agentPolicy,
+    ...baseHardDeny,
+    ...depthPolicy,
+    ...subagentPolicy,
+    ...subagentAlwaysAllow,
+  ];
 }

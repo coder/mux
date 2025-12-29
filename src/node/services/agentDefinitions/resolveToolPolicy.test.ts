@@ -135,6 +135,26 @@ describe("resolveToolPolicyForAgent", () => {
       { regex_match: "task_.*", action: "disable" },
       { regex_match: "propose_plan", action: "disable" },
       { regex_match: "ask_user_question", action: "disable" },
+      { regex_match: "agent_report", action: "enable" },
+    ]);
+  });
+
+  test("subagents always allow agent_report (even when permissionMode is missing)", () => {
+    const policy = resolveToolPolicyForAgent({
+      base: "exec",
+      frontmatter: { name: "Subagent" },
+      isSubagent: true,
+      disableTaskToolsForDepth: false,
+    });
+
+    expect(policy).toEqual([
+      { regex_match: ".*", action: "disable" },
+      { regex_match: "propose_plan", action: "disable" },
+      { regex_match: "task", action: "disable" },
+      { regex_match: "task_.*", action: "disable" },
+      { regex_match: "propose_plan", action: "disable" },
+      { regex_match: "ask_user_question", action: "disable" },
+      { regex_match: "agent_report", action: "enable" },
     ]);
   });
 
