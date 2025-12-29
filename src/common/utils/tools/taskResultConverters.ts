@@ -48,15 +48,56 @@ export function coerceBashToolResult(value: unknown): BashToolResult | null {
     }
 
     // Background spawn success includes taskId/backgroundProcessId.
-    const taskId = (value as { taskId?: unknown }).taskId;
-    const backgroundProcessId = (value as { backgroundProcessId?: unknown }).backgroundProcessId;
-    if (taskId !== undefined || backgroundProcessId !== undefined) {
-      if (typeof taskId !== "string" || typeof backgroundProcessId !== "string") {
-        return null;
-      }
+    // Older histories sometimes stored only one of these fields, so we derive the
+    // other when possible.
+    const taskIdRaw = (value as { taskId?: unknown }).taskId;
+    const backgroundProcessIdRaw = (value as { backgroundProcessId?: unknown }).backgroundProcessId;
+
+    if (taskIdRaw === undefined && backgroundProcessIdRaw === undefined) {
+      return value as BashToolResult;
     }
 
-    return value as BashToolResult;
+    if (typeof taskIdRaw === "string" && typeof backgroundProcessIdRaw === "string") {
+      return value as BashToolResult;
+    }
+
+    if (typeof backgroundProcessIdRaw === "string" && taskIdRaw === undefined) {
+      const processId = backgroundProcessIdRaw.trim();
+      if (processId.length === 0) {
+        return null;
+      }
+
+      const derived: BashToolResult = {
+        success: true,
+        output,
+        exitCode: 0,
+        wall_duration_ms: wallDurationMs,
+        taskId: `${BASH_TASK_ID_PREFIX}${processId}`,
+        backgroundProcessId: processId,
+      };
+
+      return derived;
+    }
+
+    if (typeof taskIdRaw === "string" && backgroundProcessIdRaw === undefined) {
+      const processId = fromBashTaskId(taskIdRaw);
+      if (!processId) {
+        return null;
+      }
+
+      const derived: BashToolResult = {
+        success: true,
+        output,
+        exitCode: 0,
+        wall_duration_ms: wallDurationMs,
+        taskId: taskIdRaw,
+        backgroundProcessId: processId,
+      };
+
+      return derived;
+    }
+
+    return null;
   }
 
   const error = (value as { error?: unknown }).error;
