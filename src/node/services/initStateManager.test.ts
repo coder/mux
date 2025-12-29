@@ -344,5 +344,52 @@ describe("InitStateManager", () => {
       expect(state?.lines.length).toBe(10);
       expect(state?.truncatedLines).toBeUndefined();
     });
+
+    it("should truncate old persisted data on replay (backwards compat)", async () => {
+      const workspaceId = "test-workspace";
+      const events: Array<WorkspaceInitEvent & { workspaceId: string }> = [];
+
+      // Manually write a large init-status.json to simulate old data
+      const sessionsDir = path.join(tempDir, "sessions", workspaceId);
+      await fs.mkdir(sessionsDir, { recursive: true });
+
+      const oldLineCount = INIT_HOOK_MAX_LINES + 200;
+      const oldStatus = {
+        status: "success",
+        hookPath: "/path/to/hook",
+        startTime: Date.now() - 1000,
+        lines: Array.from({ length: oldLineCount }, (_, i) => ({
+          line: `Old line ${i}`,
+          isError: false,
+          timestamp: Date.now() - 1000 + i,
+        })),
+        exitCode: 0,
+        endTime: Date.now(),
+        // No truncatedLines field - old format
+      };
+      await fs.writeFile(path.join(sessionsDir, "init-status.json"), JSON.stringify(oldStatus));
+
+      // Subscribe to events
+      manager.on("init-output", (event: WorkspaceInitEvent & { workspaceId: string }) =>
+        events.push(event)
+      );
+      manager.on("init-end", (event: WorkspaceInitEvent & { workspaceId: string }) =>
+        events.push(event)
+      );
+
+      // Replay from disk
+      await manager.replayInit(workspaceId);
+
+      // Should only emit MAX_LINES output events (truncated)
+      const outputEvents = events.filter((e) => e.type === "init-output");
+      expect(outputEvents.length).toBe(INIT_HOOK_MAX_LINES);
+
+      // init-end should include truncatedLines count
+      const endEvent = events.find((e) => e.type === "init-end");
+      expect((endEvent as { truncatedLines?: number }).truncatedLines).toBe(200);
+
+      // First replayed line should be from the tail (old line 200)
+      expect((outputEvents[0] as { line: string }).line).toBe("Old line 200");
+    });
   });
 });

@@ -1358,11 +1358,7 @@ export class StreamingMessageAggregator {
         return;
       }
       const line = data.isError ? `ERROR: ${data.line}` : data.line;
-      // Extra defensive check (should never hit due to check above, but prevents crash if data changes)
-      if (typeof line !== "string") {
-        console.error("Init-output line is not a string", { line, data });
-        return;
-      }
+
       // Truncation: keep only the most recent MAX_LINES (matches backend)
       if (this.initState.lines.length >= INIT_HOOK_MAX_LINES) {
         this.initState.lines.shift(); // Drop oldest line
@@ -1386,8 +1382,8 @@ export class StreamingMessageAggregator {
       this.initState.exitCode = data.exitCode;
       this.initState.status = data.exitCode === 0 ? "success" : "error";
       this.initState.endTime = data.timestamp;
-      // Capture truncation info from init-end event
-      if (data.truncatedLines) {
+      // Use backend truncation count if larger (covers replay of old data)
+      if (data.truncatedLines && data.truncatedLines > (this.initState.truncatedLines ?? 0)) {
         this.initState.truncatedLines = data.truncatedLines;
       }
       // Cancel any pending throttled update and flush immediately

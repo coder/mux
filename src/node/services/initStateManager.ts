@@ -104,7 +104,19 @@ export class InitStateManager extends EventEmitter {
 
     // Emit init-output for each accumulated line with original timestamps
     // Defensive: state.lines could be undefined from old persisted data
-    const lines = state.lines ?? [];
+    let lines = state.lines ?? [];
+    let truncatedLines = state.truncatedLines ?? 0;
+
+    // Truncate old persisted data that exceeded the limit (backwards compat)
+    if (lines.length > INIT_HOOK_MAX_LINES) {
+      const excessLines = lines.length - INIT_HOOK_MAX_LINES;
+      lines = lines.slice(-INIT_HOOK_MAX_LINES); // Keep tail
+      truncatedLines += excessLines;
+      log.info(
+        `[InitStateManager] Truncated ${excessLines} lines from old persisted data for ${workspaceId}`
+      );
+    }
+
     for (const timedLine of lines) {
       // Skip malformed entries (missing required fields)
       if (typeof timedLine.line !== "string" || typeof timedLine.timestamp !== "number") {
@@ -128,7 +140,7 @@ export class InitStateManager extends EventEmitter {
         exitCode: state.exitCode,
         timestamp: state.endTime ?? state.startTime,
         // Include truncation info so frontend can show indicator
-        ...(state.truncatedLines ? { truncatedLines: state.truncatedLines } : {}),
+        ...(truncatedLines ? { truncatedLines } : {}),
       });
     }
 
