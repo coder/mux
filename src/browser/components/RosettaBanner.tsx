@@ -29,13 +29,11 @@ export const RosettaBanner: React.FC = () => {
   return (
     <div
       className={cn(
-        "bg-warning/10 border-warning/30 flex items-center justify-between gap-3 border-b px-4 py-2 text-sm",
-        // Dark amber for light mode contrast, original warning yellow for dark mode
-        "text-amber-800 dark:text-warning"
+        "bg-warning/10 border-warning/30 text-warning flex items-center justify-between gap-3 border-b px-4 py-2 text-sm"
       )}
     >
       <div className="flex items-center gap-2">
-        <AlertTriangle className="size-4 shrink-0" />
+        <AlertTriangle className="text-warning size-4 shrink-0" />
         <span>
           Mux is running under Rosetta. For better performance,{" "}
           <a
@@ -52,7 +50,7 @@ export const RosettaBanner: React.FC = () => {
       <button
         type="button"
         onClick={() => setDismissedAt(Date.now())}
-        className="hover:text-amber-600 dark:hover:text-warning/80 shrink-0 p-1 transition-colors"
+        className="hover:text-warning/80 shrink-0 p-1 transition-colors"
         aria-label="Dismiss Rosetta warning"
       >
         <X className="size-4" />

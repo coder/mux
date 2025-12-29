@@ -591,116 +591,112 @@ function AppInner() {
 
   return (
     <>
-      <div className="bg-bg-dark mobile-layout flex h-screen flex-col overflow-hidden">
-        <RosettaBanner />
-        <div className="flex min-h-0 flex-1 overflow-hidden">
-          <LeftSidebar
-            lastReadTimestamps={lastReadTimestamps}
-            onToggleUnread={onToggleUnread}
-            collapsed={sidebarCollapsed}
-            onToggleCollapsed={handleToggleSidebar}
-            sortedWorkspacesByProject={sortedWorkspacesByProject}
-            workspaceRecency={workspaceRecency}
-          />
-          <div className="mobile-main-content flex min-w-0 flex-1 flex-col overflow-hidden">
-            <div className="mobile-layout flex flex-1 overflow-hidden">
-              {selectedWorkspace ? (
-                (() => {
-                  const currentMetadata = workspaceMetadata.get(selectedWorkspace.workspaceId);
-                  // Guard: Don't render AIView if workspace metadata not found.
-                  // This can happen when selectedWorkspace (from localStorage) refers to a
-                  // deleted workspace, or during a race condition on reload before the
-                  // validation effect clears the stale selection.
-                  if (!currentMetadata) {
-                    return null;
-                  }
-                  // Use metadata.name for workspace name (works for both worktree and local runtimes)
-                  // Fallback to path-based derivation for legacy compatibility
-                  const workspaceName =
-                    currentMetadata.name ??
-                    selectedWorkspace.namedWorkspacePath?.split("/").pop() ??
-                    selectedWorkspace.workspaceId;
-                  // Use live metadata path (updates on rename) with fallback to initial path
-                  const workspacePath =
-                    currentMetadata.namedWorkspacePath ??
-                    selectedWorkspace.namedWorkspacePath ??
-                    "";
-                  return (
-                    <ErrorBoundary
-                      workspaceInfo={`${selectedWorkspace.projectName}/${workspaceName}`}
-                    >
-                      <AIView
-                        key={selectedWorkspace.workspaceId}
-                        workspaceId={selectedWorkspace.workspaceId}
-                        projectPath={selectedWorkspace.projectPath}
-                        projectName={selectedWorkspace.projectName}
-                        workspaceName={workspaceName}
-                        namedWorkspacePath={workspacePath}
-                        runtimeConfig={currentMetadata.runtimeConfig}
-                        incompatibleRuntime={currentMetadata.incompatibleRuntime}
-                        status={currentMetadata.status}
-                      />
-                    </ErrorBoundary>
-                  );
-                })()
-              ) : creationProjectPath ? (
-                (() => {
-                  const projectPath = creationProjectPath;
-                  const projectName =
-                    projectPath.split("/").pop() ?? projectPath.split("\\").pop() ?? "Project";
-                  return (
-                    <ProjectPage
-                      projectPath={projectPath}
-                      projectName={projectName}
-                      onProviderConfig={handleProviderConfig}
-                      onWorkspaceCreated={(metadata) => {
-                        // IMPORTANT: Add workspace to store FIRST (synchronous) to ensure
-                        // the store knows about it before React processes the state updates.
-                        // This prevents race conditions where the UI tries to access the
-                        // workspace before the store has created its aggregator.
-                        workspaceStore.addWorkspace(metadata);
-
-                        // Add to workspace metadata map (triggers React state update)
-                        setWorkspaceMetadata((prev) => new Map(prev).set(metadata.id, metadata));
-
-                        // Only switch to new workspace if user hasn't selected another one
-                        // during the creation process (selectedWorkspace was null when creation started)
-                        setSelectedWorkspace((current) => {
-                          if (current !== null) {
-                            // User has already selected another workspace - don't override
-                            return current;
-                          }
-                          return toWorkspaceSelection(metadata);
-                        });
-
-                        // Track telemetry
-                        telemetry.workspaceCreated(
-                          metadata.id,
-                          getRuntimeTypeForTelemetry(metadata.runtimeConfig)
-                        );
-
-                        // Note: No need to call clearPendingWorkspaceCreation() here.
-                        // Navigating to the workspace URL automatically clears the pending
-                        // state since pendingNewWorkspaceProject is derived from the URL.
-                      }}
+      <div className="bg-bg-dark mobile-layout flex h-screen overflow-hidden">
+        <LeftSidebar
+          lastReadTimestamps={lastReadTimestamps}
+          onToggleUnread={onToggleUnread}
+          collapsed={sidebarCollapsed}
+          onToggleCollapsed={handleToggleSidebar}
+          sortedWorkspacesByProject={sortedWorkspacesByProject}
+          workspaceRecency={workspaceRecency}
+        />
+        <div className="mobile-main-content flex min-w-0 flex-1 flex-col overflow-hidden">
+          <RosettaBanner />
+          <div className="mobile-layout flex flex-1 overflow-hidden">
+            {selectedWorkspace ? (
+              (() => {
+                const currentMetadata = workspaceMetadata.get(selectedWorkspace.workspaceId);
+                // Guard: Don't render AIView if workspace metadata not found.
+                // This can happen when selectedWorkspace (from localStorage) refers to a
+                // deleted workspace, or during a race condition on reload before the
+                // validation effect clears the stale selection.
+                if (!currentMetadata) {
+                  return null;
+                }
+                // Use metadata.name for workspace name (works for both worktree and local runtimes)
+                // Fallback to path-based derivation for legacy compatibility
+                const workspaceName =
+                  currentMetadata.name ??
+                  selectedWorkspace.namedWorkspacePath?.split("/").pop() ??
+                  selectedWorkspace.workspaceId;
+                // Use live metadata path (updates on rename) with fallback to initial path
+                const workspacePath =
+                  currentMetadata.namedWorkspacePath ?? selectedWorkspace.namedWorkspacePath ?? "";
+                return (
+                  <ErrorBoundary
+                    workspaceInfo={`${selectedWorkspace.projectName}/${workspaceName}`}
+                  >
+                    <AIView
+                      key={selectedWorkspace.workspaceId}
+                      workspaceId={selectedWorkspace.workspaceId}
+                      projectPath={selectedWorkspace.projectPath}
+                      projectName={selectedWorkspace.projectName}
+                      workspaceName={workspaceName}
+                      namedWorkspacePath={workspacePath}
+                      runtimeConfig={currentMetadata.runtimeConfig}
+                      incompatibleRuntime={currentMetadata.incompatibleRuntime}
+                      status={currentMetadata.status}
                     />
-                  );
-                })()
-              ) : (
-                <div
-                  className="[&_p]:text-muted [&_h2]:text-foreground mx-auto w-full max-w-3xl text-center [&_h2]:mb-4 [&_h2]:font-bold [&_h2]:tracking-tight [&_p]:leading-[1.6]"
-                  style={{
-                    padding: "clamp(40px, 10vh, 100px) 20px",
-                    fontSize: "clamp(14px, 2vw, 16px)",
-                  }}
-                >
-                  <h2 style={{ fontSize: "clamp(24px, 5vw, 36px)", letterSpacing: "-1px" }}>
-                    Welcome to Mux
-                  </h2>
-                  <p>Select a workspace from the sidebar or add a new one to get started.</p>
-                </div>
-              )}
-            </div>
+                  </ErrorBoundary>
+                );
+              })()
+            ) : creationProjectPath ? (
+              (() => {
+                const projectPath = creationProjectPath;
+                const projectName =
+                  projectPath.split("/").pop() ?? projectPath.split("\\").pop() ?? "Project";
+                return (
+                  <ProjectPage
+                    projectPath={projectPath}
+                    projectName={projectName}
+                    onProviderConfig={handleProviderConfig}
+                    onWorkspaceCreated={(metadata) => {
+                      // IMPORTANT: Add workspace to store FIRST (synchronous) to ensure
+                      // the store knows about it before React processes the state updates.
+                      // This prevents race conditions where the UI tries to access the
+                      // workspace before the store has created its aggregator.
+                      workspaceStore.addWorkspace(metadata);
+
+                      // Add to workspace metadata map (triggers React state update)
+                      setWorkspaceMetadata((prev) => new Map(prev).set(metadata.id, metadata));
+
+                      // Only switch to new workspace if user hasn't selected another one
+                      // during the creation process (selectedWorkspace was null when creation started)
+                      setSelectedWorkspace((current) => {
+                        if (current !== null) {
+                          // User has already selected another workspace - don't override
+                          return current;
+                        }
+                        return toWorkspaceSelection(metadata);
+                      });
+
+                      // Track telemetry
+                      telemetry.workspaceCreated(
+                        metadata.id,
+                        getRuntimeTypeForTelemetry(metadata.runtimeConfig)
+                      );
+
+                      // Note: No need to call clearPendingWorkspaceCreation() here.
+                      // Navigating to the workspace URL automatically clears the pending
+                      // state since pendingNewWorkspaceProject is derived from the URL.
+                    }}
+                  />
+                );
+              })()
+            ) : (
+              <div
+                className="[&_p]:text-muted [&_h2]:text-foreground mx-auto w-full max-w-3xl text-center [&_h2]:mb-4 [&_h2]:font-bold [&_h2]:tracking-tight [&_p]:leading-[1.6]"
+                style={{
+                  padding: "clamp(40px, 10vh, 100px) 20px",
+                  fontSize: "clamp(14px, 2vw, 16px)",
+                }}
+              >
+                <h2 style={{ fontSize: "clamp(24px, 5vw, 36px)", letterSpacing: "-1px" }}>
+                  Welcome to Mux
+                </h2>
+                <p>Select a workspace from the sidebar or add a new one to get started.</p>
+              </div>
+            )}
           </div>
         </div>
         <CommandPalette
