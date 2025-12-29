@@ -5,7 +5,13 @@ import type { AgentDefinitionPackage } from "@/common/types/agentDefinition";
 import { AgentIdSchema } from "@/common/orpc/schemas";
 import { parseAgentDefinitionMarkdown } from "./parseAgentDefinitionMarkdown";
 
-const BUILTIN_AGENTS_DIR = path.join(__dirname, "..", "..", "builtinAgents");
+/**
+ * Built-in agents directory path.
+ * In development: src/node/builtinAgents/ (relative to src/node/services/agentDefinitions/)
+ * In production:  dist/builtinAgents/     (relative to dist/services/agentDefinitions/)
+ * Both resolve correctly via __dirname + ../../builtinAgents
+ */
+const BUILTIN_AGENTS_DIR = path.join(__dirname, "../../builtinAgents");
 
 let cachedPackages: AgentDefinitionPackage[] | null = null;
 let loadPromise: Promise<AgentDefinitionPackage[]> | null = null;

@@ -221,6 +221,7 @@
     "dist/**/*.woff2",
     "dist/**/*.json",
     "dist/**/*.png",
+    "dist/**/*.md",
     "dist/assets/**/*",
     "scripts/postinstall.sh",
     "README.md",

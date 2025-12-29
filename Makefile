@@ -225,6 +225,9 @@ build-static: ## Copy static assets to dist
 	@mkdir -p dist
 	@cp static/splash.html dist/splash.html
 	@cp -r public/* dist/
+	@# Copy built-in agent definition markdown files
+	@mkdir -p dist/builtinAgents
+	@cp src/node/builtinAgents/*.md dist/builtinAgents/
 	@# Copy TypeScript lib files for PTC runtime type validation (es5 through es2023).
 	@# electron-builder ignores .d.ts files by default and this cannot be overridden:
 	@# https://github.com/electron-userland/electron-builder/issues/5064
