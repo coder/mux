@@ -25,7 +25,58 @@ export function coerceBashToolResult(value: unknown): BashToolResult | null {
     return null;
   }
 
-  if (typeof (value as { success?: unknown }).success !== "boolean") {
+  const success = (value as { success?: unknown }).success;
+  if (typeof success !== "boolean") {
+    return null;
+  }
+
+  if (success) {
+    const output = (value as { output?: unknown }).output;
+    const exitCode = (value as { exitCode?: unknown }).exitCode;
+    const wallDurationMs = (value as { wall_duration_ms?: unknown }).wall_duration_ms;
+
+    if (typeof output !== "string") {
+      return null;
+    }
+
+    if (exitCode !== 0) {
+      return null;
+    }
+
+    if (typeof wallDurationMs !== "number" || !Number.isFinite(wallDurationMs)) {
+      return null;
+    }
+
+    // Background spawn success includes taskId/backgroundProcessId.
+    const taskId = (value as { taskId?: unknown }).taskId;
+    const backgroundProcessId = (value as { backgroundProcessId?: unknown }).backgroundProcessId;
+    if (taskId !== undefined || backgroundProcessId !== undefined) {
+      if (typeof taskId !== "string" || typeof backgroundProcessId !== "string") {
+        return null;
+      }
+    }
+
+    return value as BashToolResult;
+  }
+
+  const error = (value as { error?: unknown }).error;
+  const exitCode = (value as { exitCode?: unknown }).exitCode;
+  const wallDurationMs = (value as { wall_duration_ms?: unknown }).wall_duration_ms;
+  const output = (value as { output?: unknown }).output;
+
+  if (typeof error !== "string") {
+    return null;
+  }
+
+  if (typeof exitCode !== "number" || !Number.isFinite(exitCode)) {
+    return null;
+  }
+
+  if (typeof wallDurationMs !== "number" || !Number.isFinite(wallDurationMs)) {
+    return null;
+  }
+
+  if (output !== undefined && typeof output !== "string") {
     return null;
   }
 
