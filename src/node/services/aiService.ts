@@ -1418,12 +1418,13 @@ export class AIService extends EventEmitter {
           );
 
           if (experiments?.programmaticToolCallingExclusive) {
-            // Exclusive mode: code_execution is mandatory (only way to use bridged tools)
-            // nonBridgeable is already policy-filtered (toolBridge received policyFilteredTools)
+            // Exclusive mode: code_execution is mandatory — it's the only way to use bridged
+            // tools. The experiment flag is the opt-in; policy cannot disable it here since
+            // that would leave no way to access tools. nonBridgeable is already policy-filtered.
             const nonBridgeable = toolBridge.getNonBridgeableTools();
             toolsForModel = { ...nonBridgeable, code_execution: codeExecutionTool };
           } else {
-            // Supplement mode: add code_execution if policy allows
+            // Supplement mode: add code_execution if policy allows (experiment is additive)
             const codeExecAllowed =
               Object.keys(
                 applyToolPolicy({ code_execution: codeExecutionTool }, effectiveToolPolicy)
