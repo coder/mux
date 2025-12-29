@@ -235,11 +235,11 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     buttonLabel,
     disabled: startHereDisabled,
     modal,
-  } = useStartHere(
-    workspaceId,
-    startHereContent,
-    false // Plans are never already compacted
-  );
+  } = useStartHere(workspaceId, startHereContent, false, {
+    // Preserve the source mode so exec mode can detect a plan→exec transition
+    // even after replacing chat history.
+    sourceMode: "plan",
+  });
 
   // Copy to clipboard with feedback
   const { copied, copyToClipboard } = useCopyToClipboard();

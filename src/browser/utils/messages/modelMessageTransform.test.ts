@@ -920,7 +920,8 @@ describe("injectModeTransition", () => {
     ];
 
     const planContent = "# My Plan\n\n## Step 1\nDo something\n\n## Step 2\nDo more";
-    const result = injectModeTransition(messages, "exec", undefined, planContent);
+    const planFilePath = "~/.mux/plans/demo/ws-123.md";
+    const result = injectModeTransition(messages, "exec", undefined, planContent, planFilePath);
 
     expect(result.length).toBe(4);
     const transitionMessage = result[2];
@@ -933,6 +934,7 @@ describe("injectModeTransition", () => {
       expect(textPart.text).toContain(
         "[Mode switched from plan to exec. Follow exec mode instructions.]"
       );
+      expect(textPart.text).toContain(`Plan file path: ${planFilePath}`);
       expect(textPart.text).toContain("The following plan was developed in plan mode");
       expect(textPart.text).toContain("<plan>");
       expect(textPart.text).toContain(planContent);

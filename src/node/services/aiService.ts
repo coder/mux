@@ -71,7 +71,7 @@ import type { ToolBridge } from "@/node/services/ptc/toolBridge";
 import { MockScenarioPlayer } from "./mock/mockScenarioPlayer";
 import { EnvHttpProxyAgent, type Dispatcher } from "undici";
 import { getPlanFilePath } from "@/common/utils/planStorage";
-import { getPlanModeInstruction } from "@/common/utils/ui/modeUtils";
+import { getPlanFileHint, getPlanModeInstruction } from "@/common/utils/ui/modeUtils";
 import type { UIMode } from "@/common/types/mode";
 import { MUX_APP_ATTRIBUTION_TITLE, MUX_APP_ATTRIBUTION_URL } from "@/constants/appAttribution";
 import { readPlanFile } from "@/node/utils/runtime/helpers";
@@ -1159,6 +1159,16 @@ export class AIService extends EventEmitter {
         effectiveAdditionalInstructions = additionalSystemInstructions
           ? `${planModeInstruction}\n\n${additionalSystemInstructions}`
           : planModeInstruction;
+      } else if (mode && planResult.exists && planResult.content.trim()) {
+        // Users often use "Replace all chat history" after plan mode. In exec (or other non-plan)
+        // modes, the model can lose the plan file location because plan path injection only
+        // happens in plan mode.
+        const planFileHint = getPlanFileHint(planFilePath, planResult.exists);
+        if (planFileHint) {
+          effectiveAdditionalInstructions = effectiveAdditionalInstructions
+            ? `${planFileHint}\n\n${effectiveAdditionalInstructions}`
+            : planFileHint;
+        }
       }
 
       // Read plan content for mode transition (plan → exec)
@@ -1178,7 +1188,8 @@ export class AIService extends EventEmitter {
         messagesWithSentinel,
         mode,
         toolNamesForSentinel,
-        planContentForTransition
+        planContentForTransition,
+        planContentForTransition ? planFilePath : undefined
       );
 
       // Inject file change notifications as user messages (preserves system message cache)

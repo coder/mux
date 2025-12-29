@@ -215,6 +215,7 @@ export type DisplayedMessage =
       isCompacted: boolean; // Whether this is a compacted summary
       isIdleCompacted: boolean; // Whether this compaction was auto-triggered due to inactivity
       model?: string;
+      mode?: string; // Mode active when this message was sent (assistant messages only)
       timestamp?: number;
       tokens?: number;
     }

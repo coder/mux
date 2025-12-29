@@ -1582,6 +1582,7 @@ export class StreamingMessageAggregator {
                 isCompacted: !!message.metadata?.compacted,
                 isIdleCompacted: message.metadata?.compacted === "idle",
                 model: message.metadata?.model,
+                mode: message.metadata?.mode,
                 timestamp: part.timestamp ?? baseTimestamp,
               });
             } else if (isDynamicToolPart(part)) {

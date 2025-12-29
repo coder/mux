@@ -45,6 +45,17 @@ If the user suggests that you should make edits to other files, ask them to swit
 }
 
 /**
+ * Lightweight plan file context for non-plan modes.
+ *
+ * We intentionally include only the path (not the contents) to avoid prompt bloat.
+ */
+export function getPlanFileHint(planFilePath: string, planExists: boolean): string | null {
+  if (!planExists) return null;
+
+  return `A plan file exists at: ${planFilePath}. If a previously developed plan is relevant to the current work, read it and follow it. Otherwise, ignore it.`;
+}
+
+/**
  * Get the tool policy for a given UI mode.
  * In plan mode, file_edit_* tools remain enabled (agent needs them to write plan file),
  * but strict path enforcement in file_edit_operation.ts restricts edits to only the plan file.

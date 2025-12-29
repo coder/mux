@@ -41,7 +41,9 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
     buttonLabel,
     disabled: startHereDisabled,
     modal,
-  } = useStartHere(workspaceId, content, isCompacted);
+  } = useStartHere(workspaceId, content, isCompacted, {
+    sourceMode: message.mode,
+  });
 
   // Copy to clipboard with feedback
   const { copied, copyToClipboard } = useCopyToClipboard(clipboardWriteText);

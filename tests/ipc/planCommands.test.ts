@@ -195,6 +195,51 @@ describeIntegration("Plan Commands Integration", () => {
         await env.orpc.workspace.remove({ workspaceId });
       }
     }, 30000);
+
+    it("should preserve mode metadata in summary message", async () => {
+      const branchName = generateBranchName("start-here-preserve-mode");
+      const trunkBranch = await detectDefaultTrunkBranch(repoPath);
+
+      const createResult = await env.orpc.workspace.create({
+        projectPath: repoPath,
+        branchName,
+        trunkBranch,
+      });
+
+      expect(createResult.success).toBe(true);
+      if (!createResult.success) throw new Error("Failed to create workspace");
+
+      const workspaceId = createResult.metadata.id;
+
+      try {
+        const summaryMessage = createMuxMessage(
+          `start-here-test-${Date.now()}`,
+          "assistant",
+          "summary",
+          { timestamp: Date.now(), compacted: true, mode: "plan" }
+        );
+
+        const replaceResult = await env.orpc.workspace.replaceChatHistory({
+          workspaceId,
+          summaryMessage,
+        });
+
+        expect(replaceResult.success).toBe(true);
+
+        const chatHistoryPath = path.join(env.config.getSessionDir(workspaceId), "chat.jsonl");
+        const data = await fs.readFile(chatHistoryPath, "utf-8");
+        const firstLine = data
+          .split("\n")
+          .map((line) => line.trim())
+          .find((line) => line.length > 0);
+
+        expect(firstLine).toBeTruthy();
+        const historyEntry = JSON.parse(firstLine!) as { metadata?: { mode?: string } };
+        expect(historyEntry.metadata?.mode).toBe("plan");
+      } finally {
+        await env.orpc.workspace.remove({ workspaceId });
+      }
+    }, 30000);
   });
 
   describe("openInEditor", () => {

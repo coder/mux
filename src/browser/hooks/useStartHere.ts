@@ -18,7 +18,7 @@ export function useStartHere(
   workspaceId: string | undefined,
   content: string,
   isCompacted = false,
-  options?: { deletePlanFile?: boolean }
+  options?: { deletePlanFile?: boolean; sourceMode?: string }
 ) {
   const { api } = useAPI();
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -48,6 +48,7 @@ export function useStartHere(
         {
           timestamp: Date.now(),
           compacted: "user",
+          mode: options?.sourceMode,
         }
       );
 

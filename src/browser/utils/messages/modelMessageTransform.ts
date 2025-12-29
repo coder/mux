@@ -148,13 +148,15 @@ export function addInterruptedSentinel(messages: MuxMessage[]): MuxMessage[] {
  * @param currentMode The mode for the upcoming assistant response (e.g., "plan", "exec")
  * @param toolNames Optional list of available tool names to include in transition message
  * @param planContent Optional plan content to include when transitioning plan → exec
+ * @param planFilePath Optional plan file path to include when transitioning plan → exec
  * @returns Messages with mode transition context injected if needed
  */
 export function injectModeTransition(
   messages: MuxMessage[],
   currentMode?: string,
   toolNames?: string[],
-  planContent?: string
+  planContent?: string,
+  planFilePath?: string
 ): MuxMessage[] {
   // No mode specified, nothing to do
   if (!currentMode) {
@@ -211,9 +213,10 @@ export function injectModeTransition(
 
   // When transitioning plan → exec with plan content, include the plan for context
   if (lastMode === "plan" && currentMode === "exec" && planContent) {
+    const planFilePathText = planFilePath ? `Plan file path: ${planFilePath}\n\n` : "";
     transitionText += `
 
-The following plan was developed in plan mode. Based on the user's message, determine if they have accepted the plan. If accepted and relevant, use it to guide your implementation:
+${planFilePathText}The following plan was developed in plan mode. Based on the user's message, determine if they have accepted the plan. If accepted and relevant, use it to guide your implementation:
 
 <plan>
 ${planContent}
