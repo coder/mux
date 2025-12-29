@@ -1418,14 +1418,18 @@ export class AIService extends EventEmitter {
           );
 
           if (experiments?.programmaticToolCallingExclusive) {
-            // Exclusive mode: code_execution + non-bridgeable tools (web_search, propose_plan, etc.)
-            // Non-bridgeable tools can't be used from within code_execution, so they're still
-            // available directly to the model (subject to policy)
+            // Exclusive mode: code_execution is mandatory (only way to use bridged tools)
             const nonBridgeable = toolBridge.getNonBridgeableTools();
             toolsForModel = { ...nonBridgeable, code_execution: codeExecutionTool };
           } else {
-            // Supplement mode: add code_execution alongside policy-filtered tools
-            toolsForModel = { ...policyFilteredTools, code_execution: codeExecutionTool };
+            // Supplement mode: add code_execution if policy allows
+            const codeExecAllowed =
+              Object.keys(
+                applyToolPolicy({ code_execution: codeExecutionTool }, effectiveToolPolicy)
+              ).length > 0;
+            toolsForModel = codeExecAllowed
+              ? { ...policyFilteredTools, code_execution: codeExecutionTool }
+              : policyFilteredTools;
           }
         } catch (error) {
           // Fall back to policy-filtered tools if PTC creation fails
@@ -1433,9 +1437,7 @@ export class AIService extends EventEmitter {
         }
       }
 
-      // Apply tool policy to the final tool set so tools added by experiments
-      // (e.g., code_execution) are also gated by policy (important for agent presets).
-      const tools = applyToolPolicy(toolsForModel, effectiveToolPolicy);
+      const tools = toolsForModel;
 
       const effectiveMcpStats: MCPWorkspaceStats =
         mcpStats ??
