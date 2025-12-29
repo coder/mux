@@ -32,6 +32,40 @@ export function coerceBashToolResult(value: unknown): BashToolResult | null {
   return value as BashToolResult;
 }
 
+function maybeApplyLegacySuccessCheck(
+  bashResult: BashToolResult,
+  options?: { legacySuccessCheckInclErrorLine?: boolean }
+): BashToolResult {
+  if (!options?.legacySuccessCheckInclErrorLine) {
+    return bashResult;
+  }
+
+  if (!bashResult.success) {
+    return bashResult;
+  }
+
+  // Don't drop background task identifiers.
+  if ("taskId" in bashResult) {
+    return bashResult;
+  }
+
+  const lines = bashResult.output.split(/\r?\n/).map((line) => line.trim());
+  const errorLine = lines.find((line) => /^error:/i.test(line));
+  if (!errorLine) {
+    return bashResult;
+  }
+
+  return {
+    success: false,
+    error: errorLine,
+    exitCode: 1,
+    wall_duration_ms: bashResult.wall_duration_ms,
+    output: bashResult.output,
+    truncated: "truncated" in bashResult ? bashResult.truncated : undefined,
+    note: "note" in bashResult ? bashResult.note : undefined,
+  };
+}
+
 export function convertTaskBashResult(
   taskResult: TaskToolResult | null,
   options?: { legacySuccessCheckInclErrorLine?: boolean }
@@ -43,21 +77,7 @@ export function convertTaskBashResult(
   // Some historical `task(kind="bash")` tool calls stored the raw BashToolResult.
   const maybeDirect = coerceBashToolResult(taskResult);
   if (maybeDirect) {
-    if (options?.legacySuccessCheckInclErrorLine && maybeDirect.success) {
-      const lines = maybeDirect.output.split(/\r?\n/).map((line) => line.trim());
-      const errorLine = lines.find((line) => /^error:/i.test(line));
-      if (errorLine) {
-        return {
-          success: false,
-          error: errorLine,
-          exitCode: 1,
-          wall_duration_ms: maybeDirect.wall_duration_ms,
-          output: maybeDirect.output,
-        };
-      }
-    }
-
-    return maybeDirect;
+    return maybeApplyLegacySuccessCheck(maybeDirect, options);
   }
 
   // Task tool error shape: { success: false, error }
@@ -99,22 +119,70 @@ export function convertTaskBashResult(
   }
 
   if (status === "completed") {
+    // Legacy `task(kind="bash")` results sometimes store a nested bash result or explicit
+    // exit/error fields. Preserve them so old histories don't render failures as successes.
+    const nestedRaw =
+      (taskResult as { result?: unknown; bashResult?: unknown }).result ??
+      (taskResult as { bashResult?: unknown }).bashResult;
+
+    const nested = coerceBashToolResult(nestedRaw);
+    if (nested) {
+      return maybeApplyLegacySuccessCheck(nested, options);
+    }
+
+    const exitCodeRaw = (taskResult as { exitCode?: unknown }).exitCode;
+    const exitCode =
+      typeof exitCodeRaw === "number" && Number.isFinite(exitCodeRaw) ? exitCodeRaw : undefined;
+
+    const errorRaw = (taskResult as { error?: unknown }).error;
+    const error = typeof errorRaw === "string" ? errorRaw : undefined;
+
+    const wallDurationRaw = (taskResult as { wall_duration_ms?: unknown }).wall_duration_ms;
+    const wall_duration_ms =
+      typeof wallDurationRaw === "number" && Number.isFinite(wallDurationRaw) ? wallDurationRaw : 0;
+
+    const outputRaw = (taskResult as { output?: unknown }).output;
     const reportMarkdown = (taskResult as { reportMarkdown?: unknown }).reportMarkdown;
     const title = (taskResult as { title?: unknown }).title;
 
     const output =
-      typeof reportMarkdown === "string" && reportMarkdown.trim().length > 0
-        ? reportMarkdown
-        : typeof title === "string"
-          ? title
-          : "";
+      typeof outputRaw === "string"
+        ? outputRaw
+        : typeof reportMarkdown === "string" && reportMarkdown.trim().length > 0
+          ? reportMarkdown
+          : typeof title === "string"
+            ? title
+            : "";
 
-    return {
-      success: true,
-      output,
-      exitCode: 0,
-      wall_duration_ms: 0,
-    };
+    if (exitCode !== undefined && exitCode !== 0) {
+      return {
+        success: false,
+        error: error?.trim().length ? error : `Command failed with exit code ${exitCode}`,
+        exitCode,
+        wall_duration_ms,
+        output: output.trim().length ? output : undefined,
+      };
+    }
+
+    if (error?.trim().length) {
+      return {
+        success: false,
+        error,
+        exitCode: exitCode ?? 1,
+        wall_duration_ms,
+        output: output.trim().length ? output : undefined,
+      };
+    }
+
+    return maybeApplyLegacySuccessCheck(
+      {
+        success: true,
+        output,
+        exitCode: 0,
+        wall_duration_ms,
+      },
+      options
+    );
   }
 
   return null;
