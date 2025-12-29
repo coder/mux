@@ -950,6 +950,7 @@ export class StreamingMessageAggregator {
       historySequence: data.historySequence,
       timestamp: Date.now(),
       model: data.model,
+      mode: data.mode,
     });
 
     this.messages.set(data.messageId, streamingMessage);
