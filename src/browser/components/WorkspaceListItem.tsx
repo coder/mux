@@ -190,7 +190,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
                 data-workspace-id={workspaceId}
               />
             ) : (
-              <Tooltip>
+              <Tooltip disableHoverableContent>
                 <TooltipTrigger asChild>
                   <span
                     className={cn(
