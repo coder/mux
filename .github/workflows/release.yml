@@ -239,12 +239,12 @@ jobs:
     steps:
       - name: Send failure notification to Slack
         env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_RELEASE_WEBHOOK_URL }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           RELEASE_TAG: ${{ env.RELEASE_TAG }}
           WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           if [ -z "$SLACK_WEBHOOK_URL" ]; then
-            echo "SLACK_RELEASE_WEBHOOK_URL secret is not set; skipping Slack notification."
+            echo "SLACK_WEBHOOK_URL secret is not set; skipping Slack notification."
             exit 0
           fi
 
