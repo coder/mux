@@ -10,13 +10,19 @@ import {
   type SetStateAction,
 } from "react";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import type { UIMode } from "@/common/types/mode";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import {
   deleteWorkspaceStorage,
+  getAgentIdKey,
+  getModeKey,
   getModelKey,
   getThinkingLevelKey,
+  getWorkspaceAISettingsByModeKey,
+  AGENT_AI_DEFAULTS_KEY,
+  MODE_AI_DEFAULTS_KEY,
   SELECTED_WORKSPACE_KEY,
 } from "@/common/constants/storage";
 import { useAPI } from "@/browser/contexts/API";
@@ -25,6 +31,8 @@ import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { isExperimentEnabled } from "@/browser/hooks/useExperiments";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
+import { normalizeModeAiDefaults } from "@/common/types/modeAiDefaults";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 import { useRouter } from "@/browser/contexts/RouterContext";
 
@@ -34,27 +42,74 @@ import { useRouter } from "@/browser/contexts/RouterContext";
  * This keeps a workspace's model/thinking consistent across devices/browsers.
  */
 function seedWorkspaceLocalStorageFromBackend(metadata: FrontendWorkspaceMetadata): void {
-  const ai = metadata.aiSettings;
-  if (!ai) {
+  type WorkspaceAISettingsByModeCache = Partial<
+    Record<UIMode, { model: string; thinkingLevel: ThinkingLevel }>
+  >;
+
+  const workspaceId = metadata.id;
+
+  // Seed the workspace agentId (tasks/subagents) so the UI renders correctly on reload.
+  // Main workspaces default to the locally-selected agentId (stored in localStorage).
+  const metadataAgentId = metadata.agentId ?? metadata.agentType;
+  if (typeof metadataAgentId === "string" && metadataAgentId.trim().length > 0) {
+    const key = getAgentIdKey(workspaceId);
+    const normalized = metadataAgentId.trim().toLowerCase();
+    const existing = readPersistedState<string | undefined>(key, undefined);
+    if (existing !== normalized) {
+      updatePersistedState(key, normalized);
+    }
+  }
+
+  const aiByMode =
+    metadata.aiSettingsByMode ??
+    (metadata.aiSettings
+      ? {
+          plan: metadata.aiSettings,
+          exec: metadata.aiSettings,
+        }
+      : undefined);
+
+  if (!aiByMode) {
     return;
   }
 
-  // Seed model selection.
-  if (typeof ai.model === "string" && ai.model.length > 0) {
-    const modelKey = getModelKey(metadata.id);
-    const existingModel = readPersistedState<string | undefined>(modelKey, undefined);
-    if (existingModel !== ai.model) {
-      updatePersistedState(modelKey, ai.model);
-    }
+  // Merge backend values into a per-workspace per-mode cache.
+  const byModeKey = getWorkspaceAISettingsByModeKey(workspaceId);
+  const existingByMode = readPersistedState<WorkspaceAISettingsByModeCache>(byModeKey, {});
+  const nextByMode: WorkspaceAISettingsByModeCache = { ...existingByMode };
+
+  for (const mode of ["plan", "exec"] as const) {
+    const entry = aiByMode[mode];
+    if (!entry) continue;
+    if (typeof entry.model !== "string" || entry.model.length === 0) continue;
+
+    nextByMode[mode] = {
+      model: entry.model,
+      thinkingLevel: entry.thinkingLevel,
+    };
   }
 
-  // Seed thinking level.
-  if (ai.thinkingLevel) {
-    const thinkingKey = getThinkingLevelKey(metadata.id);
-    const existingThinking = readPersistedState<ThinkingLevel | undefined>(thinkingKey, undefined);
-    if (existingThinking !== ai.thinkingLevel) {
-      updatePersistedState(thinkingKey, ai.thinkingLevel);
-    }
+  if (JSON.stringify(existingByMode) !== JSON.stringify(nextByMode)) {
+    updatePersistedState(byModeKey, nextByMode);
+  }
+
+  // Seed the active mode into the existing keys to avoid UI flash.
+  const activeMode = readPersistedState<UIMode>(getModeKey(workspaceId), "exec");
+  const active = nextByMode[activeMode] ?? nextByMode.exec ?? nextByMode.plan;
+  if (!active) {
+    return;
+  }
+
+  const modelKey = getModelKey(workspaceId);
+  const existingModel = readPersistedState<string | undefined>(modelKey, undefined);
+  if (existingModel !== active.model) {
+    updatePersistedState(modelKey, active.model);
+  }
+
+  const thinkingKey = getThinkingLevelKey(workspaceId);
+  const existingThinking = readPersistedState<ThinkingLevel | undefined>(thinkingKey, undefined);
+  if (existingThinking !== active.thinkingLevel) {
+    updatePersistedState(thinkingKey, active.thinkingLevel);
   }
 }
 
@@ -133,6 +188,28 @@ interface WorkspaceProviderProps {
 
 export function WorkspaceProvider(props: WorkspaceProviderProps) {
   const { api } = useAPI();
+
+  // Cache global mode defaults so non-react code paths (compaction, etc.) can read them.
+  useEffect(() => {
+    if (!api?.config?.getConfig) return;
+
+    void api.config
+      .getConfig()
+      .then((cfg) => {
+        updatePersistedState(
+          AGENT_AI_DEFAULTS_KEY,
+          normalizeAgentAiDefaults(cfg.agentAiDefaults ?? {})
+        );
+
+        updatePersistedState(
+          MODE_AI_DEFAULTS_KEY,
+          normalizeModeAiDefaults(cfg.modeAiDefaults ?? {})
+        );
+      })
+      .catch(() => {
+        // Best-effort only.
+      });
+  }, [api]);
   // Get project refresh function from ProjectContext
   const { refreshProjects } = useProjectContext();
   // Get router navigation functions and current route state

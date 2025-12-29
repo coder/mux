@@ -1,17 +1,8 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useAPI } from "@/browser/contexts/API";
+import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui/tooltip";
 import { Input } from "@/browser/components/ui/input";
-import {
-  DEFAULT_TASK_SETTINGS,
-  TASK_SETTINGS_LIMITS,
-  normalizeTaskSettings,
-  type TaskSettings,
-  type SubagentAiDefaults,
-  type SubagentAiDefaultsEntry,
-} from "@/common/types/tasks";
-import { BUILT_IN_SUBAGENTS } from "@/common/constants/agents";
-import type { ThinkingLevel } from "@/common/types/thinking";
-import { useModelsFromSettings } from "@/browser/hooks/useModelsFromSettings";
 import { ModelSelector } from "@/browser/components/ModelSelector";
 import {
   Select,
@@ -20,19 +11,115 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/browser/components/ui/select";
+import { copyToClipboard } from "@/browser/utils/clipboard";
+import { useModelsFromSettings } from "@/browser/hooks/useModelsFromSettings";
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { AGENT_AI_DEFAULTS_KEY, MODE_AI_DEFAULTS_KEY } from "@/common/constants/storage";
+import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
+import {
+  normalizeAgentAiDefaults,
+  type AgentAiDefaults,
+  type AgentAiDefaultsEntry,
+} from "@/common/types/agentAiDefaults";
+import { normalizeModeAiDefaults } from "@/common/types/modeAiDefaults";
+import {
+  DEFAULT_TASK_SETTINGS,
+  TASK_SETTINGS_LIMITS,
+  normalizeTaskSettings,
+  type TaskSettings,
+} from "@/common/types/tasks";
+import type { ThinkingLevel } from "@/common/types/thinking";
 import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
 
 const INHERIT = "__inherit__";
 const ALL_THINKING_LEVELS = ["off", "low", "medium", "high", "xhigh"] as const;
 
-function updateSubagentDefaultEntry(
-  previous: SubagentAiDefaults,
-  agentType: string,
-  update: (entry: SubagentAiDefaultsEntry) => void
-): SubagentAiDefaults {
+const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
+  {
+    id: "plan",
+    scope: "built-in",
+    name: "Plan",
+    description: "Create a plan before coding",
+    uiSelectable: true,
+    subagentRunnable: false,
+    policyBase: "plan",
+  },
+  {
+    id: "exec",
+    scope: "built-in",
+    name: "Exec",
+    description: "Implement changes in the repository",
+    uiSelectable: true,
+    subagentRunnable: true,
+    policyBase: "exec",
+  },
+  {
+    id: "compact",
+    scope: "built-in",
+    name: "Compact",
+    description: "History compaction (internal)",
+    uiSelectable: false,
+    subagentRunnable: false,
+    policyBase: "compact",
+  },
+  {
+    id: "explore",
+    scope: "built-in",
+    name: "Explore",
+    description: "Read-only repository exploration",
+    uiSelectable: false,
+    subagentRunnable: true,
+    policyBase: "exec",
+  },
+];
+
+const DEFAULT_EXEC_BASE_TOOLS = [
+  "bash",
+  "bash_output",
+  "bash_background_list",
+  "bash_background_terminate",
+  "file_read",
+  "agent_skill_read",
+  "agent_skill_read_file",
+  "file_edit_replace_string",
+  "file_edit_insert",
+  "task",
+  "task_await",
+  "task_terminate",
+  "task_list",
+  "todo_write",
+  "todo_read",
+  "status_set",
+  "web_fetch",
+] as const;
+
+function getAgentDefinitionPath(agent: AgentDefinitionDescriptor): string | null {
+  switch (agent.scope) {
+    case "project":
+      return `.mux/agents/${agent.id}.md`;
+    case "global":
+      return `~/.mux/agents/${agent.id}.md`;
+    default:
+      return null;
+  }
+}
+
+const DEFAULT_PLAN_BASE_TOOLS = [
+  ...DEFAULT_EXEC_BASE_TOOLS,
+  "ask_user_question",
+  "propose_plan",
+] as const;
+
+function updateAgentDefaultEntry(
+  previous: AgentAiDefaults,
+  agentId: string,
+  update: (entry: AgentAiDefaultsEntry) => void
+): AgentAiDefaults {
+  const normalizedId = agentId.trim().toLowerCase();
+
   const next = { ...previous };
-  const existing = next[agentType] ?? {};
-  const updated: SubagentAiDefaultsEntry = { ...existing };
+  const existing = next[normalizedId] ?? {};
+  const updated: AgentAiDefaultsEntry = { ...existing };
   update(updated);
 
   if (updated.modelString && updated.thinkingLevel) {
@@ -40,26 +127,170 @@ function updateSubagentDefaultEntry(
   }
 
   if (!updated.modelString && !updated.thinkingLevel) {
-    delete next[agentType];
+    delete next[normalizedId];
   } else {
-    next[agentType] = updated;
+    next[normalizedId] = updated;
   }
 
   return next;
 }
 
+function renderPolicySummary(agent: AgentDefinitionDescriptor): React.ReactNode {
+  const base = agent.policyBase;
+
+  const baseDescription = (() => {
+    switch (base) {
+      case "exec":
+        return {
+          title: "Base policy: exec",
+          allowedTools: DEFAULT_EXEC_BASE_TOOLS,
+          hardDeniedTools: ["propose_plan"] as const,
+          note: "Allowed tools assume permissionMode: default. Custom agents may start with no tool permissions.",
+        };
+      case "plan":
+        return {
+          title: "Base policy: plan",
+          allowedTools: DEFAULT_PLAN_BASE_TOOLS,
+          hardDeniedTools: [] as const,
+          note: "Allowed tools assume permissionMode: default. Custom agents may start with no tool permissions.",
+        };
+      case "compact":
+        return {
+          title: "Base policy: compact",
+          allowedTools: [] as const,
+          hardDeniedTools: [".*"] as const,
+          note: "Internal no-tools mode.",
+        };
+      default:
+        return {
+          title: `Base policy: ${String(base)}`,
+          allowedTools: [] as const,
+          hardDeniedTools: [] as const,
+          note: "Tool permissions depend on permissionMode and tool allow/deny rules.",
+        };
+    }
+  })();
+
+  const pieces: React.ReactNode[] = [
+    <Tooltip key="base-policy">
+      <TooltipTrigger asChild>
+        <span className="cursor-help underline decoration-dotted underline-offset-2">
+          base: {base}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent align="start" className="max-w-80 whitespace-normal">
+        <div className="font-medium">{baseDescription.title}</div>
+
+        {baseDescription.allowedTools.length > 0 ? (
+          <>
+            <div className="mt-1 font-medium">Allowed tools (default)</div>
+            <ul className="mt-1 space-y-0.5">
+              {baseDescription.allowedTools.map((tool) => (
+                <li key={tool}>
+                  <code>{tool}</code>
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : (
+          <div className="mt-1">(No tools)</div>
+        )}
+
+        {baseDescription.hardDeniedTools.length > 0 ? (
+          <>
+            <div className="mt-2 font-medium">Always denied</div>
+            <ul className="mt-1 space-y-0.5">
+              {baseDescription.hardDeniedTools.map((tool) => (
+                <li key={tool}>
+                  <code>{tool}</code>
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : null}
+
+        <div className="text-muted mt-2 text-xs">{baseDescription.note}</div>
+      </TooltipContent>
+    </Tooltip>,
+  ];
+
+  const toolFilter = agent.toolFilter;
+  if (toolFilter?.only && toolFilter.only.length > 0) {
+    const only = toolFilter.only;
+    pieces.push(
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="cursor-help underline decoration-dotted underline-offset-2">
+            tools: only ({only.length})
+          </span>
+        </TooltipTrigger>
+        <TooltipContent align="start" className="max-w-80 whitespace-normal">
+          <div className="font-medium">Allowed tools</div>
+          <ul className="mt-1 space-y-0.5">
+            {only.map((tool) => (
+              <li key={tool}>
+                <code>{tool}</code>
+              </li>
+            ))}
+          </ul>
+        </TooltipContent>
+      </Tooltip>
+    );
+  } else if (toolFilter?.deny && toolFilter.deny.length > 0) {
+    const deny = toolFilter.deny;
+    pieces.push(
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="cursor-help underline decoration-dotted underline-offset-2">
+            tools: deny ({deny.length})
+          </span>
+        </TooltipTrigger>
+        <TooltipContent align="start" className="max-w-80 whitespace-normal">
+          <div className="font-medium">Denied tools</div>
+          <ul className="mt-1 space-y-0.5">
+            {deny.map((tool) => (
+              <li key={tool}>
+                <code>{tool}</code>
+              </li>
+            ))}
+          </ul>
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  return (
+    <>
+      {pieces.map((piece, idx) => (
+        <React.Fragment key={idx}>
+          {idx > 0 ? " • " : null}
+          {piece}
+        </React.Fragment>
+      ))}
+    </>
+  );
+}
+
 export function TasksSection() {
   const { api } = useAPI();
+  const { selectedWorkspace } = useWorkspaceContext();
+
   const [taskSettings, setTaskSettings] = useState<TaskSettings>(DEFAULT_TASK_SETTINGS);
-  const [subagentAiDefaults, setSubagentAiDefaults] = useState<SubagentAiDefaults>({});
+  const [agentAiDefaults, setAgentAiDefaults] = useState<AgentAiDefaults>({});
+
+  const [agents, setAgents] = useState<AgentDefinitionDescriptor[]>([]);
+  const [agentsLoaded, setAgentsLoaded] = useState(false);
+  const [agentsLoadFailed, setAgentsLoadFailed] = useState(false);
+
   const [loaded, setLoaded] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savingRef = useRef(false);
   const pendingSaveRef = useRef<{
     taskSettings: TaskSettings;
-    subagentAiDefaults: SubagentAiDefaults;
+    agentAiDefaults: AgentAiDefaults;
   } | null>(null);
 
   const { models, hiddenModels } = useModelsFromSettings();
@@ -75,22 +306,16 @@ export function TasksSection() {
       .getConfig()
       .then((cfg) => {
         setTaskSettings(normalizeTaskSettings(cfg.taskSettings));
-        setSubagentAiDefaults(() => {
-          const next: SubagentAiDefaults = {};
-          const defaults = cfg.subagentAiDefaults ?? {};
-          for (const [agentType, entry] of Object.entries(defaults)) {
-            if (!entry) continue;
-            if (!entry.modelString || !entry.thinkingLevel) {
-              next[agentType] = entry;
-              continue;
-            }
-            next[agentType] = {
-              ...entry,
-              thinkingLevel: enforceThinkingPolicy(entry.modelString, entry.thinkingLevel),
-            };
-          }
-          return next;
-        });
+        const normalizedAgentDefaults = normalizeAgentAiDefaults(cfg.agentAiDefaults);
+        setAgentAiDefaults(normalizedAgentDefaults);
+        updatePersistedState(AGENT_AI_DEFAULTS_KEY, normalizedAgentDefaults);
+
+        // Keep a local cache for non-react readers (compaction handler, etc.)
+        updatePersistedState(
+          MODE_AI_DEFAULTS_KEY,
+          normalizeModeAiDefaults(cfg.modeAiDefaults ?? {})
+        );
+
         setLoadFailed(false);
         setLoaded(true);
       })
@@ -103,10 +328,57 @@ export function TasksSection() {
 
   useEffect(() => {
     if (!api) return;
+
+    const workspaceId = selectedWorkspace?.workspaceId;
+    if (!workspaceId) {
+      setAgents([]);
+      setAgentsLoaded(true);
+      setAgentsLoadFailed(false);
+      return;
+    }
+
+    let cancelled = false;
+    setAgentsLoaded(false);
+    setAgentsLoadFailed(false);
+
+    void api.agents
+      .list({ workspaceId })
+      .then((list) => {
+        if (cancelled) return;
+        setAgents(list);
+        setAgentsLoadFailed(false);
+        setAgentsLoaded(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setAgents([]);
+        setAgentsLoadFailed(true);
+        setAgentsLoaded(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [api, selectedWorkspace?.workspaceId]);
+
+  useEffect(() => {
+    if (!api) return;
     if (!loaded) return;
     if (loadFailed) return;
 
-    pendingSaveRef.current = { taskSettings, subagentAiDefaults };
+    pendingSaveRef.current = { taskSettings, agentAiDefaults };
+    // Keep agent defaults cache up-to-date for any syncers/non-react readers.
+    updatePersistedState(AGENT_AI_DEFAULTS_KEY, agentAiDefaults);
+
+    // Keep mode defaults cache up-to-date for non-react readers.
+    updatePersistedState(
+      MODE_AI_DEFAULTS_KEY,
+      normalizeModeAiDefaults({
+        plan: agentAiDefaults.plan,
+        exec: agentAiDefaults.exec,
+        compact: agentAiDefaults.compact,
+      })
+    );
 
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current);
@@ -124,7 +396,10 @@ export function TasksSection() {
         pendingSaveRef.current = null;
         savingRef.current = true;
         void api.config
-          .saveConfig(payload)
+          .saveConfig({
+            taskSettings: payload.taskSettings,
+            agentAiDefaults: payload.agentAiDefaults,
+          })
           .catch((error: unknown) => {
             setSaveError(error instanceof Error ? error.message : String(error));
           })
@@ -143,7 +418,7 @@ export function TasksSection() {
         saveTimerRef.current = null;
       }
     };
-  }, [api, loaded, loadFailed, subagentAiDefaults, taskSettings]);
+  }, [api, agentAiDefaults, loaded, loadFailed, taskSettings]);
 
   // Flush any pending debounced save on unmount so changes aren't lost.
   useEffect(() => {
@@ -164,7 +439,10 @@ export function TasksSection() {
       pendingSaveRef.current = null;
       savingRef.current = true;
       void api.config
-        .saveConfig(payload)
+        .saveConfig({
+          taskSettings: payload.taskSettings,
+          agentAiDefaults: payload.agentAiDefaults,
+        })
         .catch(() => undefined)
         .finally(() => {
           savingRef.current = false;
@@ -182,9 +460,9 @@ export function TasksSection() {
     setTaskSettings((prev) => normalizeTaskSettings({ ...prev, maxTaskNestingDepth: parsed }));
   };
 
-  const setSubagentModel = (agentType: string, value: string) => {
-    setSubagentAiDefaults((prev) =>
-      updateSubagentDefaultEntry(prev, agentType, (updated) => {
+  const setAgentModel = (agentId: string, value: string) => {
+    setAgentAiDefaults((prev) =>
+      updateAgentDefaultEntry(prev, agentId, (updated) => {
         if (value === INHERIT) {
           delete updated.modelString;
         } else {
@@ -194,9 +472,9 @@ export function TasksSection() {
     );
   };
 
-  const setSubagentThinking = (agentType: string, value: string) => {
-    setSubagentAiDefaults((prev) =>
-      updateSubagentDefaultEntry(prev, agentType, (updated) => {
+  const setAgentThinking = (agentId: string, value: string) => {
+    setAgentAiDefaults((prev) =>
+      updateAgentDefaultEntry(prev, agentId, (updated) => {
         if (value === INHERIT) {
           delete updated.thinkingLevel;
           return;
@@ -207,10 +485,222 @@ export function TasksSection() {
     );
   };
 
+  const listedAgents = agents.length > 0 ? agents : FALLBACK_AGENTS;
+
+  const uiAgents = useMemo(
+    () =>
+      [...listedAgents]
+        .filter((agent) => agent.uiSelectable)
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [listedAgents]
+  );
+
+  const subagents = useMemo(
+    () =>
+      [...listedAgents]
+        // Keep the sections mutually exclusive: UI agents belong under "UI agents" even if they
+        // can also run as sub-agents.
+        .filter((agent) => agent.subagentRunnable && !agent.uiSelectable)
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [listedAgents]
+  );
+
+  const internalAgents = useMemo(
+    () =>
+      [...listedAgents]
+        .filter((agent) => !agent.uiSelectable && !agent.subagentRunnable)
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [listedAgents]
+  );
+
+  const unknownAgentIds = useMemo(() => {
+    const known = new Set(listedAgents.map((agent) => agent.id));
+    return Object.keys(agentAiDefaults)
+      .filter((id) => !known.has(id))
+      .sort((a, b) => a.localeCompare(b));
+  }, [agentAiDefaults, listedAgents]);
+
+  const renderAgentDefaults = (agent: AgentDefinitionDescriptor) => {
+    const entry = agentAiDefaults[agent.id];
+    const modelValue = entry?.modelString ?? INHERIT;
+    const thinkingValue = entry?.thinkingLevel ?? INHERIT;
+    const allowedThinkingLevels =
+      modelValue !== INHERIT ? getThinkingPolicyForModel(modelValue) : ALL_THINKING_LEVELS;
+
+    const agentDefinitionPath = getAgentDefinitionPath(agent);
+    const scopeNode = agentDefinitionPath ? (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            className="hover:text-foreground cursor-copy bg-transparent p-0 underline decoration-dotted underline-offset-2"
+            onClick={(e) => {
+              e.stopPropagation();
+              void copyToClipboard(agentDefinitionPath);
+            }}
+          >
+            {agent.scope}
+          </button>
+        </TooltipTrigger>
+        <TooltipContent align="start" className="max-w-80 whitespace-normal">
+          <div className="font-medium">Agent file</div>
+          <div className="mt-1">
+            <code>{agentDefinitionPath}</code>
+          </div>
+          <div className="text-muted mt-2 text-xs">Click to copy</div>
+        </TooltipContent>
+      </Tooltip>
+    ) : (
+      <span>{agent.scope}</span>
+    );
+
+    return (
+      <div
+        key={agent.id}
+        className="border-border-medium bg-background-secondary rounded-md border p-3"
+      >
+        <div className="flex items-baseline justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="text-foreground text-sm font-medium">{agent.name}</div>
+            <div className="text-muted text-xs">
+              {agent.id} • {scopeNode} • {renderPolicySummary(agent)}
+              {agent.uiSelectable && agent.subagentRunnable ? (
+                <>
+                  {" "}
+                  •{" "}
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="cursor-help underline decoration-dotted underline-offset-2">
+                        sub-agent
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent align="start" className="max-w-80 whitespace-normal">
+                      Can be invoked as a sub-agent.
+                    </TooltipContent>
+                  </Tooltip>
+                </>
+              ) : null}
+            </div>
+
+            {agent.description ? (
+              <div className="text-muted mt-1 text-xs">{agent.description}</div>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div className="space-y-1">
+            <div className="text-muted text-xs">Model</div>
+            <div className="flex items-center gap-2">
+              <ModelSelector
+                value={modelValue === INHERIT ? "" : modelValue}
+                emptyLabel="Inherit"
+                onChange={(value) => setAgentModel(agent.id, value)}
+                models={models}
+                hiddenModels={hiddenModels}
+              />
+              {modelValue !== INHERIT ? (
+                <button
+                  type="button"
+                  className="text-muted hover:text-foreground text-xs"
+                  onClick={() => setAgentModel(agent.id, INHERIT)}
+                >
+                  Reset
+                </button>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <div className="text-muted text-xs">Reasoning</div>
+            <Select
+              value={thinkingValue}
+              onValueChange={(value) => setAgentThinking(agent.id, value)}
+            >
+              <SelectTrigger className="border-border-medium bg-modal-bg h-9">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={INHERIT}>Inherit</SelectItem>
+                {allowedThinkingLevels.map((level) => (
+                  <SelectItem key={level} value={level}>
+                    {level}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderUnknownAgentDefaults = (agentId: string) => {
+    const entry = agentAiDefaults[agentId];
+    const modelValue = entry?.modelString ?? INHERIT;
+    const thinkingValue = entry?.thinkingLevel ?? INHERIT;
+    const allowedThinkingLevels =
+      modelValue !== INHERIT ? getThinkingPolicyForModel(modelValue) : ALL_THINKING_LEVELS;
+
+    return (
+      <div
+        key={agentId}
+        className="border-border-medium bg-background-secondary rounded-md border p-3"
+      >
+        <div className="text-foreground text-sm font-medium">{agentId}</div>
+        <div className="text-muted text-xs">Not discovered in the current workspace</div>
+
+        <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div className="space-y-1">
+            <div className="text-muted text-xs">Model</div>
+            <div className="flex items-center gap-2">
+              <ModelSelector
+                value={modelValue === INHERIT ? "" : modelValue}
+                emptyLabel="Inherit"
+                onChange={(value) => setAgentModel(agentId, value)}
+                models={models}
+                hiddenModels={hiddenModels}
+              />
+              {modelValue !== INHERIT ? (
+                <button
+                  type="button"
+                  className="text-muted hover:text-foreground text-xs"
+                  onClick={() => setAgentModel(agentId, INHERIT)}
+                >
+                  Reset
+                </button>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <div className="text-muted text-xs">Reasoning</div>
+            <Select
+              value={thinkingValue}
+              onValueChange={(value) => setAgentThinking(agentId, value)}
+            >
+              <SelectTrigger className="border-border-medium bg-modal-bg h-9">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={INHERIT}>Inherit</SelectItem>
+                {allowedThinkingLevels.map((level) => (
+                  <SelectItem key={level} value={level}>
+                    {level}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-6">
       <div>
-        <h3 className="text-foreground mb-4 text-sm font-medium">Agents</h3>
+        <h3 className="text-foreground mb-4 text-sm font-medium">Task Settings</h3>
         <div className="space-y-4">
           <div className="flex items-center justify-between gap-4">
             <div className="flex-1">
@@ -255,75 +745,50 @@ export function TasksSection() {
           </div>
         </div>
 
-        {saveError && <div className="text-danger-light mt-4 text-xs">{saveError}</div>}
+        {saveError ? <div className="text-danger-light mt-4 text-xs">{saveError}</div> : null}
       </div>
 
       <div>
-        <h3 className="text-foreground mb-4 text-sm font-medium">Sub-agents</h3>
-        <div className="space-y-4">
-          {BUILT_IN_SUBAGENTS.map((preset) => {
-            const agentType = preset.agentType;
-            const entry = subagentAiDefaults[agentType];
-            const modelValue = entry?.modelString ?? INHERIT;
-            const thinkingValue = entry?.thinkingLevel ?? INHERIT;
-            const allowedThinkingLevels =
-              modelValue !== INHERIT ? getThinkingPolicyForModel(modelValue) : ALL_THINKING_LEVELS;
-
-            return (
-              <div
-                key={agentType}
-                className="border-border-medium bg-background-secondary rounded-md border p-3"
-              >
-                <div className="text-foreground text-sm font-medium">{preset.label}</div>
-
-                <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
-                  <div className="space-y-1">
-                    <div className="text-muted text-xs">Model</div>
-                    <div className="flex items-center gap-2">
-                      <ModelSelector
-                        value={modelValue === INHERIT ? "" : modelValue}
-                        emptyLabel="Inherit"
-                        onChange={(value) => setSubagentModel(agentType, value)}
-                        models={models}
-                        hiddenModels={hiddenModels}
-                      />
-                      {modelValue !== INHERIT ? (
-                        <button
-                          type="button"
-                          className="text-muted hover:text-foreground text-xs"
-                          onClick={() => setSubagentModel(agentType, INHERIT)}
-                        >
-                          Reset
-                        </button>
-                      ) : null}
-                    </div>
-                  </div>
-
-                  <div className="space-y-1">
-                    <div className="text-muted text-xs">Reasoning</div>
-                    <Select
-                      value={thinkingValue}
-                      onValueChange={(value) => setSubagentThinking(agentType, value)}
-                    >
-                      <SelectTrigger className="border-border-medium bg-modal-bg h-9">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value={INHERIT}>Inherit</SelectItem>
-                        {allowedThinkingLevels.map((level) => (
-                          <SelectItem key={level} value={level}>
-                            {level}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
+        <h3 className="text-foreground mb-1 text-sm font-medium">Agent Defaults</h3>
+        <div className="text-muted text-xs">
+          Defaults apply globally. Changing model/reasoning in a workspace creates a workspace
+          override.
         </div>
+        {agentsLoadFailed ? (
+          <div className="text-danger-light mt-3 text-xs">
+            Failed to load agent definitions for this workspace.
+          </div>
+        ) : null}
+        {!agentsLoaded ? <div className="text-muted mt-3 text-xs">Loading agents…</div> : null}
       </div>
+
+      {uiAgents.length > 0 ? (
+        <div>
+          <h4 className="text-foreground mb-3 text-sm font-medium">UI agents</h4>
+          <div className="space-y-4">{uiAgents.map(renderAgentDefaults)}</div>
+        </div>
+      ) : null}
+
+      {subagents.length > 0 ? (
+        <div>
+          <h4 className="text-foreground mb-3 text-sm font-medium">Sub-agents</h4>
+          <div className="space-y-4">{subagents.map(renderAgentDefaults)}</div>
+        </div>
+      ) : null}
+
+      {internalAgents.length > 0 ? (
+        <div>
+          <h4 className="text-foreground mb-3 text-sm font-medium">Internal</h4>
+          <div className="space-y-4">{internalAgents.map(renderAgentDefaults)}</div>
+        </div>
+      ) : null}
+
+      {unknownAgentIds.length > 0 ? (
+        <div>
+          <h4 className="text-foreground mb-3 text-sm font-medium">Unknown agents</h4>
+          <div className="space-y-4">{unknownAgentIds.map(renderUnknownAgentDefaults)}</div>
+        </div>
+      ) : null}
     </div>
   );
 }

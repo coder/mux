@@ -189,6 +189,7 @@ log_info "Testing oRPC endpoints via HTTP and WebSocket..."
 PROJECT_DIR=$(mktemp -d)
 git init -b main "$PROJECT_DIR" >/dev/null 2>&1
 git -C "$PROJECT_DIR" config user.email "test@example.com"
+git -C "$PROJECT_DIR" config commit.gpgSign false
 git -C "$PROJECT_DIR" config user.name "Test User"
 touch "$PROJECT_DIR/README.md"
 git -C "$PROJECT_DIR" add .

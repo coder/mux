@@ -5,7 +5,7 @@ import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
  * Derived from the comments in keybinds.ts.
  */
 const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
-  TOGGLE_MODE: "Toggle Plan/Exec mode",
+  TOGGLE_MODE: "Cycle agent (Exec/Plan/Other)",
   SEND_MESSAGE: "Send message",
   NEW_LINE: "Insert newline",
   CANCEL: "Cancel / Close modal",

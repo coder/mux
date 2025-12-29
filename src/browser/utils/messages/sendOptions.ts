@@ -1,4 +1,5 @@
 import {
+  getAgentIdKey,
   getModelKey,
   getThinkingLevelByModelKey,
   getThinkingLevelKey,
@@ -67,6 +68,13 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
   // Read mode (workspace-specific)
   const mode = readPersistedState<UIMode>(getModeKey(workspaceId), WORKSPACE_DEFAULTS.mode);
 
+  // Read selected agent id (workspace-specific). If missing, fall back to the legacy mode key.
+  const rawAgentId = readPersistedState<string | undefined>(getAgentIdKey(workspaceId), undefined);
+  const agentId =
+    typeof rawAgentId === "string" && rawAgentId.trim().length > 0
+      ? rawAgentId.trim().toLowerCase()
+      : mode;
+
   // Get provider options
   const providerOptions = getProviderOptions();
 
@@ -77,6 +85,7 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
 
   return {
     model,
+    agentId,
     mode: mode === "exec" || mode === "plan" ? mode : "exec", // Only pass exec/plan to backend
     thinkingLevel: effectiveThinkingLevel,
     toolPolicy: modeToToolPolicy(mode),

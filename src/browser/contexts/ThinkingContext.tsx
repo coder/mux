@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import React, { createContext, useContext, useEffect, useMemo, useCallback } from "react";
+import type { UIMode } from "@/common/types/mode";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import {
   readPersistedState,
@@ -7,10 +8,13 @@ import {
   usePersistedState,
 } from "@/browser/hooks/usePersistedState";
 import {
+  getAgentIdKey,
   getModelKey,
   getProjectScopeId,
+  getModeKey,
   getThinkingLevelByModelKey,
   getThinkingLevelKey,
+  getWorkspaceAISettingsByModeKey,
   GLOBAL_SCOPE_ID,
 } from "@/common/constants/storage";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
@@ -79,13 +83,44 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
       setThinkingLevelInternal(effective);
 
       // Workspace variant: persist to backend so settings follow the workspace across devices.
-      if (!props.workspaceId || !api) {
+      if (!props.workspaceId) {
+        return;
+      }
+
+      type WorkspaceAISettingsByModeCache = Partial<
+        Record<string, { model: string; thinkingLevel: ThinkingLevel }>
+      >;
+
+      const mode = readPersistedState<UIMode>(getModeKey(scopeId), "exec");
+      const rawAgentId = readPersistedState<string | undefined>(getAgentIdKey(scopeId), undefined);
+      const agentId =
+        typeof rawAgentId === "string" && rawAgentId.trim().length > 0
+          ? rawAgentId.trim().toLowerCase()
+          : mode;
+
+      updatePersistedState<WorkspaceAISettingsByModeCache>(
+        getWorkspaceAISettingsByModeKey(props.workspaceId),
+        (prev) => {
+          const record: WorkspaceAISettingsByModeCache =
+            prev && typeof prev === "object" ? prev : {};
+          return {
+            ...record,
+            [agentId]: { model, thinkingLevel: effective },
+          };
+        },
+        {}
+      );
+
+      // Only persist when the active agent matches the base mode so custom-agent overrides
+      // don't clobber exec/plan defaults that other agents inherit.
+      if (!api || agentId !== mode) {
         return;
       }
 
       api.workspace
-        .updateAISettings({
+        .updateModeAISettings({
           workspaceId: props.workspaceId,
+          mode,
           aiSettings: { model, thinkingLevel: effective },
         })
         .catch(() => {

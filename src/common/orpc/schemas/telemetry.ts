@@ -6,6 +6,7 @@
  */
 
 import { z } from "zod";
+import { AgentModeSchema } from "../../types/mode";
 
 // Error context enum (matches payload.ts)
 const ErrorContextSchema = z.enum([
@@ -64,7 +65,7 @@ const WorkspaceSwitchedPropertiesSchema = z.object({
 const MessageSentPropertiesSchema = z.object({
   workspaceId: z.string(),
   model: z.string(),
-  mode: z.string(),
+  mode: AgentModeSchema.catch("exec"),
   message_length_b2: z.number(),
   runtimeType: TelemetryRuntimeTypeSchema,
   frontendPlatform: FrontendPlatformInfoSchema,
@@ -83,7 +84,8 @@ const TelemetryMCPTransportModeSchema = z.enum([
 const MCPContextInjectedPropertiesSchema = z.object({
   workspaceId: z.string(),
   model: z.string(),
-  mode: z.string(),
+  mode: AgentModeSchema.catch("exec"),
+  agentId: z.string().min(1).optional().catch(undefined),
   runtimeType: TelemetryRuntimeTypeSchema,
 
   mcp_server_enabled_count: z.number(),
@@ -134,7 +136,7 @@ const StatsTabOpenedPropertiesSchema = z.object({
 
 const StreamTimingComputedPropertiesSchema = z.object({
   model: z.string(),
-  mode: z.string(),
+  mode: AgentModeSchema.catch("exec"),
   duration_b2: z.number(),
   ttft_ms_b2: z.number(),
   tool_ms_b2: z.number(),

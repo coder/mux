@@ -451,7 +451,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
     const list: CommandAction[] = [
       {
         id: CommandIds.modeToggle(),
-        title: "Toggle Plan/Exec Mode",
+        title: "Cycle Agent (Exec/Plan/Other)",
         section: section.mode,
         shortcutHint: formatKeybind(KEYBINDS.TOGGLE_MODE),
         run: () => {

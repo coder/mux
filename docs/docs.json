@@ -55,6 +55,7 @@
               },
               "context-management",
               "instruction-files",
+              "agents",
               "agent-skills",
               "mcp-servers",
               {

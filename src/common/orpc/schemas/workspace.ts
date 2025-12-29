@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { RuntimeConfigSchema } from "./runtime";
-import { WorkspaceAISettingsSchema } from "./workspaceAiSettings";
+import { WorkspaceAISettingsByModeSchema, WorkspaceAISettingsSchema } from "./workspaceAiSettings";
 
 const ThinkingLevelSchema = z.enum(["off", "low", "medium", "high", "xhigh"]);
 
@@ -26,6 +26,9 @@ export const WorkspaceMetadataSchema = z.object({
     description:
       "ISO 8601 timestamp of when workspace was created (optional for backward compatibility)",
   }),
+  aiSettingsByMode: WorkspaceAISettingsByModeSchema.optional().meta({
+    description: "Per-mode AI settings (plan/exec) persisted in config",
+  }),
   runtimeConfig: RuntimeConfigSchema.meta({
     description: "Runtime configuration for this workspace (always set, defaults to local on load)",
   }),
@@ -38,6 +41,10 @@ export const WorkspaceMetadataSchema = z.object({
   }),
   agentType: z.string().optional().meta({
     description: 'If set, selects an agent preset for this workspace (e.g., "explore" or "exec").',
+  }),
+  agentId: z.string().optional().meta({
+    description:
+      'If set, selects an agent definition for this workspace (e.g., "explore" or "exec").',
   }),
   taskStatus: z.enum(["queued", "running", "awaiting_report", "reported"]).optional().meta({
     description:

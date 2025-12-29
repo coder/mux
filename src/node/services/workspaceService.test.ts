@@ -313,7 +313,115 @@ describe("WorkspaceService.list post-compaction timeout", () => {
 
     // Should return workspace without post-compaction state (timeout fallback)
     expect(result.length).toBe(1);
+
     expect(result[0].id).toBe("ssh-workspace");
     expect(result[0].postCompaction).toBeUndefined();
+  });
+});
+
+describe("WorkspaceService maybePersistAISettingsFromOptions", () => {
+  let workspaceService: WorkspaceService;
+
+  beforeEach(() => {
+    const aiService: AIService = {
+      isStreaming: mock(() => false),
+      getWorkspaceMetadata: mock(() => Promise.resolve({ success: false as const, error: "nope" })),
+      on(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+      off(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+    } as unknown as AIService;
+
+    const mockHistoryService: Partial<HistoryService> = {
+      getHistory: mock(() => Promise.resolve({ success: true as const, data: [] })),
+      appendToHistory: mock(() => Promise.resolve({ success: true as const, data: undefined })),
+    };
+
+    const mockConfig: Partial<Config> = {
+      srcDir: "/tmp/test",
+      getSessionDir: mock(() => "/tmp/test/sessions"),
+      generateStableId: mock(() => "test-id"),
+      findWorkspace: mock(() => null),
+    };
+
+    const mockPartialService: Partial<PartialService> = {
+      commitToHistory: mock(() => Promise.resolve({ success: true as const, data: undefined })),
+    };
+
+    const mockInitStateManager: Partial<InitStateManager> = {};
+    const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
+    const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
+      cleanup: mock(() => Promise.resolve()),
+    };
+
+    workspaceService = new WorkspaceService(
+      mockConfig as Config,
+      mockHistoryService as HistoryService,
+      mockPartialService as PartialService,
+      aiService,
+      mockInitStateManager as InitStateManager,
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+  });
+
+  test("skips persisting base mode AI settings when agentId differs", async () => {
+    const persistSpy = mock(() => Promise.resolve({ success: true as const, data: true }));
+
+    interface WorkspaceServiceTestAccess {
+      maybePersistAISettingsFromOptions: (
+        workspaceId: string,
+        options: unknown,
+        context: "send" | "resume"
+      ) => Promise<void>;
+      persistWorkspaceAISettingsForMode: (...args: unknown[]) => unknown;
+    }
+
+    const svc = workspaceService as unknown as WorkspaceServiceTestAccess;
+    svc.persistWorkspaceAISettingsForMode = persistSpy;
+
+    await svc.maybePersistAISettingsFromOptions(
+      "ws",
+      {
+        mode: "exec",
+        agentId: "reviewer",
+        model: "openai:gpt-4o-mini",
+        thinkingLevel: "off",
+      },
+      "send"
+    );
+
+    expect(persistSpy).not.toHaveBeenCalled();
+  });
+
+  test("persists base mode AI settings when agentId matches", async () => {
+    const persistSpy = mock(() => Promise.resolve({ success: true as const, data: true }));
+
+    interface WorkspaceServiceTestAccess {
+      maybePersistAISettingsFromOptions: (
+        workspaceId: string,
+        options: unknown,
+        context: "send" | "resume"
+      ) => Promise<void>;
+      persistWorkspaceAISettingsForMode: (...args: unknown[]) => unknown;
+    }
+
+    const svc = workspaceService as unknown as WorkspaceServiceTestAccess;
+    svc.persistWorkspaceAISettingsForMode = persistSpy;
+
+    await svc.maybePersistAISettingsFromOptions(
+      "ws",
+      {
+        mode: "exec",
+        agentId: "exec",
+        model: "openai:gpt-4o-mini",
+        thinkingLevel: "off",
+      },
+      "send"
+    );
+
+    expect(persistSpy).toHaveBeenCalledTimes(1);
   });
 });

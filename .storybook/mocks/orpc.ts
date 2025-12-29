@@ -4,6 +4,7 @@
  * Creates a client that matches the AppRouter interface with configurable mock data.
  */
 import type { APIClient } from "@/browser/contexts/API";
+import type { AgentDefinitionDescriptor, AgentDefinitionPackage } from "@/common/types/agentDefinition";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { ProjectConfig } from "@/node/config";
 import type {
@@ -21,6 +22,11 @@ import {
   type SubagentAiDefaults,
   type TaskSettings,
 } from "@/common/types/tasks";
+import {
+  normalizeModeAiDefaults,
+  type ModeAiDefaults,
+} from "@/common/types/modeAiDefaults";
+import { normalizeAgentAiDefaults, type AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 
@@ -57,6 +63,12 @@ export interface MockORPCClientOptions {
   workspaces?: FrontendWorkspaceMetadata[];
   /** Initial task settings for config.getConfig (e.g., Settings → Tasks section) */
   taskSettings?: Partial<TaskSettings>;
+  /** Initial mode AI defaults for config.getConfig (e.g., Settings → Modes section) */
+  modeAiDefaults?: ModeAiDefaults;
+  /** Initial unified AI defaults for agents (plan/exec/compact + subagents) */
+  agentAiDefaults?: AgentAiDefaults;
+  /** Agent definitions to expose via agents.list */
+  agentDefinitions?: AgentDefinitionDescriptor[];
   /** Initial per-subagent AI defaults for config.getConfig (e.g., Settings → Tasks section) */
   subagentAiDefaults?: SubagentAiDefaults;
   /** Per-workspace chat callback. Return messages to emit, or use the callback for streaming. */
@@ -140,7 +152,10 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     mcpOverrides = new Map(),
     mcpTestResults = new Map(),
     taskSettings: initialTaskSettings,
+    modeAiDefaults: initialModeAiDefaults,
     subagentAiDefaults: initialSubagentAiDefaults,
+    agentAiDefaults: initialAgentAiDefaults,
+    agentDefinitions: initialAgentDefinitions,
   } = options;
 
   // Feature flags
@@ -158,8 +173,78 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
   };
 
   const workspaceMap = new Map(workspaces.map((w) => [w.id, w]));
+
+  const agentDefinitions: AgentDefinitionDescriptor[] =
+    initialAgentDefinitions ??
+    ([
+      {
+        id: "plan",
+        scope: "built-in",
+        name: "Plan",
+        description: "Create a plan before coding",
+        uiSelectable: true,
+        subagentRunnable: false,
+        policyBase: "plan",
+      },
+      {
+        id: "exec",
+        scope: "built-in",
+        name: "Exec",
+        description: "Implement changes in the repository",
+        uiSelectable: true,
+        subagentRunnable: true,
+        policyBase: "exec",
+      },
+      {
+        id: "compact",
+        scope: "built-in",
+        name: "Compact",
+        description: "History compaction (internal)",
+        uiSelectable: false,
+        subagentRunnable: false,
+        policyBase: "compact",
+      },
+      {
+        id: "explore",
+        scope: "built-in",
+        name: "Explore",
+        description: "Read-only repository exploration",
+        uiSelectable: false,
+        subagentRunnable: true,
+        policyBase: "exec",
+      },
+    ] satisfies AgentDefinitionDescriptor[]);
+
   let taskSettings = normalizeTaskSettings(initialTaskSettings ?? DEFAULT_TASK_SETTINGS);
-  let subagentAiDefaults = normalizeSubagentAiDefaults(initialSubagentAiDefaults ?? {});
+
+  let agentAiDefaults = normalizeAgentAiDefaults(
+    initialAgentAiDefaults ??
+      ({
+        ...(initialSubagentAiDefaults ?? {}),
+        ...(initialModeAiDefaults ?? {}),
+      } as const)
+  );
+
+  const deriveModeAiDefaults = () =>
+    normalizeModeAiDefaults({
+      plan: agentAiDefaults.plan,
+      exec: agentAiDefaults.exec,
+      compact: agentAiDefaults.compact,
+    });
+
+  const deriveSubagentAiDefaults = () => {
+    const raw: Record<string, unknown> = {};
+    for (const [agentId, entry] of Object.entries(agentAiDefaults)) {
+      if (agentId === "plan" || agentId === "exec" || agentId === "compact") {
+        continue;
+      }
+      raw[agentId] = entry;
+    }
+    return normalizeSubagentAiDefaults(raw);
+  };
+
+  let modeAiDefaults = deriveModeAiDefaults();
+  let subagentAiDefaults = deriveSubagentAiDefaults();
 
   const mockStats: ChatStats = {
     consumers: [],
@@ -193,13 +278,67 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       setSshHost: async () => undefined,
     },
     config: {
-      getConfig: async () => ({ taskSettings, subagentAiDefaults }),
-      saveConfig: async (input: { taskSettings: unknown; subagentAiDefaults?: unknown }) => {
+      getConfig: async () => ({ taskSettings, agentAiDefaults, subagentAiDefaults, modeAiDefaults }),
+      saveConfig: async (input: {
+        taskSettings: unknown;
+        agentAiDefaults?: unknown;
+        subagentAiDefaults?: unknown;
+      }) => {
         taskSettings = normalizeTaskSettings(input.taskSettings);
+
+        if (input.agentAiDefaults !== undefined) {
+          agentAiDefaults = normalizeAgentAiDefaults(input.agentAiDefaults);
+          modeAiDefaults = deriveModeAiDefaults();
+          subagentAiDefaults = deriveSubagentAiDefaults();
+        }
+
         if (input.subagentAiDefaults !== undefined) {
           subagentAiDefaults = normalizeSubagentAiDefaults(input.subagentAiDefaults);
+
+          const nextAgentAiDefaults: Record<string, unknown> = { ...agentAiDefaults };
+          for (const [agentType, entry] of Object.entries(subagentAiDefaults)) {
+            nextAgentAiDefaults[agentType] = entry;
+          }
+
+          agentAiDefaults = normalizeAgentAiDefaults(nextAgentAiDefaults);
+          modeAiDefaults = deriveModeAiDefaults();
         }
+
         return undefined;
+      },
+      updateAgentAiDefaults: async (input: { agentAiDefaults: unknown }) => {
+        agentAiDefaults = normalizeAgentAiDefaults(input.agentAiDefaults);
+        modeAiDefaults = deriveModeAiDefaults();
+        subagentAiDefaults = deriveSubagentAiDefaults();
+        return undefined;
+      },
+      updateModeAiDefaults: async (input: { modeAiDefaults: unknown }) => {
+        modeAiDefaults = normalizeModeAiDefaults(input.modeAiDefaults);
+        agentAiDefaults = normalizeAgentAiDefaults({ ...agentAiDefaults, ...modeAiDefaults });
+        modeAiDefaults = deriveModeAiDefaults();
+        subagentAiDefaults = deriveSubagentAiDefaults();
+        return undefined;
+      },
+    },
+    agents: {
+      list: async (_input: { workspaceId: string }) => agentDefinitions,
+      get: async (input: { workspaceId: string; agentId: string }) => {
+        const descriptor =
+          agentDefinitions.find((agent) => agent.id === input.agentId) ?? agentDefinitions[0];
+
+        return {
+          id: descriptor.id,
+          scope: descriptor.scope,
+          frontmatter: {
+            name: descriptor.name,
+            description: descriptor.description,
+            ui: { selectable: descriptor.uiSelectable },
+            subagent: { runnable: descriptor.subagentRunnable },
+            ai: descriptor.aiDefaults,
+            policy: { base: descriptor.policyBase, tools: descriptor.toolFilter },
+          },
+          body: "",
+        } satisfies AgentDefinitionPackage;
       },
     },
     providers: {

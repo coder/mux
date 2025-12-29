@@ -32,20 +32,20 @@ describe("applyCompactionOverrides", () => {
     expect(result.model).toBe(KNOWN_MODELS.HAIKU.id);
   });
 
-  it("preserves workspace thinking level for all models", () => {
-    // Test Anthropic model
+  it("enforces thinking policy for the compaction model", () => {
+    // Test Anthropic model (supports medium)
     const anthropicData: CompactionRequestData = {
       model: KNOWN_MODELS.HAIKU.id,
     };
     const anthropicResult = applyCompactionOverrides(baseOptions, anthropicData);
     expect(anthropicResult.thinkingLevel).toBe("medium");
 
-    // Test OpenAI model
+    // Test OpenAI model (gpt-5-pro only supports high)
     const openaiData: CompactionRequestData = {
       model: "openai:gpt-5-pro",
     };
     const openaiResult = applyCompactionOverrides(baseOptions, openaiData);
-    expect(openaiResult.thinkingLevel).toBe("medium");
+    expect(openaiResult.thinkingLevel).toBe("high");
   });
 
   it("applies maxOutputTokens override", () => {

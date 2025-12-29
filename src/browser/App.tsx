@@ -29,14 +29,18 @@ import { ThemeProvider, useTheme, type ThemeMode } from "./contexts/ThemeContext
 import { CommandPalette } from "./components/CommandPalette";
 import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sources";
 
+import type { UIMode } from "@/common/types/mode";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { isWorkspaceForkSwitchEvent } from "./utils/workspaceEvents";
 import {
+  EXPANDED_PROJECTS_KEY,
+  getAgentIdKey,
+  getModeKey,
+  getModelKey,
   getThinkingLevelByModelKey,
   getThinkingLevelKey,
-  getModelKey,
-  EXPANDED_PROJECTS_KEY,
+  getWorkspaceAISettingsByModeKey,
 } from "@/common/constants/storage";
 import { sortProjectsByOrder } from "@/common/utils/projectOrdering";
 import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
@@ -323,10 +327,43 @@ function AppInner() {
       // ThinkingProvider will pick this up via its listener
       updatePersistedState(key, effective);
 
+      type WorkspaceAISettingsByModeCache = Partial<
+        Record<string, { model: string; thinkingLevel: ThinkingLevel }>
+      >;
+
+      const mode = readPersistedState<UIMode>(getModeKey(workspaceId), "exec");
+      const rawAgentId = readPersistedState<string | undefined>(
+        getAgentIdKey(workspaceId),
+        undefined
+      );
+      const agentId =
+        typeof rawAgentId === "string" && rawAgentId.trim().length > 0
+          ? rawAgentId.trim().toLowerCase()
+          : mode;
+
+      updatePersistedState<WorkspaceAISettingsByModeCache>(
+        getWorkspaceAISettingsByModeKey(workspaceId),
+        (prev) => {
+          const record: WorkspaceAISettingsByModeCache =
+            prev && typeof prev === "object" ? prev : {};
+          return {
+            ...record,
+            [agentId]: { model, thinkingLevel: effective },
+          };
+        },
+        {}
+      );
+
       // Persist to backend so the palette change follows the workspace across devices.
-      if (api) {
+      // Only persist when the active agent matches the base mode so custom-agent overrides
+      // don't clobber exec/plan defaults that other agents inherit.
+      if (api && agentId === mode) {
         api.workspace
-          .updateAISettings({ workspaceId, aiSettings: { model, thinkingLevel: effective } })
+          .updateModeAISettings({
+            workspaceId,
+            mode,
+            aiSettings: { model, thinkingLevel: effective },
+          })
           .catch(() => {
             // Best-effort only.
           });

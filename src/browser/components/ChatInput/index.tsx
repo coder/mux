@@ -13,10 +13,15 @@ import type { Toast } from "../ChatInputToast";
 import { ChatInputToast } from "../ChatInputToast";
 import { createCommandToast, createErrorToast } from "../ChatInputToasts";
 import { parseCommand } from "@/browser/utils/slashCommands/parser";
-import { usePersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
+import {
+  readPersistedState,
+  usePersistedState,
+  updatePersistedState,
+} from "@/browser/hooks/usePersistedState";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { useMode } from "@/browser/contexts/ModeContext";
+import { useAgent } from "@/browser/contexts/AgentContext";
 import { ThinkingSliderComponent } from "../ThinkingSlider";
 import { ModelSettings } from "../ModelSettings";
 import { useAPI } from "@/browser/contexts/API";
@@ -26,8 +31,11 @@ import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import {
   getModelKey,
+  getThinkingLevelKey,
+  getWorkspaceAISettingsByModeKey,
   getInputKey,
   getInputImagesKey,
+  MODE_AI_DEFAULTS_KEY,
   VIM_ENABLED_KEY,
   getProjectScopeId,
   getPendingScopeId,
@@ -49,7 +57,7 @@ import {
   type SlashSuggestion,
 } from "@/browser/utils/slashCommands/suggestions";
 import { Tooltip, TooltipTrigger, TooltipContent, HelpIndicator } from "../ui/tooltip";
-import { ModeSelector } from "../ModeSelector";
+import { AgentModePicker } from "../AgentModePicker";
 import { ContextUsageIndicatorButton } from "../ContextUsageIndicatorButton";
 import { useWorkspaceUsage } from "@/browser/stores/WorkspaceStore";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
@@ -73,7 +81,8 @@ import {
   processImageFiles,
 } from "@/browser/utils/imageHandling";
 
-import type { ThinkingLevel } from "@/common/types/thinking";
+import type { ModeAiDefaults } from "@/common/types/modeAiDefaults";
+import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
 import type { MuxFrontendMetadata } from "@/common/types/message";
 import { prepareUserMessageForSend } from "@/common/types/message";
 import { MODEL_ABBREVIATION_EXAMPLES } from "@/common/constants/knownModels";
@@ -265,7 +274,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const preEditDraftRef = useRef<DraftState>({ text: "", images: [] });
   const { open } = useSettings();
   const { selectedWorkspace } = useWorkspaceContext();
-  const [mode, setMode] = useMode();
+  const [mode] = useMode();
+  const { agentId } = useAgent();
   const {
     models,
     customModels,
@@ -276,6 +286,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     defaultModel,
     setDefaultModel,
   } = useModelsFromSettings();
+
+  const [modeAiDefaults] = usePersistedState<ModeAiDefaults>(
+    MODE_AI_DEFAULTS_KEY,
+    {},
+    {
+      listener: true,
+    }
+  );
   const commandListId = useId();
   const telemetry = useTelemetry();
   const [vimEnabled, setVimEnabled] = usePersistedState<boolean>(VIM_ENABLED_KEY, false, {
@@ -346,26 +364,65 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
   const setPreferredModel = useCallback(
     (model: string) => {
+      type WorkspaceAISettingsByModeCache = Partial<
+        Record<string, { model: string; thinkingLevel: ThinkingLevel }>
+      >;
+
       const canonicalModel = migrateGatewayModel(model);
       ensureModelInSettings(canonicalModel); // Ensure model exists in Settings
       updatePersistedState(storageKeys.modelKey, canonicalModel); // Update workspace or project-specific
 
-      // Workspace variant: persist to backend for cross-device consistency.
-      if (!api || variant !== "workspace" || !workspaceId) {
+      if (variant !== "workspace" || !workspaceId) {
         return;
       }
 
       const effectiveThinkingLevel = enforceThinkingPolicy(canonicalModel, thinkingLevel);
+
+      const normalizedAgentId =
+        typeof agentId === "string" && agentId.trim().length > 0
+          ? agentId.trim().toLowerCase()
+          : mode;
+
+      updatePersistedState<WorkspaceAISettingsByModeCache>(
+        getWorkspaceAISettingsByModeKey(workspaceId),
+        (prev) => {
+          const record: WorkspaceAISettingsByModeCache =
+            prev && typeof prev === "object" ? prev : {};
+          return {
+            ...record,
+            [normalizedAgentId]: { model: canonicalModel, thinkingLevel: effectiveThinkingLevel },
+          };
+        },
+        {}
+      );
+
+      // Workspace variant: persist to backend for cross-device consistency.
+      // Only persist when the active agent matches the base mode so custom-agent overrides
+      // don't clobber exec/plan defaults that other agents inherit.
+      if (!api || normalizedAgentId !== mode) {
+        return;
+      }
+
       api.workspace
-        .updateAISettings({
+        .updateModeAISettings({
           workspaceId,
+          mode,
           aiSettings: { model: canonicalModel, thinkingLevel: effectiveThinkingLevel },
         })
         .catch(() => {
           // Best-effort only. If offline or backend is old, sendMessage will persist.
         });
     },
-    [api, storageKeys.modelKey, ensureModelInSettings, thinkingLevel, variant, workspaceId]
+    [
+      api,
+      agentId,
+      mode,
+      storageKeys.modelKey,
+      ensureModelInSettings,
+      thinkingLevel,
+      variant,
+      workspaceId,
+    ]
   );
   const deferredModel = useDeferredValue(preferredModel);
   const deferredInput = useDeferredValue(input);
@@ -428,23 +485,41 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const hasReviews = attachedReviews.length > 0;
   const canSend = (hasTypedText || hasImages || hasReviews) && !disabled && !isSendInFlight;
 
-  // When entering creation mode, initialize the project-scoped model to the
-  // default so previous manual picks don't bleed into new creation flows.
-  // Only runs once per creation session (not when defaultModel changes, which
-  // would clobber the user's intentional model selection).
-  const creationModelInitialized = useRef<string | null>(null);
+  const creationProjectPath = variant === "creation" ? props.projectPath : "";
+
+  // Creation variant: keep the project-scoped model/thinking in sync with global per-mode defaults
+  // so switching Plan/Exec uses the configured defaults (and respects "inherit" semantics).
   useEffect(() => {
-    if (variant === "creation" && defaultModel) {
-      // Only initialize once per project scope
-      if (creationModelInitialized.current !== storageKeys.modelKey) {
-        creationModelInitialized.current = storageKeys.modelKey;
-        updatePersistedState(storageKeys.modelKey, defaultModel);
-      }
-    } else if (variant !== "creation") {
-      // Reset when leaving creation mode so re-entering triggers initialization
-      creationModelInitialized.current = null;
+    if (variant !== "creation") {
+      return;
     }
-  }, [variant, defaultModel, storageKeys.modelKey]);
+
+    const scopeId = getProjectScopeId(creationProjectPath);
+    const modelKey = getModelKey(scopeId);
+    const thinkingKey = getThinkingLevelKey(scopeId);
+
+    const fallbackModel = defaultModel;
+
+    const existingModel = readPersistedState<string>(modelKey, fallbackModel);
+    const candidateModel = modeAiDefaults[mode]?.modelString ?? existingModel;
+    const resolvedModel =
+      typeof candidateModel === "string" && candidateModel.trim().length > 0
+        ? candidateModel
+        : fallbackModel;
+
+    const existingThinking = readPersistedState<ThinkingLevel>(thinkingKey, "off");
+    const candidateThinking = modeAiDefaults[mode]?.thinkingLevel ?? existingThinking ?? "off";
+    const resolvedThinking = coerceThinkingLevel(candidateThinking) ?? "off";
+    const effectiveThinking = enforceThinkingPolicy(resolvedModel, resolvedThinking);
+
+    if (existingModel !== resolvedModel) {
+      updatePersistedState(modelKey, resolvedModel);
+    }
+
+    if (existingThinking !== effectiveThinking) {
+      updatePersistedState(thinkingKey, effectiveThinking);
+    }
+  }, [creationProjectPath, defaultModel, mode, modeAiDefaults, variant]);
 
   // Expose ChatInput auto-focus completion for Storybook/tests.
   const chatInputSectionRef = useRef<HTMLDivElement | null>(null);
@@ -1792,7 +1867,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     autoCompaction={autoCompactionProps}
                   />
                 )}
-                <ModeSelector mode={mode} onChange={setMode} />
+                <AgentModePicker
+                  workspaceId={variant === "workspace" ? props.workspaceId : undefined}
+                  projectPath={
+                    variant === "creation" ? props.projectPath : selectedWorkspace?.projectPath
+                  }
+                  onComplete={() => inputRef.current?.focus()}
+                />
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button

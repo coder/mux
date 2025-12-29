@@ -3,8 +3,10 @@
  *
  * Shows different sections and states of the Settings modal:
  * - General (theme toggle)
+ * - Agents (task parallelism / nesting)
  * - Providers (API key configuration)
  * - Models (custom model management)
+ * - Modes (per-mode default model / reasoning)
  * - Experiments
  *
  * NOTE: Projects/MCP stories live in App.mcp.stories.tsx
@@ -19,6 +21,7 @@ import { selectWorkspace } from "./storyHelpers";
 import { createMockORPCClient } from "../../../.storybook/mocks/orpc";
 import { within, userEvent, waitFor } from "@storybook/test";
 import { getExperimentKey, EXPERIMENT_IDS } from "@/common/constants/experiments";
+import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import type { TaskSettings } from "@/common/types/tasks";
 
 export default {
@@ -34,6 +37,7 @@ export default {
 function setupSettingsStory(options: {
   providersConfig?: Record<string, { apiKeySet: boolean; baseUrl?: string; models?: string[] }>;
   providersList?: string[];
+  agentAiDefaults?: AgentAiDefaults;
   taskSettings?: Partial<TaskSettings>;
   /** Pre-set experiment states in localStorage before render */
   experiments?: Partial<Record<string, boolean>>;
@@ -54,6 +58,7 @@ function setupSettingsStory(options: {
     projects: groupWorkspacesByProject(workspaces),
     workspaces,
     providersConfig: options.providersConfig ?? {},
+    agentAiDefaults: options.agentAiDefaults,
     providersList: options.providersList ?? ["anthropic", "openai", "xai"],
     taskSettings: options.taskSettings,
   });
@@ -110,25 +115,22 @@ export const Tasks: AppStory = {
     await openSettingsToSection(canvasElement, "agents");
 
     const body = within(canvasElement.ownerDocument.body);
+    const dialog = await body.findByRole("dialog");
+    const dialogCanvas = within(dialog);
 
-    await body.findByText(/Max Parallel Agent Tasks/i);
-    await body.findByText(/Max Task Nesting Depth/i);
-    const subagentsHeading = await body.findByRole("heading", { name: /Sub-agents/i });
-    const subagentsSection = subagentsHeading.parentElement;
-    if (!subagentsSection) {
-      throw new Error("Expected Sub-agents section container to exist");
-    }
+    await dialogCanvas.findByText(/Max Parallel Agent Tasks/i);
+    await dialogCanvas.findByText(/Max Task Nesting Depth/i);
+    await dialogCanvas.findByText(/Agent Defaults/i);
+    await dialogCanvas.findByRole("heading", { name: /UI agents/i });
+    await dialogCanvas.findByRole("heading", { name: /Sub-agents/i });
+    await dialogCanvas.findByRole("heading", { name: /Internal/i });
 
-    const subagents = within(subagentsSection);
+    await dialogCanvas.findByText(/^Plan$/i);
+    await dialogCanvas.findByText(/^Exec$/i);
+    await dialogCanvas.findByText(/^Explore$/i);
+    await dialogCanvas.findByText(/^Compact$/i);
 
-    await subagents.findByText(/^Explore$/i);
-
-    const execMatches = subagents.queryAllByText(/^Exec$/i);
-    if (execMatches.length > 0) {
-      throw new Error("Expected Exec sub-agent settings to be hidden (always inherits)");
-    }
-
-    const inputs = await body.findAllByRole("spinbutton");
+    const inputs = await dialogCanvas.findAllByRole("spinbutton");
     if (inputs.length !== 2) {
       throw new Error(`Expected 2 task settings inputs, got ${inputs.length}`);
     }

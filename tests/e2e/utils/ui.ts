@@ -110,13 +110,19 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
 
     async setMode(mode: ChatMode): Promise<void> {
       const normalizedMode = sanitizeMode(mode);
-      const button = page.getByRole("button", { name: normalizedMode, exact: true });
-      await expect(button).toBeVisible();
-      await button.click();
-      const pressed = await button.getAttribute("aria-pressed");
-      if (pressed !== "true") {
-        throw new Error(`"${normalizedMode}" button did not toggle into active state`);
-      }
+
+      // ChatInput exposes Exec/Plan as segmented buttons (AgentModePicker).
+      // Anchor to the picker chevron so we don't accidentally match other "Exec"/"Plan" buttons.
+      const agentPickerChevron = page.getByRole("button", { name: "Choose agent" }).first();
+      await expect(agentPickerChevron).toBeVisible();
+
+      const agentPicker = agentPickerChevron.locator("..");
+      const modeButton = agentPicker.getByRole("button", { name: normalizedMode, exact: true });
+      await expect(modeButton).toBeVisible();
+
+      await modeButton.click();
+
+      await expect(modeButton).toHaveAttribute("aria-pressed", "true");
     },
 
     async setThinkingLevel(value: number): Promise<void> {

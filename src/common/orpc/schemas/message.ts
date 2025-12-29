@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AgentModeSchema } from "../../types/mode";
 import { StreamErrorTypeSchema } from "./errors";
 
 export const ImagePartSchema = z.object({
@@ -110,7 +111,7 @@ export const MuxMessageSchema = z.object({
       // Compaction source: "user" (manual), "idle" (auto), or legacy boolean (true)
       compacted: z.union([z.literal("user"), z.literal("idle"), z.boolean()]).optional(),
       toolPolicy: z.any().optional(),
-      mode: z.string().optional(),
+      mode: AgentModeSchema.optional().catch(undefined),
       partial: z.boolean().optional(),
       synthetic: z.boolean().optional(),
       error: z.string().optional(),

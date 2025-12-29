@@ -20,6 +20,8 @@
  * code only needs to provide event-specific properties.
  */
 
+import type { AgentMode } from "@/common/types/mode";
+
 /**
  * Base properties included with all telemetry events
  * These are added by the backend, not the frontend
@@ -97,7 +99,7 @@ export interface MessageSentPayload {
   /** Full model identifier (e.g., 'anthropic/claude-3-5-sonnet-20241022') */
   model: string;
   /** UI mode (e.g., 'plan', 'exec', 'edit') */
-  mode: string;
+  mode: AgentMode;
   /** Message length rounded to nearest power of 2 (e.g., 128, 256, 512, 1024) */
   message_length_b2: number;
   /** Runtime type for the workspace */
@@ -118,8 +120,10 @@ export interface MCPContextInjectedPayload {
   workspaceId: string;
   /** Full model identifier */
   model: string;
-  /** UI mode */
-  mode: string;
+  /** UI mode (plan|exec|compact) derived from the selected agent definition */
+  mode: AgentMode;
+  /** Active agent definition id (e.g. "plan", "exec", "explore"). Optional for backwards compatibility. */
+  agentId?: string;
   /** Runtime type for the workspace */
   runtimeType: TelemetryRuntimeType;
 
@@ -196,7 +200,7 @@ export interface StatsTabOpenedPayload {
  */
 export interface StreamTimingComputedPayload {
   model: string;
-  mode: string;
+  mode: AgentMode;
   duration_b2: number;
   ttft_ms_b2: number;
   tool_ms_b2: number;
