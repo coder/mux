@@ -1857,13 +1857,11 @@ export function useBashToolLiveOutput(
 }
 
 /**
- * Hook to check if a specific bash tool call is the latest streaming (executing) bash.
+ * Hook to get the toolCallId of the latest streaming (executing) bash.
+ * Returns null if no bash is currently streaming.
  * Used by BashToolCall to auto-expand/collapse.
  */
-export function useIsLatestStreamingBash(
-  workspaceId: string | undefined,
-  toolCallId: string | undefined
-): boolean {
+export function useLatestStreamingBashId(workspaceId: string | undefined): string | null {
   const store = getStoreInstance();
 
   return useSyncExternalStore(
@@ -1872,11 +1870,11 @@ export function useIsLatestStreamingBash(
       return store.subscribeKey(workspaceId, listener);
     },
     () => {
-      if (!workspaceId || !toolCallId) return false;
+      if (!workspaceId) return null;
       const aggregator = store.getAggregator(workspaceId);
-      if (!aggregator) return false;
+      if (!aggregator) return null;
       // Aggregator caches the result, so this is O(1) on subsequent calls
-      return aggregator.getLatestStreamingBashToolCallId() === toolCallId;
+      return aggregator.getLatestStreamingBashToolCallId();
     }
   );
 }

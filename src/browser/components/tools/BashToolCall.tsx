@@ -22,7 +22,7 @@ import {
   type ToolStatus,
 } from "./shared/toolUtils";
 import { cn } from "@/common/lib/utils";
-import { useBashToolLiveOutput, useIsLatestStreamingBash } from "@/browser/stores/WorkspaceStore";
+import { useBashToolLiveOutput, useLatestStreamingBashId } from "@/browser/stores/WorkspaceStore";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 
 interface BashToolCallProps {
@@ -59,7 +59,8 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
   const [elapsedTime, setElapsedTime] = useState(0);
 
   const liveOutput = useBashToolLiveOutput(workspaceId, toolCallId);
-  const isLatestStreamingBash = useIsLatestStreamingBash(workspaceId, toolCallId);
+  const latestStreamingBashId = useLatestStreamingBashId(workspaceId);
+  const isLatestStreamingBash = latestStreamingBashId === toolCallId;
 
   const outputRef = useRef<HTMLPreElement>(null);
   const outputPinnedRef = useRef(true);
@@ -90,6 +91,7 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
 
   // Auto-expand after a delay when this is the latest streaming bash.
   // Delay prevents layout flash for fast-completing commands.
+  // Auto-collapse when a NEW bash starts streaming (but not on completion).
   useEffect(() => {
     if (userToggledRef.current) return; // Don't override user's choice
 
@@ -107,8 +109,8 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
         clearTimeout(expandTimerRef.current);
         expandTimerRef.current = null;
       }
-      // Auto-collapse when done, but only if we auto-expanded it
-      if (wasAutoExpandedRef.current && status !== "executing") {
+      // Collapse if a NEW bash took over (latestStreamingBashId is not null and not us)
+      if (wasAutoExpandedRef.current && latestStreamingBashId !== null) {
         setExpanded(false);
         wasAutoExpandedRef.current = false;
       }
@@ -119,7 +121,7 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
         clearTimeout(expandTimerRef.current);
       }
     };
-  }, [isLatestStreamingBash, status, setExpanded]);
+  }, [isLatestStreamingBash, latestStreamingBashId, status, setExpanded]);
 
   // Track elapsed time for pending/executing status
   useEffect(() => {
