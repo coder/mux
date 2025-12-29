@@ -22,7 +22,7 @@ import {
   type ToolStatus,
 } from "./shared/toolUtils";
 import { cn } from "@/common/lib/utils";
-import { useBashToolLiveOutput } from "@/browser/stores/WorkspaceStore";
+import { useBashToolLiveOutput, useIsLatestStreamingBash } from "@/browser/stores/WorkspaceStore";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 
 interface BashToolCallProps {
@@ -55,10 +55,11 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
   canSendToBackground,
   onSendToBackground,
 }) => {
-  const { expanded, toggleExpanded } = useToolExpansion();
+  const { expanded, setExpanded, toggleExpanded } = useToolExpansion();
   const [elapsedTime, setElapsedTime] = useState(0);
 
   const liveOutput = useBashToolLiveOutput(workspaceId, toolCallId);
+  const isLatestStreamingBash = useIsLatestStreamingBash(workspaceId, toolCallId);
 
   const outputRef = useRef<HTMLPreElement>(null);
   const outputPinnedRef = useRef(true);
@@ -79,6 +80,25 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
     }
   }, [combinedLiveOutput]);
   const startTimeRef = useRef<number>(startedAt ?? Date.now());
+
+  // Track whether user manually toggled expansion to avoid fighting with auto-expand
+  const userToggledRef = useRef(false);
+  // Track whether this bash was auto-expanded (so we know to auto-collapse it)
+  const wasAutoExpandedRef = useRef(false);
+
+  // Auto-expand when this is the latest streaming bash, collapse when done
+  useEffect(() => {
+    if (userToggledRef.current) return; // Don't override user's choice
+
+    if (isLatestStreamingBash && status === "executing") {
+      setExpanded(true);
+      wasAutoExpandedRef.current = true;
+    } else if (wasAutoExpandedRef.current && status !== "executing") {
+      // Auto-collapse when done, but only if we auto-expanded it
+      setExpanded(false);
+      wasAutoExpandedRef.current = false;
+    }
+  }, [isLatestStreamingBash, status, setExpanded]);
 
   // Track elapsed time for pending/executing status
   useEffect(() => {
@@ -111,9 +131,14 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
   const showLiveOutput =
     !isBackground && (status === "executing" || (Boolean(liveOutput) && !resultHasOutput));
 
+  const handleToggle = () => {
+    userToggledRef.current = true;
+    toggleExpanded();
+  };
+
   return (
     <ToolContainer expanded={expanded}>
-      <ToolHeader onClick={toggleExpanded}>
+      <ToolHeader onClick={handleToggle}>
         <ExpandIcon expanded={expanded}>▶</ExpandIcon>
         <ToolIcon emoji="🔧" toolName="bash" />
         <span className="text-text font-monospace max-w-96 truncate">{args.script}</span>

@@ -160,9 +160,13 @@ export class StreamingMessageAggregator {
   private messages = new Map<string, MuxMessage>();
   private activeStreams = new Map<string, StreamingContext>();
 
-  // Simple cache for derived values (invalidated on every mutation)
-  private cachedAllMessages: MuxMessage[] | null = null;
-  private cachedDisplayedMessages: DisplayedMessage[] | null = null;
+  // Derived value cache - invalidated as a unit on every mutation.
+  // Adding a new cached value? Add it here and it will auto-invalidate.
+  private cache: {
+    allMessages?: MuxMessage[];
+    displayedMessages?: DisplayedMessage[];
+    latestStreamingBashToolCallId?: string | null; // null = computed, none found
+  } = {};
   private recencyTimestamp: number | null = null;
 
   // Delta history for token counting and TPS calculation
@@ -345,8 +349,7 @@ export class StreamingMessageAggregator {
     return serverTimestamp + context.clockOffsetMs;
   }
   private invalidateCache(): void {
-    this.cachedAllMessages = null;
-    this.cachedDisplayedMessages = null;
+    this.cache = {};
     this.updateRecency();
   }
 
@@ -629,10 +632,10 @@ export class StreamingMessageAggregator {
   }
 
   getAllMessages(): MuxMessage[] {
-    this.cachedAllMessages ??= Array.from(this.messages.values()).sort(
+    this.cache.allMessages ??= Array.from(this.messages.values()).sort(
       (a, b) => (a.metadata?.historySequence ?? 0) - (b.metadata?.historySequence ?? 0)
     );
-    return this.cachedAllMessages;
+    return this.cache.allMessages;
   }
 
   // Efficient methods to check message state without creating arrays
@@ -1461,7 +1464,7 @@ export class StreamingMessageAggregator {
    * Cache is invalidated whenever messages change (via invalidateCache()).
    */
   getDisplayedMessages(): DisplayedMessage[] {
-    if (!this.cachedDisplayedMessages) {
+    if (!this.cache.displayedMessages) {
       const displayedMessages: DisplayedMessage[] = [];
       const allMessages = this.getAllMessages();
 
@@ -1735,9 +1738,33 @@ export class StreamingMessageAggregator {
       }
 
       // Return the full array
-      this.cachedDisplayedMessages = displayedMessages;
+      this.cache.displayedMessages = displayedMessages;
     }
-    return this.cachedDisplayedMessages;
+    return this.cache.displayedMessages;
+  }
+
+  /**
+   * Get the toolCallId of the latest foreground bash that is currently executing.
+   * Used by BashToolCall for auto-expand/collapse behavior.
+   * Result is cached until the next mutation.
+   */
+  getLatestStreamingBashToolCallId(): string | null {
+    if (this.cache.latestStreamingBashToolCallId === undefined) {
+      const messages = this.getDisplayedMessages();
+      let result: string | null = null;
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const msg = messages[i];
+        if (msg.type === "tool" && msg.toolName === "bash" && msg.status === "executing") {
+          const args = msg.args as { run_in_background?: boolean } | undefined;
+          if (!args?.run_in_background) {
+            result = msg.toolCallId;
+            break;
+          }
+        }
+      }
+      this.cache.latestStreamingBashToolCallId = result;
+    }
+    return this.cache.latestStreamingBashToolCallId;
   }
 
   /**
