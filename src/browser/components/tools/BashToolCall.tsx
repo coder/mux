@@ -85,19 +85,40 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
   const userToggledRef = useRef(false);
   // Track whether this bash was auto-expanded (so we know to auto-collapse it)
   const wasAutoExpandedRef = useRef(false);
+  // Timer for delayed auto-expand
+  const expandTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Auto-expand when this is the latest streaming bash, collapse when done
+  // Auto-expand after a delay when this is the latest streaming bash.
+  // Delay prevents layout flash for fast-completing commands.
   useEffect(() => {
     if (userToggledRef.current) return; // Don't override user's choice
 
     if (isLatestStreamingBash && status === "executing") {
-      setExpanded(true);
-      wasAutoExpandedRef.current = true;
-    } else if (wasAutoExpandedRef.current && status !== "executing") {
+      // Delay expansion - if command completes quickly, we skip the expand entirely
+      expandTimerRef.current = setTimeout(() => {
+        if (!userToggledRef.current) {
+          setExpanded(true);
+          wasAutoExpandedRef.current = true;
+        }
+      }, 300);
+    } else {
+      // Clear pending expand if command finished before delay
+      if (expandTimerRef.current) {
+        clearTimeout(expandTimerRef.current);
+        expandTimerRef.current = null;
+      }
       // Auto-collapse when done, but only if we auto-expanded it
-      setExpanded(false);
-      wasAutoExpandedRef.current = false;
+      if (wasAutoExpandedRef.current && status !== "executing") {
+        setExpanded(false);
+        wasAutoExpandedRef.current = false;
+      }
     }
+
+    return () => {
+      if (expandTimerRef.current) {
+        clearTimeout(expandTimerRef.current);
+      }
+    };
   }, [isLatestStreamingBash, status, setExpanded]);
 
   // Track elapsed time for pending/executing status
