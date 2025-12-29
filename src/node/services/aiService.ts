@@ -1419,6 +1419,7 @@ export class AIService extends EventEmitter {
 
           if (experiments?.programmaticToolCallingExclusive) {
             // Exclusive mode: code_execution is mandatory (only way to use bridged tools)
+            // nonBridgeable is already policy-filtered (toolBridge received policyFilteredTools)
             const nonBridgeable = toolBridge.getNonBridgeableTools();
             toolsForModel = { ...nonBridgeable, code_execution: codeExecutionTool };
           } else {
