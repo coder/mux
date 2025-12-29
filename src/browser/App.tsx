@@ -35,6 +35,7 @@ import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { isWorkspaceForkSwitchEvent } from "./utils/workspaceEvents";
 import {
   EXPANDED_PROJECTS_KEY,
+  getAgentIdKey,
   getModeKey,
   getModelKey,
   getThinkingLevelByModelKey,
@@ -326,10 +327,18 @@ function AppInner() {
       updatePersistedState(key, effective);
 
       type WorkspaceAISettingsByModeCache = Partial<
-        Record<UIMode, { model: string; thinkingLevel: ThinkingLevel }>
+        Record<string, { model: string; thinkingLevel: ThinkingLevel }>
       >;
 
       const mode = readPersistedState<UIMode>(getModeKey(workspaceId), "exec");
+      const rawAgentId = readPersistedState<string | undefined>(
+        getAgentIdKey(workspaceId),
+        undefined
+      );
+      const agentId =
+        typeof rawAgentId === "string" && rawAgentId.trim().length > 0
+          ? rawAgentId.trim().toLowerCase()
+          : mode;
 
       updatePersistedState<WorkspaceAISettingsByModeCache>(
         getWorkspaceAISettingsByModeKey(workspaceId),
@@ -339,6 +348,7 @@ function AppInner() {
           return {
             ...record,
             [mode]: { model, thinkingLevel: effective },
+            [agentId]: { model, thinkingLevel: effective },
           };
         },
         {}

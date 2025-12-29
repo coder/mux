@@ -65,17 +65,19 @@ function syncCreationPreferences(projectPath: string, workspaceId: string): void
     const effectiveMode: UIMode = projectMode ?? "exec";
     const effectiveThinking: ThinkingLevel = projectThinkingLevel ?? "off";
 
-    updatePersistedState<
-      Partial<Record<"plan" | "exec", { model: string; thinkingLevel: ThinkingLevel }>>
-    >(
+    const normalizedAgentId =
+      typeof projectAgentId === "string" && projectAgentId.trim().length > 0
+        ? projectAgentId.trim().toLowerCase()
+        : effectiveMode;
+
+    updatePersistedState<Partial<Record<string, { model: string; thinkingLevel: ThinkingLevel }>>>(
       getWorkspaceAISettingsByModeKey(workspaceId),
       (prev) => {
         const record = prev && typeof prev === "object" ? prev : {};
         return {
-          ...(record as Partial<
-            Record<"plan" | "exec", { model: string; thinkingLevel: ThinkingLevel }>
-          >),
+          ...(record as Partial<Record<string, { model: string; thinkingLevel: ThinkingLevel }>>),
           [effectiveMode]: { model: projectModel, thinkingLevel: effectiveThinking },
+          [normalizedAgentId]: { model: projectModel, thinkingLevel: effectiveThinking },
         };
       },
       {}

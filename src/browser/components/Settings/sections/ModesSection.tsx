@@ -10,6 +10,7 @@ import {
   SelectValue,
 } from "@/browser/components/ui/select";
 import type { ThinkingLevel } from "@/common/types/thinking";
+import { normalizeAgentAiDefaults, type AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import {
   normalizeModeAiDefaults,
   type ModeAiDefaults,
@@ -17,7 +18,7 @@ import {
 } from "@/common/types/modeAiDefaults";
 import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
-import { MODE_AI_DEFAULTS_KEY } from "@/common/constants/storage";
+import { AGENT_AI_DEFAULTS_KEY, MODE_AI_DEFAULTS_KEY } from "@/common/constants/storage";
 
 const INHERIT = "__inherit__";
 const ALL_THINKING_LEVELS = ["off", "low", "medium", "high", "xhigh"] as const;
@@ -80,6 +81,7 @@ export function ModesSection() {
         setModeAiDefaults(normalized);
         // Keep a local cache for non-react readers (compaction handler, sync, etc.)
         updatePersistedState(MODE_AI_DEFAULTS_KEY, normalized);
+        updatePersistedState(AGENT_AI_DEFAULTS_KEY, normalizeAgentAiDefaults(cfg.agentAiDefaults));
         setLoadFailed(false);
         setLoaded(true);
       })
@@ -97,6 +99,17 @@ export function ModesSection() {
 
     pendingSaveRef.current = modeAiDefaults;
     updatePersistedState(MODE_AI_DEFAULTS_KEY, modeAiDefaults);
+    updatePersistedState<AgentAiDefaults>(
+      AGENT_AI_DEFAULTS_KEY,
+      (prev) =>
+        normalizeAgentAiDefaults({
+          ...(prev && typeof prev === "object" ? prev : {}),
+          plan: modeAiDefaults.plan,
+          exec: modeAiDefaults.exec,
+          compact: modeAiDefaults.compact,
+        }),
+      {}
+    );
 
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current);

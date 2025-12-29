@@ -14,7 +14,7 @@ import {
 import { copyToClipboard } from "@/browser/utils/clipboard";
 import { useModelsFromSettings } from "@/browser/hooks/useModelsFromSettings";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
-import { MODE_AI_DEFAULTS_KEY } from "@/common/constants/storage";
+import { AGENT_AI_DEFAULTS_KEY, MODE_AI_DEFAULTS_KEY } from "@/common/constants/storage";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 import {
   normalizeAgentAiDefaults,
@@ -306,7 +306,9 @@ export function TasksSection() {
       .getConfig()
       .then((cfg) => {
         setTaskSettings(normalizeTaskSettings(cfg.taskSettings));
-        setAgentAiDefaults(normalizeAgentAiDefaults(cfg.agentAiDefaults));
+        const normalizedAgentDefaults = normalizeAgentAiDefaults(cfg.agentAiDefaults);
+        setAgentAiDefaults(normalizedAgentDefaults);
+        updatePersistedState(AGENT_AI_DEFAULTS_KEY, normalizedAgentDefaults);
 
         // Keep a local cache for non-react readers (compaction handler, etc.)
         updatePersistedState(
@@ -365,6 +367,8 @@ export function TasksSection() {
     if (loadFailed) return;
 
     pendingSaveRef.current = { taskSettings, agentAiDefaults };
+    // Keep agent defaults cache up-to-date for any syncers/non-react readers.
+    updatePersistedState(AGENT_AI_DEFAULTS_KEY, agentAiDefaults);
 
     // Keep mode defaults cache up-to-date for non-react readers.
     updatePersistedState(

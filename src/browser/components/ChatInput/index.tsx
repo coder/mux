@@ -21,6 +21,7 @@ import {
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { useMode } from "@/browser/contexts/ModeContext";
+import { useAgent } from "@/browser/contexts/AgentContext";
 import { ThinkingSliderComponent } from "../ThinkingSlider";
 import { ModelSettings } from "../ModelSettings";
 import { useAPI } from "@/browser/contexts/API";
@@ -274,6 +275,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const { open } = useSettings();
   const { selectedWorkspace } = useWorkspaceContext();
   const [mode] = useMode();
+  const { agentId } = useAgent();
   const {
     models,
     customModels,
@@ -363,7 +365,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const setPreferredModel = useCallback(
     (model: string) => {
       type WorkspaceAISettingsByModeCache = Partial<
-        Record<"plan" | "exec", { model: string; thinkingLevel: ThinkingLevel }>
+        Record<string, { model: string; thinkingLevel: ThinkingLevel }>
       >;
 
       const canonicalModel = migrateGatewayModel(model);
@@ -384,6 +386,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           return {
             ...record,
             [mode]: { model: canonicalModel, thinkingLevel: effectiveThinkingLevel },
+            [agentId]: { model: canonicalModel, thinkingLevel: effectiveThinkingLevel },
           };
         },
         {}
@@ -404,7 +407,16 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           // Best-effort only. If offline or backend is old, sendMessage will persist.
         });
     },
-    [api, mode, storageKeys.modelKey, ensureModelInSettings, thinkingLevel, variant, workspaceId]
+    [
+      api,
+      agentId,
+      mode,
+      storageKeys.modelKey,
+      ensureModelInSettings,
+      thinkingLevel,
+      variant,
+      workspaceId,
+    ]
   );
   const deferredModel = useDeferredValue(preferredModel);
   const deferredInput = useDeferredValue(input);

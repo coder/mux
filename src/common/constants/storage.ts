@@ -195,6 +195,12 @@ export const PREFERRED_COMPACTION_MODEL_KEY = "preferredCompactionModel";
 export const MODE_AI_DEFAULTS_KEY = "modeAiDefaults";
 
 /**
+ * Get the localStorage key for cached per-agent AI defaults (global).
+ * Format: "agentAiDefaults"
+ */
+export const AGENT_AI_DEFAULTS_KEY = "agentAiDefaults";
+
+/**
  * Get the localStorage key for vim mode preference (global)
  * Format: "vimEnabled"
  */

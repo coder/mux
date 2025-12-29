@@ -8,6 +8,7 @@ import {
   usePersistedState,
 } from "@/browser/hooks/usePersistedState";
 import {
+  getAgentIdKey,
   getModelKey,
   getProjectScopeId,
   getModeKey,
@@ -87,10 +88,15 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
       }
 
       type WorkspaceAISettingsByModeCache = Partial<
-        Record<UIMode, { model: string; thinkingLevel: ThinkingLevel }>
+        Record<string, { model: string; thinkingLevel: ThinkingLevel }>
       >;
 
       const mode = readPersistedState<UIMode>(getModeKey(scopeId), "exec");
+      const rawAgentId = readPersistedState<string | undefined>(getAgentIdKey(scopeId), undefined);
+      const agentId =
+        typeof rawAgentId === "string" && rawAgentId.trim().length > 0
+          ? rawAgentId.trim().toLowerCase()
+          : mode;
 
       updatePersistedState<WorkspaceAISettingsByModeCache>(
         getWorkspaceAISettingsByModeKey(props.workspaceId),
@@ -100,6 +106,7 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
           return {
             ...record,
             [mode]: { model, thinkingLevel: effective },
+            [agentId]: { model, thinkingLevel: effective },
           };
         },
         {}

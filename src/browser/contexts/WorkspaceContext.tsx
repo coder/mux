@@ -21,6 +21,7 @@ import {
   getModelKey,
   getThinkingLevelKey,
   getWorkspaceAISettingsByModeKey,
+  AGENT_AI_DEFAULTS_KEY,
   MODE_AI_DEFAULTS_KEY,
   SELECTED_WORKSPACE_KEY,
 } from "@/common/constants/storage";
@@ -30,6 +31,7 @@ import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { isExperimentEnabled } from "@/browser/hooks/useExperiments";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { normalizeModeAiDefaults } from "@/common/types/modeAiDefaults";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 import { useRouter } from "@/browser/contexts/RouterContext";
@@ -194,6 +196,11 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     void api.config
       .getConfig()
       .then((cfg) => {
+        updatePersistedState(
+          AGENT_AI_DEFAULTS_KEY,
+          normalizeAgentAiDefaults(cfg.agentAiDefaults ?? {})
+        );
+
         updatePersistedState(
           MODE_AI_DEFAULTS_KEY,
           normalizeModeAiDefaults(cfg.modeAiDefaults ?? {})
