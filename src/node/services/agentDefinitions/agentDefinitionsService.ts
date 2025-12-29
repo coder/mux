@@ -216,7 +216,7 @@ export async function discoverAgentDefinitions(
   const byId = new Map<AgentId, AgentDiscoveryEntry>();
 
   // Seed built-ins (lowest precedence).
-  for (const pkg of await getBuiltInAgentDefinitions()) {
+  for (const pkg of getBuiltInAgentDefinitions()) {
     const uiSelectable = resolveUiSelectable(pkg.frontmatter.ui);
     const uiColor = pkg.frontmatter.color;
     const subagentRunnable = pkg.frontmatter.subagent?.runnable ?? false;
@@ -348,8 +348,7 @@ export async function readAgentDefinition(
     }
   }
 
-  const builtIns = await getBuiltInAgentDefinitions();
-  const builtIn = builtIns.find((pkg) => pkg.id === agentId);
+  const builtIn = getBuiltInAgentDefinitions().find((pkg) => pkg.id === agentId);
   if (builtIn) {
     const validated = AgentDefinitionPackageSchema.safeParse(builtIn);
     if (!validated.success) {
