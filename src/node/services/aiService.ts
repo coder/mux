@@ -1425,10 +1425,13 @@ export class AIService extends EventEmitter {
             toolsForModel = { ...nonBridgeable, code_execution: codeExecutionTool };
           } else {
             // Supplement mode: add code_execution if policy allows (experiment is additive).
-            // Skip if policy has a require filter — adding code_execution would violate it.
-            const hasRequire = effectiveToolPolicy?.some((f) => f.action === "require") ?? false;
+            // If policy requires a different tool, don't add code_execution (would violate require).
+            const requiredToolName = effectiveToolPolicy?.find(
+              (f) => f.action === "require"
+            )?.regex_match;
+            const requiresOtherTool = requiredToolName && requiredToolName !== "code_execution";
             const codeExecAllowed =
-              !hasRequire &&
+              !requiresOtherTool &&
               Object.keys(
                 applyToolPolicy({ code_execution: codeExecutionTool }, effectiveToolPolicy)
               ).length > 0;
