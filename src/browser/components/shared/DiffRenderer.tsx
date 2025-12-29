@@ -379,6 +379,15 @@ const highlightedDiffCache = new LRUCache<string, HighlightedChunk[]>({
     ),
 });
 
+// Fast string hash (djb2 algorithm) - O(n) but very low constant factor
+function hashString(str: string): number {
+  let hash = 5381;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) + hash) ^ str.charCodeAt(i);
+  }
+  return hash >>> 0; // Convert to unsigned 32-bit
+}
+
 function getDiffCacheKey(
   content: string,
   language: string,
@@ -386,13 +395,10 @@ function getDiffCacheKey(
   newStart: number,
   themeMode: ThemeMode
 ): string {
-  // Use content hash for more reliable cache hits
-  // Simple hash: length + first/last 100 chars (fast, unique enough for this use case)
-  const contentHash =
-    content.length <= 200
-      ? content
-      : `${content.length}:${content.slice(0, 100)}:${content.slice(-100)}`;
-  return `${contentHash}:${oldStart}:${newStart}:${language}:${themeMode}`;
+  // Use hash of full content to avoid collisions where diffs differ only in the middle
+  // (e.g., deletion vs addition of same line - only the +/- prefix differs)
+  const contentHash = hashString(content);
+  return `${contentHash}:${content.length}:${oldStart}:${newStart}:${language}:${themeMode}`;
 }
 
 /** Synchronous plain-text chunks for instant rendering (no "Processing..." flash) */
