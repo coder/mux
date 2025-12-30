@@ -5,6 +5,8 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import { log } from "./log";
 import * as os from "os";
+import { VERSION } from "@/version";
+import { buildMuxMdnsServiceOptions, MdnsAdvertiserService } from "./mdnsAdvertiserService";
 import type { AppRouter } from "@/node/orpc/router";
 
 export interface ServerInfo {
@@ -41,7 +43,13 @@ type NetworkInterfaces = NodeJS.Dict<os.NetworkInterfaceInfo[]>;
 
 function isLoopbackHost(host: string): boolean {
   const normalized = host.trim().toLowerCase();
-  return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1";
+
+  // IPv4 loopback range (RFC 1122): 127.0.0.0/8
+  if (normalized.startsWith("127.")) {
+    return true;
+  }
+
+  return normalized === "localhost" || normalized === "::1";
 }
 
 function formatHostForUrl(host: string): string {
@@ -143,6 +151,7 @@ export class ServerService {
   private lockfile: ServerLockfile | null = null;
   private apiAuthToken: string | null = null;
   private serverInfo: ServerInfo | null = null;
+  private readonly mdnsAdvertiser = new MdnsAdvertiserService();
   private sshHost: string | undefined = undefined;
 
   /**
@@ -263,6 +272,31 @@ export class ServerService {
       networkBaseUrls,
     };
 
+    const mdnsAdvertisementEnabled = options.context.config.getMdnsAdvertisementEnabled();
+
+    // "auto" mode: only advertise when the bind host is reachable from other devices.
+    if (mdnsAdvertisementEnabled !== false && !isLoopbackHost(bindHost)) {
+      const instanceName = options.context.config.getMdnsServiceName() ?? `mux-${os.hostname()}`;
+      const serviceOptions = buildMuxMdnsServiceOptions({
+        bindHost,
+        port: server.port,
+        instanceName,
+        version: VERSION.git_describe,
+        authRequired: options.authToken.trim().length > 0,
+      });
+
+      try {
+        await this.mdnsAdvertiser.start(serviceOptions);
+      } catch (err) {
+        log.warn("Failed to advertise mux API server via mDNS:", err);
+      }
+    } else if (mdnsAdvertisementEnabled === true && isLoopbackHost(bindHost)) {
+      log.warn(
+        "mDNS advertisement requested, but the API server is loopback-only. " +
+          "Set apiServerBindHost to 0.0.0.0 (or a LAN IP) to enable LAN discovery."
+      );
+    }
+
     return this.serverInfo;
   }
 
@@ -270,6 +304,12 @@ export class ServerService {
    * Stop the HTTP/WS API server and release the lockfile.
    */
   async stopServer(): Promise<void> {
+    try {
+      await this.mdnsAdvertiser.stop();
+    } catch (err) {
+      log.warn("Failed to stop mDNS advertiser:", err);
+    }
+
     if (this.lockfile) {
       await this.lockfile.release();
       this.lockfile = null;

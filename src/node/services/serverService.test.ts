@@ -5,6 +5,7 @@ import * as os from "os";
 import * as net from "net";
 import { ServerService, computeNetworkBaseUrls } from "./serverService";
 import type { ORPCContext } from "@/node/orpc/context";
+import { Config } from "@/node/config";
 import { ServerLockDataSchema } from "./serverLockfile";
 
 describe("ServerService", () => {
@@ -39,11 +40,12 @@ describe("ServerService", () => {
 describe("ServerService.startServer", () => {
   let tempDir: string;
 
-  // Minimal context stub - server creation only needs the shape, not real services
-  const stubContext: Partial<ORPCContext> = {};
+  let stubContext: ORPCContext;
 
   beforeEach(async () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-server-test-"));
+    const config = new Config(tempDir);
+    stubContext = { config } as unknown as ORPCContext;
   });
 
   afterEach(async () => {
@@ -93,7 +95,7 @@ describe("ServerService.startServer", () => {
       // Start server - this should fail when trying to write lockfile
       await service.startServer({
         muxHome: tempDir,
-        context: stubContext as ORPCContext,
+        context: stubContext,
         authToken: "test-token",
         port: 0, // random port
       });
@@ -128,7 +130,7 @@ describe("ServerService.startServer", () => {
     try {
       await service.startServer({
         muxHome: tempDir,
-        context: stubContext as ORPCContext,
+        context: stubContext,
         authToken: "test-token",
         port: 0,
       });
@@ -154,7 +156,7 @@ describe("ServerService.startServer", () => {
 
     const info = await service.startServer({
       muxHome: tempDir,
-      context: stubContext as ORPCContext,
+      context: stubContext,
       authToken: "test-token",
       port: 0,
     });
@@ -183,6 +185,7 @@ describe("ServerService.startServer", () => {
 describe("computeNetworkBaseUrls", () => {
   test("returns empty for loopback binds", () => {
     expect(computeNetworkBaseUrls({ bindHost: "127.0.0.1", port: 3000 })).toEqual([]);
+    expect(computeNetworkBaseUrls({ bindHost: "127.0.0.2", port: 3000 })).toEqual([]);
     expect(computeNetworkBaseUrls({ bindHost: "localhost", port: 3000 })).toEqual([]);
     expect(computeNetworkBaseUrls({ bindHost: "::1", port: 3000 })).toEqual([]);
   });

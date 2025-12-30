@@ -45,6 +45,26 @@ function parseOptionalNonEmptyString(value: unknown): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
+function parseOptionalEnvBoolean(value: unknown): boolean | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return undefined;
+  }
+
+  if (normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on") {
+    return true;
+  }
+
+  if (normalized === "0" || normalized === "false" || normalized === "no" || normalized === "off") {
+    return false;
+  }
+
+  return undefined;
+}
 function parseOptionalBoolean(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
 }
@@ -94,6 +114,8 @@ export class Config {
           apiServerBindHost?: unknown;
           apiServerPort?: unknown;
           apiServerServeWebUi?: unknown;
+          mdnsAdvertisementEnabled?: unknown;
+          mdnsServiceName?: unknown;
           serverSshHost?: string;
           viewedSplashScreens?: string[];
           featureFlagOverrides?: Record<string, "default" | "on" | "off">;
@@ -132,6 +154,8 @@ export class Config {
               ? true
               : undefined,
             apiServerPort: parseOptionalPort(parsed.apiServerPort),
+            mdnsAdvertisementEnabled: parseOptionalBoolean(parsed.mdnsAdvertisementEnabled),
+            mdnsServiceName: parseOptionalNonEmptyString(parsed.mdnsServiceName),
             serverSshHost: parsed.serverSshHost,
             viewedSplashScreens: parsed.viewedSplashScreens,
             taskSettings,
@@ -168,6 +192,8 @@ export class Config {
         apiServerBindHost?: string;
         apiServerPort?: number;
         apiServerServeWebUi?: boolean;
+        mdnsAdvertisementEnabled?: boolean;
+        mdnsServiceName?: string;
         serverSshHost?: string;
         viewedSplashScreens?: string[];
         featureFlagOverrides?: ProjectsConfig["featureFlagOverrides"];
@@ -192,6 +218,16 @@ export class Config {
       const apiServerPort = parseOptionalPort(config.apiServerPort);
       if (apiServerPort !== undefined) {
         data.apiServerPort = apiServerPort;
+      }
+
+      const mdnsAdvertisementEnabled = parseOptionalBoolean(config.mdnsAdvertisementEnabled);
+      if (mdnsAdvertisementEnabled !== undefined) {
+        data.mdnsAdvertisementEnabled = mdnsAdvertisementEnabled;
+      }
+
+      const mdnsServiceName = parseOptionalNonEmptyString(config.mdnsServiceName);
+      if (mdnsServiceName) {
+        data.mdnsServiceName = mdnsServiceName;
       }
 
       if (config.serverSshHost) {
@@ -277,6 +313,34 @@ export class Config {
       config.featureFlagOverrides = Object.keys(next).length > 0 ? next : undefined;
       return config;
     });
+  }
+
+  /**
+   * mDNS advertisement enablement.
+   *
+   * - true: attempt to advertise (will warn if the API server is loopback-only)
+   * - false: never advertise
+   * - undefined: "auto" (advertise only when the API server is LAN-reachable)
+   */
+  getMdnsAdvertisementEnabled(): boolean | undefined {
+    const envOverride = parseOptionalEnvBoolean(process.env.MUX_MDNS_ADVERTISE);
+    if (envOverride !== undefined) {
+      return envOverride;
+    }
+
+    const config = this.loadConfigOrDefault();
+    return config.mdnsAdvertisementEnabled;
+  }
+
+  /** Optional DNS-SD service instance name override. */
+  getMdnsServiceName(): string | undefined {
+    const envName = parseOptionalNonEmptyString(process.env.MUX_MDNS_SERVICE_NAME);
+    if (envName) {
+      return envName;
+    }
+
+    const config = this.loadConfigOrDefault();
+    return config.mdnsServiceName;
   }
 
   /**
