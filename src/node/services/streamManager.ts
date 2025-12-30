@@ -1252,15 +1252,24 @@ export class StreamManager extends EventEmitter {
           await this.historyService.updateHistory(workspaceId as string, finalAssistantMessage);
 
           // Update cumulative session usage (if service is available)
+          // Wrapped in try/catch so stream-end always emits even if usage persistence fails
           if (this.sessionUsageService && totalUsage) {
-            const messageUsage = createDisplayUsage(totalUsage, streamInfo.model, providerMetadata);
-            if (messageUsage) {
-              const normalizedModel = normalizeGatewayModel(streamInfo.model);
-              await this.sessionUsageService.recordUsage(
-                workspaceId as string,
-                normalizedModel,
-                messageUsage
+            try {
+              const messageUsage = createDisplayUsage(
+                totalUsage,
+                streamInfo.model,
+                providerMetadata
               );
+              if (messageUsage) {
+                const normalizedModel = normalizeGatewayModel(streamInfo.model);
+                await this.sessionUsageService.recordUsage(
+                  workspaceId as string,
+                  normalizedModel,
+                  messageUsage
+                );
+              }
+            } catch (usageError) {
+              log.error("Failed to record session usage", { workspaceId, error: usageError });
             }
           }
         }
