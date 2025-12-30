@@ -14,6 +14,7 @@ import type {
   CompactionRequestData,
   ContinueMessage,
 } from "@/common/types/message";
+import type { ReviewNoteData } from "@/common/types/review";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { RUNTIME_MODE, SSH_RUNTIME_PREFIX } from "@/common/types/runtime";
@@ -748,6 +749,8 @@ export interface CommandHandlerContext {
   workspaceId: string;
   sendMessageOptions: SendMessageOptions;
   imageParts?: ImagePart[];
+  /** Reviews attached to the message (from code review panel) */
+  reviews?: ReviewNoteData[];
   editMessageId?: string;
   setInput: (value: string) => void;
   setImageAttachments: (images: ImageAttachment[]) => void;
@@ -891,15 +894,21 @@ export async function handleCompactCommand(
   setIsSending(true);
 
   try {
+    // Check if we have content to continue with after compaction
+    const hasText = !!parsed.continueMessage;
+    const hasImages = context.imageParts && context.imageParts.length > 0;
+    const hasReviews = context.reviews && context.reviews.length > 0;
+
     const result = await executeCompaction({
       api,
       workspaceId,
       maxOutputTokens: parsed.maxOutputTokens,
       continueMessage:
-        parsed.continueMessage || (context.imageParts && context.imageParts.length > 0)
+        hasText || hasImages || hasReviews
           ? {
               text: parsed.continueMessage ?? "",
               imageParts: context.imageParts,
+              reviews: context.reviews,
               model: sendMessageOptions.model,
             }
           : undefined,
