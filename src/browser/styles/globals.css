@@ -1458,6 +1458,8 @@ code {
   border-radius: 4px;
   overflow-x: auto;
   margin: 1em 0;
+  width: fit-content;
+  max-width: 100%;
 }
 
 .markdown-content pre code {
@@ -1500,7 +1502,8 @@ code {
 
 .markdown-content table {
   border-collapse: collapse;
-  width: 100%;
+  width: fit-content;
+  max-width: 100%;
   margin: 1em 0;
 }
 
@@ -1613,6 +1616,9 @@ span.search-highlight {
 .code-block-wrapper {
   position: relative;
   margin: 0.75em 0;
+  width: fit-content;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 /* Code block with line numbers - each line is a grid row */
@@ -1621,7 +1627,7 @@ span.search-highlight {
   grid-template-columns: auto 1fr;
   background: var(--color-code-bg);
   border-radius: 4px;
-  padding: 6px 0;
+  padding: 6px 40px 6px 0; /* Right padding for copy button */
   font-family: var(--font-monospace);
   font-size: 12px;
   line-height: 1.6;

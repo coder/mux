@@ -69,9 +69,9 @@ export const MessageWindow: React.FC<MessageWindowProps> = ({
   return (
     <div
       className={cn(
-        "mt-4 mb-1 flex w-full flex-col relative isolate w-fit",
-        variant === "user" && "ml-auto",
-        variant === "assistant" && "text-foreground",
+        "mt-4 mb-1 flex flex-col relative isolate",
+        variant === "user" && "ml-auto w-fit",
+        variant === "assistant" && "w-full text-foreground",
         isLastPartOfMessage && "mb-4"
       )}
       data-message-block

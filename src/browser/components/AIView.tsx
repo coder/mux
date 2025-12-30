@@ -607,7 +607,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
             tabIndex={0}
             data-testid="message-window"
             data-loaded={!loading}
-            className="h-full overflow-y-auto p-[15px] leading-[1.5] break-words whitespace-pre-wrap"
+            className="h-full overflow-x-hidden overflow-y-auto p-[15px] leading-[1.5] break-words whitespace-pre-wrap"
           >
             <div
               ref={innerRef}
