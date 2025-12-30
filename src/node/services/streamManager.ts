@@ -1229,9 +1229,10 @@ export class StreamManager extends EventEmitter {
         // where isStreaming() returns true while event handlers try to send new messages
         streamInfo.state = StreamState.COMPLETED;
 
-        this.emit("stream-end", streamEndEvent);
-
         // Update history with final message (only if there are parts)
+        // CRITICAL: This must happen BEFORE emitting stream-end, because event handlers
+        // (e.g., handleStreamEnd in TaskService) may trigger cleanup that reads session-usage.json.
+        // If we emit first, the cleanup could race and read stale data.
         if (streamInfo.parts && streamInfo.parts.length > 0) {
           const finalAssistantMessage: MuxMessage = {
             id: streamInfo.messageId,
@@ -1263,6 +1264,8 @@ export class StreamManager extends EventEmitter {
             }
           }
         }
+
+        this.emit("stream-end", streamEndEvent);
       }
     } catch (error) {
       streamInfo.state = StreamState.ERROR;

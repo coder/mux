@@ -50,6 +50,9 @@ describe("agent_report tool", () => {
       tool.execute!({ reportMarkdown: "done", title: "t" }, mockToolCallOptions)
     );
 
-    expect(result).toEqual({ success: true });
+    expect(result).toEqual({
+      success: true,
+      message: "Report submitted successfully. STOP. Do not generate any further output.",
+    });
   });
 });

@@ -1505,6 +1505,7 @@ describe("TaskService", () => {
         result: unknown;
         timestamp: number;
       }) => Promise<void>;
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
     };
     await internal.handleAgentReport({
       type: "tool-call-end",
@@ -1553,9 +1554,24 @@ describe("TaskService", () => {
       expect.objectContaining({ workspaceId: childId })
     );
 
-    expect(remove).toHaveBeenCalled();
+    // resumeStream is called by handleAgentReport (not deferred)
     expect(resumeStream).toHaveBeenCalled();
-    expect(emit).toHaveBeenCalled();
+
+    // But cleanup is deferred until stream ends (so recordUsage runs first).
+    // Verify remove has NOT been called yet.
+    expect(remove).not.toHaveBeenCalled();
+
+    // Simulate stream ending to trigger cleanup.
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: childId,
+      messageId: "assistant-child-partial",
+      metadata: { model: "test-model" },
+      parts: childPartial.parts as StreamEndEvent["parts"],
+    });
+
+    // NOW remove should have been called
+    expect(remove).toHaveBeenCalled();
   });
 
   test("agent_report updates queued/running task tool output in parent history", async () => {
@@ -1645,6 +1661,7 @@ describe("TaskService", () => {
         result: unknown;
         timestamp: number;
       }) => Promise<void>;
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
     };
     await internal.handleAgentReport({
       type: "tool-call-end",
@@ -1690,8 +1707,24 @@ describe("TaskService", () => {
       }
     }
 
-    expect(remove).toHaveBeenCalled();
+    // resumeStream is called by handleAgentReport (not deferred)
     expect(resumeStream).toHaveBeenCalled();
+
+    // But cleanup is deferred until stream ends (so recordUsage runs first).
+    // Verify remove has NOT been called yet.
+    expect(remove).not.toHaveBeenCalled();
+
+    // Simulate stream ending to trigger cleanup.
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: childId,
+      messageId: "assistant-child-partial",
+      metadata: { model: "test-model" },
+      parts: childPartial.parts as StreamEndEvent["parts"],
+    });
+
+    // NOW remove should have been called
+    expect(remove).toHaveBeenCalled();
   });
 
   test("uses agent_report from stream-end parts instead of fallback", async () => {

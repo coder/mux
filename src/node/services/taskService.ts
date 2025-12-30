@@ -1594,7 +1594,12 @@ export class TaskService {
     }
 
     const status = entry.workspace.taskStatus;
-    if (status === "reported") return;
+    if (status === "reported") {
+      // handleAgentReport already finalized but deferred cleanup until stream ended
+      // (so recordUsage could run). Now safe to clean up.
+      await this.cleanupReportedLeafTask(workspaceId);
+      return;
+    }
 
     // Never allow a task to finish/report while it still has active descendant tasks.
     // We'll auto-resume this task once the last descendant reports.
@@ -1609,6 +1614,8 @@ export class TaskService {
     const reportArgs = this.findAgentReportArgsInParts(event.parts);
     if (reportArgs) {
       await this.finalizeAgentTaskReport(workspaceId, entry, reportArgs);
+      // Stream already ended, so recordUsage already ran. Safe to clean up now.
+      await this.cleanupReportedLeafTask(workspaceId);
       return;
     }
 
@@ -1745,7 +1752,11 @@ export class TaskService {
 
     const cfgBeforeReport = this.config.loadConfigOrDefault();
     const childEntryBeforeReport = this.findWorkspaceEntry(cfgBeforeReport, childWorkspaceId);
-    if (childEntryBeforeReport?.workspace.taskStatus === "reported") {
+    // Workspace may have been deleted if stream-end raced ahead and cleaned up
+    if (!childEntryBeforeReport) {
+      return;
+    }
+    if (childEntryBeforeReport.workspace.taskStatus === "reported") {
       return;
     }
 
@@ -1763,16 +1774,15 @@ export class TaskService {
       return;
     }
 
-    await this.finalizeAgentTaskReport(childWorkspaceId, childEntryBeforeReport, reportArgs, {
-      stopStream: true,
-    });
+    // Don't abort the stream - providers/AI SDK don't report usage for aborted streams.
+    // Let it finish naturally; the agent_report tool result tells the LLM to stop generating.
+    await this.finalizeAgentTaskReport(childWorkspaceId, childEntryBeforeReport, reportArgs);
   }
 
   private async finalizeAgentTaskReport(
     childWorkspaceId: string,
     childEntry: { projectPath: string; workspace: WorkspaceConfigEntry } | null | undefined,
-    reportArgs: { reportMarkdown: string; title?: string },
-    options?: { stopStream?: boolean }
+    reportArgs: { reportMarkdown: string; title?: string }
   ): Promise<void> {
     assert(
       childWorkspaceId.length > 0,
@@ -1802,27 +1812,9 @@ export class TaskService {
 
     await this.emitWorkspaceMetadata(childWorkspaceId);
 
-    if (options?.stopStream) {
-      // `agent_report` is terminal. Stop the child stream immediately to prevent any further token
-      // usage and to ensure parallelism accounting never "frees" a slot while the stream is still
-      // active (Claude/Anthropic can emit tool calls before the final assistant block completes).
-      try {
-        const stopResult = await this.aiService.stopStream(childWorkspaceId, {
-          abandonPartial: true,
-        });
-        if (!stopResult.success) {
-          log.debug("Failed to stop task stream after agent_report", {
-            workspaceId: childWorkspaceId,
-            error: stopResult.error,
-          });
-        }
-      } catch (error: unknown) {
-        log.debug("Failed to stop task stream after agent_report (threw)", {
-          workspaceId: childWorkspaceId,
-          error,
-        });
-      }
-    }
+    // NOTE: We intentionally do NOT abort the stream here. Providers/AI SDK don't report
+    // usage for aborted streams, so we let it finish naturally. The agent_report tool result
+    // instructs the LLM to stop generating further output.
 
     const cfgAfterReport = this.config.loadConfigOrDefault();
     const latestChildEntry =
@@ -1850,8 +1842,9 @@ export class TaskService {
     // Free slot and start queued tasks.
     await this.maybeStartQueuedTasks();
 
-    // Attempt cleanup of reported tasks (leaf-first).
-    await this.cleanupReportedLeafTask(childWorkspaceId);
+    // NOTE: Cleanup is deferred to handleStreamEnd. We can't clean up here because
+    // recordUsage hasn't run yet (it runs when the stream ends, before stream-end event).
+    // handleStreamEnd will call cleanupReportedLeafTask after recordUsage has persisted.
 
     // Auto-resume any parent stream that was waiting on a task tool call (restart-safe).
     const postCfg = this.config.loadConfigOrDefault();
