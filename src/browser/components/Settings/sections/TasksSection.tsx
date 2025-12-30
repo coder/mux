@@ -151,25 +151,43 @@ function renderPolicySummary(
     </Tooltip>,
   ];
 
-  // Show tools whitelist if present
+  // Show tools config if present
   const tools = agent.tools;
-  if (tools && tools.length > 0) {
+  const addCount = tools?.add?.length ?? 0;
+  const removeCount = tools?.remove?.length ?? 0;
+  if (addCount > 0 || removeCount > 0) {
     pieces.push(
       <Tooltip key="tools">
         <TooltipTrigger asChild>
           <span className="cursor-help underline decoration-dotted underline-offset-2">
-            tools: {tools.length}
+            tools: +{addCount} -{removeCount}
           </span>
         </TooltipTrigger>
         <TooltipContent align="start" className="max-w-80 whitespace-normal">
-          <div className="font-medium">Allowed tools (regex patterns)</div>
-          <ul className="mt-1 space-y-0.5">
-            {tools.map((tool) => (
-              <li key={tool}>
-                <code>{tool}</code>
-              </li>
-            ))}
-          </ul>
+          {addCount > 0 && (
+            <>
+              <div className="font-medium">Added tools (regex patterns)</div>
+              <ul className="mt-1 space-y-0.5">
+                {tools?.add?.map((tool) => (
+                  <li key={tool}>
+                    <code>{tool}</code>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          {removeCount > 0 && (
+            <>
+              <div className="mt-2 font-medium">Removed tools</div>
+              <ul className="mt-1 space-y-0.5">
+                {tools?.remove?.map((tool) => (
+                  <li key={tool}>
+                    <code>{tool}</code>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
         </TooltipContent>
       </Tooltip>
     );

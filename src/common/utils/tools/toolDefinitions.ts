@@ -1032,18 +1032,19 @@ export function getToolSchemas(): Record<string, ToolSchema> {
 /**
  * Get which tools are available for a given model
  * @param modelString The model string (e.g., "anthropic:claude-opus-4-1")
- * @param mode Optional mode ("plan" | "exec") - ask_user_question only available in plan mode
+ * @param _mode Deprecated - tool availability is now controlled by agent tool policy
  * @returns Array of tool names available for the model
  */
 export function getAvailableTools(
   modelString: string,
-  mode?: "plan" | "exec",
+  _mode?: "plan" | "exec",
   options?: { enableAgentReport?: boolean }
 ): string[] {
   const [provider] = modelString.split(":");
   const enableAgentReport = options?.enableAgentReport ?? true;
 
   // Base tools available for all models
+  // Note: Tool availability is controlled by agent tool policy (allowlist), not mode checks here.
   const baseTools = [
     "file_read",
     "agent_skill_read",
@@ -1051,8 +1052,7 @@ export function getAvailableTools(
     "file_edit_replace_string",
     // "file_edit_replace_lines", // DISABLED: causes models to break repo state
     "file_edit_insert",
-    // ask_user_question only available in plan mode
-    ...(mode === "plan" ? ["ask_user_question"] : []),
+    "ask_user_question",
     "propose_plan",
     "bash",
     "task",

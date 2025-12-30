@@ -42,6 +42,17 @@ const AgentDefinitionAiDefaultsSchema = z
   })
   .strip();
 
+// Tool configuration: add/remove patterns (regex).
+// Layers are processed in order during inheritance (base first, then child).
+const AgentDefinitionToolsSchema = z
+  .object({
+    // Patterns to add (enable). Processed before remove.
+    add: z.array(z.string().min(1)).optional(),
+    // Patterns to remove (disable). Processed after add.
+    remove: z.array(z.string().min(1)).optional(),
+  })
+  .strip();
+
 export const AgentDefinitionFrontmatterSchema = z
   .object({
     name: z.string().min(1).max(128),
@@ -56,8 +67,9 @@ export const AgentDefinitionFrontmatterSchema = z
     subagent: AgentDefinitionSubagentSchema.optional(),
     ai: AgentDefinitionAiDefaultsSchema.optional(),
 
-    // Tool whitelist: regex patterns. If omitted, no tools are available.
-    tools: z.array(z.string().min(1)).optional(),
+    // Tool configuration: add/remove patterns (regex).
+    // If omitted and no base, no tools are available.
+    tools: AgentDefinitionToolsSchema.optional(),
   })
   .strip();
 
@@ -73,8 +85,8 @@ export const AgentDefinitionDescriptorSchema = z
     // Base agent ID for inheritance (e.g., "exec", "plan", or custom agent)
     base: AgentIdSchema.optional(),
     aiDefaults: AgentDefinitionAiDefaultsSchema.optional(),
-    // Tool whitelist patterns (for UI display)
-    tools: z.array(z.string().min(1)).optional(),
+    // Tool configuration (for UI display / inheritance computation)
+    tools: AgentDefinitionToolsSchema.optional(),
   })
   .strict();
 

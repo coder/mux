@@ -256,8 +256,9 @@ export async function getToolsForModel(
   };
 
   // Non-runtime tools execute immediately (no init wait needed)
+  // Note: Tool availability is controlled by agent tool policy (allowlist), not mode checks here.
   const nonRuntimeTools: Record<string, Tool> = {
-    ...(config.mode === "plan" ? { ask_user_question: createAskUserQuestionTool(config) } : {}),
+    ask_user_question: createAskUserQuestionTool(config),
     propose_plan: createProposePlanTool(config),
     ...(config.enableAgentReport ? { agent_report: createAgentReportTool(config) } : {}),
     todo_write: createTodoWriteTool(config),

@@ -11,7 +11,8 @@ describe("parseAgentDefinitionMarkdown", () => {
 name: My Agent
 description: Does stuff
 base: exec
-tools: ["file_read", "bash.*"]
+tools:
+  add: ["file_read", "bash.*"]
 unknownTopLevel: 123
 ui:
   hidden: false
@@ -30,7 +31,7 @@ Do the thing.
     expect(result.frontmatter.name).toBe("My Agent");
     expect(result.frontmatter.description).toBe("Does stuff");
     expect(result.frontmatter.base).toBe("exec");
-    expect(result.frontmatter.tools).toEqual(["file_read", "bash.*"]);
+    expect(result.frontmatter.tools).toEqual({ add: ["file_read", "bash.*"] });
     expect(result.frontmatter.ui?.hidden).toBe(false);
     expect(result.frontmatter.ui?.color).toBe("#ff00ff");
 
@@ -72,13 +73,16 @@ Body
     ).toThrow(AgentDefinitionParseError);
   });
 
-  test("parses tools as regex patterns", () => {
+  test("parses tools as add/remove patterns", () => {
     const content = `---
 name: Regex Tools
 tools:
-  - file_read
-  - "bash.*"
-  - "task_.*"
+  add:
+    - file_read
+    - "bash.*"
+    - "task_.*"
+  remove:
+    - task
 ---
 Body
 `;
@@ -88,6 +92,9 @@ Body
       byteSize: Buffer.byteLength(content, "utf-8"),
     });
 
-    expect(result.frontmatter.tools).toEqual(["file_read", "bash.*", "task_.*"]);
+    expect(result.frontmatter.tools).toEqual({
+      add: ["file_read", "bash.*", "task_.*"],
+      remove: ["task"],
+    });
   });
 });

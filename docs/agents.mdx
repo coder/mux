@@ -32,9 +32,11 @@ name: Review
 description: Terse reviewer-style feedback
 base: exec
 tools:
-  - file_read
-  - bash
-  - web_search
+  # Remove editing tools from exec base (this is a read-only reviewer)
+  remove:
+    - file_edit_.*
+    - task
+    - task_.*
 ---
 
 You are a code reviewer.
@@ -91,12 +93,14 @@ ai:
   model: sonnet # Or full ID like "anthropic:claude-sonnet-4-5"
   thinkingLevel: medium
 
-# Tool whitelist (regex patterns)
+# Tool configuration (regex patterns, processed in order during inheritance)
 tools:
-  - file_read
-  - file_edit_.*
-  - bash
-  - task_.*
+  add: # Patterns to add/enable
+    - file_read
+    - file_edit_.*
+    - bash
+  remove: # Patterns to remove/disable (applied after add)
+    - task_.*
 ---
 ```
 
@@ -167,11 +171,11 @@ name: Security Audit
 description: Security-focused code review
 base: exec
 tools:
-  - file_read
-  - agent_skill_read
-  - agent_skill_read_file
-  - bash
-  - web_search
+  # Remove editing/task tools - this is read-only analysis
+  remove:
+    - file_edit_.*
+    - task
+    - task_.*
 ---
 
 You are a security auditor. Analyze the codebase for:
@@ -192,10 +196,10 @@ name: Docs
 description: Focus on documentation tasks
 base: exec
 tools:
-  - file_read
-  - file_edit_insert
-  - file_edit_replace_string
-  - bash
+  # Remove task delegation - keep it simple for doc tasks
+  remove:
+    - task
+    - task_.*
 ---
 
 You are in Documentation mode. Focus on improving documentation:
@@ -222,24 +226,25 @@ ui:
 subagent:
   runnable: true
 tools:
-  - file_read
-  - agent_skill_read
-  - agent_skill_read_file
-  - file_edit_insert
-  - file_edit_replace_string
-  - bash
-  - bash_output
-  - bash_background_list
-  - bash_background_terminate
-  - task
-  - task_await
-  - task_list
-  - task_terminate
-  - web_fetch
-  - web_search
-  - todo_read
-  - todo_write
-  - status_set
+  add:
+    - file_read
+    - agent_skill_read
+    - agent_skill_read_file
+    - file_edit_insert
+    - file_edit_replace_string
+    - bash
+    - bash_output
+    - bash_background_list
+    - bash_background_terminate
+    - task
+    - task_await
+    - task_list
+    - task_terminate
+    - web_fetch
+    - web_search
+    - todo_read
+    - todo_write
+    - status_set
 ---
 
 You are in Exec mode.
@@ -271,20 +276,21 @@ ui:
 subagent:
   runnable: false
 tools:
-  - file_read
-  - agent_skill_read
-  - agent_skill_read_file
-  - bash
-  - bash_output
-  - bash_background_list
-  - bash_background_terminate
-  - web_fetch
-  - web_search
-  - propose_plan
-  - todo_read
-  - todo_write
-  - status_set
-  - ask_user_question
+  add:
+    - file_read
+    - agent_skill_read
+    - agent_skill_read_file
+    - bash
+    - bash_output
+    - bash_background_list
+    - bash_background_terminate
+    - web_fetch
+    - web_search
+    - propose_plan
+    - todo_read
+    - todo_write
+    - status_set
+    - ask_user_question
 ---
 
 You are in Plan Mode.
@@ -334,14 +340,12 @@ ui:
 subagent:
   runnable: true
 tools:
-  - file_read
-  - bash
-  - bash_output
-  - bash_background_list
-  - bash_background_terminate
-  - web_fetch
-  - web_search
-  - agent_report
+  remove:
+    - file_edit_.*
+    - task
+    - task_.*
+    - agent_skill_read
+    - agent_skill_read_file
 ---
 
 You are an Explore sub-agent running inside a child workspace.

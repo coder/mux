@@ -7,14 +7,13 @@ ui:
 subagent:
   runnable: true
 tools:
-  - file_read
-  - bash
-  - bash_output
-  - bash_background_list
-  - bash_background_terminate
-  - web_fetch
-  - web_search
-  - agent_report
+  # Remove editing and task tools from exec base (read-only agent)
+  remove:
+    - file_edit_.*
+    - task
+    - task_.*
+    - agent_skill_read
+    - agent_skill_read_file
 ---
 
 You are an Explore sub-agent running inside a child workspace.

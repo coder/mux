@@ -1,30 +1,31 @@
 import type { AgentId } from "@/common/types/agentDefinition";
 
 /**
+ * Tool configuration with add/remove patterns.
+ */
+interface ToolsConfig {
+  add?: readonly string[];
+  remove?: readonly string[];
+}
+
+/**
  * Interface for objects that have an `id`, optional `base`, and optional `tools` field.
  * Works with both AgentDefinitionDescriptor and AgentDefinitionPackage.
  */
 interface AgentLike {
   id: AgentId;
   base?: AgentId;
-  tools?: readonly string[];
+  tools?: ToolsConfig;
 }
 
 /**
- * Check if a tool name matches any pattern in the tools whitelist.
- * Patterns can be exact matches or glob-like with `*` suffix.
+ * Check if a tool name matches any pattern in a list.
+ * Patterns are treated as regex (consistent with toolPolicy.ts).
  */
 function toolMatchesPatterns(toolName: string, patterns: readonly string[]): boolean {
   for (const pattern of patterns) {
-    if (pattern === "*") {
-      return true;
-    }
-    if (pattern.endsWith("*")) {
-      const prefix = pattern.slice(0, -1);
-      if (toolName.startsWith(prefix)) {
-        return true;
-      }
-    } else if (pattern === toolName) {
+    const regex = new RegExp(`^${pattern}$`);
+    if (regex.test(toolName)) {
       return true;
     }
   }
@@ -33,11 +34,16 @@ function toolMatchesPatterns(toolName: string, patterns: readonly string[]): boo
 
 /**
  * Resolve the effective tools for an agent, including inherited tools from base agents.
- * Tools are merged up the inheritance chain (child tools extend parent tools).
+ *
+ * Inheritance is processed in order (base first, then child):
+ * 1. Start with base agent's resolved tools
+ * 2. Apply child's add patterns (union)
+ * 3. Apply child's remove patterns (difference)
  *
  * @param agentId The agent to resolve tools for
  * @param agents All available agent definitions
  * @param maxDepth Maximum inheritance depth to prevent infinite loops (default: 10)
+ * @returns Array of tool patterns that are enabled for this agent
  */
 export function resolveAgentTools(
   agentId: AgentId,
@@ -49,8 +55,8 @@ export function resolveAgentTools(
     byId.set(agent.id, agent);
   }
 
-  // Collect tools from inheritance chain (parent first, then child overrides)
-  const toolSets: Array<readonly string[]> = [];
+  // Collect tool configs from inheritance chain (base first)
+  const configs: ToolsConfig[] = [];
   let currentId: AgentId | undefined = agentId;
   let depth = 0;
 
@@ -59,21 +65,36 @@ export function resolveAgentTools(
     if (!agent) break;
 
     if (agent.tools) {
-      toolSets.unshift(agent.tools); // Parent tools go first
+      configs.unshift(agent.tools); // Base configs go first
     }
     currentId = agent.base;
     depth++;
   }
 
-  // Merge all tool sets (later entries can override, but we just union for now)
-  const merged = new Set<string>();
-  for (const tools of toolSets) {
-    for (const tool of tools) {
-      merged.add(tool);
+  // Process configs in order: base → child
+  // Each layer's add patterns are added, then remove patterns are applied
+  const enabled = new Set<string>();
+  for (const config of configs) {
+    // Add patterns
+    if (config.add) {
+      for (const pattern of config.add) {
+        enabled.add(pattern);
+      }
+    }
+    // Remove patterns (removes matching patterns from enabled set)
+    if (config.remove) {
+      for (const removePattern of config.remove) {
+        // Remove any enabled pattern that matches the remove pattern
+        for (const enabledPattern of [...enabled]) {
+          if (enabledPattern === removePattern) {
+            enabled.delete(enabledPattern);
+          }
+        }
+      }
     }
   }
 
-  return [...merged];
+  return [...enabled];
 }
 
 /**
