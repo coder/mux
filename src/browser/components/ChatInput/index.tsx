@@ -1316,15 +1316,24 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
         // Handle /compact command
         if (parsed.type === "compact") {
+          // Include attached reviews in the context so they're queued after compaction
+          const reviewsData =
+            attachedReviews.length > 0 ? attachedReviews.map((r) => r.data) : undefined;
+
           const context: CommandHandlerContext = {
             ...commandHandlerContextBase,
             editMessageId: editingMessage?.id,
             onCancelEdit: props.onCancelEdit,
+            reviews: reviewsData,
           };
 
           const result = await handleCompactCommand(parsed, context);
           if (!result.clearInput) {
             setInput(messageText); // Restore input on error
+          } else if (reviewsData && reviewsData.length > 0) {
+            // Mark attached reviews as checked on success
+            const sentReviewIds = attachedReviews.map((r) => r.id);
+            props.onCheckReviews?.(sentReviewIds);
           }
           return;
         }
