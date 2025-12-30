@@ -17,7 +17,6 @@ const BUILT_INS: AgentDefinitionDescriptor[] = [
     name: "Exec",
     uiSelectable: true,
     subagentRunnable: false,
-    policyBase: "exec",
   },
   {
     id: "plan",
@@ -25,7 +24,7 @@ const BUILT_INS: AgentDefinitionDescriptor[] = [
     name: "Plan",
     uiSelectable: true,
     subagentRunnable: false,
-    policyBase: "plan",
+    base: "plan",
   },
 ];
 
@@ -35,7 +34,7 @@ const HIDDEN_AGENT: AgentDefinitionDescriptor = {
   name: "Explore",
   uiSelectable: false,
   subagentRunnable: true,
-  policyBase: "exec",
+  base: "exec",
 };
 const CUSTOM_AGENT: AgentDefinitionDescriptor = {
   id: "review",
@@ -44,7 +43,6 @@ const CUSTOM_AGENT: AgentDefinitionDescriptor = {
   description: "Review changes",
   uiSelectable: true,
   subagentRunnable: false,
-  policyBase: "exec",
 };
 
 describe("AgentModePicker", () => {

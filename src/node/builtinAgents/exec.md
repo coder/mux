@@ -1,9 +1,29 @@
 ---
 name: Exec
 description: Implement changes in the repository
-permissionMode: default
+ui:
+  color: var(--color-exec-mode)
 subagent:
   runnable: true
+tools:
+  - file_read
+  - agent_skill_read
+  - agent_skill_read_file
+  - file_edit_insert
+  - file_edit_replace_string
+  - bash
+  - bash_output
+  - bash_background_list
+  - bash_background_terminate
+  - task
+  - task_await
+  - task_list
+  - task_terminate
+  - web_fetch
+  - web_search
+  - todo_read
+  - todo_write
+  - status_set
 ---
 
 You are in Exec mode.

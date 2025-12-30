@@ -13,6 +13,7 @@
   },
   "include": [
     "src/version.ts",
+    "src/vite-env.d.ts",
     "src/cli/index.ts",
     "src/cli/server.ts",
     "src/desktop/**/*",

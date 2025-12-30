@@ -184,7 +184,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         description: "Create a plan before coding",
         uiSelectable: true,
         subagentRunnable: false,
-        policyBase: "plan",
+        base: "plan",
       },
       {
         id: "exec",
@@ -193,7 +193,6 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         description: "Implement changes in the repository",
         uiSelectable: true,
         subagentRunnable: true,
-        policyBase: "exec",
       },
       {
         id: "compact",
@@ -202,7 +201,6 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         description: "History compaction (internal)",
         uiSelectable: false,
         subagentRunnable: false,
-        policyBase: "compact",
       },
       {
         id: "explore",
@@ -211,7 +209,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         description: "Read-only repository exploration",
         uiSelectable: false,
         subagentRunnable: true,
-        policyBase: "exec",
+        base: "exec",
       },
     ] satisfies AgentDefinitionDescriptor[]);
 
@@ -332,10 +330,11 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           frontmatter: {
             name: descriptor.name,
             description: descriptor.description,
+            base: descriptor.base,
             ui: { selectable: descriptor.uiSelectable },
             subagent: { runnable: descriptor.subagentRunnable },
             ai: descriptor.aiDefaults,
-            policy: { base: descriptor.policyBase, tools: descriptor.toolFilter },
+            tools: descriptor.tools,
           },
           body: "",
         } satisfies AgentDefinitionPackage;

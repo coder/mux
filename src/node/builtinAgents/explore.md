@@ -1,23 +1,20 @@
 ---
 name: Explore
 description: Read-only repository exploration
+base: exec
 ui:
   hidden: true
 subagent:
   runnable: true
-policy:
-  base: exec
-  tools:
-    only:
-      - file_read
-      - bash
-      - bash_output
-      - bash_background_list
-      - bash_background_terminate
-      - web_fetch
-      - web_search
-      - google_search
-      - agent_report
+tools:
+  - file_read
+  - bash
+  - bash_output
+  - bash_background_list
+  - bash_background_terminate
+  - web_fetch
+  - web_search
+  - agent_report
 ---
 
 You are an Explore sub-agent running inside a child workspace.

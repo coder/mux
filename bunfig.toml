@@ -1,3 +1,7 @@
 [test]
 root = "src"
 preload = ["./tests/setup.ts"]
+
+# Load .md files as raw text (used for built-in agent definitions)
+[loader]
+".md" = "text"

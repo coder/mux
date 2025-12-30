@@ -205,9 +205,29 @@ refactoring code unless it's purely for documentation purposes.
 ---
 name: Exec
 description: Implement changes in the repository
+ui:
+  color: var(--color-exec-mode)
 subagent:
   runnable: true
-permissionMode: default
+tools:
+  - file_read
+  - agent_skill_read
+  - agent_skill_read_file
+  - file_edit_insert
+  - file_edit_replace_string
+  - bash
+  - bash_output
+  - bash_background_list
+  - bash_background_terminate
+  - task
+  - task_await
+  - task_list
+  - task_terminate
+  - web_fetch
+  - web_search
+  - todo_read
+  - todo_write
+  - status_set
 ---
 
 You are in Exec mode.
@@ -234,11 +254,25 @@ If you are running as a sub-agent in a child workspace:
 ---
 name: Plan
 description: Create a plan before coding
+ui:
+  color: var(--color-plan-mode)
 subagent:
   runnable: false
-policy:
-  base: plan
-permissionMode: default
+tools:
+  - file_read
+  - agent_skill_read
+  - agent_skill_read_file
+  - bash
+  - bash_output
+  - bash_background_list
+  - bash_background_terminate
+  - web_fetch
+  - web_search
+  - propose_plan
+  - todo_read
+  - todo_write
+  - status_set
+  - ask_user_question
 ---
 
 You are in Plan Mode.
@@ -282,23 +316,20 @@ You are running a compaction/summarization pass. Do not call tools.
 ---
 name: Explore
 description: Read-only repository exploration
+base: exec
 ui:
   hidden: true
 subagent:
   runnable: true
-policy:
-  base: exec
-  tools:
-    only:
-      - file_read
-      - bash
-      - bash_output
-      - bash_background_list
-      - bash_background_terminate
-      - web_fetch
-      - web_search
-      - google_search
-      - agent_report
+tools:
+  - file_read
+  - bash
+  - bash_output
+  - bash_background_list
+  - bash_background_terminate
+  - web_fetch
+  - web_search
+  - agent_report
 ---
 
 You are an Explore sub-agent running inside a child workspace.

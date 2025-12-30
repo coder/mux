@@ -30,6 +30,7 @@ import {
 } from "@/common/types/tasks";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
+import { isPlanLike } from "@/common/utils/agentInheritance";
 
 const INHERIT = "__inherit__";
 const ALL_THINKING_LEVELS = ["off", "low", "medium", "high", "xhigh"] as const;
@@ -42,7 +43,7 @@ const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
     description: "Create a plan before coding",
     uiSelectable: true,
     subagentRunnable: false,
-    policyBase: "plan",
+    base: "plan",
   },
   {
     id: "exec",
@@ -51,7 +52,6 @@ const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
     description: "Implement changes in the repository",
     uiSelectable: true,
     subagentRunnable: true,
-    policyBase: "exec",
   },
   {
     id: "compact",
@@ -60,7 +60,6 @@ const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
     description: "History compaction (internal)",
     uiSelectable: false,
     subagentRunnable: false,
-    policyBase: "compact",
   },
   {
     id: "explore",
@@ -69,29 +68,9 @@ const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
     description: "Read-only repository exploration",
     uiSelectable: false,
     subagentRunnable: true,
-    policyBase: "exec",
+    base: "exec",
   },
 ];
-
-const DEFAULT_EXEC_BASE_TOOLS = [
-  "bash",
-  "bash_output",
-  "bash_background_list",
-  "bash_background_terminate",
-  "file_read",
-  "agent_skill_read",
-  "agent_skill_read_file",
-  "file_edit_replace_string",
-  "file_edit_insert",
-  "task",
-  "task_await",
-  "task_terminate",
-  "task_list",
-  "todo_write",
-  "todo_read",
-  "status_set",
-  "web_fetch",
-] as const;
 
 function getAgentDefinitionPath(agent: AgentDefinitionDescriptor): string | null {
   switch (agent.scope) {
@@ -103,12 +82,6 @@ function getAgentDefinitionPath(agent: AgentDefinitionDescriptor): string | null
       return null;
   }
 }
-
-const DEFAULT_PLAN_BASE_TOOLS = [
-  ...DEFAULT_EXEC_BASE_TOOLS,
-  "ask_user_question",
-  "propose_plan",
-] as const;
 
 function updateAgentDefaultEntry(
   previous: AgentAiDefaults,
@@ -135,120 +108,63 @@ function updateAgentDefaultEntry(
   return next;
 }
 
-function renderPolicySummary(agent: AgentDefinitionDescriptor): React.ReactNode {
-  const base = agent.policyBase;
+function renderPolicySummary(
+  agent: AgentDefinitionDescriptor,
+  allAgents: AgentDefinitionDescriptor[]
+): React.ReactNode {
+  // Use proper inheritance check
+  const agentIsPlanLike = isPlanLike(agent.id, allAgents);
+  const isCompact = agent.id === "compact";
 
   const baseDescription = (() => {
-    switch (base) {
-      case "exec":
-        return {
-          title: "Base policy: exec",
-          allowedTools: DEFAULT_EXEC_BASE_TOOLS,
-          hardDeniedTools: ["propose_plan"] as const,
-          note: "Allowed tools assume permissionMode: default. Custom agents may start with no tool permissions.",
-        };
-      case "plan":
-        return {
-          title: "Base policy: plan",
-          allowedTools: DEFAULT_PLAN_BASE_TOOLS,
-          hardDeniedTools: [] as const,
-          note: "Allowed tools assume permissionMode: default. Custom agents may start with no tool permissions.",
-        };
-      case "compact":
-        return {
-          title: "Base policy: compact",
-          allowedTools: [] as const,
-          hardDeniedTools: [".*"] as const,
-          note: "Internal no-tools mode.",
-        };
-      default:
-        return {
-          title: `Base policy: ${String(base)}`,
-          allowedTools: [] as const,
-          hardDeniedTools: [] as const,
-          note: "Tool permissions depend on permissionMode and tool allow/deny rules.",
-        };
+    if (isCompact) {
+      return {
+        title: "Base: compact",
+        note: "Internal no-tools mode.",
+      };
     }
+
+    if (agentIsPlanLike) {
+      return {
+        title: agent.base ? `Base: ${agent.base}` : "Base: plan",
+        note: "Plan-like agents have access to propose_plan.",
+      };
+    }
+
+    return {
+      title: agent.base ? `Base: ${agent.base}` : "Base: exec",
+      note: "Exec-like agents cannot use propose_plan.",
+    };
   })();
 
   const pieces: React.ReactNode[] = [
     <Tooltip key="base-policy">
       <TooltipTrigger asChild>
         <span className="cursor-help underline decoration-dotted underline-offset-2">
-          base: {base}
+          {baseDescription.title.toLowerCase()}
         </span>
       </TooltipTrigger>
       <TooltipContent align="start" className="max-w-80 whitespace-normal">
         <div className="font-medium">{baseDescription.title}</div>
-
-        {baseDescription.allowedTools.length > 0 ? (
-          <>
-            <div className="mt-1 font-medium">Allowed tools (default)</div>
-            <ul className="mt-1 space-y-0.5">
-              {baseDescription.allowedTools.map((tool) => (
-                <li key={tool}>
-                  <code>{tool}</code>
-                </li>
-              ))}
-            </ul>
-          </>
-        ) : (
-          <div className="mt-1">(No tools)</div>
-        )}
-
-        {baseDescription.hardDeniedTools.length > 0 ? (
-          <>
-            <div className="mt-2 font-medium">Always denied</div>
-            <ul className="mt-1 space-y-0.5">
-              {baseDescription.hardDeniedTools.map((tool) => (
-                <li key={tool}>
-                  <code>{tool}</code>
-                </li>
-              ))}
-            </ul>
-          </>
-        ) : null}
-
         <div className="text-muted mt-2 text-xs">{baseDescription.note}</div>
       </TooltipContent>
     </Tooltip>,
   ];
 
-  const toolFilter = agent.toolFilter;
-  if (toolFilter?.only && toolFilter.only.length > 0) {
-    const only = toolFilter.only;
+  // Show tools whitelist if present
+  const tools = agent.tools;
+  if (tools && tools.length > 0) {
     pieces.push(
-      <Tooltip>
+      <Tooltip key="tools">
         <TooltipTrigger asChild>
           <span className="cursor-help underline decoration-dotted underline-offset-2">
-            tools: only ({only.length})
+            tools: {tools.length}
           </span>
         </TooltipTrigger>
         <TooltipContent align="start" className="max-w-80 whitespace-normal">
-          <div className="font-medium">Allowed tools</div>
+          <div className="font-medium">Allowed tools (regex patterns)</div>
           <ul className="mt-1 space-y-0.5">
-            {only.map((tool) => (
-              <li key={tool}>
-                <code>{tool}</code>
-              </li>
-            ))}
-          </ul>
-        </TooltipContent>
-      </Tooltip>
-    );
-  } else if (toolFilter?.deny && toolFilter.deny.length > 0) {
-    const deny = toolFilter.deny;
-    pieces.push(
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span className="cursor-help underline decoration-dotted underline-offset-2">
-            tools: deny ({deny.length})
-          </span>
-        </TooltipTrigger>
-        <TooltipContent align="start" className="max-w-80 whitespace-normal">
-          <div className="font-medium">Denied tools</div>
-          <ul className="mt-1 space-y-0.5">
-            {deny.map((tool) => (
+            {tools.map((tool) => (
               <li key={tool}>
                 <code>{tool}</code>
               </li>
@@ -563,7 +479,7 @@ export function TasksSection() {
           <div className="min-w-0 flex-1">
             <div className="text-foreground text-sm font-medium">{agent.name}</div>
             <div className="text-muted text-xs">
-              {agent.id} • {scopeNode} • {renderPolicySummary(agent)}
+              {agent.id} • {scopeNode} • {renderPolicySummary(agent, agents)}
               {agent.uiSelectable && agent.subagentRunnable ? (
                 <>
                   {" "}

@@ -78,6 +78,8 @@ import type { AgentMode, UIMode } from "@/common/types/mode";
 import { MUX_APP_ATTRIBUTION_TITLE, MUX_APP_ATTRIBUTION_URL } from "@/constants/appAttribution";
 import { readPlanFile } from "@/node/utils/runtime/helpers";
 import { readAgentDefinition } from "@/node/services/agentDefinitions/agentDefinitionsService";
+import { getBuiltInAgentDefinitions } from "@/node/services/agentDefinitions/builtInAgentDefinitions";
+import { isPlanLike } from "@/common/utils/agentInheritance";
 import { resolveToolPolicyForAgent } from "@/node/services/agentDefinitions/resolveToolPolicy";
 
 // Export a standalone version of getToolsForModel for use in backend
@@ -1135,9 +1137,16 @@ export class AIService extends EventEmitter {
         agentDefinition = await readAgentDefinition(runtime, workspacePath, "exec");
       }
 
-      const effectiveMode: AgentMode = agentDefinition.frontmatter.policy?.base ?? "exec";
-      const uiMode: UIMode | undefined =
-        effectiveMode === "plan" ? "plan" : effectiveMode === "exec" ? "exec" : undefined;
+      // Determine the effective mode by checking inheritance against built-in agents
+      // This allows custom agents to inherit from built-ins (e.g., my-plan → plan)
+      const builtInAgents = getBuiltInAgentDefinitions();
+      const allAgents = [
+        ...builtInAgents.map((pkg) => ({ id: pkg.id, base: pkg.frontmatter.base })),
+        { id: effectiveAgentId, base: agentDefinition.frontmatter.base },
+      ];
+      const agentIsPlanLike = isPlanLike(effectiveAgentId, allAgents);
+      const effectiveMode: AgentMode = agentIsPlanLike ? "plan" : "exec";
+      const uiMode: UIMode | undefined = effectiveMode === "plan" ? "plan" : "exec";
 
       const cfg = this.config.loadConfigOrDefault();
       const taskSettings = cfg.taskSettings ?? DEFAULT_TASK_SETTINGS;
@@ -1149,10 +1158,11 @@ export class AIService extends EventEmitter {
       // NOTE: Agent tool policy is applied after any caller-supplied policy so callers cannot
       // broaden the tool set (e.g., re-enable propose_plan in exec mode).
       const agentToolPolicy = resolveToolPolicyForAgent({
-        base: effectiveMode,
+        agentId: effectiveAgentId,
         frontmatter: agentDefinition.frontmatter,
         isSubagent: isSubagentWorkspace,
         disableTaskToolsForDepth: shouldDisableTaskToolsForDepth,
+        isPlanLike: agentIsPlanLike,
       });
       const effectiveToolPolicy: ToolPolicy | undefined =
         toolPolicy || agentToolPolicy.length > 0

@@ -18,6 +18,7 @@ import {
   TooltipTrigger,
 } from "@/browser/components/ui/tooltip";
 import { formatKeybind, KEYBINDS, isMac } from "@/browser/utils/ui/keybinds";
+import { isPlanLike as isPlanLikeFn } from "@/common/utils/agentInheritance";
 
 interface AgentModePickerProps {
   className?: string;
@@ -35,7 +36,8 @@ interface AgentModePickerProps {
 interface AgentOption {
   id: string;
   name: string;
-  policyBase: AgentDefinitionDescriptor["policyBase"];
+  /** True if this agent inherits from "plan" (for UI styling) */
+  isPlanLike: boolean;
   uiColor?: string;
 }
 
@@ -105,12 +107,13 @@ function resolveAgentOptions(agents: AgentDefinitionDescriptor[]): AgentOption[]
       ? selectable.map((entry) => ({
           id: entry.id,
           name: entry.name,
-          policyBase: entry.policyBase,
+          // Use inheritance check for proper multi-level support
+          isPlanLike: isPlanLikeFn(entry.id, agents),
           uiColor: entry.uiColor,
         }))
       : [
-          { id: "exec", name: "Exec", policyBase: "exec" },
-          { id: "plan", name: "Plan", policyBase: "plan" },
+          { id: "exec", name: "Exec", isPlanLike: false },
+          { id: "plan", name: "Plan", isPlanLike: true },
         ];
 
   // Prefer showing Exec/Plan first in the picker (for discoverability / keyboard-only use).
@@ -121,8 +124,8 @@ function resolveAgentOptions(agents: AgentDefinitionDescriptor[]): AgentOption[]
   return [exec, plan, ...rest].filter((opt): opt is AgentOption => Boolean(opt));
 }
 
-function resolveActiveClassName(policyBase: AgentDefinitionDescriptor["policyBase"]): string {
-  return policyBase === "plan"
+function resolveActiveClassName(isPlanLike: boolean): string {
+  return isPlanLike
     ? "bg-plan-mode text-white hover:bg-plan-mode-hover"
     : "bg-exec-mode text-white hover:bg-exec-mode-hover";
 }
@@ -198,7 +201,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
     return {
       id: descriptor.id,
       name: descriptor.name,
-      policyBase: descriptor.policyBase,
+      isPlanLike: isPlanLikeFn(descriptor.id, agents),
       uiColor: descriptor.uiColor,
     } satisfies AgentOption;
   }, [agents, normalizedAgentId]);
@@ -406,15 +409,12 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
   };
 
   // Resolve display properties for the trigger pill
-  const activePolicyBase =
-    activeOption?.policyBase ?? (normalizedAgentId === "plan" ? "plan" : "exec");
+  const isPlanLike = activeOption?.isPlanLike ?? normalizedAgentId === "plan";
   const activeDisplayName = activeOption?.name ?? formatAgentIdLabel(normalizedAgentId);
   const activeStyle: React.CSSProperties | undefined = activeOption?.uiColor
     ? { backgroundColor: activeOption.uiColor }
     : undefined;
-  const activeClassName = activeOption?.uiColor
-    ? "text-white"
-    : resolveActiveClassName(activePolicyBase);
+  const activeClassName = activeOption?.uiColor ? "text-white" : resolveActiveClassName(isPlanLike);
 
   return (
     <div ref={containerRef} className={cn("relative flex items-center gap-1.5", props.className)}>

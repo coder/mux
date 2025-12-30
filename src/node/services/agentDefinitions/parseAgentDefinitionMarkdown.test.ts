@@ -10,15 +10,13 @@ describe("parseAgentDefinitionMarkdown", () => {
     const content = `---
 name: My Agent
 description: Does stuff
-color: "#ff00ff"
-permissionMode: readOnly
-tools: ["Read"]
+base: exec
+tools: ["file_read", "bash.*"]
 unknownTopLevel: 123
 ui:
   hidden: false
+  color: "#ff00ff"
   unknownNested: 456
-policy:
-  base: exec
 ---
 # Instructions
 Do the thing.
@@ -31,11 +29,10 @@ Do the thing.
 
     expect(result.frontmatter.name).toBe("My Agent");
     expect(result.frontmatter.description).toBe("Does stuff");
-    expect(result.frontmatter.color).toBe("#ff00ff");
-    expect(result.frontmatter.permissionMode).toBe("readOnly");
-    expect(result.frontmatter.tools).toEqual(["Read"]);
+    expect(result.frontmatter.base).toBe("exec");
+    expect(result.frontmatter.tools).toEqual(["file_read", "bash.*"]);
     expect(result.frontmatter.ui?.hidden).toBe(false);
-    expect(result.frontmatter.policy?.base).toBe("exec");
+    expect(result.frontmatter.ui?.color).toBe("#ff00ff");
 
     const frontmatterUnknown = result.frontmatter as unknown as Record<string, unknown>;
     expect(frontmatterUnknown.unknownTopLevel).toBeUndefined();
@@ -54,8 +51,6 @@ Do the thing.
 name: Legacy UI
 ui:
   selectable: false
-policy:
-  base: exec
 ---
 Body
 `;
@@ -77,23 +72,22 @@ Body
     ).toThrow(AgentDefinitionParseError);
   });
 
-  test("throws when policy.tools specifies both deny and only", () => {
+  test("parses tools as regex patterns", () => {
     const content = `---
-name: Bad Agent
-policy:
-  base: exec
-  tools:
-    deny: ["file_read"]
-    only: ["bash"]
+name: Regex Tools
+tools:
+  - file_read
+  - "bash.*"
+  - "task_.*"
 ---
 Body
 `;
 
-    expect(() =>
-      parseAgentDefinitionMarkdown({
-        content,
-        byteSize: Buffer.byteLength(content, "utf-8"),
-      })
-    ).toThrow(AgentDefinitionParseError);
+    const result = parseAgentDefinitionMarkdown({
+      content,
+      byteSize: Buffer.byteLength(content, "utf-8"),
+    });
+
+    expect(result.frontmatter.tools).toEqual(["file_read", "bash.*", "task_.*"]);
   });
 });

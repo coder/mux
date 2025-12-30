@@ -18,6 +18,7 @@ import {
 } from "@/common/constants/storage";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 import type { UIMode } from "@/common/types/mode";
+import { isPlanLike } from "@/common/utils/agentInheritance";
 
 type ModeContextType = [UIMode, (mode: UIMode) => void];
 
@@ -39,9 +40,8 @@ function coerceAgentId(value: unknown): string {
 
 function resolveModeFromAgentId(agentId: string, agents: AgentDefinitionDescriptor[]): UIMode {
   const normalizedAgentId = coerceAgentId(agentId);
-  const descriptor = agents.find((entry) => entry.id === normalizedAgentId);
-  const base = descriptor?.policyBase ?? (normalizedAgentId === "plan" ? "plan" : "exec");
-  return base === "plan" ? "plan" : "exec";
+  // Use proper inheritance check for multi-level support
+  return isPlanLike(normalizedAgentId, agents) ? "plan" : "exec";
 }
 
 export const ModeProvider: React.FC<ModeProviderProps> = (props) => {

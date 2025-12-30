@@ -26,6 +26,9 @@ import {
   parseAgentDefinitionMarkdown,
 } from "./parseAgentDefinitionMarkdown";
 
+// Re-export the shared inheritance utilities for backend use
+export { inheritsFrom, isPlanLike, isExecLike } from "@/common/utils/agentInheritance";
+
 const GLOBAL_AGENTS_ROOT = "~/.mux/agents";
 
 function resolveUiSelectable(
@@ -170,9 +173,8 @@ async function readAgentDescriptorFromFileWithDisabled(
     const parsed = parseAgentDefinitionMarkdown({ content, byteSize: stat.size });
 
     const uiSelectable = resolveUiSelectable(parsed.frontmatter.ui);
-    const uiColor = parsed.frontmatter.color;
+    const uiColor = parsed.frontmatter.ui?.color;
     const subagentRunnable = parsed.frontmatter.subagent?.runnable ?? false;
-    const policyBase = parsed.frontmatter.policy?.base ?? "exec";
     const disabled = resolveUiDisabled(parsed.frontmatter.ui);
 
     const descriptor: AgentDefinitionDescriptor = {
@@ -183,9 +185,9 @@ async function readAgentDescriptorFromFileWithDisabled(
       uiSelectable,
       uiColor,
       subagentRunnable,
-      policyBase,
+      base: parsed.frontmatter.base,
       aiDefaults: parsed.frontmatter.ai,
-      toolFilter: parsed.frontmatter.policy?.tools,
+      tools: parsed.frontmatter.tools,
     };
 
     const validated = AgentDefinitionDescriptorSchema.safeParse(descriptor);
@@ -218,9 +220,8 @@ export async function discoverAgentDefinitions(
   // Seed built-ins (lowest precedence).
   for (const pkg of getBuiltInAgentDefinitions()) {
     const uiSelectable = resolveUiSelectable(pkg.frontmatter.ui);
-    const uiColor = pkg.frontmatter.color;
+    const uiColor = pkg.frontmatter.ui?.color;
     const subagentRunnable = pkg.frontmatter.subagent?.runnable ?? false;
-    const policyBase = pkg.frontmatter.policy?.base ?? "exec";
     const disabled = resolveUiDisabled(pkg.frontmatter.ui);
 
     byId.set(pkg.id, {
@@ -232,9 +233,9 @@ export async function discoverAgentDefinitions(
         uiSelectable,
         uiColor,
         subagentRunnable,
-        policyBase,
+        base: pkg.frontmatter.base,
         aiDefaults: pkg.frontmatter.ai,
-        toolFilter: pkg.frontmatter.policy?.tools,
+        tools: pkg.frontmatter.tools,
       },
       disabled,
     });

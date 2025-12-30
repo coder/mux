@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { AgentModeSchema } from "@/common/types/mode";
 
 export const AgentDefinitionScopeSchema = z.enum(["built-in", "project", "global"]);
 
@@ -11,14 +10,7 @@ export const AgentIdSchema = z
   .max(64)
   .regex(/^[a-z0-9]+(?:[a-z0-9_-]*[a-z0-9])?$/);
 
-const AgentPolicyBaseSchema = z.preprocess(
-  (value) => (typeof value === "string" ? value.trim().toLowerCase() : value),
-  AgentModeSchema
-);
-
 const ThinkingLevelSchema = z.enum(["off", "low", "medium", "high", "xhigh"]);
-
-const PermissionModeSchema = z.enum(["default", "readOnly"]);
 
 const AgentDefinitionUiSchema = z
   .object({
@@ -30,6 +22,9 @@ const AgentDefinitionUiSchema = z
 
     // When true, completely hides this agent (useful for disabling built-ins)
     disabled: z.boolean().optional(),
+
+    // UI color (CSS color value). Inherited from base agent if not specified.
+    color: z.string().min(1).optional(),
   })
   .strip();
 
@@ -46,50 +41,22 @@ const AgentDefinitionAiDefaultsSchema = z
   })
   .strip();
 
-const AgentDefinitionToolFilterSchema = z
-  .object({
-    deny: z.array(z.string().min(1)).optional(),
-    only: z.array(z.string().min(1)).optional(),
-  })
-  .strip()
-  .superRefine((value, ctx) => {
-    const hasDeny = Array.isArray(value.deny) && value.deny.length > 0;
-    const hasOnly = Array.isArray(value.only) && value.only.length > 0;
-
-    if (hasDeny && hasOnly) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "policy.tools must specify exactly one of deny or only",
-        path: ["deny"],
-      });
-      return;
-    }
-  });
-
-const AgentDefinitionPolicySchema = z
-  .object({
-    base: AgentPolicyBaseSchema.optional(),
-    tools: AgentDefinitionToolFilterSchema.optional(),
-  })
-  .strip();
-
 export const AgentDefinitionFrontmatterSchema = z
   .object({
     name: z.string().min(1).max(128),
     description: z.string().min(1).max(1024).optional(),
 
-    // UI metadata
-    color: z.string().min(1).optional(),
+    // Inheritance: reference a built-in or custom agent ID
+    base: AgentIdSchema.optional(),
+
+    // UI metadata (color, visibility, etc.)
     ui: AgentDefinitionUiSchema.optional(),
 
     subagent: AgentDefinitionSubagentSchema.optional(),
     ai: AgentDefinitionAiDefaultsSchema.optional(),
-    policy: AgentDefinitionPolicySchema.optional(),
 
-    // Tool policy presets + tweaks
-    permissionMode: PermissionModeSchema.optional(),
+    // Tool whitelist: regex patterns. If omitted, no tools are available.
     tools: z.array(z.string().min(1)).optional(),
-    disallowedTools: z.array(z.string().min(1)).optional(),
   })
   .strip();
 
@@ -102,10 +69,11 @@ export const AgentDefinitionDescriptorSchema = z
     uiSelectable: z.boolean(),
     uiColor: z.string().min(1).optional(),
     subagentRunnable: z.boolean(),
-    policyBase: AgentModeSchema,
+    // Base agent ID for inheritance (e.g., "exec", "plan", or custom agent)
+    base: AgentIdSchema.optional(),
     aiDefaults: AgentDefinitionAiDefaultsSchema.optional(),
-    // Raw tool filter metadata (for UI display). Runtime validates tool names.
-    toolFilter: AgentDefinitionToolFilterSchema.optional(),
+    // Tool whitelist patterns (for UI display)
+    tools: z.array(z.string().min(1)).optional(),
   })
   .strict();
 

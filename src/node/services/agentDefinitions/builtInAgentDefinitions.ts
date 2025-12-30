@@ -1,124 +1,54 @@
-import type { AgentDefinitionPackage } from "@/common/types/agentDefinition";
+import type { AgentDefinitionPackage, AgentId } from "@/common/types/agentDefinition";
+import { parseAgentDefinitionMarkdown } from "./parseAgentDefinitionMarkdown";
+
+// Import markdown files as text (bundled at build time via esbuild --loader:.md=text)
+import execMd from "@/node/builtinAgents/exec.md";
+import planMd from "@/node/builtinAgents/plan.md";
+import compactMd from "@/node/builtinAgents/compact.md";
+import exploreMd from "@/node/builtinAgents/explore.md";
 
 /**
  * Built-in agent definitions.
  *
- * These are hardcoded here for runtime reliability (works in both ESM and CommonJS contexts).
- * The same content is also stored in src/node/builtinAgents/*.md for:
- * - Documentation generation (docs/agents.mdx auto-generates from these files)
- * - Serving as authentic examples of the agent definition format
- *
- * If you update these definitions, also update the corresponding .md files.
+ * Source of truth is the markdown files in src/node/builtinAgents/*.md.
+ * These are bundled as text at build time and parsed here.
  */
-const BUILT_IN_PACKAGES: AgentDefinitionPackage[] = [
-  {
-    id: "plan",
-    scope: "built-in",
-    frontmatter: {
-      name: "Plan",
-      description: "Create a plan before coding",
-      permissionMode: "default",
-      subagent: { runnable: false },
-      policy: { base: "plan" },
-    },
-    body: [
-      "You are in Plan Mode.",
-      "",
-      "- Produce a crisp, actionable plan before making code changes.",
-      "- Keep the plan scannable; put long rationale in <details>/<summary> blocks.",
-      "",
-      "Note: mux will provide a concrete plan file path separately.",
-    ].join("\n"),
-  },
-  {
-    id: "exec",
-    scope: "built-in",
-    frontmatter: {
-      name: "Exec",
-      description: "Implement changes in the repository",
-      permissionMode: "default",
-      subagent: { runnable: true },
-    },
-    body: [
-      "You are in Exec mode.",
-      "",
-      "- Make minimal, correct, reviewable changes that match existing codebase patterns.",
-      "- Prefer targeted commands and checks (typecheck/tests) when feasible.",
-      "",
-      "If you are running as a sub-agent in a child workspace:",
-      "",
-      "- When you have a final answer, call agent_report exactly once.",
-      "- Do not call task/task_await/task_list/task_terminate (subagent recursion is disabled).",
-      "- Do not call propose_plan.",
-    ].join("\n"),
-  },
-  {
-    id: "compact",
-    scope: "built-in",
-    frontmatter: {
-      name: "Compact",
-      description: "History compaction (internal)",
-      ui: { hidden: true },
-      subagent: { runnable: false },
-    },
-    body: "You are running a compaction/summarization pass. Do not call tools.",
-  },
-  {
-    id: "explore",
-    scope: "built-in",
-    frontmatter: {
-      name: "Explore",
-      description: "Read-only repository exploration",
-      ui: { hidden: true },
-      subagent: { runnable: true },
-      policy: {
-        base: "exec",
-        tools: {
-          only: [
-            "file_read",
-            "bash",
-            "bash_output",
-            "bash_background_list",
-            "bash_background_terminate",
-            "web_fetch",
-            "web_search",
-            "google_search",
-            "agent_report",
-          ],
-        },
-      },
-    },
-    body: [
-      "You are an Explore sub-agent running inside a child workspace.",
-      "",
-      "Goals:",
-      "",
-      "- Explore the repository to answer the prompt using read-only investigation.",
-      "- Return concise, actionable findings (paths, symbols, callsites, and facts).",
-      "",
-      "Rules:",
-      "=== CRITICAL: READ-ONLY MODE - NO FILE MODIFICATIONS ===",
-      "",
-      "- You MUST NOT create, edit, delete, move, or copy files.",
-      "- You MUST NOT create temporary files anywhere (including /tmp).",
-      "- You MUST NOT use redirect operators (>, >>, |) or heredocs to write to files.",
-      "- You MUST NOT run commands that change system state (rm, mv, cp, mkdir, touch, git add/commit, installs, etc.).",
-      "- Use bash only for read-only operations (rg, ls, cat, git diff/show/log, etc.).",
-      "- Do not call task/task_await/task_list/task_terminate (subagent recursion is disabled).",
-      "",
-      "Reporting:",
-      "",
-      "- When you have a final answer, call agent_report exactly once.",
-      "- Do not call agent_report until you have completed the assigned task and integrated all relevant findings.",
-    ].join("\n"),
-  },
-];
 
-export function getBuiltInAgentDefinitions(): AgentDefinitionPackage[] {
-  return BUILT_IN_PACKAGES;
+interface BuiltInSource {
+  id: AgentId;
+  content: string;
 }
 
-/** Exposed for testing - no-op since definitions are hardcoded */
+const BUILT_IN_SOURCES: BuiltInSource[] = [
+  { id: "exec", content: execMd },
+  { id: "plan", content: planMd },
+  { id: "compact", content: compactMd },
+  { id: "explore", content: exploreMd },
+];
+
+let cachedPackages: AgentDefinitionPackage[] | null = null;
+
+function parseBuiltIns(): AgentDefinitionPackage[] {
+  return BUILT_IN_SOURCES.map(({ id, content }) => {
+    const parsed = parseAgentDefinitionMarkdown({
+      content,
+      byteSize: Buffer.byteLength(content, "utf8"),
+    });
+    return {
+      id,
+      scope: "built-in" as const,
+      frontmatter: parsed.frontmatter,
+      body: parsed.body.trim(),
+    };
+  });
+}
+
+export function getBuiltInAgentDefinitions(): AgentDefinitionPackage[] {
+  cachedPackages ??= parseBuiltIns();
+  return cachedPackages;
+}
+
+/** Exposed for testing - clears cached parsed packages */
 export function clearBuiltInAgentCache(): void {
-  // No-op - built-ins are hardcoded, not cached from disk
+  cachedPackages = null;
 }

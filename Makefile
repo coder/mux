@@ -139,13 +139,13 @@ dev: node_modules/.installed build-main ## Start development server (Vite + node
 	# https://github.com/oven-sh/bun/issues/18275
 	@MUX_DISABLE_TELEMETRY=$(if $(MUX_ENABLE_TELEMETRY_IN_DEV),,$(or $(MUX_DISABLE_TELEMETRY),1)) NODE_OPTIONS="--max-old-space-size=4096" npm x concurrently -k --raw \
 		"bun x nodemon --watch src --watch tsconfig.main.json --watch tsconfig.json --ext ts,tsx,json --ignore dist --ignore node_modules --exec node scripts/build-main-watch.js" \
-		"npx esbuild src/cli/api.ts --bundle --format=esm --platform=node --target=node20 --outfile=dist/cli/api.mjs --external:zod --external:commander --external:@trpc/server --banner:js='import { createRequire } from \"module\"; const require = createRequire(import.meta.url);' --watch" \
+		"npx esbuild src/cli/api.ts --bundle --format=esm --platform=node --target=node20 --outfile=dist/cli/api.mjs --loader:.md=text --external:zod --external:commander --external:@trpc/server --banner:js='import { createRequire } from \"module\"; const require = createRequire(import.meta.url);' --watch" \
 		"vite"
 else
 dev: node_modules/.installed build-main build-preload ## Start development server (Vite + tsgo watcher for 10x faster type checking)
 	@MUX_DISABLE_TELEMETRY=$(if $(MUX_ENABLE_TELEMETRY_IN_DEV),,$(or $(MUX_DISABLE_TELEMETRY),1)) bun x concurrently -k \
 		"bun x concurrently \"$(TSGO) -w -p tsconfig.main.json\" \"bun x tsc-alias -w -p tsconfig.main.json\"" \
-		"bun x esbuild src/cli/api.ts --bundle --format=esm --platform=node --target=node20 --outfile=dist/cli/api.mjs --external:zod --external:commander --external:@trpc/server --banner:js='import { createRequire } from \"module\"; const require = createRequire(import.meta.url);' --watch" \
+		"bun x esbuild src/cli/api.ts --bundle --format=esm --platform=node --target=node20 --outfile=dist/cli/api.mjs --loader:.md=text --external:zod --external:commander --external:@trpc/server --banner:js='import { createRequire } from \"module\"; const require = createRequire(import.meta.url);' --watch" \
 		"vite"
 endif
 
@@ -159,7 +159,7 @@ dev-server: node_modules/.installed build-main ## Start server mode with hot rel
 	@# On Windows, use npm run because bunx doesn't correctly pass arguments
 	@MUX_DISABLE_TELEMETRY=$(if $(MUX_ENABLE_TELEMETRY_IN_DEV),,$(or $(MUX_DISABLE_TELEMETRY),1)) npmx concurrently -k \
 		"npmx nodemon --watch src --watch tsconfig.main.json --watch tsconfig.json --ext ts,tsx,json --ignore dist --ignore node_modules --exec node scripts/build-main-watch.js" \
-		"npx esbuild src/cli/api.ts --bundle --format=esm --platform=node --target=node20 --outfile=dist/cli/api.mjs --external:zod --external:commander --external:@trpc/server --banner:js='import { createRequire } from \"module\"; const require = createRequire(import.meta.url);' --watch" \
+		"npx esbuild src/cli/api.ts --bundle --format=esm --platform=node --target=node20 --outfile=dist/cli/api.mjs --loader:.md=text --external:zod --external:commander --external:@trpc/server --banner:js='import { createRequire } from \"module\"; const require = createRequire(import.meta.url);' --watch" \
 		"npmx nodemon --watch dist/cli/index.js --watch dist/cli/server.js --delay 500ms --exec \"node dist/cli/index.js server --host $(or $(BACKEND_HOST),localhost) --port $(or $(BACKEND_PORT),3000)\"" \
 		"$(SHELL) -lc \"MUX_VITE_HOST=$(or $(VITE_HOST),127.0.0.1) MUX_VITE_PORT=$(or $(VITE_PORT),5173) VITE_BACKEND_URL=http://$(or $(BACKEND_HOST),localhost):$(or $(BACKEND_PORT),3000) vite\""
 else
@@ -171,7 +171,7 @@ dev-server: node_modules/.installed build-main ## Start server mode with hot rel
 	@echo "For remote access: make dev-server VITE_HOST=0.0.0.0 BACKEND_HOST=0.0.0.0"
 	@MUX_DISABLE_TELEMETRY=$(if $(MUX_ENABLE_TELEMETRY_IN_DEV),,$(or $(MUX_DISABLE_TELEMETRY),1)) bun x concurrently -k \
 		"bun x concurrently \"$(TSGO) -w -p tsconfig.main.json\" \"bun x tsc-alias -w -p tsconfig.main.json\"" \
-		"bun x esbuild src/cli/api.ts --bundle --format=esm --platform=node --target=node20 --outfile=dist/cli/api.mjs --external:zod --external:commander --external:@trpc/server --banner:js='import { createRequire } from \"module\"; const require = createRequire(import.meta.url);' --watch" \
+		"bun x esbuild src/cli/api.ts --bundle --format=esm --platform=node --target=node20 --outfile=dist/cli/api.mjs --loader:.md=text --external:zod --external:commander --external:@trpc/server --banner:js='import { createRequire } from \"module\"; const require = createRequire(import.meta.url);' --watch" \
 		"bun x nodemon --watch dist/cli/index.js --watch dist/cli/server.js --delay 500ms --exec 'NODE_ENV=development node dist/cli/index.js server --host $(or $(BACKEND_HOST),localhost) --port $(or $(BACKEND_PORT),3000)'" \
 		"MUX_VITE_HOST=$(or $(VITE_HOST),127.0.0.1) MUX_VITE_PORT=$(or $(VITE_PORT),5173) VITE_BACKEND_URL=http://$(or $(BACKEND_HOST),localhost):$(or $(BACKEND_PORT),3000) vite"
 endif
@@ -200,6 +200,7 @@ dist/cli/api.mjs: src/cli/api.ts src/cli/proxifyOrpc.ts $(TS_SOURCES)
 		--platform=node \
 		--target=node20 \
 		--outfile=dist/cli/api.mjs \
+		--loader:.md=text \
 		--banner:js='import { createRequire } from "module"; const require = createRequire(import.meta.url);' \
 		--external:zod \
 		--external:commander \
@@ -225,9 +226,6 @@ build-static: ## Copy static assets to dist
 	@mkdir -p dist
 	@cp static/splash.html dist/splash.html
 	@cp -r public/* dist/
-	@# Copy built-in agent definition markdown files
-	@mkdir -p dist/builtinAgents
-	@cp src/node/builtinAgents/*.md dist/builtinAgents/
 	@# Copy TypeScript lib files for PTC runtime type validation (es5 through es2023).
 	@# electron-builder ignores .d.ts files by default and this cannot be overridden:
 	@# https://github.com/electron-userland/electron-builder/issues/5064
