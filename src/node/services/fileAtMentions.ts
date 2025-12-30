@@ -227,6 +227,31 @@ export async function injectFileAtMentions(
     const pathLooksLikeFilePath = isLikelyFilePathToken(displayPath) || mention.range !== undefined;
 
     if (mention.rangeError) {
+      let shouldEmitRangeError = pathLooksLikeFilePath;
+
+      // For "bare" @mentions, only emit range errors if the path actually exists as a file.
+      // This avoids noisy errors for patterns like "@alice#123".
+      if (!shouldEmitRangeError) {
+        try {
+          const resolvedPathForRange = resolveWorkspaceFilePath(
+            options.runtime,
+            options.workspacePath,
+            mention.path
+          );
+          const statForRange = await options.runtime.stat(
+            resolvedPathForRange,
+            options.abortSignal
+          );
+          shouldEmitRangeError = !statForRange.isDirectory;
+        } catch {
+          shouldEmitRangeError = false;
+        }
+      }
+
+      if (!shouldEmitRangeError) {
+        continue;
+      }
+
       const block = renderMuxFileError(displayPath, mention.rangeError);
       const blockBytes = Buffer.byteLength(block, "utf8");
       if (totalBytes + blockBytes > MAX_TOTAL_BYTES) {

@@ -74,4 +74,22 @@ describe("injectFileAtMentions", () => {
       await fsPromises.rm(tmpDir, { recursive: true, force: true });
     }
   });
+
+  it("ignores non-file @mentions with # fragments", async () => {
+    const tmpDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), "mux-file-at-mentions-"));
+
+    try {
+      const runtime = createRuntime({ type: "local" }, { projectPath: tmpDir });
+      const messages = [createMuxMessage("u1", "user", "Ping @alice#123")];
+
+      const result = await injectFileAtMentions(messages, {
+        runtime,
+        workspacePath: tmpDir,
+      });
+
+      expect(result).toEqual(messages);
+    } finally {
+      await fsPromises.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
 });
