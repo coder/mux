@@ -515,6 +515,7 @@ export class WorkspaceStore {
             content: data.displayText,
             imageParts: data.imageParts,
             reviews: data.reviews,
+            hasCompactionRequest: data.hasCompactionRequest,
           }
         : null;
 

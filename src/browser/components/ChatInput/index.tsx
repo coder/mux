@@ -163,6 +163,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const editingMessage = variant === "workspace" ? props.editingMessage : undefined;
   const isCompacting = variant === "workspace" ? (props.isCompacting ?? false) : false;
   const canInterrupt = variant === "workspace" ? (props.canInterrupt ?? false) : false;
+  const hasQueuedCompaction =
+    variant === "workspace" ? (props.hasQueuedCompaction ?? false) : false;
   // runtimeType for telemetry - defaults to "worktree" if not provided
   const runtimeType = variant === "workspace" ? (props.runtimeType ?? "worktree") : "worktree";
 
@@ -1455,7 +1457,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       // Result is computed in parent (AIView) and passed down to avoid duplicate calculation
       if (
         variant === "workspace" &&
-        shouldTriggerAutoCompaction(props.autoCompactionCheck, isCompacting, !!editingMessage)
+        shouldTriggerAutoCompaction(
+          props.autoCompactionCheck,
+          isCompacting,
+          !!editingMessage,
+          hasQueuedCompaction
+        )
       ) {
         // Prepare image parts for the continue message
         const imageParts = imageAttachments.map((img) => ({

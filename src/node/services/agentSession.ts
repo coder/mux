@@ -872,6 +872,7 @@ export class AgentSession {
       displayText: this.messageQueue.getDisplayText(),
       imageParts: this.messageQueue.getImageParts(),
       reviews: this.messageQueue.getReviews(),
+      hasCompactionRequest: this.messageQueue.hasCompactionRequest(),
     });
   }
 

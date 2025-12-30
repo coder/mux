@@ -781,6 +781,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
           canInterrupt={canInterrupt}
           onReady={handleChatInputReady}
           autoCompactionCheck={autoCompactionResult}
+          hasQueuedCompaction={workspaceState.queuedMessage?.hasCompactionRequest}
           attachedReviews={reviews.attachedReviews}
           onDetachReview={reviews.detachReview}
           onDetachAllReviews={reviews.detachAllAttached}

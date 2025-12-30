@@ -301,6 +301,8 @@ export const QueuedMessageChangedEventSchema = z.object({
   displayText: z.string(),
   imageParts: z.array(ImagePartSchema).optional(),
   reviews: z.array(ReviewNoteDataSchema).optional(),
+  /** True when the queued message is a compaction request (/compact) */
+  hasCompactionRequest: z.boolean().optional(),
 });
 
 export const RestoreToInputEventSchema = z.object({

@@ -301,6 +301,8 @@ export interface QueuedMessage {
   imageParts?: ImagePart[];
   /** Structured review data for rich UI display (from muxMetadata) */
   reviews?: ReviewNoteDataForDisplay[];
+  /** True when the queued message is a compaction request (/compact) */
+  hasCompactionRequest?: boolean;
 }
 
 // Helper to create a simple text message
