@@ -311,6 +311,15 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   // Initialize review state hook
   const { isRead, toggleRead, markAsRead, markAsUnread } = useReviewState(workspaceId);
 
+  // Refs for values that change frequently but are only read at callback invocation time.
+  // Using refs allows callbacks to stay stable (same reference) while still accessing current values.
+  // This prevents all HunkViewer components from re-rendering when these values change.
+  const isReadRef = useRef(isRead);
+  isReadRef.current = isRead;
+  const selectedHunkIdRef = useRef(selectedHunkId);
+  selectedHunkIdRef.current = selectedHunkId;
+  const showReadHunksRef = useRef(false); // Will be updated after filters state is declared
+
   // Track hunk first-seen timestamps for LIFO sorting
   const { recordFirstSeen, firstSeenMap } = useHunkFirstSeen(workspaceId);
 
@@ -327,6 +336,9 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     includeUncommitted: includeUncommitted,
     sortOrder: sortOrder,
   });
+
+  // Keep showReadHunksRef in sync for stable callbacks
+  showReadHunksRef.current = filters.showReadHunks;
 
   // Ref to track when user is interacting (pauses auto-refresh)
   const isInteractingRef = useRef(false);
@@ -785,15 +797,16 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   );
 
   // Handle toggling read state with auto-navigation
+  // Uses refs to keep callback stable across state changes - prevents HunkViewer re-renders
   const handleToggleRead = useCallback(
     (hunkId: string) => {
-      const wasRead = isRead(hunkId);
+      const wasRead = isReadRef.current(hunkId);
       toggleRead(hunkId);
 
       // If toggling the selected hunk, check if it will still be visible after toggle
-      if (hunkId === selectedHunkId) {
+      if (hunkId === selectedHunkIdRef.current) {
         // Hunk is visible if: showReadHunks is on OR it will be unread after toggle
-        const willBeVisible = filters.showReadHunks || wasRead;
+        const willBeVisible = showReadHunksRef.current || wasRead;
 
         if (!willBeVisible) {
           // Use ref to get current filtered/sorted list for navigation
@@ -801,22 +814,23 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         }
       }
     },
-    [isRead, toggleRead, filters.showReadHunks, selectedHunkId, setSelectedHunkId]
+    [toggleRead, setSelectedHunkId]
   );
 
   // Handle marking hunk as read with auto-navigation
+  // Uses refs to keep callback stable across state changes - prevents HunkViewer re-renders
   const handleMarkAsRead = useCallback(
     (hunkId: string) => {
-      const wasRead = isRead(hunkId);
+      const wasRead = isReadRef.current(hunkId);
       markAsRead(hunkId);
 
       // If marking the selected hunk as read and it will be filtered out, navigate
-      if (hunkId === selectedHunkId && !wasRead && !filters.showReadHunks) {
+      if (hunkId === selectedHunkIdRef.current && !wasRead && !showReadHunksRef.current) {
         // Use ref to get current filtered/sorted list for navigation
         setSelectedHunkId(findNextHunkId(filteredHunksRef.current, hunkId));
       }
     },
-    [isRead, markAsRead, filters.showReadHunks, selectedHunkId, setSelectedHunkId]
+    [markAsRead, setSelectedHunkId]
   );
 
   // Handle marking hunk as unread (no navigation needed - unread hunks are always visible)
@@ -1178,9 +1192,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
                       onRegisterToggleExpand={handleRegisterToggleExpand}
                       onReviewNote={onReviewNote}
                       searchConfig={searchConfig}
-                      onComposingChange={(isComposing) =>
-                        handleHunkComposingChange(hunk.id, isComposing)
-                      }
+                      onComposingChange={handleHunkComposingChange}
                       diffBase={filters.diffBase}
                       includeUncommitted={filters.includeUncommitted}
                     />

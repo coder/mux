@@ -32,8 +32,8 @@ interface HunkViewerProps {
   onRegisterToggleExpand?: (hunkId: string, toggleFn: () => void) => void;
   onReviewNote?: (data: ReviewNoteData) => void;
   searchConfig?: SearchHighlightConfig;
-  /** Callback when review note composition state changes */
-  onComposingChange?: (isComposing: boolean) => void;
+  /** Callback when review note composition state changes (receives hunkId for stable reference) */
+  onComposingChange?: (hunkId: string, isComposing: boolean) => void;
   /** Diff base for determining which git ref to read from */
   diffBase: string;
   /** Whether uncommitted changes are included in the diff */
@@ -205,6 +205,15 @@ export const HunkViewer = React.memo<HunkViewerProps>(
       onToggleRead?.(e);
     };
 
+    // Wrap onComposingChange to include hunkId - creates stable reference per-hunk
+    // This allows parent to pass a single stable callback instead of inline arrow functions
+    const handleComposingChange = React.useCallback(
+      (isComposing: boolean) => {
+        onComposingChange?.(hunkId, isComposing);
+      },
+      [hunkId, onComposingChange]
+    );
+
     // Detect pure rename: if renamed and content hasn't changed (zero additions and deletions)
     const isPureRename =
       hunk.changeType === "renamed" && hunk.oldPath && additions === 0 && deletions === 0;
@@ -336,7 +345,7 @@ export const HunkViewer = React.memo<HunkViewerProps>(
               }}
               searchConfig={searchConfig}
               enableHighlighting={isVisible}
-              onComposingChange={onComposingChange}
+              onComposingChange={handleComposingChange}
             />
 
             {/* Expanded content below */}
