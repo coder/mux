@@ -60,7 +60,7 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
     const configuredDefaults = agentAiDefaults[normalizedAgentId];
 
     const agentModelDefault =
-      configuredDefaults?.modelString ?? descriptorDefaults?.modelString ?? undefined;
+      configuredDefaults?.modelString ?? descriptorDefaults?.model ?? undefined;
     const agentThinkingDefault =
       configuredDefaults?.thinkingLevel ?? descriptorDefaults?.thinkingLevel ?? undefined;
 

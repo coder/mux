@@ -36,7 +36,8 @@ const AgentDefinitionSubagentSchema = z
 
 const AgentDefinitionAiDefaultsSchema = z
   .object({
-    modelString: z.string().min(1).optional(),
+    // Model identifier: full string (e.g. "anthropic:claude-sonnet-4-5") or abbreviation (e.g. "sonnet")
+    model: z.string().min(1).optional(),
     thinkingLevel: ThinkingLevelSchema.optional(),
   })
   .strip();
