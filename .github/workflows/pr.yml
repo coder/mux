@@ -71,9 +71,17 @@ jobs:
           key: ${{ runner.os }}-shfmt-latest
       - name: Install shfmt
         run: |
+          set -euo pipefail
           if [[ ! -f "$HOME/.local/bin/shfmt" ]] || ! "$HOME/.local/bin/shfmt" --version >/dev/null 2>&1; then
-            curl -sS https://webinstall.dev/shfmt | bash
+            # webinstall.dev can be flaky; retry and force HTTP/1.1 to avoid HTTP/2 stream errors.
+            curl --retry 5 --retry-all-errors --retry-delay 2 -LsSf --http1.1 https://webinstall.dev/shfmt | bash
           fi
+
+          if ! "$HOME/.local/bin/shfmt" --version >/dev/null 2>&1; then
+            echo "Error: shfmt install failed"
+            exit 1
+          fi
+
           echo "$HOME/.local/bin" >> $GITHUB_PATH
       - uses: cachix/install-nix-action@v27
         with:
