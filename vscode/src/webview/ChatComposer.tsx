@@ -20,8 +20,9 @@ import { VimTextArea } from "mux/browser/components/VimTextArea";
 import { ModelSelector } from "mux/browser/components/ModelSelector";
 import { ThinkingSliderComponent } from "mux/browser/components/ThinkingSlider";
 import { ContextUsageIndicatorButton } from "mux/browser/components/ContextUsageIndicatorButton";
-import { ModeSelector } from "mux/browser/components/ModeSelector";
 import { Tooltip, TooltipTrigger, TooltipContent } from "mux/browser/components/ui/tooltip";
+
+import type { UIMode } from "mux/common/types/mode";
 
 import { calculateTokenMeterData } from "mux/common/utils/tokens/tokenMeterUtils";
 import { createDisplayUsage } from "mux/common/utils/tokens/displayUsage";
@@ -31,6 +32,35 @@ import { cn } from "mux/common/lib/utils";
 import { VIM_ENABLED_KEY, getInputKey, getModelKey } from "mux/common/constants/storage";
 
 const SEND_MESSAGE_TIMEOUT_MS = 30_000;
+
+/**
+ * Simple mode toggle for VS Code extension (no agent discovery).
+ * Just toggles between Exec and Plan modes.
+ */
+function SimpleModeToggle(props: { mode: UIMode; onChange: (mode: UIMode) => void }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          onClick={() => props.onChange(props.mode === "exec" ? "plan" : "exec")}
+          className={cn(
+            "rounded-sm px-1.5 py-0.5 text-[11px] font-medium transition-all duration-150",
+            props.mode === "exec"
+              ? "bg-exec-mode text-white hover:bg-exec-mode-hover"
+              : "bg-plan-mode text-white hover:bg-plan-mode-hover"
+          )}
+        >
+          {props.mode === "exec" ? "Exec" : "Plan"}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent align="center">
+        Click to switch to {props.mode === "exec" ? "Plan" : "Exec"} mode (
+        {formatKeybind(KEYBINDS.TOGGLE_MODE)})
+      </TooltipContent>
+    </Tooltip>
+  );
+}
 
 function getLastContextUsage(
   aggregator: StreamingMessageAggregator,
@@ -337,7 +367,7 @@ function ChatComposerInner(props: {
 
           <div className="flex shrink-0 items-center gap-1.5">
             <ContextUsageIndicatorButton data={contextUsageData} autoCompaction={autoCompactionSettings} />
-            <ModeSelector mode={mode} onChange={setMode} />
+            <SimpleModeToggle mode={mode} onChange={setMode} />
 
             <Tooltip>
               <TooltipTrigger asChild>

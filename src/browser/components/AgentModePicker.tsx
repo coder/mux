@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown } from "lucide-react";
+import { Check, ChevronDown } from "lucide-react";
 
 import { useAgent } from "@/browser/contexts/AgentContext";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
@@ -17,7 +17,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/browser/components/ui/tooltip";
-import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
+import { formatKeybind, KEYBINDS, isMac } from "@/browser/utils/ui/keybinds";
 
 interface AgentModePickerProps {
   className?: string;
@@ -31,8 +31,6 @@ interface AgentModePickerProps {
   /** Called when the picker closes (best-effort). Useful for restoring focus. */
   onComplete?: () => void;
 }
-
-type PickerOpenReason = "manual" | "modeCycle";
 
 interface AgentOption {
   id: string;
@@ -85,10 +83,18 @@ const AgentHelpTooltip: React.FC = () => (
       Selects an agent definition (system prompt + tool policy).
       <br />
       <br />
-      Cycle between Exec → Plan → Other with: {formatKeybind(KEYBINDS.TOGGLE_MODE)}
+      Open picker: {formatKeybind(KEYBINDS.TOGGLE_MODE)}
+      <br />
+      Quick select: {isMac() ? "⌘" : "Ctrl"}+1-9 (when open)
     </TooltipContent>
   </Tooltip>
 );
+
+/** Format a number keybind for display in dropdown items */
+function formatNumberKeybind(index: number): string {
+  if (index < 0 || index > 8) return "";
+  return isMac() ? `⌘${index + 1}` : `Ctrl+${index + 1}`;
+}
 
 function resolveAgentOptions(agents: AgentDefinitionDescriptor[]): AgentOption[] {
   const selectable = agents.filter((entry) => entry.uiSelectable);
@@ -169,7 +175,6 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
 
   const effectivePinnedAgentId = pinnedOption?.id ?? "";
 
-  const [openReason, setOpenReason] = useState<PickerOpenReason | null>(null);
   const [isPickerOpen, setIsPickerOpen] = useState(false);
   const [filter, setFilter] = useState("");
   const [highlightedIndex, setHighlightedIndex] = useState<number>(-1);
@@ -198,15 +203,6 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
     } satisfies AgentOption;
   }, [agents, normalizedAgentId]);
 
-  const activeIsSelectable = useMemo(() => {
-    if (!normalizedAgentId) {
-      return false;
-    }
-
-    return options.some((opt) => opt.id === normalizedAgentId);
-  }, [normalizedAgentId, options]);
-  const isBuiltinAgent = normalizedAgentId === "exec" || normalizedAgentId === "plan";
-
   const filteredOptions = useMemo(() => {
     const query = filter.trim().toLowerCase();
     if (query.length === 0) {
@@ -222,17 +218,15 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
 
   const closePicker = useCallback(() => {
     setIsPickerOpen(false);
-    setOpenReason(null);
     setFilter("");
     setHighlightedIndex(-1);
     onComplete?.();
   }, [onComplete]);
 
   const openPicker = useCallback(
-    (opts?: { reason?: PickerOpenReason; highlightAgentId?: string }) => {
+    (opts?: { highlightAgentId?: string }) => {
       setIsPickerOpen(true);
       setFilter("");
-      setOpenReason(opts?.reason ?? "manual");
 
       const highlightId = normalizeAgentId(opts?.highlightAgentId) || normalizedAgentId;
 
@@ -243,11 +237,10 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
     [normalizedAgentId, options]
   );
 
-  // Hotkey integration (open/close via ModeContext).
+  // Hotkey integration (open via ModeContext).
   useEffect(() => {
     const handleOpen = () => {
       openPicker({
-        reason: "modeCycle",
         highlightAgentId: effectivePinnedAgentId || normalizedAgentId,
       });
     };
@@ -299,6 +292,35 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [closePicker, isPickerOpen]);
 
+  // Global Cmd/Ctrl+1-9 shortcuts when dropdown is open (takes priority over tab keybinds).
+  useEffect(() => {
+    if (!isPickerOpen) return;
+
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      const modKey = isMac() ? e.metaKey : e.ctrlKey;
+      if (!modKey || e.key < "1" || e.key > "9") return;
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      const index = parseInt(e.key, 10) - 1;
+      if (index < options.length) {
+        const picked = options[index];
+        if (picked) {
+          setAgentId(picked.id);
+          if (picked.id !== "exec" && picked.id !== "plan") {
+            setPinnedAgentIdRaw(picked.id);
+          }
+          closePicker();
+        }
+      }
+    };
+
+    // Use capture phase to intercept before other handlers
+    window.addEventListener("keydown", handleGlobalKeyDown, true);
+    return () => window.removeEventListener("keydown", handleGlobalKeyDown, true);
+  }, [isPickerOpen, options, setAgentId, setPinnedAgentIdRaw, closePicker]);
+
   // Keep highlight in-bounds when the filtered list changes.
   useEffect(() => {
     if (filteredOptions.length === 0) {
@@ -342,9 +364,6 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
   const handlePickerKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Escape") {
       e.preventDefault();
-      if (openReason === "modeCycle" && effectivePinnedAgentId) {
-        setAgentId(effectivePinnedAgentId);
-      }
       closePicker();
       return;
     }
@@ -386,125 +405,52 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
     }
   };
 
-  const thirdDisplayOption = isBuiltinAgent ? pinnedOption : activeOption;
-
-  const thirdLabel = isBuiltinAgent
-    ? (pinnedOption?.name ?? "Other…")
-    : (thirdDisplayOption?.name ?? formatAgentIdLabel(normalizedAgentId));
-
-  const thirdIsActive = isBuiltinAgent
-    ? Boolean(effectivePinnedAgentId) && normalizedAgentId === effectivePinnedAgentId
-    : Boolean(normalizedAgentId);
-
-  const thirdPolicyBase = thirdDisplayOption?.policyBase ?? "exec";
-
-  const thirdActiveClassName = thirdIsActive
-    ? thirdDisplayOption?.uiColor
-      ? "text-white"
-      : resolveActiveClassName(thirdPolicyBase)
-    : "";
-
-  const thirdActiveStyle: React.CSSProperties | undefined =
-    thirdIsActive && thirdDisplayOption?.uiColor
-      ? { backgroundColor: thirdDisplayOption.uiColor }
-      : undefined;
-
-  const buttonBaseClassName =
-    "px-1.5 py-0.5 text-[11px] font-sans rounded-sm border-none cursor-pointer transition-all duration-150 bg-transparent";
-
-  const inactiveClassName =
-    "text-toggle-text font-normal hover:text-toggle-text-hover hover:bg-toggle-hover";
+  // Resolve display properties for the trigger pill
+  const activePolicyBase =
+    activeOption?.policyBase ?? (normalizedAgentId === "plan" ? "plan" : "exec");
+  const activeDisplayName = activeOption?.name ?? formatAgentIdLabel(normalizedAgentId);
+  const activeStyle: React.CSSProperties | undefined = activeOption?.uiColor
+    ? { backgroundColor: activeOption.uiColor }
+    : undefined;
+  const activeClassName = activeOption?.uiColor
+    ? "text-white"
+    : resolveActiveClassName(activePolicyBase);
 
   return (
     <div ref={containerRef} className={cn("relative flex items-center gap-1.5", props.className)}>
-      <div className="bg-toggle-bg flex gap-0 rounded">
-        {/* Exec */}
-        <button
-          type="button"
-          onClick={() => {
-            setAgentId("exec");
-            onComplete?.();
-          }}
-          aria-pressed={normalizedAgentId === "exec"}
-          className={cn(
-            buttonBaseClassName,
-            normalizedAgentId === "exec"
-              ? "bg-exec-mode text-white hover:bg-exec-mode-hover font-medium"
-              : inactiveClassName
-          )}
-        >
-          Exec
-        </button>
-
-        {/* Plan */}
-        <button
-          type="button"
-          onClick={() => {
-            setAgentId("plan");
-            onComplete?.();
-          }}
-          aria-pressed={normalizedAgentId === "plan"}
-          className={cn(
-            buttonBaseClassName,
-            normalizedAgentId === "plan"
-              ? "bg-plan-mode text-white hover:bg-plan-mode-hover font-medium"
-              : inactiveClassName
-          )}
-        >
-          Plan
-        </button>
-
-        {/* Pinned / Other */}
-        <button
-          type="button"
-          onClick={() => {
-            // If we're currently on a non-builtin agent (including non-selectable agents like
-            // Explore in subagent workspaces), this segment is already selected.
-            //
-            // For non-selectable agents, allow clicking to open the picker so the user can
-            // switch away.
-            if (!isBuiltinAgent) {
-              if (!activeIsSelectable) {
+      {/* Dropdown trigger - pill style button */}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            aria-label="Select agent"
+            aria-expanded={isPickerOpen}
+            onClick={() => {
+              if (isPickerOpen) {
+                closePicker();
+              } else {
                 openPicker();
               }
-              return;
-            }
-
-            // In exec/plan, clicking the third segment selects the pinned agent (if present).
-            if (effectivePinnedAgentId) {
-              setAgentId(effectivePinnedAgentId);
-              onComplete?.();
-              return;
-            }
-
-            openPicker();
-          }}
-          aria-pressed={thirdIsActive}
-          style={thirdActiveStyle}
-          className={cn(
-            buttonBaseClassName,
-            "flex items-center gap-1",
-            thirdIsActive ? cn("font-medium", thirdActiveClassName) : inactiveClassName
-          )}
-        >
-          <span className="max-w-[110px] truncate">{thirdLabel}</span>
-        </button>
-        <button
-          type="button"
-          aria-label="Choose agent"
-          onClick={() => {
-            openPicker();
-          }}
-          style={thirdActiveStyle}
-          className={cn(
-            buttonBaseClassName,
-            "px-1",
-            thirdIsActive ? cn("font-medium", thirdActiveClassName) : inactiveClassName
-          )}
-        >
-          <ChevronDown className="h-3 w-3" />
-        </button>
-      </div>
+            }}
+            style={activeStyle}
+            className={cn(
+              "flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-[11px] font-medium transition-all duration-150",
+              activeClassName
+            )}
+          >
+            <span className="max-w-[130px] truncate">{activeDisplayName}</span>
+            <ChevronDown
+              className={cn(
+                "h-3 w-3 transition-transform duration-150",
+                isPickerOpen && "rotate-180"
+              )}
+            />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent align="center">
+          Select agent ({formatKeybind(KEYBINDS.TOGGLE_MODE)})
+        </TooltipContent>
+      </Tooltip>
 
       <AgentHelpTooltip />
 
@@ -543,6 +489,8 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
             ) : (
               filteredOptions.map((opt, index) => {
                 const isHighlighted = index === highlightedIndex;
+                const isSelected = opt.id === normalizedAgentId;
+                const keybindLabel = formatNumberKeybind(index);
                 return (
                   <div
                     key={opt.id}
@@ -559,9 +507,17 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
                     onMouseEnter={() => setHighlightedIndex(index)}
                     onClick={() => handleSelectAgent(opt.id)}
                   >
-                    <div className="grid grid-cols-[1fr_auto] items-center gap-2">
+                    <div className="grid grid-cols-[auto_1fr_auto_auto] items-center gap-2">
+                      <Check
+                        className={cn("h-3 w-3 shrink-0", isSelected ? "opacity-100" : "opacity-0")}
+                      />
                       <span className="min-w-0 truncate text-[11px] font-medium">{opt.name}</span>
                       <span className="text-muted-light text-[10px]">{opt.id}</span>
+                      {keybindLabel && (
+                        <span className="text-muted-light ml-2 text-[10px] tabular-nums">
+                          {keybindLabel}
+                        </span>
+                      )}
                     </div>
                   </div>
                 );

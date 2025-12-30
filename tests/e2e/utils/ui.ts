@@ -111,18 +111,23 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
     async setMode(mode: ChatMode): Promise<void> {
       const normalizedMode = sanitizeMode(mode);
 
-      // ChatInput exposes Exec/Plan as segmented buttons (AgentModePicker).
-      // Anchor to the picker chevron so we don't accidentally match other "Exec"/"Plan" buttons.
-      const agentPickerChevron = page.getByRole("button", { name: "Choose agent" }).first();
-      await expect(agentPickerChevron).toBeVisible();
+      // AgentModePicker is now a dropdown. Click the trigger to open, then select the mode.
+      const agentPickerTrigger = page.getByRole("button", { name: "Select agent" }).first();
+      await expect(agentPickerTrigger).toBeVisible();
 
-      const agentPicker = agentPickerChevron.locator("..");
-      const modeButton = agentPicker.getByRole("button", { name: normalizedMode, exact: true });
-      await expect(modeButton).toBeVisible();
+      // If the dropdown doesn't show the requested mode in the trigger, we need to open it
+      const currentMode = await agentPickerTrigger.textContent();
+      if (!currentMode?.includes(normalizedMode)) {
+        await agentPickerTrigger.click();
 
-      await modeButton.click();
+        // Wait for dropdown to open and click the mode option
+        const dropdown = page.locator('[role="button"]').filter({ hasText: normalizedMode });
+        await expect(dropdown.first()).toBeVisible();
+        await dropdown.first().click();
+      }
 
-      await expect(modeButton).toHaveAttribute("aria-pressed", "true");
+      // Verify the trigger now shows the selected mode
+      await expect(agentPickerTrigger).toContainText(normalizedMode);
     },
 
     async setThinkingLevel(value: number): Promise<void> {

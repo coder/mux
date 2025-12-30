@@ -13,7 +13,6 @@ import { matchesKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import {
   getAgentIdKey,
   getModeKey,
-  getPinnedAgentIdKey,
   getProjectScopeId,
   GLOBAL_SCOPE_ID,
 } from "@/common/constants/storage";
@@ -32,10 +31,6 @@ interface ModeProviderProps {
 
 function getScopeId(workspaceId: string | undefined, projectPath: string | undefined): string {
   return workspaceId ?? (projectPath ? getProjectScopeId(projectPath) : GLOBAL_SCOPE_ID);
-}
-
-function normalizeOptionalAgentId(value: unknown): string {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim().toLowerCase() : "";
 }
 
 function coerceAgentId(value: unknown): string {
@@ -74,27 +69,6 @@ export const ModeProvider: React.FC<ModeProviderProps> = (props) => {
   const [agents, setAgents] = useState<AgentDefinitionDescriptor[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
-
-  const [pinnedAgentIdRaw] = usePersistedState<string>(getPinnedAgentIdKey(scopeId), "", {
-    listener: true,
-  });
-
-  const cycleOtherAgentId = useMemo(() => {
-    const pinnedAgentId = normalizeOptionalAgentId(pinnedAgentIdRaw);
-    if (!pinnedAgentId || pinnedAgentId === "exec" || pinnedAgentId === "plan") {
-      return "";
-    }
-
-    // If we have a resolved agent list, ensure the pinned agent is still selectable.
-    if (agents.length > 0) {
-      const descriptor = agents.find((entry) => entry.id === pinnedAgentId);
-      if (!descriptor?.uiSelectable) {
-        return "";
-      }
-    }
-
-    return pinnedAgentId;
-  }, [agents, pinnedAgentIdRaw]);
 
   useEffect(() => {
     if (!api) return;
@@ -142,7 +116,7 @@ export const ModeProvider: React.FC<ModeProviderProps> = (props) => {
     [setAgentId]
   );
 
-  // Global keybind handler
+  // Global keybind handler - opens the agent picker dropdown
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!matchesKeybind(e, KEYBINDS.TOGGLE_MODE)) {
@@ -150,32 +124,12 @@ export const ModeProvider: React.FC<ModeProviderProps> = (props) => {
       }
 
       e.preventDefault();
-
-      // Best-effort: if the agent picker is open, close it before cycling.
-      window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.CLOSE_AGENT_PICKER));
-
-      const normalizedAgentId = coerceAgentId(agentId);
-
-      // Cycle Exec -> Plan -> Other (pinned) -> Exec.
-      if (normalizedAgentId === "exec") {
-        setAgentId("plan");
-        return;
-      }
-
-      if (normalizedAgentId === "plan") {
-        if (cycleOtherAgentId) {
-          setAgentId(cycleOtherAgentId);
-        }
-        window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.OPEN_AGENT_PICKER));
-        return;
-      }
-
-      setAgentId("exec");
+      window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.OPEN_AGENT_PICKER));
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [agentId, cycleOtherAgentId, setAgentId]);
+  }, []);
 
   const agentContextValue = useMemo(
     () => ({

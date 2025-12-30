@@ -86,10 +86,7 @@ describe("AgentModePicker", () => {
     expect(getByText("Explore")).toBeTruthy();
   });
 
-  test("when auto-opened via hotkey, Escape selects the pinned agent", async () => {
-    const pinnedKey = getPinnedAgentIdKey("ws-123");
-    window.localStorage.setItem(pinnedKey, JSON.stringify("review"));
-
+  test("Escape closes the picker without changing selection", async () => {
     function Harness() {
       const [agentId, setAgentId] = React.useState("plan");
       return (
@@ -114,7 +111,7 @@ describe("AgentModePicker", () => {
 
     const { getByPlaceholderText, getByTestId, queryByPlaceholderText } = render(<Harness />);
 
-    // Simulate ModeContext auto-opening the picker.
+    // Simulate ModeContext opening the picker.
     window.dispatchEvent(new CustomEvent(CUSTOM_EVENTS.OPEN_AGENT_PICKER));
 
     await waitFor(() => {
@@ -123,13 +120,12 @@ describe("AgentModePicker", () => {
 
     fireEvent.keyDown(getByPlaceholderText("Search agents…"), { key: "Escape" });
 
-    await waitFor(() => {
-      expect(getByTestId("agentId").textContent).toBe("review");
-    });
-
+    // Escape should close the picker without changing the agent
     await waitFor(() => {
       expect(queryByPlaceholderText("Search agents…")).toBeNull();
     });
+
+    expect(getByTestId("agentId").textContent).toBe("plan");
   });
 
   test("ArrowUp closes the picker without selecting an agent", async () => {
@@ -155,11 +151,12 @@ describe("AgentModePicker", () => {
       );
     }
 
-    const { getByPlaceholderText, getByTestId, getByText, queryByPlaceholderText } = render(
+    const { getByPlaceholderText, getByTestId, getByLabelText, queryByPlaceholderText } = render(
       <Harness />
     );
 
-    fireEvent.click(getByText("Other…"));
+    // Open the dropdown via the trigger button
+    fireEvent.click(getByLabelText("Select agent"));
 
     await waitFor(() => {
       expect(getByPlaceholderText("Search agents…")).toBeTruthy();
@@ -174,7 +171,7 @@ describe("AgentModePicker", () => {
     expect(getByTestId("agentId").textContent).toBe("exec");
   });
 
-  test("shows a non-selectable active agent in the segmented control", async () => {
+  test("shows a non-selectable active agent in the dropdown trigger", async () => {
     function Harness() {
       const [agentId, setAgentId] = React.useState("explore");
       return (
@@ -197,22 +194,25 @@ describe("AgentModePicker", () => {
       );
     }
 
-    const { getAllByText, getByLabelText, getByPlaceholderText, getByText } = render(<Harness />);
+    const { getAllByText, getByLabelText, getByPlaceholderText } = render(<Harness />);
 
-    const exploreButton = getByText("Explore").closest("button");
-    expect(exploreButton?.getAttribute("aria-pressed")).toBe("true");
+    // The trigger button should show the current agent name "Explore"
+    const triggerButton = getByLabelText("Select agent");
+    expect(triggerButton.textContent).toContain("Explore");
 
-    fireEvent.click(getByLabelText("Choose agent"));
+    // Open dropdown
+    fireEvent.click(triggerButton);
 
     await waitFor(() => {
       expect(getByPlaceholderText("Search agents…")).toBeTruthy();
     });
 
-    // Explore should not appear as a selectable option.
+    // Explore should not appear as a selectable option in the dropdown (only in trigger).
+    // The text "Explore" appears once in trigger, so if dropdown opened it should still be just one.
     expect(getAllByText("Explore").length).toBe(1);
   });
 
-  test("pins a custom agent and keeps it available when switching back to Exec/Plan", async () => {
+  test("pins a custom agent and persists it in storage", async () => {
     function Harness() {
       const [agentId, setAgentId] = React.useState("exec");
       return (
@@ -235,12 +235,10 @@ describe("AgentModePicker", () => {
       );
     }
 
-    const { getByPlaceholderText, getByTestId, getByText, getByLabelText, queryByText } = render(
-      <Harness />
-    );
+    const { getByPlaceholderText, getByTestId, getByText, getByLabelText } = render(<Harness />);
 
-    // Open picker via "Other…".
-    fireEvent.click(getByText("Other…"));
+    // Open picker via dropdown trigger
+    fireEvent.click(getByLabelText("Select agent"));
 
     await waitFor(() => {
       expect(getByPlaceholderText("Search agents…")).toBeTruthy();
@@ -256,38 +254,21 @@ describe("AgentModePicker", () => {
     const pinnedKey = getPinnedAgentIdKey("ws-123");
     expect(JSON.parse(window.localStorage.getItem(pinnedKey) ?? "null")).toBe("review");
 
-    // Switch back to Exec.
-    fireEvent.click(getByText("Exec"));
-    await waitFor(() => {
-      expect(getByTestId("agentId").textContent).toBe("exec");
-    });
-
-    // Pinned label should still be visible.
-    expect(getByText("Review")).toBeTruthy();
-
-    // Clicking the pinned button should select it.
-    fireEvent.click(getByText("Review"));
-    await waitFor(() => {
-      expect(getByTestId("agentId").textContent).toBe("review");
-    });
-
-    // Opening the picker and selecting Exec should NOT clobber the pin.
-    fireEvent.click(getByLabelText("Choose agent"));
+    // Open dropdown again and select Exec.
+    fireEvent.click(getByLabelText("Select agent"));
 
     await waitFor(() => {
       expect(getByPlaceholderText("Search agents…")).toBeTruthy();
     });
 
-    // Disambiguate from the segmented-control "Exec" button by clicking the dropdown's id label.
+    // Click on Exec row (use id "exec" to disambiguate)
     fireEvent.click(getByText("exec"));
 
     await waitFor(() => {
       expect(getByTestId("agentId").textContent).toBe("exec");
     });
 
+    // Selecting a built-in agent should NOT clobber the pin.
     expect(JSON.parse(window.localStorage.getItem(pinnedKey) ?? "null")).toBe("review");
-
-    // Still shows the pinned quick option.
-    expect(queryByText("Review")).toBeTruthy();
   });
 });
