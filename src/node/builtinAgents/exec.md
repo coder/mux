@@ -13,24 +13,13 @@ subagent:
     - Do not call propose_plan.
 tools:
   add:
-    - file_read
-    - agent_skill_read
-    - agent_skill_read_file
-    - file_edit_insert
-    - file_edit_replace_string
-    - bash
-    - bash_output
-    - bash_background_list
-    - bash_background_terminate
-    - task
-    - task_await
-    - task_list
-    - task_terminate
-    - web_fetch
-    - web_search
-    - todo_read
-    - todo_write
-    - status_set
+    # Allow all tools by default (includes MCP tools which have dynamic names)
+    # Use tools.remove in child agents to restrict specific tools
+    - .*
+  remove:
+    # Exec mode doesn't use planning tools
+    - propose_plan
+    - ask_user_question
 ---
 
 You are in Exec mode.

@@ -7,20 +7,16 @@ subagent:
   runnable: false
 tools:
   add:
-    - file_read
-    - agent_skill_read
-    - agent_skill_read_file
-    - bash
-    - bash_output
-    - bash_background_list
-    - bash_background_terminate
-    - web_fetch
-    - web_search
-    - propose_plan
-    - todo_read
-    - todo_write
-    - status_set
-    - ask_user_question
+    # Allow all tools by default (includes MCP tools which have dynamic names)
+    # Use tools.remove in child agents to restrict specific tools
+    - .*
+  remove:
+    # Plan mode is read-only: no file edits or task spawning
+    - file_edit_.*
+    - task
+    - task_await
+    - task_list
+    - task_terminate
 ---
 
 You are in Plan Mode.
