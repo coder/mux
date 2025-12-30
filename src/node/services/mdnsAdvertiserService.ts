@@ -10,7 +10,9 @@ import {
 import * as net from "node:net";
 import { log } from "./log";
 
-export const MUX_MDNS_SERVICE_TYPE = "mux";
+// NOTE: Avoid "mux" here: it's an IANA-registered service name ("Multiplexing Protocol"),
+// and some discovery tools will display/handle it specially.
+export const MUX_MDNS_SERVICE_TYPE = "mux-orpc";
 
 type ServiceTxtRecord = Record<string, string>;
 
@@ -145,6 +147,16 @@ export class MdnsAdvertiserService {
 
       await service.advertise();
 
+      log.info("mDNS service advertised", {
+        name: serviceOptions.name,
+        type: serviceOptions.type,
+        protocol: serviceOptions.protocol ?? "tcp",
+        port: serviceOptions.port,
+        restrictedAddresses: serviceOptions.restrictedAddresses,
+        disabledIpv6: serviceOptions.disabledIpv6,
+        txt: serviceOptions.txt,
+      });
+
       this.service = service;
       this.advertisedKey = nextKey;
     });
@@ -165,6 +177,10 @@ export class MdnsAdvertiserService {
 
       if (responder) {
         await responder.shutdown();
+      }
+
+      if (service || responder) {
+        log.info("mDNS service stopped");
       }
     });
   }
