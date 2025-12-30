@@ -9,6 +9,10 @@ export interface AgentContextValue {
   agents: AgentDefinitionDescriptor[];
   loaded: boolean;
   loadFailed: boolean;
+  /** Reload agent definitions from the backend */
+  refresh: () => Promise<void>;
+  /** True while a refresh is in progress */
+  refreshing: boolean;
 }
 
 const AgentContext = createContext<AgentContextValue | undefined>(undefined);

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, RefreshCw } from "lucide-react";
 
 import { useAgent } from "@/browser/contexts/AgentContext";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
@@ -32,6 +32,7 @@ interface AgentOption {
   /** True if this agent inherits from "plan" (for UI styling) */
   isPlanLike: boolean;
   uiColor?: string;
+  description?: string;
 }
 
 function formatAgentIdLabel(agentId: string): string {
@@ -78,6 +79,7 @@ function resolveAgentOptions(agents: AgentDefinitionDescriptor[]): AgentOption[]
       name: entry.name,
       isPlanLike: isPlanLikeFn(entry.id, agents),
       uiColor: entry.uiColor,
+      description: entry.description,
     }));
 }
 
@@ -88,7 +90,7 @@ function resolveActiveClassName(isPlanLike: boolean): string {
 }
 
 export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
-  const { agentId, setAgentId, agents } = useAgent();
+  const { agentId, setAgentId, agents, refresh, refreshing } = useAgent();
 
   const onComplete = props.onComplete;
 
@@ -357,7 +359,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
 
       {isPickerOpen && (
         <div className="bg-separator border-border-light absolute right-0 bottom-full z-[1020] mb-1 max-w-[420px] min-w-72 overflow-hidden rounded border shadow-[0_4px_12px_rgba(0,0,0,0.3)]">
-          <div className="border-border-light border-b p-1.5">
+          <div className="border-border-light flex items-center gap-1.5 border-b p-1.5">
             <input
               ref={inputRef}
               value={filter}
@@ -380,8 +382,26 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
               }}
               onKeyDown={handlePickerKeyDown}
               placeholder="Search agents…"
-              className="text-light bg-dark border-border-light focus:border-exec-mode w-full rounded-sm border px-1 py-0.5 text-[10px] leading-[11px] outline-none"
+              className="text-light bg-dark border-border-light focus:border-exec-mode min-w-0 flex-1 rounded-sm border px-1 py-0.5 text-[10px] leading-[11px] outline-none"
             />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="Reload agents"
+                  onClick={() => void refresh()}
+                  className={cn(
+                    "text-muted hover:text-foreground flex-shrink-0 p-0.5 transition-colors",
+                    refreshing && "text-accent"
+                  )}
+                >
+                  <RefreshCw className={cn("h-3 w-3", refreshing && "animate-spin")} />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" align="end">
+                {refreshing ? "Reloading…" : "Reload agent definitions"}
+              </TooltipContent>
+            </Tooltip>
           </div>
 
           <div className="max-h-[220px] overflow-y-auto">
@@ -409,9 +429,27 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
                     onMouseEnter={() => setHighlightedIndex(index)}
                     onClick={() => handleSelectAgent(opt.id)}
                   >
-                    <div className="grid grid-cols-[1fr_auto_auto] items-center gap-2">
+                    <div className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-2">
                       <span className="min-w-0 truncate text-[11px] font-medium">{opt.name}</span>
                       <span className="text-muted-light text-[10px]">{opt.id}</span>
+                      {opt.description && (
+                        <Tooltip>
+                          <TooltipTrigger
+                            asChild
+                            onClick={(e) => e.stopPropagation()}
+                            onMouseDown={(e) => e.stopPropagation()}
+                          >
+                            <HelpIndicator className="ml-0.5">?</HelpIndicator>
+                          </TooltipTrigger>
+                          <TooltipContent
+                            side="left"
+                            align="center"
+                            className="max-w-60 whitespace-normal"
+                          >
+                            {opt.description}
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
                       {keybindLabel && (
                         <span className="text-muted-light ml-1 text-[10px] tabular-nums">
                           {keybindLabel}

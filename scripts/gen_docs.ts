@@ -14,6 +14,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as yaml from "yaml";
+import * as prettier from "prettier";
 import { KNOWN_MODELS, DEFAULT_MODEL } from "../src/common/constants/knownModels";
 import { formatModelDisplayName } from "../src/common/utils/ai/modelDisplay";
 import { AgentDefinitionFrontmatterSchema } from "../src/common/orpc/schemas/agentDefinition";
@@ -59,7 +60,14 @@ async function syncDoc(options: SyncDocOptions): Promise<boolean> {
 
   const currentContent = fs.readFileSync(docsPath, "utf-8");
   const block = generateBlock();
-  const newContent = injectBetweenMarkers(currentContent, markerName, block);
+  const rawContent = injectBetweenMarkers(currentContent, markerName, block);
+
+  // Format with prettier to ensure consistent output
+  const prettierConfig = await prettier.resolveConfig(docsPath);
+  const newContent = await prettier.format(rawContent, {
+    ...prettierConfig,
+    filepath: docsPath,
+  });
 
   if (currentContent === newContent) {
     console.log(`✓ ${docsFile} is up-to-date with ${sourceLabel}`);
@@ -177,6 +185,8 @@ interface ParsedAgent {
   id: string;
   frontmatter: ReturnType<typeof AgentDefinitionFrontmatterSchema.parse>;
   body: string;
+  /** Original file content (preserves comments and formatting) */
+  rawContent: string;
 }
 
 function parseFrontmatter(content: string): { frontmatter: unknown; body: string } | null {
@@ -209,6 +219,7 @@ function loadBuiltinAgents(): ParsedAgent[] {
       id: filename.slice(0, -3), // Remove .md extension
       frontmatter: result.data,
       body: parsed.body,
+      rawContent: content.trim(),
     });
   }
 
@@ -226,7 +237,7 @@ function generateBuiltinAgentsBlock(): string {
   const sections: string[] = [];
 
   for (const agent of agents) {
-    const { id, frontmatter, body } = agent;
+    const { id, frontmatter, rawContent } = agent;
     const lines: string[] = [];
 
     // Header
@@ -238,20 +249,11 @@ function generateBuiltinAgentsBlock(): string {
       lines.push("");
     }
 
-    // Show the full agent file as an example
+    // Show the full agent file as an example (using raw content to preserve comments)
     lines.push(`<Accordion title="View ${id}.md">`);
     lines.push("");
     lines.push("```md");
-
-    // Reconstruct the file content
-    const yamlContent = yaml.stringify(frontmatter, { lineWidth: 0 }).trim();
-    lines.push("---");
-    lines.push(yamlContent);
-    lines.push("---");
-    if (body) {
-      lines.push("");
-      lines.push(body);
-    }
+    lines.push(rawContent);
     lines.push("```");
     lines.push("");
     lines.push("</Accordion>");

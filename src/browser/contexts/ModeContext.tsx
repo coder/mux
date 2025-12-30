@@ -1,5 +1,13 @@
 import type { Dispatch, ReactNode, SetStateAction } from "react";
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { useAPI } from "@/browser/contexts/API";
 import { AgentProvider } from "@/browser/contexts/AgentContext";
@@ -69,34 +77,57 @@ export const ModeProvider: React.FC<ModeProviderProps> = (props) => {
   const [agents, setAgents] = useState<AgentDefinitionDescriptor[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
+  // Track current workspace to avoid stale updates
+  const workspaceIdRef = useRef(props.workspaceId);
+  workspaceIdRef.current = props.workspaceId;
+
+  const fetchAgents = useCallback(
+    async (workspaceId: string | undefined) => {
+      if (!api || !workspaceId) {
+        setAgents([]);
+        setLoaded(true);
+        setLoadFailed(false);
+        return;
+      }
+
+      try {
+        const result = await api.agents.list({ workspaceId });
+        // Guard against stale updates if workspace changed mid-fetch
+        if (workspaceIdRef.current === workspaceId) {
+          setAgents(result);
+          setLoadFailed(false);
+          setLoaded(true);
+        }
+      } catch {
+        if (workspaceIdRef.current === workspaceId) {
+          setAgents([]);
+          setLoadFailed(true);
+          setLoaded(true);
+        }
+      }
+    },
+    [api]
+  );
+
+  // Initial fetch
   useEffect(() => {
-    if (!api) return;
-
-    // Only discover agents in the context of an existing workspace.
-    if (!props.workspaceId) {
-      setAgents([]);
-      setLoaded(true);
-      setLoadFailed(false);
-      return;
-    }
-
     setLoaded(false);
     setLoadFailed(false);
+    void fetchAgents(props.workspaceId);
+  }, [fetchAgents, props.workspaceId]);
 
-    void api.agents
-      .list({ workspaceId: props.workspaceId })
-      .then((result) => {
-        setAgents(result);
-        setLoadFailed(false);
-        setLoaded(true);
-      })
-      .catch(() => {
-        setAgents([]);
-        setLoadFailed(true);
-        setLoaded(true);
-      });
-  }, [api, props.workspaceId]);
+  // Manual refresh function
+  const refresh = useCallback(async () => {
+    if (!props.workspaceId) return;
+    setRefreshing(true);
+    try {
+      await fetchAgents(props.workspaceId);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [fetchAgents, props.workspaceId]);
 
   const mode = useMemo(() => resolveModeFromAgentId(agentId, agents), [agentId, agents]);
 
@@ -138,8 +169,10 @@ export const ModeProvider: React.FC<ModeProviderProps> = (props) => {
       agents,
       loaded,
       loadFailed,
+      refresh,
+      refreshing,
     }),
-    [agentId, agents, loaded, loadFailed, setAgentId]
+    [agentId, agents, loaded, loadFailed, refresh, refreshing, setAgentId]
   );
 
   const modeContextValue: ModeContextType = [mode, setMode];

@@ -67,6 +67,8 @@ describe("AgentModePicker", () => {
             agents: [],
             loaded: false,
             loadFailed: false,
+            refresh: () => Promise.resolve(),
+            refreshing: false,
           }}
         >
           <TooltipProvider>
@@ -94,6 +96,8 @@ describe("AgentModePicker", () => {
             agents: [...BUILT_INS, CUSTOM_AGENT],
             loaded: true,
             loadFailed: false,
+            refresh: () => Promise.resolve(),
+            refreshing: false,
           }}
         >
           <TooltipProvider>
@@ -142,6 +146,8 @@ describe("AgentModePicker", () => {
             agents: [...BUILT_INS, CUSTOM_AGENT],
             loaded: true,
             loadFailed: false,
+            refresh: () => Promise.resolve(),
+            refreshing: false,
           }}
         >
           <TooltipProvider>
@@ -185,6 +191,8 @@ describe("AgentModePicker", () => {
             agents: [...BUILT_INS, HIDDEN_AGENT, CUSTOM_AGENT],
             loaded: true,
             loadFailed: false,
+            refresh: () => Promise.resolve(),
+            refreshing: false,
           }}
         >
           <TooltipProvider>
@@ -226,6 +234,8 @@ describe("AgentModePicker", () => {
             agents: [...BUILT_INS, CUSTOM_AGENT],
             loaded: true,
             loadFailed: false,
+            refresh: () => Promise.resolve(),
+            refreshing: false,
           }}
         >
           <TooltipProvider>
