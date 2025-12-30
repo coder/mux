@@ -62,6 +62,12 @@ import type { AskUserQuestionToolSuccessResult, BashToolResult } from "@/common/
 import { secretsToRecord } from "@/common/types/secrets";
 
 import { execBuffered, movePlanFile, copyPlanFile } from "@/node/utils/runtime/helpers";
+import {
+  buildFileCompletionsIndex,
+  EMPTY_FILE_COMPLETIONS_INDEX,
+  searchFileCompletions,
+  type FileCompletionsIndex,
+} from "@/node/services/fileCompletionsIndex";
 import { taskQueueDebug } from "@/node/services/taskQueueDebug";
 
 /** Maximum number of retry attempts when workspace name collides */
@@ -72,6 +78,12 @@ const MAX_WORKSPACE_NAME_COLLISION_RETRIES = 3;
 // Shared type for workspace-scoped AI settings (model + thinking)
 type WorkspaceAISettings = z.infer<typeof WorkspaceAISettingsSchema>;
 const POST_COMPACTION_METADATA_REFRESH_DEBOUNCE_MS = 100;
+
+interface FileCompletionsCacheEntry {
+  index: FileCompletionsIndex;
+  fetchedAt: number;
+  refreshing?: Promise<void>;
+}
 
 /**
  * Checks if an error indicates a workspace name collision
@@ -117,7 +129,7 @@ export class WorkspaceService extends EventEmitter {
   private readonly renamingWorkspaces = new Set<string>();
 
   // Cache for @file mention autocomplete (git ls-files output).
-  private readonly fileCompletionsCache = new Map<string, { files: string[]; fetchedAt: number }>();
+  private readonly fileCompletionsCache = new Map<string, FileCompletionsCacheEntry>();
   // Tracks workspaces currently being removed to prevent new sessions/streams during deletion.
   private readonly removingWorkspaces = new Set<string>();
 
@@ -2145,61 +2157,56 @@ export class WorkspaceService extends EventEmitter {
     const CACHE_TTL_MS = 10_000;
 
     let cached = this.fileCompletionsCache.get(workspaceId);
-    if (!cached || now - cached.fetchedAt > CACHE_TTL_MS) {
-      try {
-        const result = await execBuffered(runtime, "git ls-files -co --exclude-standard", {
-          cwd: workspacePath,
-          timeout: 5,
-        });
-
-        if (result.exitCode !== 0) {
-          cached = { files: [], fetchedAt: now };
-        } else {
-          const files = result.stdout
-            .split("\n")
-            .map((line) => line.trim())
-            // File @mentions are whitespace-delimited, so we exclude spaced paths from autocomplete.
-            .filter((filePath) => Boolean(filePath) && !/\s/.test(filePath));
-          cached = { files, fetchedAt: now };
-        }
-      } catch (error) {
-        log.debug("getFileCompletions: failed to list files", {
-          workspaceId,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        cached = { files: [], fetchedAt: now };
-      }
-
+    if (!cached) {
+      cached = { index: EMPTY_FILE_COMPLETIONS_INDEX, fetchedAt: 0 };
       this.fileCompletionsCache.set(workspaceId, cached);
     }
 
-    const normalizedQuery = query.replace(/\\/g, "/").trim().toLowerCase();
-    if (!normalizedQuery) {
-      return { paths: cached.files.slice(0, resolvedLimit) };
+    const cacheEntry = cached;
+
+    const isStale = cacheEntry.fetchedAt === 0 || now - cacheEntry.fetchedAt > CACHE_TTL_MS;
+    if (isStale && !cacheEntry.refreshing) {
+      cacheEntry.refreshing = (async () => {
+        const previousIndex = cacheEntry.index;
+
+        try {
+          const result = await execBuffered(runtime, "git ls-files -co --exclude-standard", {
+            cwd: workspacePath,
+            timeout: 5,
+          });
+
+          if (result.exitCode !== 0) {
+            cacheEntry.index = previousIndex;
+          } else {
+            const files = result.stdout
+              .split("\n")
+              .map((line) => line.trim())
+              // File @mentions are whitespace-delimited, so we exclude spaced paths from autocomplete.
+              .filter((filePath) => Boolean(filePath) && !/\s/.test(filePath));
+            cacheEntry.index = buildFileCompletionsIndex(files);
+          }
+
+          cacheEntry.fetchedAt = Date.now();
+        } catch (error) {
+          log.debug("getFileCompletions: failed to list files", {
+            workspaceId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+
+          // Keep any previously indexed data, but avoid retrying in a tight loop.
+          cacheEntry.index = previousIndex;
+          cacheEntry.fetchedAt = Date.now();
+        }
+      })().finally(() => {
+        cacheEntry.refreshing = undefined;
+      });
     }
 
-    const score = (candidate: string): number | null => {
-      const haystack = candidate.toLowerCase();
-      if (haystack.startsWith(normalizedQuery)) return 0;
-      if (haystack.includes(`/${normalizedQuery}`)) return 1;
-      if (haystack.includes(normalizedQuery)) return 2;
-      return null;
-    };
-
-    const matches: Array<{ path: string; score: number }> = [];
-    for (const filePath of cached.files) {
-      const s = score(filePath);
-      if (s === null) continue;
-      matches.push({ path: filePath, score: s });
+    if (cacheEntry.fetchedAt === 0 && cacheEntry.refreshing) {
+      await cacheEntry.refreshing;
     }
 
-    matches.sort((a, b) => {
-      if (a.score !== b.score) return a.score - b.score;
-      if (a.path.length !== b.path.length) return a.path.length - b.path.length;
-      return a.path.localeCompare(b.path);
-    });
-
-    return { paths: matches.slice(0, resolvedLimit).map((m) => m.path) };
+    return { paths: searchFileCompletions(cacheEntry.index, query, resolvedLimit) };
   }
   async getFullReplay(workspaceId: string): Promise<WorkspaceChatMessage[]> {
     try {

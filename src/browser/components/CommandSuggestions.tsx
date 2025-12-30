@@ -41,7 +41,7 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
   }, [suggestions]);
 
   // Scroll selected item into view
-  useEffect(() => {
+  useLayoutEffect(() => {
     selectedRef.current?.scrollIntoView({ block: "nearest" });
   }, [selectedIndex]);
 
@@ -166,7 +166,7 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
           role="option"
           aria-selected={index === selectedIndex}
           className={cn(
-            "px-2.5 py-1.5 cursor-pointer transition-colors duration-150 flex items-center justify-between gap-3 hover:bg-accent-darker",
+            "px-2.5 py-1.5 cursor-pointer flex items-center justify-between gap-3 hover:bg-accent/20",
             index === selectedIndex ? "bg-accent-darker" : "bg-transparent"
           )}
         >

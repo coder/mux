@@ -714,7 +714,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     const cursor = inputRef.current?.selectionStart ?? input.length;
     const match = findAtMentionAtCursor(input, cursor);
 
-    if (!match || match.query.length === 0) {
+    if (!match) {
       // Invalidate any in-flight completion request.
       atMentionRequestIdRef.current++;
       lastAtMentionWorkspaceIdRef.current = null;
@@ -742,7 +742,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     lastAtMentionQueryRef.current = match.query;
 
     const requestId = ++atMentionRequestIdRef.current;
-    atMentionDebounceRef.current = setTimeout(() => {
+    const runRequest = () => {
       void (async () => {
         try {
           const result = await api.workspace.getFileCompletions({
@@ -775,7 +775,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           }
         }
       })();
-    }, 150);
+    };
+
+    if (match.query.length === 0) {
+      runRequest();
+      return;
+    }
+
+    atMentionDebounceRef.current = setTimeout(runRequest, 150);
 
     return () => {
       if (atMentionDebounceRef.current) {
