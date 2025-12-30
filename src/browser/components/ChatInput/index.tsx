@@ -155,6 +155,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const { api } = useAPI();
   const { variant } = props;
   const [thinkingLevel] = useThinkingLevel();
+  const atMentionProjectPath = variant === "creation" ? props.projectPath : null;
   const workspaceId = variant === "workspace" ? props.workspaceId : null;
 
   // Extract workspace-specific props with defaults
@@ -189,7 +190,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const [atMentionSuggestions, setAtMentionSuggestions] = useState<SlashSuggestion[]>([]);
   const atMentionDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const atMentionRequestIdRef = useRef(0);
-  const lastAtMentionWorkspaceIdRef = useRef<string | null>(null);
+  const lastAtMentionScopeIdRef = useRef<string | null>(null);
   const lastAtMentionQueryRef = useRef<string | null>(null);
   const lastAtMentionInputRef = useRef<string>(input);
   const [showCommandSuggestions, setShowCommandSuggestions] = useState(false);
@@ -265,10 +266,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const [atMentionCursorNonce, setAtMentionCursorNonce] = useState(0);
   const lastAtMentionCursorRef = useRef<number | null>(null);
   const handleAtMentionCursorActivity = useCallback(() => {
-    if (variant !== "workspace") {
-      return;
-    }
-
     const el = inputRef.current;
     if (!el) {
       return;
@@ -281,7 +278,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
     lastAtMentionCursorRef.current = nextCursor;
     setAtMentionCursorNonce((n) => n + 1);
-  }, [input.length, variant]);
+  }, [input.length]);
 
   // Draft state combines text input and image attachments
   // Reviews are managed separately via props (persisted in pendingReviews state)
@@ -680,7 +677,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only run when editingMessage changes
   }, [editingMessage]);
 
-  // Watch input/cursor for @file mentions (workspace variant only)
+  // Watch input/cursor for @file mentions
   useEffect(() => {
     if (atMentionDebounceRef.current) {
       clearTimeout(atMentionDebounceRef.current);
@@ -690,10 +687,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     const inputChanged = lastAtMentionInputRef.current !== input;
     lastAtMentionInputRef.current = input;
 
-    if (!api || variant !== "workspace" || !workspaceId) {
+    const atMentionScopeId = variant === "workspace" ? workspaceId : atMentionProjectPath;
+
+    if (!api || !atMentionScopeId) {
       // Invalidate any in-flight completion request.
       atMentionRequestIdRef.current++;
-      lastAtMentionWorkspaceIdRef.current = null;
+      lastAtMentionScopeIdRef.current = null;
       lastAtMentionQueryRef.current = null;
       setAtMentionSuggestions([]);
       setShowAtMentionSuggestions(false);
@@ -704,7 +703,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     if (input.trimStart().startsWith("/")) {
       // Invalidate any in-flight completion request.
       atMentionRequestIdRef.current++;
-      lastAtMentionWorkspaceIdRef.current = null;
+      lastAtMentionScopeIdRef.current = null;
       lastAtMentionQueryRef.current = null;
       setAtMentionSuggestions([]);
       setShowAtMentionSuggestions(false);
@@ -717,7 +716,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     if (!match) {
       // Invalidate any in-flight completion request.
       atMentionRequestIdRef.current++;
-      lastAtMentionWorkspaceIdRef.current = null;
+      lastAtMentionScopeIdRef.current = null;
       lastAtMentionQueryRef.current = null;
       setAtMentionSuggestions([]);
       setShowAtMentionSuggestions(false);
@@ -732,24 +731,31 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     // Avoid refetching on caret movement within the same token/query.
     if (
       !inputChanged &&
-      lastAtMentionWorkspaceIdRef.current === workspaceId &&
+      lastAtMentionScopeIdRef.current === atMentionScopeId &&
       lastAtMentionQueryRef.current === match.query
     ) {
       return;
     }
 
-    lastAtMentionWorkspaceIdRef.current = workspaceId;
+    lastAtMentionScopeIdRef.current = atMentionScopeId;
     lastAtMentionQueryRef.current = match.query;
 
     const requestId = ++atMentionRequestIdRef.current;
     const runRequest = () => {
       void (async () => {
         try {
-          const result = await api.workspace.getFileCompletions({
-            workspaceId,
-            query: match.query,
-            limit: 20,
-          });
+          const result =
+            variant === "workspace"
+              ? await api.workspace.getFileCompletions({
+                  workspaceId: atMentionScopeId,
+                  query: match.query,
+                  limit: 20,
+                })
+              : await api.projects.getFileCompletions({
+                  projectPath: atMentionScopeId,
+                  query: match.query,
+                  limit: 20,
+                });
 
           if (atMentionRequestIdRef.current !== requestId) {
             return;
@@ -790,7 +796,15 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         atMentionDebounceRef.current = null;
       }
     };
-  }, [api, input, showAtMentionSuggestions, variant, workspaceId, atMentionCursorNonce]);
+  }, [
+    api,
+    input,
+    showAtMentionSuggestions,
+    variant,
+    workspaceId,
+    atMentionProjectPath,
+    atMentionCursorNonce,
+  ]);
 
   // Watch input for slash commands
   useEffect(() => {
@@ -1883,7 +1897,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             />
           )}
 
-          {/* File path suggestions (@src/foo.ts) - workspace variant only */}
+          {/* File path suggestions (@src/foo.ts) */}
           <CommandSuggestions
             suggestions={atMentionSuggestions}
             onSelectSuggestion={handleAtMentionSelect}

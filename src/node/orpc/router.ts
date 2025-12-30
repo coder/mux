@@ -576,6 +576,16 @@ export const router = (authToken?: string) => {
         .handler(async ({ context }) => {
           return context.projectService.pickDirectory();
         }),
+      getFileCompletions: t
+        .input(schemas.projects.getFileCompletions.input)
+        .output(schemas.projects.getFileCompletions.output)
+        .handler(async ({ context, input }) => {
+          return context.projectService.getFileCompletions(
+            input.projectPath,
+            input.query,
+            input.limit
+          );
+        }),
       listBranches: t
         .input(schemas.projects.listBranches.input)
         .output(schemas.projects.listBranches.output)

@@ -5,6 +5,13 @@ import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { Secret } from "@/common/types/secrets";
 import * as fsPromises from "fs/promises";
+import { execAsync } from "@/node/utils/disposableExec";
+import {
+  buildFileCompletionsIndex,
+  EMPTY_FILE_COMPLETIONS_INDEX,
+  searchFileCompletions,
+  type FileCompletionsIndex,
+} from "@/node/services/fileCompletionsIndex";
 import { log } from "@/node/services/log";
 import type { BranchListResult } from "@/common/orpc/types";
 import type { FileTreeNode } from "@/common/utils/git/numstatParser";
@@ -46,7 +53,16 @@ async function listDirectory(requestedPath: string): Promise<FileTreeNode> {
   };
 }
 
+const FILE_COMPLETIONS_CACHE_TTL_MS = 10_000;
+
+interface FileCompletionsCacheEntry {
+  index: FileCompletionsIndex;
+  fetchedAt: number;
+  refreshing?: Promise<void>;
+}
+
 export class ProjectService {
+  private readonly fileCompletionsCache = new Map<string, FileCompletionsCacheEntry>();
   private directoryPicker?: () => Promise<string | null>;
 
   constructor(private readonly config: Config) {}
@@ -151,6 +167,73 @@ export class ProjectService {
       log.error("Failed to list branches:", error);
       throw error instanceof Error ? error : new Error(String(error));
     }
+  }
+
+  async getFileCompletions(
+    projectPath: string,
+    query: string,
+    limit?: number
+  ): Promise<{ paths: string[] }> {
+    const resolvedLimit = limit ?? 20;
+
+    if (typeof projectPath !== "string" || projectPath.trim().length === 0) {
+      return { paths: [] };
+    }
+
+    const validation = await validateProjectPath(projectPath);
+    if (!validation.valid) {
+      return { paths: [] };
+    }
+
+    const normalizedPath = validation.expandedPath!;
+
+    let cacheEntry = this.fileCompletionsCache.get(normalizedPath);
+    if (!cacheEntry) {
+      cacheEntry = { index: EMPTY_FILE_COMPLETIONS_INDEX, fetchedAt: 0 };
+      this.fileCompletionsCache.set(normalizedPath, cacheEntry);
+    }
+
+    const now = Date.now();
+    const isStale =
+      cacheEntry.fetchedAt === 0 || now - cacheEntry.fetchedAt > FILE_COMPLETIONS_CACHE_TTL_MS;
+
+    if (isStale && !cacheEntry.refreshing) {
+      cacheEntry.refreshing = (async () => {
+        try {
+          if (!(await isGitRepository(normalizedPath))) {
+            cacheEntry.index = EMPTY_FILE_COMPLETIONS_INDEX;
+            return;
+          }
+
+          using proc = execAsync(`git -C "${normalizedPath}" ls-files -co --exclude-standard`);
+          const { stdout } = await proc.result;
+
+          const files = stdout
+            .split("\n")
+            .map((line) => line.trim())
+            .filter((line) => line.length > 0)
+            // File @mentions are whitespace-delimited (extractAtMentions uses /@(\\S+)/), so
+            // suggestions containing spaces would be inserted incorrectly (e.g. "@foo bar.ts").
+            .filter((filePath) => !/\s/.test(filePath));
+
+          cacheEntry.index = buildFileCompletionsIndex(files);
+        } catch (error) {
+          log.debug("getFileCompletions: failed to list files", {
+            projectPath: normalizedPath,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        } finally {
+          cacheEntry.fetchedAt = Date.now();
+          cacheEntry.refreshing = undefined;
+        }
+      })();
+    }
+
+    if (cacheEntry.fetchedAt === 0 && cacheEntry.refreshing) {
+      await cacheEntry.refreshing;
+    }
+
+    return { paths: searchFileCompletions(cacheEntry.index, query, resolvedLimit) };
   }
 
   getSecrets(projectPath: string): Secret[] {
