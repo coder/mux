@@ -3,7 +3,6 @@ import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { ModeProvider } from "@/browser/contexts/ModeContext";
 import { ProviderOptionsProvider } from "@/browser/contexts/ProviderOptionsContext";
 import { ThinkingProvider } from "@/browser/contexts/ThinkingContext";
-import { ConnectionStatusIndicator } from "./ConnectionStatusIndicator";
 import { ChatInput } from "./ChatInput/index";
 import type { ChatInputAPI } from "./ChatInput/types";
 import { ArchivedWorkspaces } from "./ArchivedWorkspaces";
@@ -127,7 +126,6 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
     <ModeProvider projectPath={projectPath}>
       <ProviderOptionsProvider>
         <ThinkingProvider projectPath={projectPath}>
-          <ConnectionStatusIndicator />
           {/* Scrollable content area */}
           <div className="min-h-0 flex-1 overflow-y-auto">
             {/* Top section: centers ChatInput in top portion of viewport */}
