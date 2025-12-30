@@ -335,7 +335,10 @@ const ReviewsBannerInner: React.FC<ReviewsBannerInnerProps> = ({ workspaceId }) 
   // "attached" reviews are shown in ChatInput, so we only show "pending" and "checked" here
   const { pendingList, completedList } = useMemo(() => {
     const pending = reviewsHook.reviews.filter((r) => r.status === "pending");
-    const completed = reviewsHook.reviews.filter((r) => r.status === "checked");
+    // Sort completed reviews recent-first (by when they were checked, falling back to creation time)
+    const completed = reviewsHook.reviews
+      .filter((r) => r.status === "checked")
+      .sort((a, b) => (b.statusChangedAt ?? b.createdAt) - (a.statusChangedAt ?? a.createdAt));
     return { pendingList: pending, completedList: completed };
   }, [reviewsHook.reviews]);
 
