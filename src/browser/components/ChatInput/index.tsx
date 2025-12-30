@@ -755,12 +755,16 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             return;
           }
 
-          const nextSuggestions = result.paths.map((p) => ({
-            id: `file:${p}`,
-            display: p,
-            description: "File",
-            replacement: `@${p}`,
-          }));
+          const nextSuggestions = result.paths
+            // File @mentions are whitespace-delimited (extractAtMentions uses /@(\S+)/), so
+            // suggestions containing spaces would be inserted incorrectly (e.g. "@foo bar.ts").
+            .filter((p) => !/\s/.test(p))
+            .map((p) => ({
+              id: `file:${p}`,
+              display: p,
+              description: "File",
+              replacement: `@${p}`,
+            }));
 
           setAtMentionSuggestions(nextSuggestions);
           setShowAtMentionSuggestions(nextSuggestions.length > 0);

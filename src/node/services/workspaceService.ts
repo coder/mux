@@ -2158,7 +2158,8 @@ export class WorkspaceService extends EventEmitter {
           const files = result.stdout
             .split("\n")
             .map((line) => line.trim())
-            .filter(Boolean);
+            // File @mentions are whitespace-delimited, so we exclude spaced paths from autocomplete.
+            .filter((filePath) => Boolean(filePath) && !/\s/.test(filePath));
           cached = { files, fetchedAt: now };
         }
       } catch (error) {
