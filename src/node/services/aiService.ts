@@ -1353,6 +1353,13 @@ export class AIService extends EventEmitter {
         }
       }
 
+      // Construct effective agent system prompt
+      // If running as subagent and agent has subagent.prompt, use that; otherwise use body
+      const agentSystemPrompt =
+        isSubagentWorkspace && agentDefinition.frontmatter.subagent?.prompt
+          ? agentDefinition.frontmatter.subagent.prompt
+          : agentDefinition.body;
+
       // Build system message from workspace metadata
       const systemMessage = await buildSystemMessage(
         metadata,
@@ -1364,7 +1371,7 @@ export class AIService extends EventEmitter {
         mcpServers,
         {
           agentId: effectiveAgentId,
-          agentSystemPrompt: agentDefinition.body,
+          agentSystemPrompt,
         }
       );
 
