@@ -12,7 +12,7 @@ import { log } from "./log";
 
 // NOTE: Avoid "mux" here: it's an IANA-registered service name ("Multiplexing Protocol"),
 // and some discovery tools will display/handle it specially.
-export const MUX_MDNS_SERVICE_TYPE = "mux-orpc";
+export const MUX_MDNS_SERVICE_TYPE = "mux-api";
 
 type ServiceTxtRecord = Record<string, string>;
 
