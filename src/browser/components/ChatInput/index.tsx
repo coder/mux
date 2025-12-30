@@ -2073,13 +2073,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     autoCompaction={autoCompactionProps}
                   />
                 )}
-                <AgentModePicker
-                  workspaceId={variant === "workspace" ? props.workspaceId : undefined}
-                  projectPath={
-                    variant === "creation" ? props.projectPath : selectedWorkspace?.projectPath
-                  }
-                  onComplete={() => inputRef.current?.focus()}
-                />
+                <AgentModePicker onComplete={() => inputRef.current?.focus()} />
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button

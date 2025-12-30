@@ -1,14 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 
 import { useAgent } from "@/browser/contexts/AgentContext";
-import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
-import {
-  getPinnedAgentIdKey,
-  getProjectScopeId,
-  GLOBAL_SCOPE_ID,
-} from "@/common/constants/storage";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 import { cn } from "@/common/lib/utils";
 import {
@@ -17,17 +11,11 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/browser/components/ui/tooltip";
-import { formatKeybind, KEYBINDS, isMac } from "@/browser/utils/ui/keybinds";
+import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { isPlanLike as isPlanLikeFn } from "@/common/utils/agentInheritance";
 
 interface AgentModePickerProps {
   className?: string;
-
-  /** Highest-priority scope for pin persistence. */
-  workspaceId?: string;
-
-  /** Fallback scope for pin persistence (used when workspaceId is not provided). */
-  projectPath?: string;
 
   /** Called when the picker closes (best-effort). Useful for restoring focus. */
   onComplete?: () => void;
@@ -43,22 +31,10 @@ interface AgentOption {
 
 function formatAgentIdLabel(agentId: string): string {
   if (!agentId) {
-    return "Other…";
+    return "Agent";
   }
 
-  // Avoid label flicker while agent definitions are still loading.
-  switch (agentId) {
-    case "exec":
-      return "Exec";
-    case "plan":
-      return "Plan";
-    case "explore":
-      return "Explore";
-    case "compact":
-      return "Compact";
-  }
-
-  // Best-effort humanization for custom IDs (e.g. "code-review" -> "Code Review").
+  // Best-effort humanization for IDs (e.g. "code-review" -> "Code Review").
   const parts = agentId.split(/[-_]+/g).filter((part) => part.length > 0);
   if (parts.length === 0) {
     return agentId;
@@ -68,12 +44,9 @@ function formatAgentIdLabel(agentId: string): string {
     .map((part) => (part.length > 0 ? part[0].toUpperCase() + part.slice(1) : part))
     .join(" ");
 }
+
 function normalizeAgentId(value: unknown): string {
   return typeof value === "string" && value.trim().length > 0 ? value.trim().toLowerCase() : "";
-}
-
-function getScopeId(workspaceId: string | undefined, projectPath: string | undefined): string {
-  return workspaceId ?? (projectPath ? getProjectScopeId(projectPath) : GLOBAL_SCOPE_ID);
 }
 
 const AgentHelpTooltip: React.FC = () => (
@@ -86,42 +59,19 @@ const AgentHelpTooltip: React.FC = () => (
       <br />
       <br />
       Open picker: {formatKeybind(KEYBINDS.TOGGLE_MODE)}
-      <br />
-      Quick select: {isMac() ? "⌘" : "Ctrl"}+1-9 (when open)
     </TooltipContent>
   </Tooltip>
 );
 
-/** Format a number keybind for display in dropdown items */
-function formatNumberKeybind(index: number): string {
-  if (index < 0 || index > 8) return "";
-  return isMac() ? `⌘${index + 1}` : `Ctrl+${index + 1}`;
-}
-
 function resolveAgentOptions(agents: AgentDefinitionDescriptor[]): AgentOption[] {
-  const selectable = agents.filter((entry) => entry.uiSelectable);
-
-  // Defensive: If agent discovery failed (or is unavailable), fall back to Exec/Plan.
-  const base: AgentOption[] =
-    selectable.length > 0
-      ? selectable.map((entry) => ({
-          id: entry.id,
-          name: entry.name,
-          // Use inheritance check for proper multi-level support
-          isPlanLike: isPlanLikeFn(entry.id, agents),
-          uiColor: entry.uiColor,
-        }))
-      : [
-          { id: "exec", name: "Exec", isPlanLike: false },
-          { id: "plan", name: "Plan", isPlanLike: true },
-        ];
-
-  // Prefer showing Exec/Plan first in the picker (for discoverability / keyboard-only use).
-  const exec = base.find((opt) => opt.id === "exec");
-  const plan = base.find((opt) => opt.id === "plan");
-  const rest = base.filter((opt) => opt.id !== "exec" && opt.id !== "plan");
-
-  return [exec, plan, ...rest].filter((opt): opt is AgentOption => Boolean(opt));
+  return agents
+    .filter((entry) => entry.uiSelectable)
+    .map((entry) => ({
+      id: entry.id,
+      name: entry.name,
+      isPlanLike: isPlanLikeFn(entry.id, agents),
+      uiColor: entry.uiColor,
+    }));
 }
 
 function resolveActiveClassName(isPlanLike: boolean): string {
@@ -135,49 +85,6 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
 
   const onComplete = props.onComplete;
 
-  const scopeId = useMemo(
-    () => getScopeId(props.workspaceId, props.projectPath),
-    [props.projectPath, props.workspaceId]
-  );
-
-  const [pinnedAgentIdRaw, setPinnedAgentIdRaw] = usePersistedState<string>(
-    getPinnedAgentIdKey(scopeId),
-    "",
-    {
-      listener: true,
-    }
-  );
-
-  const pinnedAgentId = useMemo(() => normalizeAgentId(pinnedAgentIdRaw), [pinnedAgentIdRaw]);
-
-  const options = useMemo(() => resolveAgentOptions(agents), [agents]);
-
-  const pinnedOption = useMemo(
-    () => options.find((opt) => opt.id === pinnedAgentId) ?? null,
-    [options, pinnedAgentId]
-  );
-
-  // If the pinned agent no longer exists (file deleted / renamed), clear it.
-  useEffect(() => {
-    if (!pinnedAgentId) {
-      return;
-    }
-
-    // If we can't validate the agent list (e.g., no workspace context), do not
-    // clobber the user's pinned preference.
-    if (agents.length === 0) {
-      return;
-    }
-
-    if (pinnedOption) {
-      return;
-    }
-
-    setPinnedAgentIdRaw("");
-  }, [agents.length, pinnedAgentId, pinnedOption, setPinnedAgentIdRaw]);
-
-  const effectivePinnedAgentId = pinnedOption?.id ?? "";
-
   const [isPickerOpen, setIsPickerOpen] = useState(false);
   const [filter, setFilter] = useState("");
   const [highlightedIndex, setHighlightedIndex] = useState<number>(-1);
@@ -188,6 +95,8 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
 
   const normalizedAgentId = useMemo(() => normalizeAgentId(agentId), [agentId]);
 
+  const options = useMemo(() => resolveAgentOptions(agents), [agents]);
+
   const activeOption = useMemo(() => {
     if (!normalizedAgentId) {
       return null;
@@ -195,7 +104,13 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
 
     const descriptor = agents.find((entry) => entry.id === normalizedAgentId);
     if (!descriptor) {
-      return null;
+      // Unknown agent (not in discovery) - show a fallback option
+      return {
+        id: normalizedAgentId,
+        name: formatAgentIdLabel(normalizedAgentId),
+        isPlanLike: isPlanLikeFn(normalizedAgentId, agents),
+        uiColor: undefined,
+      } satisfies AgentOption;
     }
 
     return {
@@ -219,6 +134,24 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
     });
   }, [filter, options]);
 
+  const openPicker = useCallback(
+    (opts?: { highlightAgentId?: string }) => {
+      setIsPickerOpen(true);
+      setFilter("");
+
+      // Pre-select the current agent (or specified) in the list.
+      const targetId = opts?.highlightAgentId ?? normalizedAgentId;
+      const currentIndex = options.findIndex((opt) => opt.id === targetId);
+      setHighlightedIndex(currentIndex >= 0 ? currentIndex : 0);
+
+      // Focus the search input after the dropdown renders.
+      requestAnimationFrame(() => {
+        inputRef.current?.focus();
+      });
+    },
+    [normalizedAgentId, options]
+  );
+
   const closePicker = useCallback(() => {
     setIsPickerOpen(false);
     setFilter("");
@@ -226,32 +159,16 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
     onComplete?.();
   }, [onComplete]);
 
-  const openPicker = useCallback(
-    (opts?: { highlightAgentId?: string }) => {
-      setIsPickerOpen(true);
-      setFilter("");
-
-      const highlightId = normalizeAgentId(opts?.highlightAgentId) || normalizedAgentId;
-
-      // Start with selected agent highlighted (if present in the list).
-      const currentIndex = options.findIndex((opt) => opt.id === highlightId);
-      setHighlightedIndex(currentIndex);
-    },
-    [normalizedAgentId, options]
-  );
-
   // Hotkey integration (open via ModeContext).
   useEffect(() => {
     const handleOpen = () => {
-      openPicker({
-        highlightAgentId: effectivePinnedAgentId || normalizedAgentId,
-      });
+      openPicker({ highlightAgentId: normalizedAgentId });
     };
 
     window.addEventListener(CUSTOM_EVENTS.OPEN_AGENT_PICKER, handleOpen as EventListener);
     return () =>
       window.removeEventListener(CUSTOM_EVENTS.OPEN_AGENT_PICKER, handleOpen as EventListener);
-  }, [effectivePinnedAgentId, normalizedAgentId, openPicker]);
+  }, [normalizedAgentId, openPicker]);
 
   useEffect(() => {
     const handleClose = () => {
@@ -266,63 +183,22 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
       window.removeEventListener(CUSTOM_EVENTS.CLOSE_AGENT_PICKER, handleClose as EventListener);
   }, [closePicker, isPickerOpen]);
 
-  // Focus input when picker opens.
+  // Close picker when clicking outside.
   useEffect(() => {
     if (!isPickerOpen) {
       return;
     }
 
-    // Defer to next paint so the input exists.
-    const id = setTimeout(() => {
-      inputRef.current?.focus();
-      inputRef.current?.select();
-    }, 0);
-
-    return () => clearTimeout(id);
-  }, [isPickerOpen]);
-
-  // Handle click outside to close.
-  useEffect(() => {
-    if (!isPickerOpen) return;
-
     const handleClickOutside = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        closePicker();
+      if (containerRef.current?.contains(e.target as Node)) {
+        return;
       }
+      closePicker();
     };
 
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [closePicker, isPickerOpen]);
-
-  // Global Cmd/Ctrl+1-9 shortcuts when dropdown is open (takes priority over tab keybinds).
-  useEffect(() => {
-    if (!isPickerOpen) return;
-
-    const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      const modKey = isMac() ? e.metaKey : e.ctrlKey;
-      if (!modKey || e.key < "1" || e.key > "9") return;
-
-      e.preventDefault();
-      e.stopPropagation();
-
-      const index = parseInt(e.key, 10) - 1;
-      if (index < options.length) {
-        const picked = options[index];
-        if (picked) {
-          setAgentId(picked.id);
-          if (picked.id !== "exec" && picked.id !== "plan") {
-            setPinnedAgentIdRaw(picked.id);
-          }
-          closePicker();
-        }
-      }
-    };
-
-    // Use capture phase to intercept before other handlers
-    window.addEventListener("keydown", handleGlobalKeyDown, true);
-    return () => window.removeEventListener("keydown", handleGlobalKeyDown, true);
-  }, [isPickerOpen, options, setAgentId, setPinnedAgentIdRaw, closePicker]);
 
   // Keep highlight in-bounds when the filtered list changes.
   useEffect(() => {
@@ -353,15 +229,9 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
       }
 
       setAgentId(normalized);
-
-      // Only non-builtin agents should affect the pinned third option.
-      if (normalized !== "exec" && normalized !== "plan") {
-        setPinnedAgentIdRaw(normalized);
-      }
-
       closePicker();
     },
-    [closePicker, setAgentId, setPinnedAgentIdRaw]
+    [closePicker, setAgentId]
   );
 
   const handlePickerKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -395,7 +265,6 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
 
     if (e.key === "ArrowUp") {
       e.preventDefault();
-
       // When we're already at the top (or nothing is highlighted), treat ArrowUp
       // as a close/cancel action.
       if (highlightedIndex <= 0) {
@@ -409,7 +278,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
   };
 
   // Resolve display properties for the trigger pill
-  const isPlanLike = activeOption?.isPlanLike ?? normalizedAgentId === "plan";
+  const isPlanLike = activeOption?.isPlanLike ?? false;
   const activeDisplayName = activeOption?.name ?? formatAgentIdLabel(normalizedAgentId);
   const activeStyle: React.CSSProperties | undefined = activeOption?.uiColor
     ? { backgroundColor: activeOption.uiColor }
@@ -489,8 +358,6 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
             ) : (
               filteredOptions.map((opt, index) => {
                 const isHighlighted = index === highlightedIndex;
-                const isSelected = opt.id === normalizedAgentId;
-                const keybindLabel = formatNumberKeybind(index);
                 return (
                   <div
                     key={opt.id}
@@ -507,17 +374,9 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
                     onMouseEnter={() => setHighlightedIndex(index)}
                     onClick={() => handleSelectAgent(opt.id)}
                   >
-                    <div className="grid grid-cols-[auto_1fr_auto_auto] items-center gap-2">
-                      <Check
-                        className={cn("h-3 w-3 shrink-0", isSelected ? "opacity-100" : "opacity-0")}
-                      />
+                    <div className="grid grid-cols-[1fr_auto] items-center gap-2">
                       <span className="min-w-0 truncate text-[11px] font-medium">{opt.name}</span>
                       <span className="text-muted-light text-[10px]">{opt.id}</span>
-                      {keybindLabel && (
-                        <span className="text-muted-light ml-2 text-[10px] tabular-nums">
-                          {keybindLabel}
-                        </span>
-                      )}
                     </div>
                   </div>
                 );
