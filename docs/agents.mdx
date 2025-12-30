@@ -30,10 +30,11 @@ An **Agent Definition** is a Markdown file:
 ---
 name: Review
 description: Terse reviewer-style feedback
-policy:
-  base: exec
-  tools:
-    deny: ["file_edit_insert", "file_edit_replace_string"]
+base: exec
+tools:
+  - file_read
+  - bash
+  - web_search
 ---
 
 You are a code reviewer.
@@ -73,12 +74,13 @@ name: My Agent # Display name in UI
 
 # Optional
 description: What this agent does # Shown in tooltips
-color: "#6b5bff" # UI accent color
+base: exec # Inherit from another agent (exec, plan, or custom agent id)
 
-# UI visibility
+# UI settings
 ui:
   hidden: false # Set true to hide from agent selector
   disabled: false # Set true to completely disable (useful to hide built-ins)
+  color: "#6b5bff" # UI accent color (inherited from base if not set)
 
 # Subagent configuration
 subagent:
@@ -89,17 +91,12 @@ ai:
   modelString: anthropic:claude-sonnet-4-5
   thinkingLevel: medium
 
-# Tool policy
-policy:
-  base: exec # Base policy: plan | exec | compact
-  tools:
-    deny: ["tool_a", "tool_b"] # OR
-    only: ["tool_x", "tool_y"] # (mutually exclusive)
-
-# Alternative tool control (simpler syntax)
-permissionMode: default # "default" or "readOnly"
-tools: ["task", "task_.*"] # Tools to enable (regex patterns)
-disallowedTools: ["bash"] # Tools to disable
+# Tool whitelist (regex patterns)
+tools:
+  - file_read
+  - file_edit_.*
+  - bash
+  - task_.*
 ---
 ```
 
@@ -123,9 +120,15 @@ This completely removes the agent from discovery. To override (replace) a built-
 
 ## Tool Policy Semantics
 
-- `policy.base: plan` — Plan-mode behaviors (e.g., `ask_user_question`, `propose_plan`)
-- `policy.base: exec` — Normal coding workflow with full tool access
-- `policy.base: compact` — Internal no-tools flow for history compaction
+Tools are controlled via an explicit **whitelist**. The `tools` array lists patterns (exact names or regex) that the agent can use. If `tools` is omitted or empty, no tools are available.
+
+**Inheritance:** Use `base` to inherit behavior from another agent:
+
+- `base: plan` — Plan-mode behaviors (enables `ask_user_question`, `propose_plan`)
+- `base: exec` — Exec-mode behaviors (standard coding workflow)
+- `base: <custom-agent-id>` — Inherit from any custom agent
+
+Inheritance is multi-level: if `my-agent` has `base: plan`, agents inheriting from `my-agent` also get plan-like behavior.
 
 **Hard denies in subagents:** Even if an agent definition allows them, mux blocks these tools in child workspaces:
 
@@ -162,10 +165,13 @@ Only agents with `subagent.runnable: true` can be used this way.
 ---
 name: Security Audit
 description: Security-focused code review
-policy:
-  base: exec
-  tools:
-    deny: ["file_edit_insert", "file_edit_replace_string", "bash"]
+base: exec
+tools:
+  - file_read
+  - agent_skill_read
+  - agent_skill_read_file
+  - bash
+  - web_search
 ---
 
 You are a security auditor. Analyze the codebase for:
@@ -184,6 +190,12 @@ Provide a structured report with severity levels. Do not make changes.
 ---
 name: Docs
 description: Focus on documentation tasks
+base: exec
+tools:
+  - file_read
+  - file_edit_insert
+  - file_edit_replace_string
+  - bash
 ---
 
 You are in Documentation mode. Focus on improving documentation:
