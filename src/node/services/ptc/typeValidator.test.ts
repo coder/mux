@@ -183,6 +183,125 @@ mux.file_read({ path: "wrong" });`,
     expect(result.valid).toBe(true);
   });
 
+  test("allows dynamic properties on empty object literals", () => {
+    // Claude frequently uses this pattern to collate parallel reads
+    const result = validateTypes(
+      `
+      const results = {};
+      results.file1 = mux.file_read({ filePath: "a.txt" });
+      results.file2 = mux.file_read({ filePath: "b.txt" });
+      return results;
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  test("still catches mux tool typos", () => {
+    // Must not filter errors for typos on the mux namespace
+    const result = validateTypes(
+      `
+      mux.file_reade({ filePath: "test.txt" });
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.message.includes("file_reade"))).toBe(true);
+  });
+
+  test("catches reads from empty object literals (typos)", () => {
+    // Reads from {} should still error - only writes are allowed
+    const result = validateTypes(
+      `
+      const results = {};
+      results.file1 = mux.file_read({ filePath: "a.txt" });
+      return results.filee1;  // typo: should be file1
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.message.includes("filee1"))).toBe(true);
+  });
+
+  test("catches empty object properties used in tool args", () => {
+    // Using unset properties from {} in tool calls should error
+    const result = validateTypes(
+      `
+      const config = {};
+      mux.file_read({ filePath: config.path });  // config.path doesn't exist
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.message.includes("path"))).toBe(true);
+  });
+
+  test("catches empty object reads in expressions", () => {
+    // Reading from {} in any expression context should error
+    const result = validateTypes(
+      `
+      const obj = {};
+      const x = obj.value + 1;  // obj.value doesn't exist
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.message.includes("value"))).toBe(true);
+  });
+
+  test("catches empty object reads in conditionals", () => {
+    const result = validateTypes(
+      `
+      const obj = {};
+      if (obj.flag) { console.log("yes"); }  // obj.flag doesn't exist
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.message.includes("flag"))).toBe(true);
+  });
+
+  test("allows multiple writes to empty object", () => {
+    const result = validateTypes(
+      `
+      const data = {};
+      data.a = 1;
+      data.b = 2;
+      data.c = mux.file_read({ filePath: "test.txt" });
+      data.d = "string";
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  test("catches compound assignment on empty object (+=)", () => {
+    // Compound assignments read then write, so should error
+    const result = validateTypes(
+      `
+      const obj = {};
+      obj.count += 1;  // reads obj.count first
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.message.includes("count"))).toBe(true);
+  });
+
+  test("accepts ES2021+ features (replaceAll, at, etc.)", () => {
+    const result = validateTypes(
+      `
+      const str = "a-b-c".replaceAll("-", "_");
+      const arr = [1, 2, 3];
+      const last = arr.at(-1);
+      const hasA = Object.hasOwn({ a: 1 }, "a");
+      return { str, last, hasA };
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
   test("catches syntax error gracefully", () => {
     const result = validateTypes(
       `

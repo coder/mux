@@ -62,9 +62,7 @@ export async function createCodeExecutionTool(
   const muxTypes = await getCachedMuxTypes(bridgeableTools);
 
   return tool({
-    description: `Execute JavaScript code in a sandboxed environment with access to Mux tools.
-
-Important: Batch multiple tool calls in one invocation to minimize round trips.
+    description: `Execute sandboxed JavaScript to batch tools and transform outputs.
 
 **Available tools (TypeScript definitions):**
 \`\`\`typescript

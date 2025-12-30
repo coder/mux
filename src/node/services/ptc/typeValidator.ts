@@ -22,7 +22,7 @@ import ts from "typescript";
  * These constants are computed once at module load time.
  */
 const BUNDLED_LIB_DIR = path.resolve(__dirname, "../../../typescript-lib");
-const IS_PRODUCTION = fs.existsSync(path.join(BUNDLED_LIB_DIR, "lib.es2020.d.ts.txt"));
+const IS_PRODUCTION = fs.existsSync(path.join(BUNDLED_LIB_DIR, "lib.es2023.d.ts.txt"));
 const LIB_DIR = IS_PRODUCTION
   ? BUNDLED_LIB_DIR
   : path.dirname(require.resolve("typescript/lib/lib.d.ts"));
@@ -50,6 +50,59 @@ export interface TypeValidationResult {
  * @param muxTypes - Generated `.d.ts` content from generateMuxTypes()
  * @returns Validation result with errors if any
  */
+
+/**
+ * Check if a TS2339 diagnostic is for a property WRITE on an empty object literal.
+ * Returns true only for patterns like `results.foo = x` where `results` is typed as `{}`.
+ * Returns false for reads like `return results.foo` or `fn(results.foo)`.
+ */
+function isEmptyObjectWriteError(d: ts.Diagnostic, sourceFile: ts.SourceFile): boolean {
+  if (d.code !== 2339 || d.start === undefined) return false;
+  const message = ts.flattenDiagnosticMessageText(d.messageText, "");
+  if (!message.includes("on type '{}'")) return false;
+
+  // Find the node at the error position and walk up to find context
+  const token = findTokenAtPosition(sourceFile, d.start);
+  if (!token) return false;
+
+  // Walk up to find PropertyAccessExpression containing this token
+  let propAccess: ts.PropertyAccessExpression | undefined;
+  let node: ts.Node = token;
+  while (node.parent) {
+    if (ts.isPropertyAccessExpression(node.parent)) {
+      propAccess = node.parent;
+      break;
+    }
+    node = node.parent;
+  }
+  if (!propAccess) return false;
+
+  // Check if this PropertyAccessExpression is on the left side of an assignment
+  const parent = propAccess.parent;
+  if (
+    ts.isBinaryExpression(parent) &&
+    parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    parent.left === propAccess
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/** Find the innermost token at a position in the source file */
+function findTokenAtPosition(sourceFile: ts.SourceFile, position: number): ts.Node | undefined {
+  function find(node: ts.Node): ts.Node | undefined {
+    if (position < node.getStart(sourceFile) || position >= node.getEnd()) {
+      return undefined;
+    }
+    // Try to find a more specific child
+    const child = ts.forEachChild(node, find);
+    return child ?? node;
+  }
+  return find(sourceFile);
+}
+
 export function validateTypes(code: string, muxTypes: string): TypeValidationResult {
   // Wrap code in function to allow return statements (matches runtime behavior)
   // Note: We don't use async because Asyncify makes mux.* calls appear synchronous
@@ -68,7 +121,9 @@ ${muxTypes}
     skipLibCheck: true,
     target: ts.ScriptTarget.ES2020,
     module: ts.ModuleKind.ESNext,
-    lib: ["lib.es2020.d.ts"], // Need real lib for Array, Promise, etc.
+    // ES2023 needed for Array.at(), findLast(), toSorted(), Object.hasOwn(), String.replaceAll()
+    // QuickJS 0.31+ supports these features at runtime
+    lib: ["lib.es2023.d.ts"],
   };
 
   const sourceFile = ts.createSourceFile("agent.ts", wrappedCode, ts.ScriptTarget.ES2020, true);
@@ -94,8 +149,9 @@ ${muxTypes}
 
   host.getSourceFile = (fileName, languageVersion) => {
     if (fileName === "agent.ts") return sourceFile;
-    // Redirect lib file requests to our bundled directory
-    if (fileName.includes("lib.") && fileName.endsWith(".d.ts")) {
+    // In production, redirect lib file requests to our bundled directory (with .txt extension)
+    // In development, let TypeScript use its default resolution so /// <reference lib="..." /> works
+    if (IS_PRODUCTION && fileName.includes("lib.") && fileName.endsWith(".d.ts")) {
       const libPath = resolveLibPath(fileName);
       const content = fs.existsSync(libPath) ? fs.readFileSync(libPath, "utf-8") : undefined;
       if (content) {
@@ -106,15 +162,15 @@ ${muxTypes}
   };
   host.fileExists = (fileName) => {
     if (fileName === "agent.ts") return true;
-    // Check bundled lib directory for lib files
-    if (fileName.includes("lib.") && fileName.endsWith(".d.ts")) {
+    // In production, check bundled lib directory for lib files
+    if (IS_PRODUCTION && fileName.includes("lib.") && fileName.endsWith(".d.ts")) {
       return fs.existsSync(resolveLibPath(fileName));
     }
     return originalFileExists(fileName);
   };
   host.readFile = (fileName) => {
-    // Read lib files from bundled directory
-    if (fileName.includes("lib.") && fileName.endsWith(".d.ts")) {
+    // In production, read lib files from bundled directory
+    if (IS_PRODUCTION && fileName.includes("lib.") && fileName.endsWith(".d.ts")) {
       const libPath = resolveLibPath(fileName);
       if (fs.existsSync(libPath)) {
         return fs.readFileSync(libPath, "utf-8");
@@ -132,6 +188,11 @@ ${muxTypes}
     .filter((d) => d.category === ts.DiagnosticCategory.Error)
     .filter((d) => !d.file || d.file.fileName === "agent.ts")
     .filter((d) => !ts.flattenDiagnosticMessageText(d.messageText, "").includes("console"))
+    // Allow dynamic property WRITES on empty object literals - Claude frequently uses
+    // `const results = {}; results.foo = mux.file_read(...)` to collate parallel reads.
+    // Only suppress when the property access is on the LEFT side of an assignment.
+    // Reads like `return results.typo` must still error.
+    .filter((d) => !isEmptyObjectWriteError(d, sourceFile))
     .map((d) => {
       const message = ts.flattenDiagnosticMessageText(d.messageText, " ");
       // Extract line number if available
