@@ -30,7 +30,7 @@ import {
 } from "@/common/types/tasks";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
-import { isPlanLike } from "@/common/utils/agentInheritance";
+import { isPlanLike, resolveAgentTools } from "@/common/utils/agentInheritance";
 
 const INHERIT = "__inherit__";
 const ALL_THINKING_LEVELS = ["off", "low", "medium", "high", "xhigh"] as const;
@@ -151,43 +151,25 @@ function renderPolicySummary(
     </Tooltip>,
   ];
 
-  // Show tools config if present
-  const tools = agent.tools;
-  const addCount = tools?.add?.length ?? 0;
-  const removeCount = tools?.remove?.length ?? 0;
-  if (addCount > 0 || removeCount > 0) {
+  // Show resolved tools (after inheritance)
+  const resolvedTools = resolveAgentTools(agent.id, allAgents);
+  if (resolvedTools.length > 0) {
     pieces.push(
       <Tooltip key="tools">
         <TooltipTrigger asChild>
           <span className="cursor-help underline decoration-dotted underline-offset-2">
-            tools: +{addCount} -{removeCount}
+            tools: {resolvedTools.length}
           </span>
         </TooltipTrigger>
         <TooltipContent align="start" className="max-w-80 whitespace-normal">
-          {addCount > 0 && (
-            <>
-              <div className="font-medium">Added tools (regex patterns)</div>
-              <ul className="mt-1 space-y-0.5">
-                {tools?.add?.map((tool) => (
-                  <li key={tool}>
-                    <code>{tool}</code>
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-          {removeCount > 0 && (
-            <>
-              <div className="mt-2 font-medium">Removed tools</div>
-              <ul className="mt-1 space-y-0.5">
-                {tools?.remove?.map((tool) => (
-                  <li key={tool}>
-                    <code>{tool}</code>
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
+          <div className="font-medium">Allowed tools (regex patterns)</div>
+          <ul className="mt-1 space-y-0.5">
+            {resolvedTools.map((tool) => (
+              <li key={tool}>
+                <code>{tool}</code>
+              </li>
+            ))}
+          </ul>
         </TooltipContent>
       </Tooltip>
     );
