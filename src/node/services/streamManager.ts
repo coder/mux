@@ -532,7 +532,7 @@ export class StreamManager extends EventEmitter {
       streamInfo.abortController.abort();
 
       // Unlike checkSoftCancelStream, await cleanup (blocking)
-      await this.cleanupStream(workspaceId, streamInfo, abandonPartial);
+      await this.cleanupAbortedStream(workspaceId, streamInfo, abandonPartial);
     } catch (error) {
       log.error("Error during stream cancellation:", error);
       // Force cleanup even if cancellation fails
@@ -560,7 +560,7 @@ export class StreamManager extends EventEmitter {
       const abandonPartial = streamInfo.softInterrupt.pending
         ? streamInfo.softInterrupt.abandonPartial
         : false;
-      void this.cleanupStream(workspaceId, streamInfo, abandonPartial);
+      void this.cleanupAbortedStream(workspaceId, streamInfo, abandonPartial);
     } catch (error) {
       log.error("Error during stream cancellation:", error);
       // Force cleanup even if cancellation fails
@@ -568,7 +568,7 @@ export class StreamManager extends EventEmitter {
     }
   }
 
-  private async cleanupStream(
+  private async cleanupAbortedStream(
     workspaceId: WorkspaceId,
     streamInfo: WorkspaceStreamInfo,
     abandonPartial?: boolean
@@ -592,6 +592,24 @@ export class StreamManager extends EventEmitter {
 
     // Include provider metadata for accurate cost calculation
     const providerMetadata = streamInfo.cumulativeProviderMetadata;
+
+    // Record session usage for aborted streams (mirrors stream-end path)
+    // This ensures tokens consumed before abort are tracked for cost display
+    if (this.sessionUsageService && usage) {
+      const messageUsage = createDisplayUsage(usage, streamInfo.model, providerMetadata);
+      if (messageUsage) {
+        const normalizedModel = normalizeGatewayModel(streamInfo.model);
+        try {
+          await this.sessionUsageService.recordUsage(
+            workspaceId as string,
+            normalizedModel,
+            messageUsage
+          );
+        } catch (usageError) {
+          log.error("Failed to record session usage on abort", { workspaceId, error: usageError });
+        }
+      }
+    }
 
     // Emit abort event with usage if available
     this.emit("stream-abort", {
