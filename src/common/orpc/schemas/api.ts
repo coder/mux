@@ -161,6 +161,16 @@ export const projects = {
     input: z.void(),
     output: z.array(z.tuple([z.string(), ProjectConfigSchema])),
   },
+  getFileCompletions: {
+    input: z
+      .object({
+        projectPath: z.string(),
+        query: z.string(),
+        limit: z.number().int().positive().max(50).optional(),
+      })
+      .strict(),
+    output: z.object({ paths: z.array(z.string()) }),
+  },
   listBranches: {
     input: z.object({ projectPath: z.string() }),
     output: BranchListResultSchema,

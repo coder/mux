@@ -34,14 +34,44 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
   );
   const menuRef = useRef<HTMLDivElement>(null);
   const selectedRef = useRef<HTMLDivElement>(null);
+  const previousSuggestionsRef = useRef<SlashSuggestion[]>(suggestions);
+  const wasVisibleRef = useRef(isVisible);
 
-  // Reset selection whenever suggestions change
-  useEffect(() => {
-    setSelectedIndex(0);
-  }, [suggestions]);
+  // Keep selection stable while suggestions update (e.g. user keeps typing).
+  // We reset selection only when the menu becomes visible.
+  useLayoutEffect(() => {
+    const wasVisible = wasVisibleRef.current;
+    wasVisibleRef.current = isVisible;
+
+    const prevSuggestions = previousSuggestionsRef.current;
+    previousSuggestionsRef.current = suggestions;
+
+    if (!isVisible || suggestions.length === 0) {
+      setSelectedIndex(0);
+      return;
+    }
+
+    // Menu just opened: default to the first suggestion.
+    if (!wasVisible) {
+      setSelectedIndex(0);
+      return;
+    }
+
+    // Preserve the previously-selected suggestion if it still exists; otherwise clamp.
+    setSelectedIndex((prevIndex) => {
+      const prevSelected = prevSuggestions[prevIndex];
+      if (prevSelected) {
+        const nextIndex = suggestions.findIndex((s) => s.id === prevSelected.id);
+        if (nextIndex !== -1) {
+          return nextIndex;
+        }
+      }
+      return Math.min(prevIndex, suggestions.length - 1);
+    });
+  }, [isVisible, suggestions]);
 
   // Scroll selected item into view
-  useEffect(() => {
+  useLayoutEffect(() => {
     selectedRef.current?.scrollIntoView({ block: "nearest" });
   }, [selectedIndex]);
 
@@ -166,7 +196,7 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
           role="option"
           aria-selected={index === selectedIndex}
           className={cn(
-            "px-2.5 py-1.5 cursor-pointer transition-colors duration-150 flex items-center justify-between gap-3 hover:bg-accent-darker",
+            "px-2.5 py-1.5 cursor-pointer flex items-center justify-between gap-3 hover:bg-accent/20",
             index === selectedIndex ? "bg-accent-darker" : "bg-transparent"
           )}
         >
