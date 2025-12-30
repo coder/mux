@@ -69,7 +69,7 @@ export const RosettaBanner: React.FC = () => {
         <span>
           Mux is running under Rosetta. For better performance,{" "}
           <a
-            href="https://mux.coder.com/download"
+            href="https://mux.coder.com/install#downloads"
             target="_blank"
             rel="noopener noreferrer"
             className="underline hover:no-underline"
