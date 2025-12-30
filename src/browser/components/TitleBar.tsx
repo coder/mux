@@ -20,64 +20,18 @@ const updateStatusColors: Record<"available" | "downloading" | "downloaded" | "d
     disabled: "#666666", // Gray for disabled
   };
 
-interface VersionMetadata {
-  buildTime: string;
-  git_describe?: unknown;
-}
-
-function hasBuildInfo(value: unknown): value is VersionMetadata {
-  if (typeof value !== "object" || value === null) {
-    return false;
+function parseGitDescribe(version: unknown): string | undefined {
+  if (typeof version !== "object" || version === null) {
+    return undefined;
   }
 
-  const candidate = value as Record<string, unknown>;
-  return typeof candidate.buildTime === "string";
-}
-
-function formatLocalDate(isoDate: string): string {
-  const date = new Date(isoDate);
-  return date.toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
-}
-
-function formatExtendedTimestamp(isoDate: string): string {
-  const date = new Date(isoDate);
-  return date.toLocaleString("en-US", {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    timeZoneName: "short",
-  });
-}
-
-function parseBuildInfo(version: unknown) {
-  if (hasBuildInfo(version)) {
-    const { buildTime, git_describe } = version;
-    const gitDescribe = typeof git_describe === "string" ? git_describe : undefined;
-
-    return {
-      buildDate: formatLocalDate(buildTime),
-      extendedTimestamp: formatExtendedTimestamp(buildTime),
-      gitDescribe,
-    };
-  }
-
-  return {
-    buildDate: "unknown",
-    extendedTimestamp: "Unknown build time",
-    gitDescribe: undefined,
-  };
+  const candidate = version as Record<string, unknown>;
+  return typeof candidate.git_describe === "string" ? candidate.git_describe : undefined;
 }
 
 export function TitleBar() {
   const { api } = useAPI();
-  const { buildDate, extendedTimestamp, gitDescribe } = parseBuildInfo(VERSION satisfies unknown);
+  const gitDescribe = parseGitDescribe(VERSION satisfies unknown);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ type: "idle" });
   const [isCheckingOnHover, setIsCheckingOnHover] = useState(false);
   const lastHoverCheckTime = useRef<number>(0);
@@ -267,12 +221,6 @@ export function TitleBar() {
       </div>
       <div className="flex items-center gap-3">
         <SettingsButton />
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <div className="cursor-default text-[11px] opacity-70">{buildDate}</div>
-          </TooltipTrigger>
-          <TooltipContent align="end">Built at {extendedTimestamp}</TooltipContent>
-        </Tooltip>
       </div>
     </div>
   );
