@@ -23,7 +23,7 @@ import { defaultModel, normalizeGatewayModel } from "@/common/utils/ai/models";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { AgentIdSchema } from "@/common/orpc/schemas";
 import type { ThinkingLevel } from "@/common/types/thinking";
-import type { ToolCallEndEvent, StreamEndEvent } from "@/common/types/stream";
+import type { ToolCallEndEvent, StreamEndEvent, StreamAbortEvent } from "@/common/types/stream";
 import { isDynamicToolPart, type DynamicToolPart } from "@/common/types/toolParts";
 import {
   AgentReportToolArgsSchema,
@@ -124,6 +124,17 @@ function isStreamEndEvent(value: unknown): value is StreamEndEvent {
   );
 }
 
+function isStreamAbortEvent(value: unknown): value is StreamAbortEvent {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "type" in value &&
+    (value as { type: unknown }).type === "stream-abort" &&
+    "workspaceId" in value &&
+    typeof (value as { workspaceId: unknown }).workspaceId === "string"
+  );
+}
+
 function coerceNonEmptyString(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
@@ -219,6 +230,20 @@ export class TaskService {
         })
         .catch((error: unknown) => {
           log.error("TaskService.handleStreamEnd failed", { error });
+        });
+    });
+
+    // Handle stream aborts - clean up reported tasks that won't get a stream-end event.
+    // This can happen if user cancels or network fails after agent_report but before stream ends.
+    this.aiService.on("stream-abort", (payload: unknown) => {
+      if (!isStreamAbortEvent(payload)) return;
+
+      void this.workspaceEventLocks
+        .withLock(payload.workspaceId, async () => {
+          await this.handleStreamAbort(payload);
+        })
+        .catch((error: unknown) => {
+          log.error("TaskService.handleStreamAbort failed", { error });
         });
     });
   }
@@ -1549,6 +1574,25 @@ export class TaskService {
           log.error("Task start waiter callback failed", { workspaceId, error });
         }
       }
+    }
+  }
+
+  /**
+   * Handle stream abort events for tasks.
+   * If a task's stream is aborted after agent_report ran (status is "reported"),
+   * we need to clean up since stream-end won't fire.
+   */
+  private async handleStreamAbort(event: StreamAbortEvent): Promise<void> {
+    const workspaceId = event.workspaceId;
+
+    const cfg = this.config.loadConfigOrDefault();
+    const entry = this.findWorkspaceEntry(cfg, workspaceId);
+    if (!entry) return;
+
+    // Only clean up if this task was already reported.
+    // handleAgentReport ran but stream was aborted before stream-end could fire.
+    if (entry.workspace.taskStatus === "reported") {
+      await this.cleanupReportedLeafTask(workspaceId);
     }
   }
 
