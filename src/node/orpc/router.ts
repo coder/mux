@@ -401,6 +401,9 @@ export const router = (authToken?: string) => {
 
             return result;
           });
+
+          // Re-evaluate task queue in case more slots opened up
+          await context.taskService.maybeStartQueuedTasks();
         }),
     },
     agents: {

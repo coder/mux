@@ -1243,7 +1243,7 @@ export class TaskService {
     return depth;
   }
 
-  private async maybeStartQueuedTasks(): Promise<void> {
+  async maybeStartQueuedTasks(): Promise<void> {
     await using _lock = await this.mutex.acquire();
 
     const configAtStart = this.config.loadConfigOrDefault();
