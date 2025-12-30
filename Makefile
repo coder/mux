@@ -47,7 +47,7 @@ MAKEFLAGS += -j
 endif
 
 # Common esbuild flags for CLI API bundle (ESM format for trpc-cli)
-ESBUILD_CLI_FLAGS := --bundle --format=esm --platform=node --target=node20 --outfile=dist/cli/api.mjs --loader:.md=text --external:zod --external:commander --external:@trpc/server --banner:js='import { createRequire } from "module"; const require = createRequire(import.meta.url);'
+ESBUILD_CLI_FLAGS := --bundle --format=esm --platform=node --target=node20 --outfile=dist/cli/api.mjs --external:zod --external:commander --external:@trpc/server --banner:js='import { createRequire } from "module"; const require = createRequire(import.meta.url);'
 
 # Include formatting rules
 include fmt.mk
@@ -189,7 +189,12 @@ build: node_modules/.installed src/version.ts build-renderer build-main build-pr
 
 build-main: node_modules/.installed dist/cli/index.js dist/cli/api.mjs ## Build main process
 
-dist/cli/index.js: src/cli/index.ts src/desktop/main.ts src/cli/server.ts src/version.ts tsconfig.main.json tsconfig.json $(TS_SOURCES)
+BUILTIN_AGENTS_GENERATED := src/node/services/agentDefinitions/builtInAgentContent.generated.ts
+
+$(BUILTIN_AGENTS_GENERATED): src/node/builtinAgents/*.md scripts/generate-builtin-agents.sh
+	@./scripts/generate-builtin-agents.sh
+
+dist/cli/index.js: src/cli/index.ts src/desktop/main.ts src/cli/server.ts src/version.ts tsconfig.main.json tsconfig.json $(TS_SOURCES) $(BUILTIN_AGENTS_GENERATED)
 	@echo "Building main process..."
 	@NODE_ENV=production $(TSGO) -p tsconfig.main.json
 	@NODE_ENV=production bun x tsc-alias -p tsconfig.main.json

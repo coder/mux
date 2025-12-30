@@ -1,11 +1,12 @@
 import type { AgentId } from "@/common/types/agentDefinition";
 
 /**
- * Interface for objects that have an `id` and optional `tools` field.
+ * Interface for objects that have an `id`, optional `base`, and optional `tools` field.
  * Works with both AgentDefinitionDescriptor and AgentDefinitionPackage.
  */
 interface AgentLike {
   id: AgentId;
+  base?: AgentId;
   tools?: readonly string[];
 }
 
@@ -31,22 +32,64 @@ function toolMatchesPatterns(toolName: string, patterns: readonly string[]): boo
 }
 
 /**
- * Check if an agent has a specific tool in its whitelist.
+ * Resolve the effective tools for an agent, including inherited tools from base agents.
+ * Tools are merged up the inheritance chain (child tools extend parent tools).
+ *
+ * @param agentId The agent to resolve tools for
+ * @param agents All available agent definitions
+ * @param maxDepth Maximum inheritance depth to prevent infinite loops (default: 10)
+ */
+export function resolveAgentTools(
+  agentId: AgentId,
+  agents: readonly AgentLike[],
+  maxDepth = 10
+): readonly string[] {
+  const byId = new Map<AgentId, AgentLike>();
+  for (const agent of agents) {
+    byId.set(agent.id, agent);
+  }
+
+  // Collect tools from inheritance chain (parent first, then child overrides)
+  const toolSets: Array<readonly string[]> = [];
+  let currentId: AgentId | undefined = agentId;
+  let depth = 0;
+
+  while (currentId && depth < maxDepth) {
+    const agent = byId.get(currentId);
+    if (!agent) break;
+
+    if (agent.tools) {
+      toolSets.unshift(agent.tools); // Parent tools go first
+    }
+    currentId = agent.base;
+    depth++;
+  }
+
+  // Merge all tool sets (later entries can override, but we just union for now)
+  const merged = new Set<string>();
+  for (const tools of toolSets) {
+    for (const tool of tools) {
+      merged.add(tool);
+    }
+  }
+
+  return [...merged];
+}
+
+/**
+ * Check if an agent has a specific tool in its resolved tools (including inherited).
  */
 export function agentHasTool(
   agentId: AgentId,
   toolName: string,
   agents: readonly AgentLike[]
 ): boolean {
-  const agent = agents.find((a) => a.id === agentId);
-  if (!agent?.tools) {
-    return false;
-  }
-  return toolMatchesPatterns(toolName, agent.tools);
+  const tools = resolveAgentTools(agentId, agents);
+  return toolMatchesPatterns(toolName, tools);
 }
 
 /**
- * Check if an agent is "plan-like" (has propose_plan in its tools whitelist).
+ * Check if an agent is "plan-like" (has propose_plan in its resolved tools).
  * Plan-like agents get plan-mode UI styling.
  */
 export function isPlanLike(agentId: AgentId, agents: readonly AgentLike[]): boolean {
@@ -54,7 +97,7 @@ export function isPlanLike(agentId: AgentId, agents: readonly AgentLike[]): bool
 }
 
 /**
- * Check if an agent is "exec-like" (does NOT have propose_plan in tools).
+ * Check if an agent is "exec-like" (does NOT have propose_plan in resolved tools).
  */
 export function isExecLike(agentId: AgentId, agents: readonly AgentLike[]): boolean {
   return !isPlanLike(agentId, agents);
