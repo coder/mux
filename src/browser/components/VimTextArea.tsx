@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useAutoResizeTextarea } from "@/browser/hooks/useAutoResizeTextarea";
-import type { UIMode } from "@/common/types/mode";
 import { isVscodeWebview } from "@/browser/utils/env";
 import * as vim from "@/browser/utils/vim";
 import { Tooltip, TooltipTrigger, TooltipContent, HelpIndicator } from "./ui/tooltip";
@@ -32,14 +31,13 @@ export interface VimTextAreaProps extends Omit<
 > {
   value: string;
   onChange: (next: string) => void;
-  mode: UIMode; // for styling (plan/exec focus color fallback)
   isEditing?: boolean;
   suppressKeys?: string[]; // keys for which Vim should not interfere (e.g. ["Tab","ArrowUp","ArrowDown","Escape"]) when popovers are open
   trailingAction?: React.ReactNode;
   /** Called when Escape is pressed in normal mode (vim) - useful for cancel edit */
   onEscapeInNormalMode?: () => void;
-  /** Custom focus border color (CSS color value). Overrides mode-based coloring. */
-  focusBorderColor?: string;
+  /** Focus border color (CSS color value). */
+  focusBorderColor: string;
 }
 
 type VimMode = vim.VimMode;
@@ -49,7 +47,6 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
     {
       value,
       onChange,
-      mode,
       isEditing,
       suppressKeys,
       onKeyDown,
@@ -248,9 +245,8 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
               {
                 ...(rest.style ?? {}),
                 ...(trailingAction ? { scrollbarGutter: "stable both-edges" } : {}),
-                // Custom focus border color from agent definition
-                "--focus-border-color":
-                  focusBorderColor && !isEditing ? focusBorderColor : undefined,
+                // Focus border color from agent definition
+                "--focus-border-color": !isEditing ? focusBorderColor : undefined,
               } as React.CSSProperties
             }
             className={cn(
@@ -261,14 +257,7 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
               trailingAction && "pr-10",
               isEditing
                 ? "bg-editing-mode-alpha border-editing-mode focus:border-editing-mode"
-                : "bg-dark border-border-light",
-              // Use custom color if provided, otherwise fall back to mode-based colors
-              !isEditing &&
-                (focusBorderColor
-                  ? "focus:border-[var(--focus-border-color)]"
-                  : mode === "plan"
-                    ? "focus:border-plan-mode"
-                    : "focus:border-exec-mode"),
+                : "bg-dark border-border-light focus:border-[var(--focus-border-color)]",
               vimMode === "normal"
                 ? "caret-transparent selection:bg-white/50"
                 : "caret-current selection:bg-selection",

@@ -22,6 +22,7 @@ import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { useMode } from "@/browser/contexts/ModeContext";
 import { useAgent } from "@/browser/contexts/AgentContext";
+import { resolveAgentProperty, isPlanLike } from "@/common/utils/agentInheritance";
 import { ThinkingSliderComponent } from "../ThinkingSlider";
 import { ModelSettings } from "../ModelSettings";
 import { useAPI } from "@/browser/contexts/API";
@@ -305,11 +306,16 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const [mode] = useMode();
   const { agentId, agents } = useAgent();
 
-  // Get the active agent's uiColor for focus border styling
-  const activeAgentColor = useMemo(() => {
-    if (!agentId) return undefined;
-    const agent = agents.find((a) => a.id === agentId);
-    return agent?.uiColor;
+  // Get the active agent's uiColor for focus border styling (respects inheritance)
+  // Falls back to plan/exec mode colors based on agent's tool policy
+  const focusBorderColor = useMemo(() => {
+    if (!agentId) {
+      return "var(--color-exec-mode)";
+    }
+    const color = resolveAgentProperty(agentId, "uiColor", agents);
+    if (color) return color;
+    // Fallback: use plan color if agent has propose_plan, otherwise exec
+    return isPlanLike(agentId, agents) ? "var(--color-plan-mode)" : "var(--color-exec-mode)";
   }, [agentId, agents]);
   const {
     models,
@@ -1939,8 +1945,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   ref={inputRef}
                   value={input}
                   isEditing={!!editingMessage}
-                  mode={mode}
-                  focusBorderColor={activeAgentColor}
+                  focusBorderColor={focusBorderColor}
                   onChange={setInput}
                   onKeyDown={handleKeyDown}
                   onPaste={handlePaste}

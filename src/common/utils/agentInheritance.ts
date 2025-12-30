@@ -9,10 +9,18 @@ interface ToolsConfig {
 }
 
 /**
+ * Properties that can be inherited from base agents via resolveAgentProperty.
+ * Add new inheritable properties here to enable type-safe resolution.
+ */
+interface InheritableAgentProperties {
+  uiColor?: string;
+}
+
+/**
  * Interface for objects that have an `id`, optional `base`, and optional `tools` field.
  * Works with both AgentDefinitionDescriptor and AgentDefinitionPackage.
  */
-interface AgentLike {
+interface AgentLike extends InheritableAgentProperties {
   id: AgentId;
   base?: AgentId;
   tools?: ToolsConfig;
@@ -122,4 +130,43 @@ export function isPlanLike(agentId: AgentId, agents: readonly AgentLike[]): bool
  */
 export function isExecLike(agentId: AgentId, agents: readonly AgentLike[]): boolean {
   return !isPlanLike(agentId, agents);
+}
+
+/**
+ * Resolve a property from an agent, walking up the inheritance chain until a value is found.
+ * Returns undefined if no agent in the chain has the property set.
+ *
+ * @param agentId The agent to start resolving from
+ * @param property The property name to resolve (must be in InheritableAgentProperties)
+ * @param agents All available agent definitions
+ * @param maxDepth Maximum inheritance depth (default: 10)
+ */
+export function resolveAgentProperty<K extends keyof InheritableAgentProperties>(
+  agentId: AgentId,
+  property: K,
+  agents: readonly AgentLike[],
+  maxDepth = 10
+): InheritableAgentProperties[K] {
+  const byId = new Map<AgentId, AgentLike>();
+  for (const agent of agents) {
+    byId.set(agent.id, agent);
+  }
+
+  let currentId: AgentId | undefined = agentId;
+  let depth = 0;
+
+  while (currentId && depth < maxDepth) {
+    const agent = byId.get(currentId);
+    if (!agent) break;
+
+    const value = agent[property];
+    if (value !== undefined) {
+      return value;
+    }
+
+    currentId = agent.base;
+    depth++;
+  }
+
+  return undefined;
 }

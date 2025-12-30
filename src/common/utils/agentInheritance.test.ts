@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { resolveAgentTools, agentHasTool, isPlanLike, isExecLike } from "./agentInheritance";
+import {
+  resolveAgentTools,
+  agentHasTool,
+  isPlanLike,
+  isExecLike,
+  resolveAgentProperty,
+} from "./agentInheritance";
 
 describe("resolveAgentTools", () => {
   test("returns agent's own tools when no base", () => {
@@ -176,5 +182,52 @@ describe("isExecLike", () => {
 
   test("agent with propose_plan is not exec-like", () => {
     expect(isExecLike("plan", agents)).toBe(false);
+  });
+});
+
+describe("resolveAgentProperty", () => {
+  test("returns property from agent", () => {
+    const agents = [{ id: "exec", uiColor: "#ff0000" }];
+    expect(resolveAgentProperty("exec", "uiColor", agents)).toBe("#ff0000");
+  });
+
+  test("returns undefined when property not set", () => {
+    const agents = [{ id: "exec" }];
+    expect(resolveAgentProperty("exec", "uiColor", agents)).toBeUndefined();
+  });
+
+  test("inherits property from base agent", () => {
+    const agents = [
+      { id: "exec", uiColor: "var(--color-exec-mode)" },
+      { id: "my-exec", base: "exec" },
+    ];
+    expect(resolveAgentProperty("my-exec", "uiColor", agents)).toBe("var(--color-exec-mode)");
+  });
+
+  test("child property overrides base property", () => {
+    const agents = [
+      { id: "exec", uiColor: "var(--color-exec-mode)" },
+      { id: "custom", base: "exec", uiColor: "#custom" },
+    ];
+    expect(resolveAgentProperty("custom", "uiColor", agents)).toBe("#custom");
+  });
+
+  test("multi-level inheritance returns nearest defined value", () => {
+    const agents = [
+      { id: "base", uiColor: "#base" },
+      { id: "middle", base: "base" }, // No uiColor
+      { id: "child", base: "middle" }, // No uiColor
+    ];
+    expect(resolveAgentProperty("child", "uiColor", agents)).toBe("#base");
+  });
+
+  test("handles unknown agent gracefully", () => {
+    const agents = [{ id: "exec", uiColor: "#ff0000" }];
+    expect(resolveAgentProperty("unknown", "uiColor", agents)).toBeUndefined();
+  });
+
+  test("handles missing base gracefully", () => {
+    const agents = [{ id: "orphan", base: "missing", uiColor: "#orphan" }];
+    expect(resolveAgentProperty("orphan", "uiColor", agents)).toBe("#orphan");
   });
 });
