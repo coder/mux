@@ -277,6 +277,10 @@ export const KEYBINDS = {
   // macOS: Cmd+3, Win/Linux: Ctrl+3
   STATS_TAB: { key: "3", ctrl: true, description: "Stats tab" },
 
+  /** Switch to Terminal tab in right sidebar */
+  // macOS: Cmd+4, Win/Linux: Ctrl+4
+  TERMINAL_TAB: { key: "4", ctrl: true, description: "Terminal tab" },
+
   /** Refresh diff in Code Review panel */
   // macOS: Cmd+R, Win/Linux: Ctrl+R
   REFRESH_REVIEW: { key: "r", ctrl: true },

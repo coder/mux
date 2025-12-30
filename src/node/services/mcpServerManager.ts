@@ -739,7 +739,7 @@ export class MCPServerManager {
       await transport.start();
       const client = await experimental_createMCPClient({ transport });
       const rawTools = await client.tools();
-      const tools = wrapMCPTools(rawTools);
+      const tools = wrapMCPTools(rawTools as unknown as Record<string, Tool>);
 
       log.info("[MCP] Server ready", {
         name,
@@ -816,7 +816,7 @@ export class MCPServerManager {
     }
 
     const rawTools = await client.tools();
-    const tools = wrapMCPTools(rawTools);
+    const tools = wrapMCPTools(rawTools as unknown as Record<string, Tool>);
 
     log.info("[MCP] Server ready", {
       name,
