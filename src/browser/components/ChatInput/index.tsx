@@ -783,19 +783,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       })();
     };
 
-    if (match.query.length === 0) {
-      runRequest();
-      return;
-    }
-
-    atMentionDebounceRef.current = setTimeout(runRequest, 150);
-
-    return () => {
-      if (atMentionDebounceRef.current) {
-        clearTimeout(atMentionDebounceRef.current);
-        atMentionDebounceRef.current = null;
-      }
-    };
+    // Our backend autocomplete is cheap (indexed) and cached, so update suggestions on every
+    // character rather than waiting for a debounce window.
+    runRequest();
   }, [
     api,
     input,
