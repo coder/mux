@@ -17,7 +17,6 @@ describe("searchFileCompletions", () => {
     expect(searchFileCompletions(index, "", 3)).toEqual(["README.md", "src/bar.ts", "src/foo.ts"]);
   });
 
-
   it("supports prefix matches on directory paths", () => {
     expect(searchFileCompletions(index, "src/", 10)).toEqual([
       "src/bar.ts",
