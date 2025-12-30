@@ -1233,6 +1233,7 @@ export class StreamManager extends EventEmitter {
         // CRITICAL: This must happen BEFORE emitting stream-end, because event handlers
         // (e.g., handleStreamEnd in TaskService) may trigger cleanup that reads session-usage.json.
         // If we emit first, the cleanup could race and read stale data.
+        // All I/O operations are wrapped in try/catch so stream-end always emits even on errors.
         if (streamInfo.parts && streamInfo.parts.length > 0) {
           const finalAssistantMessage: MuxMessage = {
             id: streamInfo.messageId,
@@ -1244,15 +1245,21 @@ export class StreamManager extends EventEmitter {
             parts: streamInfo.parts,
           };
 
-          // CRITICAL: Delete partial.json before updating chat.jsonl
-          // On successful completion, partial.json becomes stale and must be removed
-          await this.partialService.deletePartial(workspaceId as string);
+          try {
+            // CRITICAL: Delete partial.json before updating chat.jsonl
+            // On successful completion, partial.json becomes stale and must be removed
+            await this.partialService.deletePartial(workspaceId as string);
 
-          // Update the placeholder message in chat.jsonl with final content
-          await this.historyService.updateHistory(workspaceId as string, finalAssistantMessage);
+            // Update the placeholder message in chat.jsonl with final content
+            await this.historyService.updateHistory(workspaceId as string, finalAssistantMessage);
+          } catch (historyError) {
+            log.error("Failed to update history on stream end", {
+              workspaceId,
+              error: historyError,
+            });
+          }
 
           // Update cumulative session usage (if service is available)
-          // Wrapped in try/catch so stream-end always emits even if usage persistence fails
           if (this.sessionUsageService && totalUsage) {
             try {
               const messageUsage = createDisplayUsage(
