@@ -303,7 +303,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const { open } = useSettings();
   const { selectedWorkspace } = useWorkspaceContext();
   const [mode] = useMode();
-  const { agentId } = useAgent();
+  const { agentId, agents } = useAgent();
+
+  // Get the active agent's uiColor for focus border styling
+  const activeAgentColor = useMemo(() => {
+    if (!agentId) return undefined;
+    const agent = agents.find((a) => a.id === agentId);
+    return agent?.uiColor;
+  }, [agentId, agents]);
   const {
     models,
     customModels,
@@ -1933,6 +1940,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   value={input}
                   isEditing={!!editingMessage}
                   mode={mode}
+                  focusBorderColor={activeAgentColor}
                   onChange={setInput}
                   onKeyDown={handleKeyDown}
                   onPaste={handlePaste}

@@ -32,12 +32,14 @@ export interface VimTextAreaProps extends Omit<
 > {
   value: string;
   onChange: (next: string) => void;
-  mode: UIMode; // for styling (plan/exec focus color)
+  mode: UIMode; // for styling (plan/exec focus color fallback)
   isEditing?: boolean;
   suppressKeys?: string[]; // keys for which Vim should not interfere (e.g. ["Tab","ArrowUp","ArrowDown","Escape"]) when popovers are open
   trailingAction?: React.ReactNode;
   /** Called when Escape is pressed in normal mode (vim) - useful for cancel edit */
   onEscapeInNormalMode?: () => void;
+  /** Custom focus border color (CSS color value). Overrides mode-based coloring. */
+  focusBorderColor?: string;
 }
 
 type VimMode = vim.VimMode;
@@ -53,6 +55,7 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
       onKeyDown,
       trailingAction,
       onEscapeInNormalMode,
+      focusBorderColor,
       ...rest
     },
     ref
@@ -241,10 +244,15 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
             // Optimize for iPadOS/iOS keyboard behavior
             enterKeyHint="send"
             {...rest}
-            style={{
-              ...(rest.style ?? {}),
-              ...(trailingAction ? { scrollbarGutter: "stable both-edges" } : {}),
-            }}
+            style={
+              {
+                ...(rest.style ?? {}),
+                ...(trailingAction ? { scrollbarGutter: "stable both-edges" } : {}),
+                // Custom focus border color from agent definition
+                "--focus-border-color":
+                  focusBorderColor && !isEditing ? focusBorderColor : undefined,
+              } as React.CSSProperties
+            }
             className={cn(
               "w-full border text-light py-1.5 px-2 rounded text-[13px] resize-none min-h-8 max-h-[50vh] overflow-y-auto",
               vimEnabled ? "font-monospace" : "font-sans",
@@ -254,7 +262,13 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
               isEditing
                 ? "bg-editing-mode-alpha border-editing-mode focus:border-editing-mode"
                 : "bg-dark border-border-light",
-              !isEditing && (mode === "plan" ? "focus:border-plan-mode" : "focus:border-exec-mode"),
+              // Use custom color if provided, otherwise fall back to mode-based colors
+              !isEditing &&
+                (focusBorderColor
+                  ? "focus:border-[var(--focus-border-color)]"
+                  : mode === "plan"
+                    ? "focus:border-plan-mode"
+                    : "focus:border-exec-mode"),
               vimMode === "normal"
                 ? "caret-transparent selection:bg-white/50"
                 : "caret-current selection:bg-selection",
