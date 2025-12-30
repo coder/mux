@@ -11,7 +11,12 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/browser/components/ui/tooltip";
-import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
+import {
+  formatKeybind,
+  formatNumberedKeybind,
+  KEYBINDS,
+  matchNumberedKeybind,
+} from "@/browser/utils/ui/keybinds";
 import { isPlanLike as isPlanLikeFn } from "@/common/utils/agentInheritance";
 
 interface AgentModePickerProps {
@@ -59,6 +64,8 @@ const AgentHelpTooltip: React.FC = () => (
       <br />
       <br />
       Open picker: {formatKeybind(KEYBINDS.TOGGLE_MODE)}
+      <br />
+      Quick select: {formatNumberedKeybind(0).replace("1", "1-9")} (when open)
     </TooltipContent>
   </Tooltip>
 );
@@ -234,6 +241,31 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
     [closePicker, setAgentId]
   );
 
+  // Global Cmd/Ctrl+1-9 shortcuts when dropdown is open.
+  useEffect(() => {
+    if (!isPickerOpen) return;
+
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      const index = matchNumberedKeybind(e);
+      if (index < 0) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      // Use options (not filteredOptions) for consistent keybinds
+      if (index < options.length) {
+        const picked = options[index];
+        if (picked) {
+          handleSelectAgent(picked.id);
+        }
+      }
+    };
+
+    // Use capture phase to intercept before other handlers
+    window.addEventListener("keydown", handleGlobalKeyDown, true);
+    return () => window.removeEventListener("keydown", handleGlobalKeyDown, true);
+  }, [isPickerOpen, options, handleSelectAgent]);
+
   const handlePickerKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Escape") {
       e.preventDefault();
@@ -358,6 +390,9 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
             ) : (
               filteredOptions.map((opt, index) => {
                 const isHighlighted = index === highlightedIndex;
+                // Show keybind for first 9 items (based on position in full options list)
+                const optionIndex = options.findIndex((o) => o.id === opt.id);
+                const keybindLabel = formatNumberedKeybind(optionIndex);
                 return (
                   <div
                     key={opt.id}
@@ -374,9 +409,14 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
                     onMouseEnter={() => setHighlightedIndex(index)}
                     onClick={() => handleSelectAgent(opt.id)}
                   >
-                    <div className="grid grid-cols-[1fr_auto] items-center gap-2">
+                    <div className="grid grid-cols-[1fr_auto_auto] items-center gap-2">
                       <span className="min-w-0 truncate text-[11px] font-medium">{opt.name}</span>
                       <span className="text-muted-light text-[10px]">{opt.id}</span>
+                      {keybindLabel && (
+                        <span className="text-muted-light ml-1 text-[10px] tabular-nums">
+                          {keybindLabel}
+                        </span>
+                      )}
                     </div>
                   </div>
                 );

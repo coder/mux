@@ -327,3 +327,25 @@ export function createEditKeyHandler(options: {
     }
   };
 }
+
+/**
+ * Format a numbered quick-select keybind (Cmd/Ctrl+1 through Cmd/Ctrl+9).
+ * Returns empty string for indices outside 0-8 range.
+ * @param index Zero-based index (0 = Cmd/Ctrl+1, 8 = Cmd/Ctrl+9)
+ */
+export function formatNumberedKeybind(index: number): string {
+  if (index < 0 || index > 8) return "";
+  const num = index + 1;
+  return isMac() ? `\u2318${num}` : `Ctrl+${num}`;
+}
+
+/**
+ * Check if a keyboard event matches a numbered quick-select keybind (Cmd/Ctrl+1-9).
+ * @returns The zero-based index (0-8) if matched, or -1 if not matched
+ */
+export function matchNumberedKeybind(event: KeyboardEvent): number {
+  const modKey = isMac() ? event.metaKey : event.ctrlKey;
+  if (!modKey) return -1;
+  if (event.key < "1" || event.key > "9") return -1;
+  return parseInt(event.key, 10) - 1;
+}
