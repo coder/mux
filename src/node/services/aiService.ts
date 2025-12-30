@@ -78,8 +78,7 @@ import type { AgentMode, UIMode } from "@/common/types/mode";
 import { MUX_APP_ATTRIBUTION_TITLE, MUX_APP_ATTRIBUTION_URL } from "@/constants/appAttribution";
 import { readPlanFile } from "@/node/utils/runtime/helpers";
 import { readAgentDefinition } from "@/node/services/agentDefinitions/agentDefinitionsService";
-import { getBuiltInAgentDefinitions } from "@/node/services/agentDefinitions/builtInAgentDefinitions";
-import { isPlanLike } from "@/common/utils/agentInheritance";
+
 import { resolveToolPolicyForAgent } from "@/node/services/agentDefinitions/resolveToolPolicy";
 
 // Export a standalone version of getToolsForModel for use in backend
@@ -1137,14 +1136,9 @@ export class AIService extends EventEmitter {
         agentDefinition = await readAgentDefinition(runtime, workspacePath, "exec");
       }
 
-      // Determine the effective mode by checking inheritance against built-in agents
-      // This allows custom agents to inherit from built-ins (e.g., my-plan → plan)
-      const builtInAgents = getBuiltInAgentDefinitions();
-      const allAgents = [
-        ...builtInAgents.map((pkg) => ({ id: pkg.id, base: pkg.frontmatter.base })),
-        { id: effectiveAgentId, base: agentDefinition.frontmatter.base },
-      ];
-      const agentIsPlanLike = isPlanLike(effectiveAgentId, allAgents);
+      // Determine if agent is plan-like by checking if propose_plan is in its tools
+      const agentTools = agentDefinition.frontmatter.tools ?? [];
+      const agentIsPlanLike = agentTools.includes("propose_plan") || agentTools.includes("*");
       const effectiveMode: AgentMode = agentIsPlanLike ? "plan" : "exec";
       const uiMode: UIMode | undefined = effectiveMode === "plan" ? "plan" : "exec";
 
@@ -1162,7 +1156,6 @@ export class AIService extends EventEmitter {
         frontmatter: agentDefinition.frontmatter,
         isSubagent: isSubagentWorkspace,
         disableTaskToolsForDepth: shouldDisableTaskToolsForDepth,
-        isPlanLike: agentIsPlanLike,
       });
       const effectiveToolPolicy: ToolPolicy | undefined =
         toolPolicy || agentToolPolicy.length > 0

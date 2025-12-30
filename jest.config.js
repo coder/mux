@@ -27,6 +27,7 @@ module.exports = {
   modulePathIgnorePatterns: ["<rootDir>/vscode/"],
   transform: {
     "^.+\\.(ts|tsx|js|mjs)$": ["babel-jest"],
+    "^.+\\.md$": "<rootDir>/tests/__mocks__/mdTransformer.js",
   },
   // Transform ESM-only packages. Use negative lookahead to transform everything
   // EXCEPT known CJS packages, which is more maintainable than listing all ESM packages.

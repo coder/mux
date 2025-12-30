@@ -27,7 +27,7 @@ import {
 } from "./parseAgentDefinitionMarkdown";
 
 // Re-export the shared inheritance utilities for backend use
-export { inheritsFrom, isPlanLike, isExecLike } from "@/common/utils/agentInheritance";
+export { agentHasTool, isPlanLike, isExecLike } from "@/common/utils/agentInheritance";
 
 const GLOBAL_AGENTS_ROOT = "~/.mux/agents";
 

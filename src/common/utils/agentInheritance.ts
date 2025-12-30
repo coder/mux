@@ -1,80 +1,60 @@
 import type { AgentId } from "@/common/types/agentDefinition";
 
 /**
- * Interface for objects that have an `id` and optional `base` field.
+ * Interface for objects that have an `id` and optional `tools` field.
  * Works with both AgentDefinitionDescriptor and AgentDefinitionPackage.
  */
 interface AgentLike {
   id: AgentId;
-  base?: AgentId;
+  tools?: readonly string[];
 }
 
 /**
- * Check if an agent inherits from a target agent by traversing the `base` chain.
- *
- * Examples with agents = [
- *   { id: "plan", base: undefined },
- *   { id: "my-plan", base: "plan" },
- *   { id: "my-sub-plan", base: "my-plan" }
- * ]:
- *
- * - inheritsFrom("plan", "plan", agents) → true (self-match)
- * - inheritsFrom("my-plan", "plan", agents) → true (direct base)
- * - inheritsFrom("my-sub-plan", "plan", agents) → true (transitive: my-sub-plan → my-plan → plan)
- * - inheritsFrom("exec", "plan", agents) → false
- *
- * @param agentId The agent to check
- * @param targetId The target base to look for in the inheritance chain
- * @param agents All available agent definitions (for chain traversal)
- * @param maxDepth Maximum inheritance depth to prevent infinite loops (default: 10)
+ * Check if a tool name matches any pattern in the tools whitelist.
+ * Patterns can be exact matches or glob-like with `*` suffix.
  */
-export function inheritsFrom(
-  agentId: AgentId,
-  targetId: AgentId,
-  agents: readonly AgentLike[],
-  maxDepth = 10
-): boolean {
-  // Build a lookup map for efficiency
-  const byId = new Map<AgentId, AgentLike>();
-  for (const agent of agents) {
-    byId.set(agent.id, agent);
-  }
-
-  let currentId: AgentId | undefined = agentId;
-  let depth = 0;
-
-  while (currentId && depth < maxDepth) {
-    // Self-match or match found in chain
-    if (currentId === targetId) {
+function toolMatchesPatterns(toolName: string, patterns: readonly string[]): boolean {
+  for (const pattern of patterns) {
+    if (pattern === "*") {
       return true;
     }
-
-    // Look up the current agent to find its base
-    const current = byId.get(currentId);
-    if (!current) {
-      // Agent not found in the collection - can't traverse further
-      return false;
+    if (pattern.endsWith("*")) {
+      const prefix = pattern.slice(0, -1);
+      if (toolName.startsWith(prefix)) {
+        return true;
+      }
+    } else if (pattern === toolName) {
+      return true;
     }
-
-    // Move up the chain
-    currentId = current.base;
-    depth++;
   }
-
   return false;
 }
 
 /**
- * Check if an agent is "plan-like" (inherits from "plan").
- * Plan-like agents can use propose_plan and have plan-mode UI styling.
+ * Check if an agent has a specific tool in its whitelist.
  */
-export function isPlanLike(agentId: AgentId, agents: readonly AgentLike[]): boolean {
-  return inheritsFrom(agentId, "plan", agents);
+export function agentHasTool(
+  agentId: AgentId,
+  toolName: string,
+  agents: readonly AgentLike[]
+): boolean {
+  const agent = agents.find((a) => a.id === agentId);
+  if (!agent?.tools) {
+    return false;
+  }
+  return toolMatchesPatterns(toolName, agent.tools);
 }
 
 /**
- * Check if an agent is "exec-like" (does NOT inherit from "plan").
- * Exec-like agents cannot use propose_plan.
+ * Check if an agent is "plan-like" (has propose_plan in its tools whitelist).
+ * Plan-like agents get plan-mode UI styling.
+ */
+export function isPlanLike(agentId: AgentId, agents: readonly AgentLike[]): boolean {
+  return agentHasTool(agentId, "propose_plan", agents);
+}
+
+/**
+ * Check if an agent is "exec-like" (does NOT have propose_plan in tools).
  */
 export function isExecLike(agentId: AgentId, agents: readonly AgentLike[]): boolean {
   return !isPlanLike(agentId, agents);

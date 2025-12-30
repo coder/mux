@@ -9,13 +9,9 @@ describe("resolveToolPolicyForAgent", () => {
       frontmatter: { name: "Test Agent" },
       isSubagent: false,
       disableTaskToolsForDepth: false,
-      isPlanLike: false,
     });
 
-    expect(policy).toEqual([
-      { regex_match: ".*", action: "disable" },
-      { regex_match: "propose_plan", action: "disable" },
-    ]);
+    expect(policy).toEqual([{ regex_match: ".*", action: "disable" }]);
   });
 
   test("tools whitelist enables specified patterns", () => {
@@ -27,18 +23,16 @@ describe("resolveToolPolicyForAgent", () => {
       },
       isSubagent: false,
       disableTaskToolsForDepth: false,
-      isPlanLike: false,
     });
 
     expect(policy).toEqual([
       { regex_match: ".*", action: "disable" },
       { regex_match: "file_read", action: "enable" },
       { regex_match: "bash.*", action: "enable" },
-      { regex_match: "propose_plan", action: "disable" },
     ]);
   });
 
-  test("plan-like agents can use propose_plan", () => {
+  test("agents can include propose_plan in tools", () => {
     const policy = resolveToolPolicyForAgent({
       agentId: "my-plan",
       frontmatter: {
@@ -47,34 +41,12 @@ describe("resolveToolPolicyForAgent", () => {
       },
       isSubagent: false,
       disableTaskToolsForDepth: false,
-      isPlanLike: true,
     });
 
     expect(policy).toEqual([
       { regex_match: ".*", action: "disable" },
       { regex_match: "propose_plan", action: "enable" },
       { regex_match: "file_read", action: "enable" },
-      // No propose_plan disable because isPlanLike is true
-    ]);
-  });
-
-  test("exec-like agents cannot use propose_plan even if in tools list", () => {
-    const policy = resolveToolPolicyForAgent({
-      agentId: "exec",
-      frontmatter: {
-        name: "Exec",
-        tools: ["propose_plan", "file_read"],
-      },
-      isSubagent: false,
-      disableTaskToolsForDepth: false,
-      isPlanLike: false,
-    });
-
-    expect(policy).toEqual([
-      { regex_match: ".*", action: "disable" },
-      { regex_match: "propose_plan", action: "enable" },
-      { regex_match: "file_read", action: "enable" },
-      { regex_match: "propose_plan", action: "disable" }, // Runtime restriction
     ]);
   });
 
@@ -87,14 +59,12 @@ describe("resolveToolPolicyForAgent", () => {
       },
       isSubagent: true,
       disableTaskToolsForDepth: false,
-      isPlanLike: false,
     });
 
     expect(policy).toEqual([
       { regex_match: ".*", action: "disable" },
       { regex_match: "task", action: "enable" },
       { regex_match: "file_read", action: "enable" },
-      { regex_match: "propose_plan", action: "disable" },
       { regex_match: "task", action: "disable" },
       { regex_match: "task_.*", action: "disable" },
       { regex_match: "propose_plan", action: "disable" },
@@ -112,14 +82,12 @@ describe("resolveToolPolicyForAgent", () => {
       },
       isSubagent: false,
       disableTaskToolsForDepth: true,
-      isPlanLike: false,
     });
 
     expect(policy).toEqual([
       { regex_match: ".*", action: "disable" },
       { regex_match: "task", action: "enable" },
       { regex_match: "file_read", action: "enable" },
-      { regex_match: "propose_plan", action: "disable" },
       { regex_match: "task", action: "disable" },
       { regex_match: "task_.*", action: "disable" },
     ]);
@@ -134,13 +102,9 @@ describe("resolveToolPolicyForAgent", () => {
       },
       isSubagent: false,
       disableTaskToolsForDepth: false,
-      isPlanLike: false,
     });
 
-    expect(policy).toEqual([
-      { regex_match: ".*", action: "disable" },
-      { regex_match: "propose_plan", action: "disable" },
-    ]);
+    expect(policy).toEqual([{ regex_match: ".*", action: "disable" }]);
   });
 
   test("whitespace in tool patterns is trimmed", () => {
@@ -152,14 +116,12 @@ describe("resolveToolPolicyForAgent", () => {
       },
       isSubagent: false,
       disableTaskToolsForDepth: false,
-      isPlanLike: false,
     });
 
     expect(policy).toEqual([
       { regex_match: ".*", action: "disable" },
       { regex_match: "file_read", action: "enable" },
       { regex_match: "bash", action: "enable" },
-      { regex_match: "propose_plan", action: "disable" },
     ]);
   });
 });

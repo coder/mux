@@ -6,8 +6,6 @@ export interface ResolveToolPolicyOptions {
   frontmatter: AgentDefinitionFrontmatter;
   isSubagent: boolean;
   disableTaskToolsForDepth: boolean;
-  /** Whether this agent inherits from "plan" (pre-computed by caller) */
-  isPlanLike: boolean;
 }
 
 // Runtime restrictions that cannot be overridden by agent definitions
@@ -33,7 +31,7 @@ const DEPTH_HARD_DENY: ToolPolicy = [
  * Subagents always get `agent_report` enabled regardless of their tool list.
  */
 export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): ToolPolicy {
-  const { frontmatter, isSubagent, disableTaskToolsForDepth, isPlanLike } = options;
+  const { frontmatter, isSubagent, disableTaskToolsForDepth } = options;
 
   // Start with deny-all, then enable only whitelisted tools
   const agentPolicy: ToolPolicy = [{ regex_match: ".*", action: "disable" }];
@@ -49,11 +47,6 @@ export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): To
 
   // Runtime restrictions (applied last, cannot be overridden)
   const runtimePolicy: ToolPolicy = [];
-
-  // Exec-like agents (those not inheriting from plan) cannot use propose_plan
-  if (!isPlanLike) {
-    runtimePolicy.push({ regex_match: "propose_plan", action: "disable" });
-  }
 
   if (disableTaskToolsForDepth) {
     runtimePolicy.push(...DEPTH_HARD_DENY);
