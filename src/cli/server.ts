@@ -44,7 +44,13 @@ let launchProjectPath: string | null = null;
 
 function isLoopbackHost(host: string): boolean {
   const normalized = host.trim().toLowerCase();
-  return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1";
+
+  // IPv4 loopback range (RFC 1122): 127.0.0.0/8
+  if (normalized.startsWith("127.")) {
+    return true;
+  }
+
+  return normalized === "localhost" || normalized === "::1";
 }
 
 // Minimal BrowserWindow stub for services that expect one

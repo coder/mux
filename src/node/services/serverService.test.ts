@@ -185,6 +185,7 @@ describe("ServerService.startServer", () => {
 describe("computeNetworkBaseUrls", () => {
   test("returns empty for loopback binds", () => {
     expect(computeNetworkBaseUrls({ bindHost: "127.0.0.1", port: 3000 })).toEqual([]);
+    expect(computeNetworkBaseUrls({ bindHost: "127.0.0.2", port: 3000 })).toEqual([]);
     expect(computeNetworkBaseUrls({ bindHost: "localhost", port: 3000 })).toEqual([]);
     expect(computeNetworkBaseUrls({ bindHost: "::1", port: 3000 })).toEqual([]);
   });
