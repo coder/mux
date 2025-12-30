@@ -36,6 +36,14 @@ export interface ProjectsConfig {
    * This enables other devices (LAN/VPN) to open mux in a browser.
    */
   apiServerServeWebUi?: boolean;
+  /**
+   * Advertise the API server on the local network via mDNS/Bonjour (DNS-SD).
+   *
+   * When unset, mux uses "auto" behavior (advertise only when apiServerBindHost is non-loopback).
+   */
+  mdnsAdvertisementEnabled?: boolean;
+  /** Optional mDNS DNS-SD service instance name override. */
+  mdnsServiceName?: string;
   /** SSH hostname/alias for this machine (used for editor deep links in browser mode) */
   serverSshHost?: string;
   /** IDs of splash screens that have been viewed */
