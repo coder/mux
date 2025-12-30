@@ -45,6 +45,11 @@ interface ToolRegistryEntry {
 /**
  * Registry mapping tool names to their components and validation schemas.
  * Adding a new tool: add one line here.
+ *
+ * Note: Some tools (ask_user_question, propose_plan, todo_write, status_set) require
+ * props like workspaceId/toolCallId that aren't available in nested context. This is
+ * fine because the backend excludes these from code_execution sandbox (see EXCLUDED_TOOLS
+ * in src/node/services/ptc/toolBridge.ts). They can never appear in nested tool calls.
  */
 const TOOL_REGISTRY: Record<string, ToolRegistryEntry> = {
   bash: { component: BashToolCall, schema: TOOL_DEFINITIONS.bash.schema },
