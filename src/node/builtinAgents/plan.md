@@ -11,12 +11,12 @@ tools:
     # Use tools.remove in child agents to restrict specific tools
     - .*
   remove:
-    # Plan mode is read-only: no file edits or task spawning
-    - file_edit_.*
+    # Plan mode doesn't spawn tasks - it creates plans for review
     - task
     - task_await
     - task_list
     - task_terminate
+    # Note: file_edit_* tools ARE available but restricted to plan file only at runtime
 ---
 
 You are in Plan Mode.

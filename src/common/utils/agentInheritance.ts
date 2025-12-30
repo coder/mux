@@ -41,29 +41,18 @@ function toolMatchesPatterns(toolName: string, patterns: readonly string[]): boo
 }
 
 /**
- * Resolve the effective tools for an agent, including inherited tools from base agents.
- *
- * Inheritance is processed in order (base first, then child):
- * 1. Start with base agent's resolved tools
- * 2. Apply child's add patterns (union)
- * 3. Apply child's remove patterns (difference)
- *
- * @param agentId The agent to resolve tools for
- * @param agents All available agent definitions
- * @param maxDepth Maximum inheritance depth to prevent infinite loops (default: 10)
- * @returns Array of tool patterns that are enabled for this agent
+ * Collect tool configs from an agent's inheritance chain (base first, then child).
  */
-export function resolveAgentTools(
+function collectToolConfigs(
   agentId: AgentId,
   agents: readonly AgentLike[],
   maxDepth = 10
-): readonly string[] {
+): ToolsConfig[] {
   const byId = new Map<AgentId, AgentLike>();
   for (const agent of agents) {
     byId.set(agent.id, agent);
   }
 
-  // Collect tool configs from inheritance chain (base first)
   const configs: ToolsConfig[] = [];
   let currentId: AgentId | undefined = agentId;
   let depth = 0;
@@ -78,6 +67,32 @@ export function resolveAgentTools(
     currentId = agent.base;
     depth++;
   }
+
+  return configs;
+}
+
+/**
+ * Resolve the effective tools for an agent, including inherited tools from base agents.
+ *
+ * Inheritance is processed in order (base first, then child):
+ * 1. Start with base agent's resolved tools
+ * 2. Apply child's add patterns (union)
+ * 3. Apply child's remove patterns (difference)
+ *
+ * Note: This returns the raw pattern strings. For checking if a specific tool
+ * is enabled, use agentHasTool() which properly handles add/remove semantics.
+ *
+ * @param agentId The agent to resolve tools for
+ * @param agents All available agent definitions
+ * @param maxDepth Maximum inheritance depth to prevent infinite loops (default: 10)
+ * @returns Array of tool patterns that are enabled for this agent
+ */
+export function resolveAgentTools(
+  agentId: AgentId,
+  agents: readonly AgentLike[],
+  maxDepth = 10
+): readonly string[] {
+  const configs = collectToolConfigs(agentId, agents, maxDepth);
 
   // Process configs in order: base → child
   // Each layer's add patterns are added, then remove patterns are applied
@@ -107,14 +122,37 @@ export function resolveAgentTools(
 
 /**
  * Check if an agent has a specific tool in its resolved tools (including inherited).
+ *
+ * This properly handles add/remove semantics:
+ * - A tool is enabled if it matches any add pattern
+ * - A tool is disabled if it matches any remove pattern that comes after the matching add
+ *
+ * The inheritance chain is processed base → child, with each layer's add patterns
+ * checked first, then remove patterns.
  */
 export function agentHasTool(
   agentId: AgentId,
   toolName: string,
   agents: readonly AgentLike[]
 ): boolean {
-  const tools = resolveAgentTools(agentId, agents);
-  return toolMatchesPatterns(toolName, tools);
+  const configs = collectToolConfigs(agentId, agents);
+
+  // Simulate tool policy: process add/remove in order
+  // Start with disabled (deny-all baseline)
+  let enabled = false;
+
+  for (const config of configs) {
+    // Check add patterns
+    if (config.add && toolMatchesPatterns(toolName, config.add)) {
+      enabled = true;
+    }
+    // Check remove patterns (can override add)
+    if (config.remove && toolMatchesPatterns(toolName, config.remove)) {
+      enabled = false;
+    }
+  }
+
+  return enabled;
 }
 
 /**

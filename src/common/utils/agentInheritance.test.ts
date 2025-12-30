@@ -84,6 +84,7 @@ describe("agentHasTool", () => {
     { id: "exec", tools: { add: ["bash", "file_.*", "web_fetch"] } },
     { id: "plan", tools: { add: ["bash", "file_.*", "propose_plan", "ask_user_question"] } },
     { id: "wildcard", tools: { add: [".*"] } },
+    { id: "wildcard-with-removes", tools: { add: [".*"], remove: ["propose_plan", "task"] } },
     { id: "no-tools", tools: { add: [] } },
     { id: "undefined-tools" }, // No tools field
   ] as const;
@@ -104,6 +105,14 @@ describe("agentHasTool", () => {
     expect(agentHasTool("wildcard", "anything", agents)).toBe(true);
     expect(agentHasTool("wildcard", "propose_plan", agents)).toBe(true);
     expect(agentHasTool("wildcard", "bash", agents)).toBe(true);
+  });
+
+  test("wildcard with removes excludes specific tools", () => {
+    // Wildcard allows all, but removes should exclude specific tools
+    expect(agentHasTool("wildcard-with-removes", "bash", agents)).toBe(true);
+    expect(agentHasTool("wildcard-with-removes", "file_read", agents)).toBe(true);
+    expect(agentHasTool("wildcard-with-removes", "propose_plan", agents)).toBe(false);
+    expect(agentHasTool("wildcard-with-removes", "task", agents)).toBe(false);
   });
 
   test("no match returns false", () => {
