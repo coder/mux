@@ -4,8 +4,6 @@ description: Implement changes in the repository
 permissionMode: default
 subagent:
   runnable: true
-policy:
-  base: exec
 ---
 
 You are in Exec mode.

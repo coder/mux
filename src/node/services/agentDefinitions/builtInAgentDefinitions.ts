@@ -38,7 +38,6 @@ const BUILT_IN_PACKAGES: AgentDefinitionPackage[] = [
       description: "Implement changes in the repository",
       permissionMode: "default",
       subagent: { runnable: true },
-      policy: { base: "exec" },
     },
     body: [
       "You are in Exec mode.",
@@ -61,7 +60,6 @@ const BUILT_IN_PACKAGES: AgentDefinitionPackage[] = [
       description: "History compaction (internal)",
       ui: { hidden: true },
       subagent: { runnable: false },
-      policy: { base: "compact" },
     },
     body: "You are running a compaction/summarization pass. Do not call tools.",
   },
