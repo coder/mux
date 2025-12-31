@@ -47,7 +47,7 @@ const ViewToggle: React.FC<ViewToggleProps> = ({
         type="button"
         onClick={onClick}
         className={cn(
-          "flex h-5 w-5 items-center justify-center p-0.5 transition-colors",
+          "flex h-5 w-5 items-center justify-center rounded-full p-0.5 transition-colors",
           active && "bg-foreground/10",
           variant === "default" && "text-muted hover:text-foreground",
           variant === "success" && "text-green-400 hover:text-green-300",
@@ -76,16 +76,20 @@ export const CodeExecutionToolCall: React.FC<CodeExecutionToolCallProps> = ({
 
   const [viewMode, setViewMode] = useState<ViewMode>("tools");
 
-  // When execution completes with no tool calls, switch to code view
+  // Determine the appropriate default view for no-tool-calls case
+  const hasFailed = isComplete && result && !result.success;
+  const noToolCallsDefaultView = hasFailed ? "result" : "code";
+
+  // When execution completes with no tool calls, switch to appropriate view
   useEffect(() => {
     if (isComplete && !hasToolCalls && viewMode === "tools") {
-      setViewMode("code");
+      setViewMode(noToolCallsDefaultView);
     }
-  }, [isComplete, hasToolCalls, viewMode]);
+  }, [isComplete, hasToolCalls, viewMode, noToolCallsDefaultView]);
 
   const toggleView = (mode: ViewMode) => {
-    // When toggling off, return to tools if available, otherwise code (only if complete)
-    const defaultView = hasToolCalls || !isComplete ? "tools" : "code";
+    // When toggling off, return to tools if available, otherwise the no-tool-calls default
+    const defaultView = hasToolCalls || !isComplete ? "tools" : noToolCallsDefaultView;
     setViewMode((prev) => (prev === mode ? defaultView : mode));
   };
 
@@ -136,15 +140,13 @@ export const CodeExecutionToolCall: React.FC<CodeExecutionToolCallProps> = ({
               )}
             </ViewToggle>
           </div>
-          {(hasToolCalls || !isComplete) && (
-            <ViewToggle
-              active={viewMode === "code"}
-              onClick={() => toggleView("code")}
-              tooltip="Show Code"
-            >
-              <CodeIcon className="h-3.5 w-3.5" />
-            </ViewToggle>
-          )}
+          <ViewToggle
+            active={viewMode === "code"}
+            onClick={() => toggleView("code")}
+            tooltip="Show Code"
+          >
+            <CodeIcon className="h-3.5 w-3.5" />
+          </ViewToggle>
           <ViewToggle
             active={viewMode === "console"}
             onClick={() => toggleView("console")}
@@ -162,7 +164,7 @@ export const CodeExecutionToolCall: React.FC<CodeExecutionToolCallProps> = ({
 
       {viewMode === "code" && (
         <div className="border-foreground/10 bg-code-bg rounded border p-2">
-          <HighlightedCode language="javascript" code={args.code} />
+          <HighlightedCode language="javascript" code={args.code.trim()} />
         </div>
       )}
 

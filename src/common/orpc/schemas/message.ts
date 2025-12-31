@@ -31,18 +31,14 @@ const MuxToolPartBase = z.object({
 /**
  * Schema for nested tool calls within code_execution.
  *
- * RUNTIME VS PERSISTED STATE:
- * The `nestedCalls` field is RUNTIME-ONLY state - it is NOT persisted to chat.jsonl.
- * - During live streaming: parentToolCallId on events → aggregator stores in part.nestedCalls
- * - In chat.jsonl: Only result.toolCalls (inside PTCExecutionResult output) is persisted
- * - On history replay: Aggregator reconstructs nestedCalls from result.toolCalls
+ * PERSISTENCE:
+ * - During live streaming: parentToolCallId on events → streamManager persists to part.nestedCalls
+ * - In chat.jsonl: nestedCalls is persisted alongside result.toolCalls (for interrupted streams)
+ * - On history replay: Aggregator uses persisted nestedCalls, or reconstructs from result.toolCalls
  *
- * This means the schema describes runtime state that differs from persisted state.
- * The reconstruction logic lives in StreamingMessageAggregator.getDisplayedMessages().
- *
- * Not exported - only used internally for typing nestedCalls arrays.
+ * The reconstruction from result.toolCalls provides backward compatibility for older history.
  */
-const NestedToolCallSchema = z.object({
+export const NestedToolCallSchema = z.object({
   toolCallId: z.string(),
   toolName: z.string(),
   input: z.unknown(),
@@ -50,6 +46,8 @@ const NestedToolCallSchema = z.object({
   state: z.enum(["input-available", "output-available"]),
   timestamp: z.number().optional(),
 });
+
+export type NestedToolCall = z.infer<typeof NestedToolCallSchema>;
 
 // Discriminated tool part schemas - output required only when state is "output-available"
 export const DynamicToolPartPendingSchema = MuxToolPartBase.extend({

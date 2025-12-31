@@ -26,6 +26,7 @@ import type {
 
 import type { SendMessageError, StreamErrorType } from "@/common/types/errors";
 import type { MuxMetadata, MuxMessage } from "@/common/types/message";
+import type { NestedToolCall } from "@/common/orpc/schemas/message";
 import type { PartialService } from "./partialService";
 import type { HistoryService } from "./historyService";
 import { addUsage, accumulateProviderMetadata } from "@/common/utils/tokens/usageHelpers";
@@ -835,6 +836,8 @@ export class StreamManager extends EventEmitter {
    * Emit nested tool events from PTC code_execution.
    * These are forwarded to the frontend via the same event channel as regular tool events.
    * The parentToolCallId field identifies which code_execution call spawned this nested call.
+   *
+   * Also persists nested calls to streamInfo.parts so they survive interruption/reload.
    */
   emitNestedToolEvent(
     workspaceId: string,
@@ -851,6 +854,42 @@ export class StreamManager extends EventEmitter {
       error?: string;
     }
   ): void {
+    // Persist nested calls to streamInfo.parts for crash/interrupt resilience
+    const streamInfo = this.workspaceStreams.get(workspaceId as WorkspaceId);
+    if (streamInfo) {
+      const parentPartIndex = streamInfo.parts.findIndex(
+        (p): p is CompletedMessagePart & { type: "dynamic-tool"; toolCallId: string } =>
+          p.type === "dynamic-tool" && "toolCallId" in p && p.toolCallId === event.parentToolCallId
+      );
+
+      if (parentPartIndex !== -1) {
+        const parentPart = streamInfo.parts[parentPartIndex] as { nestedCalls?: NestedToolCall[] };
+        const nestedCalls = parentPart.nestedCalls ?? [];
+
+        if (event.type === "tool-call-start") {
+          nestedCalls.push({
+            toolCallId: event.callId,
+            toolName: event.toolName,
+            input: event.args,
+            state: "input-available",
+            timestamp: event.startTime,
+          });
+        } else if (event.type === "tool-call-end") {
+          const idx = nestedCalls.findIndex((n) => n.toolCallId === event.callId);
+          if (idx !== -1) {
+            nestedCalls[idx] = {
+              ...nestedCalls[idx],
+              output: event.result ?? (event.error ? { error: event.error } : undefined),
+              state: "output-available",
+            };
+          }
+        }
+
+        parentPart.nestedCalls = nestedCalls;
+      }
+    }
+
+    // Emit to frontend
     if (event.type === "tool-call-start") {
       this.emit("tool-call-start", {
         type: "tool-call-start",
