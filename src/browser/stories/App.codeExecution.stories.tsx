@@ -302,40 +302,39 @@ export const Failed: AppStory = {
   ),
 };
 
-/** Code execution returning JSON result (pretty-printed) */
-export const WithJsonResult: AppStory = {
+/** Code execution with no tool calls (pure computation) */
+export const NoToolCalls: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() =>
         setupSimpleChatStory({
           messages: [
-            createUserMessage("msg-1", "Get the user data", {
+            createUserMessage("msg-1", "Calculate fibonacci", {
               historySequence: 1,
               timestamp: STABLE_TIMESTAMP - 60000,
             }),
-            createAssistantMessage("msg-2", "Fetching user data.", {
+            createAssistantMessage("msg-2", "Computing fibonacci sequence.", {
               historySequence: 2,
               timestamp: STABLE_TIMESTAMP - 50000,
               toolCalls: [
                 createCodeExecutionTool(
                   "call-1",
-                  `const users = await mux.file_read({ filePath: "data/users.json" });
-return JSON.parse(users.content);`,
+                  `function fib(n) {
+  if (n <= 1) return n;
+  return fib(n - 1) + fib(n - 2);
+}
+
+const results = [];
+for (let i = 0; i < 10; i++) {
+  results.push(fib(i));
+}
+return results;`,
                   {
                     success: true,
-                    result: {
-                      users: [
-                        { id: 1, name: "Alice", email: "alice@example.com", role: "admin" },
-                        { id: 2, name: "Bob", email: "bob@example.com", role: "user" },
-                        { id: 3, name: "Charlie", email: "charlie@example.com", role: "user" },
-                      ],
-                      total: 3,
-                      page: 1,
-                      hasMore: false,
-                    },
+                    result: [0, 1, 1, 2, 3, 5, 8, 13, 21, 34],
                     toolCalls: [],
                     consoleOutput: [],
-                    duration_ms: 25,
+                    duration_ms: 12,
                   },
                   []
                 ),
