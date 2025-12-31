@@ -348,6 +348,50 @@ return JSON.parse(users.content);`,
   ),
 };
 
+/** Code execution with nested tool that threw an error (error-only output shape) */
+export const NestedToolError: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          messages: [
+            createUserMessage("msg-1", "Read a file that doesn't exist", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 60000,
+            }),
+            createAssistantMessage("msg-2", "I'll try to read that file.", {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP - 50000,
+              toolCalls: [
+                createCodeExecutionTool(
+                  "call-1",
+                  `const result = mux.file_read({ filePath: "nonexistent.ts" });
+return result;`,
+                  {
+                    success: false,
+                    error: "Tool execution failed",
+                    consoleOutput: [],
+                    duration_ms: 10,
+                    toolCalls: [
+                      {
+                        toolName: "file_read",
+                        args: { filePath: "nonexistent.ts" },
+                        // Error-only output shape (no success field) - tool threw
+                        result: { error: "ENOENT: no such file or directory" },
+                        duration_ms: 5,
+                      },
+                    ],
+                  }
+                ),
+              ],
+            }),
+          ],
+        })
+      }
+    />
+  ),
+};
+
 /** Code execution that was interrupted (e.g., app restart) */
 export const Interrupted: AppStory = {
   render: () => (

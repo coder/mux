@@ -86,3 +86,32 @@ export function formatDuration(ms: number): string {
   if (ms < 3600000) return `${Math.round(ms / 60000)}m`;
   return `${Math.round(ms / 3600000)}h`;
 }
+
+/**
+ * Determine if a tool output indicates failure.
+ * Handles both `{ success: false }` and `{ error: "..." }` shapes.
+ */
+export function isFailedToolOutput(output: unknown): boolean {
+  if (!output || typeof output !== "object") return false;
+  if ("success" in output && (output as { success: unknown }).success === false) return true;
+  if ("error" in output) return true;
+  return false;
+}
+
+/**
+ * Determine the display status for a nested tool call.
+ * - output-available + failure → "failed"
+ * - output-available + success → "completed"
+ * - input-available + parentInterrupted → "interrupted"
+ * - input-available + running → "executing"
+ */
+export function getNestedToolStatus(
+  state: "input-available" | "output-available",
+  output: unknown,
+  parentInterrupted: boolean
+): ToolStatus {
+  if (state === "output-available") {
+    return isFailedToolOutput(output) ? "failed" : "completed";
+  }
+  return parentInterrupted ? "interrupted" : "executing";
+}

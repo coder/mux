@@ -1,6 +1,6 @@
 import React from "react";
 import { NestedToolRenderer } from "./NestedToolRenderer";
-import type { ToolStatus } from "./toolUtils";
+import { getNestedToolStatus } from "./toolUtils";
 import type { NestedToolCall } from "./codeExecutionTypes";
 
 interface NestedToolsContainerProps {
@@ -22,26 +22,7 @@ export const NestedToolsContainer: React.FC<NestedToolsContainerProps> = ({
   return (
     <div className="-mx-3 space-y-3">
       {calls.map((call) => {
-        // Check if the result indicates failure (for tools that return { success: boolean })
-        const hasFailedResult =
-          call.output &&
-          typeof call.output === "object" &&
-          "success" in call.output &&
-          call.output.success === false;
-
-        // Determine status based on tool completion state:
-        // - output-available + success: false → "failed" (tool finished with error)
-        // - output-available + success: true → "completed" (tool finished successfully)
-        // - input-available + parentInterrupted → "interrupted" (tool never finished)
-        // - input-available + !parentInterrupted → "executing" (tool still running)
-        const status: ToolStatus =
-          call.state === "output-available"
-            ? hasFailedResult
-              ? "failed"
-              : "completed"
-            : parentInterrupted
-              ? "interrupted"
-              : "executing";
+        const status = getNestedToolStatus(call.state, call.output, parentInterrupted ?? false);
         return (
           <NestedToolRenderer
             key={call.toolCallId}
