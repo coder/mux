@@ -153,7 +153,7 @@ describe("ProjectService", () => {
   });
 
   describe("gitInit", () => {
-    it("initializes git repo in non-git directory", async () => {
+    it("initializes git repo in non-git directory with initial commit", async () => {
       const testDir = path.join(tempDir, "new-project");
       await fs.mkdir(testDir);
 
@@ -165,6 +165,11 @@ describe("ProjectService", () => {
       const gitDir = path.join(testDir, ".git");
       const stat = await fs.stat(gitDir);
       expect(stat.isDirectory()).toBe(true);
+
+      // Verify a branch exists (main) after the initial commit
+      const branchResult = await service.listBranches(testDir);
+      expect(branchResult.branches).toContain("main");
+      expect(branchResult.recommendedTrunk).toBe("main");
     });
 
     it("returns error for already-initialized git repo", async () => {

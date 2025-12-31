@@ -161,6 +161,14 @@ export class ProjectService {
       }
 
       const branches = await listLocalBranches(normalizedPath);
+
+      // Empty branches means the repo is unborn (git init but no commits yet)
+      // Return empty branches - frontend will show the git init banner since no branches exist
+      // After user creates a commit, branches will populate
+      if (branches.length === 0) {
+        return { branches: [], recommendedTrunk: null };
+      }
+
       const recommendedTrunk = await detectDefaultTrunkBranch(normalizedPath, branches);
       return { branches, recommendedTrunk };
     } catch (error) {
@@ -192,6 +200,19 @@ export class ProjectService {
       // Initialize git repository with main as default branch
       using initProc = execAsync(`git -C "${normalizedPath}" init -b main`);
       await initProc.result;
+
+      // Create an initial empty commit so the branch exists and worktree/SSH can work
+      // Without a commit, the repo is "unborn" and has no branches
+      using configName = execAsync(`git -C "${normalizedPath}" config user.name "mux" || true`);
+      await configName.result;
+      using configEmail = execAsync(
+        `git -C "${normalizedPath}" config user.email "mux@localhost" || true`
+      );
+      await configEmail.result;
+      using commitProc = execAsync(
+        `git -C "${normalizedPath}" commit --allow-empty -m "Initial commit"`
+      );
+      await commitProc.result;
 
       // Invalidate file completions cache since the repo state changed
       this.fileCompletionsCache.delete(normalizedPath);
