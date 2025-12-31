@@ -420,10 +420,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                 <button
                   onClick={onAddProject}
                   aria-label="Add project"
-                  className="text-secondary hover:bg-hover hover:border-border-light flex cursor-pointer items-center gap-1 rounded border border-transparent bg-transparent px-1.5 py-0.5 text-sm transition-all duration-200"
+                  className="text-secondary hover:bg-hover hover:border-border-light flex h-6 w-6 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent text-lg leading-none transition-all duration-200"
                 >
-                  <span className="text-base leading-none">+</span>
-                  <span>New Project</span>
+                  +
                 </button>
               </div>
               <div className="flex-1 overflow-y-auto">
@@ -555,9 +554,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             }}
                             aria-label={`New chat in ${projectName}`}
                             data-project-path={projectPath}
-                            className="text-secondary hover:bg-hover hover:border-border-light shrink-0 cursor-pointer rounded border border-transparent bg-transparent px-1.5 py-0.5 text-[11px] transition-all duration-200"
+                            className="text-secondary hover:bg-hover hover:border-border-light flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent text-sm leading-none transition-all duration-200"
                           >
-                            + New Chat
+                            +
                           </button>
                         </DraggableProjectItem>
 
