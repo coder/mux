@@ -38,7 +38,7 @@ gh pr comment <pr_number> --body-file - <<'EOF'
 <message>
 EOF
 ```
-- If Codex left review comments and you addressed them, push your fixes and then comment `@codex review` to re-request review. After that, re-run `./scripts/wait_pr_checks.sh <pr_number>` and `./scripts/check_codex_comments.sh <pr_number>`.
+- If Codex left review comments and you addressed them, push your fixes, resolve the PR comment, and then comment `@codex review` to re-request review. After that, re-run `./scripts/wait_pr_checks.sh <pr_number>` and `./scripts/check_codex_comments.sh <pr_number>`.
 - Generally run `wait_pr_checks` after submitting a PR to ensure CI passes.
 - Status decoding: `mergeable=MERGEABLE` clean; `CONFLICTING` needs resolution. `mergeStateStatus=CLEAN` ready, `BLOCKED` waiting for CI, `BEHIND` rebase, `DIRTY` conflicts.
 - If behind: `git fetch origin && git rebase origin/main && git push --force-with-lease`.
