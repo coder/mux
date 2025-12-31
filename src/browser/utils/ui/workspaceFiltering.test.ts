@@ -491,6 +491,54 @@ describe("buildSortedWorkspacesByProject", () => {
     expect(result.get("/new/project")?.[0].id).toBe("pending1");
   });
 
+  it("should use stable tie-breakers when recency is equal", () => {
+    const projects = new Map<string, ProjectConfig>([
+      [
+        "/project/a",
+        {
+          workspaces: [
+            { path: "/a/ws1", id: "ws1" },
+            { path: "/a/ws2", id: "ws2" },
+            { path: "/a/ws3", id: "ws3" },
+          ],
+        },
+      ],
+    ]);
+
+    const metadata = new Map<string, FrontendWorkspaceMetadata>([
+      [
+        "ws1",
+        {
+          ...createWorkspace("ws1", "/project/a"),
+          name: "beta",
+          createdAt: "2020-01-01T00:00:00.000Z",
+        },
+      ],
+      [
+        "ws2",
+        {
+          ...createWorkspace("ws2", "/project/a"),
+          name: "alpha",
+          createdAt: "2021-01-01T00:00:00.000Z",
+        },
+      ],
+      [
+        "ws3",
+        {
+          ...createWorkspace("ws3", "/project/a"),
+          name: "aardvark",
+          createdAt: "2020-01-01T00:00:00.000Z",
+        },
+      ],
+    ]);
+
+    // No recency timestamps → all ties
+    const result = buildSortedWorkspacesByProject(projects, metadata, {});
+
+    // Tie-break order: createdAt desc, then name asc, then id asc
+    expect(result.get("/project/a")?.map((w) => w.id)).toEqual(["ws2", "ws3", "ws1"]);
+  });
+
   it("should sort workspaces by recency (most recent first)", () => {
     const now = Date.now();
     const projects = new Map<string, ProjectConfig>([
