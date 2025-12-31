@@ -7,7 +7,8 @@ import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 
 interface RenderReviewPanelParams {
   apiClient: APIClient;
-  metadata: FrontendWorkspaceMetadata;
+  /** Metadata for the workspace to select (optional - app can render without a workspace) */
+  metadata?: FrontendWorkspaceMetadata;
 }
 
 export interface RenderedApp extends RenderResult {

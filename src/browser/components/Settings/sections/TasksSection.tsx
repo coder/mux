@@ -245,8 +245,9 @@ export function TasksSection() {
   useEffect(() => {
     if (!api) return;
 
+    const projectPath = selectedWorkspace?.projectPath;
     const workspaceId = selectedWorkspace?.workspaceId;
-    if (!workspaceId) {
+    if (!projectPath) {
       setAgents([]);
       setAgentsLoaded(true);
       setAgentsLoadFailed(false);
@@ -258,7 +259,7 @@ export function TasksSection() {
     setAgentsLoadFailed(false);
 
     void api.agents
-      .list({ workspaceId })
+      .list({ projectPath, workspaceId })
       .then((list) => {
         if (cancelled) return;
         setAgents(list);
@@ -275,7 +276,7 @@ export function TasksSection() {
     return () => {
       cancelled = true;
     };
-  }, [api, selectedWorkspace?.workspaceId]);
+  }, [api, selectedWorkspace?.projectPath, selectedWorkspace?.workspaceId]);
 
   useEffect(() => {
     if (!api) return;

@@ -411,45 +411,57 @@ export const router = (authToken?: string) => {
         .input(schemas.agents.list.input)
         .output(schemas.agents.list.output)
         .handler(async ({ context, input }) => {
-          const metadataResult = await context.aiService.getWorkspaceMetadata(input.workspaceId);
-          if (!metadataResult.success) {
-            throw new Error(metadataResult.error);
-          }
-
-          const metadata = metadataResult.data;
+          // Agents can be discovered from either project path or workspace path.
+          // - When workspaceId is provided: use workspace worktree path (for iterating on agents)
+          // - When only projectPath is provided: use project path (stable, shared agents)
           const runtime = createRuntime(
-            metadata.runtimeConfig ?? { type: "local", srcBaseDir: context.config.srcDir },
-            { projectPath: metadata.projectPath }
+            { type: "local", srcBaseDir: context.config.srcDir },
+            { projectPath: input.projectPath }
           );
 
-          const isInPlace = metadata.projectPath === metadata.name;
-          const workspacePath = isInPlace
-            ? metadata.projectPath
-            : runtime.getWorkspacePath(metadata.projectPath, metadata.name);
+          let discoveryPath: string;
+          if (input.workspaceId) {
+            const metadataResult = await context.aiService.getWorkspaceMetadata(input.workspaceId);
+            if (!metadataResult.success) {
+              throw new Error(metadataResult.error);
+            }
+            // Compute worktree path from metadata using runtime
+            discoveryPath = runtime.getWorkspacePath(
+              metadataResult.data.projectPath,
+              metadataResult.data.name
+            );
+          } else {
+            discoveryPath = input.projectPath;
+          }
 
-          return discoverAgentDefinitions(runtime, workspacePath);
+          return discoverAgentDefinitions(runtime, discoveryPath);
         }),
       get: t
         .input(schemas.agents.get.input)
         .output(schemas.agents.get.output)
         .handler(async ({ context, input }) => {
-          const metadataResult = await context.aiService.getWorkspaceMetadata(input.workspaceId);
-          if (!metadataResult.success) {
-            throw new Error(metadataResult.error);
-          }
-
-          const metadata = metadataResult.data;
+          // Same logic as list: use workspace path when workspaceId provided, else project path.
           const runtime = createRuntime(
-            metadata.runtimeConfig ?? { type: "local", srcBaseDir: context.config.srcDir },
-            { projectPath: metadata.projectPath }
+            { type: "local", srcBaseDir: context.config.srcDir },
+            { projectPath: input.projectPath }
           );
 
-          const isInPlace = metadata.projectPath === metadata.name;
-          const workspacePath = isInPlace
-            ? metadata.projectPath
-            : runtime.getWorkspacePath(metadata.projectPath, metadata.name);
+          let discoveryPath: string;
+          if (input.workspaceId) {
+            const metadataResult = await context.aiService.getWorkspaceMetadata(input.workspaceId);
+            if (!metadataResult.success) {
+              throw new Error(metadataResult.error);
+            }
+            // Compute worktree path from metadata using runtime
+            discoveryPath = runtime.getWorkspacePath(
+              metadataResult.data.projectPath,
+              metadataResult.data.name
+            );
+          } else {
+            discoveryPath = input.projectPath;
+          }
 
-          return readAgentDefinition(runtime, workspacePath, input.agentId);
+          return readAgentDefinition(runtime, discoveryPath, input.agentId);
         }),
     },
     providers: {

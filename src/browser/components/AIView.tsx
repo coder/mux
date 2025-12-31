@@ -844,7 +844,7 @@ export const AIView: React.FC<AIViewProps> = (props) => {
   }
 
   return (
-    <ModeProvider workspaceId={props.workspaceId}>
+    <ModeProvider workspaceId={props.workspaceId} projectPath={props.projectPath}>
       <WorkspaceModeAISync workspaceId={props.workspaceId} />
       <ProviderOptionsProvider>
         <ThinkingProvider workspaceId={props.workspaceId}>

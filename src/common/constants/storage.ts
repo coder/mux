@@ -150,6 +150,15 @@ export function getPinnedAgentIdKey(scopeId: string): string {
  * Get the localStorage key for the UI mode for a workspace
  * Format: "mode:{workspaceId}"
  */
+
+/**
+ * Get the localStorage key for "use project agents only" toggle per scope.
+ * When true, agents are loaded from projectPath only, ignoring workspace worktree agents.
+ * Format: "useProjectAgentsOnly:{scopeId}"
+ */
+export function getUseProjectAgentsOnlyKey(scopeId: string): string {
+  return `useProjectAgentsOnly:${scopeId}`;
+}
 export function getModeKey(workspaceId: string): string {
   return `mode:${workspaceId}`;
 }

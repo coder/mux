@@ -13,6 +13,12 @@ export interface AgentContextValue {
   refresh: () => Promise<void>;
   /** True while a refresh is in progress */
   refreshing: boolean;
+  /**
+   * When true, agents are loaded from projectPath only (ignoring workspace worktree).
+   * Useful for unbricking when iterating on agent files in a workspace.
+   */
+  useProjectAgentsOnly: boolean;
+  setUseProjectAgentsOnly: Dispatch<SetStateAction<boolean>>;
 }
 
 const AgentContext = createContext<AgentContextValue | undefined>(undefined);

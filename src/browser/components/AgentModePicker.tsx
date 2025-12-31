@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, RefreshCw } from "lucide-react";
+import { ChevronDown, FolderGit2, RefreshCw } from "lucide-react";
 
 import { useAgent } from "@/browser/contexts/AgentContext";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
@@ -188,7 +188,15 @@ function resolveActiveClassName(isPlanLike: boolean): string {
 }
 
 export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
-  const { agentId, setAgentId, agents, refresh, refreshing } = useAgent();
+  const {
+    agentId,
+    setAgentId,
+    agents,
+    refresh,
+    refreshing,
+    useProjectAgentsOnly,
+    setUseProjectAgentsOnly,
+  } = useAgent();
 
   const onComplete = props.onComplete;
 
@@ -490,6 +498,32 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
               placeholder="Search agents…"
               className="text-light bg-dark border-border-light focus:border-exec-mode min-w-0 flex-1 rounded-sm border px-1 py-0.5 text-[10px] leading-[11px] outline-none"
             />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={
+                    useProjectAgentsOnly
+                      ? "Using project agents (click for workspace)"
+                      : "Using workspace agents (click for project only)"
+                  }
+                  onClick={() => setUseProjectAgentsOnly((prev) => !prev)}
+                  className={cn(
+                    "flex-shrink-0 p-0.5 transition-colors",
+                    useProjectAgentsOnly
+                      ? "text-accent hover:text-accent-hover"
+                      : "text-muted hover:text-foreground"
+                  )}
+                >
+                  <FolderGit2 className="h-3 w-3" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" align="end" className="max-w-52">
+                {useProjectAgentsOnly
+                  ? "Project agents only (click to include workspace agents)"
+                  : "Workspace agents (click to use project agents only)"}
+              </TooltipContent>
+            </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
                 <button

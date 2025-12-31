@@ -43,6 +43,15 @@ const CUSTOM_AGENT: AgentDefinitionDescriptor = {
   subagentRunnable: false,
 };
 
+// Default context value properties shared by all test harnesses
+const noop = () => {
+  // intentional noop for tests
+};
+const defaultContextProps = {
+  useProjectAgentsOnly: false,
+  setUseProjectAgentsOnly: noop,
+};
+
 describe("AgentModePicker", () => {
   beforeEach(() => {
     globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
@@ -69,6 +78,7 @@ describe("AgentModePicker", () => {
             loadFailed: false,
             refresh: () => Promise.resolve(),
             refreshing: false,
+            ...defaultContextProps,
           }}
         >
           <TooltipProvider>
@@ -98,6 +108,7 @@ describe("AgentModePicker", () => {
             loadFailed: false,
             refresh: () => Promise.resolve(),
             refreshing: false,
+            ...defaultContextProps,
           }}
         >
           <TooltipProvider>
@@ -148,6 +159,7 @@ describe("AgentModePicker", () => {
             loadFailed: false,
             refresh: () => Promise.resolve(),
             refreshing: false,
+            ...defaultContextProps,
           }}
         >
           <TooltipProvider>
@@ -193,6 +205,7 @@ describe("AgentModePicker", () => {
             loadFailed: false,
             refresh: () => Promise.resolve(),
             refreshing: false,
+            ...defaultContextProps,
           }}
         >
           <TooltipProvider>
@@ -236,6 +249,7 @@ describe("AgentModePicker", () => {
             loadFailed: false,
             refresh: () => Promise.resolve(),
             refreshing: false,
+            ...defaultContextProps,
           }}
         >
           <TooltipProvider>

@@ -16,8 +16,12 @@ import { shouldRunIntegrationTests } from "../testUtils";
 import {
   cleanupSharedRepo,
   createSharedRepo,
+  getSharedEnv,
+  getSharedRepoPath,
   withSharedWorkspace,
 } from "../ipc/sendMessageTestHelpers";
+import { generateBranchName } from "../ipc/helpers";
+import { detectDefaultTrunkBranch } from "../../src/node/git";
 
 import { installDom } from "./dom";
 import { renderApp } from "./renderReviewPanel";
@@ -195,11 +199,13 @@ describeIntegration("Agent Picker (UI)", () => {
     });
   }, 30_000);
 
-  test("custom project agents appear alongside built-ins", async () => {
+  test("custom workspace agents appear alongside built-ins", async () => {
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
+      // With workspaceId provided, agents are discovered from workspace worktree path.
+      // This allows iterating on agent definitions per-workspace.
       const workspacePath = metadata.namedWorkspacePath;
 
-      // Create a custom agent
+      // Create a custom agent in the workspace worktree
       const customAgentContent = `---
 name: Code Review
 description: Review code changes for quality and best practices.
@@ -244,6 +250,7 @@ You are a code review agent. Review code for quality, readability, and best prac
 
   test("refresh button reloads agents after filesystem changes", async () => {
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
+      // With workspaceId provided, agents are discovered from workspace worktree path.
       const workspacePath = metadata.namedWorkspacePath;
 
       const cleanupDom = installDom();
@@ -257,7 +264,7 @@ You are a code review agent. Review code for quality, readability, and best prac
         let agentNames = getVisibleAgentNames(view.container);
         expect(agentNames).not.toContain("Hot Reload Test");
 
-        // Create a new agent while dropdown is open
+        // Create a new agent in the workspace worktree while dropdown is open
         const newAgentContent = `---
 name: Hot Reload Test
 description: Test agent for verifying hot reload.
@@ -356,6 +363,73 @@ This is a test agent.
         await cleanupView(view, cleanupDom);
       }
     });
+  }, 30_000);
+
+  test("agent picker shows agents on project page (no workspace)", async () => {
+    // This test reproduces a bug where the agent picker shows "No matching agents"
+    // on the new workspace creation page, even though exec agent is selected.
+    // The bug occurs because ModeProvider doesn't load agents when there's no workspaceId.
+    const env = getSharedEnv();
+    const projectPath = getSharedRepoPath();
+    const branchName = generateBranchName("test-agent-picker-project");
+    const trunkBranch = await detectDefaultTrunkBranch(projectPath);
+
+    // Create and archive a workspace to register the project (setup - OK to use API)
+    const createResult = await env.orpc.workspace.create({
+      projectPath,
+      branchName,
+      trunkBranch,
+    });
+    if (!createResult.success) throw new Error(createResult.error);
+    const metadata = createResult.metadata;
+    const workspaceId = metadata.id;
+
+    await env.orpc.workspace.archive({ workspaceId });
+
+    const cleanupDom = installDom();
+    // Disable tutorial to prevent it from blocking UI interactions
+    globalThis.localStorage.setItem(
+      "tutorialState",
+      JSON.stringify({ disabled: true, completed: {} })
+    );
+
+    const view = renderApp({ apiClient: env.orpc, metadata });
+
+    try {
+      await view.waitForReady();
+
+      // Click project to navigate to project page (new workspace creation)
+      const projectRow = await waitFor(
+        () => {
+          const el = view.container.querySelector(`[data-project-path="${projectPath}"]`);
+          if (!el) throw new Error("Project not found");
+          return el as HTMLElement;
+        },
+        { timeout: 5_000 }
+      );
+      fireEvent.click(projectRow);
+
+      // Wait for project page (textarea for new workspace creation)
+      await waitFor(
+        () => {
+          const textarea = view.container.querySelector("textarea");
+          if (!textarea) throw new Error("Project page not rendered");
+        },
+        { timeout: 5_000 }
+      );
+
+      // Open agent picker
+      await openAgentPicker(view.container);
+
+      // Should show agents, not "No matching agents"
+      const agentNames = getVisibleAgentNames(view.container);
+      expect(agentNames.length).toBeGreaterThan(0);
+      expect(agentNames).toContain("Exec");
+      expect(agentNames).toContain("Plan");
+    } finally {
+      await env.orpc.workspace.remove({ workspaceId, options: { force: true } }).catch(() => {});
+      await cleanupView(view, cleanupDom);
+    }
   }, 30_000);
 
   // Note: Search filtering test is skipped because happy-dom doesn't reliably

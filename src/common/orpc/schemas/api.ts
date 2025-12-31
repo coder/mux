@@ -568,13 +568,27 @@ export const tasks = {
 };
 
 // Agent definitions (unifies UI modes + subagents)
+// Agents can be discovered from either the PROJECT path or the WORKSPACE path.
+// - Project path: <projectPath>/.mux/agents - shared across all workspaces
+// - Workspace path: <worktree>/.mux/agents - workspace-specific (useful for iterating)
+// Default is workspace path when workspaceId is provided; use useProjectAgentsOnly to override.
 export const agents = {
   list: {
-    input: z.object({ workspaceId: z.string() }),
+    // projectPath is required; workspaceId is optional.
+    // When workspaceId is provided, agents are discovered from the workspace worktree path.
+    // When only projectPath is provided, agents are discovered from the project path.
+    input: z.object({
+      projectPath: z.string(),
+      workspaceId: z.string().optional(),
+    }),
     output: z.array(AgentDefinitionDescriptorSchema),
   },
   get: {
-    input: z.object({ workspaceId: z.string(), agentId: AgentIdSchema }),
+    input: z.object({
+      projectPath: z.string(),
+      workspaceId: z.string().optional(),
+      agentId: AgentIdSchema,
+    }),
     output: AgentDefinitionPackageSchema,
   },
 };
