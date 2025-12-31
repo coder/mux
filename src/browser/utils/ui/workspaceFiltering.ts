@@ -147,11 +147,33 @@ export function buildSortedWorkspacesByProject(
   }
 
   // Sort each project's workspaces by recency (sort mutates in place)
+  // IMPORTANT: Include deterministic tie-breakers so Storybook/Chromatic snapshots can't
+  // flip ordering when multiple workspaces have equal recency.
   for (const metadataList of result.values()) {
     metadataList.sort((a, b) => {
       const aTimestamp = workspaceRecency[a.id] ?? 0;
       const bTimestamp = workspaceRecency[b.id] ?? 0;
-      return bTimestamp - aTimestamp;
+      if (aTimestamp !== bTimestamp) {
+        return bTimestamp - aTimestamp;
+      }
+
+      const aCreatedAtRaw = Date.parse(a.createdAt ?? "");
+      const bCreatedAtRaw = Date.parse(b.createdAt ?? "");
+      const aCreatedAt = Number.isFinite(aCreatedAtRaw) ? aCreatedAtRaw : 0;
+      const bCreatedAt = Number.isFinite(bCreatedAtRaw) ? bCreatedAtRaw : 0;
+      if (aCreatedAt !== bCreatedAt) {
+        return bCreatedAt - aCreatedAt;
+      }
+
+      if (a.name !== b.name) {
+        return a.name < b.name ? -1 : 1;
+      }
+
+      if (a.id !== b.id) {
+        return a.id < b.id ? -1 : 1;
+      }
+
+      return 0;
     });
   }
 
