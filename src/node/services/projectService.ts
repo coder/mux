@@ -179,7 +179,8 @@ export class ProjectService {
 
   /**
    * Initialize a git repository in the project directory.
-   * Runs `git init` and creates an initial commit if there are files.
+   * Runs `git init` and creates an initial commit so branches exist.
+   * Also handles "unborn" repos (git init already run but no commits yet).
    */
   async gitInit(projectPath: string): Promise<Result<void>> {
     if (typeof projectPath !== "string" || projectPath.trim().length === 0) {
@@ -192,14 +193,20 @@ export class ProjectService {
       }
       const normalizedPath = validation.expandedPath!;
 
-      // Check if already a git repo
-      if (await isGitRepository(normalizedPath)) {
-        return Err("Directory is already a git repository");
-      }
+      const isGitRepo = await isGitRepository(normalizedPath);
 
-      // Initialize git repository with main as default branch
-      using initProc = execAsync(`git -C "${normalizedPath}" init -b main`);
-      await initProc.result;
+      if (isGitRepo) {
+        // Check if repo is "unborn" (git init but no commits yet)
+        const branches = await listLocalBranches(normalizedPath);
+        if (branches.length > 0) {
+          return Err("Directory is already a git repository with commits");
+        }
+        // Repo exists but is unborn - just create the initial commit
+      } else {
+        // Initialize git repository with main as default branch
+        using initProc = execAsync(`git -C "${normalizedPath}" init -b main`);
+        await initProc.result;
+      }
 
       // Create an initial empty commit so the branch exists and worktree/SSH can work
       // Without a commit, the repo is "unborn" and has no branches

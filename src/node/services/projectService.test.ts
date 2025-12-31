@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import * as fs from "fs/promises";
 import * as path from "path";
 import * as os from "os";
+import { execSync } from "child_process";
 import { Config } from "@/node/config";
 import { ProjectService } from "./projectService";
 
@@ -172,10 +173,32 @@ describe("ProjectService", () => {
       expect(branchResult.recommendedTrunk).toBe("main");
     });
 
-    it("returns error for already-initialized git repo", async () => {
+    it("succeeds for unborn git repo (git init but no commits)", async () => {
+      const testDir = path.join(tempDir, "unborn-git");
+      await fs.mkdir(testDir);
+
+      // Create an unborn repo (git init without commits)
+      execSync("git init -b main", { cwd: testDir, stdio: "ignore" });
+
+      const result = await service.gitInit(testDir);
+
+      expect(result.success).toBe(true);
+
+      // Verify branch exists after the commit
+      const branchResult = await service.listBranches(testDir);
+      expect(branchResult.branches).toContain("main");
+    });
+
+    it("returns error for git repo with existing commits", async () => {
       const testDir = path.join(tempDir, "existing-git");
       await fs.mkdir(testDir);
-      await fs.mkdir(path.join(testDir, ".git"));
+
+      // Create a repo with a commit
+      execSync("git init -b main", { cwd: testDir, stdio: "ignore" });
+      execSync('git -c user.name="test" -c user.email="test@test" commit --allow-empty -m "test"', {
+        cwd: testDir,
+        stdio: "ignore",
+      });
 
       const result = await service.gitInit(testDir);
 
