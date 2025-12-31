@@ -29,12 +29,15 @@ export const NestedToolsContainer: React.FC<NestedToolsContainerProps> = ({
           "success" in call.output &&
           call.output.success === false;
 
-        // If parent was interrupted and this tool failed, it was interrupted mid-execution.
-        // A tool that succeeded before interruption still shows "completed" ✓.
+        // Determine status based on tool completion state:
+        // - output-available + success: false → "failed" (tool finished with error)
+        // - output-available + success: true → "completed" (tool finished successfully)
+        // - input-available + parentInterrupted → "interrupted" (tool never finished)
+        // - input-available + !parentInterrupted → "executing" (tool still running)
         const status: ToolStatus =
           call.state === "output-available"
-            ? parentInterrupted && hasFailedResult
-              ? "interrupted"
+            ? hasFailedResult
+              ? "failed"
               : "completed"
             : parentInterrupted
               ? "interrupted"
