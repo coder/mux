@@ -403,7 +403,7 @@ check-docs-links: ## Check documentation for broken links
 	@cd docs && npx mintlify broken-links
 
 ## Storybook
-storybook: node_modules/.installed ## Start Storybook development server
+storybook: node_modules/.installed src/version.ts ## Start Storybook development server
 	$(check_node_version)
 	@bun x storybook dev -p 6006 $(STORYBOOK_OPEN_FLAG)
 
