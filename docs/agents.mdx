@@ -286,7 +286,7 @@ ui:
   color: var(--color-exec-mode)
 subagent:
   runnable: true
-  prompt: |
+  append_prompt: |
     If you are running as a sub-agent in a child workspace:
 
     - When you have a final answer, call agent_report exactly once.
@@ -385,7 +385,7 @@ ui:
   hidden: true
 subagent:
   runnable: true
-  prompt: |
+  append_prompt: |
     You are an Explore sub-agent running inside a child workspace.
 
     - Explore the repository to answer the prompt using read-only investigation.

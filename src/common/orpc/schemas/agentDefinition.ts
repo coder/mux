@@ -31,8 +31,8 @@ const AgentDefinitionUiSchema = z
 const AgentDefinitionSubagentSchema = z
   .object({
     runnable: z.boolean().optional(),
-    // Instructions injected when this agent runs as a subagent (child workspace)
-    prompt: z.string().min(1).optional(),
+    // Instructions appended when this agent runs as a subagent (child workspace)
+    append_prompt: z.string().min(1).optional(),
   })
   .strip();
 

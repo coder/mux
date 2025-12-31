@@ -5,7 +5,7 @@ ui:
   color: var(--color-exec-mode)
 subagent:
   runnable: true
-  prompt: |
+  append_prompt: |
     If you are running as a sub-agent in a child workspace:
 
     - When you have a final answer, call agent_report exactly once.

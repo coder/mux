@@ -1354,10 +1354,10 @@ export class AIService extends EventEmitter {
       }
 
       // Construct effective agent system prompt
-      // If running as subagent and agent has subagent.prompt, use that; otherwise use body
+      // If running as subagent and agent has subagent.append_prompt, append it to the body
       const agentSystemPrompt =
-        isSubagentWorkspace && agentDefinition.frontmatter.subagent?.prompt
-          ? agentDefinition.frontmatter.subagent.prompt
+        isSubagentWorkspace && agentDefinition.frontmatter.subagent?.append_prompt
+          ? `${agentDefinition.body}\n\n${agentDefinition.frontmatter.subagent.append_prompt}`
           : agentDefinition.body;
 
       // Build system message from workspace metadata
