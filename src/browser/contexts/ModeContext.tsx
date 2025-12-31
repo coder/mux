@@ -87,9 +87,16 @@ export const ModeProvider: React.FC<ModeProviderProps> = (props) => {
   const [loadFailed, setLoadFailed] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Track current project to avoid stale updates
-  const projectPathRef = useRef(props.projectPath);
-  projectPathRef.current = props.projectPath;
+  // Track current fetch parameters to avoid stale updates from slow responses.
+  // All three values must match to apply a response - guards against:
+  // - Project changed mid-fetch
+  // - Workspace changed mid-fetch (different worktree)
+  // - disableWorkspaceAgents toggled mid-fetch
+  const fetchParamsRef = useRef({
+    projectPath: props.projectPath,
+    workspaceId: props.workspaceId,
+    disableWorkspaceAgents,
+  });
 
   const fetchAgents = useCallback(
     async (
@@ -97,6 +104,13 @@ export const ModeProvider: React.FC<ModeProviderProps> = (props) => {
       workspaceId: string | undefined,
       workspaceAgentsDisabled: boolean
     ) => {
+      // Update ref before fetch so we can compare after
+      fetchParamsRef.current = {
+        projectPath,
+        workspaceId,
+        disableWorkspaceAgents: workspaceAgentsDisabled,
+      };
+
       // Need at least one of projectPath or workspaceId
       if (!api || (!projectPath && !workspaceId)) {
         setAgents([]);
@@ -112,14 +126,24 @@ export const ModeProvider: React.FC<ModeProviderProps> = (props) => {
           projectPath,
           workspaceId: workspaceAgentsDisabled ? undefined : workspaceId,
         });
-        // Guard against stale updates if project changed mid-fetch
-        if (projectPathRef.current === projectPath) {
+        // Guard against stale updates: only apply if all params still match
+        const current = fetchParamsRef.current;
+        if (
+          current.projectPath === projectPath &&
+          current.workspaceId === workspaceId &&
+          current.disableWorkspaceAgents === workspaceAgentsDisabled
+        ) {
           setAgents(result);
           setLoadFailed(false);
           setLoaded(true);
         }
       } catch {
-        if (projectPathRef.current === projectPath) {
+        const current = fetchParamsRef.current;
+        if (
+          current.projectPath === projectPath &&
+          current.workspaceId === workspaceId &&
+          current.disableWorkspaceAgents === workspaceAgentsDisabled
+        ) {
           setAgents([]);
           setLoadFailed(true);
           setLoaded(true);
