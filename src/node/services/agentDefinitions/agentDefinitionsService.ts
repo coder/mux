@@ -31,6 +31,20 @@ export { agentHasTool, isPlanLike, isExecLike } from "@/common/utils/agentInheri
 
 const MAX_INHERITANCE_DEPTH = 10;
 
+/**
+ * Helper to enforce inheritance chain safety (cycle detection + depth limits).
+ * Throws if the chain would cause infinite recursion or exceed depth.
+ */
+function checkInheritanceChain(visited: Set<AgentId>, id: AgentId, depth: number): void {
+  if (depth > MAX_INHERITANCE_DEPTH) {
+    throw new Error(`Agent inheritance depth exceeded for '${id}' (max: ${MAX_INHERITANCE_DEPTH})`);
+  }
+  if (visited.has(id)) {
+    throw new Error(`Circular agent inheritance detected: ${id}`);
+  }
+  visited.add(id);
+}
+
 const GLOBAL_AGENTS_ROOT = "~/.mux/agents";
 
 function resolveUiSelectable(
@@ -366,11 +380,8 @@ export async function readAgentDefinition(
 /**
  * Resolve the effective system prompt body for an agent, including inherited content.
  *
- * When an agent has `prompt.append: true` and a `base` agent, this function:
- * 1. Recursively resolves the base agent's body
- * 2. Appends this agent's body to the resolved base body
- *
- * Without `prompt.append: true`, the agent's body replaces the base (default behavior).
+ * By default (or with `prompt.append: true`), the agent's body is appended to its base's body.
+ * Set `prompt.append: false` to replace the base body entirely.
  */
 export async function resolveAgentBody(
   runtime: Runtime,
@@ -381,22 +392,14 @@ export async function resolveAgentBody(
   const visited = new Set<AgentId>();
 
   async function resolve(id: AgentId, depth: number): Promise<string> {
-    if (depth > MAX_INHERITANCE_DEPTH) {
-      throw new Error(
-        `Agent inheritance depth exceeded for '${id}' (max: ${MAX_INHERITANCE_DEPTH})`
-      );
-    }
-
-    if (visited.has(id)) {
-      throw new Error(`Circular agent inheritance detected: ${id}`);
-    }
-    visited.add(id);
+    checkInheritanceChain(visited, id, depth);
 
     const pkg = await readAgentDefinition(runtime, workspacePath, id, options);
     const baseId = pkg.frontmatter.base;
-    const shouldAppend = pkg.frontmatter.prompt?.append === true;
+    // Default to append (true) unless explicitly set to false
+    const shouldAppend = pkg.frontmatter.prompt?.append !== false;
 
-    // No base or not appending: just return this agent's body
+    // No base or explicitly not appending: just return this agent's body
     if (!baseId || !shouldAppend) {
       return pkg.body;
     }

@@ -18,5 +18,6 @@ You are in Plan Mode.
 
 - Produce a crisp, actionable plan before making code changes.
 - Keep the plan scannable; put long rationale in `<details>/<summary>` blocks.
+- When Plan Mode is requested, assume the user wants the actual completed plan; do not merely describe how you would devise one.
 
 Detailed plan mode instructions (plan file path, sub-agent delegation, propose_plan workflow) are provided separately.
