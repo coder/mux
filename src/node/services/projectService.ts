@@ -203,14 +203,9 @@ export class ProjectService {
 
       // Create an initial empty commit so the branch exists and worktree/SSH can work
       // Without a commit, the repo is "unborn" and has no branches
-      using configName = execAsync(`git -C "${normalizedPath}" config user.name "mux" || true`);
-      await configName.result;
-      using configEmail = execAsync(
-        `git -C "${normalizedPath}" config user.email "mux@localhost" || true`
-      );
-      await configEmail.result;
+      // Use -c flags to set identity only for this commit (don't persist to repo config)
       using commitProc = execAsync(
-        `git -C "${normalizedPath}" commit --allow-empty -m "Initial commit"`
+        `git -C "${normalizedPath}" -c user.name="mux" -c user.email="mux@localhost" commit --allow-empty -m "Initial commit"`
       );
       await commitProc.result;
 
