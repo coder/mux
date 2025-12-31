@@ -1,5 +1,12 @@
 import React, { useState, useMemo, useEffect } from "react";
-import { CodeIcon, TerminalIcon, CheckCircleIcon, XCircleIcon } from "lucide-react";
+import {
+  CodeIcon,
+  TerminalIcon,
+  CheckCircleIcon,
+  XCircleIcon,
+  AlertTriangleIcon,
+  CirclePauseIcon,
+} from "lucide-react";
 import { DetailContent } from "./shared/ToolPrimitives";
 import { type ToolStatus } from "./shared/toolUtils";
 import { HighlightedCode } from "./shared/HighlightedCode";
@@ -24,7 +31,7 @@ interface ViewToggleProps {
   onClick: () => void;
   tooltip: string;
   children: React.ReactNode;
-  variant?: "default" | "success" | "error";
+  variant?: "default" | "success" | "error" | "warning";
 }
 
 const ViewToggle: React.FC<ViewToggleProps> = ({
@@ -44,7 +51,8 @@ const ViewToggle: React.FC<ViewToggleProps> = ({
           active && "bg-foreground/10",
           variant === "default" && "text-muted hover:text-foreground",
           variant === "success" && "text-green-400 hover:text-green-300",
-          variant === "error" && "text-red-400 hover:text-red-300"
+          variant === "error" && "text-red-400 hover:text-red-300",
+          variant === "warning" && "text-yellow-400 hover:text-yellow-300"
         )}
       >
         {children}
@@ -90,7 +98,17 @@ export const CodeExecutionToolCall: React.FC<CodeExecutionToolCallProps> = ({
   }, [result]);
 
   // Determine result icon and variant
-  const resultVariant = !isComplete ? "default" : result?.success ? "success" : "error";
+  const isInterrupted = status === "interrupted";
+  const isBackgrounded = status === "backgrounded";
+  const resultVariant = isInterrupted
+    ? "warning"
+    : isBackgrounded
+      ? "default"
+      : !isComplete
+        ? "default"
+        : result?.success
+          ? "success"
+          : "error";
 
   return (
     <fieldset className="border-foreground/20 mt-3 flex flex-col gap-1.5 rounded-lg border border-dashed px-3 pt-1 pb-2">
@@ -105,7 +123,11 @@ export const CodeExecutionToolCall: React.FC<CodeExecutionToolCallProps> = ({
               tooltip="Show Result"
               variant={resultVariant}
             >
-              {!isComplete ? (
+              {isInterrupted ? (
+                <AlertTriangleIcon className="h-3.5 w-3.5" />
+              ) : isBackgrounded ? (
+                <CirclePauseIcon className="h-3.5 w-3.5" />
+              ) : !isComplete ? (
                 <span className="text-xs font-medium">...</span>
               ) : result?.success ? (
                 <CheckCircleIcon className="h-3.5 w-3.5" />
@@ -165,6 +187,10 @@ export const CodeExecutionToolCall: React.FC<CodeExecutionToolCallProps> = ({
               {result.error}
             </DetailContent>
           )
+        ) : isInterrupted ? (
+          <div className="text-yellow-400 text-xs italic">Execution interrupted</div>
+        ) : isBackgrounded ? (
+          <div className="text-muted text-xs italic">Execution backgrounded</div>
         ) : (
           <div className="text-muted text-xs italic">Execution in progress...</div>
         ))}

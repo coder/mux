@@ -219,6 +219,8 @@ export function createAssistantMessage(
     model?: string;
     reasoning?: string;
     toolCalls?: MuxPart[];
+    /** Mark as partial/interrupted message (unfinished stream) */
+    partial?: boolean;
   }
 ): ChatMuxMessage {
   const parts: MuxPart[] = [];
@@ -241,6 +243,7 @@ export function createAssistantMessage(
       usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
       contextUsage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
       duration: 1000,
+      partial: opts.partial,
     },
   };
 }

@@ -337,6 +337,55 @@ return JSON.parse(users.content);`,
   ),
 };
 
+/** Code execution that was interrupted (e.g., app restart) */
+export const Interrupted: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          messages: [
+            createUserMessage("msg-1", "Run a long operation", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 60000,
+            }),
+            createAssistantMessage("msg-2", "I'll run that for you.", {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP - 50000,
+              partial: true, // Mark as interrupted/partial message
+              toolCalls: [
+                createPendingCodeExecutionTool("call-1", SAMPLE_CODE, [
+                  {
+                    toolCallId: "nested-1",
+                    toolName: "file_read",
+                    input: { filePath: "src/config.ts" },
+                    output: {
+                      success: true,
+                      lines_read: 42,
+                      content: "export const config = {...};",
+                    },
+                    state: "output-available",
+                  },
+                  {
+                    toolCallId: "nested-2",
+                    toolName: "bash",
+                    input: {
+                      script: "sleep 60",
+                      timeout_secs: 120,
+                      run_in_background: false,
+                      display_name: "Long sleep",
+                    },
+                    state: "input-available", // Was executing when interrupted
+                  },
+                ]),
+              ],
+            }),
+          ],
+        })
+      }
+    />
+  ),
+};
+
 /** Code execution with lots of console output */
 export const WithConsoleOutput: AppStory = {
   render: () => (
