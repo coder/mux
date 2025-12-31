@@ -77,7 +77,10 @@ import { getPlanFileHint, getPlanModeInstruction } from "@/common/utils/ui/modeU
 import type { AgentMode } from "@/common/types/mode";
 import { MUX_APP_ATTRIBUTION_TITLE, MUX_APP_ATTRIBUTION_URL } from "@/constants/appAttribution";
 import { readPlanFile } from "@/node/utils/runtime/helpers";
-import { readAgentDefinition } from "@/node/services/agentDefinitions/agentDefinitionsService";
+import {
+  readAgentDefinition,
+  resolveAgentBody,
+} from "@/node/services/agentDefinitions/agentDefinitionsService";
 import { resolveToolPolicyForAgent } from "@/node/services/agentDefinitions/resolveToolPolicy";
 import { isPlanLike } from "@/common/utils/agentInheritance";
 import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/resolveAgentInheritanceChain";
@@ -1358,11 +1361,14 @@ export class AIService extends EventEmitter {
       }
 
       // Construct effective agent system prompt
-      // If running as subagent and agent has subagent.append_prompt, append it to the body
+      // 1. Resolve the body with inheritance (prompt.append merges with base)
+      // 2. If running as subagent, append subagent.append_prompt
+      // Note: Use agentDefinition.id (may have fallen back to exec) instead of effectiveAgentId
+      const resolvedBody = await resolveAgentBody(runtime, workspacePath, agentDefinition.id);
       const agentSystemPrompt =
         isSubagentWorkspace && agentDefinition.frontmatter.subagent?.append_prompt
-          ? `${agentDefinition.body}\n\n${agentDefinition.frontmatter.subagent.append_prompt}`
-          : agentDefinition.body;
+          ? `${resolvedBody}\n\n${agentDefinition.frontmatter.subagent.append_prompt}`
+          : resolvedBody;
 
       // Build system message from workspace metadata
       const systemMessage = await buildSystemMessage(

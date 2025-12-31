@@ -44,6 +44,13 @@ const AgentDefinitionAiDefaultsSchema = z
   })
   .strip();
 
+const AgentDefinitionPromptSchema = z
+  .object({
+    // When true, append this agent's body to the base agent's body (default: false = replace)
+    append: z.boolean().optional(),
+  })
+  .strip();
+
 // Tool configuration: add/remove patterns (regex).
 // Layers are processed in order during inheritance (base first, then child).
 const AgentDefinitionToolsSchema = z
@@ -65,6 +72,9 @@ export const AgentDefinitionFrontmatterSchema = z
 
     // UI metadata (color, visibility, etc.)
     ui: AgentDefinitionUiSchema.optional(),
+
+    // Prompt behavior configuration
+    prompt: AgentDefinitionPromptSchema.optional(),
 
     subagent: AgentDefinitionSubagentSchema.optional(),
     ai: AgentDefinitionAiDefaultsSchema.optional(),

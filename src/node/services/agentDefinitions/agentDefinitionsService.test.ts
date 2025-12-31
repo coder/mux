@@ -6,7 +6,11 @@ import { describe, expect, test } from "bun:test";
 import { AgentIdSchema } from "@/common/orpc/schemas";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import { DisposableTempDir } from "@/node/services/tempDir";
-import { discoverAgentDefinitions, readAgentDefinition } from "./agentDefinitionsService";
+import {
+  discoverAgentDefinitions,
+  readAgentDefinition,
+  resolveAgentBody,
+} from "./agentDefinitionsService";
 
 async function writeAgent(root: string, id: string, name: string): Promise<void> {
   await fs.mkdir(root, { recursive: true });
@@ -65,5 +69,64 @@ describe("agentDefinitionsService", () => {
 
     expect(pkg.scope).toBe("project");
     expect(pkg.frontmatter.name).toBe("Foo (project)");
+  });
+
+  test("resolveAgentBody appends when prompt.append is true", async () => {
+    using tempDir = new DisposableTempDir("agent-body-test");
+    const agentsRoot = path.join(tempDir.path, ".mux", "agents");
+    await fs.mkdir(agentsRoot, { recursive: true });
+
+    // Create base agent
+    await fs.writeFile(
+      path.join(agentsRoot, "base.md"),
+      `---
+name: Base
+tools:
+  add:
+    - .*
+---
+Base instructions.
+`,
+      "utf-8"
+    );
+
+    // Create child agent that appends
+    await fs.writeFile(
+      path.join(agentsRoot, "child.md"),
+      `---
+name: Child
+base: base
+prompt:
+  append: true
+---
+Child additions.
+`,
+      "utf-8"
+    );
+
+    // Create another child that replaces (default)
+    await fs.writeFile(
+      path.join(agentsRoot, "replacer.md"),
+      `---
+name: Replacer
+base: base
+---
+Replaced body.
+`,
+      "utf-8"
+    );
+
+    const roots = { projectRoot: agentsRoot, globalRoot: agentsRoot };
+    const runtime = new LocalRuntime(tempDir.path);
+
+    // Child with append: true should have both bodies
+    const childBody = await resolveAgentBody(runtime, tempDir.path, "child", { roots });
+    expect(childBody).toContain("Base instructions.");
+    expect(childBody).toContain("Child additions.");
+
+    // Child without append should only have its own body
+    const replacerBody = await resolveAgentBody(runtime, tempDir.path, "replacer", { roots });
+    expect(replacerBody).toBe("Replaced body.\n");
+    expect(replacerBody).not.toContain("Base instructions");
   });
 });

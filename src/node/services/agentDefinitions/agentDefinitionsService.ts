@@ -29,6 +29,8 @@ import {
 // Re-export the shared inheritance utilities for backend use
 export { agentHasTool, isPlanLike, isExecLike } from "@/common/utils/agentInheritance";
 
+const MAX_INHERITANCE_DEPTH = 10;
+
 const GLOBAL_AGENTS_ROOT = "~/.mux/agents";
 
 function resolveUiSelectable(
@@ -359,4 +361,51 @@ export async function readAgentDefinition(
   }
 
   throw new Error(`Agent definition not found: ${agentId}`);
+}
+
+/**
+ * Resolve the effective system prompt body for an agent, including inherited content.
+ *
+ * When an agent has `prompt.append: true` and a `base` agent, this function:
+ * 1. Recursively resolves the base agent's body
+ * 2. Appends this agent's body to the resolved base body
+ *
+ * Without `prompt.append: true`, the agent's body replaces the base (default behavior).
+ */
+export async function resolveAgentBody(
+  runtime: Runtime,
+  workspacePath: string,
+  agentId: AgentId,
+  options?: { roots?: AgentDefinitionsRoots }
+): Promise<string> {
+  const visited = new Set<AgentId>();
+
+  async function resolve(id: AgentId, depth: number): Promise<string> {
+    if (depth > MAX_INHERITANCE_DEPTH) {
+      throw new Error(
+        `Agent inheritance depth exceeded for '${id}' (max: ${MAX_INHERITANCE_DEPTH})`
+      );
+    }
+
+    if (visited.has(id)) {
+      throw new Error(`Circular agent inheritance detected: ${id}`);
+    }
+    visited.add(id);
+
+    const pkg = await readAgentDefinition(runtime, workspacePath, id, options);
+    const baseId = pkg.frontmatter.base;
+    const shouldAppend = pkg.frontmatter.prompt?.append === true;
+
+    // No base or not appending: just return this agent's body
+    if (!baseId || !shouldAppend) {
+      return pkg.body;
+    }
+
+    // Resolve base body and append this agent's body
+    const baseBody = await resolve(baseId, depth + 1);
+    const separator = baseBody.trim() && pkg.body.trim() ? "\n\n" : "";
+    return `${baseBody}${separator}${pkg.body}`;
+  }
+
+  return resolve(agentId, 0);
 }
