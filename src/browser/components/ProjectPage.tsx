@@ -157,24 +157,23 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
           <ConnectionStatusIndicator />
           {/* Scrollable content area */}
           <div className="min-h-0 flex-1 overflow-y-auto">
-            {/* Git init banner - shown above ChatInput when not a git repo */}
-            {isNonGitRepo && (
-              <div className="flex justify-center px-4 pt-4">
-                <div className="w-full max-w-3xl">
+            {/* Main content - vertically centered with reduced gaps */}
+            <div className="flex min-h-[50vh] flex-col items-center justify-center px-4 py-6">
+              <div className="flex w-full max-w-3xl flex-col gap-4">
+                {/* Git init banner - shown above ChatInput when not a git repo */}
+                {isNonGitRepo && (
                   <GitInitBanner projectPath={projectPath} onSuccess={loadBranches} />
-                </div>
+                )}
+                {/* ChatInput for workspace creation */}
+                <ChatInput
+                  variant="creation"
+                  projectPath={projectPath}
+                  projectName={projectName}
+                  onProviderConfig={onProviderConfig}
+                  onReady={handleChatReady}
+                  onWorkspaceCreated={onWorkspaceCreated}
+                />
               </div>
-            )}
-            {/* Top section: centers ChatInput in top portion of viewport */}
-            <div className="flex min-h-[50vh] flex-col items-center justify-center p-4">
-              <ChatInput
-                variant="creation"
-                projectPath={projectPath}
-                projectName={projectName}
-                onProviderConfig={onProviderConfig}
-                onReady={handleChatReady}
-                onWorkspaceCreated={onWorkspaceCreated}
-              />
             </div>
             {/* Archived workspaces: separate section below centered area */}
             {archivedWorkspaces.length > 0 && (
