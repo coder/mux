@@ -64,7 +64,7 @@ import { ConcurrentLocalWarning } from "./ConcurrentLocalWarning";
 import { BackgroundProcessesBanner } from "./BackgroundProcessesBanner";
 import { useBackgroundBashHandlers } from "@/browser/hooks/useBackgroundBashHandlers";
 import { checkAutoCompaction } from "@/browser/utils/compaction/autoCompactionCheck";
-import { executeCompaction } from "@/browser/utils/chatCommands";
+import { executeCompaction, buildContinueMessage } from "@/browser/utils/chatCommands";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { useAutoCompactionSettings } from "../hooks/useAutoCompactionSettings";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
@@ -226,7 +226,11 @@ const AIViewInner: React.FC<AIViewProps> = ({
       api,
       workspaceId,
       sendMessageOptions: pendingSendOptions,
-      continueMessage: { text: "Continue" },
+      continueMessage: buildContinueMessage({
+        text: "Continue",
+        model: pendingSendOptions.model,
+        mode: pendingSendOptions.mode === "plan" ? "plan" : "exec",
+      }),
     });
   }, [api, workspaceId, pendingSendOptions]);
 

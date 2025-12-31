@@ -48,6 +48,7 @@ import {
   forkWorkspace,
   prepareCompactionMessage,
   executeCompaction,
+  buildContinueMessage,
   type CommandHandlerContext,
 } from "@/browser/utils/chatCommands";
 import { shouldTriggerAutoCompaction } from "@/browser/utils/compaction/shouldTriggerAutoCompaction";
@@ -1479,8 +1480,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           mediaType: img.mediaType,
         }));
 
-        // Prepare reviews data for the continue message (orthogonal to compaction)
-        // Review.data is already ReviewNoteData shape
+        // Prepare reviews data for the continue message
         const reviewsData =
           attachedReviews.length > 0 ? attachedReviews.map((r) => r.data) : undefined;
 
@@ -1496,12 +1496,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           const result = await executeCompaction({
             api,
             workspaceId: props.workspaceId,
-            continueMessage: {
+            continueMessage: buildContinueMessage({
               text: messageText,
               imageParts,
-              model: sendMessageOptions.model,
               reviews: reviewsData,
-            },
+              model: sendMessageOptions.model,
+              mode: sendMessageOptions.mode === "plan" ? "plan" : "exec",
+            }),
             sendMessageOptions,
           });
 

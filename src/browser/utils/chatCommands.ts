@@ -597,6 +597,34 @@ export function formatNewCommand(
 // Compaction
 // ============================================================================
 
+/**
+ * Build a ContinueMessage from raw inputs.
+ * Centralizes the has-content check and field construction to avoid duplication
+ * across executeCompaction() call sites.
+ *
+ * @returns ContinueMessage if there's content to continue with, undefined otherwise
+ */
+export function buildContinueMessage(opts: {
+  text?: string;
+  imageParts?: ImagePart[];
+  reviews?: ReviewNoteData[];
+  model: string;
+  mode: "exec" | "plan";
+}): ContinueMessage | undefined {
+  const hasText = opts.text && opts.text.length > 0;
+  const hasImages = opts.imageParts && opts.imageParts.length > 0;
+  const hasReviews = opts.reviews && opts.reviews.length > 0;
+  if (!hasText && !hasImages && !hasReviews) return undefined;
+
+  return {
+    text: opts.text ?? "",
+    imageParts: opts.imageParts,
+    reviews: opts.reviews,
+    model: opts.model,
+    mode: opts.mode,
+  };
+}
+
 export interface CompactionOptions {
   api?: RouterClient<AppRouter>;
   workspaceId: string;
@@ -630,48 +658,27 @@ export function prepareCompactionMessage(options: CompactionOptions): {
   // Build compaction message with optional continue context
   let messageText = buildCompactionPrompt(targetWords);
 
-  const continueText = options.continueMessage?.text;
-  const hasImages =
-    options.continueMessage?.imageParts && options.continueMessage.imageParts.length > 0;
-  const hasReviews = options.continueMessage?.reviews && options.continueMessage.reviews.length > 0;
-
   // continueMessage is a follow-up user message that will be auto-sent after compaction.
   // For forced compaction (no explicit follow-up), we inject a short resume sentinel ("Continue").
   // Keep that sentinel out of the *compaction prompt* (summarization request), otherwise the model can
   // misread it as a competing instruction. We still keep it in metadata so the backend resumes.
   // Only treat it as the default resume when there's no other queued content (images/reviews).
+  const cm = options.continueMessage;
   const isDefaultResume =
-    typeof continueText === "string" &&
-    continueText.trim() === "Continue" &&
-    !hasImages &&
-    !hasReviews;
+    cm?.text?.trim() === "Continue" && !cm?.imageParts?.length && !cm?.reviews?.length;
 
-  if (options.continueMessage && !isDefaultResume) {
-    messageText += `\n\nThe user wants to continue with: ${options.continueMessage.text}`;
+  if (cm && !isDefaultResume) {
+    messageText += `\n\nThe user wants to continue with: ${cm.text}`;
   }
 
   // Handle model preference (sticky globally)
   const effectiveModel = resolveCompactionModel(options.model);
 
-  // Create compaction metadata (will be stored in user message)
-  // Only include continueMessage if there's text, images, or reviews to queue after compaction
-  const hasText = continueText;
-  // Determine mode for continue message - use mode from sendMessageOptions if it's exec/plan, otherwise default to exec
-  const continueMode = options.sendMessageOptions.mode === "plan" ? "plan" : "exec";
-
+  // continueMessage is already built by caller via buildContinueMessage() - just pass it through
   const compactData: CompactionRequestData = {
     model: effectiveModel,
     maxOutputTokens: options.maxOutputTokens,
-    continueMessage:
-      hasText || hasImages || hasReviews
-        ? {
-            text: options.continueMessage?.text ?? "",
-            imageParts: options.continueMessage?.imageParts,
-            model: options.continueMessage?.model ?? options.sendMessageOptions.model,
-            mode: continueMode,
-            reviews: options.continueMessage?.reviews,
-          }
-        : undefined,
+    continueMessage: cm,
   };
 
   const metadata: MuxFrontendMetadata = {
@@ -894,24 +901,17 @@ export async function handleCompactCommand(
   setIsSending(true);
 
   try {
-    // Check if we have content to continue with after compaction
-    const hasText = !!parsed.continueMessage;
-    const hasImages = context.imageParts && context.imageParts.length > 0;
-    const hasReviews = context.reviews && context.reviews.length > 0;
-
     const result = await executeCompaction({
       api,
       workspaceId,
       maxOutputTokens: parsed.maxOutputTokens,
-      continueMessage:
-        hasText || hasImages || hasReviews
-          ? {
-              text: parsed.continueMessage ?? "",
-              imageParts: context.imageParts,
-              reviews: context.reviews,
-              model: sendMessageOptions.model,
-            }
-          : undefined,
+      continueMessage: buildContinueMessage({
+        text: parsed.continueMessage,
+        imageParts: context.imageParts,
+        reviews: context.reviews,
+        model: sendMessageOptions.model,
+        mode: sendMessageOptions.mode === "plan" ? "plan" : "exec",
+      }),
       model: parsed.model,
       sendMessageOptions,
       editMessageId,

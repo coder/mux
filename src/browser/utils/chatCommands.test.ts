@@ -6,6 +6,7 @@ import {
   handlePlanShowCommand,
   handlePlanOpenCommand,
   handleCompactCommand,
+  buildContinueMessage,
 } from "./chatCommands";
 import type { CommandHandlerContext } from "./chatCommands";
 import type { ReviewNoteData } from "@/common/types/review";
@@ -110,6 +111,91 @@ describe("parseRuntimeString", () => {
   });
 });
 
+describe("buildContinueMessage", () => {
+  test("returns undefined when no content provided", () => {
+    const result = buildContinueMessage({
+      model: "anthropic:claude-3-5-sonnet",
+      mode: "exec",
+    });
+    expect(result).toBeUndefined();
+  });
+
+  test("returns undefined when text is empty string", () => {
+    const result = buildContinueMessage({
+      text: "",
+      model: "anthropic:claude-3-5-sonnet",
+      mode: "exec",
+    });
+    expect(result).toBeUndefined();
+  });
+
+  test("returns message when text is provided", () => {
+    const result = buildContinueMessage({
+      text: "Continue with this",
+      model: "anthropic:claude-3-5-sonnet",
+      mode: "exec",
+    });
+    expect(result).toBeDefined();
+    expect(result?.text).toBe("Continue with this");
+    expect(result?.model).toBe("anthropic:claude-3-5-sonnet");
+    expect(result?.mode).toBe("exec");
+  });
+
+  test("returns message when only images provided", () => {
+    const result = buildContinueMessage({
+      imageParts: [{ url: "data:image/png;base64,abc", mediaType: "image/png" }],
+      model: "anthropic:claude-3-5-sonnet",
+      mode: "plan",
+    });
+    expect(result).toBeDefined();
+    expect(result?.text).toBe("");
+    expect(result?.imageParts).toHaveLength(1);
+    expect(result?.mode).toBe("plan");
+  });
+
+  test("returns message when only reviews provided", () => {
+    const reviews: ReviewNoteData[] = [
+      {
+        filePath: "src/test.ts",
+        lineRange: "10-15",
+        selectedCode: "const x = 1;",
+        userNote: "Fix this",
+      },
+    ];
+    const result = buildContinueMessage({
+      reviews,
+      model: "anthropic:claude-3-5-sonnet",
+      mode: "exec",
+    });
+    expect(result).toBeDefined();
+    expect(result?.text).toBe("");
+    expect(result?.reviews).toHaveLength(1);
+    expect(result?.reviews?.[0].userNote).toBe("Fix this");
+  });
+
+  test("includes all fields when all provided", () => {
+    const reviews: ReviewNoteData[] = [
+      { filePath: "src/a.ts", lineRange: "1", selectedCode: "x", userNote: "note" },
+    ];
+    const imageParts = [{ url: "data:image/png;base64,abc", mediaType: "image/png" }];
+
+    const result = buildContinueMessage({
+      text: "Check this",
+      imageParts,
+      reviews,
+      model: "anthropic:claude-3-5-sonnet",
+      mode: "plan",
+    });
+
+    expect(result).toBeDefined();
+    expect(result?.text).toBe("Check this");
+    expect(result?.imageParts).toHaveLength(1);
+    expect(result?.reviews).toHaveLength(1);
+    expect(result?.model).toBe("anthropic:claude-3-5-sonnet");
+    expect(result?.mode).toBe("plan");
+  });
+});
+
 describe("prepareCompactionMessage", () => {
   const createBaseOptions = (): SendMessageOptions => ({
     model: "anthropic:claude-3-5-sonnet",
@@ -118,12 +204,18 @@ describe("prepareCompactionMessage", () => {
     mode: "exec",
   });
 
-  test("embeds continue message model from base send options", () => {
+  test("passes through continueMessage as-is (caller should use buildContinueMessage)", () => {
     const sendMessageOptions = createBaseOptions();
+    const continueMessage = buildContinueMessage({
+      text: "Keep building",
+      model: sendMessageOptions.model,
+      mode: "exec",
+    });
+
     const { metadata } = prepareCompactionMessage({
       workspaceId: "ws-1",
       maxOutputTokens: 4096,
-      continueMessage: { text: "Keep building" },
+      continueMessage,
       model: "anthropic:claude-3-5-haiku",
       sendMessageOptions,
     });
@@ -133,7 +225,9 @@ describe("prepareCompactionMessage", () => {
       throw new Error("Expected compaction metadata");
     }
 
+    // Model should be exactly what was passed in continueMessage
     expect(metadata.parsed.continueMessage?.model).toBe(sendMessageOptions.model);
+    expect(metadata.parsed.continueMessage?.mode).toBe("exec");
   });
 
   test("does not create continueMessage when no text or images provided", () => {
@@ -156,7 +250,11 @@ describe("prepareCompactionMessage", () => {
     const sendMessageOptions = createBaseOptions();
     const { metadata } = prepareCompactionMessage({
       workspaceId: "ws-1",
-      continueMessage: { text: "Continue with this" },
+      continueMessage: buildContinueMessage({
+        text: "Continue with this",
+        model: sendMessageOptions.model,
+        mode: "exec",
+      }),
       sendMessageOptions,
     });
 
@@ -174,7 +272,11 @@ describe("prepareCompactionMessage", () => {
       workspaceId: "ws-1",
       maxOutputTokens: 2048,
       model: "anthropic:claude-3-5-haiku",
-      continueMessage: { text: "Line 1\nLine 2" },
+      continueMessage: buildContinueMessage({
+        text: "Line 1\nLine 2",
+        model: sendMessageOptions.model,
+        mode: "exec",
+      }),
       sendMessageOptions,
     });
 
@@ -191,7 +293,11 @@ describe("prepareCompactionMessage", () => {
     const sendMessageOptions = createBaseOptions();
     const { messageText, metadata } = prepareCompactionMessage({
       workspaceId: "ws-1",
-      continueMessage: { text: "Continue" },
+      continueMessage: buildContinueMessage({
+        text: "Continue",
+        model: sendMessageOptions.model,
+        mode: "exec",
+      }),
       sendMessageOptions,
     });
 
@@ -209,7 +315,11 @@ describe("prepareCompactionMessage", () => {
     const sendMessageOptions = createBaseOptions();
     const { messageText } = prepareCompactionMessage({
       workspaceId: "ws-1",
-      continueMessage: { text: "fix tests" },
+      continueMessage: buildContinueMessage({
+        text: "fix tests",
+        model: sendMessageOptions.model,
+        mode: "exec",
+      }),
       sendMessageOptions,
     });
 
@@ -220,10 +330,11 @@ describe("prepareCompactionMessage", () => {
     const sendMessageOptions = createBaseOptions();
     const { metadata } = prepareCompactionMessage({
       workspaceId: "ws-1",
-      continueMessage: {
-        text: "",
+      continueMessage: buildContinueMessage({
         imageParts: [{ url: "data:image/png;base64,abc", mediaType: "image/png" }],
-      },
+        model: sendMessageOptions.model,
+        mode: "exec",
+      }),
       sendMessageOptions,
     });
 
@@ -239,8 +350,7 @@ describe("prepareCompactionMessage", () => {
     const sendMessageOptions = createBaseOptions();
     const { metadata } = prepareCompactionMessage({
       workspaceId: "ws-1",
-      continueMessage: {
-        text: "",
+      continueMessage: buildContinueMessage({
         reviews: [
           {
             filePath: "src/test.ts",
@@ -249,7 +359,9 @@ describe("prepareCompactionMessage", () => {
             userNote: "Please fix this",
           },
         ],
-      },
+        model: sendMessageOptions.model,
+        mode: "exec",
+      }),
       sendMessageOptions,
     });
 
@@ -266,7 +378,7 @@ describe("prepareCompactionMessage", () => {
     const sendMessageOptions = createBaseOptions();
     const { metadata } = prepareCompactionMessage({
       workspaceId: "ws-1",
-      continueMessage: {
+      continueMessage: buildContinueMessage({
         text: "Also check the tests",
         reviews: [
           {
@@ -276,7 +388,9 @@ describe("prepareCompactionMessage", () => {
             userNote: "Fix this bug",
           },
         ],
-      },
+        model: sendMessageOptions.model,
+        mode: "exec",
+      }),
       sendMessageOptions,
     });
 
@@ -293,7 +407,7 @@ describe("prepareCompactionMessage", () => {
     const sendMessageOptions = createBaseOptions();
     const { messageText, metadata } = prepareCompactionMessage({
       workspaceId: "ws-1",
-      continueMessage: {
+      continueMessage: buildContinueMessage({
         text: "Continue",
         reviews: [
           {
@@ -303,7 +417,9 @@ describe("prepareCompactionMessage", () => {
             userNote: "Check this",
           },
         ],
-      },
+        model: sendMessageOptions.model,
+        mode: "exec",
+      }),
       sendMessageOptions,
     });
 
