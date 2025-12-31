@@ -411,6 +411,11 @@ export const router = (authToken?: string) => {
         .input(schemas.agents.list.input)
         .output(schemas.agents.list.output)
         .handler(async ({ context, input }) => {
+          // At least one of projectPath or workspaceId must be provided
+          if (!input.projectPath && !input.workspaceId) {
+            throw new Error("Either projectPath or workspaceId must be provided");
+          }
+
           // Agents can be discovered from either project path or workspace path.
           // - When workspaceId is provided: use workspace's runtime to discover from worktree path
           // - When only projectPath is provided: use local runtime to discover from project path
@@ -427,12 +432,12 @@ export const router = (authToken?: string) => {
             runtime = createRuntime(metadata.runtimeConfig, { projectPath: metadata.projectPath });
             discoveryPath = runtime.getWorkspacePath(metadata.projectPath, metadata.name);
           } else {
-            // No workspace - use local runtime with project path
+            // No workspace - use local runtime with project path (validated above)
             runtime = createRuntime(
               { type: "local", srcBaseDir: context.config.srcDir },
-              { projectPath: input.projectPath }
+              { projectPath: input.projectPath! }
             );
-            discoveryPath = input.projectPath;
+            discoveryPath = input.projectPath!;
           }
 
           return discoverAgentDefinitions(runtime, discoveryPath);
@@ -441,6 +446,11 @@ export const router = (authToken?: string) => {
         .input(schemas.agents.get.input)
         .output(schemas.agents.get.output)
         .handler(async ({ context, input }) => {
+          // At least one of projectPath or workspaceId must be provided
+          if (!input.projectPath && !input.workspaceId) {
+            throw new Error("Either projectPath or workspaceId must be provided");
+          }
+
           // Same logic as list: use workspace's runtime when workspaceId provided, else local runtime.
           let runtime: ReturnType<typeof createRuntime>;
           let discoveryPath: string;
@@ -455,12 +465,12 @@ export const router = (authToken?: string) => {
             runtime = createRuntime(metadata.runtimeConfig, { projectPath: metadata.projectPath });
             discoveryPath = runtime.getWorkspacePath(metadata.projectPath, metadata.name);
           } else {
-            // No workspace - use local runtime with project path
+            // No workspace - use local runtime with project path (validated above)
             runtime = createRuntime(
               { type: "local", srcBaseDir: context.config.srcDir },
-              { projectPath: input.projectPath }
+              { projectPath: input.projectPath! }
             );
-            discoveryPath = input.projectPath;
+            discoveryPath = input.projectPath!;
           }
 
           return readAgentDefinition(runtime, discoveryPath, input.agentId);

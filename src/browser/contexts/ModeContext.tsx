@@ -95,9 +95,10 @@ export const ModeProvider: React.FC<ModeProviderProps> = (props) => {
     async (
       projectPath: string | undefined,
       workspaceId: string | undefined,
-      projectAgentsOnly: boolean
+      workspaceAgentsDisabled: boolean
     ) => {
-      if (!api || !projectPath) {
+      // Need at least one of projectPath or workspaceId
+      if (!api || (!projectPath && !workspaceId)) {
         setAgents([]);
         setLoaded(true);
         setLoadFailed(false);
@@ -105,11 +106,11 @@ export const ModeProvider: React.FC<ModeProviderProps> = (props) => {
       }
 
       try {
-        // When projectAgentsOnly is true or no workspaceId, load from projectPath only.
-        // Otherwise, load from workspacePath (worktree) for iterating on agent files.
+        // When workspaceAgentsDisabled is true, pass only projectPath to skip workspace agents.
+        // Otherwise, pass workspaceId to discover from worktree (if available).
         const result = await api.agents.list({
           projectPath,
-          workspaceId: projectAgentsOnly ? undefined : workspaceId,
+          workspaceId: workspaceAgentsDisabled ? undefined : workspaceId,
         });
         // Guard against stale updates if project changed mid-fetch
         if (projectPathRef.current === projectPath) {
@@ -137,7 +138,7 @@ export const ModeProvider: React.FC<ModeProviderProps> = (props) => {
 
   // Manual refresh function
   const refresh = useCallback(async () => {
-    if (!props.projectPath) return;
+    if (!props.projectPath && !props.workspaceId) return;
     setRefreshing(true);
     try {
       await fetchAgents(props.projectPath, props.workspaceId, disableWorkspaceAgents);

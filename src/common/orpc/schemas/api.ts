@@ -575,18 +575,19 @@ export const tasks = {
 // Use disableWorkspaceAgents in SendMessageOptions to skip workspace agents during message sending.
 export const agents = {
   list: {
-    // projectPath is required; workspaceId is optional.
-    // When workspaceId is provided, agents are discovered from the workspace worktree path.
-    // When only projectPath is provided, agents are discovered from the project path.
+    // At least one of projectPath or workspaceId must be provided.
+    // - workspaceId only: resolve projectPath from workspace metadata, discover from worktree
+    // - projectPath only: discover from project path (project page, no workspace yet)
+    // - both: discover from worktree using workspaceId
     input: z.object({
-      projectPath: z.string(),
+      projectPath: z.string().optional(),
       workspaceId: z.string().optional(),
     }),
     output: z.array(AgentDefinitionDescriptorSchema),
   },
   get: {
     input: z.object({
-      projectPath: z.string(),
+      projectPath: z.string().optional(),
       workspaceId: z.string().optional(),
       agentId: AgentIdSchema,
     }),
