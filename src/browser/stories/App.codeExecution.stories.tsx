@@ -192,6 +192,7 @@ export const Executing: AppStory = {
                     input: { filePath: "src/config.ts" },
                     output: {
                       success: true,
+                      file_size: 1024,
                       lines_read: 42,
                       content: "export const config = {...};",
                     },
@@ -370,6 +371,7 @@ export const Interrupted: AppStory = {
                     input: { filePath: "src/config.ts" },
                     output: {
                       success: true,
+                      file_size: 1024,
                       lines_read: 42,
                       content: "export const config = {...};",
                     },
