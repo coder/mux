@@ -169,6 +169,41 @@ export class ProjectService {
     }
   }
 
+  /**
+   * Initialize a git repository in the project directory.
+   * Runs `git init` and creates an initial commit if there are files.
+   */
+  async gitInit(projectPath: string): Promise<Result<void>> {
+    if (typeof projectPath !== "string" || projectPath.trim().length === 0) {
+      return Err("Project path is required");
+    }
+    try {
+      const validation = await validateProjectPath(projectPath);
+      if (!validation.valid) {
+        return Err(validation.error ?? "Invalid project path");
+      }
+      const normalizedPath = validation.expandedPath!;
+
+      // Check if already a git repo
+      if (await isGitRepository(normalizedPath)) {
+        return Err("Directory is already a git repository");
+      }
+
+      // Initialize git repository with main as default branch
+      using initProc = execAsync(`git -C "${normalizedPath}" init -b main`);
+      await initProc.result;
+
+      // Invalidate file completions cache since the repo state changed
+      this.fileCompletionsCache.delete(normalizedPath);
+
+      return Ok(undefined);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      log.error("Failed to initialize git repository:", error);
+      return Err(`Failed to initialize git repository: ${message}`);
+    }
+  }
+
   async getFileCompletions(
     projectPath: string,
     query: string,

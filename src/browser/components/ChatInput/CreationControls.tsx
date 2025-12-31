@@ -1,12 +1,13 @@
-import React, { useCallback, useEffect } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { RUNTIME_MODE, type RuntimeMode } from "@/common/types/runtime";
 import { Select } from "../Select";
-import { Loader2, Wand2 } from "lucide-react";
+import { GitBranch, Loader2, Wand2 } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { SSHIcon, WorktreeIcon, LocalIcon } from "../icons/RuntimeIcons";
 import { DocsLink } from "../DocsLink";
 import type { WorkspaceNameState } from "@/browser/hooks/useWorkspaceName";
+import { useAPI } from "@/browser/contexts/API";
 
 interface CreationControlsProps {
   branches: string[];
@@ -25,6 +26,10 @@ interface CreationControlsProps {
   projectName: string;
   /** Workspace name/title generation state and actions */
   nameState: WorkspaceNameState;
+  /** Project path for git init */
+  projectPath: string;
+  /** Callback to reload branches after git init succeeds */
+  onBranchesReload: () => void | Promise<void>;
 }
 
 /** Runtime type button group with icons and colors */
@@ -142,6 +147,66 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
   );
 }
 
+/** Banner prompting user to run git init for non-git directories */
+function GitInitBanner(props: { projectPath: string; onSuccess: () => void | Promise<void> }) {
+  const { api } = useAPI();
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleGitInit = useCallback(async () => {
+    if (!api || isLoading) return;
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const result = await api.projects.gitInit({ projectPath: props.projectPath });
+      if (result.success) {
+        await props.onSuccess();
+      } else {
+        setError(result.error);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to initialize git repository");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [api, isLoading, props]);
+
+  return (
+    <div
+      className="bg-bg-dark border-border-medium flex items-center gap-3 rounded-lg border px-4 py-3"
+      data-testid="git-init-banner"
+    >
+      <GitBranch className="text-muted-foreground h-5 w-5 shrink-0" />
+      <div className="flex flex-1 flex-col gap-0.5">
+        <span className="text-foreground text-sm font-medium">
+          This directory is not a git repository
+        </span>
+        <span className="text-muted-foreground text-xs">
+          Run <code className="bg-bg-dark-hover rounded px-1 font-mono">git init</code> to enable
+          Worktree and SSH runtimes
+        </span>
+        {error && <span className="text-xs text-red-500">{error}</span>}
+      </div>
+      <button
+        type="button"
+        onClick={() => void handleGitInit()}
+        disabled={isLoading}
+        className="bg-accent hover:bg-accent/80 text-accent-foreground inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-50"
+      >
+        {isLoading ? (
+          <>
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Running...
+          </>
+        ) : (
+          "Run git init"
+        )}
+      </button>
+    </div>
+  );
+}
+
 /**
  * Prominent controls shown above the input during workspace creation.
  * Displays project name as header, workspace name with magic wand, and runtime/branch selectors.
@@ -187,6 +252,10 @@ export function CreationControls(props: CreationControlsProps) {
 
   return (
     <div className="mb-3 flex flex-col gap-4">
+      {/* Git init banner - shown when project is not a git repository */}
+      {isNonGitRepo && (
+        <GitInitBanner projectPath={props.projectPath} onSuccess={props.onBranchesReload} />
+      )}
       {/* Project name / workspace name header row */}
       <div className="flex items-center" data-component="WorkspaceNameGroup">
         <h2 className="text-foreground shrink-0 text-lg font-semibold">{props.projectName}</h2>

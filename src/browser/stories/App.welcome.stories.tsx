@@ -93,6 +93,37 @@ export const CreateWorkspaceMultipleProjects: AppStory = {
   ),
 };
 
+/**
+ * Non-git repository - shows git init banner prompting user to initialize git.
+ * When clicked, runs `git init` and reloads branches to enable Worktree/SSH runtimes.
+ */
+export const NonGitRepository: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        let gitInitialized = false;
+        expandProjects(["/Users/dev/new-project"]);
+        return createMockORPCClient({
+          projects: new Map([projectWithNoWorkspaces("/Users/dev/new-project")]),
+          workspaces: [],
+          // Return empty branches until git init is called
+          listBranches: () => {
+            if (gitInitialized) {
+              return Promise.resolve({ branches: ["main"], recommendedTrunk: "main" });
+            }
+            return Promise.resolve({ branches: [], recommendedTrunk: null });
+          },
+          // Simulate git init success
+          gitInit: () => {
+            gitInitialized = true;
+            return Promise.resolve({ success: true as const });
+          },
+        });
+      }}
+    />
+  ),
+};
+
 /** Helper to generate archived workspaces with varied dates for timeline grouping */
 function generateArchivedWorkspaces(projectPath: string, projectName: string) {
   const MINUTE = 60000;

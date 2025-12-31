@@ -107,6 +107,8 @@ interface UseCreationWorkspaceReturn {
   nameState: WorkspaceNameState;
   /** The confirmed identity being used for creation (null until generation resolves) */
   creatingWithIdentity: WorkspaceIdentity | null;
+  /** Reload branches (e.g., after git init) */
+  reloadBranches: () => Promise<void>;
 }
 
 /**
@@ -157,34 +159,26 @@ export function useCreationWorkspace({
   // Destructure name state functions for use in callbacks
   const { waitForGeneration } = workspaceNameState;
 
+  // Extracted function to load branches - used on mount and after git init
+  const loadBranches = useCallback(async () => {
+    if (!projectPath.length || !api) return;
+    setBranchesLoaded(false);
+    try {
+      const result = await api.projects.listBranches({ projectPath });
+      setBranches(result.branches);
+      setRecommendedTrunk(result.recommendedTrunk);
+    } catch (err) {
+      console.error("Failed to load branches:", err);
+    } finally {
+      setBranchesLoaded(true);
+    }
+  }, [projectPath, api]);
+
   // Load branches on mount
   useEffect(() => {
-    // This can be created with an empty project path when the user is
-    // creating a new workspace.
-    if (!projectPath.length || !api) {
-      return;
-    }
-    let mounted = true;
-    setBranchesLoaded(false);
-    const loadBranches = async () => {
-      try {
-        const result = await api.projects.listBranches({ projectPath });
-        if (!mounted) return;
-        setBranches(result.branches);
-        setRecommendedTrunk(result.recommendedTrunk);
-      } catch (err) {
-        console.error("Failed to load branches:", err);
-      } finally {
-        if (mounted) {
-          setBranchesLoaded(true);
-        }
-      }
-    };
+    if (!projectPath.length || !api) return;
     void loadBranches();
-    return () => {
-      mounted = false;
-    };
-  }, [projectPath, api]);
+  }, [projectPath, api, loadBranches]);
 
   const handleSend = useCallback(
     async (messageText: string, imageParts?: ImagePart[]): Promise<boolean> => {
@@ -336,5 +330,7 @@ export function useCreationWorkspace({
     nameState: workspaceNameState,
     // The confirmed identity being used for creation (null until generation resolves)
     creatingWithIdentity,
+    // Reload branches (e.g., after git init)
+    reloadBranches: loadBranches,
   };
 }

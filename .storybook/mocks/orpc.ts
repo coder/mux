@@ -115,6 +115,10 @@ export interface MockORPCClientOptions {
   >;
   /** MCP test results - maps server name to tools list or error */
   mcpTestResults?: Map<string, { success: true; tools: string[] } | { success: false; error: string }>;
+  /** Custom listBranches implementation (for testing non-git repos) */
+  listBranches?: (input: { projectPath: string }) => Promise<{ branches: string[]; recommendedTrunk: string | null }>;
+  /** Custom gitInit implementation (for testing git init flow) */
+  gitInit?: (input: { projectPath: string }) => Promise<{ success: true } | { success: false; error: string }>;
 }
 
 /**
@@ -156,6 +160,8 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     subagentAiDefaults: initialSubagentAiDefaults,
     agentAiDefaults: initialAgentAiDefaults,
     agentDefinitions: initialAgentDefinitions,
+    listBranches: customListBranches,
+    gitInit: customGitInit,
   } = options;
 
   // Feature flags
@@ -360,10 +366,21 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         data: { projectConfig: { workspaces: [] }, normalizedPath: "/mock/project" },
       }),
       pickDirectory: async () => null,
-      listBranches: async () => ({
-        branches: ["main", "develop", "feature/new-feature"],
-        recommendedTrunk: "main",
-      }),
+      listBranches: async (input: { projectPath: string }) => {
+        if (customListBranches) {
+          return customListBranches(input);
+        }
+        return {
+          branches: ["main", "develop", "feature/new-feature"],
+          recommendedTrunk: "main",
+        };
+      },
+      gitInit: async (input: { projectPath: string }) => {
+        if (customGitInit) {
+          return customGitInit(input);
+        }
+        return { success: true as const };
+      },
       remove: async (input: { projectPath: string }) => {
         if (onProjectRemove) {
           return onProjectRemove(input.projectPath);

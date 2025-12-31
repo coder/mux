@@ -592,6 +592,12 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           return context.projectService.listBranches(input.projectPath);
         }),
+      gitInit: t
+        .input(schemas.projects.gitInit.input)
+        .output(schemas.projects.gitInit.output)
+        .handler(async ({ context, input }) => {
+          return context.projectService.gitInit(input.projectPath);
+        }),
       remove: t
         .input(schemas.projects.remove.input)
         .output(schemas.projects.remove.output)

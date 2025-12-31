@@ -175,6 +175,10 @@ export const projects = {
     input: z.object({ projectPath: z.string() }),
     output: BranchListResultSchema,
   },
+  gitInit: {
+    input: z.object({ projectPath: z.string() }),
+    output: ResultSchema(z.void(), z.string()),
+  },
   mcp: {
     list: {
       input: z.object({ projectPath: z.string() }),

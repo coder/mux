@@ -151,4 +151,48 @@ describe("ProjectService", () => {
       expect(result.data.path).toBe(os.homedir());
     });
   });
+
+  describe("gitInit", () => {
+    it("initializes git repo in non-git directory", async () => {
+      const testDir = path.join(tempDir, "new-project");
+      await fs.mkdir(testDir);
+
+      const result = await service.gitInit(testDir);
+
+      expect(result.success).toBe(true);
+
+      // Verify .git directory was created
+      const gitDir = path.join(testDir, ".git");
+      const stat = await fs.stat(gitDir);
+      expect(stat.isDirectory()).toBe(true);
+    });
+
+    it("returns error for already-initialized git repo", async () => {
+      const testDir = path.join(tempDir, "existing-git");
+      await fs.mkdir(testDir);
+      await fs.mkdir(path.join(testDir, ".git"));
+
+      const result = await service.gitInit(testDir);
+
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error("Expected failure");
+      expect(result.error).toContain("already a git repository");
+    });
+
+    it("returns error for empty project path", async () => {
+      const result = await service.gitInit("");
+
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error("Expected failure");
+      expect(result.error).toContain("required");
+    });
+
+    it("returns error for non-existent directory", async () => {
+      const result = await service.gitInit("/non-existent-path-12345");
+
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error("Expected failure");
+      expect(result.error).toContain("does not exist");
+    });
+  });
 });
