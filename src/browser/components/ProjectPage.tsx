@@ -9,6 +9,7 @@ import type { ChatInputAPI } from "./ChatInput/types";
 import { ArchivedWorkspaces } from "./ArchivedWorkspaces";
 import { useAPI } from "@/browser/contexts/API";
 import { isWorkspaceArchived } from "@/common/utils/archive";
+import { GitInitBanner } from "./GitInitBanner";
 
 interface ProjectPageProps {
   projectPath: string;
@@ -40,6 +41,32 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
   const { api } = useAPI();
   const chatInputRef = useRef<ChatInputAPI | null>(null);
   const [archivedWorkspaces, setArchivedWorkspaces] = useState<FrontendWorkspaceMetadata[]>([]);
+
+  // Git repository state for the banner
+  const [branchesLoaded, setBranchesLoaded] = useState(false);
+  const [hasBranches, setHasBranches] = useState(true); // Assume git repo until proven otherwise
+
+  // Load branches to determine if this is a git repository
+  const loadBranches = useCallback(async () => {
+    if (!api) return;
+    setBranchesLoaded(false);
+    try {
+      const result = await api.projects.listBranches({ projectPath });
+      setHasBranches(result.branches.length > 0);
+    } catch (err) {
+      console.error("Failed to load branches:", err);
+      setHasBranches(true); // On error, don't show banner
+    } finally {
+      setBranchesLoaded(true);
+    }
+  }, [api, projectPath]);
+
+  // Load branches on mount
+  useEffect(() => {
+    void loadBranches();
+  }, [loadBranches]);
+
+  const isNonGitRepo = branchesLoaded && !hasBranches;
 
   // Track archived workspaces in a ref; only update state when the list actually changes
   const archivedMapRef = useRef<Map<string, FrontendWorkspaceMetadata>>(new Map());
@@ -130,6 +157,14 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
           <ConnectionStatusIndicator />
           {/* Scrollable content area */}
           <div className="min-h-0 flex-1 overflow-y-auto">
+            {/* Git init banner - shown above ChatInput when not a git repo */}
+            {isNonGitRepo && (
+              <div className="flex justify-center px-4 pt-4">
+                <div className="w-full max-w-3xl">
+                  <GitInitBanner projectPath={projectPath} onSuccess={loadBranches} />
+                </div>
+              </div>
+            )}
             {/* Top section: centers ChatInput in top portion of viewport */}
             <div className="flex min-h-[50vh] flex-col items-center justify-center p-4">
               <ChatInput

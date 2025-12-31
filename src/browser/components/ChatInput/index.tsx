@@ -1904,8 +1904,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
               disabled={isSendInFlight}
               projectName={props.projectName}
               nameState={creationState.nameState}
-              projectPath={props.projectPath}
-              onBranchesReload={() => creationState.reloadBranches()}
+              isNonGitRepo={creationState.branchesLoaded && creationState.branches.length === 0}
             />
           )}
 

@@ -2,6 +2,8 @@
  * Welcome/Empty state and workspace creation stories
  */
 
+import { within, userEvent, waitFor } from "@storybook/test";
+
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { createMockORPCClient, type MockSessionUsage } from "../../../.storybook/mocks/orpc";
 import { expandProjects } from "./storyHelpers";
@@ -122,6 +124,119 @@ export const NonGitRepository: AppStory = {
       }}
     />
   ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    const canvas = within(storyRoot);
+
+    // Wait for the banner to appear
+    const banner = await canvas.findByTestId("git-init-banner", {}, { timeout: 10000 });
+    banner.scrollIntoView({ block: "center" });
+
+    // Click the git init button to trigger success flow
+    const button = await canvas.findByTestId("git-init-button");
+    await userEvent.click(button);
+
+    // Wait for banner to disappear (success case)
+    await waitFor(
+      () => {
+        if (canvas.queryByTestId("git-init-banner")) {
+          throw new Error("Banner still visible");
+        }
+      },
+      { timeout: 5000 }
+    );
+  },
+};
+
+/**
+ * Non-git repository with in-progress state - demonstrates the loading UI
+ * while git init is running.
+ */
+export const NonGitRepositoryInProgress: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        expandProjects(["/Users/dev/new-project"]);
+        return createMockORPCClient({
+          projects: new Map([projectWithNoWorkspaces("/Users/dev/new-project")]),
+          workspaces: [],
+          listBranches: () => Promise.resolve({ branches: [], recommendedTrunk: null }),
+          // Never resolve - keeps in loading state
+          // eslint-disable-next-line @typescript-eslint/no-empty-function
+          gitInit: () => new Promise(() => {}),
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    const canvas = within(storyRoot);
+
+    // Wait for the banner to appear
+    const banner = await canvas.findByTestId("git-init-banner", {}, { timeout: 10000 });
+    banner.scrollIntoView({ block: "center" });
+
+    // Click the button to trigger loading state
+    const button = await canvas.findByTestId("git-init-button");
+    await userEvent.click(button);
+
+    // Verify loading state is shown
+    await waitFor(
+      () => {
+        if (!canvas.queryByText("Running...")) {
+          throw new Error("Loading state not visible");
+        }
+      },
+      { timeout: 2000 }
+    );
+  },
+};
+
+/**
+ * Non-git repository with error state - demonstrates the error message
+ * when git init fails.
+ */
+export const NonGitRepositoryError: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        expandProjects(["/Users/dev/new-project"]);
+        return createMockORPCClient({
+          projects: new Map([projectWithNoWorkspaces("/Users/dev/new-project")]),
+          workspaces: [],
+          listBranches: () => Promise.resolve({ branches: [], recommendedTrunk: null }),
+          // Return error
+          gitInit: () =>
+            Promise.resolve({
+              success: false as const,
+              error: "Permission denied: cannot write to /Users/dev/new-project",
+            }),
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    const canvas = within(storyRoot);
+
+    // Wait for the banner to appear
+    const banner = await canvas.findByTestId("git-init-banner", {}, { timeout: 10000 });
+    banner.scrollIntoView({ block: "center" });
+
+    // Click the button to trigger error
+    const button = await canvas.findByTestId("git-init-button");
+    await userEvent.click(button);
+
+    // Verify error message is shown
+    await waitFor(
+      () => {
+        if (!canvas.queryByTestId("git-init-error")) {
+          throw new Error("Error message not visible");
+        }
+      },
+      { timeout: 2000 }
+    );
+  },
 };
 
 /** Helper to generate archived workspaces with varied dates for timeline grouping */
