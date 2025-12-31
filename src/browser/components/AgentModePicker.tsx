@@ -419,6 +419,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
                     ref={(el) => (dropdownItemRefs.current[index] = el)}
                     role="button"
                     tabIndex={-1}
+                    data-agent-id={opt.id}
                     className={cn(
                       "px-2.5 py-1.5 cursor-pointer transition-colors duration-100",
                       "first:rounded-t last:rounded-b",
@@ -430,8 +431,15 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
                     onClick={() => handleSelectAgent(opt.id)}
                   >
                     <div className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-2">
-                      <span className="min-w-0 truncate text-[11px] font-medium">{opt.name}</span>
-                      <span className="text-muted-light text-[10px]">{opt.id}</span>
+                      <span
+                        data-testid="agent-name"
+                        className="min-w-0 truncate text-[11px] font-medium"
+                      >
+                        {opt.name}
+                      </span>
+                      <span data-testid="agent-id" className="text-muted-light text-[10px]">
+                        {opt.id}
+                      </span>
                       {opt.description && (
                         <Tooltip>
                           <TooltipTrigger

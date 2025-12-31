@@ -15,6 +15,7 @@ interface BuiltInSource {
 }
 
 const BUILT_IN_SOURCES: BuiltInSource[] = [
+  { id: "ask", content: BUILTIN_AGENT_CONTENT.ask },
   { id: "exec", content: BUILTIN_AGENT_CONTENT.exec },
   { id: "plan", content: BUILTIN_AGENT_CONTENT.plan },
   { id: "compact", content: BUILTIN_AGENT_CONTENT.compact },
