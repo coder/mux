@@ -5,6 +5,7 @@ import { useAgent } from "@/browser/contexts/AgentContext";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 import { cn } from "@/common/lib/utils";
+import { DocsLink } from "@/browser/components/DocsLink";
 import {
   HelpIndicator,
   Tooltip,
@@ -33,6 +34,14 @@ interface AgentOption {
   isPlanLike: boolean;
   uiColor?: string;
   description?: string;
+  /** Base agent ID for inheritance */
+  base?: string;
+  /** Tool add/remove patterns */
+  tools?: { add?: string[]; remove?: string[] };
+  /** AI defaults (model, thinking level) */
+  aiDefaults?: { model?: string; thinkingLevel?: string };
+  /** Whether this agent can be spawned as a subagent */
+  subagentRunnable: boolean;
 }
 
 function formatAgentIdLabel(agentId: string): string {
@@ -55,6 +64,68 @@ function normalizeAgentId(value: unknown): string {
   return typeof value === "string" && value.trim().length > 0 ? value.trim().toLowerCase() : "";
 }
 
+/** Renders the rich tooltip content for an agent option */
+const AgentTooltipContent: React.FC<{ opt: AgentOption }> = ({ opt }) => {
+  const hasAdd = (opt.tools?.add?.length ?? 0) > 0;
+  const hasRemove = (opt.tools?.remove?.length ?? 0) > 0;
+  const hasAiDefaults = Boolean(opt.aiDefaults?.model ?? opt.aiDefaults?.thinkingLevel);
+
+  return (
+    <div className="space-y-1.5 text-[10px]">
+      {opt.description && <div className="text-light">{opt.description}</div>}
+
+      {opt.base && (
+        <div className="text-muted">
+          <span className="text-muted-light">Base:</span> {opt.base}
+        </div>
+      )}
+
+      {hasAiDefaults && (
+        <div className="text-muted">
+          <span className="text-muted-light">AI:</span>{" "}
+          {[opt.aiDefaults?.model, opt.aiDefaults?.thinkingLevel].filter(Boolean).join(", ")}
+        </div>
+      )}
+
+      {(hasAdd || hasRemove) && (
+        <div className="text-muted space-y-0.5">
+          <span className="text-muted-light">Tools:</span>
+          {hasAdd && (
+            <div className="ml-2">
+              <span className="text-green-500">+</span> {opt.tools!.add!.slice(0, 3).join(", ")}
+              {opt.tools!.add!.length > 3 && ` (+${opt.tools!.add!.length - 3} more)`}
+            </div>
+          )}
+          {hasRemove && (
+            <div className="ml-2">
+              <span className="text-red-500">−</span> {opt.tools!.remove!.slice(0, 3).join(", ")}
+              {opt.tools!.remove!.length > 3 && ` (+${opt.tools!.remove!.length - 3} more)`}
+            </div>
+          )}
+        </div>
+      )}
+
+      {opt.subagentRunnable && (
+        <div className="text-muted">
+          <span className="text-muted-light">Subagent:</span> runnable
+        </div>
+      )}
+    </div>
+  );
+};
+
+/** Returns true if an agent has any tooltip-worthy content */
+function hasTooltipContent(opt: AgentOption): boolean {
+  if (opt.description) return true;
+  if (opt.base) return true;
+  if (opt.aiDefaults?.model) return true;
+  if (opt.aiDefaults?.thinkingLevel) return true;
+  if ((opt.tools?.add?.length ?? 0) > 0) return true;
+  if ((opt.tools?.remove?.length ?? 0) > 0) return true;
+  if (opt.subagentRunnable) return true;
+  return false;
+}
+
 const AgentHelpTooltip: React.FC = () => (
   <Tooltip>
     <TooltipTrigger asChild>
@@ -67,6 +138,9 @@ const AgentHelpTooltip: React.FC = () => (
       Open picker: {formatKeybind(KEYBINDS.TOGGLE_MODE)}
       <br />
       Quick select: {formatNumberedKeybind(0).replace("1", "1-9")} (when open)
+      <br />
+      <br />
+      <DocsLink path="/agents">Learn more about agents</DocsLink>
     </TooltipContent>
   </Tooltip>
 );
@@ -80,6 +154,10 @@ function resolveAgentOptions(agents: AgentDefinitionDescriptor[]): AgentOption[]
       isPlanLike: isPlanLikeFn(entry.id, agents),
       uiColor: entry.uiColor,
       description: entry.description,
+      base: entry.base,
+      tools: entry.tools,
+      aiDefaults: entry.aiDefaults,
+      subagentRunnable: entry.subagentRunnable,
     }));
 }
 
@@ -119,6 +197,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
         name: formatAgentIdLabel(normalizedAgentId),
         isPlanLike: isPlanLikeFn(normalizedAgentId, agents),
         uiColor: undefined,
+        subagentRunnable: false,
       } satisfies AgentOption;
     }
 
@@ -127,6 +206,11 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
       name: descriptor.name,
       isPlanLike: isPlanLikeFn(descriptor.id, agents),
       uiColor: descriptor.uiColor,
+      description: descriptor.description,
+      base: descriptor.base,
+      tools: descriptor.tools,
+      aiDefaults: descriptor.aiDefaults,
+      subagentRunnable: descriptor.subagentRunnable,
     } satisfies AgentOption;
   }, [agents, normalizedAgentId]);
 
@@ -440,7 +524,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
                       <span data-testid="agent-id" className="text-muted-light text-[10px]">
                         {opt.id}
                       </span>
-                      {opt.description && (
+                      {hasTooltipContent(opt) && (
                         <Tooltip>
                           <TooltipTrigger
                             asChild
@@ -452,9 +536,9 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
                           <TooltipContent
                             side="left"
                             align="center"
-                            className="max-w-60 whitespace-normal"
+                            className="max-w-72 whitespace-normal"
                           >
-                            {opt.description}
+                            <AgentTooltipContent opt={opt} />
                           </TooltipContent>
                         </Tooltip>
                       )}
