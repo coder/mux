@@ -97,9 +97,37 @@ export const CreateWorkspaceMultipleProjects: AppStory = {
 
 /**
  * Non-git repository - shows git init banner prompting user to initialize git.
- * When clicked, runs `git init` and reloads branches to enable Worktree/SSH runtimes.
+ * Banner is displayed above the ChatInput when the project directory is not a git repo.
  */
 export const NonGitRepository: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        expandProjects(["/Users/dev/new-project"]);
+        return createMockORPCClient({
+          projects: new Map([projectWithNoWorkspaces("/Users/dev/new-project")]),
+          workspaces: [],
+          // Return empty branches (indicates non-git repo)
+          listBranches: () => Promise.resolve({ branches: [], recommendedTrunk: null }),
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    const canvas = within(storyRoot);
+
+    // Wait for the banner to appear and scroll into view
+    const banner = await canvas.findByTestId("git-init-banner", {}, { timeout: 10000 });
+    banner.scrollIntoView({ block: "center" });
+  },
+};
+
+/**
+ * Non-git repository success flow - demonstrates clicking "Run git init"
+ * which initializes the repo and makes the banner disappear.
+ */
+export const NonGitRepositorySuccess: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() => {
