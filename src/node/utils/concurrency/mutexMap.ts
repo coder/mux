@@ -23,26 +23,24 @@ export class MutexMap<K> {
    * Operations for different keys can run concurrently
    */
   async withLock<T>(key: K, operation: () => Promise<T>): Promise<T> {
-    // Wait for any existing operation on this key to complete
-    const existingLock = this.locks.get(key);
-    if (existingLock) {
-      await existingLock;
-    }
+    // Chain onto existing lock (or resolved promise if none)
+    const previousLock = this.locks.get(key) ?? Promise.resolve();
 
-    // Create a new lock for this operation
     let releaseLock: () => void;
     const lockPromise = new Promise<void>((resolve) => {
       releaseLock = resolve;
     });
+
+    // ATOMIC: set our lock BEFORE awaiting previous
+    // This prevents the TOCTOU race where multiple callers see the same
+    // existing lock, all await it, then all proceed concurrently
     this.locks.set(key, lockPromise);
 
     try {
-      // Execute the operation
+      await previousLock; // Wait for previous operation
       return await operation();
     } finally {
-      // Release the lock
       releaseLock!();
-      // Clean up if this is the current lock
       if (this.locks.get(key) === lockPromise) {
         this.locks.delete(key);
       }
