@@ -128,9 +128,12 @@ async function validateSyntax(code: string): Promise<AnalysisError | null> {
   // Wrap in function to allow return statements (matches runtime behavior)
   const wrappedCode = `(function() { ${code} })`;
 
-  // Use evalCode with compile-only flag to parse without executing
+  // Use evalCode with compile-only flag to parse without executing.
+  // Module mode makes `await` a reserved keyword, giving clearer errors
+  // like "unexpected 'await' keyword" instead of obtuse "expecting ';'".
   const result = ctx.evalCode(wrappedCode, "analysis.js", {
     compileOnly: true,
+    type: "module",
   });
 
   if (result.error) {
