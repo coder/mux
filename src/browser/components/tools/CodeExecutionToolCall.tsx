@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { CodeIcon, TerminalIcon, CheckCircleIcon, XCircleIcon } from "lucide-react";
 import { DetailContent } from "./shared/ToolPrimitives";
 import { type ToolStatus } from "./shared/toolUtils";
@@ -66,10 +66,14 @@ export const CodeExecutionToolCall: React.FC<CodeExecutionToolCallProps> = ({
   const hasToolCalls = toolCalls.length > 0;
   const isComplete = status === "completed" || status === "failed";
 
-  // Default to code view only if complete with no tool calls, otherwise show tools
-  const [viewMode, setViewMode] = useState<ViewMode>(() =>
-    isComplete && !hasToolCalls ? "code" : "tools"
-  );
+  const [viewMode, setViewMode] = useState<ViewMode>("tools");
+
+  // When execution completes with no tool calls, switch to code view
+  useEffect(() => {
+    if (isComplete && !hasToolCalls && viewMode === "tools") {
+      setViewMode("code");
+    }
+  }, [isComplete, hasToolCalls, viewMode]);
 
   const toggleView = (mode: ViewMode) => {
     // When toggling off, return to tools if available, otherwise code (only if complete)
