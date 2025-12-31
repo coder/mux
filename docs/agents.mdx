@@ -84,6 +84,10 @@ ui:
   disabled: false # Set true to completely disable (useful to hide built-ins)
   color: "#6b5bff" # UI accent color (inherited from base if not set)
 
+# Prompt behavior
+prompt:
+  append: true # Append body to base agent's body (default); set false to replace
+
 # Subagent configuration
 subagent:
   runnable: false # Allow spawning via task({ agentId: ... })
@@ -107,6 +111,8 @@ tools:
 ### Markdown Body (Instructions)
 
 The markdown body after the frontmatter becomes the agent's system prompt, layered with mux's base prelude.
+
+**Inheritance behavior:** By default, when an agent has a `base`, the child's body is **appended** to the base agent's body. Set `prompt.append: false` to **replace** the base body entirely—useful when you want to completely override the base agent's instructions while keeping its tool policies or AI defaults.
 
 ## Disabling Built-in Agents
 
@@ -246,6 +252,7 @@ You are in Exec mode.
 
 - Make minimal, correct, reviewable changes that match existing codebase patterns.
 - Prefer targeted commands and checks (typecheck/tests) when feasible.
+- Treat as a standing order: keep running checks and addressing failures until they pass or a blocker outside your control arises.
 ```
 
 </Accordion>
@@ -277,6 +284,7 @@ You are in Plan Mode.
 
 - Produce a crisp, actionable plan before making code changes.
 - Keep the plan scannable; put long rationale in `<details>/<summary>` blocks.
+- When Plan Mode is requested, assume the user wants the actual completed plan; do not merely describe how you would devise one.
 
 Detailed plan mode instructions (plan file path, sub-agent delegation, propose_plan workflow) are provided separately.
 ```

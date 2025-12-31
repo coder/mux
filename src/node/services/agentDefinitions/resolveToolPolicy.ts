@@ -40,13 +40,14 @@ const DEPTH_HARD_DENY: ToolPolicy = [
   { regex_match: "task_.*", action: "disable" },
 ];
 
+const MAX_INHERITANCE_DEPTH = 10;
+
 /**
  * Collect tool configs from an agent's inheritance chain (base first, then child).
  */
 function collectToolConfigs(
   agentId: AgentId,
-  agents: readonly AgentLikeForPolicy[],
-  maxDepth = 10
+  agents: readonly AgentLikeForPolicy[]
 ): ToolsConfig[] {
   const byId = new Map<AgentId, AgentLikeForPolicy>();
   for (const agent of agents) {
@@ -54,10 +55,16 @@ function collectToolConfigs(
   }
 
   const configs: ToolsConfig[] = [];
+  const visited = new Set<AgentId>();
   let currentId: AgentId | undefined = agentId;
   let depth = 0;
 
-  while (currentId && depth < maxDepth) {
+  while (currentId && depth < MAX_INHERITANCE_DEPTH) {
+    if (visited.has(currentId)) {
+      throw new Error(`Circular agent inheritance detected: ${currentId}`);
+    }
+    visited.add(currentId);
+
     const agent = byId.get(currentId);
     if (!agent) break;
 

@@ -26,3 +26,4 @@ You are in Exec mode.
 
 - Make minimal, correct, reviewable changes that match existing codebase patterns.
 - Prefer targeted commands and checks (typecheck/tests) when feasible.
+- Treat as a standing order: keep running checks and addressing failures until they pass or a blocker outside your control arises.

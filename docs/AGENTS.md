@@ -199,18 +199,6 @@ Avoid mock-heavy tests that verify implementation details rather than behavior. 
 - When adding complexity, add or extend tests. If coverage requires new infrastructure, propose the harness and then add the tests there.
 - When asked to reduce LoC, focus on simplifying production logic—not stripping comments, docs, or tests.
 
-## Mode: Exec
-
-- Treat as a standing order: keep running checks and addressing failures until they pass or a blocker outside your control arises.
-- **Before pushing to a PR**, run `make static-check` locally and ensure all checks pass. Fix issues with `make fmt` or manual edits. Never push until local checks are green.
-- Reproduce remote static-check failures locally with `make static-check`; fix formatting with `make fmt` before rerunning CI.
-- When CI fails, reproduce locally with the smallest relevant command; log approximate runtimes to optimize future loops.
-
-## Mode: Plan
-
-- When Plan Mode is requested, assume the user wants the actual completed plan; do not merely describe how you would devise one.
-- Attach a net LoC estimate (product code only) to each recommended approach.
-
 ## Tool: status_set
 
 - Set status url to the Pull Request once opened
