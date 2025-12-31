@@ -886,6 +886,9 @@ export class StreamManager extends EventEmitter {
         }
 
         parentPart.nestedCalls = nestedCalls;
+
+        // Schedule partial write so nested calls survive crashes
+        void this.schedulePartialWrite(workspaceId as WorkspaceId, streamInfo);
       }
     }
 
