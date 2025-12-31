@@ -1246,9 +1246,10 @@ export class StreamManager extends EventEmitter {
         // where isStreaming() returns true while event handlers try to send new messages
         streamInfo.state = StreamState.COMPLETED;
 
-        this.emit("stream-end", streamEndEvent);
-
-        // Update history with final message (only if there are parts)
+        // Update history with final message BEFORE emitting stream-end
+        // This prevents a race condition where compaction (triggered by stream-end)
+        // clears history while updateHistory is still running, causing old messages
+        // to be written back after compaction completes.
         if (streamInfo.parts && streamInfo.parts.length > 0) {
           const finalAssistantMessage: MuxMessage = {
             id: streamInfo.messageId,
@@ -1268,18 +1269,37 @@ export class StreamManager extends EventEmitter {
           await this.historyService.updateHistory(workspaceId as string, finalAssistantMessage);
 
           // Update cumulative session usage (if service is available)
+          // Wrapped in try-catch: usage recording is non-critical and shouldn't block stream completion
           if (this.sessionUsageService && totalUsage) {
-            const messageUsage = createDisplayUsage(totalUsage, streamInfo.model, providerMetadata);
-            if (messageUsage) {
-              const normalizedModel = normalizeGatewayModel(streamInfo.model);
-              await this.sessionUsageService.recordUsage(
-                workspaceId as string,
-                normalizedModel,
-                messageUsage
+            try {
+              const messageUsage = createDisplayUsage(
+                totalUsage,
+                streamInfo.model,
+                providerMetadata
               );
+              if (messageUsage) {
+                const normalizedModel = normalizeGatewayModel(streamInfo.model);
+                await this.sessionUsageService.recordUsage(
+                  workspaceId as string,
+                  normalizedModel,
+                  messageUsage
+                );
+              }
+            } catch (usageError) {
+              // Log but don't fail the stream - usage is tracking data, not critical state
+              log.warn("Failed to record session usage (stream completion unaffected)", {
+                workspaceId,
+                error: usageError,
+              });
             }
           }
         }
+
+        // Emit stream-end AFTER history is updated to prevent race with compaction
+        // Compaction handler listens to this event and clears history - if we emit
+        // before updateHistory completes, compaction can clear the file and then
+        // updateHistory writes stale data back.
+        this.emit("stream-end", streamEndEvent);
       }
     } catch (error) {
       streamInfo.state = StreamState.ERROR;
