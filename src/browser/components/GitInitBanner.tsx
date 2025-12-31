@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { GitBranch, Loader2 } from "lucide-react";
+import { Check, GitBranch, Loader2 } from "lucide-react";
 import { useAPI } from "@/browser/contexts/API";
 
 interface GitInitBannerProps {
@@ -14,17 +14,22 @@ interface GitInitBannerProps {
 export function GitInitBanner(props: GitInitBannerProps) {
   const { api } = useAPI();
   const [isLoading, setIsLoading] = useState(false);
+  const [isSuccess, setIsSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const handleGitInit = useCallback(async () => {
-    if (!api || isLoading) return;
+    if (!api || isLoading || isSuccess) return;
     setIsLoading(true);
     setError(null);
 
     try {
       const result = await api.projects.gitInit({ projectPath: props.projectPath });
       if (result.success) {
-        await props.onSuccess();
+        setIsSuccess(true);
+        // Brief delay to show success message before reloading
+        setTimeout(() => {
+          void props.onSuccess();
+        }, 1500);
       } else {
         setError(result.error);
       }
@@ -33,7 +38,27 @@ export function GitInitBanner(props: GitInitBannerProps) {
     } finally {
       setIsLoading(false);
     }
-  }, [api, isLoading, props]);
+  }, [api, isLoading, isSuccess, props]);
+
+  // Success state
+  if (isSuccess) {
+    return (
+      <div
+        className="flex items-center gap-3 rounded-lg border border-green-500/30 bg-green-500/10 px-4 py-3"
+        data-testid="git-init-banner"
+      >
+        <Check className="h-5 w-5 shrink-0 text-green-500" />
+        <div className="flex flex-1 flex-col gap-0.5">
+          <span className="text-sm font-medium text-green-500" data-testid="git-init-success">
+            Git repository initialized
+          </span>
+          <span className="text-muted-foreground text-xs">
+            You can now use Worktree and Remote runtimes for isolated workspaces
+          </span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -47,7 +72,7 @@ export function GitInitBanner(props: GitInitBannerProps) {
         </span>
         <span className="text-muted-foreground text-xs">
           Run <code className="bg-bg-dark-hover rounded px-1 font-mono">git init</code> to enable
-          Worktree and SSH runtimes
+          Worktree and Remote runtimes
         </span>
         {error && (
           <span className="text-xs text-red-500" data-testid="git-init-error">

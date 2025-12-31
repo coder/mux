@@ -125,29 +125,20 @@ export const NonGitRepository: AppStory = {
 
 /**
  * Non-git repository success flow - demonstrates clicking "Run git init"
- * which initializes the repo and makes the banner disappear.
+ * which shows a success message explaining Worktree and Remote are now available.
  */
 export const NonGitRepositorySuccess: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() => {
-        let gitInitialized = false;
         expandProjects(["/Users/dev/new-project"]);
         return createMockORPCClient({
           projects: new Map([projectWithNoWorkspaces("/Users/dev/new-project")]),
           workspaces: [],
-          // Return empty branches until git init is called
-          listBranches: () => {
-            if (gitInitialized) {
-              return Promise.resolve({ branches: ["main"], recommendedTrunk: "main" });
-            }
-            return Promise.resolve({ branches: [], recommendedTrunk: null });
-          },
+          // Always return empty branches so banner stays visible after success
+          listBranches: () => Promise.resolve({ branches: [], recommendedTrunk: null }),
           // Simulate git init success
-          gitInit: () => {
-            gitInitialized = true;
-            return Promise.resolve({ success: true as const });
-          },
+          gitInit: () => Promise.resolve({ success: true as const }),
         });
       }}
     />
@@ -164,11 +155,11 @@ export const NonGitRepositorySuccess: AppStory = {
     const button = await canvas.findByTestId("git-init-button");
     await userEvent.click(button);
 
-    // Wait for banner to disappear (success case)
+    // Wait for success message to appear
     await waitFor(
       () => {
-        if (canvas.queryByTestId("git-init-banner")) {
-          throw new Error("Banner still visible");
+        if (!canvas.queryByTestId("git-init-success")) {
+          throw new Error("Success message not visible");
         }
       },
       { timeout: 5000 }
