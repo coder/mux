@@ -412,25 +412,26 @@ export const router = (authToken?: string) => {
         .output(schemas.agents.list.output)
         .handler(async ({ context, input }) => {
           // Agents can be discovered from either project path or workspace path.
-          // - When workspaceId is provided: use workspace worktree path (for iterating on agents)
-          // - When only projectPath is provided: use project path (stable, shared agents)
-          const runtime = createRuntime(
-            { type: "local", srcBaseDir: context.config.srcDir },
-            { projectPath: input.projectPath }
-          );
-
+          // - When workspaceId is provided: use workspace's runtime to discover from worktree path
+          // - When only projectPath is provided: use local runtime to discover from project path
+          let runtime: ReturnType<typeof createRuntime>;
           let discoveryPath: string;
+
           if (input.workspaceId) {
             const metadataResult = await context.aiService.getWorkspaceMetadata(input.workspaceId);
             if (!metadataResult.success) {
               throw new Error(metadataResult.error);
             }
-            // Compute worktree path from metadata using runtime
-            discoveryPath = runtime.getWorkspacePath(
-              metadataResult.data.projectPath,
-              metadataResult.data.name
-            );
+            const metadata = metadataResult.data;
+            // Use workspace's runtime config (respects SSH, local, worktree, etc.)
+            runtime = createRuntime(metadata.runtimeConfig, { projectPath: metadata.projectPath });
+            discoveryPath = runtime.getWorkspacePath(metadata.projectPath, metadata.name);
           } else {
+            // No workspace - use local runtime with project path
+            runtime = createRuntime(
+              { type: "local", srcBaseDir: context.config.srcDir },
+              { projectPath: input.projectPath }
+            );
             discoveryPath = input.projectPath;
           }
 
@@ -440,24 +441,25 @@ export const router = (authToken?: string) => {
         .input(schemas.agents.get.input)
         .output(schemas.agents.get.output)
         .handler(async ({ context, input }) => {
-          // Same logic as list: use workspace path when workspaceId provided, else project path.
-          const runtime = createRuntime(
-            { type: "local", srcBaseDir: context.config.srcDir },
-            { projectPath: input.projectPath }
-          );
-
+          // Same logic as list: use workspace's runtime when workspaceId provided, else local runtime.
+          let runtime: ReturnType<typeof createRuntime>;
           let discoveryPath: string;
+
           if (input.workspaceId) {
             const metadataResult = await context.aiService.getWorkspaceMetadata(input.workspaceId);
             if (!metadataResult.success) {
               throw new Error(metadataResult.error);
             }
-            // Compute worktree path from metadata using runtime
-            discoveryPath = runtime.getWorkspacePath(
-              metadataResult.data.projectPath,
-              metadataResult.data.name
-            );
+            const metadata = metadataResult.data;
+            // Use workspace's runtime config (respects SSH, local, worktree, etc.)
+            runtime = createRuntime(metadata.runtimeConfig, { projectPath: metadata.projectPath });
+            discoveryPath = runtime.getWorkspacePath(metadata.projectPath, metadata.name);
           } else {
+            // No workspace - use local runtime with project path
+            runtime = createRuntime(
+              { type: "local", srcBaseDir: context.config.srcDir },
+              { projectPath: input.projectPath }
+            );
             discoveryPath = input.projectPath;
           }
 
