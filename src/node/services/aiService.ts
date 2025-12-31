@@ -1168,7 +1168,7 @@ export class AIService extends EventEmitter {
       // Caller policy then narrows further if needed.
       const agentToolPolicy = resolveToolPolicyForAgent({
         agentId: effectiveAgentId,
-        frontmatter: agentDefinition.frontmatter,
+        agents: allAgents,
         isSubagent: isSubagentWorkspace,
         disableTaskToolsForDepth: shouldDisableTaskToolsForDepth,
       });

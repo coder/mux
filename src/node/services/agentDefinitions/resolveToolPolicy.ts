@@ -1,9 +1,28 @@
-import type { AgentDefinitionFrontmatter } from "@/common/types/agentDefinition";
+import type { AgentId } from "@/common/types/agentDefinition";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 
+/**
+ * Tool configuration with add/remove patterns.
+ */
+interface ToolsConfig {
+  add?: readonly string[];
+  remove?: readonly string[];
+}
+
+/**
+ * Minimal agent structure needed for tool policy resolution.
+ * Compatible with both AgentDefinitionDescriptor and AgentDefinitionPackage.
+ */
+export interface AgentLikeForPolicy {
+  id: AgentId;
+  base?: AgentId;
+  tools?: ToolsConfig;
+}
+
 export interface ResolveToolPolicyOptions {
-  agentId: string;
-  frontmatter: AgentDefinitionFrontmatter;
+  agentId: AgentId;
+  /** All available agents (built-ins + the current agent) for inheritance resolution */
+  agents: readonly AgentLikeForPolicy[];
   isSubagent: boolean;
   disableTaskToolsForDepth: boolean;
 }
@@ -22,39 +41,79 @@ const DEPTH_HARD_DENY: ToolPolicy = [
 ];
 
 /**
- * Resolves tool policy for an agent.
+ * Collect tool configs from an agent's inheritance chain (base first, then child).
+ */
+function collectToolConfigs(
+  agentId: AgentId,
+  agents: readonly AgentLikeForPolicy[],
+  maxDepth = 10
+): ToolsConfig[] {
+  const byId = new Map<AgentId, AgentLikeForPolicy>();
+  for (const agent of agents) {
+    byId.set(agent.id, agent);
+  }
+
+  const configs: ToolsConfig[] = [];
+  let currentId: AgentId | undefined = agentId;
+  let depth = 0;
+
+  while (currentId && depth < maxDepth) {
+    const agent = byId.get(currentId);
+    if (!agent) break;
+
+    if (agent.tools) {
+      configs.unshift(agent.tools); // Base configs go first
+    }
+    currentId = agent.base;
+    depth++;
+  }
+
+  return configs;
+}
+
+/**
+ * Resolves tool policy for an agent, including inherited tools from base agents.
  *
  * The policy is built from:
- * 1. Agent's `tools.add` patterns (enable) - if empty/missing, no tools allowed
- * 2. Agent's `tools.remove` patterns (disable) - removes tools that were added
- * 3. Runtime restrictions (subagent limits, depth limits) applied last
+ * 1. Inheritance chain processed base → child:
+ *    - Each layer's `tools.add` patterns (enable)
+ *    - Each layer's `tools.remove` patterns (disable)
+ * 2. Runtime restrictions (subagent limits, depth limits) applied last
  *
- * Note: This function operates on a single agent's frontmatter. Inheritance
- * (resolving tools from base agents) is handled separately.
+ * Example: ask (base: exec)
+ * - exec has add: [.*], remove: [propose_plan, ask_user_question]
+ * - ask has remove: [file_edit_.*]
+ * - Result: deny-all → enable .* → disable propose_plan → disable ask_user_question → disable file_edit_.*
  *
  * Subagents always get `agent_report` enabled regardless of their tool list.
  */
 export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): ToolPolicy {
-  const { frontmatter, isSubagent, disableTaskToolsForDepth } = options;
+  const { agentId, agents, isSubagent, disableTaskToolsForDepth } = options;
 
-  // Start with deny-all, then enable tools from add list, then disable from remove list
+  // Start with deny-all baseline
   const agentPolicy: ToolPolicy = [{ regex_match: ".*", action: "disable" }];
 
-  // Enable tools from add list (treated as regex patterns)
-  const addPatterns = frontmatter.tools?.add ?? [];
-  for (const pattern of addPatterns) {
-    const trimmed = pattern.trim();
-    if (trimmed.length > 0) {
-      agentPolicy.push({ regex_match: trimmed, action: "enable" });
+  // Process inheritance chain: base → child
+  const configs = collectToolConfigs(agentId, agents);
+  for (const config of configs) {
+    // Enable tools from add list (treated as regex patterns)
+    if (config.add) {
+      for (const pattern of config.add) {
+        const trimmed = pattern.trim();
+        if (trimmed.length > 0) {
+          agentPolicy.push({ regex_match: trimmed, action: "enable" });
+        }
+      }
     }
-  }
 
-  // Disable tools from remove list
-  const removePatterns = frontmatter.tools?.remove ?? [];
-  for (const pattern of removePatterns) {
-    const trimmed = pattern.trim();
-    if (trimmed.length > 0) {
-      agentPolicy.push({ regex_match: trimmed, action: "disable" });
+    // Disable tools from remove list
+    if (config.remove) {
+      for (const pattern of config.remove) {
+        const trimmed = pattern.trim();
+        if (trimmed.length > 0) {
+          agentPolicy.push({ regex_match: trimmed, action: "disable" });
+        }
+      }
     }
   }
 
