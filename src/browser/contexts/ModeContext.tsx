@@ -147,20 +147,40 @@ export const ModeProvider: React.FC<ModeProviderProps> = (props) => {
     [setAgentId]
   );
 
+  // Get UI-selectable agents for cycling
+  const selectableAgents = useMemo(() => agents.filter((a) => a.uiSelectable), [agents]);
+
+  // Cycle to next agent
+  const cycleToNextAgent = useCallback(() => {
+    if (selectableAgents.length < 2) return;
+
+    const currentIndex = selectableAgents.findIndex((a) => a.id === coerceAgentId(agentId));
+    const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % selectableAgents.length;
+    const nextAgent = selectableAgents[nextIndex];
+    if (nextAgent) {
+      setAgentId(nextAgent.id);
+    }
+  }, [agentId, selectableAgents, setAgentId]);
+
   // Global keybind handler - opens the agent picker dropdown
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (!matchesKeybind(e, KEYBINDS.TOGGLE_MODE)) {
+      if (matchesKeybind(e, KEYBINDS.TOGGLE_MODE)) {
+        e.preventDefault();
+        window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.OPEN_AGENT_PICKER));
         return;
       }
 
-      e.preventDefault();
-      window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.OPEN_AGENT_PICKER));
+      if (matchesKeybind(e, KEYBINDS.CYCLE_AGENT)) {
+        e.preventDefault();
+        cycleToNextAgent();
+        return;
+      }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [cycleToNextAgent]);
 
   const agentContextValue = useMemo(
     () => ({

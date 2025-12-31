@@ -364,9 +364,9 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
       {/* Completion guidance: only for completed tool calls without errors, not ephemeral previews */}
       {!isEphemeralPreview && status === "completed" && !errorMessage && (
         <div className="plan-divider text-muted mt-3 border-t pt-3 text-[11px] leading-normal italic">
-          Respond with revisions or switch to the Exec agent (cycle with
-          <span className="font-primary not-italic">{formatKeybind(KEYBINDS.TOGGLE_MODE)}</span>)
-          and ask to implement.
+          Respond with revisions or switch to the Exec agent (
+          <span className="font-primary not-italic">{formatKeybind(KEYBINDS.CYCLE_AGENT)}</span> to
+          cycle) and ask to implement.
         </div>
       )}
     </div>

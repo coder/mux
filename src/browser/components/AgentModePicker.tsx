@@ -154,6 +154,8 @@ const AgentHelpTooltip: React.FC = () => (
       <br />
       Open picker: {formatKeybind(KEYBINDS.TOGGLE_MODE)}
       <br />
+      Cycle agents: {formatKeybind(KEYBINDS.CYCLE_AGENT)}
+      <br />
       Quick select: {formatNumberedKeybind(0).replace("1", "1-9")} (when open)
       <br />
       <br />

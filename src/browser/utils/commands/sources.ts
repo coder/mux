@@ -451,11 +451,20 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
     const list: CommandAction[] = [
       {
         id: CommandIds.modeToggle(),
-        title: "Cycle Agent (Exec/Plan/Other)",
+        title: "Open Agent Picker",
         section: section.mode,
         shortcutHint: formatKeybind(KEYBINDS.TOGGLE_MODE),
         run: () => {
-          const ev = new KeyboardEvent("keydown", { key: "M", ctrlKey: true, shiftKey: true });
+          window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.OPEN_AGENT_PICKER));
+        },
+      },
+      {
+        id: "cycle-agent",
+        title: "Cycle Agent",
+        section: section.mode,
+        shortcutHint: formatKeybind(KEYBINDS.CYCLE_AGENT),
+        run: () => {
+          const ev = new KeyboardEvent("keydown", { key: ".", ctrlKey: true });
           window.dispatchEvent(ev);
         },
       },

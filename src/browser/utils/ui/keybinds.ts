@@ -190,8 +190,11 @@ export function formatKeybind(keybind: Keybind): string {
  * We also like vim keybinds.
  */
 export const KEYBINDS = {
-  /** Cycle between Exec / Plan / Other agents */
-  TOGGLE_MODE: { key: "M", ctrl: true, shift: true },
+  /** Open agent picker (focuses search) */
+  TOGGLE_MODE: { key: "A", ctrl: true, shift: true },
+
+  /** Cycle to next agent without opening picker */
+  CYCLE_AGENT: { key: ".", ctrl: true },
 
   /** Send message / Submit form */
   SEND_MESSAGE: { key: "Enter" },
