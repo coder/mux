@@ -5,19 +5,29 @@ import type { NestedToolCall } from "./codeExecutionTypes";
 
 interface NestedToolsContainerProps {
   calls: NestedToolCall[];
+  /** When true, incomplete tools show as interrupted instead of executing */
+  parentInterrupted?: boolean;
 }
 
 /**
  * Renders nested tool calls as a list.
  * Parent component provides the container styling (dashed border).
  */
-export const NestedToolsContainer: React.FC<NestedToolsContainerProps> = ({ calls }) => {
+export const NestedToolsContainer: React.FC<NestedToolsContainerProps> = ({
+  calls,
+  parentInterrupted,
+}) => {
   if (calls.length === 0) return null;
 
   return (
     <div className="-mx-3 space-y-3">
       {calls.map((call) => {
-        const status: ToolStatus = call.state === "output-available" ? "completed" : "executing";
+        const status: ToolStatus =
+          call.state === "output-available"
+            ? "completed"
+            : parentInterrupted
+              ? "interrupted"
+              : "executing";
         return (
           <NestedToolRenderer
             key={call.toolCallId}

@@ -90,6 +90,16 @@ export const Completed: AppStory = {
                       {
                         level: "log",
                         args: ["Read file with", 42, "lines"],
+                        timestamp: Date.now() - 100,
+                      },
+                      {
+                        level: "warn",
+                        args: ["Replacing string in config"],
+                        timestamp: Date.now() - 50,
+                      },
+                      {
+                        level: "log",
+                        args: ["Config updated successfully"],
                         timestamp: Date.now(),
                       },
                     ],
@@ -377,64 +387,6 @@ export const Interrupted: AppStory = {
                     state: "input-available", // Was executing when interrupted
                   },
                 ]),
-              ],
-            }),
-          ],
-        })
-      }
-    />
-  ),
-};
-
-/** Code execution with lots of console output */
-export const WithConsoleOutput: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          messages: [
-            createUserMessage("msg-1", "Run the script", {
-              historySequence: 1,
-              timestamp: STABLE_TIMESTAMP - 60000,
-            }),
-            createAssistantMessage("msg-2", "Running the script now.", {
-              historySequence: 2,
-              timestamp: STABLE_TIMESTAMP - 50000,
-              toolCalls: [
-                createCodeExecutionTool(
-                  "call-1",
-                  `console.log("Starting...");
-console.log("Processing items:", [1, 2, 3]);
-console.warn("This might take a while");
-console.error("Something went wrong but we recovered");
-console.log("Done!");`,
-                  {
-                    success: true,
-                    result: undefined,
-                    toolCalls: [],
-                    consoleOutput: [
-                      { level: "log", args: ["Starting..."], timestamp: Date.now() - 100 },
-                      {
-                        level: "log",
-                        args: ["Processing items:", [1, 2, 3]],
-                        timestamp: Date.now() - 80,
-                      },
-                      {
-                        level: "warn",
-                        args: ["This might take a while"],
-                        timestamp: Date.now() - 60,
-                      },
-                      {
-                        level: "error",
-                        args: ["Something went wrong but we recovered"],
-                        timestamp: Date.now() - 40,
-                      },
-                      { level: "log", args: ["Done!"], timestamp: Date.now() },
-                    ],
-                    duration_ms: 100,
-                  },
-                  []
-                ),
               ],
             }),
           ],

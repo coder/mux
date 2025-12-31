@@ -156,7 +156,9 @@ export const CodeExecutionToolCall: React.FC<CodeExecutionToolCallProps> = ({
       </legend>
 
       {/* Content based on view mode */}
-      {viewMode === "tools" && hasToolCalls && <NestedToolsContainer calls={toolCalls} />}
+      {viewMode === "tools" && hasToolCalls && (
+        <NestedToolsContainer calls={toolCalls} parentInterrupted={isInterrupted} />
+      )}
 
       {viewMode === "code" && (
         <div className="border-foreground/10 bg-code-bg rounded border p-2">
@@ -188,7 +190,7 @@ export const CodeExecutionToolCall: React.FC<CodeExecutionToolCallProps> = ({
             </DetailContent>
           )
         ) : isInterrupted ? (
-          <div className="text-yellow-400 text-xs italic">Execution interrupted</div>
+          <div className="text-xs text-yellow-400 italic">Execution interrupted</div>
         ) : isBackgrounded ? (
           <div className="text-muted text-xs italic">Execution backgrounded</div>
         ) : (
