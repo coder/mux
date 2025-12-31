@@ -815,6 +815,77 @@ index aaa1111..bbb2222 100644
 
 const SMALL_FILE_NUMSTAT_OUTPUT = `1\t0\tsrc/utils/math.ts`;
 
+/**
+ * Review tab with file filter active - shows the filter indicator prominently
+ * User has clicked on a file in the tree to filter hunks to just that file.
+ */
+export const ReviewTabWithFileFilter: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
+        localStorage.setItem(RIGHT_SIDEBAR_REVIEW_WIDTH_KEY, "700");
+
+        const workspaceId = "ws-review-file-filter";
+
+        // Set active file filter - this would be set when user clicks a file in tree
+        localStorage.setItem(
+          `review-file-filter:${workspaceId}`,
+          JSON.stringify("src/components/Button.tsx")
+        );
+
+        const client = setupSimpleChatStory({
+          workspaceId,
+          workspaceName: "feature/file-filter",
+          projectName: "my-app",
+          messages: [
+            createUserMessage("msg-1", "Refactor button component", { historySequence: 1 }),
+            createAssistantMessage("msg-2", "Updated Button.tsx with proper types.", {
+              historySequence: 2,
+            }),
+          ],
+          gitDiff: {
+            diffOutput: SAMPLE_DIFF_OUTPUT,
+            numstatOutput: SAMPLE_NUMSTAT_OUTPUT,
+          },
+        });
+        expandRightSidebar();
+        return client;
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Wait for review tab to be selected
+    await waitFor(
+      () => {
+        canvas.getByRole("tab", { name: /^review/i, selected: true });
+      },
+      { timeout: 5000 }
+    );
+
+    // Wait for file tree to load
+    await waitFor(
+      () => {
+        canvas.getByText("Files");
+      },
+      { timeout: 3000 }
+    );
+
+    // Verify file filter indicator is visible in the header (has clear button with ✕)
+    await waitFor(
+      async () => {
+        // Look for the filter indicator button by its title attribute which includes "Filtering:"
+        const filterIndicator = canvasElement.querySelector('button[title^="Filtering:"]');
+        await expect(filterIndicator).toBeInTheDocument();
+        await expect(filterIndicator).toHaveTextContent("Button.tsx");
+      },
+      { timeout: 3000 }
+    );
+  },
+};
+
 export const ReviewTabReadMoreBoundaries: AppStory = {
   render: () => (
     <AppWithMocks

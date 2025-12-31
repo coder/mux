@@ -254,16 +254,21 @@ export const FileTree: React.FC<FileTreeExternalProps> = ({
     { listener: true }
   );
 
+  // Extract display name for filter indicator
+  const filterDisplayName = selectedPath ? (selectedPath.split("/").pop() ?? selectedPath) : null;
+
   return (
     <>
       <div className="border-border-light text-muted font-primary flex items-center gap-2 border-b px-2 py-1 text-[11px]">
         <span>Files</span>
         {selectedPath && (
           <button
-            className="text-dim font-primary hover:text-muted ml-auto cursor-pointer border-none bg-transparent p-0 text-[10px] transition-colors duration-150"
+            className="bg-code-keyword-overlay text-foreground hover:bg-code-keyword-overlay/80 ml-auto flex cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 text-[10px] transition-colors"
             onClick={() => onSelectFile(null)}
+            title={`Filtering: ${selectedPath}\nClick to clear`}
           >
-            ✕
+            <span className="max-w-[120px] truncate">{filterDisplayName}</span>
+            <span className="text-muted">✕</span>
           </button>
         )}
       </div>
