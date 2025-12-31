@@ -1559,6 +1559,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         // Prepare image parts if any
         const imageParts = imageAttachmentsToImageParts(imageAttachments, { validate: true });
 
+        // Prepare reviews data (used for both compaction continueMessage and normal send)
+        const reviewsData =
+          attachedReviews.length > 0 ? attachedReviews.map((r) => r.data) : undefined;
+
         // When editing a /compact command, regenerate the actual summarization request
         let actualMessageText = messageText;
         let muxMetadata: MuxFrontendMetadata | undefined;
@@ -1575,9 +1579,15 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
               api,
               workspaceId: props.workspaceId,
               maxOutputTokens: parsed.maxOutputTokens,
-              continueMessage: parsed.continueMessage
-                ? { text: parsed.continueMessage }
-                : undefined,
+              // Include current attachments (images, reviews) in continueMessage so they're
+              // queued after compaction completes, not just attached to the compaction request
+              continueMessage: buildContinueMessage({
+                text: parsed.continueMessage,
+                imageParts,
+                reviews: reviewsData,
+                model: sendMessageOptions.model,
+                mode: sendMessageOptions.mode === "plan" ? "plan" : "exec",
+              }),
               model: parsed.model,
               sendMessageOptions,
             });
@@ -1587,10 +1597,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           }
         }
 
-        // Process reviews into message text and metadata using shared utility
-        // Review.data is already ReviewNoteData shape
-        const reviewsData =
-          attachedReviews.length > 0 ? attachedReviews.map((r) => r.data) : undefined;
         const { finalText: finalMessageText, metadata: reviewMetadata } = prepareUserMessageForSend(
           { text: actualMessageText, reviews: reviewsData },
           muxMetadata

@@ -26,13 +26,89 @@ export interface UserMessageContent {
 }
 
 /**
- * Message to continue with after compaction.
- * Extends UserMessageContent with model and mode preferences.
+ * Brand symbol for ContinueMessage - ensures it can only be created via factory functions.
+ * This prevents bugs where code manually constructs { text: "..." } and forgets fields.
  */
-export interface ContinueMessage extends UserMessageContent {
+declare const ContinueMessageBrand: unique symbol;
+
+/**
+ * Message to continue with after compaction.
+ * Branded type - must be created via buildContinueMessage() or rebuildContinueMessage().
+ */
+export type ContinueMessage = UserMessageContent & {
   model?: string;
   /** Mode for the continue message (determines tool policy). Defaults to 'exec'. */
   mode?: "exec" | "plan";
+  /** Brand marker - not present at runtime, enforces factory usage at compile time */
+  readonly [ContinueMessageBrand]: true;
+};
+
+/**
+ * Input options for building a ContinueMessage.
+ * All content fields optional - returns undefined if no content provided.
+ */
+export interface BuildContinueMessageOptions {
+  text?: string;
+  imageParts?: ImagePart[];
+  reviews?: ReviewNoteDataForDisplay[];
+  model: string;
+  mode: "exec" | "plan";
+}
+
+/**
+ * Build a ContinueMessage from raw inputs.
+ * Centralizes the has-content check and field construction.
+ *
+ * @returns ContinueMessage if there's content to continue with, undefined otherwise
+ */
+export function buildContinueMessage(
+  opts: BuildContinueMessageOptions
+): ContinueMessage | undefined {
+  const hasText = opts.text && opts.text.length > 0;
+  const hasImages = opts.imageParts && opts.imageParts.length > 0;
+  const hasReviews = opts.reviews && opts.reviews.length > 0;
+  if (!hasText && !hasImages && !hasReviews) return undefined;
+
+  // Type assertion is safe here - this is the only factory for ContinueMessage
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+  const result: ContinueMessage = {
+    text: opts.text ?? "",
+    imageParts: opts.imageParts,
+    reviews: opts.reviews,
+    model: opts.model,
+    mode: opts.mode,
+  } as ContinueMessage;
+  return result;
+}
+
+/**
+ * Persisted ContinueMessage shape - what we read from storage/history.
+ * May be missing fields if saved by older code versions.
+ */
+export type PersistedContinueMessage = Partial<Omit<ContinueMessage, typeof ContinueMessageBrand>>;
+
+/**
+ * Rebuild a ContinueMessage from persisted data.
+ * Use this when reading from storage/history where the data may have been
+ * saved by older code that didn't include all fields.
+ *
+ * @param persisted - Data from storage (may be partial)
+ * @param defaults - Default values for model/mode if not in persisted data
+ * @returns Branded ContinueMessage, or undefined if no content
+ */
+export function rebuildContinueMessage(
+  persisted: PersistedContinueMessage | undefined,
+  defaults: { model: string; mode: "exec" | "plan" }
+): ContinueMessage | undefined {
+  if (!persisted) return undefined;
+
+  return buildContinueMessage({
+    text: persisted.text,
+    imageParts: persisted.imageParts,
+    reviews: persisted.reviews,
+    model: persisted.model ?? defaults.model,
+    mode: persisted.mode ?? defaults.mode,
+  });
 }
 
 // Parsed compaction request data (shared type for consistency)

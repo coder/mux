@@ -9,10 +9,11 @@
 import type { RouterClient } from "@orpc/server";
 import type { AppRouter } from "@/node/orpc/router";
 import type { SendMessageOptions, ImagePart } from "@/common/orpc/types";
-import type {
-  MuxFrontendMetadata,
-  CompactionRequestData,
-  ContinueMessage,
+import {
+  type MuxFrontendMetadata,
+  type CompactionRequestData,
+  type ContinueMessage,
+  buildContinueMessage,
 } from "@/common/types/message";
 import type { ReviewNoteData } from "@/common/types/review";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
@@ -597,33 +598,8 @@ export function formatNewCommand(
 // Compaction
 // ============================================================================
 
-/**
- * Build a ContinueMessage from raw inputs.
- * Centralizes the has-content check and field construction to avoid duplication
- * across executeCompaction() call sites.
- *
- * @returns ContinueMessage if there's content to continue with, undefined otherwise
- */
-export function buildContinueMessage(opts: {
-  text?: string;
-  imageParts?: ImagePart[];
-  reviews?: ReviewNoteData[];
-  model: string;
-  mode: "exec" | "plan";
-}): ContinueMessage | undefined {
-  const hasText = opts.text && opts.text.length > 0;
-  const hasImages = opts.imageParts && opts.imageParts.length > 0;
-  const hasReviews = opts.reviews && opts.reviews.length > 0;
-  if (!hasText && !hasImages && !hasReviews) return undefined;
-
-  return {
-    text: opts.text ?? "",
-    imageParts: opts.imageParts,
-    reviews: opts.reviews,
-    model: opts.model,
-    mode: opts.mode,
-  };
-}
+// Re-export buildContinueMessage from common/types for backward compatibility
+export { buildContinueMessage } from "@/common/types/message";
 
 export interface CompactionOptions {
   api?: RouterClient<AppRouter>;
