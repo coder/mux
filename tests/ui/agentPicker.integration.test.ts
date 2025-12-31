@@ -187,12 +187,10 @@ describeIntegration("Agent Picker (UI)", () => {
         // Built-in agents should be present
         expect(agentNames).toContain("Exec");
         expect(agentNames).toContain("Plan");
-        expect(agentNames).toContain("Ask");
 
         // Check IDs match
         expect(getAgentIdByName(view.container, "Exec")).toBe("exec");
         expect(getAgentIdByName(view.container, "Plan")).toBe("plan");
-        expect(getAgentIdByName(view.container, "Ask")).toBe("ask");
       } finally {
         await cleanupView(view, cleanupDom);
       }
@@ -302,7 +300,6 @@ This is a test agent.
         // Built-in agents have descriptions, so they should have help indicators
         expect(agentHasHelpIndicator(view.container, "Exec")).toBe(true);
         expect(agentHasHelpIndicator(view.container, "Plan")).toBe(true);
-        expect(agentHasHelpIndicator(view.container, "Ask")).toBe(true);
       } finally {
         await cleanupView(view, cleanupDom);
       }
@@ -446,7 +443,7 @@ This is a test agent.
         // Get initial count
         let agentNames = getVisibleAgentNames(view.container);
         const initialCount = agentNames.length;
-        expect(initialCount).toBeGreaterThanOrEqual(3); // At least exec, plan, ask
+        expect(initialCount).toBeGreaterThanOrEqual(2); // At least exec, plan
 
         // Type in search
         const searchInput = view.container.querySelector(
