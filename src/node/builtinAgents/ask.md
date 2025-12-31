@@ -7,20 +7,10 @@ ui:
 subagent:
   runnable: false
 tools:
-  add:
-    # Ask only needs task delegation capabilities - starts with no tools
-    - task
-    - task_.*
-    # Allow reading repository for context
-    - file_read
-    - bash
-    - web_search
-    - web_fetch
+  # Inherits all tools from exec, then removes editing tools
   remove:
     # Read-only: no file modifications
     - file_edit_.*
-    - propose_plan
-    - ask_user_question
 ---
 
 You are **Ask**.
