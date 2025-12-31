@@ -690,20 +690,45 @@ export function prepareCompactionMessage(options: CompactionOptions): {
 }
 
 /**
- * Execute a compaction command
+ * Execute a compaction command via the control-plane endpoint.
+ * This ensures compaction cannot be dropped or treated as a normal message.
  */
 export async function executeCompaction(
   options: CompactionOptions & { api: RouterClient<AppRouter> }
 ): Promise<CompactionResult> {
-  const { messageText, metadata, sendOptions } = prepareCompactionMessage(options);
+  // Resolve compaction model preference
+  const effectiveModel = resolveCompactionModel(options.model);
 
-  const result = await options.api.workspace.sendMessage({
+  // Map source to control-plane format
+  const source: "user" | "force-compaction" | "idle-compaction" =
+    options.source === "idle-compaction" ? "idle-compaction" : "user";
+
+  // Build continue message if provided
+  const continueMode = options.continueMessage?.mode ?? "exec";
+  const continueMessage = options.continueMessage
+    ? {
+        text: options.continueMessage.text,
+        imageParts: options.continueMessage.imageParts,
+        model: options.continueMessage.model ?? options.sendMessageOptions.model,
+        mode: continueMode,
+      }
+    : undefined;
+
+  // Call the control-plane compactHistory endpoint
+  const result = await options.api.workspace.compactHistory({
     workspaceId: options.workspaceId,
-    message: messageText,
-    options: {
-      ...sendOptions,
-      muxMetadata: metadata,
-      editMessageId: options.editMessageId,
+    model: effectiveModel,
+    maxOutputTokens: options.maxOutputTokens,
+    continueMessage,
+    source,
+    // For edits, interrupt any active stream before compacting.
+    // We preserve partial output; compaction will commit partial.json before summarizing.
+    interrupt: options.editMessageId ? "abort" : undefined,
+    sendMessageOptions: {
+      model: options.sendMessageOptions.model,
+      thinkingLevel: options.sendMessageOptions.thinkingLevel,
+      providerOptions: options.sendMessageOptions.providerOptions,
+      experiments: options.sendMessageOptions.experiments,
     },
   });
 

@@ -2060,6 +2060,112 @@ export class WorkspaceService extends EventEmitter {
     return Ok(undefined);
   }
 
+  /**
+   * Control-plane endpoint for compaction.
+   * Atomically interrupts any active stream (if requested) and starts compaction.
+   *
+   * Unlike sendMessage with muxMetadata, this:
+   * - Does not persist a user message with the compaction prompt
+   * - Uses session state to track compaction operation
+   * - Provides explicit operationId for correlation
+   */
+  async compactHistory(
+    workspaceId: string,
+    options: {
+      model?: string;
+      maxOutputTokens?: number;
+      continueMessage?: {
+        text: string;
+        imageParts?: ImagePart[];
+        model?: string;
+        mode?: "exec" | "plan";
+      };
+      source?: "user" | "force-compaction" | "idle-compaction";
+      interrupt?: "none" | "graceful" | "abort";
+      sendMessageOptions?: Omit<SendMessageOptions, "editMessageId" | "muxMetadata">;
+    }
+  ): Promise<Result<{ operationId: string }, SendMessageError>> {
+    const operationId = `compact-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    const source = options.source ?? "user";
+    const interrupt = options.interrupt ?? "none";
+
+    log.debug("compactHistory: starting", {
+      workspaceId,
+      operationId,
+      source,
+      interrupt,
+      hasModel: !!options.model,
+      hasContinueMessage: !!options.continueMessage,
+    });
+
+    try {
+      // Block operations on workspaces being renamed/removed
+      if (this.renamingWorkspaces.has(workspaceId)) {
+        return Err({
+          type: "unknown",
+          raw: "Workspace is being renamed. Please wait and try again.",
+        });
+      }
+      if (this.removingWorkspaces.has(workspaceId)) {
+        return Err({
+          type: "unknown",
+          raw: "Workspace is being deleted. Please wait and try again.",
+        });
+      }
+      if (!this.config.findWorkspace(workspaceId)) {
+        return Err({ type: "unknown", raw: "Workspace not found. It may have been deleted." });
+      }
+
+      const session = this.getOrCreateSession(workspaceId);
+
+      // Handle active stream based on interrupt mode
+      if (this.aiService.isStreaming(workspaceId)) {
+        switch (interrupt) {
+          case "none":
+            return Err({
+              type: "unknown",
+              raw: "Cannot compact while stream is active. Use interrupt option or wait for stream to complete.",
+            });
+          case "graceful":
+            // Wait for stream to complete (soft interrupt)
+            await session.interruptStream({ soft: true });
+            break;
+          case "abort":
+            // Interrupt immediately.
+            // NOTE: We intentionally preserve any streamed partial output.
+            // startCompaction() will commit partial.json to history before building the compaction prompt.
+            await session.interruptStream();
+            break;
+        }
+      }
+
+      // Start compaction via session
+      const result = await session.startCompaction({
+        operationId,
+        model: options.model,
+        maxOutputTokens: options.maxOutputTokens,
+        continueMessage: options.continueMessage,
+        source,
+        sendMessageOptions: options.sendMessageOptions,
+      });
+
+      if (!result.success) {
+        return result;
+      }
+
+      // Skip recency update for idle compaction to preserve "last used" time
+      if (source !== "idle-compaction") {
+        void this.updateRecencyTimestamp(workspaceId, Date.now());
+      }
+
+      return Ok({ operationId });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : JSON.stringify(error, null, 2);
+      log.error("Unexpected error in compactHistory:", error);
+      return Err({ type: "unknown", raw: `Failed to compact history: ${errorMessage}` });
+    }
+  }
+
   async replaceHistory(
     workspaceId: string,
     summaryMessage: MuxMessage,

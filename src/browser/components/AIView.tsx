@@ -64,7 +64,7 @@ import { ConcurrentLocalWarning } from "./ConcurrentLocalWarning";
 import { BackgroundProcessesBanner } from "./BackgroundProcessesBanner";
 import { useBackgroundBashHandlers } from "@/browser/hooks/useBackgroundBashHandlers";
 import { checkAutoCompaction } from "@/browser/utils/compaction/autoCompactionCheck";
-import { executeCompaction } from "@/browser/utils/chatCommands";
+
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { useAutoCompactionSettings } from "../hooks/useAutoCompactionSettings";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
@@ -220,13 +220,21 @@ const AIViewInner: React.FC<AIViewProps> = ({
   // We pass a default continueMessage of "Continue" as a resume sentinel so the backend can
   // auto-send it after compaction. The compaction prompt builder special-cases this sentinel
   // to avoid injecting it into the summarization request.
+  // Uses "force-compaction" source to distinguish from user-initiated /compact.
   const handleForceCompaction = useCallback(() => {
     if (!api) return;
-    void executeCompaction({
-      api,
+    // Use compactHistory endpoint with interrupt to ensure immediate compaction
+    void api.workspace.compactHistory({
       workspaceId,
-      sendMessageOptions: pendingSendOptions,
+      source: "force-compaction",
+      interrupt: "abort",
       continueMessage: { text: "Continue" },
+      sendMessageOptions: {
+        model: pendingSendOptions.model,
+        thinkingLevel: pendingSendOptions.thinkingLevel,
+        providerOptions: pendingSendOptions.providerOptions,
+        experiments: pendingSendOptions.experiments,
+      },
     });
   }, [api, workspaceId, pendingSendOptions]);
 
