@@ -1892,6 +1892,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           {variant === "creation" && (
             <CreationControls
               branches={creationState.branches}
+              remoteBranchGroups={creationState.remoteBranchGroups}
+              remoteBranches={creationState.remoteBranches}
               branchesLoaded={creationState.branchesLoaded}
               trunkBranch={creationState.trunkBranch}
               onTrunkBranchChange={creationState.setTrunkBranch}
@@ -1904,6 +1906,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
               disabled={isSendInFlight}
               projectName={props.projectName}
               nameState={creationState.nameState}
+              branchMode={creationState.branchMode}
+              onBranchModeChange={creationState.setBranchMode}
+              selectedExistingBranch={creationState.selectedExistingBranch}
+              onSelectedExistingBranchChange={creationState.setSelectedExistingBranch}
             />
           )}
 

@@ -249,6 +249,8 @@ export const workspace = {
       trunkBranch: z.string().optional(),
       /** Human-readable title (e.g., "Fix plan mode over SSH") - optional for backwards compat */
       title: z.string().optional(),
+      /** Optional git ref to base the branch on (e.g. "origin/foo"). */
+      startPointRef: z.string().optional(),
       runtimeConfig: RuntimeConfigSchema.optional(),
     }),
     output: z.discriminatedUnion("success", [

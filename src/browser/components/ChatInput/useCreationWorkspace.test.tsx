@@ -146,6 +146,8 @@ const setupWindow = ({
       }
       return Promise.resolve({
         branches: [FALLBACK_BRANCH],
+        remoteBranches: [],
+        remoteBranchGroups: [],
         recommendedTrunk: FALLBACK_BRANCH,
       });
     });
@@ -344,6 +346,8 @@ describe("useCreationWorkspace", () => {
       (): Promise<BranchListResult> =>
         Promise.resolve({
           branches: ["main", "dev"],
+          remoteBranches: [],
+          remoteBranchGroups: [],
           recommendedTrunk: "dev",
         })
     );
@@ -378,6 +382,8 @@ describe("useCreationWorkspace", () => {
       (): Promise<BranchListResult> =>
         Promise.resolve({
           branches: ["main"],
+          remoteBranches: [],
+          remoteBranchGroups: [],
           recommendedTrunk: "main",
         })
     );
@@ -399,6 +405,8 @@ describe("useCreationWorkspace", () => {
       (): Promise<BranchListResult> =>
         Promise.resolve({
           branches: ["main"],
+          remoteBranches: [],
+          remoteBranchGroups: [],
           recommendedTrunk: "main",
         })
     );

@@ -1,4 +1,4 @@
-import { fireEvent, waitFor } from "@testing-library/react";
+import { waitFor } from "@testing-library/react";
 
 import { shouldRunIntegrationTests, validateApiKeys } from "../testUtils";
 import {
@@ -83,7 +83,7 @@ describeIntegration("ReviewPanel manual refresh (UI + ORPC)", () => {
         expect(view.queryByText(new RegExp(MANUAL_MARKER))).toBeNull();
 
         // Click refresh
-        fireEvent.click(refreshButton);
+        refreshButton.click();
 
         // Immediate feedback: spinner should become visible
         const icon = refreshButton.querySelector("svg");
@@ -122,7 +122,7 @@ describeIntegration("ReviewPanel manual refresh (UI + ORPC)", () => {
         expect(refreshButton.getAttribute("data-last-refresh-trigger")).toBe("");
 
         // Press Ctrl+R (or Cmd+R on mac)
-        fireEvent.keyDown(window, { key: "r", ctrlKey: true });
+        window.dispatchEvent(new window.KeyboardEvent("keydown", { key: "r", ctrlKey: true }));
 
         // Should trigger refresh and update lastRefreshInfo
         await waitForRefreshButtonIdle(refreshButton);
@@ -150,7 +150,7 @@ describeIntegration("ReviewPanel manual refresh (UI + ORPC)", () => {
         const initialTrigger = refreshButton.getAttribute("data-last-refresh-trigger");
 
         // First manual refresh (no changes to diff, just clicking refresh)
-        fireEvent.click(refreshButton);
+        refreshButton.click();
         await waitForRefreshButtonIdle(refreshButton);
         await assertRefreshButtonHasLastRefreshInfo(refreshButton, "manual");
 
@@ -162,7 +162,7 @@ describeIntegration("ReviewPanel manual refresh (UI + ORPC)", () => {
         await new Promise((r) => setTimeout(r, 100));
 
         // Second manual refresh (still no changes - diff is identical)
-        fireEvent.click(refreshButton);
+        refreshButton.click();
         await waitForRefreshButtonIdle(refreshButton);
         await assertRefreshButtonHasLastRefreshInfo(refreshButton, "manual");
 
@@ -299,7 +299,7 @@ describeIntegration("ReviewPanel simulated tool refresh (UI + ORPC, no LLM)", ()
         expect(reviewPanel).not.toBeNull();
 
         // Focus the panel (simulates user interacting with the review)
-        fireEvent.focus(reviewPanel!);
+        reviewPanel!.dispatchEvent(new window.Event("focusin", { bubbles: true }));
 
         // Make a file change while panel is focused
         const FOCUS_MARKER = "FOCUS_BLUR_TEST_MARKER";
@@ -318,7 +318,7 @@ describeIntegration("ReviewPanel simulated tool refresh (UI + ORPC, no LLM)", ()
         expect(view.queryByText(new RegExp(FOCUS_MARKER))).toBeNull();
 
         // Now blur the panel - this should flush the pending refresh
-        fireEvent.blur(reviewPanel!);
+        reviewPanel!.dispatchEvent(new window.Event("focusout", { bubbles: true }));
 
         // Wait for the refresh to complete
         await view.findByText(new RegExp(FOCUS_MARKER), {}, { timeout: 60_000 });
@@ -438,7 +438,7 @@ describeIntegration("ReviewPanel auto refresh (UI + ORPC + live LLM)", () => {
         });
 
         // Manual refresh to pick up the change
-        fireEvent.click(refreshButton);
+        refreshButton.click();
         await waitForRefreshButtonIdle(refreshButton);
         await assertRefreshButtonHasLastRefreshInfo(refreshButton, "manual");
 
@@ -468,8 +468,10 @@ describeIntegration("ReviewPanel auto refresh (UI + ORPC + live LLM)", () => {
         );
 
         // Start selection by mousedown on the diff indicator, then mouseup to complete
-        fireEvent.mouseDown(diffIndicator, { button: 0 });
-        fireEvent.mouseUp(window);
+        diffIndicator.dispatchEvent(
+          new window.MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 })
+        );
+        window.dispatchEvent(new window.MouseEvent("mouseup", { bubbles: true, cancelable: true }));
 
         // Wait for React state update
         await waitFor(
@@ -485,7 +487,7 @@ describeIntegration("ReviewPanel auto refresh (UI + ORPC + live LLM)", () => {
         expect(refreshButton.getAttribute("data-disabled")).toBe("true");
 
         // Try to click the disabled button - should NOT trigger refresh
-        fireEvent.click(refreshButton);
+        refreshButton.click();
 
         // Wait a bit to ensure no refresh happens
         await new Promise((r) => setTimeout(r, 500));

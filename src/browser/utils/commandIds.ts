@@ -28,6 +28,7 @@ export const CommandIds = {
   workspaceRenameAny: () => "ws:rename-any" as const,
   workspaceOpenTerminal: () => "ws:open-terminal" as const,
   workspaceOpenTerminalCurrent: () => "ws:open-terminal-current" as const,
+  workspaceOpenBranch: () => "ws:open-branch" as const,
 
   // Navigation commands
   navNext: () => "nav:next" as const,

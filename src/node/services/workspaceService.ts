@@ -18,7 +18,10 @@ import type { ExperimentsService } from "@/node/services/experimentsService";
 import { EXPERIMENT_IDS, EXPERIMENTS } from "@/common/constants/experiments";
 import type { MCPServerManager } from "@/node/services/mcpServerManager";
 import { createRuntime, IncompatibleRuntimeError } from "@/node/runtime/runtimeFactory";
-import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
+import {
+  validateWorkspaceName,
+  validateGitBranchName,
+} from "@/common/utils/validation/workspaceValidation";
 import { getPlanFilePath, getLegacyPlanFilePath } from "@/common/utils/planStorage";
 import { shellQuote } from "@/node/runtime/backgroundCommands";
 import { extractEditedFilePaths } from "@/common/utils/messages/extractEditedFiles";
@@ -526,18 +529,10 @@ export class WorkspaceService extends EventEmitter {
     projectPath: string,
     branchName: string,
     trunkBranch: string | undefined,
+    startPointRef: string | undefined,
     title?: string,
     runtimeConfig?: RuntimeConfig
   ): Promise<Result<{ metadata: FrontendWorkspaceMetadata }>> {
-    // Validate workspace name
-    const validation = validateWorkspaceName(branchName);
-    if (!validation.valid) {
-      return Err(validation.error ?? "Invalid workspace name");
-    }
-
-    // Generate stable workspace ID
-    const workspaceId = this.config.generateStableId();
-
     // Create runtime for workspace creation
     // Default to worktree runtime for backward compatibility
     let finalRuntimeConfig: RuntimeConfig = runtimeConfig ?? {
@@ -547,6 +542,18 @@ export class WorkspaceService extends EventEmitter {
 
     // Local runtime doesn't need a trunk branch; worktree/SSH runtimes require it
     const isLocalRuntime = finalRuntimeConfig.type === "local";
+
+    // Use git-specific validation for worktree/SSH runtimes (allows slashes)
+    // Use strict validation for local runtime
+    const validation = isLocalRuntime
+      ? validateWorkspaceName(branchName)
+      : validateGitBranchName(branchName);
+    if (!validation.valid) {
+      return Err(validation.error ?? "Invalid workspace name");
+    }
+
+    // Generate stable workspace ID
+    const workspaceId = this.config.generateStableId();
     const normalizedTrunkBranch = trunkBranch?.trim() ?? "";
     if (!isLocalRuntime && normalizedTrunkBranch.length === 0) {
       return Err("Trunk branch is required for worktree and SSH runtimes");
@@ -586,6 +593,7 @@ export class WorkspaceService extends EventEmitter {
           projectPath,
           branchName: finalBranchName,
           trunkBranch: normalizedTrunkBranch,
+          startPointRef,
           directoryName: finalBranchName,
           initLogger,
         });
@@ -650,6 +658,7 @@ export class WorkspaceService extends EventEmitter {
           projectPath,
           branchName: finalBranchName,
           trunkBranch: normalizedTrunkBranch,
+          startPointRef,
           workspacePath: createResult!.workspacePath,
           initLogger,
         })
@@ -853,11 +862,6 @@ export class WorkspaceService extends EventEmitter {
         );
       }
 
-      const validation = validateWorkspaceName(newName);
-      if (!validation.valid) {
-        return Err(validation.error ?? "Invalid workspace name");
-      }
-
       // Mark workspace as renaming to block new streams during the rename operation
       this.renamingWorkspaces.add(workspaceId);
 
@@ -867,6 +871,16 @@ export class WorkspaceService extends EventEmitter {
       }
       const oldMetadata = metadataResult.data;
       const oldName = oldMetadata.name;
+
+      // Use git-specific validation for worktree/SSH runtimes (allows slashes)
+      // Use strict validation for local runtime
+      const isLocalRuntime = oldMetadata.runtimeConfig?.type === "local";
+      const validation = isLocalRuntime
+        ? validateWorkspaceName(newName)
+        : validateGitBranchName(newName);
+      if (!validation.valid) {
+        return Err(validation.error ?? "Invalid workspace name");
+      }
 
       if (newName === oldName) {
         return Ok({ newWorkspaceId: workspaceId });
@@ -1355,11 +1369,6 @@ export class WorkspaceService extends EventEmitter {
     newName: string
   ): Promise<Result<{ metadata: FrontendWorkspaceMetadata; projectPath: string }>> {
     try {
-      const validation = validateWorkspaceName(newName);
-      if (!validation.valid) {
-        return Err(validation.error ?? "Invalid workspace name");
-      }
-
       if (this.aiService.isStreaming(sourceWorkspaceId)) {
         await this.partialService.commitToHistory(sourceWorkspaceId);
       }
@@ -1376,6 +1385,17 @@ export class WorkspaceService extends EventEmitter {
         type: "local",
         srcBaseDir: this.config.srcDir,
       };
+
+      // Use git-specific validation for worktree/SSH runtimes (allows slashes)
+      // Use strict validation for local runtime
+      const isLocalRuntime = sourceRuntimeConfig.type === "local";
+      const validation = isLocalRuntime
+        ? validateWorkspaceName(newName)
+        : validateGitBranchName(newName);
+      if (!validation.valid) {
+        return Err(validation.error ?? "Invalid workspace name");
+      }
+
       const runtime = createRuntime(sourceRuntimeConfig);
 
       const newWorkspaceId = this.config.generateStableId();

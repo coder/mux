@@ -118,8 +118,22 @@ export const MuxMessageSchema = z.object({
     .optional(),
 });
 
+const RemoteBranchGroupSchema = z.object({
+  remote: z.string(),
+  branches: z.array(z.string()),
+  truncated: z.boolean(),
+});
+
 export const BranchListResultSchema = z.object({
   branches: z.array(z.string()),
+  /**
+   * Remote-only branches, excluding those already in local branches.
+   *
+   * @deprecated Prefer remoteBranchGroups (keeps remote name for disambiguation)
+   */
+  remoteBranches: z.array(z.string()),
+  /** Remote-only branches grouped by remote name (e.g. origin/upstream) */
+  remoteBranchGroups: z.array(RemoteBranchGroupSchema).optional().default([]),
   /** Recommended trunk branch, or null for non-git directories */
   recommendedTrunk: z.string().nullable(),
 });

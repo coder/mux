@@ -24,6 +24,7 @@ import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility
 import { getMuxHome } from "@/common/constants/paths";
 import { PlatformPaths } from "@/common/utils/paths";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
+import { encodeWorkspaceNameForDir } from "@/common/utils/workspaceDirName";
 
 // Re-export project types from dedicated types file (for preload usage)
 export type { Workspace, ProjectConfig, ProjectsConfig };
@@ -695,7 +696,8 @@ export class Config {
       // Compute workspace path - this is only for legacy config migration
       // New code should use Runtime.getWorkspacePath() directly
       const projectName = this.getProjectName(projectPath);
-      const workspacePath = path.join(this.srcDir, projectName, metadata.name);
+      const dirName = encodeWorkspaceNameForDir(metadata.name);
+      const workspacePath = path.join(this.srcDir, projectName, dirName);
       const workspaceEntry: Workspace = {
         path: workspacePath,
         id: metadata.id,

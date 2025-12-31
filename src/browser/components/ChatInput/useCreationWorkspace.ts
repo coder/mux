@@ -5,6 +5,10 @@ import type { ThinkingLevel } from "@/common/types/thinking";
 import type { UIMode } from "@/common/types/mode";
 import { parseRuntimeString } from "@/browser/utils/chatCommands";
 import { useDraftWorkspaceSettings } from "@/browser/hooks/useDraftWorkspaceSettings";
+import {
+  parseExistingBranchSelection,
+  type ExistingBranchSelection,
+} from "@/common/types/branchSelection";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
 import {
@@ -17,15 +21,17 @@ import {
   getWorkspaceAISettingsByModeKey,
   getPendingScopeId,
   getProjectScopeId,
+  getPrefilledExistingBranchKey,
 } from "@/common/constants/storage";
 import type { Toast } from "@/browser/components/ChatInputToast";
 import { useAPI } from "@/browser/contexts/API";
-import type { ImagePart } from "@/common/orpc/types";
+import type { BranchListResult, ImagePart } from "@/common/orpc/types";
 import {
   useWorkspaceName,
   type WorkspaceNameState,
   type WorkspaceIdentity,
 } from "@/browser/hooks/useWorkspaceName";
+import type { BranchMode } from "./CreationControls";
 
 interface UseCreationWorkspaceOptions {
   projectPath: string;
@@ -86,6 +92,10 @@ function syncCreationPreferences(projectPath: string, workspaceId: string): void
 
 interface UseCreationWorkspaceReturn {
   branches: string[];
+  /** Remote-only branches (not in local branches) */
+  remoteBranches: string[];
+  /** Remote-only branches grouped by remote name (e.g. origin/upstream) */
+  remoteBranchGroups: BranchListResult["remoteBranchGroups"];
   /** Whether listBranches has completed (to distinguish loading vs non-git repo) */
   branchesLoaded: boolean;
   trunkBranch: string;
@@ -107,6 +117,12 @@ interface UseCreationWorkspaceReturn {
   nameState: WorkspaceNameState;
   /** The confirmed identity being used for creation (null until generation resolves) */
   creatingWithIdentity: WorkspaceIdentity | null;
+  /** Branch mode: "new" creates a new branch, "existing" uses an existing branch */
+  branchMode: BranchMode;
+  setBranchMode: (mode: BranchMode) => void;
+  /** Selected existing branch (when branchMode is "existing") */
+  selectedExistingBranch: ExistingBranchSelection | null;
+  setSelectedExistingBranch: (selection: ExistingBranchSelection | null) => void;
 }
 
 /**
@@ -124,12 +140,21 @@ export function useCreationWorkspace({
 }: UseCreationWorkspaceOptions): UseCreationWorkspaceReturn {
   const { api } = useAPI();
   const [branches, setBranches] = useState<string[]>([]);
+  const [remoteBranches, setRemoteBranches] = useState<string[]>([]);
+  const [remoteBranchGroups, setRemoteBranchGroups] = useState<
+    BranchListResult["remoteBranchGroups"]
+  >([]);
   const [branchesLoaded, setBranchesLoaded] = useState(false);
   const [recommendedTrunk, setRecommendedTrunk] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
   const [isSending, setIsSending] = useState(false);
   // The confirmed identity being used for workspace creation (set after waitForGeneration resolves)
   const [creatingWithIdentity, setCreatingWithIdentity] = useState<WorkspaceIdentity | null>(null);
+  // Branch mode: "new" creates a new branch, "existing" uses an existing branch
+  const [branchMode, setBranchMode] = useState<BranchMode>("new");
+  // Selected existing branch (when branchMode is "existing")
+  const [selectedExistingBranch, setSelectedExistingBranch] =
+    useState<ExistingBranchSelection | null>(null);
 
   // Centralized draft workspace settings with automatic persistence
   const {
@@ -157,6 +182,25 @@ export function useCreationWorkspace({
   // Destructure name state functions for use in callbacks
   const { waitForGeneration } = workspaceNameState;
 
+  // Check for prefilled existing branch on mount (from command palette "Open Branch as Workspace")
+  useEffect(() => {
+    if (!projectPath.length) return;
+
+    const storedSelection = readPersistedState<unknown>(
+      getPrefilledExistingBranchKey(projectPath),
+      null
+    );
+
+    const selection = parseExistingBranchSelection(storedSelection);
+    if (selection) {
+      // Set existing branch mode and select the branch
+      setBranchMode("existing");
+      setSelectedExistingBranch(selection);
+      // Clear the prefill so it doesn't persist
+      updatePersistedState(getPrefilledExistingBranchKey(projectPath), undefined);
+    }
+  }, [projectPath]);
+
   // Load branches on mount
   useEffect(() => {
     // This can be created with an empty project path when the user is
@@ -170,8 +214,11 @@ export function useCreationWorkspace({
       try {
         const result = await api.projects.listBranches({ projectPath });
         if (!mounted) return;
-        setBranches(result.branches);
-        setRecommendedTrunk(result.recommendedTrunk);
+        // Defensive: tolerate older backends/mocks that may omit newer fields.
+        setBranches(result.branches ?? []);
+        setRemoteBranches(result.remoteBranches ?? []);
+        setRemoteBranchGroups(result.remoteBranchGroups ?? []);
+        setRecommendedTrunk(result.recommendedTrunk ?? null);
       } catch (err) {
         console.error("Failed to load branches:", err);
       } finally {
@@ -195,16 +242,43 @@ export function useCreationWorkspace({
       setCreatingWithIdentity(null);
 
       try {
-        // Wait for identity generation to complete (blocks if still in progress)
-        // Returns null if generation failed or manual name is empty (error already set in hook)
-        const identity = await waitForGeneration();
-        if (!identity) {
-          setIsSending(false);
-          return false;
-        }
+        // Determine branch name and title based on mode
+        let branchName: string;
+        let title: string | undefined;
+        let startPointRef: string | undefined;
 
-        // Set the confirmed identity for splash UI display
-        setCreatingWithIdentity(identity);
+        if (branchMode === "existing") {
+          // Existing branch mode: use selected branch, no title (use branch name)
+          if (!selectedExistingBranch) {
+            setToast({
+              id: Date.now().toString(),
+              type: "error",
+              message: "Please select an existing branch",
+            });
+            setIsSending(false);
+            return false;
+          }
+
+          branchName = selectedExistingBranch.branch;
+          startPointRef =
+            selectedExistingBranch.kind === "remote"
+              ? `${selectedExistingBranch.remote}/${selectedExistingBranch.branch}`
+              : undefined;
+
+          title = undefined; // Will use branch name as title
+          // Set identity for UI display
+          setCreatingWithIdentity({ name: branchName, title: branchName });
+        } else {
+          // New branch mode: use generated/manual name
+          const identity = await waitForGeneration();
+          if (!identity) {
+            setIsSending(false);
+            return false;
+          }
+          branchName = identity.name;
+          title = identity.title;
+          setCreatingWithIdentity(identity);
+        }
 
         // Get runtime config from options
         const runtimeString = getRuntimeString();
@@ -217,12 +291,13 @@ export function useCreationWorkspace({
         // in usePersistedState can delay state updates after model selection)
         const sendMessageOptions = getSendOptionsFromStorage(projectScopeId);
 
-        // Create the workspace with the generated name and title
+        // Create the workspace with the branch name and title
         const createResult = await api.workspace.create({
           projectPath,
-          branchName: identity.name,
+          branchName,
           trunkBranch: settings.trunkBranch,
-          title: identity.title,
+          startPointRef,
+          title,
           runtimeConfig,
         });
 
@@ -304,11 +379,13 @@ export function useCreationWorkspace({
     },
     [
       api,
+      branchMode,
       isSending,
       projectPath,
       projectScopeId,
       onWorkspaceCreated,
       getRuntimeString,
+      selectedExistingBranch,
       settings.mode,
       settings.model,
       settings.thinkingLevel,
@@ -319,6 +396,8 @@ export function useCreationWorkspace({
 
   return {
     branches,
+    remoteBranches,
+    remoteBranchGroups,
     branchesLoaded,
     trunkBranch: settings.trunkBranch,
     setTrunkBranch,
@@ -336,5 +415,10 @@ export function useCreationWorkspace({
     nameState: workspaceNameState,
     // The confirmed identity being used for creation (null until generation resolves)
     creatingWithIdentity,
+    // Branch mode state
+    branchMode,
+    setBranchMode,
+    selectedExistingBranch,
+    setSelectedExistingBranch,
   };
 }

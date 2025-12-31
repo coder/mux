@@ -18,6 +18,7 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { expandTilde } from "./tildeExpansion";
 import { LocalBaseRuntime } from "./LocalBaseRuntime";
 import { toPosixPath } from "@/node/utils/paths";
+import { encodeWorkspaceNameForDir } from "@/common/utils/workspaceDirName";
 import { log } from "@/node/services/log";
 
 /**
@@ -25,8 +26,9 @@ import { log } from "@/node/services/log";
  * directly on the host machine using Node.js APIs.
  *
  * This runtime uses git worktrees for workspace isolation:
- * - Workspaces are created in {srcBaseDir}/{projectName}/{workspaceName}
+ * - Workspaces are created in {srcBaseDir}/{projectName}/{encodedWorkspaceName}
  * - Each workspace is a git worktree with its own branch
+ * - Workspace names containing "/" are encoded (e.g., "feature/foo" → "feature%2Ffoo")
  */
 export class WorktreeRuntime extends LocalBaseRuntime {
   private readonly srcBaseDir: string;
@@ -39,11 +41,12 @@ export class WorktreeRuntime extends LocalBaseRuntime {
 
   getWorkspacePath(projectPath: string, workspaceName: string): string {
     const projectName = getProjectName(projectPath);
-    return path.join(this.srcBaseDir, projectName, workspaceName);
+    const dirName = encodeWorkspaceNameForDir(workspaceName);
+    return path.join(this.srcBaseDir, projectName, dirName);
   }
 
   async createWorkspace(params: WorkspaceCreationParams): Promise<WorkspaceCreationResult> {
-    const { projectPath, branchName, trunkBranch, initLogger } = params;
+    const { projectPath, branchName, trunkBranch, startPointRef, initLogger } = params;
 
     // Clean up stale lock before git operations on main repo
     cleanStaleLock(projectPath);
@@ -81,6 +84,12 @@ export class WorktreeRuntime extends LocalBaseRuntime {
         // Branch exists, just add worktree pointing to it
         using proc = execAsync(
           `git -C "${projectPath}" worktree add "${workspacePath}" "${branchName}"`
+        );
+        await proc.result;
+      } else if (startPointRef) {
+        // Branch doesn't exist locally; create it from the provided ref (e.g. origin/foo)
+        using proc = execAsync(
+          `git -C "${projectPath}" worktree add -b "${branchName}" "${workspacePath}" "${startPointRef}"`
         );
         await proc.result;
       } else {
