@@ -159,7 +159,8 @@ export function useCreationWorkspace({
   // Destructure name state functions for use in callbacks
   const { waitForGeneration } = workspaceNameState;
 
-  // Extracted function to load branches - used on mount and after git init
+  // Load branches - used on mount and after git init
+  // Returns a cleanup function to track mounted state
   const loadBranches = useCallback(async () => {
     if (!projectPath.length || !api) return;
     setBranchesLoaded(false);
@@ -174,11 +175,30 @@ export function useCreationWorkspace({
     }
   }, [projectPath, api]);
 
-  // Load branches on mount
+  // Load branches on mount with mounted guard
   useEffect(() => {
     if (!projectPath.length || !api) return;
-    void loadBranches();
-  }, [projectPath, api, loadBranches]);
+    let mounted = true;
+    setBranchesLoaded(false);
+    const doLoad = async () => {
+      try {
+        const result = await api.projects.listBranches({ projectPath });
+        if (!mounted) return;
+        setBranches(result.branches);
+        setRecommendedTrunk(result.recommendedTrunk);
+      } catch (err) {
+        console.error("Failed to load branches:", err);
+      } finally {
+        if (mounted) {
+          setBranchesLoaded(true);
+        }
+      }
+    };
+    void doLoad();
+    return () => {
+      mounted = false;
+    };
+  }, [projectPath, api]);
 
   const handleSend = useCallback(
     async (messageText: string, imageParts?: ImagePart[]): Promise<boolean> => {
