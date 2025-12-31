@@ -4,6 +4,7 @@ import {
   getThinkingLevelByModelKey,
   getThinkingLevelKey,
   getModeKey,
+  getDisableWorkspaceAgentsKey,
 } from "@/common/constants/storage";
 import { modeToToolPolicy } from "@/common/utils/ui/modeUtils";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
@@ -83,6 +84,12 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
   // Enforce thinking policy (gpt-5-pro → high only)
   const effectiveThinkingLevel = enforceThinkingPolicy(baseModel, thinkingLevel);
 
+  // Read disableWorkspaceAgents toggle (workspace-scoped)
+  const disableWorkspaceAgents = readPersistedState<boolean>(
+    getDisableWorkspaceAgentsKey(workspaceId),
+    false
+  );
+
   return {
     model,
     agentId,
@@ -90,6 +97,7 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
     thinkingLevel: effectiveThinkingLevel,
     toolPolicy: modeToToolPolicy(mode),
     providerOptions,
+    disableWorkspaceAgents: disableWorkspaceAgents || undefined, // Only include if true
     experiments: {
       postCompactionContext: isExperimentEnabled(EXPERIMENT_IDS.POST_COMPACTION_CONTEXT),
       programmaticToolCalling: isExperimentEnabled(EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING),

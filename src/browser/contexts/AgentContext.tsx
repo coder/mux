@@ -17,8 +17,8 @@ export interface AgentContextValue {
    * When true, agents are loaded from projectPath only (ignoring workspace worktree).
    * Useful for unbricking when iterating on agent files in a workspace.
    */
-  useProjectAgentsOnly: boolean;
-  setUseProjectAgentsOnly: Dispatch<SetStateAction<boolean>>;
+  disableWorkspaceAgents: boolean;
+  setDisableWorkspaceAgents: Dispatch<SetStateAction<boolean>>;
 }
 
 const AgentContext = createContext<AgentContextValue | undefined>(undefined);

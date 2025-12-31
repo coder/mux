@@ -48,8 +48,8 @@ const noop = () => {
   // intentional noop for tests
 };
 const defaultContextProps = {
-  useProjectAgentsOnly: false,
-  setUseProjectAgentsOnly: noop,
+  disableWorkspaceAgents: false,
+  setDisableWorkspaceAgents: noop,
 };
 
 describe("AgentModePicker", () => {

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, FolderGit2, RefreshCw } from "lucide-react";
+import { ChevronDown, FolderX, RefreshCw } from "lucide-react";
 
 import { useAgent } from "@/browser/contexts/AgentContext";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
@@ -194,8 +194,8 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
     agents,
     refresh,
     refreshing,
-    useProjectAgentsOnly,
-    setUseProjectAgentsOnly,
+    disableWorkspaceAgents,
+    setDisableWorkspaceAgents,
   } = useAgent();
 
   const onComplete = props.onComplete;
@@ -503,25 +503,29 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
                 <button
                   type="button"
                   aria-label={
-                    useProjectAgentsOnly
-                      ? "Using project agents (click for workspace)"
-                      : "Using workspace agents (click for project only)"
+                    disableWorkspaceAgents
+                      ? "Workspace agents disabled (click to enable)"
+                      : "Workspace agents enabled (click to disable)"
                   }
-                  onClick={() => setUseProjectAgentsOnly((prev) => !prev)}
+                  onClick={() => setDisableWorkspaceAgents((prev) => !prev)}
                   className={cn(
                     "flex-shrink-0 p-0.5 transition-colors",
-                    useProjectAgentsOnly
-                      ? "text-accent hover:text-accent-hover"
+                    disableWorkspaceAgents
+                      ? "text-red-500 hover:text-red-400"
                       : "text-muted hover:text-foreground"
                   )}
                 >
-                  <FolderGit2 className="h-3 w-3" />
+                  <FolderX className="h-3 w-3" />
                 </button>
               </TooltipTrigger>
-              <TooltipContent side="bottom" align="end" className="max-w-52">
-                {useProjectAgentsOnly
-                  ? "Project agents only (click to include workspace agents)"
-                  : "Workspace agents (click to use project agents only)"}
+              <TooltipContent side="bottom" align="end" className="max-w-56">
+                {disableWorkspaceAgents ? (
+                  <span className="text-red-400">
+                    Workspace agents disabled — using built-in/global only. Click to re-enable.
+                  </span>
+                ) : (
+                  "Disable workspace agents (use built-in/global only)"
+                )}
               </TooltipContent>
             </Tooltip>
             <Tooltip>

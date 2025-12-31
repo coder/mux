@@ -22,7 +22,7 @@ import {
   getAgentIdKey,
   getModeKey,
   getProjectScopeId,
-  getUseProjectAgentsOnlyKey,
+  getDisableWorkspaceAgentsKey,
   GLOBAL_SCOPE_ID,
 } from "@/common/constants/storage";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
@@ -66,8 +66,8 @@ export const ModeProvider: React.FC<ModeProviderProps> = (props) => {
   });
 
   // Toggle to use project agents only (ignore workspace worktree agents)
-  const [useProjectAgentsOnly, setUseProjectAgentsOnly] = usePersistedState<boolean>(
-    getUseProjectAgentsOnlyKey(scopeId),
+  const [disableWorkspaceAgents, setDisableWorkspaceAgents] = usePersistedState<boolean>(
+    getDisableWorkspaceAgentsKey(scopeId),
     false,
     { listener: true }
   );
@@ -132,19 +132,19 @@ export const ModeProvider: React.FC<ModeProviderProps> = (props) => {
   useEffect(() => {
     setLoaded(false);
     setLoadFailed(false);
-    void fetchAgents(props.projectPath, props.workspaceId, useProjectAgentsOnly);
-  }, [fetchAgents, props.projectPath, props.workspaceId, useProjectAgentsOnly]);
+    void fetchAgents(props.projectPath, props.workspaceId, disableWorkspaceAgents);
+  }, [fetchAgents, props.projectPath, props.workspaceId, disableWorkspaceAgents]);
 
   // Manual refresh function
   const refresh = useCallback(async () => {
     if (!props.projectPath) return;
     setRefreshing(true);
     try {
-      await fetchAgents(props.projectPath, props.workspaceId, useProjectAgentsOnly);
+      await fetchAgents(props.projectPath, props.workspaceId, disableWorkspaceAgents);
     } finally {
       setRefreshing(false);
     }
-  }, [fetchAgents, props.projectPath, props.workspaceId, useProjectAgentsOnly]);
+  }, [fetchAgents, props.projectPath, props.workspaceId, disableWorkspaceAgents]);
 
   const mode = useMemo(() => resolveModeFromAgentId(agentId, agents), [agentId, agents]);
 
@@ -208,8 +208,8 @@ export const ModeProvider: React.FC<ModeProviderProps> = (props) => {
       loadFailed,
       refresh,
       refreshing,
-      useProjectAgentsOnly,
-      setUseProjectAgentsOnly,
+      disableWorkspaceAgents,
+      setDisableWorkspaceAgents,
     }),
     [
       agentId,
@@ -219,8 +219,8 @@ export const ModeProvider: React.FC<ModeProviderProps> = (props) => {
       refresh,
       refreshing,
       setAgentId,
-      useProjectAgentsOnly,
-      setUseProjectAgentsOnly,
+      disableWorkspaceAgents,
+      setDisableWorkspaceAgents,
     ]
   );
 

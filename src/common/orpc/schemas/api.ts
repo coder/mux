@@ -571,7 +571,8 @@ export const tasks = {
 // Agents can be discovered from either the PROJECT path or the WORKSPACE path.
 // - Project path: <projectPath>/.mux/agents - shared across all workspaces
 // - Workspace path: <worktree>/.mux/agents - workspace-specific (useful for iterating)
-// Default is workspace path when workspaceId is provided; use useProjectAgentsOnly to override.
+// Default is workspace path when workspaceId is provided.
+// Use disableWorkspaceAgents in SendMessageOptions to skip workspace agents during message sending.
 export const agents = {
   list: {
     // projectPath is required; workspaceId is optional.

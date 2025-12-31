@@ -993,6 +993,7 @@ export class AIService extends EventEmitter {
    * @param recordFileState Optional callback to record file state for external edit detection
    * @param changedFileAttachments Optional attachments for files that were edited externally
    * @param postCompactionAttachments Optional attachments to inject after compaction
+   * @param disableWorkspaceAgents When true, read agent definitions from project path instead of workspace worktree
    * @returns Promise that resolves when streaming completes or fails
    */
   async streamMessage(
@@ -1010,7 +1011,8 @@ export class AIService extends EventEmitter {
     recordFileState?: (filePath: string, state: FileState) => void,
     changedFileAttachments?: EditedFileAttachment[],
     postCompactionAttachments?: PostCompactionAttachment[] | null,
-    experiments?: { programmaticToolCalling?: boolean; programmaticToolCallingExclusive?: boolean }
+    experiments?: { programmaticToolCalling?: boolean; programmaticToolCallingExclusive?: boolean },
+    disableWorkspaceAgents?: boolean
   ): Promise<Result<void, SendMessageError>> {
     try {
       if (this.mockModeEnabled && this.mockScenarioPlayer) {
@@ -1125,16 +1127,23 @@ export class AIService extends EventEmitter {
       const parsedAgentId = AgentIdSchema.safeParse(requestedAgentIdNormalized);
       const effectiveAgentId = parsedAgentId.success ? parsedAgentId.data : ("exec" as const);
 
+      // When disableWorkspaceAgents is true, skip workspace-specific agents entirely.
+      // Use project path so only built-in/global agents are available. This allows "unbricking"
+      // when iterating on agent files - a broken agent in the worktree won't affect message sending.
+      const agentDiscoveryPath = disableWorkspaceAgents ? metadata.projectPath : workspacePath;
+
       let agentDefinition;
       try {
-        agentDefinition = await readAgentDefinition(runtime, workspacePath, effectiveAgentId);
+        agentDefinition = await readAgentDefinition(runtime, agentDiscoveryPath, effectiveAgentId);
       } catch (error) {
         log.warn("Failed to load agent definition; falling back to exec", {
           workspaceId,
           effectiveAgentId,
+          agentDiscoveryPath,
+          disableWorkspaceAgents,
           error: error instanceof Error ? error.message : String(error),
         });
-        agentDefinition = await readAgentDefinition(runtime, workspacePath, "exec");
+        agentDefinition = await readAgentDefinition(runtime, agentDiscoveryPath, "exec");
       }
 
       // Determine if agent is plan-like by checking if propose_plan is in its resolved tools

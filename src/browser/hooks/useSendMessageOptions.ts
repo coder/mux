@@ -110,7 +110,7 @@ export interface SendMessageOptionsWithBase extends SendMessageOptions {
 export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWithBase {
   const [thinkingLevel] = useThinkingLevel();
   const [mode] = useMode();
-  const { agentId } = useAgent();
+  const { agentId, disableWorkspaceAgents } = useAgent();
   const { options: providerOptions } = useProviderOptions();
   const defaultModel = getDefaultModel();
   const [preferredModel] = usePersistedState<string>(
@@ -148,7 +148,11 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
     { postCompactionContext, programmaticToolCalling, programmaticToolCallingExclusive }
   );
 
-  return { ...options, baseModel };
+  return {
+    ...options,
+    baseModel,
+    disableWorkspaceAgents: disableWorkspaceAgents || undefined, // Only include if true
+  };
 }
 
 /**

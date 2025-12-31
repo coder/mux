@@ -393,6 +393,12 @@ export const SendMessageOptionsSchema = z.object({
   mode: AgentModeSchema.optional().catch(undefined),
   muxMetadata: z.any().optional(), // Black box
   experiments: ExperimentsSchema.optional(),
+  /**
+   * When true, workspace-specific agent definitions are disabled.
+   * Only built-in and global agents are loaded. Useful for "unbricking" when
+   * iterating on agent files - a broken agent in the worktree won't affect message sending.
+   */
+  disableWorkspaceAgents: z.boolean().optional(),
 });
 
 // Re-export ChatUsageDisplaySchema for convenience
