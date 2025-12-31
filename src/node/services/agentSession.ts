@@ -305,6 +305,8 @@ export class AgentSession {
         workspaceId: this.workspaceId,
         message: { type: "caught-up" },
       });
+      // Note: Aborted compaction recovery is handled by useResumeManager on the frontend,
+      // which detects interrupted compaction-request messages and retries via executeCompaction.
     }
   }
 

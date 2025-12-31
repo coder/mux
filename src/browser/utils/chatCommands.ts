@@ -27,6 +27,8 @@ import {
   resolveCompactionModel,
   isValidModelFormat,
 } from "@/browser/utils/messages/compactionModelPreference";
+import { getCancelledCompactionKey } from "@/common/constants/storage";
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import type { ImageAttachment } from "../components/ImageAttachments";
 import { dispatchWorkspaceSwitch } from "./workspaceEvents";
 import { getRuntimeKey, copyWorkspaceStorage } from "@/common/constants/storage";
@@ -703,6 +705,10 @@ export function prepareCompactionMessage(options: CompactionOptions): {
 export async function executeCompaction(
   options: CompactionOptions & { api: RouterClient<AppRouter> }
 ): Promise<CompactionResult> {
+  // Clear any cancelled-compaction marker since we're (re-)starting compaction
+  // This allows auto-retry to work if this attempt is interrupted by crash/force-exit
+  updatePersistedState(getCancelledCompactionKey(options.workspaceId), () => null);
+
   const { messageText, metadata, sendOptions } = prepareCompactionMessage(options);
 
   const result = await options.api.workspace.sendMessage({

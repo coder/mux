@@ -1,14 +1,18 @@
 import { useEffect, useRef } from "react";
 import { useWorkspaceStoreRaw, type WorkspaceState } from "@/browser/stores/WorkspaceStore";
 import { CUSTOM_EVENTS, type CustomEventType } from "@/common/constants/events";
-import { getAutoRetryKey, getRetryStateKey } from "@/common/constants/storage";
+import {
+  getAutoRetryKey,
+  getRetryStateKey,
+  getCancelledCompactionKey,
+} from "@/common/constants/storage";
 import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
 import { readPersistedState, updatePersistedState } from "./usePersistedState";
 import {
   isEligibleForAutoRetry,
   isNonRetryableSendError,
 } from "@/browser/utils/messages/retryEligibility";
-import { applyCompactionOverrides } from "@/browser/utils/messages/compactionOptions";
+import { executeCompaction } from "@/browser/utils/chatCommands";
 import type { SendMessageError } from "@/common/types/errors";
 import {
   createFailedRetryState,
@@ -21,6 +25,15 @@ export interface RetryState {
   attempt: number;
   retryStartTime: number;
   lastError?: SendMessageError;
+}
+
+/**
+ * Persisted marker for user-cancelled compaction.
+ * Used to distinguish intentional cancellation (Ctrl+C) from crash/force-exit.
+ */
+export interface CancelledCompactionMarker {
+  messageId: string;
+  timestamp: number;
 }
 
 /**
@@ -163,45 +176,80 @@ export function useResumeManager() {
     );
 
     try {
-      // Start with workspace defaults
-      let options = getSendOptionsFromStorage(workspaceId);
-
-      // Check if last user message was a compaction request
-      const state = workspaceStatesRef.current.get(workspaceId);
-      if (state) {
-        const lastUserMsg = [...state.messages].reverse().find((msg) => msg.type === "user");
-        if (lastUserMsg?.compactionRequest) {
-          // Apply compaction overrides using shared function (same as ChatInput)
-          // This ensures custom model/tokens are preserved across resume
-          options = applyCompactionOverrides(options, {
-            model: lastUserMsg.compactionRequest.parsed.model,
-            maxOutputTokens: lastUserMsg.compactionRequest.parsed.maxOutputTokens,
-            continueMessage: {
-              text: lastUserMsg.compactionRequest.parsed.continueMessage?.text ?? "",
-              imageParts: lastUserMsg.compactionRequest.parsed.continueMessage?.imageParts,
-              model: lastUserMsg.compactionRequest.parsed.continueMessage?.model ?? options.model,
-              mode: lastUserMsg.compactionRequest.parsed.continueMessage?.mode ?? "exec",
-            },
-          });
-        }
-      }
-
       if (!api) {
         retryingRef.current.delete(workspaceId);
         return;
       }
-      const result = await api.workspace.resumeStream({ workspaceId, options });
 
-      if (!result.success) {
-        // Store error in retry state so RetryBarrier can display it
-        const newState = createFailedRetryState(attempt, result.error);
-        console.debug(
-          `[retry] ${workspaceId} resumeStream failed: attempt ${attempt} → ${newState.attempt}`
+      // Start with workspace defaults
+      const options = getSendOptionsFromStorage(workspaceId);
+
+      // Check if last user message was a compaction request
+      const state = workspaceStatesRef.current.get(workspaceId);
+      const lastUserMsg = state?.messages
+        ? [...state.messages].reverse().find((msg) => msg.type === "user")
+        : undefined;
+
+      if (lastUserMsg?.compactionRequest) {
+        // Check if this compaction was user-cancelled (Ctrl+C)
+        const cancelledMarker = readPersistedState<CancelledCompactionMarker | null>(
+          getCancelledCompactionKey(workspaceId),
+          null
         );
-        updatePersistedState(getRetryStateKey(workspaceId), newState);
+
+        if (cancelledMarker && cancelledMarker.messageId === lastUserMsg.id) {
+          if (!isManual) {
+            // User explicitly cancelled this compaction - don't auto-retry
+            console.debug(
+              `[retry] ${workspaceId} skipping cancelled compaction (messageId=${lastUserMsg.id})`
+            );
+            return;
+          }
+
+          // Manual retry: clear the marker and proceed
+          updatePersistedState(getCancelledCompactionKey(workspaceId), () => null);
+        }
+
+        // Retry compaction via executeCompaction (re-sends the compaction request)
+        // This properly rebuilds the compaction-specific behavior including continueMessage queuing
+        console.debug(`[retry] ${workspaceId} retrying interrupted compaction`);
+        const { parsed } = lastUserMsg.compactionRequest;
+        const result = await executeCompaction({
+          api,
+          workspaceId,
+          sendMessageOptions: options,
+          model: parsed.model,
+          maxOutputTokens: parsed.maxOutputTokens,
+          continueMessage: parsed.continueMessage,
+          editMessageId: lastUserMsg.id, // Edit the existing compaction request message
+        });
+
+        if (!result.success) {
+          const errorData: SendMessageError = {
+            type: "unknown",
+            raw: result.error ?? "Failed to retry compaction",
+          };
+          const newState = createFailedRetryState(attempt, errorData);
+          console.debug(
+            `[retry] ${workspaceId} compaction failed: attempt ${attempt} → ${newState.attempt}`
+          );
+          updatePersistedState(getRetryStateKey(workspaceId), newState);
+        }
+      } else {
+        // Normal stream resume (non-compaction)
+        const result = await api.workspace.resumeStream({ workspaceId, options });
+
+        if (!result.success) {
+          // Store error in retry state so RetryBarrier can display it
+          const newState = createFailedRetryState(attempt, result.error);
+          console.debug(
+            `[retry] ${workspaceId} resumeStream failed: attempt ${attempt} → ${newState.attempt}`
+          );
+          updatePersistedState(getRetryStateKey(workspaceId), newState);
+        }
       }
       // Note: Don't clear retry state on success - stream-end event will handle that
-      // resumeStream success just means "stream initiated", not "stream completed"
+      // resumeStream/executeCompaction success just means "stream initiated", not "stream completed"
       // Clearing here causes backoff reset bug when stream starts then immediately fails
     } catch (error) {
       // Store error in retry state for display
