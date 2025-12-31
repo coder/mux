@@ -120,11 +120,12 @@ export const ModeProvider: React.FC<ModeProviderProps> = (props) => {
       }
 
       try {
-        // When workspaceAgentsDisabled is true, pass only projectPath to skip workspace agents.
-        // Otherwise, pass workspaceId to discover from worktree (if available).
+        // Pass workspaceId to use correct runtime (important for SSH), and
+        // disableWorkspaceAgents flag to skip worktree and discover from projectPath.
         const result = await api.agents.list({
           projectPath,
-          workspaceId: workspaceAgentsDisabled ? undefined : workspaceId,
+          workspaceId,
+          disableWorkspaceAgents: workspaceAgentsDisabled || undefined,
         });
         // Guard against stale updates: only apply if all params still match
         const current = fetchParamsRef.current;

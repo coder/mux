@@ -573,24 +573,32 @@ export const tasks = {
 // - Workspace path: <worktree>/.mux/agents - workspace-specific (useful for iterating)
 // Default is workspace path when workspaceId is provided.
 // Use disableWorkspaceAgents in SendMessageOptions to skip workspace agents during message sending.
+
+// At least one of projectPath or workspaceId must be provided for agent discovery.
+// Agent discovery input supports:
+// - workspaceId only: resolve projectPath from workspace metadata, discover from worktree
+// - projectPath only: discover from project path (project page, no workspace yet)
+// - both: discover from worktree using workspaceId
+// - disableWorkspaceAgents: when true with workspaceId, use workspace's runtime but discover
+//   from projectPath instead of worktree (useful for SSH workspaces when iterating on agents)
+const AgentDiscoveryInputSchema = z
+  .object({
+    projectPath: z.string().optional(),
+    workspaceId: z.string().optional(),
+    /** When true, skip workspace worktree and discover from projectPath (but still use workspace runtime) */
+    disableWorkspaceAgents: z.boolean().optional(),
+  })
+  .refine((data) => Boolean(data.projectPath ?? data.workspaceId), {
+    message: "Either projectPath or workspaceId must be provided",
+  });
+
 export const agents = {
   list: {
-    // At least one of projectPath or workspaceId must be provided.
-    // - workspaceId only: resolve projectPath from workspace metadata, discover from worktree
-    // - projectPath only: discover from project path (project page, no workspace yet)
-    // - both: discover from worktree using workspaceId
-    input: z.object({
-      projectPath: z.string().optional(),
-      workspaceId: z.string().optional(),
-    }),
+    input: AgentDiscoveryInputSchema,
     output: z.array(AgentDefinitionDescriptorSchema),
   },
   get: {
-    input: z.object({
-      projectPath: z.string().optional(),
-      workspaceId: z.string().optional(),
-      agentId: AgentIdSchema,
-    }),
+    input: AgentDiscoveryInputSchema.and(z.object({ agentId: AgentIdSchema })),
     output: AgentDefinitionPackageSchema,
   },
 };
