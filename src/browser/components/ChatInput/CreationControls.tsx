@@ -71,7 +71,7 @@ const RUNTIME_OPTIONS: Array<{
   },
   {
     value: RUNTIME_MODE.SSH,
-    label: "Remote",
+    label: "SSH",
     description: "Clone on SSH host",
     docsPath: "/runtime/ssh",
     Icon: SSHIcon,
