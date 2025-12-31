@@ -21,7 +21,7 @@ export interface AgentLikeForPolicy {
 
 export interface ResolveToolPolicyOptions {
   agentId: AgentId;
-  /** All available agents (built-ins + the current agent) for inheritance resolution */
+  /** Agents used for inheritance resolution (must include the agent's base chain). */
   agents: readonly AgentLikeForPolicy[];
   isSubagent: boolean;
   disableTaskToolsForDepth: boolean;

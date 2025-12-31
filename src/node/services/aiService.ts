@@ -79,7 +79,6 @@ import { MUX_APP_ATTRIBUTION_TITLE, MUX_APP_ATTRIBUTION_URL } from "@/constants/
 import { readPlanFile } from "@/node/utils/runtime/helpers";
 import { readAgentDefinition } from "@/node/services/agentDefinitions/agentDefinitionsService";
 import { resolveToolPolicyForAgent } from "@/node/services/agentDefinitions/resolveToolPolicy";
-import { getBuiltInAgentDefinitions } from "@/node/services/agentDefinitions/builtInAgentDefinitions";
 import { isPlanLike } from "@/common/utils/agentInheritance";
 
 // Export a standalone version of getToolsForModel for use in backend
@@ -1138,21 +1137,55 @@ export class AIService extends EventEmitter {
       }
 
       // Determine if agent is plan-like by checking if propose_plan is in its resolved tools
-      // (including inherited tools from base agents)
-      const builtInAgents = getBuiltInAgentDefinitions();
-      const allAgents = [
-        ...builtInAgents.map((pkg) => ({
-          id: pkg.id,
-          base: pkg.frontmatter.base,
-          tools: pkg.frontmatter.tools,
-        })),
-        {
-          id: effectiveAgentId,
-          base: agentDefinition.frontmatter.base,
-          tools: agentDefinition.frontmatter.tools,
-        },
-      ];
-      const agentIsPlanLike = isPlanLike(effectiveAgentId, allAgents);
+      // (including inherited tools from base agents).
+      //
+      // IMPORTANT: resolveToolPolicyForAgent and isPlanLike both depend on the agent's `base`
+      // inheritance chain. We resolve the chain here (including workspace-defined base agents)
+      // so agents that extend custom bases don't accidentally end up with a deny-all policy.
+      const agentsForInheritance = [];
+      {
+        const seenAgentIds = new Set<string>();
+        let currentAgentId = effectiveAgentId;
+        let currentDefinition = agentDefinition;
+
+        for (let depth = 0; depth < 10; depth++) {
+          if (seenAgentIds.has(currentAgentId)) {
+            log.warn("Agent definition base chain has a cycle; stopping resolution", {
+              workspaceId,
+              agentId: effectiveAgentId,
+              currentAgentId,
+            });
+            break;
+          }
+          seenAgentIds.add(currentAgentId);
+
+          agentsForInheritance.push({
+            id: currentAgentId,
+            base: currentDefinition.frontmatter.base,
+            tools: currentDefinition.frontmatter.tools,
+          });
+
+          const baseId = currentDefinition.frontmatter.base;
+          if (!baseId) {
+            break;
+          }
+
+          currentAgentId = baseId;
+          try {
+            currentDefinition = await readAgentDefinition(runtime, workspacePath, baseId);
+          } catch (error) {
+            log.warn("Failed to load base agent definition; stopping inheritance resolution", {
+              workspaceId,
+              agentId: effectiveAgentId,
+              baseId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+            break;
+          }
+        }
+      }
+
+      const agentIsPlanLike = isPlanLike(effectiveAgentId, agentsForInheritance);
       const effectiveMode: AgentMode = agentIsPlanLike ? "plan" : "exec";
 
       const cfg = this.config.loadConfigOrDefault();
@@ -1168,7 +1201,7 @@ export class AIService extends EventEmitter {
       // Caller policy then narrows further if needed.
       const agentToolPolicy = resolveToolPolicyForAgent({
         agentId: effectiveAgentId,
-        agents: allAgents,
+        agents: agentsForInheritance,
         isSubagent: isSubagentWorkspace,
         disableTaskToolsForDepth: shouldDisableTaskToolsForDepth,
       });
