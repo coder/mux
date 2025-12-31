@@ -34,6 +34,8 @@ interface AgentOption {
   isPlanLike: boolean;
   uiColor?: string;
   description?: string;
+  /** Source scope: built-in, project, or global */
+  scope: "built-in" | "project" | "global";
   /** Base agent ID for inheritance */
   base?: string;
   /** Tool add/remove patterns */
@@ -64,6 +66,17 @@ function normalizeAgentId(value: unknown): string {
   return typeof value === "string" && value.trim().length > 0 ? value.trim().toLowerCase() : "";
 }
 
+function formatScope(scope: AgentOption["scope"]): string {
+  switch (scope) {
+    case "built-in":
+      return "Built-in";
+    case "project":
+      return "Project";
+    case "global":
+      return "Global";
+  }
+}
+
 /** Renders the rich tooltip content for an agent option */
 const AgentTooltipContent: React.FC<{ opt: AgentOption }> = ({ opt }) => {
   const hasAdd = (opt.tools?.add?.length ?? 0) > 0;
@@ -73,6 +86,10 @@ const AgentTooltipContent: React.FC<{ opt: AgentOption }> = ({ opt }) => {
   return (
     <div className="space-y-1.5 text-[10px]">
       {opt.description && <div className="text-light">{opt.description}</div>}
+
+      <div className="text-muted">
+        <span className="text-muted-light">Source:</span> {formatScope(opt.scope)}
+      </div>
 
       {opt.base && (
         <div className="text-muted">
@@ -90,18 +107,18 @@ const AgentTooltipContent: React.FC<{ opt: AgentOption }> = ({ opt }) => {
       {(hasAdd || hasRemove) && (
         <div className="text-muted space-y-0.5">
           <span className="text-muted-light">Tools:</span>
-          {hasAdd && (
-            <div className="ml-2">
-              <span className="text-green-500">+</span> {opt.tools!.add!.slice(0, 3).join(", ")}
-              {opt.tools!.add!.length > 3 && ` (+${opt.tools!.add!.length - 3} more)`}
-            </div>
-          )}
-          {hasRemove && (
-            <div className="ml-2">
-              <span className="text-red-500">−</span> {opt.tools!.remove!.slice(0, 3).join(", ")}
-              {opt.tools!.remove!.length > 3 && ` (+${opt.tools!.remove!.length - 3} more)`}
-            </div>
-          )}
+          {hasAdd &&
+            opt.tools!.add!.map((pattern) => (
+              <div key={pattern} className="ml-2">
+                <span className="text-green-500">+</span> {pattern}
+              </div>
+            ))}
+          {hasRemove &&
+            opt.tools!.remove!.map((pattern) => (
+              <div key={pattern} className="ml-2">
+                <span className="text-red-500">−</span> {pattern}
+              </div>
+            ))}
         </div>
       )}
 
@@ -154,6 +171,7 @@ function resolveAgentOptions(agents: AgentDefinitionDescriptor[]): AgentOption[]
       isPlanLike: isPlanLikeFn(entry.id, agents),
       uiColor: entry.uiColor,
       description: entry.description,
+      scope: entry.scope,
       base: entry.base,
       tools: entry.tools,
       aiDefaults: entry.aiDefaults,
@@ -197,6 +215,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
         name: formatAgentIdLabel(normalizedAgentId),
         isPlanLike: isPlanLikeFn(normalizedAgentId, agents),
         uiColor: undefined,
+        scope: "project" as const,
         subagentRunnable: false,
       } satisfies AgentOption;
     }
@@ -207,6 +226,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
       isPlanLike: isPlanLikeFn(descriptor.id, agents),
       uiColor: descriptor.uiColor,
       description: descriptor.description,
+      scope: descriptor.scope,
       base: descriptor.base,
       tools: descriptor.tools,
       aiDefaults: descriptor.aiDefaults,
