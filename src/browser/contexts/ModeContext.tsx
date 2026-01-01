@@ -83,6 +83,19 @@ export const ModeProvider: React.FC<ModeProviderProps> = (props) => {
   const [agents, setAgents] = useState<AgentDefinitionDescriptor[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
+
+  const isMountedRef = useRef(true);
+
+  // Some async work (e.g. agent list fetch) can resolve after unmount in tests.
+  // In node-based test environments, global `window` may be restored to `undefined` after
+  // the DOM is torn down, and late React state updates can crash inside react-dom.
+  // Guard state updates so they don't run after unmount.
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
   const [refreshing, setRefreshing] = useState(false);
 
   // Track current fetch parameters to avoid stale updates from slow responses.
@@ -111,9 +124,11 @@ export const ModeProvider: React.FC<ModeProviderProps> = (props) => {
 
       // Need at least one of projectPath or workspaceId
       if (!api || (!projectPath && !workspaceId)) {
-        setAgents([]);
-        setLoaded(true);
-        setLoadFailed(false);
+        if (isMountedRef.current) {
+          setAgents([]);
+          setLoaded(true);
+          setLoadFailed(false);
+        }
         return;
       }
 
@@ -130,7 +145,8 @@ export const ModeProvider: React.FC<ModeProviderProps> = (props) => {
         if (
           current.projectPath === projectPath &&
           current.workspaceId === workspaceId &&
-          current.disableWorkspaceAgents === workspaceAgentsDisabled
+          current.disableWorkspaceAgents === workspaceAgentsDisabled &&
+          isMountedRef.current
         ) {
           setAgents(result);
           setLoadFailed(false);
@@ -141,7 +157,8 @@ export const ModeProvider: React.FC<ModeProviderProps> = (props) => {
         if (
           current.projectPath === projectPath &&
           current.workspaceId === workspaceId &&
-          current.disableWorkspaceAgents === workspaceAgentsDisabled
+          current.disableWorkspaceAgents === workspaceAgentsDisabled &&
+          isMountedRef.current
         ) {
           setAgents([]);
           setLoadFailed(true);
@@ -162,11 +179,15 @@ export const ModeProvider: React.FC<ModeProviderProps> = (props) => {
   // Manual refresh function
   const refresh = useCallback(async () => {
     if (!props.projectPath && !props.workspaceId) return;
+    if (!isMountedRef.current) return;
+
     setRefreshing(true);
     try {
       await fetchAgents(props.projectPath, props.workspaceId, disableWorkspaceAgents);
     } finally {
-      setRefreshing(false);
+      if (isMountedRef.current) {
+        setRefreshing(false);
+      }
     }
   }, [fetchAgents, props.projectPath, props.workspaceId, disableWorkspaceAgents]);
 
