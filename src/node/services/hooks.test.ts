@@ -285,6 +285,42 @@ echo "Hook received: $RESULT" >&2
       ).rejects.toThrow("Tool execution failed");
     });
 
+    test("handles hook paths with spaces", async () => {
+      // Create a directory with spaces in the name
+      const spacedDir = path.join(tempDir, "my project");
+      const hookDir = path.join(spacedDir, ".mux");
+      const hookPath = path.join(hookDir, "tool_hook");
+      await fs.mkdir(hookDir, { recursive: true });
+
+      await fs.writeFile(
+        hookPath,
+        `#!/bin/bash
+echo __MUX_EXEC__
+read RESULT
+`
+      );
+      await fs.chmod(hookPath, 0o755);
+
+      // Create a runtime for the spaced directory
+      const spacedRuntime = new LocalRuntime(spacedDir);
+
+      const { result, hook } = await runWithHook(
+        spacedRuntime,
+        hookPath,
+        {
+          tool: "test",
+          toolInput: "{}",
+          workspaceId: "test",
+          projectDir: spacedDir,
+        },
+        () => Promise.resolve({ success: true })
+      );
+
+      expect(hook.toolExecuted).toBe(true);
+      expect(hook.success).toBe(true);
+      expect(result).toEqual({ success: true });
+    });
+
     test("succeeds when hook exits without reading MUX_RESULT", async () => {
       const hookDir = path.join(tempDir, ".mux");
       const hookPath = path.join(hookDir, "tool_hook");

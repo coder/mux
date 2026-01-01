@@ -32,6 +32,12 @@ import { log } from "@/node/services/log";
 const HOOK_FILENAME = "tool_hook";
 const EXEC_MARKER = "__MUX_EXEC__";
 
+/** Shell-escape a string for safe use in bash -c commands */
+function shellEscape(str: string): string {
+  // Wrap in single quotes and escape any embedded single quotes
+  return `'${str.replace(/'/g, "'\\''")}'`;
+}
+
 export interface HookContext {
   /** Tool name (e.g., "bash", "file_edit_replace_string") */
   tool: string;
@@ -133,7 +139,9 @@ export async function runWithHook<T>(
 
   let stream;
   try {
-    stream = await runtime.exec(hookPath, {
+    // Shell-escape the hook path to handle spaces and special characters
+    // runtime.exec() uses bash -c, so unquoted paths would break
+    stream = await runtime.exec(shellEscape(hookPath), {
       cwd: context.projectDir,
       env: hookEnv,
       timeout: 300, // 5 minute timeout for hooks
