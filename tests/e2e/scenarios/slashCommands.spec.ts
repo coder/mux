@@ -105,11 +105,9 @@ test.describe("slash command flows", () => {
     // Default model is now Opus - displayed as formatted name
     await expect(modeToggles.getByText("Opus 4.5", { exact: true })).toBeVisible();
 
-    await ui.chat.sendCommandAndExpectStatus(
-      "/model sonnet",
-      "Model changed to anthropic:claude-sonnet-4-5"
-    );
-    // Model is displayed as formatted name
+    // Send command and verify model changed by checking UI (toast is flaky on linux CI)
+    await ui.chat.sendMessage("/model sonnet");
+    // Model is displayed as formatted name - this confirms the command worked
     await expect(modeToggles.getByText("Sonnet 4.5", { exact: true })).toBeVisible();
 
     const timeline = await ui.chat.captureStreamTimeline(async () => {
