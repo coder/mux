@@ -365,16 +365,10 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
                   {formatExpiration(shareData.expiresAt)}
                 </span>
               )}
-              {isUpdating && <Loader2 className="h-3 w-3 animate-spin" />}
+              {/* Inline status: spinner while updating, checkmark on success */}
+              {isUpdating && <Loader2 className="text-muted h-3.5 w-3.5 animate-spin" />}
+              {showUpdated && <Check className="h-3.5 w-3.5 text-green-500" />}
             </div>
-
-            {/* Success indicator on its own line */}
-            {showUpdated && (
-              <div className="flex items-center justify-center gap-1 text-[11px] text-green-500">
-                <Check className="h-3.5 w-3.5" />
-                Expiration updated
-              </div>
-            )}
 
             {error && (
               <div className="bg-destructive/10 text-destructive rounded px-2 py-1.5 text-[11px]">
