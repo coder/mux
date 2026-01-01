@@ -464,6 +464,42 @@ read RESULT
       expect(warnings.length).toBe(0);
     });
 
+    test("sends streaming placeholder to hook for AsyncIterable results", async () => {
+      const hookDir = path.join(tempDir, ".mux");
+      const hookPath = path.join(hookDir, "tool_hook");
+      await fs.mkdir(hookDir, { recursive: true });
+
+      await fs.writeFile(
+        hookPath,
+        `#!/bin/bash
+echo __MUX_EXEC__
+read RESULT
+echo "GOT_RESULT=$RESULT" >&2
+`
+      );
+      await fs.chmod(hookPath, 0o755);
+
+      async function* stream() {
+        await Promise.resolve();
+        yield "chunk";
+      }
+
+      const { hook } = await runWithHook(
+        runtime,
+        hookPath,
+        {
+          tool: "test",
+          toolInput: "{}",
+          workspaceId: "test",
+          projectDir: tempDir,
+        },
+        () => Promise.resolve(stream())
+      );
+
+      expect(hook.success).toBe(true);
+      expect(hook.stderr).toContain('GOT_RESULT={"streaming":true}');
+    });
+
     test("times out when pre-hook takes too long (does not run tool)", async () => {
       const hookDir = path.join(tempDir, ".mux");
       const hookPath = path.join(hookDir, "tool_hook");

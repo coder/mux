@@ -42,6 +42,14 @@ function shellEscape(str: string): string {
   return `'${str.replace(/'/g, "'\\''")}'`;
 }
 
+function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    Symbol.asyncIterator in value &&
+    typeof (value as Record<symbol, unknown>)[Symbol.asyncIterator] === "function"
+  );
+}
 function joinPathLike(basePath: string, ...parts: string[]): string {
   // For SSH runtimes (and most Unix paths), we want POSIX joins.
   // For Windows-style paths, use native joins.
@@ -211,6 +219,10 @@ export async function runWithHook<T>(
       abortSignal: abortController.signal,
     });
   } catch (err) {
+    if (preTimeoutHandle) {
+      clearTimeout(preTimeoutHandle);
+      preTimeoutHandle = undefined;
+    }
     log.error("[hooks] Failed to spawn hook", { hookPath, error: err });
     if (toolInputPath) {
       try {
@@ -314,9 +326,11 @@ export async function runWithHook<T>(
           }
 
           const payload = toolError ? { error: toolError.message } : toolResult;
+          const payloadForHook = isAsyncIterable(payload) ? { streaming: true } : payload;
+
           const writer = stream.stdin.getWriter();
           try {
-            await writer.write(new TextEncoder().encode(JSON.stringify(payload) + "\n"));
+            await writer.write(new TextEncoder().encode(JSON.stringify(payloadForHook) + "\n"));
           } catch (err) {
             hookStdinWriteError = err instanceof Error ? err : new Error(String(err));
           } finally {
