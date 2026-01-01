@@ -11,6 +11,7 @@ import { Button } from "@/browser/components/ui/button";
 import { Clipboard, ClipboardCheck, ExternalLink, Link2, Loader2 } from "lucide-react";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { uploadToMuxMd, type UploadResult } from "@/common/lib/muxMd";
+import { getSharedUrl, setSharedUrl } from "@/browser/utils/sharedUrlCache";
 
 /** Expiration options with human-readable labels */
 const EXPIRATION_OPTIONS = [
@@ -42,6 +43,10 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Check for previously shared URL
+  const cachedUrl = content ? getSharedUrl(content) : undefined;
+  const isAlreadyShared = Boolean(cachedUrl);
+
   const { copied, copyToClipboard } = useCopyToClipboard();
 
   const handleShare = async () => {
@@ -69,6 +74,9 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
         { expiresAt }
       );
       setUploadResult(result);
+
+      // Cache the shared URL for future reference
+      setSharedUrl(content, result.url);
     } catch (err) {
       console.error("Share failed:", err);
       setError(err instanceof Error ? err.message : "Failed to upload");
@@ -77,15 +85,18 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
     }
   };
 
+  // The URL to display - either from cache or from new upload
+  const displayUrl = uploadResult?.url ?? cachedUrl;
+
   const handleCopy = () => {
-    if (uploadResult?.url) {
-      void copyToClipboard(uploadResult.url);
+    if (displayUrl) {
+      void copyToClipboard(displayUrl);
     }
   };
 
   const handleOpenInBrowser = () => {
-    if (uploadResult?.url) {
-      window.open(uploadResult.url, "_blank", "noopener,noreferrer");
+    if (displayUrl) {
+      window.open(displayUrl, "_blank", "noopener,noreferrer");
     }
   };
 
@@ -108,14 +119,16 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
           variant="ghost"
           size="icon"
           disabled={disabled}
-          aria-label="Share"
-          className="text-placeholder flex h-6 w-6 items-center justify-center [&_svg]:size-3.5"
+          aria-label={isAlreadyShared ? "Already shared" : "Share"}
+          className={`flex h-6 w-6 items-center justify-center [&_svg]:size-3.5 ${
+            isAlreadyShared ? "text-blue-400" : "text-placeholder"
+          }`}
         >
           <Link2 />
         </Button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-[280px] p-3">
-        {!uploadResult ? (
+        {!displayUrl ? (
           // Pre-upload: show expiration selector and share button
           <div className="space-y-3">
             <div className="text-foreground text-xs font-medium">Share Message</div>
@@ -162,16 +175,18 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
             </p>
           </div>
         ) : (
-          // Post-upload: show URL and copy button
+          // Post-upload or cached: show URL and copy button
           <div className="space-y-3">
-            <div className="text-foreground text-xs font-medium">Link Created</div>
+            <div className="text-foreground text-xs font-medium">
+              {cachedUrl && !uploadResult ? "Previously Shared" : "Link Created"}
+            </div>
 
             <div className="border-border bg-background rounded border p-2">
               <code
                 className="text-foreground block font-mono text-[10px] break-all"
                 data-testid="share-url"
               >
-                {uploadResult.url}
+                {displayUrl}
               </code>
             </div>
 
@@ -204,9 +219,22 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
               </Button>
             </div>
 
-            {uploadResult.expiresAt && (
+            {uploadResult?.expiresAt && (
               <p className="text-muted text-center text-[10px]">
                 Expires {new Date(uploadResult.expiresAt).toLocaleDateString()}
+              </p>
+            )}
+
+            {cachedUrl && !uploadResult && (
+              <p className="text-muted text-center text-[10px]">
+                Link may have expired.{" "}
+                <button
+                  onClick={() => void handleShare()}
+                  className="text-blue-400 hover:underline"
+                  disabled={isUploading}
+                >
+                  Create new link
+                </button>
               </p>
             )}
           </div>
