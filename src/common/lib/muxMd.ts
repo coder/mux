@@ -34,8 +34,8 @@ export interface UploadResult {
   id: string;
   /** Encryption key (base64url) */
   key: string;
-  /** Delete key (base64url) - store this to delete the file later */
-  deleteKey: string;
+  /** Mutate key (base64url) - store this to delete or update expiration */
+  mutateKey: string;
   /** Expiration timestamp (ms), if set */
   expiresAt?: number;
 }
@@ -49,7 +49,7 @@ interface UploadMeta {
 interface UploadResponse {
   id: string;
   url: string;
-  deleteKey: string;
+  mutateKey: string;
   expiresAt?: number;
 }
 
@@ -196,7 +196,76 @@ export async function uploadToMuxMd(
     url: `${MUX_MD_BASE_URL}/${result.id}#${keyMaterial}`,
     id: result.id,
     key: keyMaterial,
-    deleteKey: result.deleteKey,
+    mutateKey: result.mutateKey,
     expiresAt: result.expiresAt,
   };
+}
+
+// --- Mutation API ---
+
+interface MutateResponse {
+  success: boolean;
+  id: string;
+  expiresAt?: number;
+}
+
+/**
+ * Delete a shared file from mux.md.
+ *
+ * @param id - The file ID
+ * @param mutateKey - The mutate key from upload
+ */
+export async function deleteFromMuxMd(id: string, mutateKey: string): Promise<void> {
+  const response = await fetch(`${MUX_MD_BASE_URL}/${id}`, {
+    method: "DELETE",
+    headers: {
+      "X-Mux-Mutate-Key": mutateKey,
+    },
+  });
+
+  if (!response.ok) {
+    const error = (await response.json().catch(() => ({ error: "Delete failed" }))) as {
+      error?: string;
+    };
+    throw new Error(error.error ?? "Delete failed");
+  }
+}
+
+/**
+ * Update expiration of a shared file on mux.md.
+ *
+ * @param id - The file ID
+ * @param mutateKey - The mutate key from upload
+ * @param expiresAt - New expiration (Date, ISO string, or "never" to remove expiration)
+ * @returns The new expiration timestamp (undefined if set to "never")
+ */
+export async function updateMuxMdExpiration(
+  id: string,
+  mutateKey: string,
+  expiresAt: Date | string
+): Promise<number | undefined> {
+  const expiresValue =
+    expiresAt === "never"
+      ? "never"
+      : expiresAt instanceof Date
+        ? expiresAt.toISOString()
+        : expiresAt;
+
+  const response = await fetch(`${MUX_MD_BASE_URL}/${id}`, {
+    method: "PATCH",
+    headers: {
+      "X-Mux-Mutate-Key": mutateKey,
+      "X-Mux-Expires": expiresValue,
+    },
+  });
+
+  if (!response.ok) {
+    const error = (await response.json().catch(() => ({ error: "Update failed" }))) as {
+      error?: string;
+    };
+    throw new Error(error.error ?? "Update failed");
+  }
+
+  const result = (await response.json()) as MutateResponse;
+  return result.expiresAt;
 }

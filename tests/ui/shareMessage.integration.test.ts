@@ -33,7 +33,7 @@ describeIntegration("mux.md sharing (upload integration)", () => {
     expect(result.url).toMatch(/^https:\/\/mux\.md\/[A-Za-z0-9]+#[A-Za-z0-9_-]+$/);
     expect(result.id).toMatch(/^[A-Za-z0-9]+$/);
     expect(result.key).toMatch(/^[A-Za-z0-9_-]+$/);
-    expect(result.deleteKey).toBeTruthy();
+    expect(result.mutateKey).toBeTruthy();
 
     // Verify URL contains the id and key
     expect(result.url).toContain(result.id);
@@ -55,10 +55,10 @@ describeIntegration("mux.md sharing (upload integration)", () => {
       size: content.length,
     });
 
-    // Each upload should generate unique id, key, and deleteKey
+    // Each upload should generate unique id, key, and mutateKey
     expect(result1.id).not.toBe(result2.id);
     expect(result1.key).not.toBe(result2.key);
-    expect(result1.deleteKey).not.toBe(result2.deleteKey);
+    expect(result1.mutateKey).not.toBe(result2.mutateKey);
   }, 30_000);
 
   test("should handle special characters in content", async () => {
