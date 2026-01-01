@@ -12,6 +12,7 @@ import { Clipboard, ClipboardCheck, ExternalLink, Link2, Loader2 } from "lucide-
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { uploadToMuxMd, type UploadResult } from "@/common/lib/muxMd";
 import { getSharedUrl, setSharedUrl } from "@/browser/utils/sharedUrlCache";
+import { cn } from "@/common/lib/utils";
 
 /** Expiration options with human-readable labels */
 const EXPIRATION_OPTIONS = [
@@ -29,6 +30,8 @@ interface ShareMessagePopoverProps {
   model?: string;
   thinking?: string;
   disabled?: boolean;
+  /** Visual variant: "message" for icon button (default), "plan" for plan chip style */
+  variant?: "message" | "plan";
 }
 
 export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
@@ -36,6 +39,7 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
   model,
   thinking,
   disabled = false,
+  variant = "message",
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [expiration, setExpiration] = useState<ExpirationValue>("7d");
@@ -65,7 +69,7 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
       const result = await uploadToMuxMd(
         content,
         {
-          name: "message.md",
+          name: variant === "plan" ? "plan.md" : "message.md",
           type: "text/markdown",
           size: new TextEncoder().encode(content).length,
           model,
@@ -112,26 +116,48 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
     }
   };
 
+  // Plan chip styling (matches ProposePlanToolCall button style)
+  const planChipClasses =
+    "px-2 py-1 text-[10px] font-mono rounded-sm cursor-pointer transition-all duration-150 active:translate-y-px";
+
   return (
     <Popover open={isOpen} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon"
-          disabled={disabled}
-          aria-label={isAlreadyShared ? "Already shared" : "Share"}
-          className={`flex h-6 w-6 items-center justify-center [&_svg]:size-3.5 ${
-            isAlreadyShared ? "text-blue-400" : "text-placeholder"
-          }`}
-        >
-          <Link2 />
-        </Button>
+        {variant === "plan" ? (
+          <button
+            disabled={disabled}
+            aria-label={isAlreadyShared ? "Already shared" : "Share"}
+            className={cn(
+              planChipClasses,
+              "plan-chip-ghost hover:plan-chip-ghost-hover",
+              isAlreadyShared && "text-blue-400",
+              disabled && "cursor-not-allowed opacity-50"
+            )}
+          >
+            {isAlreadyShared ? "Shared" : "Share"}
+          </button>
+        ) : (
+          <Button
+            variant="ghost"
+            size="icon"
+            disabled={disabled}
+            aria-label={isAlreadyShared ? "Already shared" : "Share"}
+            className={cn(
+              "flex h-6 w-6 items-center justify-center [&_svg]:size-3.5",
+              isAlreadyShared ? "text-blue-400" : "text-placeholder"
+            )}
+          >
+            <Link2 />
+          </Button>
+        )}
       </PopoverTrigger>
       <PopoverContent align="start" className="w-[280px] p-3">
         {!displayUrl ? (
           // Pre-upload: show expiration selector and share button
           <div className="space-y-3">
-            <div className="text-foreground text-xs font-medium">Share Message</div>
+            <div className="text-foreground text-xs font-medium">
+              Share {variant === "plan" ? "Plan" : "Message"}
+            </div>
 
             <div className="space-y-1.5">
               <label className="text-muted text-[10px] tracking-wider uppercase">Expires</label>

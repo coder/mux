@@ -28,6 +28,7 @@ import { PopoverError } from "../PopoverError";
 import { getPlanContentKey } from "@/common/constants/storage";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { Clipboard, ClipboardCheck, FileText, ListStart, Pencil, X } from "lucide-react";
+import { ShareMessagePopover } from "../ShareMessagePopover";
 
 /**
  * Check if the result is a successful file-based propose_plan result.
@@ -276,6 +277,12 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
       label: copied ? "Copied" : "Copy",
       onClick: () => void copyToClipboard(planContent),
       icon: copied ? <ClipboardCheck /> : <Clipboard />,
+    },
+    {
+      label: "Share",
+      component: (
+        <ShareMessagePopover content={planContent} disabled={!planContent} variant="plan" />
+      ),
     },
   ];
 
