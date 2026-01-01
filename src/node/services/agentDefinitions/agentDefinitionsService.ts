@@ -485,12 +485,30 @@ export async function resolveAgentIncludeFilesPatterns(
   agentId: AgentId,
   options?: { roots?: AgentDefinitionsRoots }
 ): Promise<string[]> {
-  const visited = new Set<AgentId>();
+  const visited = new Set<string>();
 
-  async function resolve(id: AgentId, depth: number): Promise<string[]> {
-    checkInheritanceChain(visited, id, depth);
+  async function resolve(
+    id: AgentId,
+    depth: number,
+    skipScopesAbove?: AgentDefinitionScope
+  ): Promise<string[]> {
+    if (depth > MAX_INHERITANCE_DEPTH) {
+      throw new Error(
+        `Agent inheritance depth exceeded for '${id}' (max: ${MAX_INHERITANCE_DEPTH})`
+      );
+    }
 
-    const pkg = await readAgentDefinition(runtime, workspacePath, id, options);
+    const pkg = await readAgentDefinition(runtime, workspacePath, id, {
+      roots: options?.roots,
+      skipScopesAbove,
+    });
+
+    const visitKey = agentVisitKey(pkg.id, pkg.scope);
+    if (visited.has(visitKey)) {
+      throw new Error(`Circular agent inheritance detected: ${pkg.id} (${pkg.scope})`);
+    }
+    visited.add(visitKey);
+
     const baseId = pkg.frontmatter.base;
     const shouldAppend = pkg.frontmatter.prompt?.append !== false;
 
@@ -500,7 +518,11 @@ export async function resolveAgentIncludeFilesPatterns(
       return patterns;
     }
 
-    const basePatterns = await resolve(baseId, depth + 1);
+    const basePatterns = await resolve(
+      baseId,
+      depth + 1,
+      computeBaseSkipScope(baseId, id, pkg.scope)
+    );
     return [...basePatterns, ...patterns];
   }
 
