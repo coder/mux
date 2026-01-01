@@ -43,6 +43,12 @@ MUX_DISABLE_TELEMETRY=1 mux
 
 This completely disables all telemetry collection at the backend level.
 
+<Note>
+  Disabling telemetry also hides the **Share** button on assistant messages. Link sharing uses
+  [mux.md](https://mux.md), a separate mux service, and is gated on telemetry enablement to respect
+  your privacy preferences.
+</Note>
+
 ## Source Code
 
 For complete transparency, you can review the telemetry implementation:

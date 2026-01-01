@@ -7,6 +7,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/browser/components/ui/select";
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+  HelpIndicator,
+} from "@/browser/components/ui/tooltip";
 import { Button } from "@/browser/components/ui/button";
 import { Check, ExternalLink, Link2, Loader2, Trash2 } from "lucide-react";
 import { CopyIcon } from "@/browser/components/icons/CopyIcon";
@@ -23,6 +29,23 @@ import {
 import { cn } from "@/common/lib/utils";
 import { SHARE_EXPIRATION_KEY } from "@/common/constants/storage";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { useLinkSharingEnabled } from "@/browser/contexts/TelemetryEnabledContext";
+
+/** Encryption info tooltip shown next to share headers */
+const EncryptionBadge = () => (
+  <Tooltip>
+    <TooltipTrigger asChild>
+      <HelpIndicator className="text-[11px]">?</HelpIndicator>
+    </TooltipTrigger>
+    <TooltipContent className="max-w-[240px]">
+      <p className="font-medium">🔒 End-to-end encrypted</p>
+      <p className="text-muted-foreground mt-1 text-[11px]">
+        Content is encrypted in your browser (AES-256-GCM). The key stays in the URL fragment and is
+        never sent to the server.
+      </p>
+    </TooltipContent>
+  </Tooltip>
+);
 
 /** Expiration options with human-readable labels */
 const EXPIRATION_OPTIONS = [
@@ -83,6 +106,9 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
   disabled = false,
   workspaceName,
 }) => {
+  // Hide share button when user explicitly disabled telemetry
+  const linkSharingEnabled = useLinkSharingEnabled();
+
   const [isOpen, setIsOpen] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
@@ -278,6 +304,12 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
   const currentExpiration = timestampToExpiration(shareData?.expiresAt);
   const isBusy = isUploading || isUpdating || isDeleting;
 
+  // Don't render the share button if link sharing is disabled or still loading
+  if (linkSharingEnabled !== true) {
+    console.log("[ShareMessagePopover] Hidden because linkSharingEnabled =", linkSharingEnabled);
+    return null;
+  }
+
   return (
     <Popover open={isOpen} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>
@@ -298,7 +330,10 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
         {!shareData ? (
           // Uploading state (auto-triggered on open)
           <div className="space-y-3">
-            <div className="text-foreground text-xs font-medium">Share</div>
+            <div className="flex items-center gap-1">
+              <span className="text-foreground text-xs font-medium">Share</span>
+              <EncryptionBadge />
+            </div>
 
             {error ? (
               <>
@@ -319,15 +354,35 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
                 <span className="text-muted ml-2 text-xs">Encrypting...</span>
               </div>
             )}
-
-            <p className="text-muted text-center text-[10px]">
-              End-to-end encrypted. Server never sees content.
-            </p>
           </div>
         ) : (
           // Post-upload: show URL, expiration controls, and delete option
           <div className="space-y-3">
-            <div className="text-foreground text-xs font-medium">Shared Link</div>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1">
+                <span className="text-foreground text-xs font-medium">Shared Link</span>
+                <EncryptionBadge />
+              </div>
+              {shareData.mutateKey && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={() => void handleDelete()}
+                      className="text-muted hover:bg-destructive/10 hover:text-destructive rounded p-1 transition-colors"
+                      aria-label="Delete shared link"
+                      disabled={isBusy}
+                    >
+                      {isDeleting ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-3.5 w-3.5" />
+                      )}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>Delete</TooltipContent>
+                </Tooltip>
+              )}
+            </div>
 
             {/* URL input with inline copy/open buttons */}
             <div className="border-border bg-background flex items-center gap-1 rounded border px-2 py-1.5">
@@ -340,26 +395,36 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
                 data-testid="share-url"
                 onFocus={(e) => e.target.select()}
               />
-              <button
-                onClick={handleCopy}
-                className="text-muted hover:text-foreground shrink-0 p-0.5 transition-colors"
-                aria-label="Copy to clipboard"
-                data-testid="copy-share-url"
-              >
-                {copied ? (
-                  <Check className="h-3.5 w-3.5 text-green-500" />
-                ) : (
-                  <CopyIcon className="h-3.5 w-3.5" />
-                )}
-              </button>
-              <button
-                onClick={handleOpenInBrowser}
-                className="text-muted hover:text-foreground shrink-0 p-0.5 transition-colors"
-                aria-label="Open in browser"
-                data-testid="open-share-url"
-              >
-                <ExternalLink className="h-3.5 w-3.5" />
-              </button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={handleCopy}
+                    className="text-muted hover:bg-muted/50 hover:text-foreground shrink-0 rounded p-1 transition-colors"
+                    aria-label="Copy to clipboard"
+                    data-testid="copy-share-url"
+                  >
+                    {copied ? (
+                      <Check className="h-3.5 w-3.5 text-green-500" />
+                    ) : (
+                      <CopyIcon className="h-3.5 w-3.5" />
+                    )}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>{copied ? "Copied!" : "Copy"}</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={handleOpenInBrowser}
+                    className="text-muted hover:bg-muted/50 hover:text-foreground shrink-0 rounded p-1 transition-colors"
+                    aria-label="Open in browser"
+                    data-testid="open-share-url"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>Open</TooltipContent>
+              </Tooltip>
             </div>
 
             {/* Expiration control */}
@@ -398,28 +463,6 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
               <div className="bg-destructive/10 text-destructive rounded px-2 py-1.5 text-[11px]">
                 {error}
               </div>
-            )}
-
-            {/* Delete action */}
-            {shareData.mutateKey && (
-              <Button
-                onClick={() => void handleDelete()}
-                variant="ghost"
-                className="text-destructive hover:text-destructive h-7 w-full text-xs"
-                disabled={isBusy}
-              >
-                {isDeleting ? (
-                  <>
-                    <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
-                    Deleting...
-                  </>
-                ) : (
-                  <>
-                    <Trash2 className="mr-1.5 h-3 w-3" />
-                    Delete shared link
-                  </>
-                )}
-              </Button>
             )}
           </div>
         )}

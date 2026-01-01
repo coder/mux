@@ -275,4 +275,13 @@ export const telemetry = {
     input: TelemetryEventSchema,
     output: z.void(),
   },
+  status: {
+    input: z.void(),
+    output: z.object({
+      /** True if telemetry is actively running (false in dev mode) */
+      enabled: z.boolean(),
+      /** True only if user explicitly set MUX_DISABLE_TELEMETRY=1 */
+      explicit: z.boolean(),
+    }),
+  },
 };

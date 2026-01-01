@@ -51,6 +51,10 @@ void mock.module("@/browser/contexts/WorkspaceContext", () => ({
   }),
 }));
 
+void mock.module("@/browser/contexts/TelemetryEnabledContext", () => ({
+  useLinkSharingEnabled: () => true,
+}));
+
 describe("ProposePlanToolCall Start Here", () => {
   beforeEach(() => {
     startHereCalls = [];

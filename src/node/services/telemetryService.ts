@@ -157,6 +157,24 @@ export class TelemetryService {
   }
 
   /**
+   * Check if telemetry is enabled.
+   * Returns true only after initialize() completes and telemetry was not disabled.
+   */
+  isEnabled(): boolean {
+    return this.client !== null;
+  }
+
+  /**
+   * Check if telemetry was explicitly disabled by the user via MUX_DISABLE_TELEMETRY=1.
+   * This is different from isEnabled() which also returns false in dev mode.
+   * Used to gate features like link sharing that should only be hidden when
+   * the user explicitly opts out of mux services.
+   */
+  isExplicitlyDisabled(): boolean {
+    return process.env.MUX_DISABLE_TELEMETRY === "1";
+  }
+
+  /**
    * Set the current PostHog feature flag/experiment assignment.
    *
    * This is used to attach `$feature/<flagKey>` properties to all telemetry events so

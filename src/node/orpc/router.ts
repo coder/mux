@@ -1761,6 +1761,15 @@ export const router = (authToken?: string) => {
         .handler(({ context, input }) => {
           context.telemetryService.capture(input);
         }),
+      status: t
+        .input(schemas.telemetry.status.input)
+        .output(schemas.telemetry.status.output)
+        .handler(({ context }) => {
+          return {
+            enabled: context.telemetryService.isEnabled(),
+            explicit: context.telemetryService.isExplicitlyDisabled(),
+          };
+        }),
     },
   });
 };

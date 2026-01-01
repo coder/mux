@@ -275,6 +275,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     },
     telemetry: {
       track: async () => undefined,
+      status: async () => ({ enabled: true, explicit: false }),
     },
     server: {
       getLaunchProject: async () => null,
