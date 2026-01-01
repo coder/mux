@@ -27,6 +27,17 @@ describe("includeFilesResolver", () => {
       );
     });
 
+    test("encodes paths for use in <@...> tag names", () => {
+      const result = renderContextFile({
+        path: "docs/User Guide.md",
+        content: "hello",
+        truncated: false,
+      });
+
+      expect(result).toContain("<@docs/User%20Guide.md>");
+      expect(result).toContain("</@docs/User%20Guide.md>");
+    });
+
     test("includes truncated attribute when content is truncated", () => {
       const result = renderContextFile({
         path: "large.json",

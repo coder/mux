@@ -66,6 +66,16 @@ function guessCodeFenceLanguage(filePath: string): string {
   return langMap[ext] ?? "";
 }
 
+function encodeAtTagNamePath(filePath: string): string {
+  // Encode characters that can break tag parsing (whitespace, quotes, etc.).
+  // Keep common path separators readable.
+  return filePath.replace(/[^A-Za-z0-9._/-]/g, (character) => {
+    return Array.from(Buffer.from(character, "utf8"))
+      .map((byte) => `%${byte.toString(16).toUpperCase().padStart(2, "0")}`)
+      .join("");
+  });
+}
+
 /**
  * Render a file as unified context XML using the `<@path>` tag format.
  */
@@ -73,13 +83,14 @@ export function renderContextFile(file: IncludedFile): string {
   const lang = guessCodeFenceLanguage(file.path);
   const fence = lang ? `\`\`\`${lang}` : "```";
   const truncatedAttr = file.truncated ? ' truncated="true"' : "";
+  const tagPath = encodeAtTagNamePath(file.path);
 
   return (
-    `<@${file.path}${truncatedAttr}>\n` +
+    `<@${tagPath}${truncatedAttr}>\n` +
     `${fence}\n` +
     `${file.content}\n` +
     `\`\`\`\n` +
-    `</@${file.path}>`
+    `</@${tagPath}>`
   );
 }
 
@@ -87,7 +98,8 @@ export function renderContextFile(file: IncludedFile): string {
  * Render an error for a file that couldn't be included.
  */
 export function renderContextFileError(filePath: string, error: string): string {
-  return `<@${filePath} error="${escapeXmlAttr(error)}" />`;
+  const tagPath = encodeAtTagNamePath(filePath);
+  return `<@${tagPath} error="${escapeXmlAttr(error)}" />`;
 }
 
 function escapeXmlAttr(value: string): string {

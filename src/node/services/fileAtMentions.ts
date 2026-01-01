@@ -148,6 +148,16 @@ function escapeXmlAttr(value: string): string {
     .replace(/>/g, "&gt;");
 }
 
+function encodeAtTagNamePath(filePath: string): string {
+  // Encode characters that can break tag parsing (whitespace, quotes, etc.).
+  // Keep common path separators readable.
+  return filePath.replace(/[^A-Za-z0-9._/-]/g, (character) => {
+    return Array.from(Buffer.from(character, "utf8"))
+      .map((byte) => `%${byte.toString(16).toUpperCase().padStart(2, "0")}`)
+      .join("");
+  });
+}
+
 function renderAtTaggedFileBlock(options: {
   filePath: string;
   rangeLabel: string;
@@ -158,18 +168,20 @@ function renderAtTaggedFileBlock(options: {
   const fence = lang ? `\`\`\`${lang}` : "```";
   const truncatedAttr = options.truncated ? ' truncated="true"' : "";
   const rangeAttr = options.rangeLabel ? ` range="${escapeXmlAttr(options.rangeLabel)}"` : "";
+  const tagPath = encodeAtTagNamePath(options.filePath);
 
   return (
-    `<@${options.filePath}${rangeAttr}${truncatedAttr}>\n` +
+    `<@${tagPath}${rangeAttr}${truncatedAttr}>\n` +
     `${fence}\n` +
     `${options.content}\n` +
     `\`\`\`\n` +
-    `</@${options.filePath}>`
+    `</@${tagPath}>`
   );
 }
 
 function renderAtTaggedFileError(filePath: string, error: string): string {
-  return `<@${filePath} error="${escapeXmlAttr(error)}" />`;
+  const tagPath = encodeAtTagNamePath(filePath);
+  return `<@${tagPath} error="${escapeXmlAttr(error)}" />`;
 }
 
 export async function injectFileAtMentions(
