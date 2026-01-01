@@ -27,8 +27,7 @@ test.describe("slash command flows", () => {
     });
     await ui.chat.expectTranscriptContains("Directory listing:");
 
-    await ui.chat.sendMessage("/clear");
-    await ui.chat.expectStatusMessageContains("Chat history cleared");
+    await ui.chat.sendCommandAndExpectStatus("/clear", "Chat history cleared");
 
     const transcript = page.getByRole("log", { name: "Conversation transcript" });
     await expect(transcript.getByText("No Messages Yet")).toBeVisible();
@@ -106,8 +105,10 @@ test.describe("slash command flows", () => {
     // Default model is now Opus - displayed as formatted name
     await expect(modeToggles.getByText("Opus 4.5", { exact: true })).toBeVisible();
 
-    await ui.chat.sendMessage("/model sonnet");
-    await ui.chat.expectStatusMessageContains("Model changed to anthropic:claude-sonnet-4-5");
+    await ui.chat.sendCommandAndExpectStatus(
+      "/model sonnet",
+      "Model changed to anthropic:claude-sonnet-4-5"
+    );
     // Model is displayed as formatted name
     await expect(modeToggles.getByText("Sonnet 4.5", { exact: true })).toBeVisible();
 
@@ -128,8 +129,10 @@ test.describe("slash command flows", () => {
   }) => {
     await ui.projects.openFirstWorkspace();
 
-    await ui.chat.sendMessage("/providers set anthropic baseUrl https://custom.endpoint");
-    await ui.chat.expectStatusMessageContains("Provider anthropic updated");
+    await ui.chat.sendCommandAndExpectStatus(
+      "/providers set anthropic baseUrl https://custom.endpoint",
+      "Provider anthropic updated"
+    );
 
     const providersPath = path.join(workspace.configRoot, "providers.jsonc");
     await expect
