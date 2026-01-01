@@ -307,11 +307,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const { agentId, agents } = useAgent();
 
   // Get the active agent's uiColor for focus border styling.
-  // Falls back to exec-mode styling if the agent hasn't loaded yet.
+  // Backend resolves uiColor from inheritance chain; we just use it directly.
   const focusBorderColor = useMemo(() => {
     const normalizedId = typeof agentId === "string" ? agentId.trim().toLowerCase() : "";
-    const descriptor = agents.find((entry) => entry.id === normalizedId);
-    return descriptor?.uiColor ?? "var(--color-exec-mode)";
+    const descriptor = agents.find((a) => a.id === normalizedId);
+    return descriptor?.uiColor ?? "var(--color-border-light)";
   }, [agentId, agents]);
   const {
     models,
