@@ -18,7 +18,7 @@ import { Check, ExternalLink, Link2, Loader2, Trash2 } from "lucide-react";
 import { CopyIcon } from "@/browser/components/icons/CopyIcon";
 import { copyToClipboard } from "@/browser/utils/clipboard";
 
-import { uploadToMuxMd, deleteFromMuxMd, updateMuxMdExpiration } from "@/browser/lib/muxMd";
+import { uploadToMuxMd, deleteFromMuxMd, updateMuxMdExpiration } from "@/common/lib/muxMd";
 import {
   getShareData,
   setShareData,

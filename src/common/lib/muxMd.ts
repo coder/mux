@@ -5,10 +5,40 @@
  * Messages are encrypted client-side before upload - the server never sees plaintext.
  */
 
-const MUX_MD_BASE_URL = "https://mux.md";
+export const MUX_MD_BASE_URL = "https://mux.md";
+export const MUX_MD_HOST = "mux.md";
 const SALT_BYTES = 16;
 const IV_BYTES = 12;
 const KEY_BYTES = 10; // 80 bits
+
+// --- URL utilities ---
+
+/**
+ * Check if URL is a mux.md share link with encryption key in fragment
+ */
+export function isMuxMdUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.host === MUX_MD_HOST && parsed.hash.length > 1;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Parse mux.md URL to extract ID and key
+ */
+export function parseMuxMdUrl(url: string): { id: string; key: string } | null {
+  try {
+    const parsed = new URL(url);
+    const id = parsed.pathname.slice(1); // Remove leading /
+    const key = parsed.hash.slice(1); // Remove leading #
+    if (!id || !key) return null;
+    return { id, key };
+  } catch {
+    return null;
+  }
+}
 
 /**
  * File metadata encrypted client-side
@@ -122,6 +152,24 @@ async function encrypt(data: Uint8Array, key: CryptoKey, iv: Uint8Array): Promis
     data.buffer as ArrayBuffer
   );
   return new Uint8Array(ciphertext);
+}
+
+async function decrypt(data: Uint8Array, key: CryptoKey, iv: Uint8Array): Promise<Uint8Array> {
+  const plaintext = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: iv.buffer as ArrayBuffer },
+    key,
+    data.buffer as ArrayBuffer
+  );
+  return new Uint8Array(plaintext);
+}
+
+function base64Decode(str: string): Uint8Array {
+  const binary = atob(str);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
 }
 
 // --- Public API ---
@@ -270,4 +318,99 @@ export async function updateMuxMdExpiration(
 
   const result = (await response.json()) as MutateResponse;
   return result.expiresAt;
+}
+
+// --- Download API ---
+
+export interface DownloadResult {
+  /** Decrypted content */
+  content: string;
+  /** File metadata (if available) */
+  fileInfo?: FileInfo;
+}
+
+interface MuxMdMeta {
+  salt: string;
+  iv: string;
+  encryptedMeta: string;
+}
+
+/**
+ * Download and decrypt content from mux.md.
+ *
+ * @param id - The file ID
+ * @param keyMaterial - The encryption key (base64url encoded)
+ * @param signal - Optional abort signal
+ * @returns Decrypted content and metadata
+ * @throws Error if download or decryption fails
+ */
+export async function downloadFromMuxMd(
+  id: string,
+  keyMaterial: string,
+  signal?: AbortSignal
+): Promise<DownloadResult> {
+  const response = await fetch(`${MUX_MD_BASE_URL}/${id}`, {
+    headers: { Accept: "application/octet-stream" },
+    signal,
+  });
+
+  if (!response.ok) {
+    if (response.status === 404) {
+      throw new Error("Share link expired or not found");
+    }
+    throw new Error(`Failed to fetch: HTTP ${response.status}`);
+  }
+
+  // Get metadata from header
+  const metaHeader = response.headers.get("X-Mux-Meta");
+  if (!metaHeader) {
+    throw new Error("Missing metadata header");
+  }
+
+  let meta: MuxMdMeta;
+  try {
+    meta = JSON.parse(atob(metaHeader)) as MuxMdMeta;
+  } catch {
+    throw new Error("Invalid metadata header");
+  }
+
+  // Decode encryption parameters
+  const salt = base64Decode(meta.salt);
+  const iv = base64Decode(meta.iv);
+
+  if (salt.length !== SALT_BYTES || iv.length !== IV_BYTES) {
+    throw new Error("Invalid encryption parameters");
+  }
+
+  // Derive decryption key
+  const key = await deriveKey(keyMaterial, salt);
+
+  // Get encrypted body
+  const encryptedData = new Uint8Array(await response.arrayBuffer());
+
+  // Decrypt content
+  let content: string;
+  try {
+    const decrypted = await decrypt(encryptedData, key, iv);
+    content = new TextDecoder().decode(decrypted);
+  } catch (err) {
+    throw new Error(
+      `Decryption failed: ${err instanceof Error ? err.message : "invalid key or corrupted data"}`
+    );
+  }
+
+  // Decrypt file metadata (optional - don't fail if this fails)
+  let fileInfo: FileInfo | undefined;
+  try {
+    const encryptedMetaBytes = base64Decode(meta.encryptedMeta);
+    // First 12 bytes are the IV for metadata
+    const metaIv = encryptedMetaBytes.slice(0, IV_BYTES);
+    const metaCiphertext = encryptedMetaBytes.slice(IV_BYTES);
+    const decryptedMeta = await decrypt(metaCiphertext, key, metaIv);
+    fileInfo = JSON.parse(new TextDecoder().decode(decryptedMeta)) as FileInfo;
+  } catch {
+    // Metadata decryption failed - continue without it
+  }
+
+  return { content, fileInfo };
 }
