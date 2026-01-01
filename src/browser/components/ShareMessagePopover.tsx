@@ -9,7 +9,8 @@ import {
 } from "@/browser/components/ui/select";
 import { Button } from "@/browser/components/ui/button";
 import { Check, ExternalLink, Link2, Loader2, Trash2 } from "lucide-react";
-import { CopyButton } from "@/browser/components/ui/CopyButton";
+import { CopyIcon } from "@/browser/components/icons/CopyIcon";
+import { copyToClipboard } from "@/browser/utils/clipboard";
 
 import { uploadToMuxMd, deleteFromMuxMd, updateMuxMdExpiration } from "@/browser/lib/muxMd";
 import {
@@ -87,6 +88,7 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
   const [isUpdating, setIsUpdating] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [showUpdated, setShowUpdated] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const urlInputRef = useRef<HTMLInputElement>(null);
 
@@ -141,7 +143,7 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
     return "message.md";
   };
 
-  // Upload without expiration (optimistic), then allow setting expiration after
+  // Upload with preferred expiration included in initial request
   const handleShare = async () => {
     if (!content || isUploading) return;
 
@@ -149,13 +151,22 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
     setError(null);
 
     try {
-      const result = await uploadToMuxMd(content, {
-        name: getFileName(),
-        type: "text/markdown",
-        size: new TextEncoder().encode(content).length,
-        model,
-        thinking,
-      });
+      // Get preferred expiration and include in upload request
+      const preferred = getPreferredExpiration();
+      const ms = expirationToMs(preferred);
+      const expiresAt = ms ? new Date(Date.now() + ms) : undefined;
+
+      const result = await uploadToMuxMd(
+        content,
+        {
+          name: getFileName(),
+          type: "text/markdown",
+          size: new TextEncoder().encode(content).length,
+          model,
+          thinking,
+        },
+        { expiresAt }
+      );
 
       const data: ShareData = {
         url: result.url,
@@ -168,13 +179,6 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
       // Cache the share data
       setShareData(content, data);
       setLocalShareData(data);
-
-      // If user has a preferred expiration, apply it automatically
-      const preferred = getPreferredExpiration();
-      if (preferred !== "never") {
-        // Apply preferred expiration in background
-        void handleUpdateExpiration(data, preferred, true);
-      }
     } catch (err) {
       console.error("Share failed:", err);
       setError(err instanceof Error ? err.message : "Failed to upload");
@@ -245,6 +249,15 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
       setIsDeleting(false);
     }
   };
+
+  const handleCopy = useCallback(() => {
+    if (shareData?.url) {
+      void copyToClipboard(shareData.url).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      });
+    }
+  }, [shareData?.url]);
 
   const handleOpenInBrowser = useCallback(() => {
     if (shareData?.url) {
@@ -327,7 +340,18 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
                 data-testid="share-url"
                 onFocus={(e) => e.target.select()}
               />
-              <CopyButton text={shareData.url} className="share-copy-button" />
+              <button
+                onClick={handleCopy}
+                className="text-muted hover:text-foreground shrink-0 p-0.5 transition-colors"
+                aria-label="Copy to clipboard"
+                data-testid="copy-share-url"
+              >
+                {copied ? (
+                  <Check className="h-3.5 w-3.5 text-green-500" />
+                ) : (
+                  <CopyIcon className="h-3.5 w-3.5" />
+                )}
+              </button>
               <button
                 onClick={handleOpenInBrowser}
                 className="text-muted hover:text-foreground shrink-0 p-0.5 transition-colors"
