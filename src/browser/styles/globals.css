@@ -1712,6 +1712,28 @@ span.search-highlight {
   height: 12px;
 }
 
+/* Share popover copy button - compact inline style */
+.share-copy-button {
+  padding: 2px 4px;
+  background: transparent;
+  border: none;
+  flex-shrink: 0;
+}
+
+.share-copy-button:hover {
+  background: transparent;
+  border: none;
+}
+
+.share-copy-button .copy-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.share-copy-button .copy-feedback {
+  font-size: 9px;
+}
+
 /* Markdown code blocks (fallback for non-highlighted blocks) */
 pre code {
   display: block;

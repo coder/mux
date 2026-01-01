@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/browser/components/ui/popover";
 import {
   Select,
@@ -8,16 +8,9 @@ import {
   SelectValue,
 } from "@/browser/components/ui/select";
 import { Button } from "@/browser/components/ui/button";
-import {
-  Check,
-  Clipboard,
-  ClipboardCheck,
-  ExternalLink,
-  Link2,
-  Loader2,
-  Trash2,
-} from "lucide-react";
-import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
+import { Check, ExternalLink, Link2, Loader2, Trash2 } from "lucide-react";
+import { CopyButton } from "@/browser/components/ui/CopyButton";
+
 import { uploadToMuxMd, deleteFromMuxMd, updateMuxMdExpiration } from "@/browser/lib/muxMd";
 import {
   getShareData,
@@ -95,6 +88,7 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
   const [isDeleting, setIsDeleting] = useState(false);
   const [showUpdated, setShowUpdated] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const urlInputRef = useRef<HTMLInputElement>(null);
 
   // Current share data (from upload or cache)
   const [shareData, setLocalShareData] = useState<ShareData | null>(null);
@@ -115,8 +109,17 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
+  // Auto-select URL text when share data becomes available
+  useEffect(() => {
+    if (shareData && urlInputRef.current) {
+      // Small delay to ensure input is rendered
+      requestAnimationFrame(() => {
+        urlInputRef.current?.select();
+      });
+    }
+  }, [shareData]);
+
   const isAlreadyShared = Boolean(shareData);
-  const { copied, copyToClipboard } = useCopyToClipboard();
 
   // Get preferred expiration from localStorage
   const getPreferredExpiration = (): ExpirationValue => {
@@ -232,6 +235,9 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
       // Remove from cache
       removeShareData(content);
       setLocalShareData(null);
+
+      // Close the popover after successful delete
+      setIsOpen(false);
     } catch (err) {
       console.error("Delete failed:", err);
       setError(err instanceof Error ? err.message : "Failed to delete");
@@ -240,17 +246,11 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
     }
   };
 
-  const handleCopy = () => {
-    if (shareData?.url) {
-      void copyToClipboard(shareData.url);
-    }
-  };
-
-  const handleOpenInBrowser = () => {
+  const handleOpenInBrowser = useCallback(() => {
     if (shareData?.url) {
       window.open(shareData.url, "_blank", "noopener,noreferrer");
     }
-  };
+  }, [shareData?.url]);
 
   const handleOpenChange = (open: boolean) => {
     setIsOpen(open);
@@ -316,42 +316,26 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
           <div className="space-y-3">
             <div className="text-foreground text-xs font-medium">Shared Link</div>
 
-            <div className="border-border bg-background rounded border p-2">
-              <code
-                className="text-foreground block font-mono text-[10px] break-all"
+            {/* URL input with inline copy/open buttons */}
+            <div className="border-border bg-background flex items-center gap-1 rounded border px-2 py-1.5">
+              <input
+                ref={urlInputRef}
+                type="text"
+                readOnly
+                value={shareData.url}
+                className="text-foreground min-w-0 flex-1 bg-transparent font-mono text-[10px] outline-none"
                 data-testid="share-url"
-              >
-                {shareData.url}
-              </code>
-            </div>
-
-            <div className="flex gap-2">
-              <Button
-                onClick={handleCopy}
-                className="h-7 flex-1 text-xs"
-                variant="default"
-                data-testid="copy-share-url"
-              >
-                {copied ? (
-                  <>
-                    <ClipboardCheck className="mr-1.5 h-3 w-3" />
-                    Copied!
-                  </>
-                ) : (
-                  <>
-                    <Clipboard className="mr-1.5 h-3 w-3" />
-                    Copy
-                  </>
-                )}
-              </Button>
-              <Button
+                onFocus={(e) => e.target.select()}
+              />
+              <CopyButton text={shareData.url} className="share-copy-button" />
+              <button
                 onClick={handleOpenInBrowser}
-                variant="outline"
-                className="h-7 text-xs"
+                className="text-muted hover:text-foreground shrink-0 p-0.5 transition-colors"
+                aria-label="Open in browser"
                 data-testid="open-share-url"
               >
-                <ExternalLink className="h-3 w-3" />
-              </Button>
+                <ExternalLink className="h-3.5 w-3.5" />
+              </button>
             </div>
 
             {/* Expiration control */}

@@ -5,10 +5,11 @@
  * - End-to-end encrypted upload to mux.md
  * - URL format validation
  * - Content can be retrieved and decrypted
+ * - Delete functionality
  */
 
 import { shouldRunIntegrationTests } from "../testUtils";
-import { uploadToMuxMd } from "../../src/browser/lib/muxMd";
+import { uploadToMuxMd, deleteFromMuxMd } from "../../src/browser/lib/muxMd";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
@@ -93,5 +94,26 @@ HTML entities: &amp; &lt; &gt;
     // Upload should succeed - metadata is encrypted client-side
     expect(result.url).toBeTruthy();
     expect(result.id).toBeTruthy();
+  }, 30_000);
+
+  test("should successfully delete uploaded content using mutateKey", async () => {
+    const content = "Content to be deleted";
+
+    // Upload first
+    const result = await uploadToMuxMd(content, {
+      name: "delete-test.md",
+      type: "text/markdown",
+      size: content.length,
+    });
+
+    expect(result.id).toBeTruthy();
+    expect(result.mutateKey).toBeTruthy();
+
+    // Delete should complete without throwing
+    await expect(deleteFromMuxMd(result.id, result.mutateKey)).resolves.not.toThrow();
+
+    // Verify the content is no longer accessible (fetch returns 404)
+    const response = await fetch(`https://mux.md/${result.id}`);
+    expect(response.status).toBe(404);
   }, 30_000);
 });
