@@ -8,7 +8,7 @@
  */
 
 import { shouldRunIntegrationTests } from "../testUtils";
-import { uploadToMuxMd } from "../../src/common/lib/muxMd";
+import { uploadToMuxMd } from "../../src/browser/lib/muxMd";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 

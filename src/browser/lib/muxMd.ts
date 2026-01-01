@@ -6,7 +6,6 @@
  */
 
 const MUX_MD_BASE_URL = "https://mux.md";
-const PBKDF2_ITERATIONS = 100_000;
 const SALT_BYTES = 16;
 const IV_BYTES = 12;
 const KEY_BYTES = 10; // 80 bits
@@ -94,16 +93,18 @@ async function deriveKey(keyMaterial: string, salt: Uint8Array): Promise<CryptoK
     rawKey[i] = binary.charCodeAt(i);
   }
 
-  const baseKey = await crypto.subtle.importKey("raw", rawKey.buffer, "PBKDF2", false, [
+  // Import as HKDF key material
+  const baseKey = await crypto.subtle.importKey("raw", rawKey.buffer, "HKDF", false, [
     "deriveBits",
     "deriveKey",
   ]);
 
+  // Derive AES-256-GCM key using HKDF with SHA-256
   return crypto.subtle.deriveKey(
     {
-      name: "PBKDF2",
+      name: "HKDF",
       salt: salt.buffer as ArrayBuffer,
-      iterations: PBKDF2_ITERATIONS,
+      info: new TextEncoder().encode("mux.md"),
       hash: "SHA-256",
     },
     baseKey,

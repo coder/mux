@@ -10,7 +10,7 @@ import {
 import { Button } from "@/browser/components/ui/button";
 import { Clipboard, ClipboardCheck, ExternalLink, Link2, Loader2, Trash2 } from "lucide-react";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
-import { uploadToMuxMd, deleteFromMuxMd, updateMuxMdExpiration } from "@/common/lib/muxMd";
+import { uploadToMuxMd, deleteFromMuxMd, updateMuxMdExpiration } from "@/browser/lib/muxMd";
 import {
   getShareData,
   setShareData,
