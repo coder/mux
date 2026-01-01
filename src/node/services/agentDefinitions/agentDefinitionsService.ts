@@ -471,3 +471,46 @@ export async function resolveAgentBody(
 
   return resolve(agentId, 0);
 }
+
+/**
+ * Resolve include_files patterns for an agent, including inherited patterns.
+ *
+ * Inheritance behavior mirrors resolveAgentBody:
+ * - If `prompt.append` is false, we do NOT inherit include_files from the base.
+ * - Otherwise, base patterns are prepended (base first, then child).
+ */
+export async function resolveAgentIncludeFilesPatterns(
+  runtime: Runtime,
+  workspacePath: string,
+  agentId: AgentId,
+  options?: { roots?: AgentDefinitionsRoots }
+): Promise<string[]> {
+  const visited = new Set<AgentId>();
+
+  async function resolve(id: AgentId, depth: number): Promise<string[]> {
+    checkInheritanceChain(visited, id, depth);
+
+    const pkg = await readAgentDefinition(runtime, workspacePath, id, options);
+    const baseId = pkg.frontmatter.base;
+    const shouldAppend = pkg.frontmatter.prompt?.append !== false;
+
+    const patterns = pkg.frontmatter.include_files ?? [];
+
+    if (!baseId || !shouldAppend) {
+      return patterns;
+    }
+
+    const basePatterns = await resolve(baseId, depth + 1);
+    return [...basePatterns, ...patterns];
+  }
+
+  const patterns = await resolve(agentId, 0);
+
+  // Preserve order while deduplicating.
+  const seen = new Set<string>();
+  return patterns.filter((pattern) => {
+    if (seen.has(pattern)) return false;
+    seen.add(pattern);
+    return true;
+  });
+}

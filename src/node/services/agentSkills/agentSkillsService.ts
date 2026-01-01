@@ -10,7 +10,10 @@ import {
   AgentSkillDescriptorSchema,
   AgentSkillPackageSchema,
   SkillNameSchema,
+  type IncludeFilesContextSchema,
 } from "@/common/orpc/schemas";
+import type { z } from "zod";
+import { resolveIncludeFiles, renderIncludedFilesContext } from "./includeFilesResolver";
 import type {
   AgentSkillDescriptor,
   AgentSkillPackage,
@@ -236,11 +239,23 @@ async function readAgentSkillFromDir(
     directoryName,
   });
 
+  // Resolve include_files if specified
+  let includeFilesContext: z.infer<typeof IncludeFilesContextSchema> | undefined;
+  if (parsed.frontmatter.include_files && parsed.frontmatter.include_files.length > 0) {
+    const resolved = await resolveIncludeFiles(runtime, skillDir, parsed.frontmatter.include_files);
+    includeFilesContext = {
+      files: resolved.files,
+      errors: resolved.errors,
+      rendered: renderIncludedFilesContext(resolved),
+    };
+  }
+
   const pkg: AgentSkillPackage = {
     scope,
     directoryName,
     frontmatter: parsed.frontmatter,
     body: parsed.body,
+    includeFilesContext,
   };
 
   const validated = AgentSkillPackageSchema.safeParse(pkg);

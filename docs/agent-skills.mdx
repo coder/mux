@@ -57,6 +57,7 @@ Optional fields:
 - `license`
 - `compatibility`
 - `metadata` (string key/value map)
+- `include_files` (glob patterns, relative to the skill directory, for files to inline when the skill is loaded)
 
 Mux ignores unknown frontmatter keys (for example `allowed-tools`).
 
@@ -69,6 +70,8 @@ description: Build and validate a release branch.
 license: MIT
 metadata:
   owner: platform
+include_files:
+  - references/**/*.md
 ---
 
 # My Skill

@@ -73,6 +73,58 @@ Body
     ).toThrow(AgentDefinitionParseError);
   });
 
+  test("parses include_files patterns", () => {
+    const content = `---
+name: With Files
+include_files:
+  - "docs/**/*.md"
+  - "src/**/*.ts"
+---
+Body
+`;
+
+    const result = parseAgentDefinitionMarkdown({
+      content,
+      byteSize: Buffer.byteLength(content, "utf-8"),
+    });
+
+    expect(result.frontmatter.include_files).toEqual(["docs/**/*.md", "src/**/*.ts"]);
+  });
+
+  test("rejects absolute paths in include_files", () => {
+    const content = `---
+name: Bad Paths
+include_files:
+  - "/etc/passwd"
+---
+Body
+`;
+
+    expect(() =>
+      parseAgentDefinitionMarkdown({
+        content,
+        byteSize: Buffer.byteLength(content, "utf-8"),
+      })
+    ).toThrow(AgentDefinitionParseError);
+  });
+
+  test("rejects path traversal in include_files", () => {
+    const content = `---
+name: Traversal
+include_files:
+  - "../secret.txt"
+---
+Body
+`;
+
+    expect(() =>
+      parseAgentDefinitionMarkdown({
+        content,
+        byteSize: Buffer.byteLength(content, "utf-8"),
+      })
+    ).toThrow(AgentDefinitionParseError);
+  });
+
   test("parses tools as add/remove patterns", () => {
     const content = `---
 name: Regex Tools

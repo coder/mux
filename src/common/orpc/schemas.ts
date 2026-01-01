@@ -45,6 +45,9 @@ export {
   AgentSkillFrontmatterSchema,
   AgentSkillPackageSchema,
   AgentSkillScopeSchema,
+  IncludeFileGlobSchema,
+  IncludedFileSchema,
+  IncludeFilesContextSchema,
   SkillNameSchema,
 } from "./schemas/agentSkill";
 

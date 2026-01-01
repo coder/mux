@@ -34,7 +34,7 @@ describe("injectFileAtMentions", () => {
       expect(result[1]).toEqual(messages[0]);
 
       const injectedText = result[0]?.parts.find((p) => p.type === "text")?.text ?? "";
-      expect(injectedText).toContain('<mux-file path="src/foo.ts" range="L2-L3"');
+      expect(injectedText).toContain('<@src/foo.ts range="L2-L3"');
       expect(injectedText).toContain("```ts");
       expect(injectedText).toContain("line2");
       expect(injectedText).toContain("line3");
@@ -67,7 +67,7 @@ describe("injectFileAtMentions", () => {
       expect(result[0]?.metadata?.synthetic).toBe(true);
 
       const injectedText = result[0]?.parts.find((p) => p.type === "text")?.text ?? "";
-      expect(injectedText).toContain('<mux-file path="Makefile" range="L1-L2"');
+      expect(injectedText).toContain('<@Makefile range="L1-L2"');
       expect(injectedText).toContain("line1");
       expect(injectedText).toContain("line2");
     } finally {

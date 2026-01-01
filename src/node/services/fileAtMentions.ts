@@ -140,7 +140,15 @@ function formatRange(startLine: number, endLine: number, lineCount: number): str
   return `L${startLine}-L${endLine}`;
 }
 
-function renderMuxFileBlock(options: {
+function escapeXmlAttr(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function renderAtTaggedFileBlock(options: {
   filePath: string;
   rangeLabel: string;
   content: string;
@@ -149,18 +157,19 @@ function renderMuxFileBlock(options: {
   const lang = guessCodeFenceLanguage(options.filePath);
   const fence = lang ? `\`\`\`${lang}` : "```";
   const truncatedAttr = options.truncated ? ' truncated="true"' : "";
+  const rangeAttr = options.rangeLabel ? ` range="${escapeXmlAttr(options.rangeLabel)}"` : "";
 
   return (
-    `<mux-file path="${options.filePath}" range="${options.rangeLabel}"${truncatedAttr}>\n` +
+    `<@${options.filePath}${rangeAttr}${truncatedAttr}>\n` +
     `${fence}\n` +
     `${options.content}\n` +
     `\`\`\`\n` +
-    `</mux-file>`
+    `</@${options.filePath}>`
   );
 }
 
-function renderMuxFileError(filePath: string, error: string): string {
-  return `<mux-file-error path="${filePath}">${error}</mux-file-error>`;
+function renderAtTaggedFileError(filePath: string, error: string): string {
+  return `<@${filePath} error="${escapeXmlAttr(error)}" />`;
 }
 
 export async function injectFileAtMentions(
@@ -252,7 +261,7 @@ export async function injectFileAtMentions(
         continue;
       }
 
-      const block = renderMuxFileError(displayPath, mention.rangeError);
+      const block = renderAtTaggedFileError(displayPath, mention.rangeError);
       const blockBytes = Buffer.byteLength(block, "utf8");
       if (totalBytes + blockBytes > MAX_TOTAL_BYTES) {
         break;
@@ -267,7 +276,7 @@ export async function injectFileAtMentions(
       resolvedPath = resolveWorkspaceFilePath(options.runtime, options.workspacePath, mention.path);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const block = renderMuxFileError(displayPath, message);
+      const block = renderAtTaggedFileError(displayPath, message);
       const blockBytes = Buffer.byteLength(block, "utf8");
       if (totalBytes + blockBytes > MAX_TOTAL_BYTES) {
         break;
@@ -286,7 +295,7 @@ export async function injectFileAtMentions(
       }
 
       const message = error instanceof Error ? error.message : String(error);
-      const block = renderMuxFileError(displayPath, `Failed to stat file: ${message}`);
+      const block = renderAtTaggedFileError(displayPath, `Failed to stat file: ${message}`);
       const blockBytes = Buffer.byteLength(block, "utf8");
       if (totalBytes + blockBytes > MAX_TOTAL_BYTES) {
         break;
@@ -301,7 +310,7 @@ export async function injectFileAtMentions(
         continue;
       }
 
-      const block = renderMuxFileError(displayPath, "Path is a directory, not a file.");
+      const block = renderAtTaggedFileError(displayPath, "Path is a directory, not a file.");
       const blockBytes = Buffer.byteLength(block, "utf8");
       if (totalBytes + blockBytes > MAX_TOTAL_BYTES) {
         break;
@@ -314,7 +323,7 @@ export async function injectFileAtMentions(
     if (stat.size > MAX_FILE_SIZE) {
       const sizeMB = (stat.size / (1024 * 1024)).toFixed(2);
       const maxMB = (MAX_FILE_SIZE / (1024 * 1024)).toFixed(2);
-      const block = renderMuxFileError(
+      const block = renderAtTaggedFileError(
         displayPath,
         `File is too large to include (${sizeMB}MB > ${maxMB}MB). Use a smaller #L<start>-<end> range or file_read.`
       );
@@ -332,7 +341,7 @@ export async function injectFileAtMentions(
       content = await readFileString(options.runtime, resolvedPath, options.abortSignal);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const block = renderMuxFileError(displayPath, `Failed to read file: ${message}`);
+      const block = renderAtTaggedFileError(displayPath, `Failed to read file: ${message}`);
       const blockBytes = Buffer.byteLength(block, "utf8");
       if (totalBytes + blockBytes > MAX_TOTAL_BYTES) {
         break;
@@ -343,7 +352,10 @@ export async function injectFileAtMentions(
     }
 
     if (content.includes("\u0000")) {
-      const block = renderMuxFileError(displayPath, "Binary file detected (NUL byte). Skipping.");
+      const block = renderAtTaggedFileError(
+        displayPath,
+        "Binary file detected (NUL byte). Skipping."
+      );
       const blockBytes = Buffer.byteLength(block, "utf8");
       if (totalBytes + blockBytes > MAX_TOTAL_BYTES) {
         break;
@@ -360,7 +372,7 @@ export async function injectFileAtMentions(
     const requestedEnd = mention.range?.endLine ?? Math.max(1, lines.length);
 
     if (lines.length > 0 && requestedStart > lines.length) {
-      const block = renderMuxFileError(
+      const block = renderAtTaggedFileError(
         displayPath,
         `Range starts beyond end of file: requested L${requestedStart}, file has ${lines.length} lines.`
       );
@@ -402,7 +414,7 @@ export async function injectFileAtMentions(
     const rangeStart = requestedStart;
     const rangeEnd = processedLines.length > 0 ? requestedStart + processedLines.length - 1 : 0;
     const rangeLabel = formatRange(rangeStart, rangeEnd, processedLines.length);
-    const header = renderMuxFileBlock({
+    const header = renderAtTaggedFileBlock({
       filePath: displayPath,
       rangeLabel,
       content: "",
@@ -423,7 +435,7 @@ export async function injectFileAtMentions(
     const finalRangeEnd = finalLines.length > 0 ? requestedStart + finalLines.length - 1 : 0;
     const finalRangeLabel = formatRange(requestedStart, finalRangeEnd, finalLines.length);
 
-    const block = renderMuxFileBlock({
+    const block = renderAtTaggedFileBlock({
       filePath: displayPath,
       rangeLabel: finalRangeLabel,
       content: finalLines.join("\n"),
