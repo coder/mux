@@ -4,7 +4,61 @@ import { cn } from "@/common/lib/utils";
 import type { SlashSuggestion } from "@/browser/utils/slashCommands/types";
 
 // Export the keys that CommandSuggestions handles
-export const COMMAND_SUGGESTION_KEYS = ["Tab", "ArrowUp", "ArrowDown", "Escape"];
+export const COMMAND_SUGGESTION_KEYS = ["Tab", "Enter", "ArrowUp", "ArrowDown", "Escape"];
+
+/**
+ * Highlight matching portions of text based on a query.
+ * Performs case-insensitive substring matching and highlights all occurrences.
+ */
+function HighlightedText({
+  text,
+  query,
+  className,
+}: {
+  text: string;
+  query?: string;
+  className?: string;
+}) {
+  if (!query || query.length === 0) {
+    return <span className={className}>{text}</span>;
+  }
+
+  const parts: React.ReactNode[] = [];
+  const lowerText = text.toLowerCase();
+  const lowerQuery = query.toLowerCase();
+  let lastIndex = 0;
+  let matchIndex = lowerText.indexOf(lowerQuery);
+
+  while (matchIndex !== -1) {
+    // Add non-matching prefix
+    if (matchIndex > lastIndex) {
+      parts.push(
+        <span key={`text-${lastIndex}`} className="opacity-60">
+          {text.slice(lastIndex, matchIndex)}
+        </span>
+      );
+    }
+    // Add highlighted match
+    parts.push(
+      <span key={`match-${matchIndex}`} className="text-light">
+        {text.slice(matchIndex, matchIndex + query.length)}
+      </span>
+    );
+    lastIndex = matchIndex + query.length;
+    matchIndex = lowerText.indexOf(lowerQuery, lastIndex);
+  }
+
+  // Add remaining non-matching suffix
+  if (lastIndex < text.length) {
+    parts.push(
+      <span key={`text-${lastIndex}`} className="opacity-60">
+        {text.slice(lastIndex)}
+      </span>
+    );
+  }
+
+  return <span className={className}>{parts}</span>;
+}
 
 // Props interface
 interface CommandSuggestionsProps {
@@ -16,6 +70,8 @@ interface CommandSuggestionsProps {
   listId?: string;
   /** Reference to the input element for portal positioning */
   anchorRef?: React.RefObject<HTMLElement | null>;
+  /** Query string to highlight in suggestions (for file path autocomplete) */
+  highlightQuery?: string;
 }
 
 // Main component
@@ -27,6 +83,7 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
   ariaLabel = "Command suggestions",
   listId,
   anchorRef,
+  highlightQuery,
 }) => {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [position, setPosition] = useState<{ top: number; left: number; width: number } | null>(
@@ -122,6 +179,7 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
           setSelectedIndex((i) => (i - 1 + suggestions.length) % suggestions.length);
           break;
         case "Tab":
+        case "Enter":
           if (!e.shiftKey && suggestions.length > 0) {
             e.preventDefault();
             onSelectSuggestion(suggestions[selectedIndex]);
@@ -200,14 +258,17 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
             index === selectedIndex ? "bg-accent-darker" : "bg-transparent"
           )}
         >
-          <div className="text-accent font-monospace shrink-0 text-xs">{suggestion.display}</div>
-          <div className="text-medium truncate text-right text-[11px]">
+          <div className="text-accent font-monospace min-w-0 shrink-0 truncate text-xs">
+            <HighlightedText text={suggestion.display} query={highlightQuery} />
+          </div>
+          <div className="text-medium shrink-0 text-right text-[11px]">
             {suggestion.description}
           </div>
         </div>
       ))}
       <div className="border-border-light bg-dark text-placeholder [&_span]:text-medium shrink-0 border-t px-2.5 py-1 text-center text-[10px] [&_span]:font-medium">
-        <span>Tab</span> to complete • <span>↑↓</span> to navigate • <span>Esc</span> to dismiss
+        <span>Enter</span> or <span>Tab</span> to complete • <span>↑↓</span> to navigate •{" "}
+        <span>Esc</span> to dismiss
       </div>
     </div>
   );

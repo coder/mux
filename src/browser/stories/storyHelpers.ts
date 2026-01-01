@@ -62,7 +62,7 @@ export function clearWorkspaceSelection(): void {
 
 /** Set input text for a workspace */
 export function setWorkspaceInput(workspaceId: string, text: string): void {
-  localStorage.setItem(getInputKey(workspaceId), text);
+  localStorage.setItem(getInputKey(workspaceId), JSON.stringify(text));
 }
 
 /** Set model for a workspace */

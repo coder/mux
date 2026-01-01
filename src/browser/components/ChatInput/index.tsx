@@ -191,6 +191,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const [hideReviewsDuringSend, setHideReviewsDuringSend] = useState(false);
   const [showAtMentionSuggestions, setShowAtMentionSuggestions] = useState(false);
   const [atMentionSuggestions, setAtMentionSuggestions] = useState<SlashSuggestion[]>([]);
+  const [atMentionQuery, setAtMentionQuery] = useState<string>("");
   const atMentionDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const atMentionRequestIdRef = useRef(0);
   const lastAtMentionScopeIdRef = useRef<string | null>(null);
@@ -776,18 +777,33 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             // File @mentions are whitespace-delimited (extractAtMentions uses /@(\S+)/), so
             // suggestions containing spaces would be inserted incorrectly (e.g. "@foo bar.ts").
             .filter((p) => !/\s/.test(p))
-            .map((p) => ({
-              id: `file:${p}`,
-              display: p,
-              description: "File",
-              replacement: `@${p}`,
-            }));
+            .map((p) => {
+              // Determine file type from extension or mark as directory
+              const getFileType = (path: string): string => {
+                if (path.endsWith("/")) return "Directory";
+                const lastDot = path.lastIndexOf(".");
+                const lastSlash = path.lastIndexOf("/");
+                // Only use extension if it's after the last slash (in the filename)
+                if (lastDot > lastSlash && lastDot < path.length - 1) {
+                  return path.slice(lastDot + 1).toUpperCase();
+                }
+                return "File";
+              };
+              return {
+                id: `file:${p}`,
+                display: p,
+                description: getFileType(p),
+                replacement: `@${p}`,
+              };
+            });
 
           setAtMentionSuggestions(nextSuggestions);
+          setAtMentionQuery(match.query);
           setShowAtMentionSuggestions(nextSuggestions.length > 0);
         } catch {
           if (atMentionRequestIdRef.current === requestId) {
             setAtMentionSuggestions([]);
+            setAtMentionQuery("");
             setShowAtMentionSuggestions(false);
           }
         }
@@ -1096,8 +1112,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         return;
       }
 
+      // Add trailing space so user can continue typing naturally
       const next =
-        input.slice(0, match.startIndex) + suggestion.replacement + input.slice(match.endIndex);
+        input.slice(0, match.startIndex) +
+        suggestion.replacement +
+        " " +
+        input.slice(match.endIndex);
 
       setInput(next);
       setAtMentionSuggestions([]);
@@ -1110,7 +1130,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         }
 
         el.focus();
-        const newCursor = match.startIndex + suggestion.replacement.length;
+        // +1 for the trailing space we added
+        const newCursor = match.startIndex + suggestion.replacement.length + 1;
         el.selectionStart = newCursor;
         el.selectionEnd = newCursor;
       });
@@ -1928,6 +1949,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             ariaLabel="File path suggestions"
             listId={atMentionListId}
             anchorRef={variant === "creation" ? inputRef : undefined}
+            highlightQuery={atMentionQuery}
           />
 
           {/* Slash command suggestions - available in both variants */}

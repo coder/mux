@@ -536,6 +536,25 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         get: async (input: { workspaceId: string }) => mcpOverrides.get(input.workspaceId) ?? {},
         set: async () => ({ success: true, data: undefined }),
       },
+      getFileCompletions: async (input: { workspaceId: string; query: string; limit?: number }) => {
+        // Mock file paths for storybook - simulate typical project structure
+        const mockPaths = [
+          "src/browser/components/ChatInput/index.tsx",
+          "src/browser/components/CommandSuggestions.tsx",
+          "src/browser/components/App.tsx",
+          "src/browser/hooks/usePersistedState.ts",
+          "src/browser/contexts/WorkspaceContext.tsx",
+          "src/common/utils/atMentions.ts",
+          "src/common/orpc/types.ts",
+          "src/node/services/workspaceService.ts",
+          "package.json",
+          "tsconfig.json",
+          "README.md",
+        ];
+        const query = input.query.toLowerCase();
+        const filtered = mockPaths.filter((p) => p.toLowerCase().includes(query));
+        return { paths: filtered.slice(0, input.limit ?? 20) };
+      },
     },
     window: {
       setTitle: async () => undefined,
