@@ -264,7 +264,7 @@ build/icon.png: docs/img/logo.webp scripts/generate-icons.ts
 	@bun scripts/generate-icons.ts png
 
 ## Quality checks (can run in parallel)
-static-check: lint typecheck fmt-check check-eager-imports check-bench-agent check-docs-links ## Run all static checks
+static-check: lint typecheck fmt-check check-eager-imports check-bench-agent check-docs-links check-code-docs-links ## Run all static checks
 
 check-bench-agent: ## Verify terminal-bench agent configuration and imports
 	@./scripts/check-bench-agent.sh
@@ -400,6 +400,9 @@ docs-server: node_modules/.installed ## Serve documentation locally (Mintlify de
 check-docs-links: ## Check documentation for broken links
 	@echo "🔗 Checking documentation links..."
 	@cd docs && npx mintlify broken-links
+
+check-code-docs-links: ## Validate code references to docs paths
+	@./scripts/check-code-docs-links.sh
 
 ## Storybook
 storybook: node_modules/.installed src/version.ts ## Start Storybook development server
