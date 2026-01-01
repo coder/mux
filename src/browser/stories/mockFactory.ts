@@ -358,6 +358,31 @@ export function createGenericTool(
   };
 }
 
+/** Create a propose_plan tool call with markdown plan content */
+export function createProposePlanTool(
+  toolCallId: string,
+  planContent: string,
+  planPath = ".mux/plan.md"
+): MuxPart {
+  // Extract title from first heading
+  const titleMatch = /^#\s+(.+)$/m.exec(planContent);
+  const title = titleMatch ? titleMatch[1] : "Plan";
+
+  return {
+    type: "dynamic-tool",
+    toolCallId,
+    toolName: "propose_plan",
+    state: "output-available",
+    input: { title, plan: planContent },
+    output: {
+      success: true,
+      planPath,
+      planContent, // Include for story rendering
+      message: `Plan saved to ${planPath}`,
+    },
+  };
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // CODE EXECUTION (PTC) TOOL FACTORIES
 // ═══════════════════════════════════════════════════════════════════════════════

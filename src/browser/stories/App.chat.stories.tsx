@@ -14,6 +14,7 @@ import {
   createStatusTool,
   createGenericTool,
   createPendingTool,
+  createProposePlanTool,
 } from "./mockFactory";
 
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
@@ -1191,6 +1192,81 @@ export const InitHookError: AppStory = {
         story:
           "Shows the InitMessage component after a failed init hook execution. " +
           "The message displays with a red alert icon, error styling, and error output.",
+      },
+    },
+  },
+};
+
+/**
+ * Story showing a propose_plan tool call with Plan UI.
+ * Tests the plan card rendering with icon action buttons at the bottom.
+ */
+export const ProposePlan: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-plan",
+          messages: [
+            createUserMessage("msg-1", "Help me refactor the authentication module", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 300000,
+            }),
+            createAssistantMessage(
+              "msg-2",
+              "I'll create a plan for refactoring the authentication module.",
+              {
+                historySequence: 2,
+                timestamp: STABLE_TIMESTAMP - 290000,
+                toolCalls: [
+                  createProposePlanTool(
+                    "call-plan-1",
+                    `# Authentication Module Refactor
+
+## Overview
+
+Refactor the authentication system to improve security and maintainability.
+
+## Tasks
+
+1. **Extract JWT utilities** - Move token generation and validation to dedicated module
+2. **Add refresh token support** - Implement secure refresh token rotation
+3. **Improve password hashing** - Upgrade to Argon2id with proper salt rounds
+4. **Add rate limiting** - Implement per-IP and per-user rate limits
+5. **Session management** - Add Redis-backed session store
+
+## Implementation Order
+
+\`\`\`mermaid
+graph TD
+    A[Extract JWT utils] --> B[Add refresh tokens]
+    B --> C[Improve hashing]
+    C --> D[Add rate limiting]
+    D --> E[Session management]
+\`\`\`
+
+## Success Criteria
+
+- All existing tests pass
+- New tests for refresh token flow
+- Security audit passes
+- Performance benchmarks maintained`
+                  ),
+                ],
+              }
+            ),
+          ],
+        })
+      }
+    />
+  ),
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Shows the ProposePlanToolCall component with a completed plan. " +
+          "The plan card displays with the title in the header and icon action buttons " +
+          "(Copy, Start Here, Show Text) at the bottom, matching the AssistantMessage aesthetic.",
       },
     },
   },
