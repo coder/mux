@@ -22,11 +22,24 @@ export function useRouter(): RouterContext {
   return ctx;
 }
 
-/** Get initial route from localStorage (restores last workspace). */
+/** Get initial route from browser URL or localStorage. */
 function getInitialRoute(): string {
-  const saved = readPersistedState<WorkspaceSelection | null>(SELECTED_WORKSPACE_KEY, null);
-  if (saved?.workspaceId) {
-    return `/workspace/${encodeURIComponent(saved.workspaceId)}`;
+  // In browser mode, read route directly from URL (enables refresh restoration)
+  if (window.location.protocol !== "file:" && !window.location.pathname.endsWith("iframe.html")) {
+    const url = window.location.pathname + window.location.search;
+    // Only use URL if it's a valid route (starts with /, not just "/" or empty)
+    if (url.startsWith("/") && url !== "/") {
+      return url;
+    }
+  }
+
+  // In Electron (file://), fallback to localStorage for workspace restoration
+  const savedWorkspace = readPersistedState<WorkspaceSelection | null>(
+    SELECTED_WORKSPACE_KEY,
+    null
+  );
+  if (savedWorkspace?.workspaceId) {
+    return `/workspace/${encodeURIComponent(savedWorkspace.workspaceId)}`;
   }
   return "/";
 }
