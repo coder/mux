@@ -76,6 +76,15 @@ export class WorktreeRuntime extends LocalBaseRuntime {
       const localBranches = await listLocalBranches(projectPath);
       const branchExists = localBranches.includes(branchName);
 
+      // Fetch origin before creating worktree (best-effort)
+      // This ensures new branches start from the latest origin state
+      const fetchedOrigin = await this.fetchOriginTrunk(projectPath, trunkBranch, initLogger);
+
+      // Determine best base for new branches: use origin if local can fast-forward to it,
+      // otherwise preserve local state (user may have unpushed work)
+      const shouldUseOrigin =
+        fetchedOrigin && (await this.canFastForwardToOrigin(projectPath, trunkBranch, initLogger));
+
       // Create worktree (git worktree is typically fast)
       if (branchExists) {
         // Branch exists, just add worktree pointing to it
@@ -84,17 +93,23 @@ export class WorktreeRuntime extends LocalBaseRuntime {
         );
         await proc.result;
       } else {
-        // Branch doesn't exist, create it from trunk
+        // Branch doesn't exist, create from the best available base:
+        // - origin/<trunk> if local is behind/equal (ensures fresh starting point)
+        // - local <trunk> if local is ahead/diverged (preserves user's work)
+        const newBranchBase = shouldUseOrigin ? `origin/${trunkBranch}` : trunkBranch;
         using proc = execAsync(
-          `git -C "${projectPath}" worktree add -b "${branchName}" "${workspacePath}" "${trunkBranch}"`
+          `git -C "${projectPath}" worktree add -b "${branchName}" "${workspacePath}" "${newBranchBase}"`
         );
         await proc.result;
       }
 
       initLogger.logStep("Worktree created successfully");
 
-      // Pull latest from origin (best-effort, non-blocking on failure)
-      await this.pullLatestFromOrigin(workspacePath, trunkBranch, initLogger);
+      // For existing branches, fast-forward to latest origin (best-effort)
+      // Only if local can fast-forward (preserves unpushed work)
+      if (shouldUseOrigin && branchExists) {
+        await this.fastForwardToOrigin(workspacePath, trunkBranch, initLogger);
+      }
 
       return { success: true, workspacePath };
     } catch (error) {
@@ -106,41 +121,79 @@ export class WorktreeRuntime extends LocalBaseRuntime {
   }
 
   /**
-   * Fetch and rebase on latest origin/<trunkBranch>
-   * Best-effort operation - logs status but doesn't fail workspace creation
+   * Fetch trunk branch from origin before worktree creation.
+   * Returns true if fetch succeeded (origin is available for branching).
    */
-  private async pullLatestFromOrigin(
+  private async fetchOriginTrunk(
+    projectPath: string,
+    trunkBranch: string,
+    initLogger: InitLogger
+  ): Promise<boolean> {
+    try {
+      initLogger.logStep(`Fetching latest from origin/${trunkBranch}...`);
+
+      using fetchProc = execAsync(`git -C "${projectPath}" fetch origin "${trunkBranch}"`);
+      await fetchProc.result;
+
+      initLogger.logStep("Fetched latest from origin");
+      return true;
+    } catch (error) {
+      const errorMsg = getErrorMessage(error);
+      initLogger.logStderr(
+        `Note: Could not fetch from origin (${errorMsg}), using local branch state`
+      );
+      return false;
+    }
+  }
+
+  /**
+   * Check if local trunk can fast-forward to origin/<trunk>.
+   * Returns true if local is behind or equal to origin (safe to use origin).
+   * Returns false if local is ahead or diverged (preserve local state).
+   */
+  private async canFastForwardToOrigin(
+    projectPath: string,
+    trunkBranch: string,
+    initLogger: InitLogger
+  ): Promise<boolean> {
+    try {
+      // Check if local trunk is an ancestor of origin/trunk
+      // Exit code 0 = local is ancestor (can fast-forward), non-zero = cannot
+      using proc = execAsync(
+        `git -C "${projectPath}" merge-base --is-ancestor "${trunkBranch}" "origin/${trunkBranch}"`
+      );
+      await proc.result;
+      return true; // Local is behind or equal to origin
+    } catch {
+      // Local is ahead or diverged - preserve local state
+      initLogger.logStderr(
+        `Note: Local ${trunkBranch} is ahead of or diverged from origin, using local state`
+      );
+      return false;
+    }
+  }
+
+  /**
+   * Fast-forward merge to latest origin/<trunkBranch> after checkout.
+   * Best-effort operation for existing branches that may be behind origin.
+   */
+  private async fastForwardToOrigin(
     workspacePath: string,
     trunkBranch: string,
     initLogger: InitLogger
   ): Promise<void> {
     try {
-      initLogger.logStep(`Fetching latest from origin/${trunkBranch}...`);
-
-      // Fetch the trunk branch from origin
-      using fetchProc = execAsync(`git -C "${workspacePath}" fetch origin "${trunkBranch}"`);
-      await fetchProc.result;
-
       initLogger.logStep("Fast-forward merging...");
 
-      // Attempt fast-forward merge from origin/<trunkBranch>
-      try {
-        using mergeProc = execAsync(
-          `git -C "${workspacePath}" merge --ff-only "origin/${trunkBranch}"`
-        );
-        await mergeProc.result;
-        initLogger.logStep("Fast-forwarded to latest origin successfully");
-      } catch (mergeError) {
-        // Fast-forward not possible (diverged branches) - just warn
-        const errorMsg = getErrorMessage(mergeError);
-        initLogger.logStderr(`Note: Fast-forward skipped (${errorMsg}), using local branch state`);
-      }
-    } catch (error) {
-      // Fetch failed - log and continue (common for repos without remote)
-      const errorMsg = getErrorMessage(error);
-      initLogger.logStderr(
-        `Note: Could not fetch from origin (${errorMsg}), using local branch state`
+      using mergeProc = execAsync(
+        `git -C "${workspacePath}" merge --ff-only "origin/${trunkBranch}"`
       );
+      await mergeProc.result;
+      initLogger.logStep("Fast-forwarded to latest origin successfully");
+    } catch (mergeError) {
+      // Fast-forward not possible (diverged branches) - just warn
+      const errorMsg = getErrorMessage(mergeError);
+      initLogger.logStderr(`Note: Fast-forward failed (${errorMsg}), using local branch state`);
     }
   }
 
