@@ -76,6 +76,15 @@ export function withHooks<TParameters, TResult>(
             throw new Error(`Tool ${toolName} does not have an execute function`);
           }
           return tool.execute(args, options);
+        },
+        {
+          slowThresholdMs: 10000,
+          onSlowHook: (phase, elapsedMs) => {
+            const seconds = (elapsedMs / 1000).toFixed(1);
+            log.warn(`[withHooks] Slow ${phase}-hook for ${toolName}: ${seconds}s`);
+            // Also log to console for visibility during interactive use
+            console.warn(`⚠️  Slow tool hook (${phase}): ${toolName} took ${seconds}s`);
+          },
         }
       );
 

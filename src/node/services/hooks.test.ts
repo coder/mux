@@ -284,5 +284,148 @@ echo "Hook received: $RESULT" >&2
         )
       ).rejects.toThrow("Tool execution failed");
     });
+
+    test("succeeds when hook exits without reading MUX_RESULT", async () => {
+      const hookDir = path.join(tempDir, ".mux");
+      const hookPath = path.join(hookDir, "tool_hook");
+      await fs.mkdir(hookDir, { recursive: true });
+
+      // Hook that signals exec but exits immediately without reading stdin
+      await fs.writeFile(
+        hookPath,
+        `#!/bin/bash
+echo __MUX_EXEC__
+exit 0
+`
+      );
+      await fs.chmod(hookPath, 0o755);
+
+      const { result, hook } = await runWithHook(
+        runtime,
+        hookPath,
+        {
+          tool: "test",
+          toolInput: "{}",
+          workspaceId: "test",
+          projectDir: tempDir,
+        },
+        () => Promise.resolve({ success: true, data: "result" })
+      );
+
+      expect(hook.toolExecuted).toBe(true);
+      expect(hook.success).toBe(true);
+      expect(result).toEqual({ success: true, data: "result" });
+    });
+
+    test("logs warning when pre-hook takes too long", async () => {
+      const hookDir = path.join(tempDir, ".mux");
+      const hookPath = path.join(hookDir, "tool_hook");
+      await fs.mkdir(hookDir, { recursive: true });
+
+      // Hook that sleeps before signaling exec
+      await fs.writeFile(
+        hookPath,
+        `#!/bin/bash
+sleep 0.15
+echo __MUX_EXEC__
+read RESULT
+`
+      );
+      await fs.chmod(hookPath, 0o755);
+
+      const warnings: string[] = [];
+      const { hook } = await runWithHook(
+        runtime,
+        hookPath,
+        {
+          tool: "test",
+          toolInput: "{}",
+          workspaceId: "test",
+          projectDir: tempDir,
+        },
+        () => Promise.resolve({ success: true }),
+        {
+          slowThresholdMs: 100,
+          onSlowHook: (phase, elapsed) => warnings.push(`${phase}: ${elapsed}ms`),
+        }
+      );
+
+      expect(hook.success).toBe(true);
+      expect(warnings.length).toBe(1);
+      expect(warnings[0]).toMatch(/^pre: \d+ms$/);
+    });
+
+    test("logs warning when post-hook takes too long", async () => {
+      const hookDir = path.join(tempDir, ".mux");
+      const hookPath = path.join(hookDir, "tool_hook");
+      await fs.mkdir(hookDir, { recursive: true });
+
+      // Hook that sleeps after reading result
+      await fs.writeFile(
+        hookPath,
+        `#!/bin/bash
+echo __MUX_EXEC__
+read RESULT
+sleep 0.15
+`
+      );
+      await fs.chmod(hookPath, 0o755);
+
+      const warnings: string[] = [];
+      const { hook } = await runWithHook(
+        runtime,
+        hookPath,
+        {
+          tool: "test",
+          toolInput: "{}",
+          workspaceId: "test",
+          projectDir: tempDir,
+        },
+        () => Promise.resolve({ success: true }),
+        {
+          slowThresholdMs: 100,
+          onSlowHook: (phase, elapsed) => warnings.push(`${phase}: ${elapsed}ms`),
+        }
+      );
+
+      expect(hook.success).toBe(true);
+      expect(warnings.length).toBe(1);
+      expect(warnings[0]).toMatch(/^post: \d+ms$/);
+    });
+
+    test("does not log warning when hook is fast", async () => {
+      const hookDir = path.join(tempDir, ".mux");
+      const hookPath = path.join(hookDir, "tool_hook");
+      await fs.mkdir(hookDir, { recursive: true });
+
+      await fs.writeFile(
+        hookPath,
+        `#!/bin/bash
+echo __MUX_EXEC__
+read RESULT
+`
+      );
+      await fs.chmod(hookPath, 0o755);
+
+      const warnings: string[] = [];
+      const { hook } = await runWithHook(
+        runtime,
+        hookPath,
+        {
+          tool: "test",
+          toolInput: "{}",
+          workspaceId: "test",
+          projectDir: tempDir,
+        },
+        () => Promise.resolve({ success: true }),
+        {
+          slowThresholdMs: 100,
+          onSlowHook: (phase, elapsed) => warnings.push(`${phase}: ${elapsed}ms`),
+        }
+      );
+
+      expect(hook.success).toBe(true);
+      expect(warnings.length).toBe(0);
+    });
   });
 });

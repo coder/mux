@@ -94,6 +94,14 @@ async function isFile(runtime: Runtime, filePath: string): Promise<boolean> {
   }
 }
 
+/** Options for hook timing warnings */
+export interface HookTimingOptions {
+  /** Threshold in ms before warning about slow hooks (default: 10000) */
+  slowThresholdMs?: number;
+  /** Callback when hook phase exceeds threshold */
+  onSlowHook?: (phase: "pre" | "post", elapsedMs: number) => void;
+}
+
 /**
  * Execute a tool with hook wrapping.
  * Uses runtime.exec() so hooks work for both local and SSH workspaces.
@@ -102,14 +110,19 @@ async function isFile(runtime: Runtime, filePath: string): Promise<boolean> {
  * @param hookPath Path to the hook executable
  * @param context Hook context with tool info
  * @param executeTool Callback to execute the actual tool (called when hook signals __MUX_EXEC__)
+ * @param timingOptions Optional timing/warning configuration
  * @returns Hook result with success status and any stderr output
  */
 export async function runWithHook<T>(
   runtime: Runtime,
   hookPath: string,
   context: HookContext,
-  executeTool: () => Promise<T | AsyncIterable<T>>
+  executeTool: () => Promise<T | AsyncIterable<T>>,
+  timingOptions?: HookTimingOptions
 ): Promise<{ result: T | AsyncIterable<T> | undefined; hook: HookResult }> {
+  const slowThresholdMs = timingOptions?.slowThresholdMs ?? 10000;
+  const onSlowHook = timingOptions?.onSlowHook;
+  const hookStartTime = Date.now();
   const hookEnv: Record<string, string> = {
     ...(context.env ?? {}),
     MUX_TOOL: context.tool,
@@ -141,6 +154,7 @@ export async function runWithHook<T>(
   let toolResult: T | AsyncIterable<T> | undefined;
   let toolError: Error | undefined;
   let toolExecuted = false;
+  let toolResultSentTime: number | undefined;
   let stderrOutput = "";
   let stdoutBuffer = "";
   let stdoutAfterMarker = "";
@@ -178,6 +192,12 @@ export async function runWithHook<T>(
 
         // Check for marker in accumulated buffer
         if (stdoutBuffer.includes(EXEC_MARKER)) {
+          // Check pre-hook timing before marking as executed
+          const preHookElapsed = Date.now() - hookStartTime;
+          if (onSlowHook && preHookElapsed > slowThresholdMs) {
+            onSlowHook("pre", preHookElapsed);
+          }
+
           toolExecuted = true;
 
           // Capture anything after the marker in this chunk
@@ -197,6 +217,7 @@ export async function runWithHook<T>(
             await writer.write(new TextEncoder().encode(JSON.stringify(errorResult) + "\n"));
           } finally {
             await writer.close();
+            toolResultSentTime = Date.now();
           }
         }
       }
@@ -214,6 +235,14 @@ export async function runWithHook<T>(
   // Wait for stderr collection and exit code
   await stderrPromise;
   const exitCode = await stream.exitCode;
+
+  // Check post-hook timing (time from result sent to hook exit)
+  if (onSlowHook && toolResultSentTime) {
+    const postHookElapsed = Date.now() - toolResultSentTime;
+    if (postHookElapsed > slowThresholdMs) {
+      onSlowHook("post", postHookElapsed);
+    }
+  }
 
   // If tool threw an error, rethrow it after hook completes
   // This ensures tool failures propagate even when hooks are present
