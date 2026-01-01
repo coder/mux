@@ -252,5 +252,37 @@ read RESULT
 
       expect(hook.stderr).toContain("SECRET=secret-value");
     });
+
+    test("rethrows tool errors after hook completes", async () => {
+      const hookDir = path.join(tempDir, ".mux");
+      const hookPath = path.join(hookDir, "tool_hook");
+      await fs.mkdir(hookDir, { recursive: true });
+
+      await fs.writeFile(
+        hookPath,
+        `#!/bin/bash
+echo __MUX_EXEC__
+read RESULT
+echo "Hook received: $RESULT" >&2
+`
+      );
+      await fs.chmod(hookPath, 0o755);
+
+      const toolError = new Error("Tool execution failed");
+
+      expect(
+        runWithHook(
+          runtime,
+          hookPath,
+          {
+            tool: "test",
+            toolInput: "{}",
+            workspaceId: "test",
+            projectDir: tempDir,
+          },
+          () => Promise.reject(toolError)
+        )
+      ).rejects.toThrow("Tool execution failed");
+    });
   });
 });

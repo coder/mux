@@ -139,6 +139,7 @@ export async function runWithHook<T>(
   }
 
   let toolResult: T | AsyncIterable<T> | undefined;
+  let toolError: Error | undefined;
   let toolExecuted = false;
   let stderrOutput = "";
   let stdoutBuffer = "";
@@ -190,7 +191,9 @@ export async function runWithHook<T>(
             const resultJson = JSON.stringify(toolResult) + "\n";
             await writer.write(new TextEncoder().encode(resultJson));
           } catch (err) {
-            const errorResult = { error: err instanceof Error ? err.message : String(err) };
+            // Capture error to rethrow after hook completes
+            toolError = err instanceof Error ? err : new Error(String(err));
+            const errorResult = { error: toolError.message };
             await writer.write(new TextEncoder().encode(JSON.stringify(errorResult) + "\n"));
           } finally {
             await writer.close();
@@ -211,6 +214,12 @@ export async function runWithHook<T>(
   // Wait for stderr collection and exit code
   await stderrPromise;
   const exitCode = await stream.exitCode;
+
+  // If tool threw an error, rethrow it after hook completes
+  // This ensures tool failures propagate even when hooks are present
+  if (toolError) {
+    throw toolError;
+  }
 
   return {
     result: toolResult,
