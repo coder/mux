@@ -184,10 +184,12 @@ export function useGitBranchDetails(
 # Get current branch
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
 
-# Get primary branch (main or master)
-PRIMARY_BRANCH=$(git branch -r 2>/dev/null | grep -E 'origin/(main|master)$' | head -1 | sed 's@^.*origin/@@' || echo "main")
-
-if [ -z "$PRIMARY_BRANCH" ]; then
+# Get primary branch (main or master) - check refs directly for reliability
+if git rev-parse --verify "refs/remotes/origin/main" >/dev/null 2>&1; then
+  PRIMARY_BRANCH="main"
+elif git rev-parse --verify "refs/remotes/origin/master" >/dev/null 2>&1; then
+  PRIMARY_BRANCH="master"
+else
   PRIMARY_BRANCH="main"
 fi
 
