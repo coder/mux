@@ -43,7 +43,8 @@
                     "pages": ["runtime", "runtime/local", "runtime/worktree", "runtime/ssh"]
                   },
                   "fork",
-                  "init-hooks"
+                  "init-hooks",
+                  "tool-hooks"
                 ]
               },
               "plan-mode",

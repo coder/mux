@@ -1,0 +1,127 @@
+/**
+ * Higher-order function that wraps a tool with hook support.
+ *
+ * When a .mux/tool_hook executable exists, the tool execution is wrapped:
+ * 1. Hook starts, receives tool info via env vars
+ * 2. Hook runs pre-logic, prints __MUX_EXEC__ when ready
+ * 3. Tool executes, result sent to hook's stdin
+ * 4. Hook runs post-logic
+ * 5. If hook exits non-zero, stderr is appended to tool result for LLM feedback
+ */
+
+import type { Tool } from "ai";
+import { getHookPath, runWithHook } from "@/node/services/hooks";
+import { log } from "@/node/services/log";
+
+export interface HookConfig {
+  /** Working directory where hooks are discovered */
+  cwd: string;
+  /** Workspace ID for hook context */
+  workspaceId: string;
+  /** Additional environment variables to pass to hooks */
+  env?: Record<string, string>;
+}
+
+/**
+ * Wrap a tool to execute within hook context if a hook exists.
+ *
+ * The wrapper:
+ * 1. Checks for .mux/tool_hook or ~/.mux/tool_hook
+ * 2. If no hook, executes tool directly
+ * 3. If hook exists, spawns it with tool context
+ * 4. Waits for hook to signal __MUX_EXEC__ before running tool
+ * 5. Sends tool result to hook's stdin
+ * 6. If hook fails (non-zero exit), appends stderr to result
+ */
+export function withHooks<TParameters, TResult>(
+  toolName: string,
+  tool: Tool<TParameters, TResult>,
+  config: HookConfig
+): Tool<TParameters, TResult> {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+  return {
+    ...tool,
+    execute: async (args: TParameters, options) => {
+      // Find hook (cached per call - hooks can be added/removed dynamically)
+      const hookPath = await getHookPath(config.cwd);
+
+      // No hook - execute tool directly
+      if (!hookPath) {
+        if (!tool.execute) {
+          throw new Error(`Tool ${toolName} does not have an execute function`);
+        }
+        return tool.execute(args, options);
+      }
+
+      // Execute tool within hook context
+      log.debug("[withHooks] Running tool with hook", { toolName, hookPath });
+
+      const { result, hook } = await runWithHook<TResult>(
+        hookPath,
+        {
+          tool: toolName,
+          toolInput: JSON.stringify(args),
+          workspaceId: config.workspaceId,
+          projectDir: config.cwd,
+          env: config.env,
+        },
+        async () => {
+          if (!tool.execute) {
+            throw new Error(`Tool ${toolName} does not have an execute function`);
+          }
+          return tool.execute(args, options);
+        }
+      );
+
+      // Hook blocked tool execution (exited before __MUX_EXEC__)
+      if (!hook.toolExecuted) {
+        log.debug("[withHooks] Hook blocked tool execution", { toolName, stderr: hook.stderr });
+        // Return error result that LLM can see
+        const errorResult: { error: string } = {
+          error: hook.stderr || "Tool blocked by hook (exited before __MUX_EXEC__)",
+        };
+        return errorResult as TResult;
+      }
+
+      // Hook failed after tool executed - append stderr feedback
+      if (!hook.success && hook.stderr) {
+        log.debug("[withHooks] Hook failed after tool execution", {
+          toolName,
+          stderr: hook.stderr,
+        });
+        return appendHookFeedback(result, hook.stderr);
+      }
+
+      // Note: result could be TResult or AsyncIterable<TResult>, but we return it as-is
+      // AsyncIterable results (streaming) are passed through without modification
+      return result as TResult | AsyncIterable<TResult>;
+    },
+  } as Tool<TParameters, TResult>;
+}
+
+/**
+ * Append hook stderr feedback to tool result.
+ * This lets the LLM see hook errors (like lint failures) alongside the tool result.
+ */
+function appendHookFeedback<T>(result: T | AsyncIterable<T> | undefined, stderr: string): T {
+  if (result === undefined) {
+    const errorResult: { error: string } = { error: stderr };
+    return errorResult as T;
+  }
+
+  // If result is an object, add hook_error field
+  if (typeof result === "object" && result !== null) {
+    const withError: T & { hook_error: string } = {
+      ...(result as T),
+      hook_error: stderr,
+    };
+    return withError as T;
+  }
+
+  // For primitive results, wrap in object
+  const wrapped: { result: T | AsyncIterable<T>; hook_error: string } = {
+    result,
+    hook_error: stderr,
+  };
+  return wrapped as unknown as T;
+}

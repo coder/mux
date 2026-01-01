@@ -1,0 +1,222 @@
+---
+title: Tool Hooks
+description: Wrap agent tool executions with custom pre/post logic
+---
+
+Add a `.mux/tool_hook` executable to your project to wrap every tool execution. Use it for environment setup (direnv, nvm), linting, type-checking, or any custom validation.
+
+## Quick Start
+
+Create `.mux/tool_hook`:
+
+```bash
+#!/usr/bin/env bash
+
+# Pre-hook: load direnv environment
+eval "$(direnv export bash 2>/dev/null)"
+
+# Signal mux to execute the tool
+echo __MUX_EXEC__
+
+# Wait for tool result
+read MUX_RESULT
+```
+
+Make it executable:
+
+```bash
+chmod +x .mux/tool_hook
+```
+
+## How It Works
+
+The hook wraps the entire tool lifecycle in a single invocation:
+
+```
+┌─────────────────────────────────────────┐
+│ 1. Hook starts, runs pre-hook logic     │
+│ 2. Hook prints __MUX_EXEC__             │
+│ 3. Mux executes the actual tool         │
+│ 4. Mux sends result JSON to hook stdin  │
+│ 5. Hook runs post-hook logic            │
+│ 6. Hook exits                           │
+└─────────────────────────────────────────┘
+```
+
+This design lets you:
+
+- **Set up environment** before tools run (direnv, virtualenv, nvm)
+- **Block tools** by exiting before `__MUX_EXEC__`
+- **Inspect results** and run validation after tools complete
+- **Share state** between pre and post logic
+
+## Environment Variables
+
+| Variable           | Description                                                      |
+| ------------------ | ---------------------------------------------------------------- |
+| `MUX_TOOL`         | Tool name: `bash`, `file_edit_replace_string`, `file_read`, etc. |
+| `MUX_TOOL_INPUT`   | JSON string with tool arguments                                  |
+| `MUX_WORKSPACE_ID` | Current workspace identifier                                     |
+| `MUX_PROJECT_DIR`  | Workspace root directory                                         |
+
+After printing `__MUX_EXEC__`, the tool result is sent to stdin as a single JSON line. Read it with `read MUX_RESULT`.
+
+## Exit Codes
+
+| Exit Code | Behavior                                                                                     |
+| --------- | -------------------------------------------------------------------------------------------- |
+| `0`       | Success - tool result returned to agent                                                      |
+| Non-zero  | **Failure** - hook's stderr is appended to tool result, letting the agent see and fix issues |
+
+If the hook exits non-zero **before** `__MUX_EXEC__`, the tool is blocked entirely and the agent sees the error.
+
+If the hook exits non-zero **after** `__MUX_EXEC__`, the tool has already run but the agent sees the hook's error output (useful for lint/type failures).
+
+## Examples
+
+### Environment Setup (direnv/devenv)
+
+The most common use case - ensure tools see your development environment:
+
+```bash
+#!/usr/bin/env bash
+
+# Load direnv environment
+eval "$(direnv export bash 2>/dev/null)"
+
+# Or activate a Python virtualenv
+# source .venv/bin/activate
+
+# Or use nvm
+# source ~/.nvm/nvm.sh && nvm use
+
+echo __MUX_EXEC__
+read MUX_RESULT
+```
+
+### Lint After File Edits
+
+Run linters after any file modification:
+
+```bash
+#!/usr/bin/env bash
+
+echo __MUX_EXEC__
+read MUX_RESULT
+
+# Only lint after file edits
+if [[ "$MUX_TOOL" == file_edit_* ]]; then
+  file=$(echo "$MUX_TOOL_INPUT" | jq -r '.file_path')
+
+  case "$file" in
+    *.ts|*.tsx)
+      npx tsc --noEmit "$file" 2>&1 || exit 1
+      ;;
+    *.py)
+      ruff check "$file" 2>&1 || exit 1
+      ;;
+  esac
+fi
+```
+
+### Block Dangerous Operations
+
+Prevent certain tools or patterns:
+
+```bash
+#!/usr/bin/env bash
+
+# Block force pushes
+if [[ "$MUX_TOOL" == "bash" ]]; then
+  if echo "$MUX_TOOL_INPUT" | jq -r '.script' | grep -q 'push.*--force'; then
+    echo "Force push blocked by tool_hook" >&2
+    exit 1
+  fi
+fi
+
+echo __MUX_EXEC__
+read MUX_RESULT
+```
+
+### Measure Tool Duration
+
+Track how long tools take:
+
+```bash
+#!/usr/bin/env bash
+
+start=$(date +%s%N)
+
+echo __MUX_EXEC__
+read MUX_RESULT
+
+end=$(date +%s%N)
+duration=$(( (end - start) / 1000000 ))
+echo "Tool $MUX_TOOL took ${duration}ms" >> /tmp/mux-tool-timing.log
+```
+
+### Python Hook
+
+Hooks can be written in any language:
+
+```python
+#!/usr/bin/env python3
+import os
+import sys
+import json
+
+tool = os.environ.get('MUX_TOOL', '')
+tool_input = json.loads(os.environ.get('MUX_TOOL_INPUT', '{}'))
+
+# Pre-hook logic here
+
+print('__MUX_EXEC__', flush=True)
+result = json.loads(input())
+
+# Post-hook logic here
+if tool.startswith('file_edit_'):
+    file_path = tool_input.get('file_path', '')
+    if file_path.endswith('.py'):
+        import subprocess
+        ret = subprocess.run(['ruff', 'check', file_path], capture_output=True, text=True)
+        if ret.returncode != 0:
+            print(ret.stdout, file=sys.stderr)
+            print(ret.stderr, file=sys.stderr)
+            sys.exit(1)
+```
+
+## Hook Location
+
+Mux searches for hooks in this order:
+
+1. `.mux/tool_hook` - Project-level (commit this for team-wide hooks)
+2. `~/.mux/tool_hook` - User-level (personal hooks, not committed)
+
+Only the first hook found is executed.
+
+## Debugging
+
+To debug your hook, write to stderr (stdout is reserved for the `__MUX_EXEC__` protocol):
+
+```bash
+#!/usr/bin/env bash
+
+echo "Hook started for $MUX_TOOL" >&2
+echo "Input: $MUX_TOOL_INPUT" >&2
+
+echo __MUX_EXEC__
+read MUX_RESULT
+
+echo "Result: $MUX_RESULT" >&2
+```
+
+Stderr output is visible in the workspace logs.
+
+## Comparison with Init Hooks
+
+| Feature      | Init Hook (`.mux/init`)     | Tool Hook (`.mux/tool_hook`) |
+| ------------ | --------------------------- | ---------------------------- |
+| **Runs**     | Once per workspace creation | Every tool execution         |
+| **Purpose**  | Setup (install deps, build) | Wrap tool behavior           |
+| **Blocking** | Non-blocking                | Blocks tool until complete   |
+| **Use case** | `bun install`, `make build` | direnv, linting, validation  |
