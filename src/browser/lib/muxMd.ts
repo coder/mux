@@ -100,11 +100,12 @@ async function deriveKey(keyMaterial: string, salt: Uint8Array): Promise<CryptoK
   ]);
 
   // Derive AES-256-GCM key using HKDF with SHA-256
+  // Note: empty info array to match mux-md viewer
   return crypto.subtle.deriveKey(
     {
       name: "HKDF",
       salt: salt.buffer as ArrayBuffer,
-      info: new TextEncoder().encode("mux.md"),
+      info: new Uint8Array(0),
       hash: "SHA-256",
     },
     baseKey,

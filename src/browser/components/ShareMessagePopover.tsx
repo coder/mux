@@ -90,13 +90,21 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
   // Current share data (from upload or cache)
   const [shareData, setLocalShareData] = useState<ShareData | null>(null);
 
-  // Load cached data when content changes or popover opens
+  // Load cached data when content changes
   useEffect(() => {
     if (content) {
       const cached = getShareData(content);
       setLocalShareData(cached ?? null);
     }
-  }, [content, isOpen]);
+  }, [content]);
+
+  // Auto-upload when popover opens and no cached data exists
+  useEffect(() => {
+    if (isOpen && content && !shareData && !isUploading && !error) {
+      void handleShare();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
 
   const isAlreadyShared = Boolean(shareData);
   const { copied, copyToClipboard } = useCopyToClipboard();
@@ -268,32 +276,31 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
       </PopoverTrigger>
       <PopoverContent align="start" className="w-[280px] p-3">
         {!shareData ? (
-          // Pre-upload: show share button (no expiration selector - upload first)
+          // Uploading state (auto-triggered on open)
           <div className="space-y-3">
             <div className="text-foreground text-xs font-medium">
               Share {variant === "plan" ? "Plan" : "Message"}
             </div>
 
-            {error && (
-              <div className="bg-destructive/10 text-destructive rounded px-2 py-1.5 text-[11px]">
-                {error}
+            {error ? (
+              <>
+                <div className="bg-destructive/10 text-destructive rounded px-2 py-1.5 text-[11px]">
+                  {error}
+                </div>
+                <Button
+                  onClick={() => void handleShare()}
+                  disabled={isUploading}
+                  className="h-7 w-full text-xs"
+                >
+                  Retry
+                </Button>
+              </>
+            ) : (
+              <div className="flex items-center justify-center py-4">
+                <Loader2 className="text-muted h-5 w-5 animate-spin" />
+                <span className="text-muted ml-2 text-xs">Encrypting...</span>
               </div>
             )}
-
-            <Button
-              onClick={() => void handleShare()}
-              disabled={isUploading || !content}
-              className="h-7 w-full text-xs"
-            >
-              {isUploading ? (
-                <>
-                  <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
-                  Encrypting...
-                </>
-              ) : (
-                "Create Link"
-              )}
-            </Button>
 
             <p className="text-muted text-center text-[10px]">
               End-to-end encrypted. Server never sees content.
