@@ -29,6 +29,7 @@ import { ReviewControls } from "./ReviewControls";
 import { FileTree } from "./FileTree";
 import { shellQuote } from "@/common/utils/shell";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { STORAGE_KEYS, WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { useReviewState } from "@/browser/hooks/useReviewState";
 import { useHunkFirstSeen } from "@/browser/hooks/useHunkFirstSeen";
 import { RefreshController, type LastRefreshInfo } from "@/browser/utils/RefreshController";
@@ -60,6 +61,7 @@ interface ReviewPanelStats {
 interface ReviewPanelProps {
   workspaceId: string;
   workspacePath: string;
+  projectPath: string;
   onReviewNote?: (data: ReviewNoteData) => void;
   /** Trigger to focus panel (increment to trigger) */
   focusTrigger?: number;
@@ -230,6 +232,7 @@ async function executeWorkspaceBashAndCache<T extends ReviewPanelCacheValue>(par
 export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   workspaceId,
   workspacePath,
+  projectPath,
   onReviewNote,
   focusTrigger,
   isCreating = false,
@@ -287,10 +290,13 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     null
   );
 
-  // Global default base (shared across all workspaces)
-  const [defaultBase] = usePersistedState<string>("review-default-base", "HEAD");
+  // Per-project default base (shared across workspaces in the same project)
+  const [defaultBase] = usePersistedState<string>(
+    STORAGE_KEYS.reviewDefaultBase(projectPath),
+    WORKSPACE_DEFAULTS.reviewBase
+  );
 
-  // Persist diff base per workspace (falls back to global default)
+  // Persist diff base per workspace (falls back to project default)
   const [diffBase, setDiffBase] = usePersistedState(`review-diff-base:${workspaceId}`, defaultBase);
 
   // Persist includeUncommitted flag globally
@@ -1033,6 +1039,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         isRefreshBlocked={isRefreshBlocked}
         workspaceId={workspaceId}
         workspacePath={workspacePath}
+        projectPath={projectPath}
         refreshTrigger={refreshTrigger}
         lastRefreshInfo={lastRefreshInfo}
       />
@@ -1040,6 +1047,14 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
       {diffState.status === "error" ? (
         <div className="text-danger-soft bg-danger-soft/10 border-danger-soft/30 font-monospace m-3 rounded border p-6 text-xs leading-[1.5] break-words whitespace-pre-wrap">
           {diffState.message}
+          {/* Show helpful hint when ref doesn't exist */}
+          {diffState.message.includes("unknown revision") && (
+            <div className="text-muted mt-3 border-t border-current/20 pt-3 font-sans text-[11px]">
+              💡 The ref <code className="text-foreground">{filters.diffBase}</code> does not exist
+              in this repository. Use the dropdown above to select a different base (e.g., HEAD,
+              origin/master).
+            </div>
+          )}
         </div>
       ) : diffState.status === "loading" ? (
         <div className="text-muted flex h-full items-center justify-center text-sm">

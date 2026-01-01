@@ -4,6 +4,7 @@
 
 import React from "react";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { STORAGE_KEYS, WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { ReviewFilters, ReviewStats, ReviewSortOrder } from "@/common/types/review";
 import type { LastRefreshInfo } from "@/browser/utils/RefreshController";
 import { RefreshButton } from "./RefreshButton";
@@ -25,6 +26,7 @@ interface ReviewControlsProps {
   isRefreshBlocked?: boolean;
   workspaceId: string;
   workspacePath: string;
+  projectPath: string;
   refreshTrigger?: number;
   /** Debug info about last refresh */
   lastRefreshInfo?: LastRefreshInfo | null;
@@ -39,11 +41,15 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
   isRefreshBlocked = false,
   workspaceId,
   workspacePath,
+  projectPath,
   refreshTrigger,
   lastRefreshInfo,
 }) => {
-  // Global default base (used for new workspaces)
-  const [defaultBase, setDefaultBase] = usePersistedState<string>("review-default-base", "HEAD");
+  // Per-project default base (used for new workspaces in this project)
+  const [defaultBase, setDefaultBase] = usePersistedState<string>(
+    STORAGE_KEYS.reviewDefaultBase(projectPath),
+    WORKSPACE_DEFAULTS.reviewBase
+  );
 
   const handleBaseChange = (value: string) => {
     onFiltersChange({ ...filters, diffBase: value });

@@ -800,6 +800,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
         key={workspaceId}
         workspaceId={workspaceId}
         workspacePath={namedWorkspacePath}
+        projectPath={projectPath}
         width={sidebarWidth}
         onStartResize={startResize}
         isResizing={isResizing}

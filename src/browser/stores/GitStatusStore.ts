@@ -3,10 +3,12 @@ import type { AppRouter } from "@/node/orpc/router";
 import type { FrontendWorkspaceMetadata, GitStatus } from "@/common/types/workspace";
 import { parseGitShowBranchForStatus } from "@/common/utils/git/parseGitStatus";
 import {
-  GIT_STATUS_SCRIPT,
+  generateGitStatusScript,
   GIT_FETCH_SCRIPT,
   parseGitStatusScriptOutput,
 } from "@/common/utils/git/gitStatus";
+import { readPersistedState } from "@/browser/hooks/usePersistedState";
+import { STORAGE_KEYS, WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { useSyncExternalStore } from "react";
 import { MapStore } from "./MapStore";
 import { isSSHRuntime } from "@/common/types/runtime";
@@ -297,9 +299,16 @@ export class GitStatusStore {
     }
 
     try {
+      // Use per-project default base ref for git status (defaults to origin/main)
+      const baseRef = readPersistedState<string>(
+        STORAGE_KEYS.reviewDefaultBase(metadata.projectPath),
+        WORKSPACE_DEFAULTS.reviewBase
+      );
+      const script = generateGitStatusScript(baseRef);
+
       const result = await this.client.workspace.executeBash({
         workspaceId: metadata.id,
-        script: GIT_STATUS_SCRIPT,
+        script,
         options: { timeout_secs: 5 },
       });
 
