@@ -4,8 +4,16 @@ import { cn } from "@/common/lib/utils";
 import type { SlashSuggestion } from "@/browser/utils/slashCommands/types";
 import { FileIcon } from "@/browser/components/FileIcon";
 
-// Export the keys that CommandSuggestions handles
-export const COMMAND_SUGGESTION_KEYS = ["Tab", "Enter", "ArrowUp", "ArrowDown", "Escape"];
+// Keys for navigating slash command suggestions.
+//
+// IMPORTANT: Do NOT treat Enter as a suggestion key here. Enter should submit the slash command
+// ("send message"). Autocomplete selection should be via Tab.
+export const COMMAND_SUGGESTION_KEYS = ["Tab", "ArrowUp", "ArrowDown", "Escape"];
+
+// Keys for navigating file path (@mention) suggestions.
+//
+// Enter accepts the selected file path (then a subsequent Enter sends the message).
+export const FILE_SUGGESTION_KEYS = ["Tab", "Enter", "ArrowUp", "ArrowDown", "Escape"];
 
 /**
  * Highlight matching portions of text based on a query.
@@ -183,7 +191,14 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
           setSelectedIndex((i) => (i - 1 + suggestions.length) % suggestions.length);
           break;
         case "Tab":
+          if (!e.shiftKey && suggestions.length > 0) {
+            e.preventDefault();
+            onSelectSuggestion(suggestions[selectedIndex]);
+          }
+          break;
         case "Enter":
+          // For slash commands, Enter should submit the command (send message), not autocomplete.
+          if (!isFileSuggestion) break;
           if (!e.shiftKey && suggestions.length > 0) {
             e.preventDefault();
             onSelectSuggestion(suggestions[selectedIndex]);
@@ -198,7 +213,7 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isVisible, suggestions, selectedIndex, onSelectSuggestion, onDismiss]);
+  }, [isVisible, suggestions, selectedIndex, onSelectSuggestion, onDismiss, isFileSuggestion]);
 
   // Click outside handler
   useEffect(() => {

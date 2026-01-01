@@ -8,7 +8,11 @@ import React, {
   useMemo,
   useDeferredValue,
 } from "react";
-import { CommandSuggestions, COMMAND_SUGGESTION_KEYS } from "../CommandSuggestions";
+import {
+  CommandSuggestions,
+  COMMAND_SUGGESTION_KEYS,
+  FILE_SUGGESTION_KEYS,
+} from "../CommandSuggestions";
 import type { Toast } from "../ChatInputToast";
 import { ChatInputToast } from "../ChatInputToast";
 import { createCommandToast, createErrorToast } from "../ChatInputToasts";
@@ -1771,11 +1775,16 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
     // Note: ESC handled by VimTextArea (for mode transitions) and CommandSuggestions (for dismissal)
 
-    // Don't handle keys if suggestions are visible
+    const hasCommandSuggestionMenu = showCommandSuggestions && commandSuggestions.length > 0;
+    const hasAtMentionSuggestionMenu = showAtMentionSuggestions && atMentionSuggestions.length > 0;
+
+    // Don't handle keys if suggestions are visible.
+    //
+    // NOTE: For slash command suggestions, Enter should still submit the command.
+    // For file (@mention) suggestions, Enter accepts the selection.
     if (
-      COMMAND_SUGGESTION_KEYS.includes(e.key) &&
-      ((showCommandSuggestions && commandSuggestions.length > 0) ||
-        (showAtMentionSuggestions && atMentionSuggestions.length > 0))
+      (hasCommandSuggestionMenu && COMMAND_SUGGESTION_KEYS.includes(e.key)) ||
+      (hasAtMentionSuggestionMenu && FILE_SUGGESTION_KEYS.includes(e.key))
     ) {
       return; // Let CommandSuggestions handle it
     }
@@ -1988,9 +1997,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   onDrop={handleDrop}
                   onEscapeInNormalMode={handleEscapeInNormalMode}
                   suppressKeys={
-                    showCommandSuggestions || showAtMentionSuggestions
-                      ? COMMAND_SUGGESTION_KEYS
-                      : undefined
+                    showAtMentionSuggestions
+                      ? FILE_SUGGESTION_KEYS
+                      : showCommandSuggestions
+                        ? COMMAND_SUGGESTION_KEYS
+                        : undefined
                   }
                   placeholder={placeholder}
                   disabled={!editingMessage && (disabled || isSendInFlight)}
