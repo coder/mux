@@ -977,14 +977,30 @@ export class SSHRuntime implements Runtime {
       }
       initLogger.logStep("Files synced successfully");
 
-      // 2. Checkout branch remotely
-      // If branch exists locally, check it out; otherwise create it from the specified trunk branch
-      // Note: We've already created local branches for all remote refs in syncProjectToRemote
+      // 2. Fetch latest from origin before checkout (best-effort)
+      // This ensures new branches start from the latest origin state, not a stale bundle
+      const fetchedOrigin = await this.fetchOriginTrunk(
+        workspacePath,
+        trunkBranch,
+        initLogger,
+        abortSignal
+      );
+
+      // Determine best base for new branches: use origin if local can fast-forward to it,
+      // otherwise preserve local state (user may have unpushed work)
+      const shouldUseOrigin =
+        fetchedOrigin &&
+        (await this.canFastForwardToOrigin(workspacePath, trunkBranch, initLogger, abortSignal));
+
+      // 3. Checkout branch remotely
+      // If branch exists locally, check it out; otherwise create it from origin (if fetched) or local trunk
       initLogger.logStep(`Checking out branch: ${branchName}`);
 
-      // Try to checkout existing branch, or create new branch from trunk
-      // Since we've created local branches for all remote refs, we can use branch names directly
-      const checkoutCmd = `git checkout ${shescape.quote(branchName)} 2>/dev/null || git checkout -b ${shescape.quote(branchName)} ${shescape.quote(trunkBranch)}`;
+      // Try to checkout existing branch, or create new branch from the best available base:
+      // - origin/<trunk> if local is behind/equal (ensures fresh starting point)
+      // - local <trunk> if local is ahead/diverged (preserves user's work)
+      const newBranchBase = shouldUseOrigin ? `origin/${trunkBranch}` : trunkBranch;
+      const checkoutCmd = `git checkout ${shescape.quote(branchName)} 2>/dev/null || git checkout -b ${shescape.quote(branchName)} ${shescape.quote(newBranchBase)}`;
 
       const checkoutStream = await this.exec(checkoutCmd, {
         cwd: workspacePath, // Use the full workspace path for git operations
@@ -1009,10 +1025,13 @@ export class SSHRuntime implements Runtime {
       }
       initLogger.logStep("Branch checked out successfully");
 
-      // 3. Pull latest from origin (best-effort, non-blocking on failure)
-      await this.pullLatestFromOrigin(workspacePath, trunkBranch, initLogger, abortSignal);
+      // 4. For existing branches, fast-forward to latest origin (best-effort)
+      // Only if local can fast-forward (preserves unpushed work)
+      if (shouldUseOrigin) {
+        await this.fastForwardToOrigin(workspacePath, trunkBranch, initLogger, abortSignal);
+      }
 
-      // 4. Run .mux/init hook if it exists
+      // 5. Run .mux/init hook if it exists
       // Note: runInitHook calls logComplete() internally if hook exists
       const hookExists = await checkInitHookExists(projectPath);
       if (hookExists) {
@@ -1036,19 +1055,18 @@ export class SSHRuntime implements Runtime {
   }
 
   /**
-   * Fetch and rebase on latest origin/<trunkBranch> on remote
-   * Best-effort operation - logs status but doesn't fail workspace initialization
+   * Fetch trunk branch from origin before checkout.
+   * Returns true if fetch succeeded (origin is available for branching).
    */
-  private async pullLatestFromOrigin(
+  private async fetchOriginTrunk(
     workspacePath: string,
     trunkBranch: string,
     initLogger: InitLogger,
     abortSignal?: AbortSignal
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
       initLogger.logStep(`Fetching latest from origin/${trunkBranch}...`);
 
-      // Fetch the trunk branch from origin
       const fetchCmd = `git fetch origin ${shescape.quote(trunkBranch)}`;
       const fetchStream = await this.exec(fetchCmd, {
         cwd: workspacePath,
@@ -1062,12 +1080,70 @@ export class SSHRuntime implements Runtime {
         initLogger.logStderr(
           `Note: Could not fetch from origin (${fetchStderr}), using local branch state`
         );
-        return;
+        return false;
       }
 
+      initLogger.logStep("Fetched latest from origin");
+      return true;
+    } catch (error) {
+      const errorMsg = getErrorMessage(error);
+      initLogger.logStderr(
+        `Note: Could not fetch from origin (${errorMsg}), using local branch state`
+      );
+      return false;
+    }
+  }
+
+  /**
+   * Check if local trunk can fast-forward to origin/<trunk>.
+   * Returns true if local is behind or equal to origin (safe to use origin).
+   * Returns false if local is ahead or diverged (preserve local state).
+   */
+  private async canFastForwardToOrigin(
+    workspacePath: string,
+    trunkBranch: string,
+    initLogger: InitLogger,
+    abortSignal?: AbortSignal
+  ): Promise<boolean> {
+    try {
+      // Check if local trunk is an ancestor of origin/trunk
+      // Exit code 0 = local is ancestor (can fast-forward), non-zero = cannot
+      const checkCmd = `git merge-base --is-ancestor ${shescape.quote(trunkBranch)} origin/${shescape.quote(trunkBranch)}`;
+      const checkStream = await this.exec(checkCmd, {
+        cwd: workspacePath,
+        timeout: 30,
+        abortSignal,
+      });
+
+      const exitCode = await checkStream.exitCode;
+      if (exitCode === 0) {
+        return true; // Local is behind or equal to origin
+      }
+
+      // Local is ahead or diverged - preserve local state
+      initLogger.logStderr(
+        `Note: Local ${trunkBranch} is ahead of or diverged from origin, using local state`
+      );
+      return false;
+    } catch {
+      // Error checking - assume we should preserve local state
+      return false;
+    }
+  }
+
+  /**
+   * Fast-forward merge to latest origin/<trunkBranch> after checkout.
+   * Best-effort operation for existing branches that may be behind origin.
+   */
+  private async fastForwardToOrigin(
+    workspacePath: string,
+    trunkBranch: string,
+    initLogger: InitLogger,
+    abortSignal?: AbortSignal
+  ): Promise<void> {
+    try {
       initLogger.logStep("Fast-forward merging...");
 
-      // Attempt fast-forward merge from origin/<trunkBranch>
       const mergeCmd = `git merge --ff-only origin/${shescape.quote(trunkBranch)}`;
       const mergeStream = await this.exec(mergeCmd, {
         cwd: workspacePath,
@@ -1091,9 +1167,7 @@ export class SSHRuntime implements Runtime {
     } catch (error) {
       // Non-fatal: log and continue
       const errorMsg = getErrorMessage(error);
-      initLogger.logStderr(
-        `Note: Could not fetch from origin (${errorMsg}), using local branch state`
-      );
+      initLogger.logStderr(`Note: Fast-forward failed (${errorMsg}), using local branch state`);
     }
   }
 
