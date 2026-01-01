@@ -26,6 +26,61 @@ import type { APIClient } from "@/browser/contexts/API";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
+type ExecuteBashResult = Awaited<ReturnType<APIClient["workspace"]["executeBash"]>>;
+type ExecuteBashSuccess = Extract<ExecuteBashResult, { success: true }>;
+type BashToolResult = ExecuteBashSuccess["data"];
+
+function isLikelyGitLockError(message: string): boolean {
+  // We sometimes race with GitStatusStore (or other git commands) and hit transient lock files.
+  // Retrying makes tests far less flaky while still surfacing real failures.
+  return /index\.lock|\.lock': File exists|another git process|could not lock/i.test(message);
+}
+
+async function executeWorkspaceBashOrThrow(params: {
+  orpc: APIClient;
+  workspaceId: string;
+  script: string;
+  timeoutSecs?: number;
+  retries?: number;
+  retryDelayMs?: number;
+}): Promise<string> {
+  const retries = params.retries ?? 5;
+  const retryDelayMs = params.retryDelayMs ?? 250;
+
+  let lastError: string | null = null;
+
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    const result = await params.orpc.workspace.executeBash({
+      workspaceId: params.workspaceId,
+      script: params.script,
+      options: params.timeoutSecs ? { timeout_secs: params.timeoutSecs } : undefined,
+    });
+
+    if (!result.success) {
+      throw new Error(result.error ?? "executeBash failed");
+    }
+
+    const toolResult: BashToolResult = result.data;
+    if (toolResult.success) {
+      return toolResult.output;
+    }
+
+    const message = [toolResult.error, toolResult.output].filter(Boolean).join("\n");
+    lastError = message;
+
+    if (attempt < retries && isLikelyGitLockError(message)) {
+      await new Promise((r) => setTimeout(r, retryDelayMs));
+      continue;
+    }
+
+    throw new Error(
+      `executeBash failed (exit ${toolResult.exitCode}): ${toolResult.error}\n${toolResult.output ?? ""}`
+    );
+  }
+
+  throw new Error(lastError ?? "executeBash failed");
+}
+
 /**
  * Helper to set up the Review tab with a file change.
  * Creates a multi-line file and a diff at a non-first line to test context expansion.
@@ -44,12 +99,15 @@ async function setupReviewPanelWithDiff(
   const fileContent = lines.join("\n");
 
   // Create the initial file (committed)
-  await orpc.workspace.executeBash({
+  await executeWorkspaceBashOrThrow({
+    orpc,
     workspaceId,
-    script: `cat > test-readmore.ts << 'EOF'
+    script: `set -euo pipefail
+cat > test-readmore.ts << 'EOF'
 ${fileContent}
 EOF
-git add test-readmore.ts && git commit -m "Add test file"`,
+git add test-readmore.ts
+git -c commit.gpgsign=false commit -m "Add test file" --no-verify`,
   });
 
   // Modify line 15 (creating a diff in the middle of the file)
@@ -57,11 +115,15 @@ git add test-readmore.ts && git commit -m "Add test file"`,
   modifiedLines[14] = "// Line 15: MODIFIED FOR TEST";
   const modifiedContent = modifiedLines.join("\n");
 
-  await orpc.workspace.executeBash({
+  await executeWorkspaceBashOrThrow({
+    orpc,
     workspaceId,
-    script: `cat > test-readmore.ts << 'EOF'
+    script: `set -euo pipefail
+cat > test-readmore.ts << 'EOF'
 ${modifiedContent}
-EOF`,
+EOF
+# Verify we actually produced a diff hunk for the review panel to render.
+git diff HEAD -- test-readmore.ts | grep -q "MODIFIED FOR TEST"`,
   });
 
   // Switch to review tab
@@ -213,14 +275,20 @@ describeIntegration("ReadMore context expansion (UI + ORPC)", () => {
         await setupWorkspaceView(view, metadata, workspaceId);
 
         // Create a small file with diff at line 1 (so BOF is immediate)
-        await env.orpc.workspace.executeBash({
+        await executeWorkspaceBashOrThrow({
+          orpc: env.orpc,
           workspaceId,
-          script: `echo "// Original line 1" > bof-test.ts && git add bof-test.ts && git commit -m "Add BOF test"`,
+          script: `set -euo pipefail
+echo "// Original line 1" > bof-test.ts
+git add bof-test.ts
+git -c commit.gpgsign=false commit -m "Add BOF test" --no-verify`,
         });
 
-        await env.orpc.workspace.executeBash({
+        await executeWorkspaceBashOrThrow({
+          orpc: env.orpc,
           workspaceId,
-          script: `echo "// Modified line 1" > bof-test.ts`,
+          script: `set -euo pipefail
+echo "// Modified line 1" > bof-test.ts`,
         });
 
         // Switch to review tab and refresh
@@ -272,9 +340,12 @@ describeIntegration("ReadMore context expansion (UI + ORPC)", () => {
 
         // Create a NEW file (not modifying existing) - this will have oldStart=0
         // Must stage it for it to show up in the review panel diff
-        await env.orpc.workspace.executeBash({
+        await executeWorkspaceBashOrThrow({
+          orpc: env.orpc,
           workspaceId,
-          script: `echo "// New file line 1" > brand-new-file.ts && git add brand-new-file.ts`,
+          script: `set -euo pipefail
+echo "// New file line 1" > brand-new-file.ts
+git add brand-new-file.ts`,
         });
 
         // Switch to review tab and refresh
@@ -322,12 +393,15 @@ describeIntegration("ReadMore context expansion (UI + ORPC)", () => {
         const lines = Array.from({ length: 10 }, (_, i) => `// Line ${i + 1}`);
         const fileContent = lines.join("\n");
 
-        await env.orpc.workspace.executeBash({
+        await executeWorkspaceBashOrThrow({
+          orpc: env.orpc,
           workspaceId,
-          script: `cat > eof-test.ts << 'EOF'
+          script: `set -euo pipefail
+cat > eof-test.ts << 'EOF'
 ${fileContent}
 EOF
-git add eof-test.ts && git commit -m "Add EOF test"`,
+git add eof-test.ts
+git -c commit.gpgsign=false commit -m "Add EOF test" --no-verify`,
         });
 
         // Modify line 5 (creates a diff in the middle with context above and below)
@@ -335,11 +409,14 @@ git add eof-test.ts && git commit -m "Add EOF test"`,
         modifiedLines[4] = "// Line 5 - MODIFIED";
         const modifiedContent = modifiedLines.join("\n");
 
-        await env.orpc.workspace.executeBash({
+        await executeWorkspaceBashOrThrow({
+          orpc: env.orpc,
           workspaceId,
-          script: `cat > eof-test.ts << 'EOF'
+          script: `set -euo pipefail
+cat > eof-test.ts << 'EOF'
 ${modifiedContent}
-EOF`,
+EOF
+git diff HEAD -- eof-test.ts | grep -q "MODIFIED"`,
         });
 
         // Switch to review tab and refresh
@@ -409,12 +486,15 @@ EOF`,
         const lines = Array.from({ length: 5 }, (_, i) => `// Line ${i + 1}`);
         const fileContent = lines.join("\n");
 
-        await env.orpc.workspace.executeBash({
+        await executeWorkspaceBashOrThrow({
+          orpc: env.orpc,
           workspaceId,
-          script: `cat > tiny-file.ts << 'EOF'
+          script: `set -euo pipefail
+cat > tiny-file.ts << 'EOF'
 ${fileContent}
 EOF
-git add tiny-file.ts && git commit -m "Add tiny file"`,
+git add tiny-file.ts
+git -c commit.gpgsign=false commit -m "Add tiny file" --no-verify`,
         });
 
         // Modify line 3
@@ -422,11 +502,14 @@ git add tiny-file.ts && git commit -m "Add tiny file"`,
         modifiedLines[2] = "// Line 3 - MODIFIED";
         const modifiedContent = modifiedLines.join("\n");
 
-        await env.orpc.workspace.executeBash({
+        await executeWorkspaceBashOrThrow({
+          orpc: env.orpc,
           workspaceId,
-          script: `cat > tiny-file.ts << 'EOF'
+          script: `set -euo pipefail
+cat > tiny-file.ts << 'EOF'
 ${modifiedContent}
-EOF`,
+EOF
+git diff HEAD -- tiny-file.ts | grep -q "MODIFIED"`,
         });
 
         // Switch to review tab and refresh
