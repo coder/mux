@@ -5,12 +5,15 @@ import * as os from "os";
 import { tool } from "ai";
 import { z } from "zod";
 import { withHooks } from "./withHooks";
+import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 
 describe("withHooks", () => {
   let tempDir: string;
+  let runtime: LocalRuntime;
 
   beforeEach(async () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-withHooks-test-"));
+    runtime = new LocalRuntime(tempDir);
   });
 
   afterEach(async () => {
@@ -31,6 +34,7 @@ describe("withHooks", () => {
     );
 
     const wrappedTool = withHooks("test_tool", baseTool, {
+      runtime,
       cwd: tempDir,
       workspaceId: "test-ws",
     });
@@ -57,6 +61,7 @@ read RESULT
     );
 
     const wrappedTool = withHooks("test_tool", baseTool, {
+      runtime,
       cwd: tempDir,
       workspaceId: "test-ws",
     });
@@ -85,6 +90,7 @@ exit 1
     });
 
     const wrappedTool = withHooks("test_tool", baseTool, {
+      runtime,
       cwd: tempDir,
       workspaceId: "test-ws",
     });
@@ -96,7 +102,7 @@ exit 1
     expect(result.error).toContain("Blocked: dangerous operation");
   });
 
-  test("appends hook_error when hook fails after execution", async () => {
+  test("appends hook_output when hook fails after execution", async () => {
     const hookDir = path.join(tempDir, ".mux");
     const hookPath = path.join(hookDir, "tool_hook");
     await fs.mkdir(hookDir, { recursive: true });
@@ -114,16 +120,48 @@ exit 1
     const baseTool = createTestTool(() => Promise.resolve({ output: "edit complete" }));
 
     const wrappedTool = withHooks("file_edit", baseTool, {
+      runtime,
       cwd: tempDir,
       workspaceId: "test-ws",
     });
 
     const result = (await wrappedTool.execute!({ input: "test" }, {} as never)) as {
       output: string;
-      hook_error?: string;
+      hook_output?: string;
     };
     expect(result.output).toBe("edit complete");
-    expect(result.hook_error).toContain("Lint failed: syntax error");
+    expect(result.hook_output).toContain("Lint failed: syntax error");
+  });
+
+  test("appends hook_output when hook succeeds with output", async () => {
+    const hookDir = path.join(tempDir, ".mux");
+    const hookPath = path.join(hookDir, "tool_hook");
+    await fs.mkdir(hookDir, { recursive: true });
+    await fs.writeFile(
+      hookPath,
+      `#!/bin/bash
+echo __MUX_EXEC__
+read RESULT
+echo "Formatted: test.ts" >&2
+exit 0
+`
+    );
+    await fs.chmod(hookPath, 0o755);
+
+    const baseTool = createTestTool(() => Promise.resolve({ output: "edit complete" }));
+
+    const wrappedTool = withHooks("file_edit", baseTool, {
+      runtime,
+      cwd: tempDir,
+      workspaceId: "test-ws",
+    });
+
+    const result = (await wrappedTool.execute!({ input: "test" }, {} as never)) as {
+      output: string;
+      hook_output?: string;
+    };
+    expect(result.output).toBe("edit complete");
+    expect(result.hook_output).toContain("Formatted: test.ts");
   });
 
   test("passes env to hook", async () => {
@@ -147,6 +185,7 @@ read RESULT
     const baseTool = createTestTool(() => Promise.resolve({ output: "ok" }));
 
     const wrappedTool = withHooks("test_tool", baseTool, {
+      runtime,
       cwd: tempDir,
       workspaceId: "test-ws",
       env: { MY_API_KEY: "secret123" },

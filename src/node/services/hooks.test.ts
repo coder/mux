@@ -3,12 +3,15 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import * as os from "os";
 import { getHookPath, runWithHook } from "./hooks";
+import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 
 describe("hooks", () => {
   let tempDir: string;
+  let runtime: LocalRuntime;
 
   beforeEach(async () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-hooks-test-"));
+    runtime = new LocalRuntime(tempDir);
   });
 
   afterEach(async () => {
@@ -17,7 +20,7 @@ describe("hooks", () => {
 
   describe("getHookPath", () => {
     test("returns null when no hook exists", async () => {
-      const result = await getHookPath(tempDir);
+      const result = await getHookPath(runtime, tempDir);
       expect(result).toBeNull();
     });
 
@@ -28,19 +31,8 @@ describe("hooks", () => {
       await fs.writeFile(hookPath, "#!/bin/bash\necho test");
       await fs.chmod(hookPath, 0o755);
 
-      const result = await getHookPath(tempDir);
+      const result = await getHookPath(runtime, tempDir);
       expect(result).toBe(hookPath);
-    });
-
-    test("ignores non-executable hook", async () => {
-      const hookDir = path.join(tempDir, ".mux");
-      const hookPath = path.join(hookDir, "tool_hook");
-      await fs.mkdir(hookDir, { recursive: true });
-      await fs.writeFile(hookPath, "#!/bin/bash\necho test");
-      // Don't set executable permission
-
-      const result = await getHookPath(tempDir);
-      expect(result).toBeNull();
     });
 
     test("ignores directory with hook name", async () => {
@@ -48,7 +40,7 @@ describe("hooks", () => {
       const hookPath = path.join(hookDir, "tool_hook");
       await fs.mkdir(hookPath, { recursive: true }); // Create as directory
 
-      const result = await getHookPath(tempDir);
+      const result = await getHookPath(runtime, tempDir);
       expect(result).toBeNull();
     });
   });
@@ -71,6 +63,7 @@ read RESULT
 
       let toolExecuted = false;
       const { result, hook } = await runWithHook(
+        runtime,
         hookPath,
         {
           tool: "test_tool",
@@ -107,6 +100,7 @@ exit 1
 
       let toolExecuted = false;
       const { result, hook } = await runWithHook(
+        runtime,
         hookPath,
         {
           tool: "dangerous_tool",
@@ -145,6 +139,7 @@ exit 1
       await fs.chmod(hookPath, 0o755);
 
       const { result, hook } = await runWithHook(
+        runtime,
         hookPath,
         {
           tool: "file_edit_replace_string",
@@ -181,6 +176,7 @@ read RESULT
       await fs.chmod(hookPath, 0o755);
 
       const { hook } = await runWithHook(
+        runtime,
         hookPath,
         {
           tool: "bash",
@@ -212,6 +208,7 @@ echo "GOT_RESULT=$RESULT" >&2
       await fs.chmod(hookPath, 0o755);
 
       const { hook } = await runWithHook(
+        runtime,
         hookPath,
         {
           tool: "test",
@@ -241,6 +238,7 @@ read RESULT
       await fs.chmod(hookPath, 0o755);
 
       const { hook } = await runWithHook(
+        runtime,
         hookPath,
         {
           tool: "test",

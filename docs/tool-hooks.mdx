@@ -63,14 +63,40 @@ After printing `__MUX_EXEC__`, the tool result is sent to stdin as a single JSON
 
 ## Exit Codes
 
-| Exit Code | Behavior                                                                                     |
-| --------- | -------------------------------------------------------------------------------------------- |
-| `0`       | Success - tool result returned to agent                                                      |
-| Non-zero  | **Failure** - hook's stderr is appended to tool result, letting the agent see and fix issues |
+| Exit Code | Behavior                                          |
+| --------- | ------------------------------------------------- |
+| `0`       | Success - tool result returned to agent           |
+| Non-zero  | Failure - agent sees error and can attempt to fix |
 
 If the hook exits non-zero **before** `__MUX_EXEC__`, the tool is blocked entirely and the agent sees the error.
 
 If the hook exits non-zero **after** `__MUX_EXEC__`, the tool has already run but the agent sees the hook's error output (useful for lint/type failures).
+
+## Hook Output
+
+The agent always sees hook output (stdout after `__MUX_EXEC__`, plus stderr) in the `hook_output` field of the tool result. This lets you communicate what the hook did—for example, if a formatter modified the file:
+
+```bash
+#!/usr/bin/env bash
+
+echo __MUX_EXEC__
+read MUX_RESULT
+
+if [[ "$MUX_TOOL" == file_edit_* ]]; then
+  file=$(echo "$MUX_TOOL_INPUT" | jq -r '.file_path')
+  if prettier --write "$file" 2>/dev/null; then
+    echo "Formatted: $file" >&2  # Agent sees this in hook_output
+  fi
+fi
+```
+
+The agent receives:
+
+```json
+{ "diff": "...", "hook_output": "Formatted: src/foo.ts" }
+```
+
+This is especially useful for file edits where a formatter modifies the file after the edit—the agent sees the original diff plus a notification that formatting was applied.
 
 ## Examples
 
@@ -193,6 +219,14 @@ Mux searches for hooks in this order:
 2. `~/.mux/tool_hook` - User-level (personal hooks, not committed)
 
 Only the first hook found is executed.
+
+### SSH Workspaces
+
+For SSH workspaces, hooks execute **on the remote machine**. The hook file must exist at `.mux/tool_hook` in the remote workspace directory (or `~/.mux/tool_hook` in the remote user's home). This means:
+
+- Hooks run in the same environment as your tools (correct paths, installed packages)
+- You can commit `.mux/tool_hook` to your repo and it will work for both local and SSH workspaces
+- User-level hooks (`~/.mux/tool_hook`) apply per-machine
 
 ## Debugging
 

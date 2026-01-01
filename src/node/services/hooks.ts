@@ -19,12 +19,14 @@
  *   4. Mux executes the tool, sends result JSON to hook's stdin
  *   5. Hook reads result, runs post-logic
  *   6. Hook exits (non-zero = failure fed back to LLM)
+ *
+ * Runtime Support:
+ *   Hooks execute via the Runtime abstraction, so they work correctly for both
+ *   local and SSH workspaces. For SSH, the hook file must exist on the remote machine.
  */
 
-import * as fs from "fs/promises";
 import * as path from "path";
-import * as os from "os";
-import { spawn } from "child_process";
+import type { Runtime } from "@/node/runtime/Runtime";
 import { log } from "@/node/services/log";
 
 const HOOK_FILENAME = "tool_hook";
@@ -46,7 +48,9 @@ export interface HookContext {
 export interface HookResult {
   /** Whether the hook succeeded (exit code 0) */
   success: boolean;
-  /** Stderr output from hook (for error feedback to LLM) */
+  /** Stdout output from hook (after __MUX_EXEC__ marker) */
+  stdout: string;
+  /** Stderr output from hook */
   stderr: string;
   /** Whether the tool was executed (hook printed __MUX_EXEC__) */
   toolExecuted: boolean;
@@ -54,36 +58,37 @@ export interface HookResult {
 
 /**
  * Find the tool_hook executable for a given project directory.
- * Returns null if no hook exists or is not executable.
+ * Uses runtime abstraction so it works for both local and SSH workspaces.
+ * Returns null if no hook exists.
+ *
+ * Note: We don't check execute permissions via runtime since FileStat doesn't
+ * expose mode bits. The hook will fail at execution time if not executable.
  */
-export async function getHookPath(projectDir: string): Promise<string | null> {
+export async function getHookPath(runtime: Runtime, projectDir: string): Promise<string | null> {
   // Check project-level hook first
-  const projectHook = path.join(projectDir, ".mux", HOOK_FILENAME);
-  if (await isExecutable(projectHook)) {
+  const projectHook = path.posix.join(projectDir, ".mux", HOOK_FILENAME);
+  if (await isFile(runtime, projectHook)) {
     return projectHook;
   }
 
-  // Fall back to user-level hook
-  const userHook = path.join(os.homedir(), ".mux", HOOK_FILENAME);
-  if (await isExecutable(userHook)) {
-    return userHook;
+  // Fall back to user-level hook (resolve ~ for SSH compatibility)
+  try {
+    const homeDir = await runtime.resolvePath("~");
+    const userHook = path.posix.join(homeDir, ".mux", HOOK_FILENAME);
+    if (await isFile(runtime, userHook)) {
+      return userHook;
+    }
+  } catch {
+    // resolvePath failed - skip user hook
   }
 
   return null;
 }
 
-async function isExecutable(filePath: string): Promise<boolean> {
+async function isFile(runtime: Runtime, filePath: string): Promise<boolean> {
   try {
-    const stat = await fs.stat(filePath);
-    if (!stat.isFile()) return false;
-
-    // Check execute permission (any of user/group/other)
-    // On Windows, we just check if the file exists since permission model differs
-    if (process.platform === "win32") {
-      return true;
-    }
-
-    return (stat.mode & 0o111) !== 0;
+    const stat = await runtime.stat(filePath);
+    return !stat.isDirectory;
   } catch {
     return false;
   }
@@ -91,94 +96,129 @@ async function isExecutable(filePath: string): Promise<boolean> {
 
 /**
  * Execute a tool with hook wrapping.
+ * Uses runtime.exec() so hooks work for both local and SSH workspaces.
  *
+ * @param runtime Runtime to execute the hook in
  * @param hookPath Path to the hook executable
  * @param context Hook context with tool info
  * @param executeTool Callback to execute the actual tool (called when hook signals __MUX_EXEC__)
  * @returns Hook result with success status and any stderr output
  */
 export async function runWithHook<T>(
+  runtime: Runtime,
   hookPath: string,
   context: HookContext,
   executeTool: () => Promise<T | AsyncIterable<T>>
 ): Promise<{ result: T | AsyncIterable<T> | undefined; hook: HookResult }> {
-  return new Promise((resolve) => {
-    const hookEnv: Record<string, string> = {
-      ...process.env,
-      ...(context.env ?? {}),
-      MUX_TOOL: context.tool,
-      MUX_TOOL_INPUT: context.toolInput,
-      MUX_WORKSPACE_ID: context.workspaceId,
-      MUX_PROJECT_DIR: context.projectDir,
-    };
+  const hookEnv: Record<string, string> = {
+    ...(context.env ?? {}),
+    MUX_TOOL: context.tool,
+    MUX_TOOL_INPUT: context.toolInput,
+    MUX_WORKSPACE_ID: context.workspaceId,
+    MUX_PROJECT_DIR: context.projectDir,
+  };
 
-    const child = spawn(hookPath, [], {
+  let stream;
+  try {
+    stream = await runtime.exec(hookPath, {
       cwd: context.projectDir,
       env: hookEnv,
-      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 300, // 5 minute timeout for hooks
     });
+  } catch (err) {
+    log.error("[hooks] Failed to spawn hook", { hookPath, error: err });
+    return {
+      result: undefined,
+      hook: {
+        success: false,
+        stdout: "",
+        stderr: `Failed to execute hook: ${err instanceof Error ? err.message : String(err)}`,
+        toolExecuted: false,
+      },
+    };
+  }
 
-    let toolResult: T | AsyncIterable<T> | undefined;
-    let toolExecuted = false;
-    let stderrOutput = "";
-    let stdoutBuffer = "";
+  let toolResult: T | AsyncIterable<T> | undefined;
+  let toolExecuted = false;
+  let stderrOutput = "";
+  let stdoutBuffer = "";
+  let stdoutAfterMarker = "";
 
-    // Collect stderr for error feedback
-    child.stderr.on("data", (data: Buffer) => {
-      stderrOutput += data.toString();
-    });
+  // Read stderr in background
+  const stderrReader = stream.stderr.getReader();
+  const stderrPromise = (async () => {
+    const decoder = new TextDecoder();
+    try {
+      while (true) {
+        const { done, value } = await stderrReader.read();
+        if (done) break;
+        stderrOutput += decoder.decode(value, { stream: true });
+      }
+    } finally {
+      stderrReader.releaseLock();
+    }
+  })();
 
-    // Watch stdout for __MUX_EXEC__ marker
-    child.stdout.on("data", (data: Buffer) => {
-      stdoutBuffer += data.toString();
+  // Read stdout, watching for __MUX_EXEC__ marker
+  const stdoutReader = stream.stdout.getReader();
+  const decoder = new TextDecoder();
+  try {
+    while (true) {
+      const { done, value } = await stdoutReader.read();
+      if (done) break;
 
-      // Check for marker in accumulated buffer
-      if (!toolExecuted && stdoutBuffer.includes(EXEC_MARKER)) {
-        toolExecuted = true;
+      const chunk = decoder.decode(value, { stream: true });
 
-        // Execute the tool and send result to hook's stdin
-        executeTool()
-          .then((result) => {
-            toolResult = result;
-            // Send result as JSON line to hook's stdin
-            child.stdin.write(JSON.stringify(result) + "\n");
-            child.stdin.end();
-          })
-          .catch((err) => {
-            // If tool execution fails, send error to hook
+      if (toolExecuted) {
+        // After marker: capture for hook output
+        stdoutAfterMarker += chunk;
+      } else {
+        stdoutBuffer += chunk;
+
+        // Check for marker in accumulated buffer
+        if (stdoutBuffer.includes(EXEC_MARKER)) {
+          toolExecuted = true;
+
+          // Capture anything after the marker in this chunk
+          const markerIdx = stdoutBuffer.indexOf(EXEC_MARKER);
+          stdoutAfterMarker = stdoutBuffer.slice(markerIdx + EXEC_MARKER.length);
+
+          // Execute the tool and send result to hook's stdin
+          const writer = stream.stdin.getWriter();
+          try {
+            toolResult = await executeTool();
+            const resultJson = JSON.stringify(toolResult) + "\n";
+            await writer.write(new TextEncoder().encode(resultJson));
+          } catch (err) {
             const errorResult = { error: err instanceof Error ? err.message : String(err) };
-            child.stdin.write(JSON.stringify(errorResult) + "\n");
-            child.stdin.end();
-          });
+            await writer.write(new TextEncoder().encode(JSON.stringify(errorResult) + "\n"));
+          } finally {
+            await writer.close();
+          }
+        }
       }
-    });
+    }
+  } finally {
+    stdoutReader.releaseLock();
+  }
 
-    child.on("error", (err) => {
-      log.error("[hooks] Failed to spawn hook", { hookPath, error: err });
-      resolve({
-        result: undefined,
-        hook: {
-          success: false,
-          stderr: `Failed to execute hook: ${err.message}`,
-          toolExecuted: false,
-        },
-      });
-    });
+  // If hook exited before __MUX_EXEC__, close stdin
+  if (!toolExecuted) {
+    const writer = stream.stdin.getWriter();
+    await writer.close();
+  }
 
-    child.on("exit", (code) => {
-      // If hook exited before __MUX_EXEC__, tool was blocked
-      if (!toolExecuted) {
-        child.stdin.end();
-      }
+  // Wait for stderr collection and exit code
+  await stderrPromise;
+  const exitCode = await stream.exitCode;
 
-      resolve({
-        result: toolResult,
-        hook: {
-          success: code === 0,
-          stderr: stderrOutput,
-          toolExecuted,
-        },
-      });
-    });
-  });
+  return {
+    result: toolResult,
+    hook: {
+      success: exitCode === 0,
+      stdout: stdoutAfterMarker.trim(),
+      stderr: stderrOutput.trim(),
+      toolExecuted,
+    },
+  };
 }

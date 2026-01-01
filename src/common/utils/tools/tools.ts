@@ -203,12 +203,13 @@ function wrapToolsWithHooks(
   tools: Record<string, Tool>,
   config: ToolConfiguration
 ): Record<string, Tool> {
-  // Hooks require workspaceId and cwd
-  if (!config.workspaceId || !config.cwd) {
+  // Hooks require workspaceId, cwd, and runtime
+  if (!config.workspaceId || !config.cwd || !config.runtime) {
     return tools;
   }
 
   const hookConfig: HookConfig = {
+    runtime: config.runtime,
     cwd: config.cwd,
     workspaceId: config.workspaceId,
     env: {
