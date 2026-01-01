@@ -142,7 +142,7 @@ interface IconActionButtonProps {
   button: ButtonConfig;
 }
 
-const IconActionButton: React.FC<IconActionButtonProps> = ({ button }) => {
+export const IconActionButton: React.FC<IconActionButtonProps> = ({ button }) => {
   const content = (
     <Button
       onClick={button.onClick}
