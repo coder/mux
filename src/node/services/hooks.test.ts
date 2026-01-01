@@ -463,5 +463,170 @@ read RESULT
       expect(hook.success).toBe(true);
       expect(warnings.length).toBe(0);
     });
+
+    test("times out when pre-hook takes too long (does not run tool)", async () => {
+      const hookDir = path.join(tempDir, ".mux");
+      const hookPath = path.join(hookDir, "tool_hook");
+      await fs.mkdir(hookDir, { recursive: true });
+
+      await fs.writeFile(
+        hookPath,
+        `#!/bin/bash
+sleep 0.15
+echo __MUX_EXEC__
+read RESULT
+`
+      );
+      await fs.chmod(hookPath, 0o755);
+
+      let toolExecuted = false;
+      const { result, hook } = await runWithHook(
+        runtime,
+        hookPath,
+        {
+          tool: "test",
+          toolInput: "{}",
+          workspaceId: "test",
+          projectDir: tempDir,
+        },
+        () => {
+          toolExecuted = true;
+          return Promise.resolve({ success: true });
+        },
+        {
+          preHookTimeoutMs: 50,
+          postHookTimeoutMs: 1000,
+        }
+      );
+
+      expect(toolExecuted).toBe(false);
+      expect(hook.toolExecuted).toBe(false);
+      expect(hook.success).toBe(false);
+      expect(hook.stderr).toContain("Hook timed out before __MUX_EXEC__");
+      expect(result).toBeUndefined();
+    });
+
+    test("times out when post-hook takes too long (after tool result)", async () => {
+      const hookDir = path.join(tempDir, ".mux");
+      const hookPath = path.join(hookDir, "tool_hook");
+      await fs.mkdir(hookDir, { recursive: true });
+
+      await fs.writeFile(
+        hookPath,
+        `#!/bin/bash
+echo __MUX_EXEC__
+read RESULT
+sleep 0.15
+`
+      );
+      await fs.chmod(hookPath, 0o755);
+
+      let toolExecuted = false;
+      const { result, hook } = await runWithHook(
+        runtime,
+        hookPath,
+        {
+          tool: "test",
+          toolInput: "{}",
+          workspaceId: "test",
+          projectDir: tempDir,
+        },
+        () => {
+          toolExecuted = true;
+          return Promise.resolve({ success: true });
+        },
+        {
+          preHookTimeoutMs: 1000,
+          postHookTimeoutMs: 50,
+        }
+      );
+
+      expect(toolExecuted).toBe(true);
+      expect(hook.toolExecuted).toBe(true);
+      expect(hook.success).toBe(false);
+      expect(hook.stderr).toContain("Hook timed out after tool result was sent");
+      expect(result).toEqual({ success: true });
+    });
+
+    test("does not count tool duration towards hook timeouts", async () => {
+      const hookDir = path.join(tempDir, ".mux");
+      const hookPath = path.join(hookDir, "tool_hook");
+      await fs.mkdir(hookDir, { recursive: true });
+
+      await fs.writeFile(
+        hookPath,
+        `#!/bin/bash
+echo __MUX_EXEC__
+read RESULT
+`
+      );
+      await fs.chmod(hookPath, 0o755);
+
+      const { result, hook } = await runWithHook(
+        runtime,
+        hookPath,
+        {
+          tool: "test",
+          toolInput: "{}",
+          workspaceId: "test",
+          projectDir: tempDir,
+        },
+        async () => {
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          return { success: true };
+        },
+        {
+          preHookTimeoutMs: 200,
+          postHookTimeoutMs: 200,
+        }
+      );
+
+      expect(hook.toolExecuted).toBe(true);
+      expect(hook.success).toBe(true);
+      expect(result).toEqual({ success: true });
+    });
+
+    test("writes large tool input to MUX_TOOL_INPUT_PATH", async () => {
+      const hookDir = path.join(tempDir, ".mux");
+      const hookPath = path.join(hookDir, "tool_hook");
+      await fs.mkdir(hookDir, { recursive: true });
+
+      await fs.writeFile(
+        hookPath,
+        `#!/bin/bash
+echo "ENV_INPUT=$MUX_TOOL_INPUT" >&2
+
+if [ -z "$MUX_TOOL_INPUT_PATH" ]; then
+  echo "NO_PATH" >&2
+  exit 1
+fi
+
+len=$(wc -c < "$MUX_TOOL_INPUT_PATH")
+echo "LEN=$len" >&2
+
+echo __MUX_EXEC__
+read RESULT
+`
+      );
+      await fs.chmod(hookPath, 0o755);
+
+      const bigInput = JSON.stringify({ data: "x".repeat(9000) });
+      const { hook } = await runWithHook(
+        runtime,
+        hookPath,
+        {
+          tool: "test",
+          toolInput: bigInput,
+          workspaceId: "test",
+          projectDir: tempDir,
+          runtimeTempDir: tempDir,
+        },
+        () => Promise.resolve({ success: true })
+      );
+
+      expect(hook.success).toBe(true);
+      expect(hook.stderr).toContain("ENV_INPUT=__MUX_TOOL_INPUT_FILE__");
+      expect(hook.stderr).toContain(`LEN=${bigInput.length}`);
+    });
   });
 });

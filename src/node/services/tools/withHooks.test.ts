@@ -36,6 +36,7 @@ describe("withHooks", () => {
     const wrappedTool = withHooks("test_tool", baseTool, {
       runtime,
       cwd: tempDir,
+      runtimeTempDir: tempDir,
       workspaceId: "test-ws",
     });
 
@@ -63,6 +64,7 @@ read RESULT
     const wrappedTool = withHooks("test_tool", baseTool, {
       runtime,
       cwd: tempDir,
+      runtimeTempDir: tempDir,
       workspaceId: "test-ws",
     });
 
@@ -92,6 +94,7 @@ exit 1
     const wrappedTool = withHooks("test_tool", baseTool, {
       runtime,
       cwd: tempDir,
+      runtimeTempDir: tempDir,
       workspaceId: "test-ws",
     });
 
@@ -122,6 +125,7 @@ exit 1
     const wrappedTool = withHooks("file_edit", baseTool, {
       runtime,
       cwd: tempDir,
+      runtimeTempDir: tempDir,
       workspaceId: "test-ws",
     });
 
@@ -153,6 +157,7 @@ exit 0
     const wrappedTool = withHooks("file_edit", baseTool, {
       runtime,
       cwd: tempDir,
+      runtimeTempDir: tempDir,
       workspaceId: "test-ws",
     });
 
@@ -187,6 +192,7 @@ read RESULT
     const wrappedTool = withHooks("test_tool", baseTool, {
       runtime,
       cwd: tempDir,
+      runtimeTempDir: tempDir,
       workspaceId: "test-ws",
       env: { MY_API_KEY: "secret123" },
     });

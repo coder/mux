@@ -211,6 +211,7 @@ function wrapToolsWithHooks(
   const hookConfig: HookConfig = {
     runtime: config.runtime,
     cwd: config.cwd,
+    runtimeTempDir: config.runtimeTempDir,
     workspaceId: config.workspaceId,
     env: {
       ...(config.secrets ?? {}),
