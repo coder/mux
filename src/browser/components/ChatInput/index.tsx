@@ -1245,10 +1245,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         // Handle /model command
         if (parsed.type === "model-set") {
           setInput(""); // Clear input immediately
-          // Show toast first before state updates that may trigger re-renders
-          pushToast({ type: "success", message: `Model changed to ${parsed.modelString}` });
           setPreferredModel(parsed.modelString);
           props.onModelChange?.(parsed.modelString);
+          pushToast({ type: "success", message: `Model changed to ${parsed.modelString}` });
           return;
         }
 
