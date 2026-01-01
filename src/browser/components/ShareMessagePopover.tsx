@@ -78,8 +78,6 @@ interface ShareMessagePopoverProps {
   model?: string;
   thinking?: string;
   disabled?: boolean;
-  /** Visual variant: "message" for icon button (default), "plan" for plan chip style */
-  variant?: "message" | "plan";
   /** Workspace name used for uploaded filename (e.g., "my-workspace" -> "my-workspace.md") */
   workspaceName?: string;
 }
@@ -89,7 +87,6 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
   model,
   thinking,
   disabled = false,
-  variant = "message",
   workspaceName,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -131,14 +128,14 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
     updatePersistedState(SHARE_EXPIRATION_KEY, value);
   };
 
-  // Derive filename: prefer workspaceName, fallback to variant-based default
+  // Derive filename: prefer workspaceName, fallback to default
   const getFileName = (): string => {
     if (workspaceName) {
       // Sanitize workspace name for filename (remove unsafe chars)
       const safeName = workspaceName.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/-+/g, "-");
       return `${safeName}.md`;
     }
-    return variant === "plan" ? "plan.md" : "message.md";
+    return "message.md";
   };
 
   // Upload without expiration (optimistic), then allow setting expiration after
@@ -265,51 +262,30 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
     }
   };
 
-  // Plan chip styling (matches ProposePlanToolCall button style)
-  const planChipClasses =
-    "px-2 py-1 text-[10px] font-mono rounded-sm cursor-pointer transition-all duration-150 active:translate-y-px";
-
   const currentExpiration = timestampToExpiration(shareData?.expiresAt);
   const isBusy = isUploading || isUpdating || isDeleting;
 
   return (
     <Popover open={isOpen} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>
-        {variant === "plan" ? (
-          <button
-            disabled={disabled}
-            aria-label={isAlreadyShared ? "Already shared" : "Share"}
-            className={cn(
-              planChipClasses,
-              "plan-chip-ghost hover:plan-chip-ghost-hover",
-              isAlreadyShared && "text-blue-400",
-              disabled && "cursor-not-allowed opacity-50"
-            )}
-          >
-            {isAlreadyShared ? "Shared" : "Share"}
-          </button>
-        ) : (
-          <Button
-            variant="ghost"
-            size="icon"
-            disabled={disabled}
-            aria-label={isAlreadyShared ? "Already shared" : "Share"}
-            className={cn(
-              "flex h-6 w-6 items-center justify-center [&_svg]:size-3.5",
-              isAlreadyShared ? "text-blue-400" : "text-placeholder"
-            )}
-          >
-            <Link2 />
-          </Button>
-        )}
+        <Button
+          variant="ghost"
+          size="icon"
+          disabled={disabled}
+          aria-label={isAlreadyShared ? "Already shared" : "Share"}
+          className={cn(
+            "flex h-6 w-6 items-center justify-center [&_svg]:size-3.5",
+            isAlreadyShared ? "text-blue-400" : "text-placeholder"
+          )}
+        >
+          <Link2 />
+        </Button>
       </PopoverTrigger>
-      <PopoverContent align="start" collisionPadding={16} className="w-[280px] p-3">
+      <PopoverContent side="top" align="start" collisionPadding={16} className="w-[280px] p-3">
         {!shareData ? (
           // Uploading state (auto-triggered on open)
           <div className="space-y-3">
-            <div className="text-foreground text-xs font-medium">
-              Share {variant === "plan" ? "Plan" : "Message"}
-            </div>
+            <div className="text-foreground text-xs font-medium">Share</div>
 
             {error ? (
               <>
@@ -406,13 +382,15 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
                 </span>
               )}
               {isUpdating && <Loader2 className="h-3 w-3 animate-spin" />}
-              {showUpdated && (
-                <span className="flex items-center gap-1 text-[10px] text-green-500">
-                  <Check className="h-3 w-3" />
-                  Updated
-                </span>
-              )}
             </div>
+
+            {/* Success indicator on its own line */}
+            {showUpdated && (
+              <div className="flex items-center justify-center gap-1 text-[11px] text-green-500">
+                <Check className="h-3.5 w-3.5" />
+                Expiration updated
+              </div>
+            )}
 
             {error && (
               <div className="bg-destructive/10 text-destructive rounded px-2 py-1.5 text-[11px]">

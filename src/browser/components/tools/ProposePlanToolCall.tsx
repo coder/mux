@@ -286,7 +286,6 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
         <ShareMessagePopover
           content={planContent}
           disabled={!planContent}
-          variant="plan"
           workspaceName={workspaceName}
         />
       ),
