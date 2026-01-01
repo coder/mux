@@ -56,16 +56,24 @@ void mock.module("@/browser/contexts/TelemetryEnabledContext", () => ({
 }));
 
 describe("ProposePlanToolCall Start Here", () => {
+  let originalWindow: typeof globalThis.window;
+  let originalDocument: typeof globalThis.document;
+
   beforeEach(() => {
     startHereCalls = [];
+    // Save original globals
+    originalWindow = globalThis.window;
+    originalDocument = globalThis.document;
+    // Set up test globals
     globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
     globalThis.document = globalThis.window.document;
   });
 
   afterEach(() => {
     cleanup();
-    globalThis.window = undefined as unknown as Window & typeof globalThis;
-    globalThis.document = undefined as unknown as Document;
+    // Restore original globals instead of setting to undefined
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
   });
 
   test("keeps plan file on disk and includes plan path note in Start Here content", () => {

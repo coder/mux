@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import {
   getSharedUrl,
   getShareData,
@@ -27,6 +27,9 @@ const mockLocalStorage: Storage = {
   key: (index: number) => Array.from(mockStorage.keys())[index] ?? null,
 };
 
+// Save original window to restore after tests
+const originalWindow = globalThis.window;
+
 beforeEach(() => {
   mockStorage.clear();
   // The persisted state helpers check window.localStorage and dispatch events
@@ -36,6 +39,11 @@ beforeEach(() => {
     // eslint-disable-next-line @typescript-eslint/no-empty-function
     addEventListener: () => {},
   } as unknown as Window & typeof globalThis;
+});
+
+afterEach(() => {
+  // Restore original window to avoid polluting other tests
+  globalThis.window = originalWindow;
 });
 
 describe("sharedUrlCache", () => {
