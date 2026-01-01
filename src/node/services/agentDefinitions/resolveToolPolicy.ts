@@ -1,12 +1,5 @@
+import { collectToolConfigsFromResolvedChain, type ToolsConfig } from "@/common/utils/agentTools";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
-
-/**
- * Tool configuration with add/remove patterns.
- */
-interface ToolsConfig {
-  add?: readonly string[];
-  remove?: readonly string[];
-}
 
 /**
  * Minimal agent structure needed for tool policy resolution.
@@ -40,21 +33,6 @@ const DEPTH_HARD_DENY: ToolPolicy = [
 ];
 
 /**
- * Extract tool configs from a pre-resolved inheritance chain.
- *
- * The `agents` array is expected to be the result of `resolveAgentInheritanceChain`,
- * ordered from child → base (the selected agent first, then its base, etc.).
- * We reverse it to process base → child for correct override semantics.
- */
-function collectToolConfigs(agents: readonly AgentLikeForPolicy[]): ToolsConfig[] {
-  // Process base → child (reverse of the input order)
-  return [...agents]
-    .reverse()
-    .filter((agent): agent is AgentLikeForPolicy & { tools: ToolsConfig } => agent.tools != null)
-    .map((agent) => agent.tools);
-}
-
-/**
  * Resolves tool policy for an agent, including inherited tools from base agents.
  *
  * The policy is built from:
@@ -77,7 +55,7 @@ export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): To
   const agentPolicy: ToolPolicy = [{ regex_match: ".*", action: "disable" }];
 
   // Process inheritance chain: base → child
-  const configs = collectToolConfigs(agents);
+  const configs = collectToolConfigsFromResolvedChain(agents);
   for (const config of configs) {
     // Enable tools from add list (treated as regex patterns)
     if (config.add) {

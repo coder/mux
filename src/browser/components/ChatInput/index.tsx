@@ -22,7 +22,6 @@ import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { useMode } from "@/browser/contexts/ModeContext";
 import { useAgent } from "@/browser/contexts/AgentContext";
-import { resolveAgentProperty, isPlanLike } from "@/common/utils/agentInheritance";
 import { ThinkingSliderComponent } from "../ThinkingSlider";
 import { ModelSettings } from "../ModelSettings";
 import { useAPI } from "@/browser/contexts/API";
@@ -307,16 +306,18 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const [mode] = useMode();
   const { agentId, agents } = useAgent();
 
-  // Get the active agent's uiColor for focus border styling (respects inheritance)
-  // Falls back to plan/exec mode colors based on agent's tool policy
+  // Get the active agent's uiColor for focus border styling.
+  //
+  // NOTE: uiColor and isPlanLike are resolved on the backend (agent inheritance is scope-aware).
   const focusBorderColor = useMemo(() => {
-    if (!agentId) {
-      return "var(--color-exec-mode)";
-    }
-    const color = resolveAgentProperty(agentId, "uiColor", agents);
+    const normalizedId = typeof agentId === "string" ? agentId.trim().toLowerCase() : "";
+    const descriptor = agents.find((entry) => entry.id === normalizedId);
+
+    const color = descriptor?.uiColor;
     if (color) return color;
-    // Fallback: use plan color if agent has propose_plan, otherwise exec
-    return isPlanLike(agentId, agents) ? "var(--color-plan-mode)" : "var(--color-exec-mode)";
+
+    const isPlanLike = descriptor?.isPlanLike ?? normalizedId === "plan";
+    return isPlanLike ? "var(--color-plan-mode)" : "var(--color-exec-mode)";
   }, [agentId, agents]);
   const {
     models,

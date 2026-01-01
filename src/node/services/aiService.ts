@@ -82,7 +82,7 @@ import {
   resolveAgentBody,
 } from "@/node/services/agentDefinitions/agentDefinitionsService";
 import { resolveToolPolicyForAgent } from "@/node/services/agentDefinitions/resolveToolPolicy";
-import { isPlanLike } from "@/common/utils/agentInheritance";
+import { isPlanLikeInResolvedChain } from "@/common/utils/agentTools";
 import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/resolveAgentInheritanceChain";
 
 // Export a standalone version of getToolsForModel for use in backend
@@ -1153,15 +1153,13 @@ export class AIService extends EventEmitter {
       // (including inherited tools from base agents).
       const agentsForInheritance = await resolveAgentInheritanceChain({
         runtime,
-        workspacePath,
+        workspacePath: agentDiscoveryPath,
         agentId: effectiveAgentId,
         agentDefinition,
         workspaceId,
       });
 
-      const agentIsPlanLike = isPlanLike(effectiveAgentId, agentsForInheritance, {
-        isPreResolvedChain: true,
-      });
+      const agentIsPlanLike = isPlanLikeInResolvedChain(agentsForInheritance);
       const effectiveMode: AgentMode = agentIsPlanLike ? "plan" : "exec";
 
       const cfg = this.config.loadConfigOrDefault();
@@ -1365,7 +1363,7 @@ export class AIService extends EventEmitter {
       // 1. Resolve the body with inheritance (prompt.append merges with base)
       // 2. If running as subagent, append subagent.append_prompt
       // Note: Use agentDefinition.id (may have fallen back to exec) instead of effectiveAgentId
-      const resolvedBody = await resolveAgentBody(runtime, workspacePath, agentDefinition.id);
+      const resolvedBody = await resolveAgentBody(runtime, agentDiscoveryPath, agentDefinition.id);
       const agentSystemPrompt =
         isSubagentWorkspace && agentDefinition.frontmatter.subagent?.append_prompt
           ? `${resolvedBody}\n\n${agentDefinition.frontmatter.subagent.append_prompt}`

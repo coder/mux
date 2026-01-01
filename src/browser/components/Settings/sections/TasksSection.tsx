@@ -30,7 +30,6 @@ import {
 } from "@/common/types/tasks";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
-import { isPlanLike, resolveAgentTools } from "@/common/utils/agentInheritance";
 
 const INHERIT = "__inherit__";
 const ALL_THINKING_LEVELS = ["off", "low", "medium", "high", "xhigh"] as const;
@@ -42,6 +41,7 @@ const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
     name: "Plan",
     description: "Create a plan before coding",
     uiSelectable: true,
+    isPlanLike: true,
     subagentRunnable: false,
     base: "plan",
   },
@@ -51,6 +51,7 @@ const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
     name: "Exec",
     description: "Implement changes in the repository",
     uiSelectable: true,
+    isPlanLike: false,
     subagentRunnable: true,
   },
   {
@@ -59,6 +60,7 @@ const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
     name: "Compact",
     description: "History compaction (internal)",
     uiSelectable: false,
+    isPlanLike: false,
     subagentRunnable: false,
   },
   {
@@ -67,6 +69,7 @@ const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
     name: "Explore",
     description: "Read-only repository exploration",
     uiSelectable: false,
+    isPlanLike: false,
     subagentRunnable: true,
     base: "exec",
   },
@@ -108,12 +111,8 @@ function updateAgentDefaultEntry(
   return next;
 }
 
-function renderPolicySummary(
-  agent: AgentDefinitionDescriptor,
-  allAgents: AgentDefinitionDescriptor[]
-): React.ReactNode {
-  // Use proper inheritance check
-  const agentIsPlanLike = isPlanLike(agent.id, allAgents);
+function renderPolicySummary(agent: AgentDefinitionDescriptor): React.ReactNode {
+  const agentIsPlanLike = agent.isPlanLike;
   const isCompact = agent.id === "compact";
 
   const baseDescription = (() => {
@@ -151,25 +150,36 @@ function renderPolicySummary(
     </Tooltip>,
   ];
 
-  // Show resolved tools (after inheritance)
-  const resolvedTools = resolveAgentTools(agent.id, allAgents);
-  if (resolvedTools.length > 0) {
+  const toolAdd = agent.tools?.add ?? [];
+  const toolRemove = agent.tools?.remove ?? [];
+  const toolRuleCount = toolAdd.length + toolRemove.length;
+
+  if (toolRuleCount > 0 || agent.base) {
     pieces.push(
       <Tooltip key="tools">
         <TooltipTrigger asChild>
           <span className="cursor-help underline decoration-dotted underline-offset-2">
-            tools: {resolvedTools.length}
+            {toolRuleCount > 0 ? `tools: ${toolRuleCount}` : "tools: inherited"}
           </span>
         </TooltipTrigger>
         <TooltipContent align="start" className="max-w-80 whitespace-normal">
-          <div className="font-medium">Allowed tools (regex patterns)</div>
-          <ul className="mt-1 space-y-0.5">
-            {resolvedTools.map((tool) => (
-              <li key={tool}>
-                <code>{tool}</code>
-              </li>
-            ))}
-          </ul>
+          <div className="font-medium">Tools</div>
+          {toolRuleCount > 0 ? (
+            <ul className="mt-1 space-y-0.5">
+              {toolAdd.map((pattern) => (
+                <li key={`add:${pattern}`}>
+                  <span className="text-green-500">+</span> <code>{pattern}</code>
+                </li>
+              ))}
+              {toolRemove.map((pattern) => (
+                <li key={`remove:${pattern}`}>
+                  <span className="text-red-500">−</span> <code>{pattern}</code>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="text-muted mt-1 text-xs">Inherited from base.</div>
+          )}
         </TooltipContent>
       </Tooltip>
     );
@@ -480,7 +490,7 @@ export function TasksSection() {
           <div className="min-w-0 flex-1">
             <div className="text-foreground text-sm font-medium">{agent.name}</div>
             <div className="text-muted text-xs">
-              {agent.id} • {scopeNode} • {renderPolicySummary(agent, agents)}
+              {agent.id} • {scopeNode} • {renderPolicySummary(agent)}
               {agent.uiSelectable && agent.subagentRunnable ? (
                 <>
                   {" "}

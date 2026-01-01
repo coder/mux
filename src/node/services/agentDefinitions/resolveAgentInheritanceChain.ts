@@ -14,6 +14,7 @@ export interface AgentForInheritance {
   id: AgentId;
   base?: AgentId;
   tools?: AgentDefinitionPackage["frontmatter"]["tools"];
+  uiColor?: string;
 }
 
 interface ResolveAgentInheritanceChainOptions {
@@ -63,6 +64,7 @@ export async function resolveAgentInheritanceChain(
       id: currentAgentId,
       base: currentDefinition.frontmatter.base,
       tools: currentDefinition.frontmatter.tools,
+      uiColor: currentDefinition.frontmatter.ui?.color,
     });
 
     const baseId = currentDefinition.frontmatter.base;

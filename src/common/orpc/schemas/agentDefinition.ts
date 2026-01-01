@@ -93,6 +93,8 @@ export const AgentDefinitionDescriptorSchema = z
     description: z.string().min(1).max(1024).optional(),
     uiSelectable: z.boolean(),
     uiColor: z.string().min(1).optional(),
+    /** True if this agent is plan-like (has propose_plan in its effective tools) */
+    isPlanLike: z.boolean(),
     subagentRunnable: z.boolean(),
     // Base agent ID for inheritance (e.g., "exec", "plan", or custom agent)
     base: AgentIdSchema.optional(),

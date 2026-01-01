@@ -18,7 +18,6 @@ import {
   KEYBINDS,
   matchNumberedKeybind,
 } from "@/browser/utils/ui/keybinds";
-import { isPlanLike as isPlanLikeFn } from "@/common/utils/agentInheritance";
 
 interface AgentModePickerProps {
   className?: string;
@@ -81,6 +80,7 @@ function formatScope(scope: AgentOption["scope"]): string {
 const AgentTooltipContent: React.FC<{ opt: AgentOption }> = ({ opt }) => {
   const hasAdd = (opt.tools?.add?.length ?? 0) > 0;
   const hasRemove = (opt.tools?.remove?.length ?? 0) > 0;
+  const hasToolsOverrides = hasAdd || hasRemove;
   const hasAiDefaults = Boolean(opt.aiDefaults?.model ?? opt.aiDefaults?.thinkingLevel);
 
   return (
@@ -104,7 +104,7 @@ const AgentTooltipContent: React.FC<{ opt: AgentOption }> = ({ opt }) => {
         </div>
       )}
 
-      {(hasAdd || hasRemove) && (
+      {(hasToolsOverrides || opt.base) && (
         <div className="text-muted space-y-0.5">
           <span className="text-muted-light">Tools:</span>
           {hasAdd &&
@@ -119,6 +119,9 @@ const AgentTooltipContent: React.FC<{ opt: AgentOption }> = ({ opt }) => {
                 <span className="text-red-500">−</span> {pattern}
               </div>
             ))}
+          {!hasToolsOverrides && opt.base && (
+            <div className="text-muted-light ml-2">inherited from base</div>
+          )}
         </div>
       )}
 
@@ -170,7 +173,7 @@ function resolveAgentOptions(agents: AgentDefinitionDescriptor[]): AgentOption[]
     .map((entry) => ({
       id: entry.id,
       name: entry.name,
-      isPlanLike: isPlanLikeFn(entry.id, agents),
+      isPlanLike: entry.isPlanLike,
       uiColor: entry.uiColor,
       description: entry.description,
       scope: entry.scope,
@@ -223,7 +226,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
       return {
         id: normalizedAgentId,
         name: formatAgentIdLabel(normalizedAgentId),
-        isPlanLike: isPlanLikeFn(normalizedAgentId, agents),
+        isPlanLike: normalizedAgentId === "plan",
         uiColor: undefined,
         scope: "project" as const,
         subagentRunnable: false,
@@ -233,7 +236,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
     return {
       id: descriptor.id,
       name: descriptor.name,
-      isPlanLike: isPlanLikeFn(descriptor.id, agents),
+      isPlanLike: descriptor.isPlanLike,
       uiColor: descriptor.uiColor,
       description: descriptor.description,
       scope: descriptor.scope,

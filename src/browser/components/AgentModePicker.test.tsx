@@ -14,6 +14,7 @@ const BUILT_INS: AgentDefinitionDescriptor[] = [
     scope: "built-in",
     name: "Exec",
     uiSelectable: true,
+    isPlanLike: false,
     subagentRunnable: false,
   },
   {
@@ -21,6 +22,7 @@ const BUILT_INS: AgentDefinitionDescriptor[] = [
     scope: "built-in",
     name: "Plan",
     uiSelectable: true,
+    isPlanLike: true,
     subagentRunnable: false,
     base: "plan",
   },
@@ -31,6 +33,7 @@ const HIDDEN_AGENT: AgentDefinitionDescriptor = {
   scope: "built-in",
   name: "Explore",
   uiSelectable: false,
+  isPlanLike: false,
   subagentRunnable: true,
   base: "exec",
 };
@@ -40,6 +43,7 @@ const CUSTOM_AGENT: AgentDefinitionDescriptor = {
   name: "Review",
   description: "Review changes",
   uiSelectable: true,
+  isPlanLike: false,
   subagentRunnable: false,
 };
 
