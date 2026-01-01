@@ -118,29 +118,51 @@ export function withHooks<TParameters, TResult>(
   } as Tool<TParameters, TResult>;
 }
 
+/** Check if a value is an AsyncIterable (streaming result) */
+function isAsyncIterable<T>(value: unknown): value is AsyncIterable<T> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    Symbol.asyncIterator in value &&
+    typeof (value as Record<symbol, unknown>)[Symbol.asyncIterator] === "function"
+  );
+}
+
 /**
- * Append hook stderr output to tool result.
+ * Append hook output to tool result.
  * This lets the LLM see hook feedback (errors, formatter notifications) alongside the tool result.
+ *
+ * Note: AsyncIterable (streaming) results are returned as-is since we can't modify a stream.
+ * Hook output is logged but not attached to streaming results.
  */
-function appendHookOutput<T>(result: T | AsyncIterable<T> | undefined, stderr: string): T {
+function appendHookOutput<T>(
+  result: T | AsyncIterable<T> | undefined,
+  output: string
+): T | AsyncIterable<T> {
   if (result === undefined) {
-    const errorResult: { error: string } = { error: stderr };
+    const errorResult: { error: string } = { error: output };
     return errorResult as T;
+  }
+
+  // AsyncIterable (streaming) results can't be modified - return as-is
+  // The hook output was already logged via log.debug
+  if (isAsyncIterable<T>(result)) {
+    return result;
   }
 
   // If result is an object, add hook_output field
   if (typeof result === "object" && result !== null) {
     const withOutput: T & { hook_output: string } = {
       ...(result as T),
-      hook_output: stderr,
+      hook_output: output,
     };
     return withOutput as T;
   }
 
   // For primitive results, wrap in object
-  const wrapped: { result: T | AsyncIterable<T>; hook_output: string } = {
+  const wrapped: { result: T; hook_output: string } = {
     result,
-    hook_output: stderr,
+    hook_output: output,
   };
   return wrapped as unknown as T;
 }
