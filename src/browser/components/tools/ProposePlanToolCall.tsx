@@ -125,10 +125,12 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   const editorError = usePopoverError();
   const editButtonRef = useRef<HTMLDivElement>(null);
 
-  // Get runtimeConfig for the workspace (needed for SSH-aware editor opening)
-  const runtimeConfig = workspaceId
-    ? workspaceContext?.workspaceMetadata.get(workspaceId)?.runtimeConfig
+  // Get runtimeConfig and name for the workspace (needed for SSH-aware editor opening and share filename)
+  const workspaceMetadata = workspaceId
+    ? workspaceContext?.workspaceMetadata.get(workspaceId)
     : undefined;
+  const runtimeConfig = workspaceMetadata?.runtimeConfig;
+  const workspaceName = workspaceMetadata?.name;
 
   // Fresh content from disk for the latest plan (external edit detection)
   // Initialize from localStorage cache for instant render (no flash on reload)
@@ -281,7 +283,12 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     {
       label: "Share",
       component: (
-        <ShareMessagePopover content={planContent} disabled={!planContent} variant="plan" />
+        <ShareMessagePopover
+          content={planContent}
+          disabled={!planContent}
+          variant="plan"
+          workspaceName={workspaceName}
+        />
       ),
     },
   ];

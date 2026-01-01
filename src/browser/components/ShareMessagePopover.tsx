@@ -8,7 +8,15 @@ import {
   SelectValue,
 } from "@/browser/components/ui/select";
 import { Button } from "@/browser/components/ui/button";
-import { Clipboard, ClipboardCheck, ExternalLink, Link2, Loader2, Trash2 } from "lucide-react";
+import {
+  Check,
+  Clipboard,
+  ClipboardCheck,
+  ExternalLink,
+  Link2,
+  Loader2,
+  Trash2,
+} from "lucide-react";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { uploadToMuxMd, deleteFromMuxMd, updateMuxMdExpiration } from "@/browser/lib/muxMd";
 import {
@@ -72,6 +80,8 @@ interface ShareMessagePopoverProps {
   disabled?: boolean;
   /** Visual variant: "message" for icon button (default), "plan" for plan chip style */
   variant?: "message" | "plan";
+  /** Workspace name used for uploaded filename (e.g., "my-workspace" -> "my-workspace.md") */
+  workspaceName?: string;
 }
 
 export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
@@ -80,11 +90,13 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
   thinking,
   disabled = false,
   variant = "message",
+  workspaceName,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [showUpdated, setShowUpdated] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Current share data (from upload or cache)
@@ -119,6 +131,16 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
     updatePersistedState(SHARE_EXPIRATION_KEY, value);
   };
 
+  // Derive filename: prefer workspaceName, fallback to variant-based default
+  const getFileName = (): string => {
+    if (workspaceName) {
+      // Sanitize workspace name for filename (remove unsafe chars)
+      const safeName = workspaceName.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/-+/g, "-");
+      return `${safeName}.md`;
+    }
+    return variant === "plan" ? "plan.md" : "message.md";
+  };
+
   // Upload without expiration (optimistic), then allow setting expiration after
   const handleShare = async () => {
     if (!content || isUploading) return;
@@ -128,7 +150,7 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
 
     try {
       const result = await uploadToMuxMd(content, {
-        name: variant === "plan" ? "plan.md" : "message.md",
+        name: getFileName(),
         type: "text/markdown",
         size: new TextEncoder().encode(content).length,
         model,
@@ -171,6 +193,7 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
 
     if (!silent) setIsUpdating(true);
     setError(null);
+    setShowUpdated(false);
 
     try {
       const ms = expirationToMs(value);
@@ -183,6 +206,12 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
 
       // Save preference for future shares
       savePreferredExpiration(value);
+
+      // Show success indicator briefly
+      if (!silent) {
+        setShowUpdated(true);
+        setTimeout(() => setShowUpdated(false), 2000);
+      }
     } catch (err) {
       console.error("Update expiration failed:", err);
       if (!silent) {
@@ -274,7 +303,7 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
           </Button>
         )}
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-[280px] p-3">
+      <PopoverContent align="start" collisionPadding={16} className="w-[280px] p-3">
         {!shareData ? (
           // Uploading state (auto-triggered on open)
           <div className="space-y-3">
@@ -377,6 +406,12 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
                 </span>
               )}
               {isUpdating && <Loader2 className="h-3 w-3 animate-spin" />}
+              {showUpdated && (
+                <span className="flex items-center gap-1 text-[10px] text-green-500">
+                  <Check className="h-3 w-3" />
+                  Updated
+                </span>
+              )}
             </div>
 
             {error && (
