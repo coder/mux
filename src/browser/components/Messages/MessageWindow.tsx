@@ -10,11 +10,13 @@ import { Button } from "../ui/button";
 
 export interface ButtonConfig {
   label: string;
-  onClick: () => void;
+  onClick?: () => void;
   icon?: ReactNode;
   active?: boolean;
   disabled?: boolean;
   tooltip?: string; // Optional tooltip text
+  /** Custom component to render instead of default button */
+  component?: ReactNode;
 }
 
 interface MessageWindowProps {
@@ -143,6 +145,11 @@ interface IconActionButtonProps {
 }
 
 export const IconActionButton: React.FC<IconActionButtonProps> = ({ button }) => {
+  // If a custom component is provided, render it directly
+  if (button.component) {
+    return <>{button.component}</>;
+  }
+
   const content = (
     <Button
       onClick={button.onClick}

@@ -4,6 +4,7 @@ import { useStartHere } from "@/browser/hooks/useStartHere";
 import type { DisplayedMessage } from "@/common/types/message";
 import { copyToClipboard } from "@/browser/utils/clipboard";
 import { Clipboard, ClipboardCheck, FileText, ListStart } from "lucide-react";
+import { ShareMessagePopover } from "@/browser/components/ShareMessagePopover";
 import React, { useState } from "react";
 import { CompactingMessageContent } from "./CompactingMessageContent";
 import { CompactionBackground } from "./CompactionBackground";
@@ -37,10 +38,10 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
 
   // Use Start Here hook for final assistant messages
   const {
-    openModal,
-    buttonLabel,
+    openModal: openStartHereModal,
+    buttonLabel: startHereLabel,
     disabled: startHereDisabled,
-    modal,
+    modal: startHereModal,
   } = useStartHere(workspaceId, content, isCompacted, {
     sourceMode:
       message.mode === "exec" || message.mode === "plan" || message.mode === "compact"
@@ -65,11 +66,17 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
 
   if (!isStreaming) {
     buttons.push({
-      label: buttonLabel,
-      onClick: openModal,
+      label: startHereLabel,
+      onClick: openStartHereModal,
       disabled: startHereDisabled,
       tooltip: "Replace all chat history with this message",
       icon: <ListStart />,
+    });
+    buttons.push({
+      label: "Share",
+      component: (
+        <ShareMessagePopover content={content} model={message.model} disabled={!content} />
+      ),
     });
     buttons.push({
       label: showRaw ? "Show Markdown" : "Show Text",
@@ -143,7 +150,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
         {renderContent()}
       </MessageWindow>
 
-      {modal}
+      {startHereModal}
     </>
   );
 };
