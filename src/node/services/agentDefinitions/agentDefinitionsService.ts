@@ -204,8 +204,6 @@ async function readAgentDescriptorFromFileWithDisabled(
       description: parsed.frontmatter.description,
       uiSelectable,
       uiColor,
-      // Populated by the agents.list endpoint (requires resolving the inheritance chain).
-      isPlanLike: false,
       subagentRunnable,
       base: parsed.frontmatter.base,
       aiDefaults: parsed.frontmatter.ai,
@@ -254,8 +252,6 @@ export async function discoverAgentDefinitions(
         description: pkg.frontmatter.description,
         uiSelectable,
         uiColor,
-        // Populated by the agents.list endpoint (requires resolving the inheritance chain).
-        isPlanLike: false,
         subagentRunnable,
         base: pkg.frontmatter.base,
         aiDefaults: pkg.frontmatter.ai,

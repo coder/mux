@@ -307,17 +307,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const { agentId, agents } = useAgent();
 
   // Get the active agent's uiColor for focus border styling.
-  //
-  // NOTE: uiColor and isPlanLike are resolved on the backend (agent inheritance is scope-aware).
+  // Falls back to exec-mode styling if the agent hasn't loaded yet.
   const focusBorderColor = useMemo(() => {
     const normalizedId = typeof agentId === "string" ? agentId.trim().toLowerCase() : "";
     const descriptor = agents.find((entry) => entry.id === normalizedId);
-
-    const color = descriptor?.uiColor;
-    if (color) return color;
-
-    const isPlanLike = descriptor?.isPlanLike ?? normalizedId === "plan";
-    return isPlanLike ? "var(--color-plan-mode)" : "var(--color-exec-mode)";
+    return descriptor?.uiColor ?? "var(--color-exec-mode)";
   }, [agentId, agents]);
   const {
     models,

@@ -41,7 +41,6 @@ const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
     name: "Plan",
     description: "Create a plan before coding",
     uiSelectable: true,
-    isPlanLike: true,
     subagentRunnable: false,
     base: "plan",
   },
@@ -51,7 +50,6 @@ const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
     name: "Exec",
     description: "Implement changes in the repository",
     uiSelectable: true,
-    isPlanLike: false,
     subagentRunnable: true,
   },
   {
@@ -60,7 +58,6 @@ const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
     name: "Compact",
     description: "History compaction (internal)",
     uiSelectable: false,
-    isPlanLike: false,
     subagentRunnable: false,
   },
   {
@@ -69,7 +66,6 @@ const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
     name: "Explore",
     description: "Read-only repository exploration",
     uiSelectable: false,
-    isPlanLike: false,
     subagentRunnable: true,
     base: "exec",
   },
@@ -112,7 +108,6 @@ function updateAgentDefaultEntry(
 }
 
 function renderPolicySummary(agent: AgentDefinitionDescriptor): React.ReactNode {
-  const agentIsPlanLike = agent.isPlanLike;
   const isCompact = agent.id === "compact";
 
   const baseDescription = (() => {
@@ -123,16 +118,16 @@ function renderPolicySummary(agent: AgentDefinitionDescriptor): React.ReactNode 
       };
     }
 
-    if (agentIsPlanLike) {
+    if (agent.base) {
       return {
-        title: agent.base ? `Base: ${agent.base}` : "Base: plan",
-        note: "Plan-like agents have access to propose_plan.",
+        title: `Base: ${agent.base}`,
+        note: "Inherits prompt/tools from base.",
       };
     }
 
     return {
-      title: agent.base ? `Base: ${agent.base}` : "Base: exec",
-      note: "Exec-like agents cannot use propose_plan.",
+      title: "Base: (none)",
+      note: "No base agent configured.",
     };
   })();
 

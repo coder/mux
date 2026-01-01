@@ -32,7 +32,6 @@ import {
   readAgentDefinition,
 } from "@/node/services/agentDefinitions/agentDefinitionsService";
 import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/resolveAgentInheritanceChain";
-import { isPlanLikeInResolvedChain } from "@/common/utils/agentTools";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 
 /**
@@ -473,7 +472,6 @@ export const router = (authToken?: string) => {
                 return {
                   ...descriptor,
                   uiColor: descriptor.uiColor ?? resolvedUiColor,
-                  isPlanLike: isPlanLikeInResolvedChain(chain),
                 };
               } catch {
                 return descriptor;

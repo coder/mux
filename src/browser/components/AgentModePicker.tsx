@@ -29,8 +29,6 @@ interface AgentModePickerProps {
 interface AgentOption {
   id: string;
   name: string;
-  /** True if this agent inherits from "plan" (for UI styling) */
-  isPlanLike: boolean;
   uiColor?: string;
   description?: string;
   /** Source scope: built-in, project, or global */
@@ -173,7 +171,6 @@ function resolveAgentOptions(agents: AgentDefinitionDescriptor[]): AgentOption[]
     .map((entry) => ({
       id: entry.id,
       name: entry.name,
-      isPlanLike: entry.isPlanLike,
       uiColor: entry.uiColor,
       description: entry.description,
       scope: entry.scope,
@@ -182,12 +179,6 @@ function resolveAgentOptions(agents: AgentDefinitionDescriptor[]): AgentOption[]
       aiDefaults: entry.aiDefaults,
       subagentRunnable: entry.subagentRunnable,
     }));
-}
-
-function resolveActiveClassName(isPlanLike: boolean): string {
-  return isPlanLike
-    ? "bg-plan-mode text-white hover:bg-plan-mode-hover"
-    : "bg-exec-mode text-white hover:bg-exec-mode-hover";
 }
 
 export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
@@ -226,7 +217,6 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
       return {
         id: normalizedAgentId,
         name: formatAgentIdLabel(normalizedAgentId),
-        isPlanLike: normalizedAgentId === "plan",
         uiColor: undefined,
         scope: "project" as const,
         subagentRunnable: false,
@@ -236,7 +226,6 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
     return {
       id: descriptor.id,
       name: descriptor.name,
-      isPlanLike: descriptor.isPlanLike,
       uiColor: descriptor.uiColor,
       description: descriptor.description,
       scope: descriptor.scope,
@@ -429,12 +418,13 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
   };
 
   // Resolve display properties for the trigger pill
-  const isPlanLike = activeOption?.isPlanLike ?? false;
   const activeDisplayName = activeOption?.name ?? formatAgentIdLabel(normalizedAgentId);
   const activeStyle: React.CSSProperties | undefined = activeOption?.uiColor
     ? { backgroundColor: activeOption.uiColor }
     : undefined;
-  const activeClassName = activeOption?.uiColor ? "text-white" : resolveActiveClassName(isPlanLike);
+  const activeClassName = activeOption?.uiColor
+    ? "text-white"
+    : "bg-exec-mode text-white hover:bg-exec-mode-hover";
 
   return (
     <div ref={containerRef} className={cn("relative flex items-center gap-1.5", props.className)}>

@@ -189,7 +189,6 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         name: "Plan",
         description: "Create a plan before coding",
         uiSelectable: true,
-        isPlanLike: true,
         subagentRunnable: false,
         base: "plan",
       },
@@ -199,7 +198,6 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         name: "Exec",
         description: "Implement changes in the repository",
         uiSelectable: true,
-        isPlanLike: false,
         subagentRunnable: true,
       },
       {
@@ -208,7 +206,6 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         name: "Compact",
         description: "History compaction (internal)",
         uiSelectable: false,
-        isPlanLike: false,
         subagentRunnable: false,
       },
       {
@@ -217,7 +214,6 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         name: "Explore",
         description: "Read-only repository exploration",
         uiSelectable: false,
-        isPlanLike: false,
         subagentRunnable: true,
         base: "exec",
       },
