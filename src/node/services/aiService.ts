@@ -1159,7 +1159,9 @@ export class AIService extends EventEmitter {
         workspaceId,
       });
 
-      const agentIsPlanLike = isPlanLike(effectiveAgentId, agentsForInheritance);
+      const agentIsPlanLike = isPlanLike(effectiveAgentId, agentsForInheritance, {
+        isPreResolvedChain: true,
+      });
       const effectiveMode: AgentMode = agentIsPlanLike ? "plan" : "exec";
 
       const cfg = this.config.loadConfigOrDefault();
@@ -1174,7 +1176,6 @@ export class AIService extends EventEmitter {
       // Agent policy establishes baseline (deny-all + enable whitelist + runtime restrictions).
       // Caller policy then narrows further if needed.
       const agentToolPolicy = resolveToolPolicyForAgent({
-        agentId: effectiveAgentId,
         agents: agentsForInheritance,
         isSubagent: isSubagentWorkspace,
         disableTaskToolsForDepth: shouldDisableTaskToolsForDepth,

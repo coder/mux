@@ -129,4 +129,104 @@ Replaced body.
     expect(replacerBody).toBe("Replaced body.\n");
     expect(replacerBody).not.toContain("Base instructions");
   });
+
+  test("same-name override: project agent with base: self extends built-in/global, not itself", async () => {
+    using project = new DisposableTempDir("agent-same-name");
+    using global = new DisposableTempDir("agent-same-name-global");
+
+    const projectAgentsRoot = path.join(project.path, ".mux", "agents");
+    const globalAgentsRoot = global.path;
+
+    await fs.mkdir(projectAgentsRoot, { recursive: true });
+    await fs.mkdir(globalAgentsRoot, { recursive: true });
+
+    // Global "foo" agent (simulates built-in or global config)
+    await fs.writeFile(
+      path.join(globalAgentsRoot, "foo.md"),
+      `---
+name: Foo
+tools:
+  add:
+    - .*
+---
+Global foo instructions.
+`,
+      "utf-8"
+    );
+
+    // Project-local "foo" agent that extends the global one via base: foo
+    // This should NOT cause a circular dependency (would previously infinite loop)
+    await fs.writeFile(
+      path.join(projectAgentsRoot, "foo.md"),
+      `---
+name: Foo
+base: foo
+---
+Project-specific additions.
+`,
+      "utf-8"
+    );
+
+    const roots = { projectRoot: projectAgentsRoot, globalRoot: globalAgentsRoot };
+    const runtime = new LocalRuntime(project.path);
+
+    // Verify project agent is discovered
+    const agents = await discoverAgentDefinitions(runtime, project.path, { roots });
+    const foo = agents.find((a) => a.id === "foo");
+    expect(foo).toBeDefined();
+    expect(foo!.scope).toBe("project");
+    expect(foo!.base).toBe("foo"); // Points to itself by name
+
+    // Verify body resolution correctly inherits from global (not self)
+    const body = await resolveAgentBody(runtime, project.path, "foo", { roots });
+    expect(body).toContain("Global foo instructions.");
+    expect(body).toContain("Project-specific additions.");
+  });
+
+  test("readAgentDefinition with skipScopesAbove skips higher-priority scopes", async () => {
+    using project = new DisposableTempDir("agent-skip-scope");
+    using global = new DisposableTempDir("agent-skip-scope-global");
+
+    const projectAgentsRoot = path.join(project.path, ".mux", "agents");
+    const globalAgentsRoot = global.path;
+
+    await fs.mkdir(projectAgentsRoot, { recursive: true });
+    await fs.mkdir(globalAgentsRoot, { recursive: true });
+
+    await fs.writeFile(
+      path.join(globalAgentsRoot, "test.md"),
+      `---
+name: Test Global
+---
+Global body.
+`,
+      "utf-8"
+    );
+
+    await fs.writeFile(
+      path.join(projectAgentsRoot, "test.md"),
+      `---
+name: Test Project
+---
+Project body.
+`,
+      "utf-8"
+    );
+
+    const roots = { projectRoot: projectAgentsRoot, globalRoot: globalAgentsRoot };
+    const runtime = new LocalRuntime(project.path);
+
+    // Without skip: project takes precedence
+    const normalPkg = await readAgentDefinition(runtime, project.path, "test", { roots });
+    expect(normalPkg.scope).toBe("project");
+    expect(normalPkg.frontmatter.name).toBe("Test Project");
+
+    // With skipScopesAbove: "project" → skip project, return global
+    const skippedPkg = await readAgentDefinition(runtime, project.path, "test", {
+      roots,
+      skipScopesAbove: "project",
+    });
+    expect(skippedPkg.scope).toBe("global");
+    expect(skippedPkg.frontmatter.name).toBe("Test Global");
+  });
 });

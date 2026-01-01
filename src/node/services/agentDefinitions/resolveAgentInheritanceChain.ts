@@ -3,7 +3,12 @@ import type { Runtime } from "@/node/runtime/Runtime";
 import type { AgentDefinitionPackage, AgentId } from "@/common/types/agentDefinition";
 import { log } from "@/node/services/log";
 
-import { readAgentDefinition } from "./agentDefinitionsService";
+import {
+  agentVisitKey,
+  computeBaseSkipScope,
+  MAX_INHERITANCE_DEPTH,
+  readAgentDefinition,
+} from "./agentDefinitionsService";
 
 export interface AgentForInheritance {
   id: AgentId;
@@ -26,28 +31,33 @@ interface ResolveAgentInheritanceChainOptions {
  * IMPORTANT: Tool-policy computation requires the base chain to be present.
  * Building an "all agents" set in callers is error-prone because base agents
  * can be workspace-defined (project/global) rather than built-ins.
+ *
+ * When resolving a base with the same ID as the current agent (e.g., project-scope
+ * `exec.md` with `base: exec`), we skip the current scope to find global/built-in.
  */
 export async function resolveAgentInheritanceChain(
   options: ResolveAgentInheritanceChainOptions
 ): Promise<AgentForInheritance[]> {
   const { runtime, workspacePath, agentId, agentDefinition, workspaceId } = options;
-  const maxDepth = options.maxDepth ?? 10;
+  const maxDepth = options.maxDepth ?? MAX_INHERITANCE_DEPTH;
 
   const agentsForInheritance: AgentForInheritance[] = [];
-  const seenAgentIds = new Set<AgentId>();
+  const seenPackages = new Set<string>();
   let currentAgentId = agentId;
   let currentDefinition = agentDefinition;
 
   for (let depth = 0; depth < maxDepth; depth++) {
-    if (seenAgentIds.has(currentAgentId)) {
+    const visitKey = agentVisitKey(currentDefinition.id, currentDefinition.scope);
+    if (seenPackages.has(visitKey)) {
       log.warn("Agent definition base chain has a cycle; stopping resolution", {
         workspaceId,
         agentId,
         currentAgentId,
+        scope: currentDefinition.scope,
       });
       break;
     }
-    seenAgentIds.add(currentAgentId);
+    seenPackages.add(visitKey);
 
     agentsForInheritance.push({
       id: currentAgentId,
@@ -60,9 +70,13 @@ export async function resolveAgentInheritanceChain(
       break;
     }
 
+    const skipScopesAbove = computeBaseSkipScope(baseId, currentAgentId, currentDefinition.scope);
     currentAgentId = baseId;
+
     try {
-      currentDefinition = await readAgentDefinition(runtime, workspacePath, baseId);
+      currentDefinition = await readAgentDefinition(runtime, workspacePath, baseId, {
+        skipScopesAbove,
+      });
     } catch (error) {
       log.warn("Failed to load base agent definition; stopping inheritance resolution", {
         workspaceId,

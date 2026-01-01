@@ -1,4 +1,3 @@
-import type { AgentId } from "@/common/types/agentDefinition";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 
 /**
@@ -11,17 +10,17 @@ interface ToolsConfig {
 
 /**
  * Minimal agent structure needed for tool policy resolution.
- * Compatible with both AgentDefinitionDescriptor and AgentDefinitionPackage.
+ * Compatible with AgentForInheritance from resolveAgentInheritanceChain.
  */
 export interface AgentLikeForPolicy {
-  id: AgentId;
-  base?: AgentId;
   tools?: ToolsConfig;
 }
 
 export interface ResolveToolPolicyOptions {
-  agentId: AgentId;
-  /** Agents used for inheritance resolution (must include the agent's base chain). */
+  /**
+   * Pre-resolved inheritance chain from resolveAgentInheritanceChain.
+   * Ordered child → base (selected agent first, then its base, etc.).
+   */
   agents: readonly AgentLikeForPolicy[];
   isSubagent: boolean;
   disableTaskToolsForDepth: boolean;
@@ -40,42 +39,19 @@ const DEPTH_HARD_DENY: ToolPolicy = [
   { regex_match: "task_.*", action: "disable" },
 ];
 
-const MAX_INHERITANCE_DEPTH = 10;
-
 /**
- * Collect tool configs from an agent's inheritance chain (base first, then child).
+ * Extract tool configs from a pre-resolved inheritance chain.
+ *
+ * The `agents` array is expected to be the result of `resolveAgentInheritanceChain`,
+ * ordered from child → base (the selected agent first, then its base, etc.).
+ * We reverse it to process base → child for correct override semantics.
  */
-function collectToolConfigs(
-  agentId: AgentId,
-  agents: readonly AgentLikeForPolicy[]
-): ToolsConfig[] {
-  const byId = new Map<AgentId, AgentLikeForPolicy>();
-  for (const agent of agents) {
-    byId.set(agent.id, agent);
-  }
-
-  const configs: ToolsConfig[] = [];
-  const visited = new Set<AgentId>();
-  let currentId: AgentId | undefined = agentId;
-  let depth = 0;
-
-  while (currentId && depth < MAX_INHERITANCE_DEPTH) {
-    if (visited.has(currentId)) {
-      throw new Error(`Circular agent inheritance detected: ${currentId}`);
-    }
-    visited.add(currentId);
-
-    const agent = byId.get(currentId);
-    if (!agent) break;
-
-    if (agent.tools) {
-      configs.unshift(agent.tools); // Base configs go first
-    }
-    currentId = agent.base;
-    depth++;
-  }
-
-  return configs;
+function collectToolConfigs(agents: readonly AgentLikeForPolicy[]): ToolsConfig[] {
+  // Process base → child (reverse of the input order)
+  return [...agents]
+    .reverse()
+    .filter((agent): agent is AgentLikeForPolicy & { tools: ToolsConfig } => agent.tools != null)
+    .map((agent) => agent.tools);
 }
 
 /**
@@ -95,13 +71,13 @@ function collectToolConfigs(
  * Subagents always get `agent_report` enabled regardless of their tool list.
  */
 export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): ToolPolicy {
-  const { agentId, agents, isSubagent, disableTaskToolsForDepth } = options;
+  const { agents, isSubagent, disableTaskToolsForDepth } = options;
 
   // Start with deny-all baseline
   const agentPolicy: ToolPolicy = [{ regex_match: ".*", action: "disable" }];
 
   // Process inheritance chain: base → child
-  const configs = collectToolConfigs(agentId, agents);
+  const configs = collectToolConfigs(agents);
   for (const config of configs) {
     // Enable tools from add list (treated as regex patterns)
     if (config.add) {

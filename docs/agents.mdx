@@ -128,6 +128,23 @@ ui:
 
 This completely removes the agent from discovery. To override (replace) a built-in instead, omit `disabled` and provide your own configuration.
 
+## Extending Built-in Agents
+
+You can extend a built-in agent by creating a file with the **same name** and using `base` to inherit from it:
+
+```md
+---
+name: Exec
+base: exec
+---
+
+Additional project-specific instructions that append to built-in exec.
+```
+
+This works because when resolving `base: exec`, mux skips the current scope (project) and looks for `exec` in lower-priority scopes (global, then built-in). Your project-local `exec.md` extends the built-in exec, not itself.
+
+**Common pattern:** Add repo-specific guidance (CI commands, test patterns) without duplicating the built-in instructions.
+
 ## Tool Policy Semantics
 
 Tools are controlled via an explicit **whitelist**. The `tools` array lists patterns (exact names or regex) that the agent can use. If `tools` is omitted or empty, no tools are available.

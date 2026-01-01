@@ -40,14 +40,35 @@ function toolMatchesPatterns(toolName: string, patterns: readonly string[]): boo
   return false;
 }
 
+interface CollectToolConfigsOptions {
+  /** If true, agents is a pre-resolved chain (child→base order), iterate directly */
+  isPreResolvedChain?: boolean;
+}
+
 /**
  * Collect tool configs from an agent's inheritance chain (base first, then child).
+ *
+ * Handles two cases:
+ * 1. Pre-resolved chain from resolveAgentInheritanceChain (child→base order, may have
+ *    duplicate IDs for same-name overrides like project/exec → built-in/exec)
+ * 2. Flat list from discovery (unique IDs, need to walk base pointers)
  */
 function collectToolConfigs(
   agentId: AgentId,
   agents: readonly AgentLike[],
-  maxDepth = 10
+  maxDepth = 10,
+  options?: CollectToolConfigsOptions
 ): ToolsConfig[] {
+  if (options?.isPreResolvedChain) {
+    // Pre-resolved chain: iterate in order (already child→base), reverse for base→child
+    return [...agents]
+      .slice(0, maxDepth)
+      .reverse()
+      .filter((agent): agent is AgentLike & { tools: ToolsConfig } => agent.tools != null)
+      .map((agent) => agent.tools);
+  }
+
+  // Flat list: build map and walk base pointers (original behavior)
   const byId = new Map<AgentId, AgentLike>();
   for (const agent of agents) {
     byId.set(agent.id, agent);
@@ -120,6 +141,15 @@ export function resolveAgentTools(
   return [...enabled];
 }
 
+export interface AgentInheritanceOptions {
+  /**
+   * If true, agents is a pre-resolved inheritance chain (child→base order)
+   * from resolveAgentInheritanceChain. Use this when the chain may contain
+   * duplicate IDs (e.g., project/exec → built-in/exec same-name override).
+   */
+  isPreResolvedChain?: boolean;
+}
+
 /**
  * Check if an agent has a specific tool in its resolved tools (including inherited).
  *
@@ -133,9 +163,12 @@ export function resolveAgentTools(
 export function agentHasTool(
   agentId: AgentId,
   toolName: string,
-  agents: readonly AgentLike[]
+  agents: readonly AgentLike[],
+  options?: AgentInheritanceOptions
 ): boolean {
-  const configs = collectToolConfigs(agentId, agents);
+  const configs = collectToolConfigs(agentId, agents, 10, {
+    isPreResolvedChain: options?.isPreResolvedChain,
+  });
 
   // Simulate tool policy: process add/remove in order
   // Start with disabled (deny-all baseline)
@@ -159,15 +192,23 @@ export function agentHasTool(
  * Check if an agent is "plan-like" (has propose_plan in its resolved tools).
  * Plan-like agents get plan-mode UI styling.
  */
-export function isPlanLike(agentId: AgentId, agents: readonly AgentLike[]): boolean {
-  return agentHasTool(agentId, "propose_plan", agents);
+export function isPlanLike(
+  agentId: AgentId,
+  agents: readonly AgentLike[],
+  options?: AgentInheritanceOptions
+): boolean {
+  return agentHasTool(agentId, "propose_plan", agents, options);
 }
 
 /**
  * Check if an agent is "exec-like" (does NOT have propose_plan in resolved tools).
  */
-export function isExecLike(agentId: AgentId, agents: readonly AgentLike[]): boolean {
-  return !isPlanLike(agentId, agents);
+export function isExecLike(
+  agentId: AgentId,
+  agents: readonly AgentLike[],
+  options?: AgentInheritanceOptions
+): boolean {
+  return !isPlanLike(agentId, agents, options);
 }
 
 /**
@@ -176,15 +217,29 @@ export function isExecLike(agentId: AgentId, agents: readonly AgentLike[]): bool
  *
  * @param agentId The agent to start resolving from
  * @param property The property name to resolve (must be in InheritableAgentProperties)
- * @param agents All available agent definitions
+ * @param agents All available agent definitions or pre-resolved chain
  * @param maxDepth Maximum inheritance depth (default: 10)
+ * @param options.isPreResolvedChain If true, agents is a pre-resolved chain (child→base order)
  */
 export function resolveAgentProperty<K extends keyof InheritableAgentProperties>(
   agentId: AgentId,
   property: K,
   agents: readonly AgentLike[],
-  maxDepth = 10
+  maxDepth = 10,
+  options?: AgentInheritanceOptions
 ): InheritableAgentProperties[K] {
+  if (options?.isPreResolvedChain) {
+    // Pre-resolved chain: iterate in order (child→base), return first defined value
+    for (let i = 0; i < Math.min(agents.length, maxDepth); i++) {
+      const value = agents[i][property];
+      if (value !== undefined) {
+        return value;
+      }
+    }
+    return undefined;
+  }
+
+  // Flat list: build map and walk base pointers (original behavior)
   const byId = new Map<AgentId, AgentLike>();
   for (const agent of agents) {
     byId.set(agent.id, agent);

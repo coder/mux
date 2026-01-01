@@ -3,11 +3,11 @@ import { describe, expect, test } from "bun:test";
 import type { AgentLikeForPolicy } from "./resolveToolPolicy";
 import { resolveToolPolicyForAgent } from "./resolveToolPolicy";
 
+// Test helper: agents array is ordered child → base (as returned by resolveAgentInheritanceChain)
 describe("resolveToolPolicyForAgent", () => {
   test("no tools means all tools disabled", () => {
-    const agents: AgentLikeForPolicy[] = [{ id: "test" }];
+    const agents: AgentLikeForPolicy[] = [{}];
     const policy = resolveToolPolicyForAgent({
-      agentId: "test",
       agents,
       isSubagent: false,
       disableTaskToolsForDepth: false,
@@ -17,9 +17,8 @@ describe("resolveToolPolicyForAgent", () => {
   });
 
   test("tools.add enables specified patterns", () => {
-    const agents: AgentLikeForPolicy[] = [{ id: "test", tools: { add: ["file_read", "bash.*"] } }];
+    const agents: AgentLikeForPolicy[] = [{ tools: { add: ["file_read", "bash.*"] } }];
     const policy = resolveToolPolicyForAgent({
-      agentId: "test",
       agents,
       isSubagent: false,
       disableTaskToolsForDepth: false,
@@ -33,11 +32,8 @@ describe("resolveToolPolicyForAgent", () => {
   });
 
   test("agents can include propose_plan in tools", () => {
-    const agents: AgentLikeForPolicy[] = [
-      { id: "my-plan", tools: { add: ["propose_plan", "file_read"] } },
-    ];
+    const agents: AgentLikeForPolicy[] = [{ tools: { add: ["propose_plan", "file_read"] } }];
     const policy = resolveToolPolicyForAgent({
-      agentId: "my-plan",
       agents,
       isSubagent: false,
       disableTaskToolsForDepth: false,
@@ -51,11 +47,8 @@ describe("resolveToolPolicyForAgent", () => {
   });
 
   test("subagents hard-deny task recursion and always allow agent_report", () => {
-    const agents: AgentLikeForPolicy[] = [
-      { id: "subagent", tools: { add: ["task", "file_read"] } },
-    ];
+    const agents: AgentLikeForPolicy[] = [{ tools: { add: ["task", "file_read"] } }];
     const policy = resolveToolPolicyForAgent({
-      agentId: "subagent",
       agents,
       isSubagent: true,
       disableTaskToolsForDepth: false,
@@ -74,9 +67,8 @@ describe("resolveToolPolicyForAgent", () => {
   });
 
   test("depth limit hard-denies task tools", () => {
-    const agents: AgentLikeForPolicy[] = [{ id: "exec", tools: { add: ["task", "file_read"] } }];
+    const agents: AgentLikeForPolicy[] = [{ tools: { add: ["task", "file_read"] } }];
     const policy = resolveToolPolicyForAgent({
-      agentId: "exec",
       agents,
       isSubagent: false,
       disableTaskToolsForDepth: true,
@@ -92,9 +84,8 @@ describe("resolveToolPolicyForAgent", () => {
   });
 
   test("empty tools.add array means no tools", () => {
-    const agents: AgentLikeForPolicy[] = [{ id: "empty", tools: { add: [] } }];
+    const agents: AgentLikeForPolicy[] = [{ tools: { add: [] } }];
     const policy = resolveToolPolicyForAgent({
-      agentId: "empty",
       agents,
       isSubagent: false,
       disableTaskToolsForDepth: false,
@@ -104,11 +95,8 @@ describe("resolveToolPolicyForAgent", () => {
   });
 
   test("whitespace in tool patterns is trimmed", () => {
-    const agents: AgentLikeForPolicy[] = [
-      { id: "test", tools: { add: ["  file_read  ", "  ", "bash"] } },
-    ];
+    const agents: AgentLikeForPolicy[] = [{ tools: { add: ["  file_read  ", "  ", "bash"] } }];
     const policy = resolveToolPolicyForAgent({
-      agentId: "test",
       agents,
       isSubagent: false,
       disableTaskToolsForDepth: false,
@@ -123,10 +111,9 @@ describe("resolveToolPolicyForAgent", () => {
 
   test("tools.remove disables specified patterns", () => {
     const agents: AgentLikeForPolicy[] = [
-      { id: "test", tools: { add: ["file_read", "bash", "task"], remove: ["task"] } },
+      { tools: { add: ["file_read", "bash", "task"], remove: ["task"] } },
     ];
     const policy = resolveToolPolicyForAgent({
-      agentId: "test",
       agents,
       isSubagent: false,
       disableTaskToolsForDepth: false,
@@ -142,12 +129,12 @@ describe("resolveToolPolicyForAgent", () => {
   });
 
   test("inherits tools from base agent", () => {
+    // Chain: ask → exec (ordered child → base as returned by resolveAgentInheritanceChain)
     const agents: AgentLikeForPolicy[] = [
-      { id: "exec", tools: { add: [".*"], remove: ["propose_plan"] } },
-      { id: "ask", base: "exec", tools: { remove: ["file_edit_.*"] } },
+      { tools: { remove: ["file_edit_.*"] } }, // ask (child)
+      { tools: { add: [".*"], remove: ["propose_plan"] } }, // exec (base)
     ];
     const policy = resolveToolPolicyForAgent({
-      agentId: "ask",
       agents,
       isSubagent: false,
       disableTaskToolsForDepth: false,
@@ -164,13 +151,13 @@ describe("resolveToolPolicyForAgent", () => {
   });
 
   test("multi-level inheritance", () => {
+    // Chain: leaf → middle → base (ordered child → base)
     const agents: AgentLikeForPolicy[] = [
-      { id: "base", tools: { add: ["file_read", "bash"] } },
-      { id: "middle", base: "base", tools: { add: ["task"], remove: ["bash"] } },
-      { id: "leaf", base: "middle", tools: { remove: ["task"] } },
+      { tools: { remove: ["task"] } }, // leaf (child)
+      { tools: { add: ["task"], remove: ["bash"] } }, // middle
+      { tools: { add: ["file_read", "bash"] } }, // base
     ];
     const policy = resolveToolPolicyForAgent({
-      agentId: "leaf",
       agents,
       isSubagent: false,
       disableTaskToolsForDepth: false,
@@ -190,12 +177,12 @@ describe("resolveToolPolicyForAgent", () => {
   });
 
   test("child can add tools not in base", () => {
+    // Chain: child → base (ordered child → base)
     const agents: AgentLikeForPolicy[] = [
-      { id: "base", tools: { add: ["file_read"] } },
-      { id: "child", base: "base", tools: { add: ["bash"] } },
+      { tools: { add: ["bash"] } }, // child
+      { tools: { add: ["file_read"] } }, // base
     ];
     const policy = resolveToolPolicyForAgent({
-      agentId: "child",
       agents,
       isSubagent: false,
       disableTaskToolsForDepth: false,

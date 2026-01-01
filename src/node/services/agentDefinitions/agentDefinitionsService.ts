@@ -29,20 +29,27 @@ import {
 // Re-export the shared inheritance utilities for backend use
 export { agentHasTool, isPlanLike, isExecLike } from "@/common/utils/agentInheritance";
 
-const MAX_INHERITANCE_DEPTH = 10;
+export const MAX_INHERITANCE_DEPTH = 10;
 
 /**
- * Helper to enforce inheritance chain safety (cycle detection + depth limits).
- * Throws if the chain would cause infinite recursion or exceed depth.
+ * Generate a unique visit key for cycle detection that distinguishes
+ * same-name agents at different scopes (e.g., project/exec vs built-in/exec).
  */
-function checkInheritanceChain(visited: Set<AgentId>, id: AgentId, depth: number): void {
-  if (depth > MAX_INHERITANCE_DEPTH) {
-    throw new Error(`Agent inheritance depth exceeded for '${id}' (max: ${MAX_INHERITANCE_DEPTH})`);
-  }
-  if (visited.has(id)) {
-    throw new Error(`Circular agent inheritance detected: ${id}`);
-  }
-  visited.add(id);
+export function agentVisitKey(id: AgentId, scope: AgentDefinitionScope): string {
+  return `${id}:${scope}`;
+}
+
+/**
+ * Compute the skipScopesAbove value when resolving a base agent.
+ * If the base has the same ID as the current agent, skip the current scope
+ * to allow project/global agents to extend built-ins of the same name.
+ */
+export function computeBaseSkipScope(
+  baseId: AgentId,
+  currentId: AgentId,
+  currentScope: AgentDefinitionScope
+): AgentDefinitionScope | undefined {
+  return baseId === currentId ? currentScope : undefined;
 }
 
 const GLOBAL_AGENTS_ROOT = "~/.mux/agents";
@@ -303,17 +310,42 @@ export async function discoverAgentDefinitions(
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+export interface ReadAgentDefinitionOptions {
+  roots?: AgentDefinitionsRoots;
+  /**
+   * Skip scopes at or above this level when resolving.
+   * Used for base resolution: when a project-scope agent has `base: exec`,
+   * we skip project scope to find the global/built-in exec, avoiding self-reference.
+   */
+  skipScopesAbove?: AgentDefinitionScope;
+}
+
+const SCOPE_PRIORITY: AgentDefinitionScope[] = ["project", "global", "built-in"];
+
 export async function readAgentDefinition(
   runtime: Runtime,
   workspacePath: string,
   agentId: AgentId,
-  options?: { roots?: AgentDefinitionsRoots }
+  options?: ReadAgentDefinitionOptions
 ): Promise<AgentDefinitionPackage> {
   if (!workspacePath) {
     throw new Error("readAgentDefinition: workspacePath is required");
   }
 
   const roots = options?.roots ?? getDefaultAgentDefinitionsRoots(runtime, workspacePath);
+  const skipScopesAbove = options?.skipScopesAbove;
+
+  // Determine which scopes to skip based on skipScopesAbove
+  const skipScopes = new Set<AgentDefinitionScope>();
+  if (skipScopesAbove) {
+    const skipIndex = SCOPE_PRIORITY.indexOf(skipScopesAbove);
+    if (skipIndex !== -1) {
+      // Skip this scope and all higher-priority scopes
+      for (let i = 0; i <= skipIndex; i++) {
+        skipScopes.add(SCOPE_PRIORITY[i]);
+      }
+    }
+  }
 
   // Precedence: project overrides global overrides built-in.
   const candidates: Array<{ scope: Exclude<AgentDefinitionScope, "built-in">; root: string }> = [
@@ -322,6 +354,10 @@ export async function readAgentDefinition(
   ];
 
   for (const candidate of candidates) {
+    if (skipScopes.has(candidate.scope)) {
+      continue;
+    }
+
     let resolvedRoot: string;
     try {
       resolvedRoot = await runtime.resolvePath(candidate.root);
@@ -365,13 +401,17 @@ export async function readAgentDefinition(
     }
   }
 
-  const builtIn = getBuiltInAgentDefinitions().find((pkg) => pkg.id === agentId);
-  if (builtIn) {
-    const validated = AgentDefinitionPackageSchema.safeParse(builtIn);
-    if (!validated.success) {
-      throw new Error(`Invalid built-in agent definition '${agentId}': ${validated.error.message}`);
+  if (!skipScopes.has("built-in")) {
+    const builtIn = getBuiltInAgentDefinitions().find((pkg) => pkg.id === agentId);
+    if (builtIn) {
+      const validated = AgentDefinitionPackageSchema.safeParse(builtIn);
+      if (!validated.success) {
+        throw new Error(
+          `Invalid built-in agent definition '${agentId}': ${validated.error.message}`
+        );
+      }
+      return validated.data;
     }
-    return validated.data;
   }
 
   throw new Error(`Agent definition not found: ${agentId}`);
@@ -382,6 +422,10 @@ export async function readAgentDefinition(
  *
  * By default (or with `prompt.append: true`), the agent's body is appended to its base's body.
  * Set `prompt.append: false` to replace the base body entirely.
+ *
+ * When resolving a base, we skip the current agent's scope to allow overriding built-ins:
+ * - Project-scope `exec.md` with `base: exec` → resolves to global/built-in exec
+ * - Global-scope `exec.md` with `base: exec` → resolves to built-in exec
  */
 export async function resolveAgentBody(
   runtime: Runtime,
@@ -389,23 +433,38 @@ export async function resolveAgentBody(
   agentId: AgentId,
   options?: { roots?: AgentDefinitionsRoots }
 ): Promise<string> {
-  const visited = new Set<AgentId>();
+  const visited = new Set<string>();
 
-  async function resolve(id: AgentId, depth: number): Promise<string> {
-    checkInheritanceChain(visited, id, depth);
+  async function resolve(
+    id: AgentId,
+    depth: number,
+    skipScopesAbove?: AgentDefinitionScope
+  ): Promise<string> {
+    if (depth > MAX_INHERITANCE_DEPTH) {
+      throw new Error(
+        `Agent inheritance depth exceeded for '${id}' (max: ${MAX_INHERITANCE_DEPTH})`
+      );
+    }
 
-    const pkg = await readAgentDefinition(runtime, workspacePath, id, options);
+    const pkg = await readAgentDefinition(runtime, workspacePath, id, {
+      roots: options?.roots,
+      skipScopesAbove,
+    });
+
+    const visitKey = agentVisitKey(pkg.id, pkg.scope);
+    if (visited.has(visitKey)) {
+      throw new Error(`Circular agent inheritance detected: ${pkg.id} (${pkg.scope})`);
+    }
+    visited.add(visitKey);
+
     const baseId = pkg.frontmatter.base;
-    // Default to append (true) unless explicitly set to false
     const shouldAppend = pkg.frontmatter.prompt?.append !== false;
 
-    // No base or explicitly not appending: just return this agent's body
     if (!baseId || !shouldAppend) {
       return pkg.body;
     }
 
-    // Resolve base body and append this agent's body
-    const baseBody = await resolve(baseId, depth + 1);
+    const baseBody = await resolve(baseId, depth + 1, computeBaseSkipScope(baseId, id, pkg.scope));
     const separator = baseBody.trim() && pkg.body.trim() ? "\n\n" : "";
     return `${baseBody}${separator}${pkg.body}`;
   }
