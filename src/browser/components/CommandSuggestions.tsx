@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/common/lib/utils";
 import type { SlashSuggestion } from "@/browser/utils/slashCommands/types";
+import { FileIcon } from "@/browser/components/FileIcon";
 
 // Export the keys that CommandSuggestions handles
 export const COMMAND_SUGGESTION_KEYS = ["Tab", "Enter", "ArrowUp", "ArrowDown", "Escape"];
@@ -72,6 +73,8 @@ interface CommandSuggestionsProps {
   anchorRef?: React.RefObject<HTMLElement | null>;
   /** Query string to highlight in suggestions (for file path autocomplete) */
   highlightQuery?: string;
+  /** Whether suggestions are file paths (enables file icons) */
+  isFileSuggestion?: boolean;
 }
 
 // Main component
@@ -84,6 +87,7 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
   listId,
   anchorRef,
   highlightQuery,
+  isFileSuggestion = false,
 }) => {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [position, setPosition] = useState<{ top: number; left: number; width: number } | null>(
@@ -254,14 +258,17 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
           role="option"
           aria-selected={index === selectedIndex}
           className={cn(
-            "px-2.5 py-1.5 cursor-pointer flex items-center justify-between gap-3 hover:bg-accent/20",
-            index === selectedIndex ? "bg-accent-darker" : "bg-transparent"
+            "cursor-pointer flex items-center gap-2 px-2.5 py-1.5 hover:bg-hover",
+            index === selectedIndex ? "bg-hover" : "bg-transparent"
           )}
         >
-          <div className="text-accent font-monospace min-w-0 shrink-0 truncate text-xs">
+          {isFileSuggestion && (
+            <FileIcon filePath={suggestion.display} className="shrink-0 text-sm" />
+          )}
+          <div className="font-monospace text-foreground min-w-0 flex-1 truncate text-xs">
             <HighlightedText text={suggestion.display} query={highlightQuery} />
           </div>
-          <div className="text-medium shrink-0 text-right text-[11px]">
+          <div className="text-secondary shrink-0 text-right text-[11px]">
             {suggestion.description}
           </div>
         </div>

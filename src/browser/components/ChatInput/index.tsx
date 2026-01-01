@@ -1950,6 +1950,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             listId={atMentionListId}
             anchorRef={variant === "creation" ? inputRef : undefined}
             highlightQuery={atMentionQuery}
+            isFileSuggestion
           />
 
           {/* Slash command suggestions - available in both variants */}
