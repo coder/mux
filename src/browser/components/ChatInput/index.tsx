@@ -191,7 +191,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const [hideReviewsDuringSend, setHideReviewsDuringSend] = useState(false);
   const [showAtMentionSuggestions, setShowAtMentionSuggestions] = useState(false);
   const [atMentionSuggestions, setAtMentionSuggestions] = useState<SlashSuggestion[]>([]);
-  const [atMentionQuery, setAtMentionQuery] = useState<string>("");
   const atMentionDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const atMentionRequestIdRef = useRef(0);
   const lastAtMentionScopeIdRef = useRef<string | null>(null);
@@ -798,12 +797,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             });
 
           setAtMentionSuggestions(nextSuggestions);
-          setAtMentionQuery(match.query);
           setShowAtMentionSuggestions(nextSuggestions.length > 0);
         } catch {
           if (atMentionRequestIdRef.current === requestId) {
             setAtMentionSuggestions([]);
-            setAtMentionQuery("");
             setShowAtMentionSuggestions(false);
           }
         }
@@ -1949,7 +1946,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             ariaLabel="File path suggestions"
             listId={atMentionListId}
             anchorRef={variant === "creation" ? inputRef : undefined}
-            highlightQuery={atMentionQuery}
+            highlightQuery={lastAtMentionQueryRef.current ?? ""}
             isFileSuggestion
           />
 
