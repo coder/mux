@@ -58,6 +58,8 @@ export interface SignatureInfo {
   publicKey: string;
   /** GitHub username, if detected */
   githubUser?: string;
+  /** Email address as fallback identity */
+  email?: string;
 }
 
 export interface UploadOptions {
@@ -193,6 +195,9 @@ function addSignatureFrontmatter(content: string, sig: SignatureInfo): string {
   const lines = ["---", `mux_signature: ${sig.signature}`, `mux_public_key: ${sig.publicKey}`];
   if (sig.githubUser) {
     lines.push(`mux_github_user: ${sig.githubUser}`);
+  }
+  if (sig.email) {
+    lines.push(`mux_email: ${sig.email}`);
   }
   lines.push("---", "", content);
   return lines.join("\n");

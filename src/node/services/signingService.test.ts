@@ -34,14 +34,14 @@ describe("SigningService", () => {
     const service = new SigningService();
     const capabilities = await service.getCapabilities();
 
-    expect(capabilities.available).toBe(true);
+    // publicKey being non-null means signing is available
     expect(capabilities.publicKey).toBeDefined();
     expect(capabilities.publicKey).toStartWith("ssh-ed25519 ");
-    // GitHub detection may or may not succeed depending on environment
-    // githubUser is either string or null
+    // Identity fields: githubUser and email are either string or null
     expect(capabilities.githubUser === null || typeof capabilities.githubUser === "string").toBe(
       true
     );
+    expect(capabilities.email === null || typeof capabilities.email === "string").toBe(true);
   });
 
   it("should sign content and return valid signature", async () => {
@@ -72,13 +72,13 @@ describe("SigningService", () => {
     expect(result.signature.replace(/=+$/, "").length).toBeLessThanOrEqual(88);
   });
 
-  it("should return unavailable when no key exists", async () => {
+  it("should return null publicKey when no key exists", async () => {
     const service = new SigningService();
     // Create a service that won't find any keys by checking non-existent paths
-    // We can't easily test this without mocking, but we can verify the error message format
+    // We can't easily test this without mocking, but we can verify the structure
     const caps = await service.getCapabilities();
-    // If we have a key (from setup), it should be available
+    // If we have a key (from setup), publicKey should be non-null
     // This test mainly ensures the code path doesn't crash
-    expect(typeof caps.available).toBe("boolean");
+    expect(caps.publicKey === null || typeof caps.publicKey === "string").toBe(true);
   });
 });

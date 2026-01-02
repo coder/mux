@@ -229,15 +229,17 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
       const ms = expirationToMs(preferred);
       const expiresAt = ms ? new Date(Date.now() + ms) : undefined;
 
-      // Sign content if enabled and available
+      // Sign content if enabled and available (publicKey exists)
       let signature: SignatureInfo | undefined;
-      if (signingEnabled && signingCapabilities?.available && api) {
+      if (signingEnabled && signingCapabilities?.publicKey && api) {
         try {
           const signResult = await api.signing.sign({ content });
           signature = {
             signature: signResult.signature,
             publicKey: signResult.publicKey,
             githubUser: signResult.githubUser ?? undefined,
+            // Use email from capabilities as fallback identity
+            email: signingCapabilities.email ?? undefined,
           };
         } catch (signErr) {
           console.warn("Signing failed, uploading without signature:", signErr);
@@ -404,7 +406,7 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
                   {error}
                 </div>
                 {/* Signing toggle - show even on error for retry */}
-                {signingCapabilities?.available && (
+                {signingCapabilities?.publicKey && (
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-1.5">
                       <PenTool className="text-muted h-3 w-3" />
@@ -413,13 +415,17 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
                         <span className="text-muted-foreground text-[10px]">
                           (@{signingCapabilities.githubUser})
                         </span>
-                      ) : signingCapabilities.githubError ? (
+                      ) : signingCapabilities.email ? (
+                        <span className="text-muted-foreground text-[10px]">
+                          ({signingCapabilities.email})
+                        </span>
+                      ) : signingCapabilities.error ? (
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <HelpIndicator className="text-[10px]">?</HelpIndicator>
                           </TooltipTrigger>
                           <TooltipContent className="max-w-[200px]">
-                            <p className="text-[11px]">{signingCapabilities.githubError}</p>
+                            <p className="text-[11px]">{signingCapabilities.error}</p>
                           </TooltipContent>
                         </Tooltip>
                       ) : null}
@@ -443,7 +449,7 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
               <div className="flex items-center justify-center py-4">
                 <Loader2 className="text-muted h-5 w-5 animate-spin" />
                 <span className="text-muted ml-2 text-xs">
-                  {signingEnabled && signingCapabilities?.available
+                  {signingEnabled && signingCapabilities?.publicKey
                     ? "Signing & encrypting..."
                     : "Encrypting..."}
                 </span>

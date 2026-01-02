@@ -12,14 +12,14 @@ import { z } from "zod";
 export const signingCapabilitiesInput = z.object({});
 
 export const signingCapabilitiesOutput = z.object({
-  /** Whether signing is available */
-  available: z.boolean(),
-  /** Public key in OpenSSH format (ssh-ed25519 AAAA...) */
+  /** Public key in OpenSSH format (ssh-ed25519 AAAA...), null if no Ed25519 key found */
   publicKey: z.string().nullable(),
   /** Detected GitHub username, if any */
   githubUser: z.string().nullable(),
-  /** Error message if GitHub user detection failed */
-  githubError: z.string().nullable(),
+  /** Git commit email as fallback identity */
+  email: z.string().nullable(),
+  /** Error message if key loading or identity detection failed */
+  error: z.string().nullable(),
 });
 
 export type SigningCapabilities = z.infer<typeof signingCapabilitiesOutput>;
@@ -42,10 +42,10 @@ export const signContentOutput = z.object({
 
 export type SignResult = z.infer<typeof signContentOutput>;
 
-// --- Clear GitHub cache endpoint ---
+// --- Clear identity cache endpoint ---
 
-export const clearGitHubCacheInput = z.object({});
-export const clearGitHubCacheOutput = z.object({
+export const clearIdentityCacheInput = z.object({});
+export const clearIdentityCacheOutput = z.object({
   success: z.boolean(),
 });
 
@@ -59,8 +59,8 @@ export const signing = {
     input: signContentInput,
     output: signContentOutput,
   },
-  clearGitHubCache: {
-    input: clearGitHubCacheInput,
-    output: clearGitHubCacheOutput,
+  clearIdentityCache: {
+    input: clearIdentityCacheInput,
+    output: clearIdentityCacheOutput,
   },
 };
