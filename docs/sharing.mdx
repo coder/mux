@@ -59,6 +59,23 @@ Click the pen icon (✏️) in the share popover to toggle signing on or off. Th
 
 When signing is disabled or no key is found, shares are still encrypted—they just won't have a signature for verification.
 
+## Using Shared Content in Mux
+
+Mux can natively read mux.md URLs using the `web_fetch` tool. When you paste a mux.md link into your chat, Mux decrypts the content client-side and makes it available to the AI assistant.
+
+This enables several workflows:
+
+- **Cross-session sharing**: Share context or instructions between workspaces in the same Mux client
+- **Team collaboration**: Send encrypted snippets to teammates who can paste them into their Mux sessions
+- **Preserving context**: Save important assistant outputs and retrieve them later in new conversations
+
+Simply paste any `https://mux.md/<id>#<key>` URL into your message, and Mux will automatically fetch and decrypt the content.
+
+<Tip>
+  The encryption key (after `#`) never leaves your client. Only the encrypted blob travels over the
+  network, so shared content remains private even when fetched programmatically.
+</Tip>
+
 ## Generating a Signing Key
 
 If you don't have an SSH key, generate one:
