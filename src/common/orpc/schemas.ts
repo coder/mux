@@ -146,6 +146,7 @@ export {
   ProvidersConfigMapSchema,
   server,
   splashScreens,
+  ssh,
   tasks,
   experiments,
   ExperimentValueSchema,
