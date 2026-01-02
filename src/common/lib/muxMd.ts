@@ -1,15 +1,23 @@
 /**
  * mux.md Client Library
  *
- * End-to-end encrypted message sharing for Mux.
- * Messages are encrypted client-side before upload - the server never sees plaintext.
+ * Thin wrapper around @coder/mux-md-client with Mux-specific types and utilities.
+ * The underlying package handles encryption, upload/download, and signature verification.
  */
+
+import {
+  upload as clientUpload,
+  download as clientDownload,
+  deleteFile as clientDelete,
+  setExpiration as clientSetExpiration,
+  parseUrl,
+  type FileInfo as ClientFileInfo,
+  type SignatureEnvelope,
+  type UploadResult as ClientUploadResult,
+} from "@coder/mux-md-client";
 
 export const MUX_MD_BASE_URL = "https://mux.md";
 export const MUX_MD_HOST = "mux.md";
-const SALT_BYTES = 16;
-const IV_BYTES = 12;
-const KEY_BYTES = 10; // 80 bits
 
 // --- URL utilities ---
 
@@ -29,15 +37,7 @@ export function isMuxMdUrl(url: string): boolean {
  * Parse mux.md URL to extract ID and key
  */
 export function parseMuxMdUrl(url: string): { id: string; key: string } | null {
-  try {
-    const parsed = new URL(url);
-    const id = parsed.pathname.slice(1); // Remove leading /
-    const key = parsed.hash.slice(1); // Remove leading #
-    if (!id || !key) return null;
-    return { id, key };
-  } catch {
-    return null;
-  }
+  return parseUrl(url);
 }
 
 /**
@@ -51,8 +51,12 @@ export interface FileInfo {
   thinking?: string;
 }
 
+/**
+ * Signature info for mux.md uploads.
+ * Maps to the package's SignatureEnvelope with field name compatibility.
+ */
 export interface SignatureInfo {
-  /** Base64-encoded Ed25519 signature */
+  /** Base64-encoded signature */
   signature: string;
   /** Public key in OpenSSH format (ssh-ed25519 AAAA...) */
   publicKey: string;
@@ -65,7 +69,7 @@ export interface SignatureInfo {
 export interface UploadOptions {
   /** Expiration time (ISO date string or Date object) */
   expiresAt?: string | Date;
-  /** Signature info to include in frontmatter */
+  /** Signature info to include */
   signature?: SignatureInfo;
 }
 
@@ -82,144 +86,17 @@ export interface UploadResult {
   expiresAt?: number;
 }
 
-interface UploadMeta {
-  salt: string;
-  iv: string;
-  encryptedMeta: string;
+// --- Conversion utilities ---
+
+/** Convert our SignatureInfo to package's SignatureEnvelope */
+function toSignatureEnvelope(sig: SignatureInfo): SignatureEnvelope {
+  return {
+    sig: sig.signature,
+    publicKey: sig.publicKey,
+    githubUser: sig.githubUser,
+    email: sig.email,
+  };
 }
-
-interface UploadResponse {
-  id: string;
-  url: string;
-  mutateKey: string;
-  expiresAt?: number;
-}
-
-// --- Crypto utilities ---
-
-function base64UrlEncode(data: Uint8Array): string {
-  const base64 = btoa(String.fromCharCode(...data));
-  return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-function base64Encode(data: Uint8Array): string {
-  return btoa(String.fromCharCode(...data));
-}
-
-function generateKey(): string {
-  const bytes = new Uint8Array(KEY_BYTES);
-  crypto.getRandomValues(bytes);
-  return base64UrlEncode(bytes);
-}
-
-function generateSalt(): Uint8Array {
-  const salt = new Uint8Array(SALT_BYTES);
-  crypto.getRandomValues(salt);
-  return salt;
-}
-
-function generateIV(): Uint8Array {
-  const iv = new Uint8Array(IV_BYTES);
-  crypto.getRandomValues(iv);
-  return iv;
-}
-
-async function deriveKey(keyMaterial: string, salt: Uint8Array): Promise<CryptoKey> {
-  // Decode base64url key material
-  let base64 = keyMaterial.replace(/-/g, "+").replace(/_/g, "/");
-  while (base64.length % 4) {
-    base64 += "=";
-  }
-  const binary = atob(base64);
-  const rawKey = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    rawKey[i] = binary.charCodeAt(i);
-  }
-
-  // Import as HKDF key material
-  const baseKey = await crypto.subtle.importKey("raw", rawKey.buffer, "HKDF", false, [
-    "deriveBits",
-    "deriveKey",
-  ]);
-
-  // Derive AES-256-GCM key using HKDF with SHA-256
-  // Note: empty info array to match mux-md viewer
-  return crypto.subtle.deriveKey(
-    {
-      name: "HKDF",
-      salt: salt.buffer as ArrayBuffer,
-      info: new Uint8Array(0),
-      hash: "SHA-256",
-    },
-    baseKey,
-    { name: "AES-GCM", length: 256 },
-    false,
-    ["encrypt", "decrypt"]
-  );
-}
-
-async function encrypt(data: Uint8Array, key: CryptoKey, iv: Uint8Array): Promise<Uint8Array> {
-  const ciphertext = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv: iv.buffer as ArrayBuffer },
-    key,
-    data.buffer as ArrayBuffer
-  );
-  return new Uint8Array(ciphertext);
-}
-
-async function decrypt(data: Uint8Array, key: CryptoKey, iv: Uint8Array): Promise<Uint8Array> {
-  const plaintext = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: iv.buffer as ArrayBuffer },
-    key,
-    data.buffer as ArrayBuffer
-  );
-  return new Uint8Array(plaintext);
-}
-
-function base64Decode(str: string): Uint8Array {
-  const binary = atob(str);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes;
-}
-
-// --- Signature utilities ---
-
-/**
- * Build YAML frontmatter with signature metadata.
- * Contains: signature, public key, and identity (github user and/or email).
- */
-function buildSignatureFrontmatter(sig: SignatureInfo): string {
-  const lines = ["---", `mux_signature: ${sig.signature}`, `mux_public_key: ${sig.publicKey}`];
-  if (sig.githubUser) {
-    lines.push(`mux_github_user: ${sig.githubUser}`);
-  }
-  if (sig.email) {
-    lines.push(`mux_email: ${sig.email}`);
-  }
-  lines.push("---");
-  return lines.join("\n");
-}
-
-/**
- * Prepend YAML frontmatter with signature info to content.
- * The signature is over the body only (original content), so we add frontmatter after signing.
- */
-function addSignatureFrontmatter(content: string, sig: SignatureInfo): string {
-  return buildSignatureFrontmatter(sig) + "\n\n" + content;
-}
-/**
- * Content format for mux.md storage.
- * - Legacy: raw encrypted markdown
- * - Unsigned: { body: "markdown" }
- * - Signed: { body: "markdown_with_frontmatter", sig: "signature_frontmatter" }
- */
-type StoredContent =
-  | string // legacy: raw encrypted blob
-  | { body: string } // unsigned
-  | { body: string; sig: string }; // signed
 
 // --- Public API ---
 
@@ -236,90 +113,21 @@ export async function uploadToMuxMd(
   fileInfo: FileInfo,
   options: UploadOptions = {}
 ): Promise<UploadResult> {
-  // Build stored content structure based on whether signature is provided
-  // New format: JSON with body field (+ sig field if signed)
-  let storedContent: StoredContent;
-  if (options.signature) {
-    // Signed: body contains markdown with signature frontmatter, sig contains just the frontmatter
-    storedContent = {
-      body: addSignatureFrontmatter(content, options.signature),
-      sig: buildSignatureFrontmatter(options.signature),
-    };
-  } else {
-    // Unsigned: body contains plain markdown
-    storedContent = { body: content };
-  }
+  const data = new TextEncoder().encode(content);
 
-  const data = new TextEncoder().encode(JSON.stringify(storedContent));
-
-  // Generate encryption parameters
-  const keyMaterial = generateKey();
-  const salt = generateSalt();
-  const iv = generateIV();
-
-  // Derive encryption key
-  const cryptoKey = await deriveKey(keyMaterial, salt);
-
-  // Encrypt file data
-  const encryptedData = await encrypt(data, cryptoKey, iv);
-
-  // Encrypt file metadata
-  const metaJson = JSON.stringify(fileInfo);
-  const metaBytes = new TextEncoder().encode(metaJson);
-  const metaIv = generateIV();
-  const encryptedMeta = await encrypt(metaBytes, cryptoKey, metaIv);
-
-  // Prepare upload metadata
-  const uploadMeta: UploadMeta = {
-    salt: base64Encode(salt),
-    iv: base64Encode(iv),
-    encryptedMeta: base64Encode(new Uint8Array([...metaIv, ...encryptedMeta])),
-  };
-
-  // Build headers
-  const headers: Record<string, string> = {
-    "Content-Type": "application/octet-stream",
-    "X-Mux-Meta": btoa(JSON.stringify(uploadMeta)),
-  };
-
-  // Add expiration header if specified
-  if (options.expiresAt) {
-    const expiresDate =
-      options.expiresAt instanceof Date ? options.expiresAt : new Date(options.expiresAt);
-    headers["X-Mux-Expires"] = expiresDate.toISOString();
-  }
-
-  // Upload to server
-  const response = await fetch(`${MUX_MD_BASE_URL}/`, {
-    method: "POST",
-    headers,
-    body: new Uint8Array(encryptedData) as BodyInit,
+  const result: ClientUploadResult = await clientUpload(data, fileInfo as ClientFileInfo, {
+    baseUrl: MUX_MD_BASE_URL,
+    expiresAt: options.expiresAt,
+    signature: options.signature ? toSignatureEnvelope(options.signature) : undefined,
   });
 
-  if (!response.ok) {
-    const error = (await response.json().catch(() => ({ error: "Upload failed" }))) as {
-      error?: string;
-    };
-    throw new Error(error.error ?? "Upload failed");
-  }
-
-  const result = (await response.json()) as UploadResponse;
-
   return {
-    url: `${MUX_MD_BASE_URL}/${result.id}#${keyMaterial}`,
+    url: result.url,
     id: result.id,
-    key: keyMaterial,
+    key: result.key,
     mutateKey: result.mutateKey,
     expiresAt: result.expiresAt,
   };
-}
-
-// --- Mutation API ---
-
-interface MutateResponse {
-  success: boolean;
-  id: string;
-  expiresAt?: number;
 }
 
 /**
@@ -329,19 +137,7 @@ interface MutateResponse {
  * @param mutateKey - The mutate key from upload
  */
 export async function deleteFromMuxMd(id: string, mutateKey: string): Promise<void> {
-  const response = await fetch(`${MUX_MD_BASE_URL}/${id}`, {
-    method: "DELETE",
-    headers: {
-      "X-Mux-Mutate-Key": mutateKey,
-    },
-  });
-
-  if (!response.ok) {
-    const error = (await response.json().catch(() => ({ error: "Delete failed" }))) as {
-      error?: string;
-    };
-    throw new Error(error.error ?? "Delete failed");
-  }
+  await clientDelete(id, mutateKey, { baseUrl: MUX_MD_BASE_URL });
 }
 
 /**
@@ -357,29 +153,7 @@ export async function updateMuxMdExpiration(
   mutateKey: string,
   expiresAt: Date | string
 ): Promise<number | undefined> {
-  const expiresValue =
-    expiresAt === "never"
-      ? "never"
-      : expiresAt instanceof Date
-        ? expiresAt.toISOString()
-        : expiresAt;
-
-  const response = await fetch(`${MUX_MD_BASE_URL}/${id}`, {
-    method: "PATCH",
-    headers: {
-      "X-Mux-Mutate-Key": mutateKey,
-      "X-Mux-Expires": expiresValue,
-    },
-  });
-
-  if (!response.ok) {
-    const error = (await response.json().catch(() => ({ error: "Update failed" }))) as {
-      error?: string;
-    };
-    throw new Error(error.error ?? "Update failed");
-  }
-
-  const result = (await response.json()) as MutateResponse;
+  const result = await clientSetExpiration(id, mutateKey, expiresAt, { baseUrl: MUX_MD_BASE_URL });
   return result.expiresAt;
 }
 
@@ -392,106 +166,24 @@ export interface DownloadResult {
   fileInfo?: FileInfo;
 }
 
-interface MuxMdMeta {
-  salt: string;
-  iv: string;
-  encryptedMeta: string;
-}
-
 /**
  * Download and decrypt content from mux.md.
  *
  * @param id - The file ID
  * @param keyMaterial - The encryption key (base64url encoded)
- * @param signal - Optional abort signal
+ * @param _signal - Optional abort signal (not currently used by underlying client)
  * @returns Decrypted content and metadata
  * @throws Error if download or decryption fails
  */
 export async function downloadFromMuxMd(
   id: string,
   keyMaterial: string,
-  signal?: AbortSignal
+  _signal?: AbortSignal
 ): Promise<DownloadResult> {
-  const response = await fetch(`${MUX_MD_BASE_URL}/${id}`, {
-    headers: { Accept: "application/octet-stream" },
-    signal,
-  });
+  const result = await clientDownload(id, keyMaterial, { baseUrl: MUX_MD_BASE_URL });
 
-  if (!response.ok) {
-    if (response.status === 404) {
-      throw new Error("Share link expired or not found");
-    }
-    throw new Error(`Failed to fetch: HTTP ${response.status}`);
-  }
-
-  // Get metadata from header
-  const metaHeader = response.headers.get("X-Mux-Meta");
-  if (!metaHeader) {
-    throw new Error("Missing metadata header");
-  }
-
-  let meta: MuxMdMeta;
-  try {
-    meta = JSON.parse(atob(metaHeader)) as MuxMdMeta;
-  } catch {
-    throw new Error("Invalid metadata header");
-  }
-
-  // Decode encryption parameters
-  const salt = base64Decode(meta.salt);
-  const iv = base64Decode(meta.iv);
-
-  if (salt.length !== SALT_BYTES || iv.length !== IV_BYTES) {
-    throw new Error("Invalid encryption parameters");
-  }
-
-  // Derive decryption key
-  const key = await deriveKey(keyMaterial, salt);
-
-  // Get encrypted body
-  const encryptedData = new Uint8Array(await response.arrayBuffer());
-
-  // Decrypt content
-  let decryptedStr: string;
-  try {
-    const decrypted = await decrypt(encryptedData, key, iv);
-    decryptedStr = new TextDecoder().decode(decrypted);
-  } catch (err) {
-    throw new Error(
-      `Decryption failed: ${err instanceof Error ? err.message : "invalid key or corrupted data"}`
-    );
-  }
-
-  // Parse content - detect format by structure:
-  // - Raw string starting with non-{ → legacy (decrypt → markdown)
-  // - JSON with `body` field → new format (body is the markdown)
-  let content: string;
-  try {
-    const parsed = JSON.parse(decryptedStr) as StoredContent;
-    if (typeof parsed === "object" && parsed !== null && "body" in parsed) {
-      // New format: extract body (which may contain signature frontmatter)
-      content = parsed.body;
-    } else {
-      // Doesn't match expected shape, treat as legacy
-      content = decryptedStr;
-    }
-  } catch {
-    // Not JSON, treat as legacy raw markdown
-    content = decryptedStr;
-  }
-
-  // Decrypt file metadata (optional - don't fail if this fails)
-  let fileInfo: FileInfo | undefined;
-  try {
-    const encryptedMetaBytes = base64Decode(meta.encryptedMeta);
-    // First 12 bytes are the IV for metadata
-    const metaIv = encryptedMetaBytes.slice(0, IV_BYTES);
-    const metaCiphertext = encryptedMetaBytes.slice(IV_BYTES);
-    const decryptedMeta = await decrypt(metaCiphertext, key, metaIv);
-    fileInfo = JSON.parse(new TextDecoder().decode(decryptedMeta)) as FileInfo;
-  } catch {
-    // Metadata decryption failed - continue without it
-  }
-
-  return { content, fileInfo };
+  return {
+    content: new TextDecoder().decode(result.data),
+    fileInfo: result.info as FileInfo,
+  };
 }

@@ -84,6 +84,6 @@ describe("muxMd", () => {
       error = e as Error;
     }
     expect(error).toBeDefined();
-    expect(error?.message).toContain("expired or not found");
+    expect(error?.message).toMatch(/not found|expired/i);
   });
 });
