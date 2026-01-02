@@ -188,10 +188,10 @@ function base64Decode(str: string): Uint8Array {
 // --- Signature utilities ---
 
 /**
- * Prepend YAML frontmatter with signature info to content.
- * The signature is over the body only (original content), so we add frontmatter after signing.
+ * Build YAML frontmatter with signature metadata.
+ * Contains: signature, public key, and identity (github user and/or email).
  */
-function addSignatureFrontmatter(content: string, sig: SignatureInfo): string {
+function buildSignatureFrontmatter(sig: SignatureInfo): string {
   const lines = ["---", `mux_signature: ${sig.signature}`, `mux_public_key: ${sig.publicKey}`];
   if (sig.githubUser) {
     lines.push(`mux_github_user: ${sig.githubUser}`);
@@ -199,9 +199,28 @@ function addSignatureFrontmatter(content: string, sig: SignatureInfo): string {
   if (sig.email) {
     lines.push(`mux_email: ${sig.email}`);
   }
-  lines.push("---", "", content);
+  lines.push("---");
   return lines.join("\n");
 }
+
+/**
+ * Prepend YAML frontmatter with signature info to content.
+ * The signature is over the body only (original content), so we add frontmatter after signing.
+ */
+function addSignatureFrontmatter(content: string, sig: SignatureInfo): string {
+  return buildSignatureFrontmatter(sig) + "\n\n" + content;
+}
+/**
+ * Content format for mux.md storage.
+ * - Legacy: raw encrypted markdown
+ * - Unsigned: { body: "markdown" }
+ * - Signed: { body: "markdown_with_frontmatter", sig: "signature_frontmatter" }
+ */
+type StoredContent =
+  | string // legacy: raw encrypted blob
+  | { body: string } // unsigned
+  | { body: string; sig: string }; // signed
+
 // --- Public API ---
 
 /**
@@ -217,11 +236,21 @@ export async function uploadToMuxMd(
   fileInfo: FileInfo,
   options: UploadOptions = {}
 ): Promise<UploadResult> {
-  // If signature is provided, prepend frontmatter
-  const finalContent = options.signature
-    ? addSignatureFrontmatter(content, options.signature)
-    : content;
-  const data = new TextEncoder().encode(finalContent);
+  // Build stored content structure based on whether signature is provided
+  // New format: JSON with body field (+ sig field if signed)
+  let storedContent: StoredContent;
+  if (options.signature) {
+    // Signed: body contains markdown with signature frontmatter, sig contains just the frontmatter
+    storedContent = {
+      body: addSignatureFrontmatter(content, options.signature),
+      sig: buildSignatureFrontmatter(options.signature),
+    };
+  } else {
+    // Unsigned: body contains plain markdown
+    storedContent = { body: content };
+  }
+
+  const data = new TextEncoder().encode(JSON.stringify(storedContent));
 
   // Generate encryption parameters
   const keyMaterial = generateKey();
@@ -423,14 +452,32 @@ export async function downloadFromMuxMd(
   const encryptedData = new Uint8Array(await response.arrayBuffer());
 
   // Decrypt content
-  let content: string;
+  let decryptedStr: string;
   try {
     const decrypted = await decrypt(encryptedData, key, iv);
-    content = new TextDecoder().decode(decrypted);
+    decryptedStr = new TextDecoder().decode(decrypted);
   } catch (err) {
     throw new Error(
       `Decryption failed: ${err instanceof Error ? err.message : "invalid key or corrupted data"}`
     );
+  }
+
+  // Parse content - detect format by structure:
+  // - Raw string starting with non-{ → legacy (decrypt → markdown)
+  // - JSON with `body` field → new format (body is the markdown)
+  let content: string;
+  try {
+    const parsed = JSON.parse(decryptedStr) as StoredContent;
+    if (typeof parsed === "object" && parsed !== null && "body" in parsed) {
+      // New format: extract body (which may contain signature frontmatter)
+      content = parsed.body;
+    } else {
+      // Doesn't match expected shape, treat as legacy
+      content = decryptedStr;
+    }
+  } catch {
+    // Not JSON, treat as legacy raw markdown
+    content = decryptedStr;
   }
 
   // Decrypt file metadata (optional - don't fail if this fails)
