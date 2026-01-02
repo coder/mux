@@ -75,7 +75,7 @@ export function BaseSelectorPopover({ value, onChange, className }: BaseSelector
   const filteredSuggestions = BASE_SUGGESTIONS.filter((s) => s.toLowerCase().includes(searchLower));
 
   return (
-    <Popover open={isOpen} onOpenChange={setIsOpen}>
+    <Popover open={isOpen} onOpenChange={setIsOpen} modal>
       <PopoverTrigger asChild>
         <button
           className={cn(

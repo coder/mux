@@ -29,7 +29,7 @@ import { ReviewControls } from "./ReviewControls";
 import { FileTree } from "./FileTree";
 import { shellQuote } from "@/common/utils/shell";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
-import { STORAGE_KEYS } from "@/constants/workspaceDefaults";
+import { STORAGE_KEYS, WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { useReviewState } from "@/browser/hooks/useReviewState";
 import { useHunkFirstSeen } from "@/browser/hooks/useHunkFirstSeen";
 import { RefreshController, type LastRefreshInfo } from "@/browser/utils/RefreshController";
@@ -294,7 +294,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   // Default is HEAD for compatibility; users can change per-project via UI
   const [defaultBase] = usePersistedState<string>(
     STORAGE_KEYS.reviewDefaultBase(projectPath),
-    "HEAD",
+    WORKSPACE_DEFAULTS.reviewBase,
     { listener: true }
   );
 

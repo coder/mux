@@ -4,7 +4,7 @@
 
 import React from "react";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
-import { STORAGE_KEYS } from "@/constants/workspaceDefaults";
+import { STORAGE_KEYS, WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { ReviewFilters, ReviewStats, ReviewSortOrder } from "@/common/types/review";
 import type { LastRefreshInfo } from "@/browser/utils/RefreshController";
 import { RefreshButton } from "./RefreshButton";
@@ -46,10 +46,9 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
   lastRefreshInfo,
 }) => {
   // Per-project default base (used for new workspaces in this project)
-  // Default is HEAD for compatibility; users can change per-project via UI
   const [defaultBase, setDefaultBase] = usePersistedState<string>(
     STORAGE_KEYS.reviewDefaultBase(projectPath),
-    "HEAD"
+    WORKSPACE_DEFAULTS.reviewBase
   );
 
   const handleBaseChange = (value: string) => {

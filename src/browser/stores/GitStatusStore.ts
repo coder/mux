@@ -8,7 +8,7 @@ import {
   parseGitStatusScriptOutput,
 } from "@/common/utils/git/gitStatus";
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
-import { STORAGE_KEYS } from "@/constants/workspaceDefaults";
+import { STORAGE_KEYS, WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { useSyncExternalStore } from "react";
 import { MapStore } from "./MapStore";
 import { isSSHRuntime } from "@/common/types/runtime";
@@ -299,14 +299,13 @@ export class GitStatusStore {
     }
 
     try {
-      // Use per-project default base ref for git status (defaults to HEAD, auto-detects branch)
+      // Use per-project default base ref for git status
       const baseRef = readPersistedState<string>(
         STORAGE_KEYS.reviewDefaultBase(metadata.projectPath),
-        "HEAD"
+        WORKSPACE_DEFAULTS.reviewBase
       );
-      // For HEAD, use auto-detection; for origin/* refs, use the configured branch
-      const script =
-        baseRef === "HEAD" ? generateGitStatusScript() : generateGitStatusScript(baseRef);
+      // Generate script with the configured base ref
+      const script = generateGitStatusScript(baseRef);
 
       const result = await this.client.workspace.executeBash({
         workspaceId: metadata.id,

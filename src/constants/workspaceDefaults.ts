@@ -58,6 +58,9 @@ export const WORKSPACE_DEFAULTS = {
 
   /** Default input text for new workspaces (empty) */
   input: "" as string,
+
+  /** Default diff base for code review (compare against origin/main) */
+  reviewBase: "origin/main" as string,
 };
 
 // Freeze the object at runtime to prevent accidental mutation
