@@ -121,10 +121,12 @@ jobs:
       - uses: ./.github/actions/setup-mux
       - run: make build-main
       - name: Run integration tests
+        id: run-tests
         run: |
           # Manual override
           if [[ -n "${{ github.event.inputs.test_filter }}" ]]; then
             TEST_INTEGRATION=1 bun x jest --coverage --maxWorkers=100% --silent ${{ github.event.inputs.test_filter }}
+            echo "ran=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           
@@ -146,11 +148,12 @@ jobs:
             echo "Browser changes detected - running tests/ui"
             TEST_INTEGRATION=1 bun x jest --coverage --maxWorkers=100% --silent tests/ui/
           fi
+          echo "ran=true" >> "$GITHUB_OUTPUT"
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       - uses: codecov/codecov-action@v5
-        if: ${{ steps.test-filter.outputs.filter != '' }}
+        if: steps.run-tests.outputs.ran == 'true'
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage/lcov.info
