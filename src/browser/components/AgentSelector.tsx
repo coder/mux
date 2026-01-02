@@ -15,6 +15,7 @@ import {
   SelectValue,
 } from "@/browser/components/ui/select";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
+import { sortAgentsStable } from "@/browser/utils/agents";
 import { cn } from "@/common/lib/utils";
 
 interface AgentSelectorProps {
@@ -44,7 +45,7 @@ export const AgentSelector: React.FC<AgentSelectorProps> = (props) => {
 
   const options =
     selectable.length > 0
-      ? selectable
+      ? sortAgentsStable(selectable)
       : [
           { id: "exec", name: "Exec" },
           { id: "plan", name: "Plan" },
