@@ -32,6 +32,7 @@ import { log } from "@/node/services/log";
 import { execBuffered, writeFileString } from "@/node/utils/runtime/helpers";
 
 const HOOK_FILENAME = "tool_hook";
+const TOOL_ENV_FILENAME = "tool_env";
 const TOOL_INPUT_ENV_LIMIT = 8_000;
 const DEFAULT_HOOK_PHASE_TIMEOUT_MS = 5 * 60_000; // 5 minutes
 const EXEC_MARKER_PREFIX = "MUX_EXEC_";
@@ -115,6 +116,32 @@ export async function getHookPath(runtime: Runtime, projectDir: string): Promise
     }
   } catch {
     // resolvePath failed - skip user hook
+  }
+
+  return null;
+}
+
+/**
+ * Find the tool_env file for a given project directory.
+ * This file is sourced before bash tool scripts to set up environment.
+ * Returns null if no tool_env exists.
+ */
+export async function getToolEnvPath(runtime: Runtime, projectDir: string): Promise<string | null> {
+  // Check project-level tool_env first
+  const projectEnv = joinPathLike(projectDir, ".mux", TOOL_ENV_FILENAME);
+  if (await isFile(runtime, projectEnv)) {
+    return projectEnv;
+  }
+
+  // Fall back to user-level tool_env (resolve ~ for SSH compatibility)
+  try {
+    const homeDir = await runtime.resolvePath("~");
+    const userEnv = joinPathLike(homeDir, ".mux", TOOL_ENV_FILENAME);
+    if (await isFile(runtime, userEnv)) {
+      return userEnv;
+    }
+  } catch {
+    // resolvePath failed - skip user tool_env
   }
 
   return null;

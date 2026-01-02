@@ -19,6 +19,7 @@ import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools"
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import { toBashTaskId } from "./taskId";
 import { migrateToBackground } from "@/node/services/backgroundProcessExecutor";
+import { getToolEnvPath } from "@/node/services/hooks";
 
 /**
  * Validates bash script input for common issues
@@ -214,6 +215,27 @@ function formatResult(
 }
 
 /**
+ * Shell-escape a string for safe use in bash commands (single-quote wrapping).
+ */
+function shellEscape(str: string): string {
+  return `'${str.replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * Build script prelude that sources .mux/tool_env if present.
+ * Returns empty string if no tool_env path is provided.
+ */
+function buildToolEnvPrelude(toolEnvPath: string | null): string {
+  if (!toolEnvPath) return "";
+  // Source the tool_env file; fail with clear error if sourcing fails
+  return `if ! source ${shellEscape(toolEnvPath)} 2>&1; then
+  echo "mux: failed to source ${toolEnvPath}" >&2
+  exit 1
+fi
+`;
+}
+
+/**
  * Bash execution tool factory for AI assistant
  * Creates a bash tool that can execute commands with a configurable timeout
  * @param config Required configuration including working directory
@@ -244,6 +266,11 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
       const validationError = validateScript(script, config);
       if (validationError) return validationError;
 
+      // Look up .mux/tool_env to source before script (for direnv, nvm, venv, etc.)
+      const toolEnvPath = config.runtime ? await getToolEnvPath(config.runtime, config.cwd) : null;
+      const toolEnvPrelude = buildToolEnvPrelude(toolEnvPath);
+      const scriptWithEnv = toolEnvPrelude + script;
+
       // Handle explicit background execution (run_in_background=true)
       if (run_in_background) {
         if (!config.workspaceId || !config.backgroundProcessManager || !config.runtime) {
@@ -260,7 +287,7 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
         const spawnResult = await config.backgroundProcessManager.spawn(
           config.runtime,
           config.workspaceId,
-          script,
+          scriptWithEnv,
           {
             cwd: config.cwd,
             // Match foreground bash behavior: muxEnv is present and secrets override it.
@@ -332,7 +359,7 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
 
       // Execute using runtime interface (works for both local and SSH)
       const scriptWithClosedStdin = `exec </dev/null
-${script}`;
+${scriptWithEnv}`;
       const execStream = await config.runtime.exec(scriptWithClosedStdin, {
         cwd: config.cwd,
         env: { ...config.muxEnv, ...config.secrets },

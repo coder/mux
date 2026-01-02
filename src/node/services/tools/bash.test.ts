@@ -1407,7 +1407,81 @@ describe("SSH runtime redundant cd detection", () => {
       expect(result.error).not.toContain("Redundant cd");
     }
   });
+
+  it("should source .mux/tool_env before running script", async () => {
+    const tempDir = new TestTempDir("test-bash-tool-env");
+    const muxDir = `${tempDir.path}/.mux`;
+    fs.mkdirSync(muxDir, { recursive: true });
+    fs.writeFileSync(`${muxDir}/tool_env`, "export MUX_TEST_VAR=from_tool_env");
+
+    const config = createTestToolConfig(tempDir.path);
+    config.runtimeTempDir = tempDir.path;
+    const tool = createBashTool(config);
+
+    const args: BashToolArgs = {
+      script: "echo $MUX_TEST_VAR",
+      timeout_secs: 5,
+      run_in_background: false,
+      display_name: "test",
+    };
+
+    const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
+
+    expect(result.success).toBe(true);
+    expect(result.output).toBe("from_tool_env");
+
+    tempDir[Symbol.dispose]();
+  });
+
+  it("should fail with clear error if tool_env sourcing fails", async () => {
+    const tempDir = new TestTempDir("test-bash-tool-env-fail");
+    const muxDir = `${tempDir.path}/.mux`;
+    fs.mkdirSync(muxDir, { recursive: true });
+    // Write invalid bash that will fail when sourced
+    fs.writeFileSync(`${muxDir}/tool_env`, "exit 1");
+
+    const config = createTestToolConfig(tempDir.path);
+    config.runtimeTempDir = tempDir.path;
+    const tool = createBashTool(config);
+
+    const args: BashToolArgs = {
+      script: "echo should_not_run",
+      timeout_secs: 5,
+      run_in_background: false,
+      display_name: "test",
+    };
+
+    const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
+
+    expect(result.success).toBe(false);
+    expect(result.exitCode).toBe(1);
+
+    tempDir[Symbol.dispose]();
+  });
+
+  it("should run script normally when no tool_env exists", async () => {
+    const tempDir = new TestTempDir("test-bash-no-tool-env");
+
+    const config = createTestToolConfig(tempDir.path);
+    config.runtimeTempDir = tempDir.path;
+    const tool = createBashTool(config);
+
+    const args: BashToolArgs = {
+      script: "echo normal_execution",
+      timeout_secs: 5,
+      run_in_background: false,
+      display_name: "test",
+    };
+
+    const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
+
+    expect(result.success).toBe(true);
+    expect(result.output).toBe("normal_execution");
+
+    tempDir[Symbol.dispose]();
+  });
 });
+
 describe("bash tool - background execution", () => {
   it("should reject background mode when manager not available", async () => {
     using testEnv = createTestBashTool();

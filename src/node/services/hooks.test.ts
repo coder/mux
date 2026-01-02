@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import * as fs from "fs/promises";
 import * as path from "path";
 import * as os from "os";
-import { getHookPath, runWithHook } from "./hooks";
+import { getHookPath, getToolEnvPath, runWithHook } from "./hooks";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 
 describe("hooks", () => {
@@ -41,6 +41,32 @@ describe("hooks", () => {
       await fs.mkdir(hookPath, { recursive: true }); // Create as directory
 
       const result = await getHookPath(runtime, tempDir);
+      expect(result).toBeNull();
+    });
+  });
+
+  describe("getToolEnvPath", () => {
+    test("returns null when no tool_env exists", async () => {
+      const result = await getToolEnvPath(runtime, tempDir);
+      expect(result).toBeNull();
+    });
+
+    test("finds project-level tool_env", async () => {
+      const envDir = path.join(tempDir, ".mux");
+      const envPath = path.join(envDir, "tool_env");
+      await fs.mkdir(envDir, { recursive: true });
+      await fs.writeFile(envPath, "export FOO=bar");
+
+      const result = await getToolEnvPath(runtime, tempDir);
+      expect(result).toBe(envPath);
+    });
+
+    test("ignores directory with tool_env name", async () => {
+      const envDir = path.join(tempDir, ".mux");
+      const envPath = path.join(envDir, "tool_env");
+      await fs.mkdir(envPath, { recursive: true }); // Create as directory
+
+      const result = await getToolEnvPath(runtime, tempDir);
       expect(result).toBeNull();
     });
   });

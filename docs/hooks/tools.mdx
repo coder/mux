@@ -3,7 +3,13 @@ title: Tool Hooks
 description: Wrap agent tool executions with custom pre/post logic
 ---
 
-Add a `.mux/tool_hook` executable to your project to wrap every tool execution. Use it for environment setup (direnv, nvm), linting, type-checking, or any custom validation.
+Add a `.mux/tool_hook` executable to your project to wrap every tool execution. Use it for linting, type-checking, blocking dangerous operations, or any custom validation.
+
+<Tip>
+  **Looking to set up direnv, nvm, or virtualenv?** Use
+  [`.mux/tool_env`](#environment-setup-with-tool_env) instead—it's simpler and specifically designed
+  for environment setup.
+</Tip>
 
 ## Quick Start
 
@@ -17,9 +23,18 @@ set -euo pipefail
 # PRE-HOOK: Runs before the tool executes
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Load direnv/devenv environment so tools see correct PATH, env vars, etc.
-# This is critical for bash tools that need nvm, pyenv, virtualenvs, etc.
-eval "$(direnv export bash 2>/dev/null)" || true
+# Example: block dangerous operations
+if [[ "$MUX_TOOL" == "bash" ]]; then
+  if [[ -n "${MUX_TOOL_INPUT_PATH:-}" ]]; then
+    input_json=$(cat "$MUX_TOOL_INPUT_PATH")
+  else
+    input_json=$MUX_TOOL_INPUT
+  fi
+  if echo "$input_json" | jq -r '.script' | grep -q 'push.*--force'; then
+    echo "Force push blocked by tool_hook" >&2
+    exit 1
+  fi
+fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SIGNAL: Tell mux to execute the tool
@@ -33,9 +48,8 @@ echo "$MUX_EXEC"
 # ─────────────────────────────────────────────────────────────────────────────
 read -t 300 MUX_RESULT || exit 0  # 5 min timeout; exit cleanly if mux disconnects
 
-# Run formatters/linters after file edits
+# Run linters after file edits
 if [[ "$MUX_TOOL" == file_edit_* ]]; then
-  # Read tool input (may be in a file if large)
   if [[ -n "${MUX_TOOL_INPUT_PATH:-}" ]]; then
     input_json=$(cat "$MUX_TOOL_INPUT_PATH")
   else
@@ -45,12 +59,8 @@ if [[ "$MUX_TOOL" == file_edit_* ]]; then
   file=$(echo "$input_json" | jq -r '.file_path // empty')
   [[ -z "$file" ]] && exit 0
 
-  # Format Python files with ruff
+  # Check Python files with ruff (non-zero exit feeds back to agent)
   if [[ "$file" == *.py ]]; then
-    if ruff format "$file" 2>/dev/null; then
-      echo "Formatted: $file" >&2  # Agent sees this in hook_output
-    fi
-    # Check for errors (non-zero exit feeds back to agent)
     ruff check "$file" 2>&1 || exit 1
   fi
 fi
@@ -331,6 +341,48 @@ echo "Result: $MUX_RESULT" >&2
 
 Stderr output is visible in the workspace logs.
 
+## Environment Setup with tool_env
+
+For environment setup (direnv, nvm, virtualenv), use `.mux/tool_env` instead of tool hooks. This file is **sourced directly** inside `bash` tool executions, so environment variables are available to your commands.
+
+Create `.mux/tool_env`:
+
+```bash
+# Environment setup for mux bash tools
+# This file is sourced before every bash command
+
+# direnv
+eval "$(direnv export bash 2>/dev/null)" || true
+
+# nvm (uncomment if needed)
+# export NVM_DIR="$HOME/.nvm"
+# [ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
+
+# Python virtualenv (uncomment if needed)
+# source .venv/bin/activate 2>/dev/null || true
+```
+
+**Search order:**
+
+1. `.mux/tool_env` - Project-level (commit for team-wide settings)
+2. `~/.mux/tool_env` - User-level (personal, not committed)
+
+<Note>
+  Unlike `tool_hook`, `tool_env` does **not** need to be executable—it's sourced, not executed. It
+  only affects `bash` tool calls, not other tools like `file_read`.
+</Note>
+
+### Why tool_env instead of tool_hook?
+
+Tool hooks run in a **separate process** from tool executions. Environment variables set in a hook don't propagate to the tool. `tool_env` is sourced in the **same shell** as the bash command, so `export` statements work as expected.
+
+| Feature        | `.mux/tool_env`         | `.mux/tool_hook`              |
+| -------------- | ----------------------- | ----------------------------- |
+| **Purpose**    | Environment setup       | Validation, blocking, linting |
+| **Applies to** | `bash` tool only        | All tools                     |
+| **Mechanism**  | Sourced in same shell   | Separate process wrapper      |
+| **Use case**   | direnv, nvm, virtualenv | Block force-push, run ruff    |
+
 ## Comparison with Init Hooks
 
 | Feature      | Init Hook (`.mux/init`)     | Tool Hook (`.mux/tool_hook`) |
@@ -338,4 +390,4 @@ Stderr output is visible in the workspace logs.
 | **Runs**     | Once per workspace creation | Every tool execution         |
 | **Purpose**  | Setup (install deps, build) | Wrap tool behavior           |
 | **Blocking** | Non-blocking                | Blocks tool until complete   |
-| **Use case** | `bun install`, `make build` | direnv, linting, validation  |
+| **Use case** | `bun install`, `make build` | linting, validation          |
