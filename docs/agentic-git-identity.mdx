@@ -110,3 +110,53 @@ git config --global --add credential.helper '!gh auth git-credential'
   The "replace all" approach will disable platform keychain helpers and may break Git authentication
   for non-GitHub remotes (GitLab, Bitbucket, etc.).
 </Warning>
+
+## Alternative: Co-Author Attribution
+
+If you prefer to keep using your personal GitHub account but still want clear attribution for AI-generated commits, you can add a `Co-authored-by` trailer using Git's built-in hooks.
+
+### Using a Git Hook
+
+Create a `prepare-commit-msg` hook that adds co-author attribution only when running inside mux:
+
+```bash
+#!/bin/bash
+# .git/hooks/prepare-commit-msg
+
+COMMIT_MSG_FILE=$1
+COMMIT_SOURCE=$2
+
+# Only add co-author when running in mux
+if [ -z "$MUX_WORKSPACE_ID" ]; then
+  exit 0
+fi
+
+# Skip merge commits
+if [ "$COMMIT_SOURCE" = "merge" ]; then
+  exit 0
+fi
+
+# Only add if not already present
+if ! grep -q "Co-authored-by:" "$COMMIT_MSG_FILE"; then
+  echo "" >> "$COMMIT_MSG_FILE"
+  echo "Co-authored-by: AI Assistant <ai@example.com>" >> "$COMMIT_MSG_FILE"
+fi
+```
+
+Make it executable:
+
+```bash
+chmod +x .git/hooks/prepare-commit-msg
+```
+
+<Info>
+  This approach uses your normal Git identity for commits, but adds a trailer indicating AI involvement.
+  The hook only activates inside mux workspaces (detected via `MUX_WORKSPACE_ID`).
+</Info>
+
+### Comparison
+
+| Approach | Pros | Cons |
+|----------|------|------|
+| Separate account | Full separation, branch protection rules | Requires second GitHub account |
+| Co-authored-by hook | Single account, clear attribution | Less separation, hook per-repo |
