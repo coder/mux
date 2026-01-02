@@ -15,7 +15,6 @@ import {
 } from "@/browser/components/ui/tooltip";
 import { Button } from "@/browser/components/ui/button";
 import { Check, ExternalLink, Link2, Loader2, Trash2, PenTool } from "lucide-react";
-import { Switch } from "@/browser/components/ui/switch";
 import { CopyIcon } from "@/browser/components/icons/CopyIcon";
 import { copyToClipboard } from "@/browser/utils/clipboard";
 
@@ -33,7 +32,7 @@ import {
   type ShareData,
 } from "@/browser/utils/sharedUrlCache";
 import { cn } from "@/common/lib/utils";
-import { SHARE_EXPIRATION_KEY, SHARE_SIGNING_KEY } from "@/common/constants/storage";
+import { SHARE_EXPIRATION_KEY } from "@/common/constants/storage";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { useLinkSharingEnabled } from "@/browser/contexts/TelemetryEnabledContext";
 import { useAPI } from "@/browser/contexts/API";
@@ -54,6 +53,65 @@ const EncryptionBadge = () => (
     </TooltipContent>
   </Tooltip>
 );
+
+/** Signing status badge - compact icon with tooltip for details */
+interface SigningBadgeProps {
+  /** Whether signing is/was enabled for this share */
+  signed: boolean;
+  /** Signing capabilities from backend */
+  capabilities: SigningCapabilities | null;
+  /** Callback to retry key detection (only shown when no key) */
+  onRetryKeyDetection?: () => void;
+}
+
+const SigningBadge = ({ signed, capabilities, onRetryKeyDetection }: SigningBadgeProps) => {
+  const hasKey = Boolean(capabilities?.publicKey);
+  const identity = capabilities?.githubUser
+    ? `@${capabilities.githubUser}`
+    : (capabilities?.email ?? null);
+
+  // Color states: green = signed, muted = not signed or no key
+  const iconColor = signed ? "text-green-500" : "text-muted";
+
+  // Tooltip content based on state
+  const tooltipContent = signed ? (
+    <>
+      <p className="font-medium">✓ Signed</p>
+      {identity && <p className="text-muted-foreground text-[11px]">Identity: {identity}</p>}
+    </>
+  ) : hasKey ? (
+    <>
+      <p className="font-medium">Not signed</p>
+      {identity && <p className="text-muted-foreground text-[11px]">Key available: {identity}</p>}
+    </>
+  ) : (
+    <>
+      <p className="font-medium">No signing key</p>
+      <p className="text-muted-foreground text-[11px]">
+        Add an Ed25519 key at ~/.mux/id_ed25519 or ~/.ssh/id_ed25519
+      </p>
+      {onRetryKeyDetection && (
+        <button
+          onClick={onRetryKeyDetection}
+          className="text-foreground mt-1 text-[11px] underline"
+        >
+          Retry detection
+        </button>
+      )}
+    </>
+  );
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className={`cursor-default ${iconColor}`}>
+          <PenTool className="h-3 w-3" />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-[200px]">{tooltipContent}</TooltipContent>
+    </Tooltip>
+  );
+};
 
 /** Expiration options with human-readable labels */
 const EXPIRATION_OPTIONS = [
@@ -130,12 +188,8 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
   // Current share data (from upload or cache)
   const [shareData, setLocalShareData] = useState<ShareData | null>(null);
 
-  // Signing state
-  const [signingEnabled, setSigningEnabled] = useState(() =>
-    readPersistedState<boolean>(SHARE_SIGNING_KEY, true)
-  );
+  // Signing capabilities
   const [signingCapabilities, setSigningCapabilities] = useState<SigningCapabilities | null>(null);
-  // Track whether we've attempted to load signing capabilities
   const [signingCapabilitiesLoaded, setSigningCapabilitiesLoaded] = useState(false);
 
   // Load signing capabilities on first popover open
@@ -162,21 +216,15 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
   }, [content]);
 
   // Auto-upload when popover opens, no cached data exists, and signing capabilities are loaded
-  // (or signing is disabled so we don't need to wait)
   useEffect(() => {
     const canAutoUpload =
-      isOpen &&
-      content &&
-      !shareData &&
-      !isUploading &&
-      !error &&
-      (signingCapabilitiesLoaded || !signingEnabled);
+      isOpen && content && !shareData && !isUploading && !error && signingCapabilitiesLoaded;
 
     if (canAutoUpload) {
       void handleShare();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, signingCapabilitiesLoaded, signingEnabled]);
+  }, [isOpen, signingCapabilitiesLoaded]);
 
   // Auto-select URL text when share data becomes available
   useEffect(() => {
@@ -198,17 +246,6 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
   // Save preferred expiration to localStorage
   const savePreferredExpiration = (value: ExpirationValue) => {
     updatePersistedState(SHARE_EXPIRATION_KEY, value);
-  };
-
-  // Toggle signing preference - invalidate cache since signed/unsigned content differs
-  const handleSigningToggle = (enabled: boolean) => {
-    setSigningEnabled(enabled);
-    updatePersistedState(SHARE_SIGNING_KEY, enabled);
-    // Clear cached share since the signing state affects the uploaded content
-    if (content) {
-      removeShareData(content);
-      setLocalShareData(null);
-    }
   };
 
   // Retry key detection (user may have created a key after app launch)
@@ -248,9 +285,9 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
       const ms = expirationToMs(preferred);
       const expiresAt = ms ? new Date(Date.now() + ms) : undefined;
 
-      // Sign content if enabled and available (publicKey exists)
+      // Sign content automatically when key is available
       let signature: SignatureInfo | undefined;
-      if (signingEnabled && signingCapabilities?.publicKey && api) {
+      if (signingCapabilities?.publicKey && api) {
         try {
           const signResult = await api.signing.sign({ content });
           signature = {
@@ -414,73 +451,14 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
         {!shareData ? (
           // Uploading state (auto-triggered on open)
           <div className="space-y-3">
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1.5">
               <span className="text-foreground text-xs font-medium">Share</span>
               <EncryptionBadge />
-            </div>
-
-            {/* Signing toggle - always visible, disabled when no key */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5">
-                <PenTool className="text-muted h-3 w-3" />
-                <span className="text-muted text-[10px]">Sign message</span>
-                {signingCapabilities?.publicKey ? (
-                  // Key available - show identity
-                  signingCapabilities.githubUser ? (
-                    <span className="text-muted-foreground text-[10px]">
-                      (@{signingCapabilities.githubUser})
-                    </span>
-                  ) : signingCapabilities.email ? (
-                    <span className="text-muted-foreground text-[10px]">
-                      ({signingCapabilities.email})
-                    </span>
-                  ) : signingCapabilities.error ? (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <HelpIndicator className="text-[10px]">?</HelpIndicator>
-                      </TooltipTrigger>
-                      <TooltipContent className="max-w-[200px]">
-                        <p className="text-[11px]">{signingCapabilities.error}</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  ) : null
-                ) : (
-                  // No key - show help tooltip with retry
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        onClick={() => void handleRetryKeyDetection()}
-                        className="text-muted-foreground hover:text-foreground text-[10px] underline"
-                      >
-                        No key found
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent className="max-w-[200px]">
-                      <p className="text-[11px]">
-                        No Ed25519 key found at ~/.mux/id_ed25519 or ~/.ssh/id_ed25519. Click to
-                        retry detection after adding a key.
-                      </p>
-                    </TooltipContent>
-                  </Tooltip>
-                )}
-              </div>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span>
-                    <Switch
-                      checked={signingEnabled}
-                      onCheckedChange={handleSigningToggle}
-                      disabled={!signingCapabilities?.publicKey}
-                      className="h-4 w-7"
-                    />
-                  </span>
-                </TooltipTrigger>
-                {!signingCapabilities?.publicKey && (
-                  <TooltipContent>
-                    <p className="text-[11px]">No signing key available</p>
-                  </TooltipContent>
-                )}
-              </Tooltip>
+              <SigningBadge
+                signed={Boolean(signingCapabilities?.publicKey)}
+                capabilities={signingCapabilities}
+                onRetryKeyDetection={() => void handleRetryKeyDetection()}
+              />
             </div>
 
             {error ? (
@@ -497,23 +475,24 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
                 </Button>
               </>
             ) : (
-              <div className="flex items-center justify-center py-4">
-                <Loader2 className="text-muted h-5 w-5 animate-spin" />
-                <span className="text-muted ml-2 text-xs">
-                  {signingEnabled && signingCapabilities?.publicKey
-                    ? "Signing & encrypting..."
-                    : "Encrypting..."}
-                </span>
+              <div className="flex items-center justify-center py-3">
+                <Loader2 className="text-muted h-4 w-4 animate-spin" />
+                <span className="text-muted ml-2 text-xs">Encrypting...</span>
               </div>
             )}
           </div>
         ) : (
           // Post-upload: show URL, expiration controls, and delete option
-          <div className="space-y-3">
+          <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1">
-                <span className="text-foreground text-xs font-medium">Shared Link</span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-foreground text-xs font-medium">Shared</span>
                 <EncryptionBadge />
+                <SigningBadge
+                  signed={Boolean(shareData.signed)}
+                  capabilities={signingCapabilities}
+                  onRetryKeyDetection={() => void handleRetryKeyDetection()}
+                />
               </div>
               {shareData.mutateKey && (
                 <Tooltip>
@@ -609,32 +588,6 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
               {/* Inline status: spinner while updating, checkmark on success */}
               {isUpdating && <Loader2 className="text-muted h-3.5 w-3.5 animate-spin" />}
               {showUpdated && <Check className="h-3.5 w-3.5 text-green-500" />}
-            </div>
-
-            {/* Signing status - show whether this share was signed */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5">
-                <PenTool className="text-muted h-3 w-3" />
-                <span className="text-muted text-[10px]">Signed</span>
-                {shareData.signed ? (
-                  signingCapabilities?.githubUser ? (
-                    <span className="text-muted-foreground text-[10px]">
-                      (@{signingCapabilities.githubUser})
-                    </span>
-                  ) : signingCapabilities?.email ? (
-                    <span className="text-muted-foreground text-[10px]">
-                      ({signingCapabilities.email})
-                    </span>
-                  ) : null
-                ) : (
-                  <span className="text-muted-foreground text-[10px]">(not signed)</span>
-                )}
-              </div>
-              {shareData.signed ? (
-                <Check className="h-3.5 w-3.5 text-green-500" />
-              ) : (
-                <span className="text-muted text-[10px]">—</span>
-              )}
             </div>
 
             {error && (
