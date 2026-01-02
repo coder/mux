@@ -75,10 +75,9 @@ describe("SigningService", () => {
       expect(result.signature).toBeDefined();
       expect(result.signature.length).toBeGreaterThan(0);
       expect(result.publicKey).toStartWith("ecdsa-sha2-nistp256 ");
-      // ECDSA signatures are DER-encoded, typically 70-72 bytes for P-256
+      // ECDSA signatures are compact r||s format, 64 bytes for P-256 (32+32)
       const sigBytes = Buffer.from(result.signature, "base64");
-      expect(sigBytes.length).toBeGreaterThanOrEqual(68);
-      expect(sigBytes.length).toBeLessThanOrEqual(74);
+      expect(sigBytes.length).toBe(64);
     });
   });
 

@@ -1,9 +1,9 @@
 /**
  * Signing Service
  *
- * Provides Ed25519 message signing for mux.md.
- * - Loads Ed25519 key from ~/.mux/id_ed25519 or ~/.ssh/id_ed25519 using sshpk
- * - Signs content with private key
+ * Provides Ed25519/ECDSA message signing for mux.md.
+ * - Loads keys from ~/.mux/message_signing_key or ~/.ssh/id_* using sshpk
+ * - Signs using @coder/mux-md-client for format compatibility
  * - Returns public key in OpenSSH format
  * - Detects GitHub username via `gh auth status`
  * - Falls back to git commit email for identity
@@ -13,12 +13,17 @@ import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import sshpk from "sshpk";
+import { createSignatureEnvelope, type SignatureEnvelope } from "@coder/mux-md-client";
 import { execAsync } from "@/node/utils/disposableExec";
 import { log } from "@/node/services/log";
 
+type ECDSACurve = "p256" | "p384" | "p521";
+
 interface KeyPair {
   privateKey: sshpk.PrivateKey;
+  privateKeyBytes: Uint8Array;
   publicKeyOpenSSH: string;
+  curve?: ECDSACurve; // For ECDSA keys
 }
 
 interface IdentityStatus {
@@ -110,7 +115,11 @@ export class SigningService {
         // Get public key in OpenSSH format
         const publicKeyOpenSSH = privateKey.toPublic().toString("ssh");
 
-        this.keyPair = { privateKey, publicKeyOpenSSH };
+        // Extract raw private key bytes for use with mux-md-client signing
+        const privateKeyBytes = this.extractPrivateKeyBytes(privateKey);
+        const curve = this.getECDSACurve(privateKey);
+
+        this.keyPair = { privateKey, privateKeyBytes, publicKeyOpenSSH, curve };
 
         log.info("[SigningService] Loaded", privateKey.type, "key from:", keyPath);
         log.info("[SigningService] Public key:", publicKeyOpenSSH.slice(0, 50) + "...");
@@ -133,6 +142,52 @@ export class SigningService {
     this.keyLoadError = `No signing key found. Create ~/.mux/message_signing_key or ensure ~/.ssh/id_ed25519 or ~/.ssh/id_ecdsa exists.`;
     log.info("[SigningService]", this.keyLoadError);
     return null;
+  }
+
+  /**
+   * Extract raw private key bytes from sshpk key for use with mux-md-client.
+   */
+  private extractPrivateKeyBytes(privateKey: sshpk.PrivateKey): Uint8Array {
+    // sshpk stores keys with a 'part' object lookup by key component name
+    // For Ed25519: part.k contains the 32-byte seed (private key)
+    // For ECDSA: part.d contains the private scalar
+    // The types are incomplete, so we use type assertions
+    const parts = privateKey.part as unknown as Record<string, { data: Buffer }>;
+    if (privateKey.type === "ed25519") {
+      const kPart = parts.k;
+      if (!kPart) throw new Error("Ed25519 key missing 'k' component");
+      return new Uint8Array(kPart.data);
+    } else if (privateKey.type === "ecdsa") {
+      const dPart = parts.d;
+      if (!dPart) throw new Error("ECDSA key missing 'd' component");
+      // sshpk may pad with leading zero byte for ASN.1 encoding; strip it
+      let data = dPart.data;
+      if (data[0] === 0 && data.length > 32) {
+        data = data.subarray(1);
+      }
+      return new Uint8Array(data);
+    }
+    throw new Error(`Unsupported key type: ${privateKey.type}`);
+  }
+
+  /**
+   * Get ECDSA curve name for mux-md-client.
+   */
+  private getECDSACurve(privateKey: sshpk.PrivateKey): ECDSACurve | undefined {
+    if (privateKey.type !== "ecdsa") return undefined;
+    // sshpk stores curve in the 'curve' property
+    const curve = (privateKey as sshpk.PrivateKey & { curve?: string }).curve;
+    switch (curve) {
+      case "nistp256":
+        return "p256";
+      case "nistp384":
+        return "p384";
+      case "nistp521":
+        return "p521";
+      default:
+        log.warn("[SigningService] Unknown ECDSA curve:", curve);
+        return "p256"; // default fallback
+    }
   }
 
   /**
@@ -230,6 +285,8 @@ export class SigningService {
 
   /**
    * Sign content and return signature with metadata.
+   * Uses @coder/mux-md-client for Ed25519 signing to ensure format compatibility with mux.md.
+   * Falls back to sshpk for ECDSA due to package bug with toCompactRawBytes().
    *
    * @param content - The content to sign (will be UTF-8 encoded)
    * @returns Signature and public key
@@ -242,22 +299,56 @@ export class SigningService {
     }
 
     const identity = await this.detectIdentity();
+    const contentBytes = new TextEncoder().encode(content);
 
-    // Choose hash algorithm based on key type
-    // Ed25519 uses sha512, ECDSA uses sha256 (standard for P-256)
-    const hashAlgo = keyPair.privateKey.type === "ed25519" ? "sha512" : "sha256";
+    let signature: string;
 
-    // Sign using sshpk's createSign
-    const signer = keyPair.privateKey.createSign(hashAlgo);
-    signer.update(content);
-    const signature = signer.sign();
+    if (keyPair.privateKey.type === "ed25519") {
+      // Use mux-md-client's signing for Ed25519 (format compatible with mux.md)
+      const envelope: SignatureEnvelope = await createSignatureEnvelope(
+        contentBytes,
+        keyPair.privateKeyBytes,
+        keyPair.publicKeyOpenSSH,
+        {
+          githubUser: identity.githubUser ?? undefined,
+          email: identity.email ?? undefined,
+        }
+      );
+      signature = envelope.sig;
+    } else {
+      // ECDSA: use sshpk signing (mux-md-client has a bug with toCompactRawBytes)
+      // Sign with sha256 and manually construct compact r||s format
+      const signer = keyPair.privateKey.createSign("sha256");
+      signer.update(content);
+      const sig = signer.sign();
 
-    // Get signature bytes - use "asn1" format for ECDSA (DER encoded), "raw" for Ed25519
-    const format = keyPair.privateKey.type === "ed25519" ? "raw" : "asn1";
-    const signatureBuffer = signature.toBuffer(format);
+      // sshpk stores ECDSA sig components in parts.r and parts.s
+      // We need to concatenate them in compact format (fixed size r||s)
+      const sigParts = sig.part as unknown as Record<string, { data: Buffer }>;
+      let rData = sigParts.r.data;
+      let sData = sigParts.s.data;
+
+      // Determine expected size based on curve (P-256: 32 bytes each, P-384: 48, P-521: 66)
+      const curve = keyPair.curve ?? "p256";
+      const coordSize = curve === "p256" ? 32 : curve === "p384" ? 48 : 66;
+
+      // Strip leading zero padding from r and s (used for ASN.1 encoding)
+      if (rData[0] === 0 && rData.length > coordSize) rData = rData.subarray(1);
+      if (sData[0] === 0 && sData.length > coordSize) sData = sData.subarray(1);
+
+      // Pad to fixed size if needed
+      const rPadded = Buffer.alloc(coordSize);
+      const sPadded = Buffer.alloc(coordSize);
+      rData.copy(rPadded, coordSize - rData.length);
+      sData.copy(sPadded, coordSize - sData.length);
+
+      // Concatenate r||s
+      const compactSig = Buffer.concat([rPadded, sPadded]);
+      signature = compactSig.toString("base64");
+    }
 
     return {
-      signature: signatureBuffer.toString("base64"),
+      signature,
       publicKey: keyPair.publicKeyOpenSSH,
       githubUser: identity.githubUser,
     };
