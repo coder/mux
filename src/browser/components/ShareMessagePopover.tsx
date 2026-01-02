@@ -200,10 +200,15 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
     updatePersistedState(SHARE_EXPIRATION_KEY, value);
   };
 
-  // Toggle signing preference
+  // Toggle signing preference - invalidate cache since signed/unsigned content differs
   const handleSigningToggle = (enabled: boolean) => {
     setSigningEnabled(enabled);
     updatePersistedState(SHARE_SIGNING_KEY, enabled);
+    // Clear cached share since the signing state affects the uploaded content
+    if (content) {
+      removeShareData(content);
+      setLocalShareData(null);
+    }
   };
 
   // Derive filename: prefer workspaceName, fallback to default
