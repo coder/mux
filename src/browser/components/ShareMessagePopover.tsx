@@ -211,6 +211,20 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
     }
   };
 
+  // Retry key detection (user may have created a key after app launch)
+  const handleRetryKeyDetection = async () => {
+    if (!api) return;
+    try {
+      // Clear backend cache (will retry key loading on next capabilities call)
+      await api.signing.clearIdentityCache({});
+      // Re-fetch capabilities
+      const caps = await api.signing.capabilities({});
+      setSigningCapabilities(caps);
+    } catch {
+      // Silently fail - capabilities stay as-is
+    }
+  };
+
   // Derive filename: prefer workspaceName, fallback to default
   const getFileName = (): string => {
     if (workspaceName) {
@@ -436,15 +450,20 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
                         </Tooltip>
                       ) : null
                     ) : (
-                      // No key - show help tooltip
+                      // No key - show help tooltip with retry
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <HelpIndicator className="text-[10px]">?</HelpIndicator>
+                          <button
+                            onClick={() => void handleRetryKeyDetection()}
+                            className="text-muted-foreground hover:text-foreground text-[10px] underline"
+                          >
+                            No key found
+                          </button>
                         </TooltipTrigger>
                         <TooltipContent className="max-w-[200px]">
                           <p className="text-[11px]">
-                            No Ed25519 key found. Add one at ~/.mux/id_ed25519 or
-                            ~/.ssh/id_ed25519 to enable signing.
+                            No Ed25519 key found at ~/.mux/id_ed25519 or ~/.ssh/id_ed25519.
+                            Click to retry detection after adding a key.
                           </p>
                         </TooltipContent>
                       </Tooltip>

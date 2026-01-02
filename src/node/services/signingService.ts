@@ -245,11 +245,16 @@ export class SigningService {
   }
 
   /**
-   * Clear cached identity (useful for re-checking after user logs in).
+   * Clear all cached state including key and identity.
+   * Allows re-detection after user creates a key or logs in.
    */
   clearIdentityCache(): void {
+    this.keyPair = null;
+    this.keyLoadAttempted = false;
+    this.keyLoadError = null;
     this.identityCache = null;
-    log.info("[SigningService] Cleared identity cache");
+    this.identityPromise = null;
+    log.info("[SigningService] Cleared key and identity cache");
   }
 }
 
