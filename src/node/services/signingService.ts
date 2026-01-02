@@ -226,23 +226,28 @@ export class SigningService {
    *
    * @param content - The content to sign (will be UTF-8 encoded)
    * @returns Signature and public key
-   * @throws Error if no Ed25519 key is available
+   * @throws Error if no signing key is available
    */
   async sign(content: string): Promise<SignResult> {
     const keyPair = this.loadKeyPair();
     if (!keyPair) {
-      throw new Error(this.keyLoadError ?? "No Ed25519 key available for signing");
+      throw new Error(this.keyLoadError ?? "No signing key available");
     }
 
     const identity = await this.detectIdentity();
 
+    // Choose hash algorithm based on key type
+    // Ed25519 uses sha512, ECDSA uses sha256 (standard for P-256)
+    const hashAlgo = keyPair.privateKey.type === "ed25519" ? "sha512" : "sha256";
+
     // Sign using sshpk's createSign
-    const signer = keyPair.privateKey.createSign("sha512");
+    const signer = keyPair.privateKey.createSign(hashAlgo);
     signer.update(content);
     const signature = signer.sign();
 
-    // Get raw signature bytes (sshpk returns in SSH format, we want raw)
-    const signatureBuffer = signature.toBuffer("raw");
+    // Get signature bytes - use "asn1" format for ECDSA (DER encoded), "raw" for Ed25519
+    const format = keyPair.privateKey.type === "ed25519" ? "raw" : "asn1";
+    const signatureBuffer = signature.toBuffer(format);
 
     return {
       signature: signatureBuffer.toString("base64"),
