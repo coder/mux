@@ -110,7 +110,6 @@ const SigningBadge = ({
       {hasKey && capabilities && (
         <div className="text-muted-foreground space-y-0.5 text-[10px]">
           {capabilities.githubUser && <p>GitHub: @{capabilities.githubUser}</p>}
-          {capabilities.email && <p>Email: {capabilities.email}</p>}
           {capabilities.publicKey && (
             <p className="font-mono">{truncatePublicKey(capabilities.publicKey)}</p>
           )}
@@ -130,24 +129,33 @@ const SigningBadge = ({
         </button>
       )}
 
-      {/* No key message + retry */}
+      {/* No key message + retry + docs link */}
       {!hasKey && (
-        <>
-          <p className="text-muted-foreground text-[10px]">
-            No signing key found. Create ~/.mux/message_signing_key
-          </p>
-          {onRetryKeyDetection && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onRetryKeyDetection();
-              }}
-              className="text-foreground text-[11px] underline hover:no-underline"
+        <div className="space-y-1">
+          <p className="text-muted-foreground text-[10px]">No signing key found</p>
+          <div className="flex gap-2 text-[11px]">
+            {onRetryKeyDetection && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRetryKeyDetection();
+                }}
+                className="text-foreground underline hover:no-underline"
+              >
+                Retry
+              </button>
+            )}
+            <a
+              href="https://mux.coder.com/sharing"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-400 underline hover:no-underline"
+              onClick={(e) => e.stopPropagation()}
             >
-              Retry detection
-            </button>
-          )}
-        </>
+              Learn more
+            </a>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -359,7 +367,6 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
             privateKey: privateKeyBytes,
             publicKey: creds.publicKey,
             githubUser: creds.githubUser ?? undefined,
-            email: creds.email ?? undefined,
           };
         } catch (signErr) {
           console.warn("Failed to get signing credentials, uploading without signature:", signErr);

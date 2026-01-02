@@ -54,6 +54,7 @@
                 "pages": ["keybinds", "vim-mode"]
               },
               "context-management",
+              "sharing",
               "instruction-files",
               "agents",
               "agent-skills",

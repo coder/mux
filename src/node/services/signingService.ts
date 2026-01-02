@@ -6,7 +6,6 @@
  * - Returns private key bytes for use with mux-md-client native signing
  * - Returns public key in OpenSSH format
  * - Detects GitHub username via `gh auth status`
- * - Falls back to git commit email for identity
  */
 
 import { existsSync, readFileSync } from "fs";
@@ -24,7 +23,6 @@ interface KeyPair {
 
 interface IdentityStatus {
   githubUser: string | null;
-  email: string | null;
   error: string | null;
 }
 
@@ -33,8 +31,6 @@ interface SigningCapabilities {
   publicKey: string | null;
   /** Detected GitHub username, if any */
   githubUser: string | null;
-  /** Git commit email as fallback identity */
-  email: string | null;
   /** Error message if key loading or identity detection failed */
   error: string | null;
 }
@@ -46,8 +42,6 @@ interface SignCredentials {
   publicKey: string;
   /** Detected GitHub username, if any */
   githubUser: string | null;
-  /** Git commit email as fallback identity */
-  email: string | null;
 }
 
 /** Supported key types for signing */
@@ -168,7 +162,7 @@ export class SigningService {
   }
 
   /**
-   * Detect identity: GitHub username via `gh auth status`, fallback to git email.
+   * Detect identity: GitHub username via `gh auth status`.
    * Result is cached after first call.
    */
   private async detectIdentity(): Promise<IdentityStatus> {
@@ -184,10 +178,9 @@ export class SigningService {
 
   private async doDetectIdentity(): Promise<IdentityStatus> {
     let githubUser: string | null = null;
-    let email: string | null = null;
     let error: string | null = null;
 
-    // Try GitHub CLI first
+    // Detect GitHub username via CLI
     try {
       using proc = execAsync("gh auth status 2>&1");
       const { stdout } = await proc.result;
@@ -200,39 +193,20 @@ export class SigningService {
         log.warn("[SigningService] gh auth status indicates logged in but couldn't parse username");
         error = "Could not parse GitHub username from gh auth status";
       } else {
-        error = "Not logged in to GitHub CLI";
+        error = "Not logged in to GitHub CLI (run: gh auth login)";
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (message.includes("command not found") || message.includes("ENOENT")) {
         log.info("[SigningService] gh CLI not installed");
+        error = "GitHub CLI not installed (brew install gh)";
       } else {
         log.info("[SigningService] gh auth status failed:", message);
+        error = "GitHub CLI error";
       }
     }
 
-    // Try git email as fallback identity
-    try {
-      using proc = execAsync("git config user.email");
-      const { stdout } = await proc.result;
-      const trimmed = stdout.trim();
-      if (trimmed) {
-        email = trimmed;
-        log.info("[SigningService] Detected git email:", email);
-      }
-    } catch {
-      log.info("[SigningService] Could not get git user.email");
-    }
-
-    // Only report error if we have neither GitHub nor email
-    if (!githubUser && !email && !error) {
-      error = "No identity found. Set up GitHub CLI or configure git user.email";
-    } else if (!githubUser && email) {
-      // Clear error if we have email fallback
-      error = null;
-    }
-
-    return { githubUser, email, error };
+    return { githubUser, error };
   }
 
   /**
@@ -245,7 +219,6 @@ export class SigningService {
       return {
         publicKey: null,
         githubUser: null,
-        email: null,
         error: this.keyLoadError,
       };
     }
@@ -255,7 +228,6 @@ export class SigningService {
     return {
       publicKey: keyPair.publicKeyOpenSSH,
       githubUser: identity.githubUser,
-      email: identity.email,
       error: identity.error,
     };
   }
@@ -282,7 +254,6 @@ export class SigningService {
       privateKeyBase64,
       publicKey: keyPair.publicKeyOpenSSH,
       githubUser: identity.githubUser,
-      email: identity.email,
     };
   }
 

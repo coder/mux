@@ -16,8 +16,6 @@ export const signingCapabilitiesOutput = z.object({
   publicKey: z.string().nullable(),
   /** Detected GitHub username, if any */
   githubUser: z.string().nullable(),
-  /** Git commit email as fallback identity */
-  email: z.string().nullable(),
   /** Error message if key loading or identity detection failed */
   error: z.string().nullable(),
 });
@@ -36,8 +34,6 @@ export const getSignCredentialsOutput = z.object({
   publicKey: z.string(),
   /** Detected GitHub username, if any */
   githubUser: z.string().nullable(),
-  /** Git commit email as fallback identity */
-  email: z.string().nullable(),
 });
 
 export type SignCredentials = z.infer<typeof getSignCredentialsOutput>;
