@@ -56,7 +56,7 @@ export function BaseSelectorPopover({
   const handleSelect = (selected: string) => {
     onChange(selected);
     setInputValue(selected);
-    setIsOpen(false);
+    handleOpenChange(false);
   };
 
   const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -64,11 +64,11 @@ export function BaseSelectorPopover({
       const trimmed = inputValue.trim();
       if (trimmed) {
         onChange(trimmed);
-        setIsOpen(false);
+        handleOpenChange(false);
       }
     } else if (e.key === "Escape") {
       setInputValue(value);
-      setIsOpen(false);
+      handleOpenChange(false);
     }
   };
 
@@ -97,7 +97,7 @@ export function BaseSelectorPopover({
           <span className="truncate">{value}</span>
         </button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-[160px] p-0">
+      <PopoverContent align="start" className="z-[10001] w-[160px] p-0">
         {/* Search/edit input */}
         <div className="border-border border-b px-2 py-1.5">
           <input
