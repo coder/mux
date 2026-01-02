@@ -88,7 +88,7 @@ const SigningBadge = ({ signed, capabilities, onRetryKeyDetection }: SigningBadg
     <>
       <p className="font-medium">No signing key</p>
       <p className="text-muted-foreground text-[11px]">
-        Add an Ed25519 key at ~/.mux/id_ed25519 or ~/.ssh/id_ed25519
+        Create ~/.mux/message_signing_key (symlink to any Ed25519/ECDSA key)
       </p>
       {onRetryKeyDetection && (
         <button

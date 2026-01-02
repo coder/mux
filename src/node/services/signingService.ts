@@ -47,12 +47,19 @@ interface SignResult {
   githubUser: string | null;
 }
 
-/** Paths to check for Ed25519 keys, in order of preference */
-const KEY_PATHS = [join(homedir(), ".mux", "id_ed25519"), join(homedir(), ".ssh", "id_ed25519")];
+/** Supported key types for signing */
+const SUPPORTED_KEY_TYPES = ["ed25519", "ecdsa"];
+
+/** Paths to check for signing keys, in order of preference */
+const KEY_PATHS = [
+  join(homedir(), ".mux", "message_signing_key"), // Explicit mux key (any supported type, symlink-friendly)
+  join(homedir(), ".ssh", "id_ed25519"), // SSH Ed25519
+  join(homedir(), ".ssh", "id_ecdsa"), // SSH ECDSA
+];
 
 /**
- * Service for Ed25519 message signing.
- * Loads key from ~/.mux/id_ed25519 or ~/.ssh/id_ed25519 on first use.
+ * Service for message signing (Ed25519 or ECDSA).
+ * Loads key from ~/.mux/message_signing_key or ~/.ssh/id_ed25519 or ~/.ssh/id_ecdsa.
  */
 export class SigningService {
   private keyPair: KeyPair | null = null;
@@ -62,10 +69,10 @@ export class SigningService {
   private identityPromise: Promise<IdentityStatus> | null = null;
 
   /**
-   * Load the Ed25519 keypair from disk using sshpk.
-   * Tries ~/.mux/id_ed25519 first, then ~/.ssh/id_ed25519.
-   * Supports PEM and OpenSSH private key formats.
-   * Returns null if no Ed25519 key is found.
+   * Load a signing keypair from disk using sshpk.
+   * Tries ~/.mux/message_signing_key first, then SSH keys.
+   * Supports Ed25519 and ECDSA keys in PEM or OpenSSH format.
+   * Returns null if no supported key is found.
    */
   private loadKeyPair(): KeyPair | null {
     if (this.keyLoadAttempted) return this.keyPair;
@@ -81,14 +88,14 @@ export class SigningService {
         // Parse with sshpk (auto-detects format)
         const privateKey = sshpk.parsePrivateKey(keyData, "auto", { filename: keyPath });
 
-        // Verify it's Ed25519
-        if (privateKey.type !== "ed25519") {
+        // Verify it's a supported key type
+        if (!SUPPORTED_KEY_TYPES.includes(privateKey.type)) {
           log.info(
             "[SigningService] Key at",
             keyPath,
             "is",
             privateKey.type,
-            "not ed25519, skipping"
+            "- not supported (need ed25519 or ecdsa), skipping"
           );
           continue;
         }
@@ -98,7 +105,7 @@ export class SigningService {
 
         this.keyPair = { privateKey, publicKeyOpenSSH };
 
-        log.info("[SigningService] Loaded Ed25519 key from:", keyPath);
+        log.info("[SigningService] Loaded", privateKey.type, "key from:", keyPath);
         log.info("[SigningService] Public key:", publicKeyOpenSSH.slice(0, 50) + "...");
         return this.keyPair;
       } catch (err) {
@@ -116,7 +123,7 @@ export class SigningService {
       }
     }
 
-    this.keyLoadError = `No Ed25519 key found. Checked: ${KEY_PATHS.join(", ")}`;
+    this.keyLoadError = `No signing key found. Create ~/.mux/message_signing_key or ensure ~/.ssh/id_ed25519 or ~/.ssh/id_ecdsa exists.`;
     log.info("[SigningService]", this.keyLoadError);
     return null;
   }
