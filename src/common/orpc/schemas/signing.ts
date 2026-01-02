@@ -24,23 +24,23 @@ export const signingCapabilitiesOutput = z.object({
 
 export type SigningCapabilities = z.infer<typeof signingCapabilitiesOutput>;
 
-// --- Sign content endpoint ---
+// --- Get sign credentials endpoint ---
+// Returns credentials needed for native signing via mux-md-client
 
-export const signContentInput = z.object({
-  /** The content to sign (markdown body, not including frontmatter) */
-  content: z.string(),
-});
+export const getSignCredentialsInput = z.object({});
 
-export const signContentOutput = z.object({
-  /** Base64-encoded Ed25519 signature (64 bytes) */
-  signature: z.string(),
+export const getSignCredentialsOutput = z.object({
+  /** Base64-encoded private key bytes (32 bytes for Ed25519, variable for ECDSA) */
+  privateKeyBase64: z.string(),
   /** Public key in OpenSSH format */
   publicKey: z.string(),
   /** Detected GitHub username, if any */
   githubUser: z.string().nullable(),
+  /** Git commit email as fallback identity */
+  email: z.string().nullable(),
 });
 
-export type SignResult = z.infer<typeof signContentOutput>;
+export type SignCredentials = z.infer<typeof getSignCredentialsOutput>;
 
 // --- Clear identity cache endpoint ---
 
@@ -55,9 +55,9 @@ export const signing = {
     input: signingCapabilitiesInput,
     output: signingCapabilitiesOutput,
   },
-  sign: {
-    input: signContentInput,
-    output: signContentOutput,
+  getSignCredentials: {
+    input: getSignCredentialsInput,
+    output: getSignCredentialsOutput,
   },
   clearIdentityCache: {
     input: clearIdentityCacheInput,

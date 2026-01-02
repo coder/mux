@@ -22,7 +22,7 @@ import {
   uploadToMuxMd,
   deleteFromMuxMd,
   updateMuxMdExpiration,
-  type SignatureInfo,
+  type SignOptions,
 } from "@/common/lib/muxMd";
 import {
   getShareData,
@@ -32,8 +32,12 @@ import {
   type ShareData,
 } from "@/browser/utils/sharedUrlCache";
 import { cn } from "@/common/lib/utils";
-import { SHARE_EXPIRATION_KEY } from "@/common/constants/storage";
-import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { SHARE_EXPIRATION_KEY, SHARE_SIGNING_KEY } from "@/common/constants/storage";
+import {
+  readPersistedState,
+  updatePersistedState,
+  usePersistedState,
+} from "@/browser/hooks/usePersistedState";
 import { useLinkSharingEnabled } from "@/browser/contexts/TelemetryEnabledContext";
 import { useAPI } from "@/browser/contexts/API";
 import type { SigningCapabilities } from "@/common/orpc/schemas";
@@ -54,61 +58,117 @@ const EncryptionBadge = () => (
   </Tooltip>
 );
 
-/** Signing status badge - compact icon with tooltip for details */
+/** Signing status badge - interactive button with full signing info tooltip */
 interface SigningBadgeProps {
   /** Whether signing is/was enabled for this share */
   signed: boolean;
   /** Signing capabilities from backend */
   capabilities: SigningCapabilities | null;
+  /** Whether signing is globally enabled */
+  signingEnabled: boolean;
+  /** Toggle signing on/off */
+  onToggleSigning?: () => void;
   /** Callback to retry key detection (only shown when no key) */
   onRetryKeyDetection?: () => void;
 }
 
-const SigningBadge = ({ signed, capabilities, onRetryKeyDetection }: SigningBadgeProps) => {
+/** Truncate public key for display */
+function truncatePublicKey(key: string): string {
+  // Format: "ssh-ed25519 AAAA...XXXX comment"
+  const parts = key.split(" ");
+  if (parts.length < 2) return key;
+  const keyType = parts[0];
+  const keyData = parts[1];
+  if (keyData.length <= 16) return key;
+  return `${keyType} ${keyData.slice(0, 8)}...${keyData.slice(-8)}`;
+}
+
+const SigningBadge = ({
+  signed,
+  capabilities,
+  signingEnabled,
+  onToggleSigning,
+  onRetryKeyDetection,
+}: SigningBadgeProps) => {
   const hasKey = Boolean(capabilities?.publicKey);
-  const identity = capabilities?.githubUser
-    ? `@${capabilities.githubUser}`
-    : (capabilities?.email ?? null);
 
-  // Color states: green = signed, muted = not signed or no key
-  const iconColor = signed ? "text-green-500" : "text-muted";
+  // Color states: blue = signed/enabled with key, muted = disabled or no key
+  const isActive = signed || (signingEnabled && hasKey);
+  const iconColor = isActive ? "text-blue-400" : "text-muted";
 
-  // Tooltip content based on state
-  const tooltipContent = signed ? (
-    <>
-      <p className="font-medium">✓ Signed</p>
-      {identity && <p className="text-muted-foreground text-[11px]">Identity: {identity}</p>}
-    </>
-  ) : hasKey ? (
-    <>
-      <p className="font-medium">Not signed</p>
-      {identity && <p className="text-muted-foreground text-[11px]">Key available: {identity}</p>}
-    </>
-  ) : (
-    <>
-      <p className="font-medium">No signing key</p>
-      <p className="text-muted-foreground text-[11px]">
-        Create ~/.mux/message_signing_key (symlink to any Ed25519/ECDSA key)
-      </p>
-      {onRetryKeyDetection && (
+  // Build tooltip content with full signing info
+  const tooltipContent = (
+    <div className="space-y-1.5">
+      {/* Status header */}
+      <div className="flex items-center gap-1.5">
+        <span className="font-medium">
+          {signed ? "✓ Signed" : signingEnabled && hasKey ? "Signing enabled" : "Signing disabled"}
+        </span>
+      </div>
+
+      {/* Show full signing details when key is available */}
+      {hasKey && capabilities && (
+        <div className="text-muted-foreground space-y-0.5 text-[10px]">
+          {capabilities.githubUser && <p>GitHub: @{capabilities.githubUser}</p>}
+          {capabilities.email && <p>Email: {capabilities.email}</p>}
+          {capabilities.publicKey && (
+            <p className="font-mono">{truncatePublicKey(capabilities.publicKey)}</p>
+          )}
+        </div>
+      )}
+
+      {/* Toggle signing (when key is available) */}
+      {hasKey && onToggleSigning && (
         <button
-          onClick={onRetryKeyDetection}
-          className="text-foreground mt-1 text-[11px] underline"
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleSigning();
+          }}
+          className="text-foreground mt-1 block text-[11px] underline hover:no-underline"
         >
-          Retry detection
+          {signingEnabled ? "Disable signing" : "Enable signing"}
         </button>
       )}
-    </>
+
+      {/* No key message + retry */}
+      {!hasKey && (
+        <>
+          <p className="text-muted-foreground text-[10px]">
+            No signing key found. Create ~/.mux/message_signing_key
+          </p>
+          {onRetryKeyDetection && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onRetryKeyDetection();
+              }}
+              className="text-foreground text-[11px] underline hover:no-underline"
+            >
+              Retry detection
+            </button>
+          )}
+        </>
+      )}
+    </div>
   );
 
   return (
-    <Tooltip>
+    <Tooltip delayDuration={0}>
       <TooltipTrigger asChild>
-        <span className={`cursor-default ${iconColor}`}>
+        <button
+          onClick={onToggleSigning}
+          disabled={!hasKey}
+          className={cn(
+            "flex items-center justify-center rounded p-0.5 transition-colors",
+            hasKey ? "hover:bg-muted/50 cursor-pointer" : "cursor-default",
+            iconColor
+          )}
+          aria-label={signingEnabled ? "Disable signing" : "Enable signing"}
+        >
           <PenTool className="h-3 w-3" />
-        </span>
+        </button>
       </TooltipTrigger>
-      <TooltipContent className="max-w-[200px]">{tooltipContent}</TooltipContent>
+      <TooltipContent className="max-w-[240px]">{tooltipContent}</TooltipContent>
     </Tooltip>
   );
 };
@@ -188,9 +248,10 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
   // Current share data (from upload or cache)
   const [shareData, setLocalShareData] = useState<ShareData | null>(null);
 
-  // Signing capabilities
+  // Signing capabilities and enabled state
   const [signingCapabilities, setSigningCapabilities] = useState<SigningCapabilities | null>(null);
   const [signingCapabilitiesLoaded, setSigningCapabilitiesLoaded] = useState(false);
+  const [signingEnabled, setSigningEnabled] = usePersistedState(SHARE_SIGNING_KEY, true);
 
   // Load signing capabilities on first popover open
   useEffect(() => {
@@ -285,20 +346,23 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
       const ms = expirationToMs(preferred);
       const expiresAt = ms ? new Date(Date.now() + ms) : undefined;
 
-      // Sign content automatically when key is available
-      let signature: SignatureInfo | undefined;
-      if (signingCapabilities?.publicKey && api) {
+      // Get sign credentials when key is available and signing is enabled
+      let sign: SignOptions | undefined;
+      if (signingEnabled && signingCapabilities?.publicKey && api) {
         try {
-          const signResult = await api.signing.sign({ content });
-          signature = {
-            signature: signResult.signature,
-            publicKey: signResult.publicKey,
-            githubUser: signResult.githubUser ?? undefined,
-            // Use email from capabilities as fallback identity
-            email: signingCapabilities.email ?? undefined,
+          const creds = await api.signing.getSignCredentials({});
+          // Decode base64 private key bytes
+          const privateKeyBytes = Uint8Array.from(atob(creds.privateKeyBase64), (c) =>
+            c.charCodeAt(0)
+          );
+          sign = {
+            privateKey: privateKeyBytes,
+            publicKey: creds.publicKey,
+            githubUser: creds.githubUser ?? undefined,
+            email: creds.email ?? undefined,
           };
         } catch (signErr) {
-          console.warn("Signing failed, uploading without signature:", signErr);
+          console.warn("Failed to get signing credentials, uploading without signature:", signErr);
           // Continue without signature - don't fail the upload
         }
       }
@@ -312,7 +376,7 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
           model,
           thinking,
         },
-        { expiresAt, signature }
+        { expiresAt, sign }
       );
 
       const data: ShareData = {
@@ -321,7 +385,7 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
         mutateKey: result.mutateKey,
         expiresAt: result.expiresAt,
         cachedAt: Date.now(),
-        signed: Boolean(signature),
+        signed: Boolean(sign),
       };
 
       // Cache the share data
@@ -455,8 +519,10 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
               <span className="text-foreground text-xs font-medium">Share</span>
               <EncryptionBadge />
               <SigningBadge
-                signed={Boolean(signingCapabilities?.publicKey)}
+                signed={false}
                 capabilities={signingCapabilities}
+                signingEnabled={signingEnabled}
+                onToggleSigning={() => setSigningEnabled(!signingEnabled)}
                 onRetryKeyDetection={() => void handleRetryKeyDetection()}
               />
             </div>
@@ -491,6 +557,8 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
                 <SigningBadge
                   signed={Boolean(shareData.signed)}
                   capabilities={signingCapabilities}
+                  signingEnabled={signingEnabled}
+                  onToggleSigning={() => setSigningEnabled(!signingEnabled)}
                   onRetryKeyDetection={() => void handleRetryKeyDetection()}
                 />
               </div>

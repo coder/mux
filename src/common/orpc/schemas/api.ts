@@ -54,7 +54,7 @@ export const experiments = {
 export { telemetry, TelemetryEventSchema } from "./telemetry";
 
 // Re-export signing schemas
-export { signing, type SigningCapabilities, type SignResult } from "./signing";
+export { signing, type SigningCapabilities, type SignCredentials } from "./signing";
 
 // --- API Router Schemas ---
 

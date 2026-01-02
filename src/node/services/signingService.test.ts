@@ -34,27 +34,26 @@ describe("SigningService", () => {
       expect(capabilities.publicKey).toStartWith("ssh-ed25519 ");
     });
 
-    it("should sign content and return valid signature", async () => {
+    it("should return sign credentials with valid private key bytes", async () => {
       const service = new SigningService([ed25519KeyPath]);
-      const content = "# Hello World\n\nThis is test content.";
-      const result = await service.sign(content);
+      const creds = await service.getSignCredentials();
 
-      expect(result.signature).toBeDefined();
-      expect(result.signature.length).toBeGreaterThan(0);
-      expect(result.publicKey).toStartWith("ssh-ed25519 ");
-      // Ed25519 signatures are exactly 64 bytes
-      const sigBytes = Buffer.from(result.signature, "base64");
-      expect(sigBytes.length).toBe(64);
+      expect(creds.privateKeyBase64).toBeDefined();
+      expect(creds.privateKeyBase64.length).toBeGreaterThan(0);
+      expect(creds.publicKey).toStartWith("ssh-ed25519 ");
+      // Ed25519 private key seed is 32 bytes
+      const keyBytes = Buffer.from(creds.privateKeyBase64, "base64");
+      expect(keyBytes.length).toBe(32);
     });
 
     it("should return consistent public key across multiple calls", async () => {
       const service = new SigningService([ed25519KeyPath]);
       const caps1 = await service.getCapabilities();
       const caps2 = await service.getCapabilities();
-      const signResult = await service.sign("test");
+      const creds = await service.getSignCredentials();
 
       expect(caps1.publicKey).toBe(caps2.publicKey);
-      expect(caps1.publicKey).toBe(signResult.publicKey);
+      expect(caps1.publicKey).toBe(creds.publicKey);
     });
   });
 
@@ -67,17 +66,16 @@ describe("SigningService", () => {
       expect(capabilities.publicKey).toStartWith("ecdsa-sha2-nistp256 ");
     });
 
-    it("should sign content and return valid signature", async () => {
+    it("should return sign credentials with valid private key bytes", async () => {
       const service = new SigningService([ecdsaKeyPath]);
-      const content = "# Hello World\n\nThis is test content.";
-      const result = await service.sign(content);
+      const creds = await service.getSignCredentials();
 
-      expect(result.signature).toBeDefined();
-      expect(result.signature.length).toBeGreaterThan(0);
-      expect(result.publicKey).toStartWith("ecdsa-sha2-nistp256 ");
-      // ECDSA signatures are compact r||s format, 64 bytes for P-256 (32+32)
-      const sigBytes = Buffer.from(result.signature, "base64");
-      expect(sigBytes.length).toBe(64);
+      expect(creds.privateKeyBase64).toBeDefined();
+      expect(creds.privateKeyBase64.length).toBeGreaterThan(0);
+      expect(creds.publicKey).toStartWith("ecdsa-sha2-nistp256 ");
+      // ECDSA P-256 private scalar is 32 bytes
+      const keyBytes = Buffer.from(creds.privateKeyBase64, "base64");
+      expect(keyBytes.length).toBe(32);
     });
   });
 
@@ -90,10 +88,16 @@ describe("SigningService", () => {
       expect(caps.error).toBeDefined();
     });
 
-    it("should throw when signing without a key", () => {
+    it("should throw when getting credentials without a key", async () => {
       const service = new SigningService(["/nonexistent/path/key"]);
 
-      expect(() => service.sign("test")).toThrow();
+      let threw = false;
+      try {
+        await service.getSignCredentials();
+      } catch {
+        threw = true;
+      }
+      expect(threw).toBe(true);
     });
   });
 

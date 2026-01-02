@@ -12,12 +12,12 @@ import {
   setExpiration,
   parseUrl,
   type FileInfo,
-  type SignatureEnvelope,
+  type SignOptions,
   type UploadResult,
 } from "@coder/mux-md-client";
 
 // Re-export types from package
-export type { FileInfo, UploadResult };
+export type { FileInfo, SignOptions, UploadResult };
 
 export const MUX_MD_BASE_URL = "https://mux.md";
 export const MUX_MD_HOST = "mux.md";
@@ -43,36 +43,11 @@ export function parseMuxMdUrl(url: string): { id: string; key: string } | null {
   return parseUrl(url);
 }
 
-/**
- * Signature info for mux.md uploads.
- * Maps to the package's SignatureEnvelope with field name compatibility.
- */
-export interface SignatureInfo {
-  /** Base64-encoded signature */
-  signature: string;
-  /** Public key in OpenSSH format (ssh-ed25519 AAAA...) */
-  publicKey: string;
-  /** GitHub username, if detected */
-  githubUser?: string;
-  /** Email address as fallback identity */
-  email?: string;
-}
-
 export interface UploadOptions {
   /** Expiration time (ISO date string or Date object) */
   expiresAt?: string | Date;
-  /** Signature info to include */
-  signature?: SignatureInfo;
-}
-
-/** Convert our SignatureInfo to package's SignatureEnvelope */
-function toSignatureEnvelope(sig: SignatureInfo): SignatureEnvelope {
-  return {
-    sig: sig.signature,
-    publicKey: sig.publicKey,
-    githubUser: sig.githubUser,
-    email: sig.email,
-  };
+  /** Sign options for native signing via mux-md-client */
+  sign?: SignOptions;
 }
 
 // --- Public API ---
@@ -88,7 +63,7 @@ export async function uploadToMuxMd(
   return upload(new TextEncoder().encode(content), fileInfo, {
     baseUrl: MUX_MD_BASE_URL,
     expiresAt: options.expiresAt,
-    signature: options.signature ? toSignatureEnvelope(options.signature) : undefined,
+    sign: options.sign,
   });
 }
 

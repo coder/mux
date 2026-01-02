@@ -1,9 +1,9 @@
 /**
  * Signing Service
  *
- * Provides Ed25519/ECDSA message signing for mux.md.
+ * Provides signing credentials for mux.md shares.
  * - Loads keys from ~/.mux/message_signing_key or ~/.ssh/id_* using sshpk
- * - Signs using @coder/mux-md-client for format compatibility
+ * - Returns private key bytes for use with mux-md-client native signing
  * - Returns public key in OpenSSH format
  * - Detects GitHub username via `gh auth status`
  * - Falls back to git commit email for identity
@@ -13,17 +13,13 @@ import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import sshpk from "sshpk";
-import { createSignatureEnvelope, type SignatureEnvelope } from "@coder/mux-md-client";
 import { execAsync } from "@/node/utils/disposableExec";
 import { log } from "@/node/services/log";
-
-type ECDSACurve = "p256" | "p384" | "p521";
 
 interface KeyPair {
   privateKey: sshpk.PrivateKey;
   privateKeyBytes: Uint8Array;
   publicKeyOpenSSH: string;
-  curve?: ECDSACurve; // For ECDSA keys
 }
 
 interface IdentityStatus {
@@ -43,13 +39,15 @@ interface SigningCapabilities {
   error: string | null;
 }
 
-interface SignResult {
-  /** Base64-encoded Ed25519 signature (64 bytes) */
-  signature: string;
+interface SignCredentials {
+  /** Base64-encoded private key bytes for use with mux-md-client */
+  privateKeyBase64: string;
   /** Public key in OpenSSH format */
   publicKey: string;
   /** Detected GitHub username, if any */
   githubUser: string | null;
+  /** Git commit email as fallback identity */
+  email: string | null;
 }
 
 /** Supported key types for signing */
@@ -117,9 +115,8 @@ export class SigningService {
 
         // Extract raw private key bytes for use with mux-md-client signing
         const privateKeyBytes = this.extractPrivateKeyBytes(privateKey);
-        const curve = this.getECDSACurve(privateKey);
 
-        this.keyPair = { privateKey, privateKeyBytes, publicKeyOpenSSH, curve };
+        this.keyPair = { privateKey, privateKeyBytes, publicKeyOpenSSH };
 
         log.info("[SigningService] Loaded", privateKey.type, "key from:", keyPath);
         log.info("[SigningService] Public key:", publicKeyOpenSSH.slice(0, 50) + "...");
@@ -168,26 +165,6 @@ export class SigningService {
       return new Uint8Array(data);
     }
     throw new Error(`Unsupported key type: ${privateKey.type}`);
-  }
-
-  /**
-   * Get ECDSA curve name for mux-md-client.
-   */
-  private getECDSACurve(privateKey: sshpk.PrivateKey): ECDSACurve | undefined {
-    if (privateKey.type !== "ecdsa") return undefined;
-    // sshpk stores curve in the 'curve' property
-    const curve = (privateKey as sshpk.PrivateKey & { curve?: string }).curve;
-    switch (curve) {
-      case "nistp256":
-        return "p256";
-      case "nistp384":
-        return "p384";
-      case "nistp521":
-        return "p521";
-      default:
-        log.warn("[SigningService] Unknown ECDSA curve:", curve);
-        return "p256"; // default fallback
-    }
   }
 
   /**
@@ -284,73 +261,28 @@ export class SigningService {
   }
 
   /**
-   * Sign content and return signature with metadata.
-   * Uses @coder/mux-md-client for Ed25519 signing to ensure format compatibility with mux.md.
-   * Falls back to sshpk for ECDSA due to package bug with toCompactRawBytes().
+   * Get signing credentials for use with mux-md-client native signing.
+   * Returns private key bytes (base64), public key, and identity info.
    *
-   * @param content - The content to sign (will be UTF-8 encoded)
-   * @returns Signature and public key
+   * @returns Credentials for native signing
    * @throws Error if no signing key is available
    */
-  async sign(content: string): Promise<SignResult> {
+  async getSignCredentials(): Promise<SignCredentials> {
     const keyPair = this.loadKeyPair();
     if (!keyPair) {
       throw new Error(this.keyLoadError ?? "No signing key available");
     }
 
     const identity = await this.detectIdentity();
-    const contentBytes = new TextEncoder().encode(content);
 
-    let signature: string;
-
-    if (keyPair.privateKey.type === "ed25519") {
-      // Use mux-md-client's signing for Ed25519 (format compatible with mux.md)
-      const envelope: SignatureEnvelope = await createSignatureEnvelope(
-        contentBytes,
-        keyPair.privateKeyBytes,
-        keyPair.publicKeyOpenSSH,
-        {
-          githubUser: identity.githubUser ?? undefined,
-          email: identity.email ?? undefined,
-        }
-      );
-      signature = envelope.sig;
-    } else {
-      // ECDSA: use sshpk signing (mux-md-client has a bug with toCompactRawBytes)
-      // Sign with sha256 and manually construct compact r||s format
-      const signer = keyPair.privateKey.createSign("sha256");
-      signer.update(content);
-      const sig = signer.sign();
-
-      // sshpk stores ECDSA sig components in parts.r and parts.s
-      // We need to concatenate them in compact format (fixed size r||s)
-      const sigParts = sig.part as unknown as Record<string, { data: Buffer }>;
-      let rData = sigParts.r.data;
-      let sData = sigParts.s.data;
-
-      // Determine expected size based on curve (P-256: 32 bytes each, P-384: 48, P-521: 66)
-      const curve = keyPair.curve ?? "p256";
-      const coordSize = curve === "p256" ? 32 : curve === "p384" ? 48 : 66;
-
-      // Strip leading zero padding from r and s (used for ASN.1 encoding)
-      if (rData[0] === 0 && rData.length > coordSize) rData = rData.subarray(1);
-      if (sData[0] === 0 && sData.length > coordSize) sData = sData.subarray(1);
-
-      // Pad to fixed size if needed
-      const rPadded = Buffer.alloc(coordSize);
-      const sPadded = Buffer.alloc(coordSize);
-      rData.copy(rPadded, coordSize - rData.length);
-      sData.copy(sPadded, coordSize - sData.length);
-
-      // Concatenate r||s
-      const compactSig = Buffer.concat([rPadded, sPadded]);
-      signature = compactSig.toString("base64");
-    }
+    // Base64 encode the private key bytes for transport over IPC
+    const privateKeyBase64 = Buffer.from(keyPair.privateKeyBytes).toString("base64");
 
     return {
-      signature,
+      privateKeyBase64,
       publicKey: keyPair.publicKeyOpenSSH,
       githubUser: identity.githubUser,
+      email: identity.email,
     };
   }
 

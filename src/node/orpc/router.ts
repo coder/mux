@@ -1778,11 +1778,11 @@ export const router = (authToken?: string) => {
         .handler(async ({ context }) => {
           return context.signingService.getCapabilities();
         }),
-      sign: t
-        .input(schemas.signing.sign.input)
-        .output(schemas.signing.sign.output)
-        .handler(async ({ context, input }) => {
-          return context.signingService.sign(input.content);
+      getSignCredentials: t
+        .input(schemas.signing.getSignCredentials.input)
+        .output(schemas.signing.getSignCredentials.output)
+        .handler(async ({ context }) => {
+          return context.signingService.getSignCredentials();
         }),
       clearIdentityCache: t
         .input(schemas.signing.clearIdentityCache.input)
