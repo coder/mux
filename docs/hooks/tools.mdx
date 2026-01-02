@@ -3,6 +3,12 @@ title: Tool Hooks
 description: Block dangerous commands, lint after edits, and set up your environment
 ---
 
+import ToolHooksExperimental from "/snippets/tool-hooks-experimental.mdx";
+
+<ToolHooksExperimental />
+
+Tool hooks let you run your own scripts before and after mux tool executions.
+
 ## What do you want to do?
 
 <CardGroup cols={3}>
@@ -141,14 +147,16 @@ All hooks receive these environment variables:
 
 <Accordion title="Hook Priority & Location">
 
-Mux searches for hooks in this order:
+Mux searches for each hook file in this order:
 
-1. `.mux/tool_pre` or `.mux/tool_post` (project-level)
-2. `~/.mux/tool_pre` or `~/.mux/tool_post` (user-level)
+1. Project-level: `.mux/<hook>`
+2. User-level: `~/.mux/<hook>`
+
+This applies to `tool_pre`, `tool_post`, `tool_env`, and the legacy `tool_hook`.
 
 For SSH workspaces, hooks execute **on the remote machine**.
 
-**Priority:** If both `tool_pre` and the legacy `tool_hook` exist, `tool_pre` takes precedence.
+**Priority:** `tool_pre`/`tool_post` take precedence over the legacy `tool_hook` when both exist.
 
 </Accordion>
 

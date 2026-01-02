@@ -1385,35 +1385,26 @@ describe("SSH runtime redundant cd detection", () => {
     }
   });
 
-  it("should allow cd to different directory", () => {
-    // Test that redundant cd detection only blocks cd to SAME directory, not different directories
-    // We test the validation logic directly since SSH execution would hang (no real host)
+  it("should not treat cd to a different directory as redundant", () => {
+    // Only testing normalization here - SSH execution would hang (no real host).
     const remoteCwd = "/remote/workspace/project/branch";
 
-    // Create SSH runtime for path normalization
-    const sshConfig = {
+    const sshRuntime = createRuntime({
       type: "ssh" as const,
       host: "test-host",
       srcBaseDir: "/remote/base",
-    };
-    const sshRuntime = createRuntime(sshConfig);
+    });
 
-    // Test: cd to different directory should NOT be blocked by redundant cd detection
-    const script = "cd /tmp && echo test";
-    const cdPattern = /^\s*cd\s+['"]?([^'";&|]+)['"]?\s*[;&|]/;
-    const match = cdPattern.exec(script);
-    expect(match).toBeTruthy();
-
-    const targetPath = match![1].trim();
-    const normalizedTarget = sshRuntime.normalizePath(targetPath, remoteCwd);
+    const normalizedTarget = sshRuntime.normalizePath("/tmp", remoteCwd);
     const normalizedCwd = sshRuntime.normalizePath(".", remoteCwd);
 
-    // /tmp is different from /remote/workspace/project/branch - should NOT be blocked
     expect(normalizedTarget).not.toBe(normalizedCwd);
   });
+});
 
+describe("bash tool - tool_env", () => {
   it("should source .mux/tool_env before running script", async () => {
-    const tempDir = new TestTempDir("test-bash-tool-env");
+    using tempDir = new TestTempDir("test-bash-tool-env");
     const muxDir = `${tempDir.path}/.mux`;
     fs.mkdirSync(muxDir, { recursive: true });
     fs.writeFileSync(`${muxDir}/tool_env`, "export MUX_TEST_VAR=from_tool_env");
@@ -1433,16 +1424,14 @@ describe("SSH runtime redundant cd detection", () => {
 
     expect(result.success).toBe(true);
     expect(result.output).toBe("from_tool_env");
-
-    tempDir[Symbol.dispose]();
   });
 
   it("should fail with clear error if tool_env sourcing fails", async () => {
-    const tempDir = new TestTempDir("test-bash-tool-env-fail");
+    using tempDir = new TestTempDir("test-bash-tool-env-fail");
     const muxDir = `${tempDir.path}/.mux`;
     fs.mkdirSync(muxDir, { recursive: true });
-    // Write invalid bash that will fail when sourced
-    fs.writeFileSync(`${muxDir}/tool_env`, "exit 1");
+    // Fail `source` without terminating the parent shell.
+    fs.writeFileSync(`${muxDir}/tool_env`, "return 1");
 
     const config = createTestToolConfig(tempDir.path);
     config.runtimeTempDir = tempDir.path;
@@ -1459,12 +1448,11 @@ describe("SSH runtime redundant cd detection", () => {
 
     expect(result.success).toBe(false);
     expect(result.exitCode).toBe(1);
-
-    tempDir[Symbol.dispose]();
+    expect(result.output).toContain("failed to source");
   });
 
   it("should run script normally when no tool_env exists", async () => {
-    const tempDir = new TestTempDir("test-bash-no-tool-env");
+    using tempDir = new TestTempDir("test-bash-no-tool-env");
 
     const config = createTestToolConfig(tempDir.path);
     config.runtimeTempDir = tempDir.path;
@@ -1481,8 +1469,6 @@ describe("SSH runtime redundant cd detection", () => {
 
     expect(result.success).toBe(true);
     expect(result.output).toBe("normal_execution");
-
-    tempDir[Symbol.dispose]();
   });
 });
 

@@ -127,7 +127,7 @@ COMMIT_MSG_FILE=$1
 COMMIT_SOURCE=$2
 
 # Only add co-author when running in mux
-if [ -z "$MUX_WORKSPACE_ID" ]; then
+if [ -z "$MUX_RUNTIME" ]; then
   exit 0
 fi
 
@@ -151,7 +151,7 @@ chmod +x .git/hooks/prepare-commit-msg
 
 <Info>
   This approach uses your normal Git identity for commits, but adds a trailer indicating AI
-  involvement. The hook only activates inside mux workspaces (detected via `MUX_WORKSPACE_ID`).
+  involvement. The hook only activates inside mux workspaces (detected via `MUX_RUNTIME`).
 </Info>
 
 ### Comparison

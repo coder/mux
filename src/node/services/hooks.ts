@@ -200,10 +200,13 @@ export async function getPostHookPath(
   return null;
 }
 
+// When probing hook files over SSH, avoid hanging on dead connections.
+// Hook discovery is best-effort; a short timeout keeps tool execution responsive.
+const HOOK_FILE_STAT_TIMEOUT_MS = 2000;
+
 async function isFile(runtime: Runtime, filePath: string): Promise<boolean> {
   try {
-    // Use short timeout to avoid hanging on unresponsive SSH connections
-    const stat = await runtime.stat(filePath, AbortSignal.timeout(2000));
+    const stat = await runtime.stat(filePath, AbortSignal.timeout(HOOK_FILE_STAT_TIMEOUT_MS));
     return !stat.isDirectory;
   } catch {
     return false;

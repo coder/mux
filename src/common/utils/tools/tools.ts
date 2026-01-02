@@ -197,7 +197,11 @@ function wrapToolsWithModelOnlyNotifications(
 
 /**
  * Wrap tools with hook support.
- * When .mux/tool_hook exists, each tool execution is wrapped with the hook.
+ *
+ * If any of these exist, each tool execution is wrapped:
+ * - `.mux/tool_pre` (pre-hook)
+ * - `.mux/tool_post` (post-hook)
+ * - `.mux/tool_hook` (legacy pre+post)
  */
 function wrapToolsWithHooks(
   tools: Record<string, Tool>,
@@ -213,9 +217,10 @@ function wrapToolsWithHooks(
     cwd: config.cwd,
     runtimeTempDir: config.runtimeTempDir,
     workspaceId: config.workspaceId,
+    // Match bash tool behavior: muxEnv is present and secrets override it.
     env: {
-      ...(config.secrets ?? {}),
       ...(config.muxEnv ?? {}),
+      ...(config.secrets ?? {}),
     },
   };
 
