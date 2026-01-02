@@ -21,9 +21,20 @@ export interface FileInfo {
   thinking?: string;
 }
 
+export interface SignatureInfo {
+  /** Base64-encoded Ed25519 signature */
+  signature: string;
+  /** Public key in OpenSSH format (ssh-ed25519 AAAA...) */
+  publicKey: string;
+  /** GitHub username, if detected */
+  githubUser?: string;
+}
+
 export interface UploadOptions {
   /** Expiration time (ISO date string or Date object) */
   expiresAt?: string | Date;
+  /** Signature info to include in frontmatter */
+  signature?: SignatureInfo;
 }
 
 export interface UploadResult {
@@ -124,6 +135,21 @@ async function encrypt(data: Uint8Array, key: CryptoKey, iv: Uint8Array): Promis
   return new Uint8Array(ciphertext);
 }
 
+// --- Signature utilities ---
+
+/**
+ * Prepend YAML frontmatter with signature info to content.
+ * The signature is over the body only (original content), so we add frontmatter after signing.
+ */
+function addSignatureFrontmatter(content: string, sig: SignatureInfo): string {
+  const lines = ["---", `mux_signature: ${sig.signature}`, `mux_public_key: ${sig.publicKey}`];
+  if (sig.githubUser) {
+    lines.push(`mux_github_user: ${sig.githubUser}`);
+  }
+  lines.push("---", "", content);
+  return lines.join("\n");
+}
+
 // --- Public API ---
 
 /**
@@ -131,7 +157,7 @@ async function encrypt(data: Uint8Array, key: CryptoKey, iv: Uint8Array): Promis
  *
  * @param content - The markdown content to share
  * @param fileInfo - Metadata about the content (name, model, thinking level)
- * @param options - Upload options (expiration, etc.)
+ * @param options - Upload options (expiration, signature, etc.)
  * @returns Upload result with shareable URL
  */
 export async function uploadToMuxMd(
@@ -139,7 +165,11 @@ export async function uploadToMuxMd(
   fileInfo: FileInfo,
   options: UploadOptions = {}
 ): Promise<UploadResult> {
-  const data = new TextEncoder().encode(content);
+  // If signature is provided, prepend frontmatter
+  const finalContent = options.signature
+    ? addSignatureFrontmatter(content, options.signature)
+    : content;
+  const data = new TextEncoder().encode(finalContent);
 
   // Generate encryption parameters
   const keyMaterial = generateKey();
