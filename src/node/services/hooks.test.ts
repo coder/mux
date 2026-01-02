@@ -2,7 +2,15 @@ import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import * as fs from "fs/promises";
 import * as path from "path";
 import * as os from "os";
-import { getHookPath, getToolEnvPath, runWithHook } from "./hooks";
+import {
+  getHookPath,
+  getToolEnvPath,
+  getPreHookPath,
+  getPostHookPath,
+  runWithHook,
+  runPreHook,
+  runPostHook,
+} from "./hooks";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 
 describe("hooks", () => {
@@ -68,6 +76,194 @@ describe("hooks", () => {
 
       const result = await getToolEnvPath(runtime, tempDir);
       expect(result).toBeNull();
+    });
+  });
+
+  describe("getPreHookPath", () => {
+    test("returns null when no tool_pre exists", async () => {
+      const result = await getPreHookPath(runtime, tempDir);
+      expect(result).toBeNull();
+    });
+
+    test("finds project-level tool_pre", async () => {
+      const hookDir = path.join(tempDir, ".mux");
+      const hookPath = path.join(hookDir, "tool_pre");
+      await fs.mkdir(hookDir, { recursive: true });
+      await fs.writeFile(hookPath, "#!/bin/bash\nexit 0");
+      await fs.chmod(hookPath, 0o755);
+
+      const result = await getPreHookPath(runtime, tempDir);
+      expect(result).toBe(hookPath);
+    });
+  });
+
+  describe("getPostHookPath", () => {
+    test("returns null when no tool_post exists", async () => {
+      const result = await getPostHookPath(runtime, tempDir);
+      expect(result).toBeNull();
+    });
+
+    test("finds project-level tool_post", async () => {
+      const hookDir = path.join(tempDir, ".mux");
+      const hookPath = path.join(hookDir, "tool_post");
+      await fs.mkdir(hookDir, { recursive: true });
+      await fs.writeFile(hookPath, "#!/bin/bash\nexit 0");
+      await fs.chmod(hookPath, 0o755);
+
+      const result = await getPostHookPath(runtime, tempDir);
+      expect(result).toBe(hookPath);
+    });
+  });
+
+  describe("runPreHook", () => {
+    test("allows tool when hook exits 0", async () => {
+      const hookDir = path.join(tempDir, ".mux");
+      const hookPath = path.join(hookDir, "tool_pre");
+      await fs.mkdir(hookDir, { recursive: true });
+      await fs.writeFile(hookPath, "#!/bin/bash\nexit 0");
+      await fs.chmod(hookPath, 0o755);
+
+      const result = await runPreHook(runtime, hookPath, {
+        tool: "test_tool",
+        toolInput: '{"arg": "value"}',
+        workspaceId: "test-workspace",
+        projectDir: tempDir,
+      });
+
+      expect(result.allowed).toBe(true);
+      expect(result.exitCode).toBe(0);
+    });
+
+    test("blocks tool when hook exits non-zero", async () => {
+      const hookDir = path.join(tempDir, ".mux");
+      const hookPath = path.join(hookDir, "tool_pre");
+      await fs.mkdir(hookDir, { recursive: true });
+      await fs.writeFile(hookPath, '#!/bin/bash\necho "blocked" >&2\nexit 1');
+      await fs.chmod(hookPath, 0o755);
+
+      const result = await runPreHook(runtime, hookPath, {
+        tool: "test_tool",
+        toolInput: '{"arg": "value"}',
+        workspaceId: "test-workspace",
+        projectDir: tempDir,
+      });
+
+      expect(result.allowed).toBe(false);
+      expect(result.exitCode).toBe(1);
+      expect(result.output).toContain("blocked");
+    });
+
+    test("receives MUX_TOOL env var", async () => {
+      const hookDir = path.join(tempDir, ".mux");
+      const hookPath = path.join(hookDir, "tool_pre");
+      await fs.mkdir(hookDir, { recursive: true });
+      await fs.writeFile(hookPath, '#!/bin/bash\necho "tool=$MUX_TOOL"');
+      await fs.chmod(hookPath, 0o755);
+
+      const result = await runPreHook(runtime, hookPath, {
+        tool: "bash",
+        toolInput: "{}",
+        workspaceId: "test-workspace",
+        projectDir: tempDir,
+      });
+
+      expect(result.allowed).toBe(true);
+      expect(result.output).toContain("tool=bash");
+    });
+  });
+
+  describe("runPostHook", () => {
+    test("succeeds when hook exits 0", async () => {
+      const hookDir = path.join(tempDir, ".mux");
+      const hookPath = path.join(hookDir, "tool_post");
+      await fs.mkdir(hookDir, { recursive: true });
+      await fs.writeFile(hookPath, "#!/bin/bash\nexit 0");
+      await fs.chmod(hookPath, 0o755);
+
+      const result = await runPostHook(
+        runtime,
+        hookPath,
+        {
+          tool: "test_tool",
+          toolInput: '{"arg": "value"}',
+          workspaceId: "test-workspace",
+          projectDir: tempDir,
+        },
+        { success: true, data: "test" }
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.exitCode).toBe(0);
+    });
+
+    test("receives MUX_TOOL_RESULT env var", async () => {
+      const hookDir = path.join(tempDir, ".mux");
+      const hookPath = path.join(hookDir, "tool_post");
+      await fs.mkdir(hookDir, { recursive: true });
+      await fs.writeFile(hookPath, '#!/bin/bash\necho "result=$MUX_TOOL_RESULT"');
+      await fs.chmod(hookPath, 0o755);
+
+      const result = await runPostHook(
+        runtime,
+        hookPath,
+        {
+          tool: "test_tool",
+          toolInput: "{}",
+          workspaceId: "test-workspace",
+          projectDir: tempDir,
+        },
+        { value: 42 }
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain('result={"value":42}');
+    });
+
+    test("can read result from MUX_TOOL_RESULT_PATH", async () => {
+      const hookDir = path.join(tempDir, ".mux");
+      const hookPath = path.join(hookDir, "tool_post");
+      await fs.mkdir(hookDir, { recursive: true });
+      await fs.writeFile(hookPath, '#!/bin/bash\ncat "$MUX_TOOL_RESULT_PATH"');
+      await fs.chmod(hookPath, 0o755);
+
+      const result = await runPostHook(
+        runtime,
+        hookPath,
+        {
+          tool: "test_tool",
+          toolInput: "{}",
+          workspaceId: "test-workspace",
+          projectDir: tempDir,
+        },
+        { complex: { nested: "data" } }
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain('{"complex":{"nested":"data"}}');
+    });
+
+    test("reports failure when hook exits non-zero", async () => {
+      const hookDir = path.join(tempDir, ".mux");
+      const hookPath = path.join(hookDir, "tool_post");
+      await fs.mkdir(hookDir, { recursive: true });
+      await fs.writeFile(hookPath, '#!/bin/bash\necho "lint error" >&2\nexit 1');
+      await fs.chmod(hookPath, 0o755);
+
+      const result = await runPostHook(
+        runtime,
+        hookPath,
+        {
+          tool: "file_edit",
+          toolInput: "{}",
+          workspaceId: "test-workspace",
+          projectDir: tempDir,
+        },
+        { success: true }
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.exitCode).toBe(1);
+      expect(result.output).toContain("lint error");
     });
   });
 

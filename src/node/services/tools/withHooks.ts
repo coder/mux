@@ -1,20 +1,28 @@
 /**
  * Higher-order function that wraps a tool with hook support.
  *
- * When a .mux/tool_hook executable exists, the tool execution is wrapped:
- * 1. Hook starts, receives tool info via env vars
- * 2. Hook runs pre-logic, prints __MUX_EXEC__ when ready
- * 3. Tool executes, result sent to hook's stdin
- * 4. Hook runs post-logic
- * 5. Hook output is appended to tool result as `hook_output` (for LLM feedback)
- *    - On failure: always appended
- *    - On success: appended if non-empty (e.g., formatter ran and modified files)
+ * Hook priority (new → legacy):
+ * - Pre-execution: tool_pre → tool_hook (if no tool_pre)
+ * - Post-execution: tool_post → tool_hook (only if tool_hook was used for pre)
+ *
+ * New model (tool_pre/tool_post):
+ * - tool_pre: runs before tool, exit 0 = allow, non-zero = block
+ * - tool_post: runs after tool with result in MUX_TOOL_RESULT/MUX_TOOL_RESULT_PATH
+ *
+ * Legacy model (tool_hook): single hook with marker protocol (echo $MUX_EXEC)
  */
 
 import assert from "@/common/utils/assert";
 import type { Tool } from "ai";
 import type { Runtime } from "@/node/runtime/Runtime";
-import { getHookPath, runWithHook } from "@/node/services/hooks";
+import {
+  getHookPath,
+  getPreHookPath,
+  getPostHookPath,
+  runWithHook,
+  runPreHook,
+  runPostHook,
+} from "@/node/services/hooks";
 import { log } from "@/node/services/log";
 
 export interface HookConfig {
@@ -55,15 +63,11 @@ function cloneToolPreservingDescriptors(tool: unknown): Tool {
 }
 
 /**
- * Wrap a tool to execute within hook context if a hook exists.
+ * Wrap a tool to execute within hook context if hooks exist.
  *
- * The wrapper:
- * 1. Checks for .mux/tool_hook or ~/.mux/tool_hook via runtime
- * 2. If no hook, executes tool directly
- * 3. If hook exists, spawns it with tool context via runtime.exec()
- * 4. Waits for hook to signal __MUX_EXEC__ before running tool
- * 5. Sends tool result to hook's stdin
- * 6. Appends hook output as `hook_output` (on failure, or on success if non-empty)
+ * Hook priority:
+ * - Pre: tool_pre (new) → tool_hook (legacy)
+ * - Post: tool_post (new) → tool_hook (only if used for pre)
  */
 export function withHooks<TParameters, TResult>(
   toolName: string,
@@ -92,11 +96,15 @@ export function withHooks<TParameters, TResult>(
   const wrappedToolRecord = wrappedTool as any as Record<string, unknown>;
 
   wrappedToolRecord.execute = async (args: TParameters, options: unknown) => {
-    // Find hook (checked per call - hooks can be added/removed dynamically)
-    const hookPath = await getHookPath(config.runtime, config.cwd);
+    // Find hooks (checked per call - hooks can be added/removed dynamically)
+    const [preHookPath, postHookPath, legacyHookPath] = await Promise.all([
+      getPreHookPath(config.runtime, config.cwd),
+      getPostHookPath(config.runtime, config.cwd),
+      getHookPath(config.runtime, config.cwd),
+    ]);
 
-    // No hook - execute tool directly
-    if (!hookPath) {
+    // No hooks at all - execute tool directly
+    if (!preHookPath && !postHookPath && !legacyHookPath) {
       return executeFn.call(tool, args, options) as TResult;
     }
 
@@ -106,68 +114,180 @@ export function withHooks<TParameters, TResult>(
         ? (options as { abortSignal?: AbortSignal }).abortSignal
         : undefined;
 
-    // Execute tool within hook context
-    log.debug("[withHooks] Running tool with hook", { toolName, hookPath });
+    const toolInput = JSON.stringify(args);
+    const hookContext = {
+      tool: toolName,
+      toolInput,
+      workspaceId: config.workspaceId,
+      projectDir: config.cwd,
+      runtimeTempDir: config.runtimeTempDir,
+      env: config.env,
+      abortSignal,
+    };
 
-    const { result, hook } = await runWithHook<TResult>(
-      config.runtime,
-      hookPath,
-      {
-        tool: toolName,
-        toolInput: JSON.stringify(args),
-        workspaceId: config.workspaceId,
-        projectDir: config.cwd,
-        runtimeTempDir: config.runtimeTempDir,
-        env: config.env,
-        abortSignal,
-      },
-      () => Promise.resolve(executeFn.call(tool, args, options) as TResult),
-      {
-        slowThresholdMs: 10000,
-        onSlowHook: (phase, elapsedMs) => {
-          const seconds = (elapsedMs / 1000).toFixed(1);
-          log.warn(`[withHooks] Slow ${phase}-hook for ${toolName}: ${seconds}s`);
-          // Also log to console for visibility during interactive use
-          console.warn(`⚠️  Slow tool hook (${phase}): ${toolName} took ${seconds}s`);
-        },
-      }
-    );
-
-    // Hook blocked tool execution (exited before $MUX_EXEC)
-    if (!hook.toolExecuted) {
-      const blockOutput = truncateHookOutput(
-        [hook.stdoutBeforeExec, hook.stderr].filter(Boolean).join("\n").trim()
+    // Use new model (tool_pre/tool_post) if tool_pre exists
+    if (preHookPath) {
+      return executeWithNewHooks(
+        config.runtime,
+        preHookPath,
+        postHookPath,
+        hookContext,
+        toolName,
+        () => executeFn.call(tool, args, options) as TResult
       );
-      log.debug("[withHooks] Hook blocked tool execution", { toolName, output: blockOutput });
-      const errorResult: { error: string } = {
-        error: blockOutput || "Tool blocked by hook (exited before $MUX_EXEC)",
-      };
-      return errorResult as TResult;
     }
 
-    // Combine stdout and stderr for hook output
-    let hookOutput = [hook.stdout, hook.stderr].filter(Boolean).join("\n").trim();
+    // Fall back to legacy model (tool_hook) if it exists
+    if (legacyHookPath) {
+      return executeWithLegacyHook(
+        config.runtime,
+        legacyHookPath,
+        hookContext,
+        toolName,
+        () => executeFn.call(tool, args, options) as TResult
+      );
+    }
 
-    // Always surface hook failures, even if the hook didn't print anything.
-    if (!hook.success && !hookOutput) {
-      hookOutput = `Tool hook failed (exit code ${hook.exitCode})`;
+    // Only post hook exists (no pre) - execute tool then run post
+    const result = (await executeFn.call(tool, args, options)) as TResult;
+    if (postHookPath) {
+      const postResult = await runPostHook(config.runtime, postHookPath, hookContext, result);
+      if (postResult.output) {
+        return appendHookOutput(result, truncateHookOutput(postResult.output)) as TResult;
+      }
+    }
+    return result;
+  };
+
+  return wrappedTool;
+}
+
+/** Execute tool with new pre/post hook model */
+async function executeWithNewHooks<TResult>(
+  runtime: Runtime,
+  preHookPath: string,
+  postHookPath: string | null,
+  context: {
+    tool: string;
+    toolInput: string;
+    workspaceId: string;
+    projectDir: string;
+    runtimeTempDir?: string;
+    env?: Record<string, string>;
+    abortSignal?: AbortSignal;
+  },
+  toolName: string,
+  executeTool: () => TResult | Promise<TResult>
+): Promise<TResult> {
+  log.debug("[withHooks] Running tool with pre/post hooks", {
+    toolName,
+    preHookPath,
+    postHookPath,
+  });
+
+  // Run pre-hook
+  const preResult = await runPreHook(runtime, preHookPath, context);
+
+  // Pre-hook blocked tool
+  if (!preResult.allowed) {
+    const output = truncateHookOutput(
+      preResult.output || `Tool blocked by pre-hook (exit ${preResult.exitCode})`
+    );
+    log.debug("[withHooks] Pre-hook blocked tool", { toolName, output });
+    const errorResult: { error: string } = { error: output };
+    return errorResult as TResult;
+  }
+
+  // Execute tool
+  const result = await executeTool();
+
+  // Run post-hook if exists
+  if (postHookPath) {
+    const postResult = await runPostHook(runtime, postHookPath, context, result);
+    let hookOutput = postResult.output;
+
+    if (!postResult.success && !hookOutput) {
+      hookOutput = `Post-hook failed (exit code ${postResult.exitCode})`;
     }
 
     if (hookOutput) {
       hookOutput = truncateHookOutput(hookOutput);
-      log.debug("[withHooks] Hook produced output", {
+      log.debug("[withHooks] Post-hook produced output", {
         toolName,
-        success: hook.success,
+        success: postResult.success,
         output: hookOutput,
       });
       return appendHookOutput(result, hookOutput) as TResult;
     }
+  }
 
-    // Note: result could be TResult or AsyncIterable<TResult>, but we return it as-is
-    return result as TResult | AsyncIterable<TResult>;
-  };
+  return result;
+}
 
-  return wrappedTool;
+/** Execute tool with legacy tool_hook model */
+async function executeWithLegacyHook<TResult>(
+  runtime: Runtime,
+  hookPath: string,
+  context: {
+    tool: string;
+    toolInput: string;
+    workspaceId: string;
+    projectDir: string;
+    runtimeTempDir?: string;
+    env?: Record<string, string>;
+    abortSignal?: AbortSignal;
+  },
+  toolName: string,
+  executeTool: () => TResult | Promise<TResult>
+): Promise<TResult> {
+  log.debug("[withHooks] Running tool with legacy hook", { toolName, hookPath });
+
+  const { result, hook } = await runWithHook<TResult>(
+    runtime,
+    hookPath,
+    context,
+    () => Promise.resolve(executeTool()),
+    {
+      slowThresholdMs: 10000,
+      onSlowHook: (phase, elapsedMs) => {
+        const seconds = (elapsedMs / 1000).toFixed(1);
+        log.warn(`[withHooks] Slow ${phase}-hook for ${toolName}: ${seconds}s`);
+        console.warn(`⚠️  Slow tool hook (${phase}): ${toolName} took ${seconds}s`);
+      },
+    }
+  );
+
+  // Hook blocked tool execution (exited before $MUX_EXEC)
+  if (!hook.toolExecuted) {
+    const blockOutput = truncateHookOutput(
+      [hook.stdoutBeforeExec, hook.stderr].filter(Boolean).join("\n").trim()
+    );
+    log.debug("[withHooks] Hook blocked tool execution", { toolName, output: blockOutput });
+    const errorResult: { error: string } = {
+      error: blockOutput || "Tool blocked by hook (exited before $MUX_EXEC)",
+    };
+    return errorResult as TResult;
+  }
+
+  // Combine stdout and stderr for hook output
+  let hookOutput = [hook.stdout, hook.stderr].filter(Boolean).join("\n").trim();
+
+  if (!hook.success && !hookOutput) {
+    hookOutput = `Tool hook failed (exit code ${hook.exitCode})`;
+  }
+
+  if (hookOutput) {
+    hookOutput = truncateHookOutput(hookOutput);
+    log.debug("[withHooks] Hook produced output", {
+      toolName,
+      success: hook.success,
+      output: hookOutput,
+    });
+    return appendHookOutput(result, hookOutput) as TResult;
+  }
+
+  // Note: result could be TResult or AsyncIterable<TResult>
+  return result as TResult;
 }
 
 /** Check if a value is an AsyncIterable (streaming result) */

@@ -200,4 +200,126 @@ read RESULT
     const result = await wrappedTool.execute!({ input: "test" }, {} as never);
     expect(result).toEqual({ output: "ok" });
   });
+
+  test("uses tool_pre hook to block execution", async () => {
+    const hookDir = path.join(tempDir, ".mux");
+    const hookPath = path.join(hookDir, "tool_pre");
+    await fs.mkdir(hookDir, { recursive: true });
+    await fs.writeFile(
+      hookPath,
+      `#!/bin/bash
+echo "Force push blocked" >&2
+exit 1
+`
+    );
+    await fs.chmod(hookPath, 0o755);
+
+    let toolExecuted = false;
+    const baseTool = createTestTool(() => {
+      toolExecuted = true;
+      return Promise.resolve({ output: "should not happen" });
+    });
+
+    const wrappedTool = withHooks("bash", baseTool, {
+      runtime,
+      cwd: tempDir,
+      runtimeTempDir: tempDir,
+      workspaceId: "test-ws",
+    });
+
+    const result = (await wrappedTool.execute!({ input: "test" }, {} as never)) as unknown as {
+      error: string;
+    };
+    expect(toolExecuted).toBe(false);
+    expect(result.error).toContain("Force push blocked");
+  });
+
+  test("uses tool_post hook to add output after execution", async () => {
+    const hookDir = path.join(tempDir, ".mux");
+    const postHookPath = path.join(hookDir, "tool_post");
+    await fs.mkdir(hookDir, { recursive: true });
+    await fs.writeFile(
+      postHookPath,
+      `#!/bin/bash
+echo "Linting passed" >&2
+exit 0
+`
+    );
+    await fs.chmod(postHookPath, 0o755);
+
+    const baseTool = createTestTool(() => Promise.resolve({ output: "edit done" }));
+
+    const wrappedTool = withHooks("file_edit", baseTool, {
+      runtime,
+      cwd: tempDir,
+      runtimeTempDir: tempDir,
+      workspaceId: "test-ws",
+    });
+
+    const result = (await wrappedTool.execute!({ input: "test" }, {} as never)) as {
+      output: string;
+      hook_output?: string;
+    };
+    expect(result.output).toBe("edit done");
+    expect(result.hook_output).toContain("Linting passed");
+  });
+
+  test("tool_pre takes priority over tool_hook", async () => {
+    const hookDir = path.join(tempDir, ".mux");
+    await fs.mkdir(hookDir, { recursive: true });
+
+    // Create both tool_pre and tool_hook
+    await fs.writeFile(path.join(hookDir, "tool_pre"), "#!/bin/bash\nexit 0");
+    await fs.chmod(path.join(hookDir, "tool_pre"), 0o755);
+
+    // Legacy hook that would block if used
+    await fs.writeFile(path.join(hookDir, "tool_hook"), "#!/bin/bash\nexit 1");
+    await fs.chmod(path.join(hookDir, "tool_hook"), 0o755);
+
+    const baseTool = createTestTool(() => Promise.resolve({ output: "success" }));
+
+    const wrappedTool = withHooks("test_tool", baseTool, {
+      runtime,
+      cwd: tempDir,
+      runtimeTempDir: tempDir,
+      workspaceId: "test-ws",
+    });
+
+    // Should succeed because tool_pre (exit 0) takes priority over tool_hook (exit 1)
+    const result = await wrappedTool.execute!({ input: "test" }, {} as never);
+    expect(result).toEqual({ output: "success" });
+  });
+
+  test("tool_pre + tool_post work together", async () => {
+    const hookDir = path.join(tempDir, ".mux");
+    await fs.mkdir(hookDir, { recursive: true });
+
+    await fs.writeFile(path.join(hookDir, "tool_pre"), '#!/bin/bash\necho "pre ran" >&2\nexit 0');
+    await fs.chmod(path.join(hookDir, "tool_pre"), 0o755);
+
+    await fs.writeFile(
+      path.join(hookDir, "tool_post"),
+      '#!/bin/bash\necho "post ran: $MUX_TOOL_RESULT"'
+    );
+    await fs.chmod(path.join(hookDir, "tool_post"), 0o755);
+
+    const baseTool = createTestTool(() =>
+      Promise.resolve({ output: "done", value: 42 } as { output: string; value?: number })
+    );
+
+    const wrappedTool = withHooks("test_tool", baseTool, {
+      runtime,
+      cwd: tempDir,
+      runtimeTempDir: tempDir,
+      workspaceId: "test-ws",
+    });
+
+    const result = (await wrappedTool.execute!({ input: "test" }, {} as never)) as unknown as {
+      value: number;
+      hook_output?: string;
+    };
+    expect(result.value).toBe(42);
+    expect(result.hook_output).toContain("post ran:");
+    expect(result.hook_output).toContain('"value":42');
+  });
 });

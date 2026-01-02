@@ -32,6 +32,8 @@ import { log } from "@/node/services/log";
 import { execBuffered, writeFileString } from "@/node/utils/runtime/helpers";
 
 const HOOK_FILENAME = "tool_hook";
+const PRE_HOOK_FILENAME = "tool_pre";
+const POST_HOOK_FILENAME = "tool_post";
 const TOOL_ENV_FILENAME = "tool_env";
 const TOOL_INPUT_ENV_LIMIT = 8_000;
 const DEFAULT_HOOK_PHASE_TIMEOUT_MS = 5 * 60_000; // 5 minutes
@@ -142,6 +144,57 @@ export async function getToolEnvPath(runtime: Runtime, projectDir: string): Prom
     }
   } catch {
     // resolvePath failed - skip user tool_env
+  }
+
+  return null;
+}
+
+/**
+ * Find the tool_pre executable for a given project directory.
+ * This hook runs before tool execution; exit non-zero to block.
+ * Returns null if no tool_pre exists.
+ */
+export async function getPreHookPath(runtime: Runtime, projectDir: string): Promise<string | null> {
+  const projectHook = joinPathLike(projectDir, ".mux", PRE_HOOK_FILENAME);
+  if (await isFile(runtime, projectHook)) {
+    return projectHook;
+  }
+
+  try {
+    const homeDir = await runtime.resolvePath("~");
+    const userHook = joinPathLike(homeDir, ".mux", PRE_HOOK_FILENAME);
+    if (await isFile(runtime, userHook)) {
+      return userHook;
+    }
+  } catch {
+    // resolvePath failed - skip user hook
+  }
+
+  return null;
+}
+
+/**
+ * Find the tool_post executable for a given project directory.
+ * This hook runs after tool execution with result available.
+ * Returns null if no tool_post exists.
+ */
+export async function getPostHookPath(
+  runtime: Runtime,
+  projectDir: string
+): Promise<string | null> {
+  const projectHook = joinPathLike(projectDir, ".mux", POST_HOOK_FILENAME);
+  if (await isFile(runtime, projectHook)) {
+    return projectHook;
+  }
+
+  try {
+    const homeDir = await runtime.resolvePath("~");
+    const userHook = joinPathLike(homeDir, ".mux", POST_HOOK_FILENAME);
+    if (await isFile(runtime, userHook)) {
+      return userHook;
+    }
+  } catch {
+    // resolvePath failed - skip user hook
   }
 
   return null;
@@ -482,4 +535,245 @@ export async function runWithHook<T>(
       toolExecuted,
     },
   };
+}
+
+/** Result from running a pre-hook */
+export interface PreHookResult {
+  /** Whether the tool is allowed to proceed (exit code 0) */
+  allowed: boolean;
+  /** Combined stdout + stderr output */
+  output: string;
+  /** Hook process exit code */
+  exitCode: number;
+}
+
+/** Result from running a post-hook */
+export interface PostHookResult {
+  /** Whether the hook succeeded (exit code 0) */
+  success: boolean;
+  /** Combined stdout + stderr output */
+  output: string;
+  /** Hook process exit code */
+  exitCode: number;
+}
+
+/** Context for pre/post hooks (simpler than HookContext) */
+export interface SimpleHookContext {
+  /** Tool name */
+  tool: string;
+  /** Tool input as JSON string */
+  toolInput: string;
+  /** Workspace ID */
+  workspaceId: string;
+  /** Project directory */
+  projectDir: string;
+  /** Runtime temp dir for scratch files */
+  runtimeTempDir?: string;
+  /** Additional environment variables */
+  env?: Record<string, string>;
+  /** External abort signal */
+  abortSignal?: AbortSignal;
+}
+
+/** Options for pre/post hook execution */
+export interface SimpleHookOptions {
+  /** Timeout in ms (default: 5 minutes) */
+  timeoutMs?: number;
+}
+
+/**
+ * Run a pre-hook (tool_pre) before tool execution.
+ * Simple model: spawn hook, wait for exit, check exit code.
+ * Exit 0 = allow tool, non-zero = block tool.
+ */
+export async function runPreHook(
+  runtime: Runtime,
+  hookPath: string,
+  context: SimpleHookContext,
+  options?: SimpleHookOptions
+): Promise<PreHookResult> {
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_HOOK_PHASE_TIMEOUT_MS;
+
+  // Prepare tool input (file if large)
+  const { toolInputEnv, toolInputPath, cleanup } = await prepareToolInput(
+    runtime,
+    context.toolInput,
+    context.runtimeTempDir,
+    context.projectDir
+  );
+
+  const hookEnv: Record<string, string> = {
+    ...(context.env ?? {}),
+    MUX_TOOL: context.tool,
+    MUX_TOOL_INPUT: toolInputEnv,
+    MUX_WORKSPACE_ID: context.workspaceId,
+    MUX_PROJECT_DIR: context.projectDir,
+  };
+  if (toolInputPath) {
+    hookEnv.MUX_TOOL_INPUT_PATH = toolInputPath;
+  }
+
+  try {
+    const result = await execBuffered(runtime, shellEscape(hookPath), {
+      cwd: context.projectDir,
+      env: hookEnv,
+      timeout: Math.ceil(timeoutMs / 1000),
+      abortSignal: context.abortSignal,
+    });
+
+    const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
+    return {
+      allowed: result.exitCode === 0,
+      output,
+      exitCode: result.exitCode ?? -1,
+    };
+  } catch (err) {
+    log.error("[hooks] Pre-hook execution failed", { hookPath, error: err });
+    return {
+      allowed: false,
+      output: `Pre-hook failed: ${err instanceof Error ? err.message : String(err)}`,
+      exitCode: -1,
+    };
+  } finally {
+    await cleanup();
+  }
+}
+
+/**
+ * Run a post-hook (tool_post) after tool execution.
+ * Simple model: spawn hook with result in env/file, wait for exit.
+ */
+export async function runPostHook(
+  runtime: Runtime,
+  hookPath: string,
+  context: SimpleHookContext,
+  toolResult: unknown,
+  options?: SimpleHookOptions
+): Promise<PostHookResult> {
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_HOOK_PHASE_TIMEOUT_MS;
+  const resultJson = JSON.stringify(toolResult);
+
+  // Prepare tool input (file if large)
+  const {
+    toolInputEnv,
+    toolInputPath,
+    cleanup: cleanupInput,
+  } = await prepareToolInput(
+    runtime,
+    context.toolInput,
+    context.runtimeTempDir,
+    context.projectDir
+  );
+
+  // Prepare tool result (always write to file, truncate env var if large)
+  const resultPath = joinPathLike(
+    context.runtimeTempDir ?? "/tmp",
+    `mux-tool-result-${Date.now()}-${crypto.randomUUID()}.json`
+  );
+  let resultEnv = resultJson;
+  try {
+    await writeFileString(runtime, resultPath, resultJson);
+    if (resultJson.length > TOOL_INPUT_ENV_LIMIT) {
+      resultEnv = "__MUX_TOOL_RESULT_FILE__";
+    }
+  } catch (err) {
+    log.debug("[hooks] Failed to write tool result to temp file", { error: err });
+    resultEnv = resultJson.slice(0, TOOL_INPUT_ENV_LIMIT);
+  }
+
+  const hookEnv: Record<string, string> = {
+    ...(context.env ?? {}),
+    MUX_TOOL: context.tool,
+    MUX_TOOL_INPUT: toolInputEnv,
+    MUX_WORKSPACE_ID: context.workspaceId,
+    MUX_PROJECT_DIR: context.projectDir,
+    MUX_TOOL_RESULT: resultEnv,
+    MUX_TOOL_RESULT_PATH: resultPath,
+  };
+  if (toolInputPath) {
+    hookEnv.MUX_TOOL_INPUT_PATH = toolInputPath;
+  }
+
+  const cleanup = async () => {
+    await cleanupInput();
+    try {
+      await execBuffered(runtime, `rm -f ${shellEscape(resultPath)}`, {
+        cwd: context.projectDir,
+        timeout: 5,
+      });
+    } catch {
+      // Best-effort
+    }
+  };
+
+  try {
+    const result = await execBuffered(runtime, shellEscape(hookPath), {
+      cwd: context.projectDir,
+      env: hookEnv,
+      timeout: Math.ceil(timeoutMs / 1000),
+      abortSignal: context.abortSignal,
+    });
+
+    const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
+    return {
+      success: result.exitCode === 0,
+      output,
+      exitCode: result.exitCode ?? -1,
+    };
+  } catch (err) {
+    log.error("[hooks] Post-hook execution failed", { hookPath, error: err });
+    return {
+      success: false,
+      output: `Post-hook failed: ${err instanceof Error ? err.message : String(err)}`,
+      exitCode: -1,
+    };
+  } finally {
+    await cleanup();
+  }
+}
+
+/** Helper to prepare tool input (write to file if large) */
+async function prepareToolInput(
+  runtime: Runtime,
+  toolInput: string,
+  runtimeTempDir: string | undefined,
+  projectDir: string
+): Promise<{
+  toolInputEnv: string;
+  toolInputPath: string | undefined;
+  cleanup: () => Promise<void>;
+}> {
+  let toolInputPath: string | undefined;
+  let toolInputEnv = toolInput;
+
+  if (toolInput.length > TOOL_INPUT_ENV_LIMIT) {
+    try {
+      const tempDir = runtimeTempDir ?? "/tmp";
+      toolInputPath = joinPathLike(
+        tempDir,
+        `mux-tool-input-${Date.now()}-${crypto.randomUUID()}.json`
+      );
+      await writeFileString(runtime, toolInputPath, toolInput);
+      toolInputEnv = "__MUX_TOOL_INPUT_FILE__";
+    } catch (err) {
+      log.debug("[hooks] Failed to write tool input to temp file", { error: err });
+      toolInputPath = undefined;
+      toolInputEnv = toolInput.slice(0, TOOL_INPUT_ENV_LIMIT);
+    }
+  }
+
+  const cleanup = async () => {
+    if (toolInputPath) {
+      try {
+        await execBuffered(runtime, `rm -f ${shellEscape(toolInputPath)}`, {
+          cwd: projectDir,
+          timeout: 5,
+        });
+      } catch {
+        // Best-effort
+      }
+    }
+  };
+
+  return { toolInputEnv, toolInputPath, cleanup };
 }
