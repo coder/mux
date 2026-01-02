@@ -419,73 +419,74 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
               <EncryptionBadge />
             </div>
 
+            {/* Signing toggle - always visible, disabled when no key */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <PenTool className="text-muted h-3 w-3" />
+                <span className="text-muted text-[10px]">Sign message</span>
+                {signingCapabilities?.publicKey ? (
+                  // Key available - show identity
+                  signingCapabilities.githubUser ? (
+                    <span className="text-muted-foreground text-[10px]">
+                      (@{signingCapabilities.githubUser})
+                    </span>
+                  ) : signingCapabilities.email ? (
+                    <span className="text-muted-foreground text-[10px]">
+                      ({signingCapabilities.email})
+                    </span>
+                  ) : signingCapabilities.error ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <HelpIndicator className="text-[10px]">?</HelpIndicator>
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-[200px]">
+                        <p className="text-[11px]">{signingCapabilities.error}</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : null
+                ) : (
+                  // No key - show help tooltip with retry
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={() => void handleRetryKeyDetection()}
+                        className="text-muted-foreground hover:text-foreground text-[10px] underline"
+                      >
+                        No key found
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-[200px]">
+                      <p className="text-[11px]">
+                        No Ed25519 key found at ~/.mux/id_ed25519 or ~/.ssh/id_ed25519. Click to
+                        retry detection after adding a key.
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+              </div>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span>
+                    <Switch
+                      checked={signingEnabled}
+                      onCheckedChange={handleSigningToggle}
+                      disabled={!signingCapabilities?.publicKey}
+                      className="h-4 w-7"
+                    />
+                  </span>
+                </TooltipTrigger>
+                {!signingCapabilities?.publicKey && (
+                  <TooltipContent>
+                    <p className="text-[11px]">No signing key available</p>
+                  </TooltipContent>
+                )}
+              </Tooltip>
+            </div>
+
             {error ? (
               <>
                 <div className="bg-destructive/10 text-destructive rounded px-2 py-1.5 text-[11px]">
                   {error}
-                </div>
-                {/* Signing toggle - show even when unavailable (disabled with tooltip) */}
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5">
-                    <PenTool className="text-muted h-3 w-3" />
-                    <span className="text-muted text-[10px]">Sign message</span>
-                    {signingCapabilities?.publicKey ? (
-                      // Key available - show identity
-                      signingCapabilities.githubUser ? (
-                        <span className="text-muted-foreground text-[10px]">
-                          (@{signingCapabilities.githubUser})
-                        </span>
-                      ) : signingCapabilities.email ? (
-                        <span className="text-muted-foreground text-[10px]">
-                          ({signingCapabilities.email})
-                        </span>
-                      ) : signingCapabilities.error ? (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <HelpIndicator className="text-[10px]">?</HelpIndicator>
-                          </TooltipTrigger>
-                          <TooltipContent className="max-w-[200px]">
-                            <p className="text-[11px]">{signingCapabilities.error}</p>
-                          </TooltipContent>
-                        </Tooltip>
-                      ) : null
-                    ) : (
-                      // No key - show help tooltip with retry
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            onClick={() => void handleRetryKeyDetection()}
-                            className="text-muted-foreground hover:text-foreground text-[10px] underline"
-                          >
-                            No key found
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent className="max-w-[200px]">
-                          <p className="text-[11px]">
-                            No Ed25519 key found at ~/.mux/id_ed25519 or ~/.ssh/id_ed25519. Click to
-                            retry detection after adding a key.
-                          </p>
-                        </TooltipContent>
-                      </Tooltip>
-                    )}
-                  </div>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span>
-                        <Switch
-                          checked={signingEnabled}
-                          onCheckedChange={handleSigningToggle}
-                          disabled={!signingCapabilities?.publicKey}
-                          className="h-4 w-7"
-                        />
-                      </span>
-                    </TooltipTrigger>
-                    {!signingCapabilities?.publicKey && (
-                      <TooltipContent>
-                        <p className="text-[11px]">No signing key available</p>
-                      </TooltipContent>
-                    )}
-                  </Tooltip>
                 </div>
                 <Button
                   onClick={() => void handleShare()}
