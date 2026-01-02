@@ -38,10 +38,17 @@ export const GitStatusIndicator: React.FC<GitStatusIndicatorProps> = ({
     { listener: true }
   );
 
-  // Per-project base ref (shared with review panel)
-  const [baseRef, setBaseRef] = usePersistedState<string>(
+  // Per-project default base (fallback for new workspaces)
+  const [projectDefaultBase] = usePersistedState<string>(
     STORAGE_KEYS.reviewDefaultBase(projectPath),
     "HEAD",
+    { listener: true }
+  );
+
+  // Per-workspace base ref (shared with review panel, syncs via listener)
+  const [baseRef, setBaseRef] = usePersistedState<string>(
+    STORAGE_KEYS.reviewDiffBase(trimmedWorkspaceId),
+    projectDefaultBase,
     { listener: true }
   );
 

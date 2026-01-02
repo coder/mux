@@ -294,11 +294,17 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   // Default is HEAD for compatibility; users can change per-project via UI
   const [defaultBase] = usePersistedState<string>(
     STORAGE_KEYS.reviewDefaultBase(projectPath),
-    "HEAD"
+    "HEAD",
+    { listener: true }
   );
 
   // Persist diff base per workspace (falls back to project default)
-  const [diffBase, setDiffBase] = usePersistedState(`review-diff-base:${workspaceId}`, defaultBase);
+  // Uses listener: true to sync with GitStatusIndicator base selector
+  const [diffBase, setDiffBase] = usePersistedState(
+    STORAGE_KEYS.reviewDiffBase(workspaceId),
+    defaultBase,
+    { listener: true }
+  );
 
   // Persist includeUncommitted flag globally
   const [includeUncommitted, setIncludeUncommitted] = usePersistedState(

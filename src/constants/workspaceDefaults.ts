@@ -4,6 +4,8 @@
 export const STORAGE_KEYS = {
   /** Per-project default diff base for code review. Pass projectPath. */
   reviewDefaultBase: (projectPath: string) => `review-default-base:${projectPath}`,
+  /** Per-workspace diff base override. Pass workspaceId. */
+  reviewDiffBase: (workspaceId: string) => `review-diff-base:${workspaceId}`,
 } as const;
 
 Object.freeze(STORAGE_KEYS);
