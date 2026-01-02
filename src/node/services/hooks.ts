@@ -202,7 +202,8 @@ export async function getPostHookPath(
 
 async function isFile(runtime: Runtime, filePath: string): Promise<boolean> {
   try {
-    const stat = await runtime.stat(filePath);
+    // Use short timeout to avoid hanging on unresponsive SSH connections
+    const stat = await runtime.stat(filePath, AbortSignal.timeout(2000));
     return !stat.isDirectory;
   } catch {
     return false;
