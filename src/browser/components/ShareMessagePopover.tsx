@@ -14,11 +14,17 @@ import {
   HelpIndicator,
 } from "@/browser/components/ui/tooltip";
 import { Button } from "@/browser/components/ui/button";
-import { Check, ExternalLink, Link2, Loader2, Trash2 } from "lucide-react";
+import { Check, ExternalLink, Link2, Loader2, Trash2, PenTool } from "lucide-react";
+import { Switch } from "@/browser/components/ui/switch";
 import { CopyIcon } from "@/browser/components/icons/CopyIcon";
 import { copyToClipboard } from "@/browser/utils/clipboard";
 
-import { uploadToMuxMd, deleteFromMuxMd, updateMuxMdExpiration } from "@/common/lib/muxMd";
+import {
+  uploadToMuxMd,
+  deleteFromMuxMd,
+  updateMuxMdExpiration,
+  type SignatureInfo,
+} from "@/common/lib/muxMd";
 import {
   getShareData,
   setShareData,
@@ -27,9 +33,11 @@ import {
   type ShareData,
 } from "@/browser/utils/sharedUrlCache";
 import { cn } from "@/common/lib/utils";
-import { SHARE_EXPIRATION_KEY } from "@/common/constants/storage";
+import { SHARE_EXPIRATION_KEY, SHARE_SIGNING_KEY } from "@/common/constants/storage";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { useLinkSharingEnabled } from "@/browser/contexts/TelemetryEnabledContext";
+import { useAPI } from "@/browser/contexts/API";
+import type { SigningCapabilities } from "@/common/orpc/schemas";
 
 /** Encryption info tooltip shown next to share headers */
 const EncryptionBadge = () => (
@@ -108,6 +116,7 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
 }) => {
   // Hide share button when user explicitly disabled telemetry
   const linkSharingEnabled = useLinkSharingEnabled();
+  const { api } = useAPI();
 
   const [isOpen, setIsOpen] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -121,6 +130,29 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
   // Current share data (from upload or cache)
   const [shareData, setLocalShareData] = useState<ShareData | null>(null);
 
+  // Signing state
+  const [signingEnabled, setSigningEnabled] = useState(() =>
+    readPersistedState<boolean>(SHARE_SIGNING_KEY, true)
+  );
+  const [signingCapabilities, setSigningCapabilities] = useState<SigningCapabilities | null>(null);
+  // Track whether we've attempted to load signing capabilities
+  const [signingCapabilitiesLoaded, setSigningCapabilitiesLoaded] = useState(false);
+
+  // Load signing capabilities on first popover open
+  useEffect(() => {
+    if (isOpen && !signingCapabilitiesLoaded && api) {
+      void api.signing
+        .capabilities({})
+        .then(setSigningCapabilities)
+        .catch(() => {
+          // Signing unavailable - leave capabilities null
+        })
+        .finally(() => {
+          setSigningCapabilitiesLoaded(true);
+        });
+    }
+  }, [isOpen, api, signingCapabilitiesLoaded]);
+
   // Load cached data when content changes
   useEffect(() => {
     if (content) {
@@ -129,13 +161,22 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
     }
   }, [content]);
 
-  // Auto-upload when popover opens and no cached data exists
+  // Auto-upload when popover opens, no cached data exists, and signing capabilities are loaded
+  // (or signing is disabled so we don't need to wait)
   useEffect(() => {
-    if (isOpen && content && !shareData && !isUploading && !error) {
+    const canAutoUpload =
+      isOpen &&
+      content &&
+      !shareData &&
+      !isUploading &&
+      !error &&
+      (signingCapabilitiesLoaded || !signingEnabled);
+
+    if (canAutoUpload) {
       void handleShare();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen]);
+  }, [isOpen, signingCapabilitiesLoaded, signingEnabled]);
 
   // Auto-select URL text when share data becomes available
   useEffect(() => {
@@ -159,6 +200,12 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
     updatePersistedState(SHARE_EXPIRATION_KEY, value);
   };
 
+  // Toggle signing preference
+  const handleSigningToggle = (enabled: boolean) => {
+    setSigningEnabled(enabled);
+    updatePersistedState(SHARE_SIGNING_KEY, enabled);
+  };
+
   // Derive filename: prefer workspaceName, fallback to default
   const getFileName = (): string => {
     if (workspaceName) {
@@ -169,7 +216,7 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
     return "message.md";
   };
 
-  // Upload with preferred expiration included in initial request
+  // Upload with preferred expiration and optional signing
   const handleShare = async () => {
     if (!content || isUploading) return;
 
@@ -182,6 +229,22 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
       const ms = expirationToMs(preferred);
       const expiresAt = ms ? new Date(Date.now() + ms) : undefined;
 
+      // Sign content if enabled and available
+      let signature: SignatureInfo | undefined;
+      if (signingEnabled && signingCapabilities?.available && api) {
+        try {
+          const signResult = await api.signing.sign({ content });
+          signature = {
+            signature: signResult.signature,
+            publicKey: signResult.publicKey,
+            githubUser: signResult.githubUser ?? undefined,
+          };
+        } catch (signErr) {
+          console.warn("Signing failed, uploading without signature:", signErr);
+          // Continue without signature - don't fail the upload
+        }
+      }
+
       const result = await uploadToMuxMd(
         content,
         {
@@ -191,7 +254,7 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
           model,
           thinking,
         },
-        { expiresAt }
+        { expiresAt, signature }
       );
 
       const data: ShareData = {
@@ -340,6 +403,34 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
                 <div className="bg-destructive/10 text-destructive rounded px-2 py-1.5 text-[11px]">
                   {error}
                 </div>
+                {/* Signing toggle - show even on error for retry */}
+                {signingCapabilities?.available && (
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <PenTool className="text-muted h-3 w-3" />
+                      <span className="text-muted text-[10px]">Sign message</span>
+                      {signingCapabilities.githubUser ? (
+                        <span className="text-muted-foreground text-[10px]">
+                          (@{signingCapabilities.githubUser})
+                        </span>
+                      ) : signingCapabilities.githubError ? (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <HelpIndicator className="text-[10px]">?</HelpIndicator>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-[200px]">
+                            <p className="text-[11px]">{signingCapabilities.githubError}</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      ) : null}
+                    </div>
+                    <Switch
+                      checked={signingEnabled}
+                      onCheckedChange={handleSigningToggle}
+                      className="h-4 w-7"
+                    />
+                  </div>
+                )}
                 <Button
                   onClick={() => void handleShare()}
                   disabled={isUploading}
@@ -351,7 +442,11 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
             ) : (
               <div className="flex items-center justify-center py-4">
                 <Loader2 className="text-muted h-5 w-5 animate-spin" />
-                <span className="text-muted ml-2 text-xs">Encrypting...</span>
+                <span className="text-muted ml-2 text-xs">
+                  {signingEnabled && signingCapabilities?.available
+                    ? "Signing & encrypting..."
+                    : "Encrypting..."}
+                </span>
               </div>
             )}
           </div>

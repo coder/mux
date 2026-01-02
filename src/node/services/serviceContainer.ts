@@ -40,6 +40,7 @@ import { MCPServerManager } from "@/node/services/mcpServerManager";
 import { SessionUsageService } from "@/node/services/sessionUsageService";
 import { IdleCompactionService } from "@/node/services/idleCompactionService";
 import { TaskService } from "@/node/services/taskService";
+import { getSigningService, type SigningService } from "@/node/services/signingService";
 
 /**
  * ServiceContainer - Central dependency container for all backend services.
@@ -72,6 +73,7 @@ export class ServiceContainer {
   public readonly sessionTimingService: SessionTimingService;
   public readonly experimentsService: ExperimentsService;
   public readonly sessionUsageService: SessionUsageService;
+  public readonly signingService: SigningService;
   private readonly initStateManager: InitStateManager;
   private readonly extensionMetadata: ExtensionMetadataService;
   private readonly ptyService: PTYService;
@@ -154,6 +156,7 @@ export class ServiceContainer {
     });
     this.featureFlagService = new FeatureFlagService(config, this.telemetryService);
     this.sessionTimingService = new SessionTimingService(config, this.telemetryService);
+    this.signingService = getSigningService();
 
     // Backend timing stats (behind feature flag).
     this.aiService.on("stream-start", (data: StreamStartEvent) =>

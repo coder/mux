@@ -17,6 +17,7 @@ import type { ExperimentsService } from "@/node/services/experimentsService";
 import type { WorkspaceMcpOverridesService } from "@/node/services/workspaceMcpOverridesService";
 import type { MCPServerManager } from "@/node/services/mcpServerManager";
 import type { TelemetryService } from "@/node/services/telemetryService";
+import type { SigningService } from "@/node/services/signingService";
 import type { FeatureFlagService } from "@/node/services/featureFlagService";
 import type { SessionTimingService } from "@/node/services/sessionTimingService";
 import type { SessionUsageService } from "@/node/services/sessionUsageService";
@@ -45,5 +46,6 @@ export interface ORPCContext {
   telemetryService: TelemetryService;
   experimentsService: ExperimentsService;
   sessionUsageService: SessionUsageService;
+  signingService: SigningService;
   headers?: IncomingHttpHeaders;
 }

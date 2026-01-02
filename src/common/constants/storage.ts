@@ -224,6 +224,13 @@ export const VIM_ENABLED_KEY = "vimEnabled";
 export const SHARE_EXPIRATION_KEY = "shareExpiration";
 
 /**
+ * Whether to sign shared messages by default.
+ * Stores: boolean
+ * Default: true
+ */
+export const SHARE_SIGNING_KEY = "shareSigning";
+
+/**
  * Git status indicator display mode (global)
  * Stores: "line-delta" | "divergence"
  */
