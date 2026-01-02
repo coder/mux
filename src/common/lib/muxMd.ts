@@ -1,20 +1,23 @@
 /**
  * mux.md Client Library
  *
- * Thin wrapper around @coder/mux-md-client with Mux-specific types and utilities.
- * The underlying package handles encryption, upload/download, and signature verification.
+ * Thin wrapper around @coder/mux-md-client for Mux app integration.
+ * Re-exports types and provides convenience functions with default base URL.
  */
 
 import {
-  upload as clientUpload,
-  download as clientDownload,
-  deleteFile as clientDelete,
-  setExpiration as clientSetExpiration,
+  upload,
+  download,
+  deleteFile,
+  setExpiration,
   parseUrl,
-  type FileInfo as ClientFileInfo,
+  type FileInfo,
   type SignatureEnvelope,
-  type UploadResult as ClientUploadResult,
+  type UploadResult,
 } from "@coder/mux-md-client";
+
+// Re-export types from package
+export type { FileInfo, UploadResult };
 
 export const MUX_MD_BASE_URL = "https://mux.md";
 export const MUX_MD_HOST = "mux.md";
@@ -27,7 +30,7 @@ export const MUX_MD_HOST = "mux.md";
 export function isMuxMdUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
-    return parsed.host === MUX_MD_HOST && parsed.hash.length > 1;
+    return parsed.host === MUX_MD_HOST && parseUrl(url) !== null;
   } catch {
     return false;
   }
@@ -38,17 +41,6 @@ export function isMuxMdUrl(url: string): boolean {
  */
 export function parseMuxMdUrl(url: string): { id: string; key: string } | null {
   return parseUrl(url);
-}
-
-/**
- * File metadata encrypted client-side
- */
-export interface FileInfo {
-  name: string;
-  type: string;
-  size: number;
-  model?: string;
-  thinking?: string;
 }
 
 /**
@@ -73,21 +65,6 @@ export interface UploadOptions {
   signature?: SignatureInfo;
 }
 
-export interface UploadResult {
-  /** Full URL with encryption key in fragment */
-  url: string;
-  /** File ID (without key) */
-  id: string;
-  /** Encryption key (base64url) */
-  key: string;
-  /** Mutate key (base64url) - store this to delete or update expiration */
-  mutateKey: string;
-  /** Expiration timestamp (ms), if set */
-  expiresAt?: number;
-}
-
-// --- Conversion utilities ---
-
 /** Convert our SignatureInfo to package's SignatureEnvelope */
 function toSignatureEnvelope(sig: SignatureInfo): SignatureEnvelope {
   return {
@@ -102,58 +79,35 @@ function toSignatureEnvelope(sig: SignatureInfo): SignatureEnvelope {
 
 /**
  * Upload content to mux.md with end-to-end encryption.
- *
- * @param content - The markdown content to share
- * @param fileInfo - Metadata about the content (name, model, thinking level)
- * @param options - Upload options (expiration, signature, etc.)
- * @returns Upload result with shareable URL
  */
 export async function uploadToMuxMd(
   content: string,
   fileInfo: FileInfo,
   options: UploadOptions = {}
 ): Promise<UploadResult> {
-  const data = new TextEncoder().encode(content);
-
-  const result: ClientUploadResult = await clientUpload(data, fileInfo as ClientFileInfo, {
+  return upload(new TextEncoder().encode(content), fileInfo, {
     baseUrl: MUX_MD_BASE_URL,
     expiresAt: options.expiresAt,
     signature: options.signature ? toSignatureEnvelope(options.signature) : undefined,
   });
-
-  return {
-    url: result.url,
-    id: result.id,
-    key: result.key,
-    mutateKey: result.mutateKey,
-    expiresAt: result.expiresAt,
-  };
 }
 
 /**
  * Delete a shared file from mux.md.
- *
- * @param id - The file ID
- * @param mutateKey - The mutate key from upload
  */
 export async function deleteFromMuxMd(id: string, mutateKey: string): Promise<void> {
-  await clientDelete(id, mutateKey, { baseUrl: MUX_MD_BASE_URL });
+  await deleteFile(id, mutateKey, { baseUrl: MUX_MD_BASE_URL });
 }
 
 /**
  * Update expiration of a shared file on mux.md.
- *
- * @param id - The file ID
- * @param mutateKey - The mutate key from upload
- * @param expiresAt - New expiration (Date, ISO string, or "never" to remove expiration)
- * @returns The new expiration timestamp (undefined if set to "never")
  */
 export async function updateMuxMdExpiration(
   id: string,
   mutateKey: string,
   expiresAt: Date | string
 ): Promise<number | undefined> {
-  const result = await clientSetExpiration(id, mutateKey, expiresAt, { baseUrl: MUX_MD_BASE_URL });
+  const result = await setExpiration(id, mutateKey, expiresAt, { baseUrl: MUX_MD_BASE_URL });
   return result.expiresAt;
 }
 
@@ -168,22 +122,15 @@ export interface DownloadResult {
 
 /**
  * Download and decrypt content from mux.md.
- *
- * @param id - The file ID
- * @param keyMaterial - The encryption key (base64url encoded)
- * @param _signal - Optional abort signal (not currently used by underlying client)
- * @returns Decrypted content and metadata
- * @throws Error if download or decryption fails
  */
 export async function downloadFromMuxMd(
   id: string,
   keyMaterial: string,
   _signal?: AbortSignal
 ): Promise<DownloadResult> {
-  const result = await clientDownload(id, keyMaterial, { baseUrl: MUX_MD_BASE_URL });
-
+  const result = await download(id, keyMaterial, { baseUrl: MUX_MD_BASE_URL });
   return {
     content: new TextDecoder().decode(result.data),
-    fileInfo: result.info as FileInfo,
+    fileInfo: result.info,
   };
 }
