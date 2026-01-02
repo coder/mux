@@ -3,7 +3,7 @@ import { createWebFetchTool } from "./web_fetch";
 import type { WebFetchToolArgs, WebFetchToolResult } from "@/common/types/tools";
 import { WEB_FETCH_MAX_OUTPUT_BYTES } from "@/common/constants/toolLimits";
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
-import { isMuxMdUrl, parseMuxMdUrl } from "@/common/lib/muxMd";
+import { isMuxMdUrl, parseMuxMdUrl, uploadToMuxMd, deleteFromMuxMd } from "@/common/lib/muxMd";
 import * as fs from "fs/promises";
 import * as path from "path";
 
@@ -331,5 +331,34 @@ describe("web_fetch tool", () => {
     // Without the key fragment, it's treated as a normal URL fetch
     // The mux.md viewer page won't have extractable content
     expect(result.success).toBe(false);
+  });
+
+  itIntegration("should decrypt and return mux.md content correctly", async () => {
+    using testEnv = createTestWebFetchTool();
+
+    // Upload test content to mux.md
+    const testContent = "# Test Heading\n\nThis is **test content** for web_fetch decryption.";
+    const uploadResult = await uploadToMuxMd(
+      testContent,
+      { name: "test.md", type: "text/markdown", size: testContent.length },
+      { expiresAt: new Date(Date.now() + 60000) }
+    );
+
+    try {
+      // Fetch via web_fetch tool
+      const args: WebFetchToolArgs = { url: uploadResult.url };
+      const result = (await testEnv.tool.execute!(args, toolCallOptions)) as WebFetchToolResult;
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.content).toBe(testContent);
+        expect(result.title).toBe("test.md");
+        expect(result.url).toBe(uploadResult.url);
+        expect(result.length).toBe(testContent.length);
+      }
+    } finally {
+      // Clean up
+      await deleteFromMuxMd(uploadResult.id, uploadResult.mutateKey);
+    }
   });
 });
