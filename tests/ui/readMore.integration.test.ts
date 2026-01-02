@@ -26,16 +26,150 @@ import type { APIClient } from "@/browser/contexts/API";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
+type ExecuteBashResult = Awaited<ReturnType<APIClient["workspace"]["executeBash"]>>;
+type ExecuteBashSuccess = Extract<ExecuteBashResult, { success: true }>;
+type BashToolResult = ExecuteBashSuccess["data"];
+
+function isLikelyGitLockError(message: string): boolean {
+  // We sometimes race with GitStatusStore (or other git commands) and hit transient lock files.
+  // Retrying makes tests far less flaky while still surfacing real failures.
+  return /index\.lock|\.lock': File exists|another git process|could not lock/i.test(message);
+}
+
+async function executeWorkspaceBashOrThrow(params: {
+  orpc: APIClient;
+  workspaceId: string;
+  script: string;
+  timeoutSecs?: number;
+  retries?: number;
+  retryDelayMs?: number;
+}): Promise<string> {
+  const retries = params.retries ?? 5;
+  const retryDelayMs = params.retryDelayMs ?? 250;
+
+  let lastError: string | null = null;
+
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    const result = await params.orpc.workspace.executeBash({
+      workspaceId: params.workspaceId,
+      script: params.script,
+      options: params.timeoutSecs ? { timeout_secs: params.timeoutSecs } : undefined,
+    });
+
+    if (!result.success) {
+      throw new Error(result.error ?? "executeBash failed");
+    }
+
+    const toolResult: BashToolResult = result.data;
+    if (toolResult.success) {
+      return toolResult.output;
+    }
+
+    const message = [toolResult.error, toolResult.output].filter(Boolean).join("\n");
+    lastError = message;
+
+    if (attempt < retries && isLikelyGitLockError(message)) {
+      await new Promise((r) => setTimeout(r, retryDelayMs));
+      continue;
+    }
+
+    throw new Error(
+      `executeBash failed (exit ${toolResult.exitCode}): ${toolResult.error}\n${toolResult.output ?? ""}`
+    );
+  }
+
+  throw new Error(lastError ?? "executeBash failed");
+}
+
+function getHunk(container: HTMLElement): HTMLElement | null {
+  return container.querySelector("[data-hunk-id]") as HTMLElement | null;
+}
+
+async function refreshReviewAndWaitForHunk(view: RenderedApp): Promise<void> {
+  await view.selectTab("review");
+
+  const refreshButton = view.getByTestId("review-refresh");
+  fireEvent.click(refreshButton);
+
+  await waitFor(
+    () => {
+      const hunk = getHunk(view.container);
+      if (!hunk) throw new Error("No hunk found");
+      return hunk;
+    },
+    { timeout: 60_000 }
+  );
+
+  await waitForRefreshButtonIdle(refreshButton);
+}
+
+async function waitForButtonToDisappear(
+  container: HTMLElement,
+  ariaLabel: string,
+  timeoutMs: number = 10_000
+): Promise<void> {
+  await waitFor(
+    () => {
+      const btn = container.querySelector(`button[aria-label="${ariaLabel}"]`);
+      if (btn) throw new Error(`Button still visible: ${ariaLabel}`);
+    },
+    { timeout: timeoutMs }
+  );
+}
+
+async function waitForNotLoading(
+  container: HTMLElement,
+  timeoutMs: number = 15_000
+): Promise<void> {
+  await waitFor(
+    () => {
+      const text = container.textContent ?? "";
+      if (text.includes("Loading...")) throw new Error("Still loading");
+    },
+    { timeout: timeoutMs }
+  );
+}
+
+async function withReviewPanel(
+  params: { apiClient: APIClient; metadata: FrontendWorkspaceMetadata },
+  fn: (view: RenderedApp) => Promise<void>
+): Promise<void> {
+  const cleanupDom = installDom();
+  const view = renderReviewPanel({ apiClient: params.apiClient, metadata: params.metadata });
+
+  try {
+    await fn(view);
+  } finally {
+    await cleanupView(view, cleanupDom);
+  }
+}
+
+async function waitForButton(
+  container: HTMLElement,
+  ariaLabel: string,
+  timeoutMs: number = 10_000
+): Promise<HTMLElement> {
+  return waitFor(
+    () => {
+      const btn = container.querySelector(`button[aria-label="${ariaLabel}"]`);
+      if (!btn) throw new Error(`Button not found: ${ariaLabel}`);
+      return btn as HTMLElement;
+    },
+    { timeout: timeoutMs }
+  );
+}
+
 /**
  * Helper to set up the Review tab with a file change.
  * Creates a multi-line file and a diff at a non-first line to test context expansion.
  */
+
 async function setupReviewPanelWithDiff(
   view: RenderedApp,
   metadata: FrontendWorkspaceMetadata,
   workspaceId: string,
   orpc: APIClient
-): Promise<{ refreshButton: HTMLElement; container: HTMLElement }> {
+): Promise<HTMLElement> {
   await setupWorkspaceView(view, metadata, workspaceId);
 
   // Create a multi-line file for context expansion testing
@@ -44,12 +178,15 @@ async function setupReviewPanelWithDiff(
   const fileContent = lines.join("\n");
 
   // Create the initial file (committed)
-  await orpc.workspace.executeBash({
+  await executeWorkspaceBashOrThrow({
+    orpc,
     workspaceId,
-    script: `cat > test-readmore.ts << 'EOF'
+    script: `set -euo pipefail
+cat > test-readmore.ts << 'EOF'
 ${fileContent}
 EOF
-git add test-readmore.ts && git commit -m "Add test file"`,
+git add test-readmore.ts
+git -c commit.gpgsign=false commit -m "Add test file" --no-verify`,
   });
 
   // Modify line 15 (creating a diff in the middle of the file)
@@ -57,32 +194,19 @@ git add test-readmore.ts && git commit -m "Add test file"`,
   modifiedLines[14] = "// Line 15: MODIFIED FOR TEST";
   const modifiedContent = modifiedLines.join("\n");
 
-  await orpc.workspace.executeBash({
+  await executeWorkspaceBashOrThrow({
+    orpc,
     workspaceId,
-    script: `cat > test-readmore.ts << 'EOF'
+    script: `set -euo pipefail
+cat > test-readmore.ts << 'EOF'
 ${modifiedContent}
-EOF`,
+EOF
+# Verify we actually produced a diff hunk for the review panel to render.
+git diff HEAD -- test-readmore.ts | grep -q "MODIFIED FOR TEST"`,
   });
 
-  // Switch to review tab
-  await view.selectTab("review");
-
-  // Wait for the diff to appear - refresh may be needed
-  const refreshButton = view.getByTestId("review-refresh");
-  fireEvent.click(refreshButton);
-
-  // Wait for the diff content to appear
-  await waitFor(
-    () => {
-      const diffContent = view.container.querySelector("[data-hunk-id]");
-      if (!diffContent) throw new Error("No hunk found");
-    },
-    { timeout: 60_000 }
-  );
-
-  await waitForRefreshButtonIdle(refreshButton);
-
-  return { refreshButton, container: view.container };
+  await refreshReviewAndWaitForHunk(view);
+  return view.container;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -100,37 +224,19 @@ describeIntegration("ReadMore context expansion (UI + ORPC)", () => {
 
   test("expand-up button loads additional context above hunk", async () => {
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
-      const cleanupDom = installDom();
-
-      const view = renderReviewPanel({
-        apiClient: env.orpc,
-        metadata,
-      });
-
-      try {
-        const { container } = await setupReviewPanelWithDiff(view, metadata, workspaceId, env.orpc);
+      await withReviewPanel({ apiClient: env.orpc, metadata }, async (view) => {
+        const container = await setupReviewPanelWithDiff(view, metadata, workspaceId, env.orpc);
 
         // Find the expand-up button (▲) - should exist since diff is at line 15, not line 1
-        const expandUpButton = await waitFor(
-          () => {
-            const btn = container.querySelector('button[aria-label="Show more context above"]');
-            if (!btn) throw new Error("Expand-up button not found");
-            return btn as HTMLElement;
-          },
-          { timeout: 10_000 }
-        );
-
-        // Click expand up
+        const expandUpButton = await waitForButton(container, "Show more context above");
         fireEvent.click(expandUpButton);
 
         // Wait for expanded content to appear - should contain lines from before line 15
         await waitFor(
           () => {
-            // Check that loading is complete and content appeared
             const hunkContent = container.textContent ?? "";
-            if (hunkContent.includes("Loading...")) {
-              throw new Error("Still loading");
-            }
+            if (hunkContent.includes("Loading...")) throw new Error("Still loading");
+
             // Should now have context lines from before the hunk (lines 1-14)
             // Look for a line number that would only appear in expanded content
             if (!hunkContent.includes("Line 10") && !hunkContent.includes("Line 5")) {
@@ -140,48 +246,26 @@ describeIntegration("ReadMore context expansion (UI + ORPC)", () => {
           { timeout: 15_000 }
         );
 
-        // Verify the expand button is still available for further expansion
-        // (since we expanded 20 lines but file has 14 lines above hunk)
-        const hunkContainer = container.querySelector("[data-hunk-id]");
-        expect(hunkContainer).not.toBeNull();
-      } finally {
-        await cleanupView(view, cleanupDom);
-      }
+        expect(getHunk(container)).not.toBeNull();
+      });
     });
   }, 180_000);
 
   test("expand-down button loads additional context below hunk", async () => {
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
-      const cleanupDom = installDom();
-
-      const view = renderReviewPanel({
-        apiClient: env.orpc,
-        metadata,
-      });
-
-      try {
-        const { container } = await setupReviewPanelWithDiff(view, metadata, workspaceId, env.orpc);
+      await withReviewPanel({ apiClient: env.orpc, metadata }, async (view) => {
+        const container = await setupReviewPanelWithDiff(view, metadata, workspaceId, env.orpc);
 
         // Find the expand-down button (▼) - should exist since diff is at line 15, file has 30 lines
-        const expandDownButton = await waitFor(
-          () => {
-            const btn = container.querySelector('button[aria-label="Show more context below"]');
-            if (!btn) throw new Error("Expand-down button not found");
-            return btn as HTMLElement;
-          },
-          { timeout: 10_000 }
-        );
-
-        // Click expand down
+        const expandDownButton = await waitForButton(container, "Show more context below");
         fireEvent.click(expandDownButton);
 
         // Wait for expanded content to appear - should contain lines after line 15
         await waitFor(
           () => {
             const hunkContent = container.textContent ?? "";
-            if (hunkContent.includes("Loading...")) {
-              throw new Error("Still loading");
-            }
+            if (hunkContent.includes("Loading...")) throw new Error("Still loading");
+
             // Should now have context lines from after the hunk (lines 16-30)
             // Look for a line number that would only appear in expanded content
             if (!hunkContent.includes("Line 20") && !hunkContent.includes("Line 25")) {
@@ -191,143 +275,97 @@ describeIntegration("ReadMore context expansion (UI + ORPC)", () => {
           { timeout: 15_000 }
         );
 
-        // Verify the hunk container still exists
-        const hunkContainer = container.querySelector("[data-hunk-id]");
-        expect(hunkContainer).not.toBeNull();
-      } finally {
-        await cleanupView(view, cleanupDom);
-      }
+        expect(getHunk(container)).not.toBeNull();
+      });
     });
   }, 180_000);
 
   test("hides expand-up button when diff starts at line 1 (BOF)", async () => {
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
-      const cleanupDom = installDom();
-
-      const view = renderReviewPanel({
-        apiClient: env.orpc,
-        metadata,
-      });
-
-      try {
+      await withReviewPanel({ apiClient: env.orpc, metadata }, async (view) => {
         await setupWorkspaceView(view, metadata, workspaceId);
 
         // Create a small file with diff at line 1 (so BOF is immediate)
-        await env.orpc.workspace.executeBash({
+        await executeWorkspaceBashOrThrow({
+          orpc: env.orpc,
           workspaceId,
-          script: `echo "// Original line 1" > bof-test.ts && git add bof-test.ts && git commit -m "Add BOF test"`,
+          script: `set -euo pipefail
+echo "// Original line 1" > bof-test.ts
+git add bof-test.ts
+git -c commit.gpgsign=false commit -m "Add BOF test" --no-verify`,
         });
 
-        await env.orpc.workspace.executeBash({
+        await executeWorkspaceBashOrThrow({
+          orpc: env.orpc,
           workspaceId,
-          script: `echo "// Modified line 1" > bof-test.ts`,
+          script: `set -euo pipefail
+echo "// Modified line 1" > bof-test.ts
+git diff HEAD -- bof-test.ts | grep -q "Modified line 1"`,
         });
 
-        // Switch to review tab and refresh
-        await view.selectTab("review");
-        const refreshButton = view.getByTestId("review-refresh");
-        fireEvent.click(refreshButton);
-
-        // Wait for hunk to appear
-        await waitFor(
-          () => {
-            const hunk = view.container.querySelector("[data-hunk-id]");
-            if (!hunk) throw new Error("No hunk found");
-          },
-          { timeout: 60_000 }
-        );
-
-        await waitForRefreshButtonIdle(refreshButton);
+        await refreshReviewAndWaitForHunk(view);
 
         // For a diff starting at line 1:
         // No expand-up button should exist (nothing above line 1)
         // and no BOF marker is shown (we just don't show the control row)
-        const expandUpButton = view.container.querySelector(
-          'button[aria-label="Show more context above"]'
-        );
-        expect(expandUpButton).toBeNull();
+        expect(
+          view.container.querySelector('button[aria-label="Show more context above"]')
+        ).toBeNull();
 
         // Expand-down button should still exist
-        const expandDownButton = view.container.querySelector(
-          'button[aria-label="Show more context below"]'
-        );
-        expect(expandDownButton).not.toBeNull();
-      } finally {
-        await cleanupView(view, cleanupDom);
-      }
+        expect(
+          view.container.querySelector('button[aria-label="Show more context below"]')
+        ).not.toBeNull();
+      });
     });
   }, 180_000);
 
   test("hides expand-up button for newly added files (oldStart=0, newStart=1)", async () => {
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
-      const cleanupDom = installDom();
-
-      const view = renderReviewPanel({
-        apiClient: env.orpc,
-        metadata,
-      });
-
-      try {
+      await withReviewPanel({ apiClient: env.orpc, metadata }, async (view) => {
         await setupWorkspaceView(view, metadata, workspaceId);
 
         // Create a NEW file (not modifying existing) - this will have oldStart=0
         // Must stage it for it to show up in the review panel diff
-        await env.orpc.workspace.executeBash({
+        await executeWorkspaceBashOrThrow({
+          orpc: env.orpc,
           workspaceId,
-          script: `echo "// New file line 1" > brand-new-file.ts && git add brand-new-file.ts`,
+          script: `set -euo pipefail
+echo "// New file line 1" > brand-new-file.ts
+git add brand-new-file.ts
+git diff --cached -- brand-new-file.ts | grep -q "New file line 1"`,
         });
 
-        // Switch to review tab and refresh
-        await view.selectTab("review");
-        const refreshButton = view.getByTestId("review-refresh");
-        fireEvent.click(refreshButton);
-
-        // Wait for hunk to appear
-        await waitFor(
-          () => {
-            const hunk = view.container.querySelector("[data-hunk-id]");
-            if (!hunk) throw new Error("No hunk found");
-          },
-          { timeout: 60_000 }
-        );
-
-        await waitForRefreshButtonIdle(refreshButton);
+        await refreshReviewAndWaitForHunk(view);
 
         // For a newly added file:
         // oldStart=0 (no old content), newStart=1
         // Should NOT show expand-up button (nothing to expand above a new file)
-        const expandUpButton = view.container.querySelector(
-          'button[aria-label="Show more context above"]'
-        );
-        expect(expandUpButton).toBeNull();
-      } finally {
-        await cleanupView(view, cleanupDom);
-      }
+        expect(
+          view.container.querySelector('button[aria-label="Show more context above"]')
+        ).toBeNull();
+      });
     });
   }, 180_000);
 
   test("hides expand-down button when expanded past file end (EOF)", async () => {
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
-      const cleanupDom = installDom();
-
-      const view = renderReviewPanel({
-        apiClient: env.orpc,
-        metadata,
-      });
-
-      try {
+      await withReviewPanel({ apiClient: env.orpc, metadata }, async (view) => {
         await setupWorkspaceView(view, metadata, workspaceId);
 
         // Create a file with 10 lines - modify line 5 so there's context below
         const lines = Array.from({ length: 10 }, (_, i) => `// Line ${i + 1}`);
         const fileContent = lines.join("\n");
 
-        await env.orpc.workspace.executeBash({
+        await executeWorkspaceBashOrThrow({
+          orpc: env.orpc,
           workspaceId,
-          script: `cat > eof-test.ts << 'EOF'
+          script: `set -euo pipefail
+cat > eof-test.ts << 'EOF'
 ${fileContent}
 EOF
-git add eof-test.ts && git commit -m "Add EOF test"`,
+git add eof-test.ts
+git -c commit.gpgsign=false commit -m "Add EOF test" --no-verify`,
         });
 
         // Modify line 5 (creates a diff in the middle with context above and below)
@@ -335,86 +373,47 @@ git add eof-test.ts && git commit -m "Add EOF test"`,
         modifiedLines[4] = "// Line 5 - MODIFIED";
         const modifiedContent = modifiedLines.join("\n");
 
-        await env.orpc.workspace.executeBash({
+        await executeWorkspaceBashOrThrow({
+          orpc: env.orpc,
           workspaceId,
-          script: `cat > eof-test.ts << 'EOF'
+          script: `set -euo pipefail
+cat > eof-test.ts << 'EOF'
 ${modifiedContent}
-EOF`,
+EOF
+git diff HEAD -- eof-test.ts | grep -q "MODIFIED"`,
         });
 
-        // Switch to review tab and refresh
-        await view.selectTab("review");
-        const refreshButton = view.getByTestId("review-refresh");
-        fireEvent.click(refreshButton);
-
-        // Wait for hunk to appear
-        await waitFor(
-          () => {
-            const hunk = view.container.querySelector("[data-hunk-id]");
-            if (!hunk) throw new Error("No hunk found");
-          },
-          { timeout: 60_000 }
-        );
-
-        await waitForRefreshButtonIdle(refreshButton);
+        await refreshReviewAndWaitForHunk(view);
 
         // Click expand-down to reach EOF (file only has 10 lines, expansion requests 20)
-        const expandDownButton = await waitFor(
-          () => {
-            const btn = view.container.querySelector(
-              'button[aria-label="Show more context below"]'
-            );
-            if (!btn) throw new Error("Expand-down button not found");
-            return btn as HTMLElement;
-          },
-          { timeout: 10_000 }
-        );
-
+        const expandDownButton = await waitForButton(view.container, "Show more context below");
         fireEvent.click(expandDownButton);
 
-        // After reaching EOF, expand-down button should be gone (replaced by collapse only)
-        await waitFor(
-          () => {
-            const expandBtn = view.container.querySelector(
-              'button[aria-label="Show more context below"]'
-            );
-            if (expandBtn) throw new Error("Expand button should be gone at EOF");
-
-            const collapseBtn = view.container.querySelector(
-              'button[aria-label="Collapse context below"]'
-            );
-            if (!collapseBtn) throw new Error("Collapse button should exist at EOF");
-          },
-          { timeout: 30_000 }
-        );
-      } finally {
-        await cleanupView(view, cleanupDom);
-      }
+        await waitForNotLoading(view.container, 30_000);
+        await waitForButtonToDisappear(view.container, "Show more context below", 30_000);
+        await waitForButton(view.container, "Collapse context below", 30_000);
+      });
     });
   }, 180_000);
 
   test("expand button stays hidden after reaching EOF (no flash back)", async () => {
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
-      const cleanupDom = installDom();
-
-      const view = renderReviewPanel({
-        apiClient: env.orpc,
-        metadata,
-      });
-
-      try {
+      await withReviewPanel({ apiClient: env.orpc, metadata }, async (view) => {
         await setupWorkspaceView(view, metadata, workspaceId);
 
         // Create a very small file (5 lines) - modify line 3
         const lines = Array.from({ length: 5 }, (_, i) => `// Line ${i + 1}`);
         const fileContent = lines.join("\n");
 
-        await env.orpc.workspace.executeBash({
+        await executeWorkspaceBashOrThrow({
+          orpc: env.orpc,
           workspaceId,
-          script: `cat > tiny-file.ts << 'EOF'
+          script: `set -euo pipefail
+cat > tiny-file.ts << 'EOF'
 ${fileContent}
 EOF
-git add tiny-file.ts && git commit -m "Add tiny file"`,
+git add tiny-file.ts
+git -c commit.gpgsign=false commit -m "Add tiny file" --no-verify`,
         });
 
         // Modify line 3
@@ -422,179 +421,68 @@ git add tiny-file.ts && git commit -m "Add tiny file"`,
         modifiedLines[2] = "// Line 3 - MODIFIED";
         const modifiedContent = modifiedLines.join("\n");
 
-        await env.orpc.workspace.executeBash({
+        await executeWorkspaceBashOrThrow({
+          orpc: env.orpc,
           workspaceId,
-          script: `cat > tiny-file.ts << 'EOF'
+          script: `set -euo pipefail
+cat > tiny-file.ts << 'EOF'
 ${modifiedContent}
-EOF`,
+EOF
+git diff HEAD -- tiny-file.ts | grep -q "MODIFIED"`,
         });
 
-        // Switch to review tab and refresh
-        await view.selectTab("review");
-        const refreshButton = view.getByTestId("review-refresh");
-        fireEvent.click(refreshButton);
-
-        await waitFor(
-          () => {
-            const hunk = view.container.querySelector("[data-hunk-id]");
-            if (!hunk) throw new Error("No hunk found");
-          },
-          { timeout: 60_000 }
-        );
-
-        await waitForRefreshButtonIdle(refreshButton);
+        await refreshReviewAndWaitForHunk(view);
 
         // Click expand-down - this should immediately hit EOF (5 line file, expansion = 20)
-        const expandDownButton = await waitFor(
-          () => {
-            const btn = view.container.querySelector(
-              'button[aria-label="Show more context below"]'
-            );
-            if (!btn) throw new Error("Expand-down button not found");
-            return btn as HTMLElement;
-          },
-          { timeout: 10_000 }
-        );
-
+        const expandDownButton = await waitForButton(view.container, "Show more context below");
         fireEvent.click(expandDownButton);
 
-        // Wait for EOF state - button should be gone
-        await waitFor(
-          () => {
-            const loadingText = view.container.textContent?.includes("Loading...");
-            if (loadingText) throw new Error("Still loading");
-
-            const expandBtn = view.container.querySelector(
-              'button[aria-label="Show more context below"]'
-            );
-            if (expandBtn) throw new Error("Expand button should be hidden at EOF");
-          },
-          { timeout: 15_000 }
-        );
+        await waitForNotLoading(view.container, 15_000);
+        await waitForButtonToDisappear(view.container, "Show more context below", 15_000);
 
         // Wait a bit and verify button doesn't flash back
         await new Promise((r) => setTimeout(r, 1000));
 
         // Button should STILL be hidden (no flash back)
-        const expandBtnAfterWait = view.container.querySelector(
-          'button[aria-label="Show more context below"]'
-        );
-        expect(expandBtnAfterWait).toBeNull();
-      } finally {
-        await cleanupView(view, cleanupDom);
-      }
+        expect(
+          view.container.querySelector('button[aria-label="Show more context below"]')
+        ).toBeNull();
+      });
     });
   }, 180_000);
 
   test("multiple expand clicks accumulate context", async () => {
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
-      const cleanupDom = installDom();
+      await withReviewPanel({ apiClient: env.orpc, metadata }, async (view) => {
+        const container = await setupReviewPanelWithDiff(view, metadata, workspaceId, env.orpc);
 
-      const view = renderReviewPanel({
-        apiClient: env.orpc,
-        metadata,
-      });
-
-      try {
-        const { container } = await setupReviewPanelWithDiff(view, metadata, workspaceId, env.orpc);
-
-        // First expand-up click
-        const expandUpButton = await waitFor(
-          () => {
-            const btn = container.querySelector('button[aria-label="Show more context above"]');
-            if (!btn) throw new Error("Expand-up button not found");
-            return btn as HTMLElement;
-          },
-          { timeout: 10_000 }
-        );
-
+        const expandUpButton = await waitForButton(container, "Show more context above");
         fireEvent.click(expandUpButton);
 
-        // Wait for first expansion
-        await waitFor(
-          () => {
-            const hunkContent = container.textContent ?? "";
-            if (hunkContent.includes("Loading...")) throw new Error("Still loading");
-          },
-          { timeout: 15_000 }
-        );
-
-        // After first click (20 lines), we're at BOF since hunk is at line 15
-        // The expand-up button should be gone (replaced by collapse only)
-        await waitFor(
-          () => {
-            const expandBtn = container.querySelector(
-              'button[aria-label="Show more context above"]'
-            );
-            if (expandBtn) throw new Error("Expand-up should be gone at BOF");
-
-            const collapseBtn = container.querySelector(
-              'button[aria-label="Collapse context above"]'
-            );
-            if (!collapseBtn) throw new Error("Collapse button should exist at BOF");
-          },
-          { timeout: 5_000 }
-        );
-      } finally {
-        await cleanupView(view, cleanupDom);
-      }
+        // After first click (20 lines), we're at BOF since hunk is at line 15.
+        await waitForNotLoading(container, 15_000);
+        await waitForButtonToDisappear(container, "Show more context above", 5_000);
+        await waitForButton(container, "Collapse context above", 5_000);
+      });
     });
   }, 180_000);
 
   test("per-side collapse button hides expanded context", async () => {
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
-      const cleanupDom = installDom();
+      await withReviewPanel({ apiClient: env.orpc, metadata }, async (view) => {
+        const container = await setupReviewPanelWithDiff(view, metadata, workspaceId, env.orpc);
 
-      const view = renderReviewPanel({
-        apiClient: env.orpc,
-        metadata,
-      });
-
-      try {
-        const { container } = await setupReviewPanelWithDiff(view, metadata, workspaceId, env.orpc);
-
-        // First expand up to get some expanded content
-        const expandUpButton = await waitFor(
-          () => {
-            const btn = container.querySelector('button[aria-label="Show more context above"]');
-            if (!btn) throw new Error("Expand-up button not found");
-            return btn as HTMLElement;
-          },
-          { timeout: 10_000 }
-        );
-
+        // Expand up to get some expanded content.
+        const expandUpButton = await waitForButton(container, "Show more context above");
         fireEvent.click(expandUpButton);
 
-        // Wait for the per-side collapse button to appear (indicates expansion completed)
-        const collapseButton = await waitFor(
-          () => {
-            const btn = container.querySelector('button[aria-label="Collapse context above"]');
-            if (!btn) throw new Error("Collapse button not found");
-            return btn as HTMLElement;
-          },
-          { timeout: 15_000 }
-        );
-
-        // Click collapse
+        // Wait for the per-side collapse button to appear (indicates expansion completed).
+        const collapseButton = await waitForButton(container, "Collapse context above", 15_000);
         fireEvent.click(collapseButton);
 
-        // Wait for collapse button to disappear (no more expanded content above)
-        await waitFor(
-          () => {
-            const collapseBtn = container.querySelector(
-              'button[aria-label="Collapse context above"]'
-            );
-            if (collapseBtn) throw new Error("Collapse button should be gone");
-          },
-          { timeout: 10_000 }
-        );
-
-        // Hunk should still be visible
-        const hunkAfterCollapse = container.querySelector("[data-hunk-id]");
-        expect(hunkAfterCollapse).not.toBeNull();
-      } finally {
-        await cleanupView(view, cleanupDom);
-      }
+        await waitForButtonToDisappear(container, "Collapse context above", 10_000);
+        expect(getHunk(container)).not.toBeNull();
+      });
     });
   }, 180_000);
 
@@ -602,38 +490,12 @@ EOF`,
   // The persistence is tested via Storybook stories which use real browser
   test.skip("expansion state persists across tab switches", async () => {
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
-      const cleanupDom = installDom();
+      await withReviewPanel({ apiClient: env.orpc, metadata }, async (view) => {
+        const container = await setupReviewPanelWithDiff(view, metadata, workspaceId, env.orpc);
 
-      const view = renderReviewPanel({
-        apiClient: env.orpc,
-        metadata,
-      });
-
-      try {
-        const { container } = await setupReviewPanelWithDiff(view, metadata, workspaceId, env.orpc);
-
-        // Find and click expand-up button
-        const expandUpButton = await waitFor(
-          () => {
-            const btn = container.querySelector('button[aria-label="Show more context above"]');
-            if (!btn) throw new Error("Expand-up button not found");
-            return btn as HTMLElement;
-          },
-          { timeout: 10_000 }
-        );
-
+        const expandUpButton = await waitForButton(container, "Show more context above");
         fireEvent.click(expandUpButton);
-
-        // Wait for expansion to complete
-        await waitFor(
-          () => {
-            const loadingText = container.querySelector('[class*="text-muted"]');
-            if (loadingText?.textContent?.includes("Loading...")) {
-              throw new Error("Still loading");
-            }
-          },
-          { timeout: 10_000 }
-        );
+        await waitForNotLoading(container, 10_000);
 
         // Switch away from review tab - use costs tab which is always available
         const costsTab = container.querySelector('[role="tab"][aria-controls*="costs"]');
@@ -646,17 +508,13 @@ EOF`,
         const reviewTab = container.querySelector('[role="tab"][aria-controls*="review"]');
         if (reviewTab) fireEvent.click(reviewTab);
 
-        // The expanded state should be restored (hunk should still be visible)
         await waitFor(
           () => {
-            const hunk = container.querySelector("[data-hunk-id]");
-            if (!hunk) throw new Error("Hunk not found after tab switch");
+            expect(getHunk(container)).not.toBeNull();
           },
           { timeout: 15_000 }
         );
-      } finally {
-        await cleanupView(view, cleanupDom);
-      }
+      });
     });
   }, 180_000);
 });
