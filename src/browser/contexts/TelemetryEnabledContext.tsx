@@ -33,15 +33,7 @@ export function TelemetryEnabledProvider({ children }: TelemetryEnabledProviderP
       .then((result) => {
         if (!cancelled) {
           // Link sharing is enabled unless user explicitly disabled telemetry
-          const enabled = !result.explicit;
-          console.log(
-            "[TelemetryEnabledContext] linkSharingEnabled =",
-            enabled,
-            "(explicit =",
-            result.explicit,
-            ")"
-          );
-          setLinkSharingEnabled(enabled);
+          setLinkSharingEnabled(!result.explicit);
         }
       })
       .catch((err) => {

@@ -390,7 +390,6 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
 
   // Don't render the share button if link sharing is disabled or still loading
   if (linkSharingEnabled !== true) {
-    console.log("[ShareMessagePopover] Hidden because linkSharingEnabled =", linkSharingEnabled);
     return null;
   }
 
