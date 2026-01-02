@@ -50,12 +50,14 @@ interface SignResult {
 /** Supported key types for signing */
 const SUPPORTED_KEY_TYPES = ["ed25519", "ecdsa"];
 
-/** Paths to check for signing keys, in order of preference */
-const KEY_PATHS = [
-  join(homedir(), ".mux", "message_signing_key"), // Explicit mux key (any supported type, symlink-friendly)
-  join(homedir(), ".ssh", "id_ed25519"), // SSH Ed25519
-  join(homedir(), ".ssh", "id_ecdsa"), // SSH ECDSA
-];
+/** Default paths to check for signing keys, in order of preference */
+export function getDefaultKeyPaths(): string[] {
+  return [
+    join(homedir(), ".mux", "message_signing_key"), // Explicit mux key (any supported type, symlink-friendly)
+    join(homedir(), ".ssh", "id_ed25519"), // SSH Ed25519
+    join(homedir(), ".ssh", "id_ecdsa"), // SSH ECDSA
+  ];
+}
 
 /**
  * Service for message signing (Ed25519 or ECDSA).
@@ -67,6 +69,11 @@ export class SigningService {
   private keyLoadError: string | null = null;
   private identityCache: IdentityStatus | null = null;
   private identityPromise: Promise<IdentityStatus> | null = null;
+  private readonly keyPaths: string[];
+
+  constructor(keyPaths?: string[]) {
+    this.keyPaths = keyPaths ?? getDefaultKeyPaths();
+  }
 
   /**
    * Load a signing keypair from disk using sshpk.
@@ -78,7 +85,7 @@ export class SigningService {
     if (this.keyLoadAttempted) return this.keyPair;
     this.keyLoadAttempted = true;
 
-    for (const keyPath of KEY_PATHS) {
+    for (const keyPath of this.keyPaths) {
       if (!existsSync(keyPath)) continue;
 
       try {

@@ -1,85 +1,118 @@
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import { SigningService } from "./signingService";
-import { mkdirSync, writeFileSync, rmSync, existsSync } from "fs";
-import { homedir } from "os";
+import { mkdirSync, rmSync } from "fs";
 import { join } from "path";
-import { generateKeyPairSync } from "crypto";
+import { execSync } from "child_process";
+import { tmpdir } from "os";
 
 describe("SigningService", () => {
-  const testKeyDir = join(homedir(), ".mux");
-  const testKeyPath = join(testKeyDir, "message_signing_key");
-  let keyCreated = false;
+  // Create isolated temp directory for each test run
+  const testDir = join(
+    tmpdir(),
+    `signing-test-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  );
+  const ed25519KeyPath = join(testDir, "id_ed25519");
+  const ecdsaKeyPath = join(testDir, "id_ecdsa");
 
   beforeAll(() => {
-    // Create a test Ed25519 key if none exists at the expected paths
-    const sshEd25519Path = join(homedir(), ".ssh", "id_ed25519");
-    const sshEcdsaPath = join(homedir(), ".ssh", "id_ecdsa");
-    if (!existsSync(testKeyPath) && !existsSync(sshEd25519Path) && !existsSync(sshEcdsaPath)) {
-      mkdirSync(testKeyDir, { recursive: true });
-      const { privateKey } = generateKeyPairSync("ed25519");
-      const pemKey = privateKey.export({ type: "pkcs8", format: "pem" });
-      writeFileSync(testKeyPath, pemKey, { mode: 0o600 });
-      keyCreated = true;
-    }
+    mkdirSync(testDir, { recursive: true });
+    // Generate keys using ssh-keygen (same format users would have)
+    execSync(`ssh-keygen -t ed25519 -f "${ed25519KeyPath}" -N "" -q`);
+    execSync(`ssh-keygen -t ecdsa -b 256 -f "${ecdsaKeyPath}" -N "" -q`);
   });
 
   afterAll(() => {
-    // Clean up only if we created the key
-    if (keyCreated && existsSync(testKeyPath)) {
-      rmSync(testKeyPath);
-      keyCreated = false;
-    }
+    rmSync(testDir, { recursive: true, force: true });
   });
 
-  it("should load Ed25519 key and return capabilities", async () => {
-    const service = new SigningService();
-    const capabilities = await service.getCapabilities();
+  describe("with Ed25519 key", () => {
+    it("should load key and return capabilities", async () => {
+      const service = new SigningService([ed25519KeyPath]);
+      const capabilities = await service.getCapabilities();
 
-    // publicKey being non-null means signing is available
-    expect(capabilities.publicKey).toBeDefined();
-    expect(capabilities.publicKey).toStartWith("ssh-ed25519 ");
-    // Identity fields: githubUser and email are either string or null
-    expect(capabilities.githubUser === null || typeof capabilities.githubUser === "string").toBe(
-      true
-    );
-    expect(capabilities.email === null || typeof capabilities.email === "string").toBe(true);
+      expect(capabilities.publicKey).toBeDefined();
+      expect(capabilities.publicKey).toStartWith("ssh-ed25519 ");
+    });
+
+    it("should sign content and return valid signature", async () => {
+      const service = new SigningService([ed25519KeyPath]);
+      const content = "# Hello World\n\nThis is test content.";
+      const result = await service.sign(content);
+
+      expect(result.signature).toBeDefined();
+      expect(result.signature.length).toBeGreaterThan(0);
+      expect(result.publicKey).toStartWith("ssh-ed25519 ");
+      // Ed25519 signatures are exactly 64 bytes
+      const sigBytes = Buffer.from(result.signature, "base64");
+      expect(sigBytes.length).toBe(64);
+    });
+
+    it("should return consistent public key across multiple calls", async () => {
+      const service = new SigningService([ed25519KeyPath]);
+      const caps1 = await service.getCapabilities();
+      const caps2 = await service.getCapabilities();
+      const signResult = await service.sign("test");
+
+      expect(caps1.publicKey).toBe(caps2.publicKey);
+      expect(caps1.publicKey).toBe(signResult.publicKey);
+    });
   });
 
-  it("should sign content and return valid signature", async () => {
-    const service = new SigningService();
-    const content = "# Hello World\n\nThis is test content.";
-    const result = await service.sign(content);
+  describe("with ECDSA key", () => {
+    it("should load key and return capabilities", async () => {
+      const service = new SigningService([ecdsaKeyPath]);
+      const capabilities = await service.getCapabilities();
 
-    expect(result.signature).toBeDefined();
-    expect(result.signature.length).toBeGreaterThan(0);
-    expect(result.publicKey).toStartWith("ssh-ed25519 ");
+      expect(capabilities.publicKey).toBeDefined();
+      expect(capabilities.publicKey).toStartWith("ecdsa-sha2-nistp256 ");
+    });
+
+    it("should sign content and return valid signature", async () => {
+      const service = new SigningService([ecdsaKeyPath]);
+      const content = "# Hello World\n\nThis is test content.";
+      const result = await service.sign(content);
+
+      expect(result.signature).toBeDefined();
+      expect(result.signature.length).toBeGreaterThan(0);
+      expect(result.publicKey).toStartWith("ecdsa-sha2-nistp256 ");
+      // ECDSA signatures are DER-encoded, typically 70-72 bytes for P-256
+      const sigBytes = Buffer.from(result.signature, "base64");
+      expect(sigBytes.length).toBeGreaterThanOrEqual(68);
+      expect(sigBytes.length).toBeLessThanOrEqual(74);
+    });
   });
 
-  it("should return consistent public key across multiple calls", async () => {
-    const service = new SigningService();
-    const caps1 = await service.getCapabilities();
-    const caps2 = await service.getCapabilities();
-    const signResult = await service.sign("test");
+  describe("with no key", () => {
+    it("should return null publicKey when no key exists", async () => {
+      const service = new SigningService(["/nonexistent/path/key"]);
+      const caps = await service.getCapabilities();
 
-    expect(caps1.publicKey).toBe(caps2.publicKey);
-    expect(caps1.publicKey).toBe(signResult.publicKey);
+      expect(caps.publicKey).toBeNull();
+      expect(caps.error).toBeDefined();
+    });
+
+    it("should throw when signing without a key", () => {
+      const service = new SigningService(["/nonexistent/path/key"]);
+
+      expect(() => service.sign("test")).toThrow();
+    });
   });
 
-  it("should produce 64-byte signature (86 chars base64)", async () => {
-    const service = new SigningService();
-    const result = await service.sign("test content");
-    // Base64 of 64 bytes = 86 chars (with padding or without trailing ==)
-    expect(result.signature.replace(/=+$/, "").length).toBeGreaterThanOrEqual(85);
-    expect(result.signature.replace(/=+$/, "").length).toBeLessThanOrEqual(88);
-  });
+  describe("key path priority", () => {
+    it("should use first available key in path order", async () => {
+      // ECDSA first, Ed25519 second - should pick ECDSA
+      const service = new SigningService([ecdsaKeyPath, ed25519KeyPath]);
+      const caps = await service.getCapabilities();
 
-  it("should return null publicKey when no key exists", async () => {
-    const service = new SigningService();
-    // Create a service that won't find any keys by checking non-existent paths
-    // We can't easily test this without mocking, but we can verify the structure
-    const caps = await service.getCapabilities();
-    // If we have a key (from setup), publicKey should be non-null
-    // This test mainly ensures the code path doesn't crash
-    expect(caps.publicKey === null || typeof caps.publicKey === "string").toBe(true);
+      expect(caps.publicKey).toStartWith("ecdsa-sha2-nistp256 ");
+    });
+
+    it("should skip missing paths and use next available", async () => {
+      // Nonexistent first, Ed25519 second - should pick Ed25519
+      const service = new SigningService(["/nonexistent/key", ed25519KeyPath]);
+      const caps = await service.getCapabilities();
+
+      expect(caps.publicKey).toStartWith("ssh-ed25519 ");
+    });
   });
 });
