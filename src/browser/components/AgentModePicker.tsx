@@ -18,6 +18,7 @@ import {
   KEYBINDS,
   matchNumberedKeybind,
 } from "@/browser/utils/ui/keybinds";
+import { sortAgentsStable } from "@/browser/utils/agents";
 
 interface AgentModePickerProps {
   className?: string;
@@ -166,19 +167,7 @@ const AgentHelpTooltip: React.FC = () => (
 );
 
 function resolveAgentOptions(agents: AgentDefinitionDescriptor[]): AgentOption[] {
-  return agents
-    .filter((entry) => entry.uiSelectable)
-    .map((entry) => ({
-      id: entry.id,
-      name: entry.name,
-      uiColor: entry.uiColor,
-      description: entry.description,
-      scope: entry.scope,
-      base: entry.base,
-      tools: entry.tools,
-      aiDefaults: entry.aiDefaults,
-      subagentRunnable: entry.subagentRunnable,
-    }));
+  return sortAgentsStable(agents.filter((entry) => entry.uiSelectable));
 }
 
 export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
