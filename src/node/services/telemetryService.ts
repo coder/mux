@@ -4,10 +4,10 @@
  * Sends telemetry events to PostHog from the main process (Node.js).
  * This avoids ad-blocker issues that affect browser-side telemetry.
  *
- * Telemetry can be disabled by setting the MUX_DISABLE_TELEMETRY=1 env var.
- * Telemetry is also disabled automatically in development and test contexts
- * (e.g., unpackaged Electron builds, NODE_ENV=test, CI, MUX_E2E=1) unless you
- * explicitly opt in via MUX_ENABLE_TELEMETRY_IN_DEV=1.
+ * Telemetry is enabled by default, including in development mode.
+ * It is automatically disabled in CI, test environments, and automation contexts
+ * (NODE_ENV=test, CI, MUX_E2E=1, JEST_WORKER_ID, etc.).
+ * Users can manually disable telemetry by setting MUX_DISABLE_TELEMETRY=1.
  *
  * Uses posthog-node which batches events and flushes asynchronously.
  */
@@ -90,26 +90,12 @@ export interface TelemetryEnablementContext {
 }
 
 export function shouldEnableTelemetry(context: TelemetryEnablementContext): boolean {
+  // Telemetry is disabled by explicit env vars, CI, or test environments
   if (isTelemetryDisabledByEnv(context.env)) {
     return false;
   }
 
-  const enableInDev = context.env.MUX_ENABLE_TELEMETRY_IN_DEV === "1";
-
-  if (context.isElectron) {
-    // In Electron, we treat all unpackaged builds as "development".
-    // Telemetry is only enabled by default in packaged builds.
-    if (context.isPackaged === true) {
-      return true;
-    }
-    return enableInDev;
-  }
-
-  // In non-Electron modes (e.g., `mux server`), treat NODE_ENV=development as "development".
-  if (context.env.NODE_ENV === "development") {
-    return enableInDev;
-  }
-
+  // Otherwise, telemetry is enabled (including dev mode)
   return true;
 }
 

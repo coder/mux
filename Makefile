@@ -25,10 +25,9 @@
 #   if dependencies are missing, not silently fall back to different behavior.
 #
 # Telemetry in Development:
-#   Telemetry is disabled by default in dev mode (MUX_DISABLE_TELEMETRY=1).
-#   To enable it (e.g., for testing PostHog experiments), set:
-#     MUX_ENABLE_TELEMETRY_IN_DEV=1 make dev
-#   This single env var is sufficient - no need to also set MUX_DISABLE_TELEMETRY=0.
+#   Telemetry is enabled by default in dev mode (same as production).
+#   It is automatically disabled in CI, test environments, and automation contexts.
+#   To manually disable telemetry, set MUX_DISABLE_TELEMETRY=1.
 
 # Use PATH-resolved bash for portability across different systems.
 # - Windows: /usr/bin/bash doesn't exist in Chocolatey's make environment or GitHub Actions
@@ -140,13 +139,13 @@ dev: node_modules/.installed build-main ## Start development server (Vite + node
 	@echo "Starting dev mode (3 watchers: nodemon for main process, esbuild for api, vite for renderer)..."
 	# On Windows, use npm run because bunx doesn't correctly pass arguments to concurrently
 	# https://github.com/oven-sh/bun/issues/18275
-	@MUX_DISABLE_TELEMETRY=$(if $(MUX_ENABLE_TELEMETRY_IN_DEV),,$(or $(MUX_DISABLE_TELEMETRY),1)) NODE_OPTIONS="--max-old-space-size=4096" npm x concurrently -k --raw \
+	@NODE_OPTIONS="--max-old-space-size=4096" npm x concurrently -k --raw \
 		"bun x nodemon --watch src --watch tsconfig.main.json --watch tsconfig.json --ext ts,tsx,json --ignore dist --ignore node_modules --exec node scripts/build-main-watch.js" \
 		"npx esbuild src/cli/api.ts $(ESBUILD_CLI_FLAGS) --watch" \
 		"vite"
 else
 dev: node_modules/.installed build-main build-preload ## Start development server (Vite + tsgo watcher for 10x faster type checking)
-	@MUX_DISABLE_TELEMETRY=$(if $(MUX_ENABLE_TELEMETRY_IN_DEV),,$(or $(MUX_DISABLE_TELEMETRY),1)) bun x concurrently -k \
+	@bun x concurrently -k \
 		"bun x concurrently \"$(TSGO) -w -p tsconfig.main.json\" \"bun x tsc-alias -w -p tsconfig.main.json\"" \
 		"bun x esbuild src/cli/api.ts $(ESBUILD_CLI_FLAGS) --watch" \
 		"vite"
@@ -160,7 +159,7 @@ dev-server: node_modules/.installed build-main ## Start server mode with hot rel
 	@echo ""
 	@echo "For remote access: make dev-server VITE_HOST=0.0.0.0 BACKEND_HOST=0.0.0.0"
 	@# On Windows, use npm run because bunx doesn't correctly pass arguments
-	@MUX_DISABLE_TELEMETRY=$(if $(MUX_ENABLE_TELEMETRY_IN_DEV),,$(or $(MUX_DISABLE_TELEMETRY),1)) npmx concurrently -k \
+	@npmx concurrently -k \
 		"npmx nodemon --watch src --watch tsconfig.main.json --watch tsconfig.json --ext ts,tsx,json --ignore dist --ignore node_modules --exec node scripts/build-main-watch.js" \
 		"npx esbuild src/cli/api.ts $(ESBUILD_CLI_FLAGS) --watch" \
 		"npmx nodemon --watch dist/cli/index.js --watch dist/cli/server.js --delay 500ms --exec \"node dist/cli/index.js server --host $(or $(BACKEND_HOST),localhost) --port $(or $(BACKEND_PORT),3000)\"" \
@@ -172,7 +171,7 @@ dev-server: node_modules/.installed build-main ## Start server mode with hot rel
 	@echo "  Frontend (with HMR):     http://$(or $(VITE_HOST),localhost):$(or $(VITE_PORT),5173)"
 	@echo ""
 	@echo "For remote access: make dev-server VITE_HOST=0.0.0.0 BACKEND_HOST=0.0.0.0"
-	@MUX_DISABLE_TELEMETRY=$(if $(MUX_ENABLE_TELEMETRY_IN_DEV),,$(or $(MUX_DISABLE_TELEMETRY),1)) bun x concurrently -k \
+	@bun x concurrently -k \
 		"bun x concurrently \"$(TSGO) -w -p tsconfig.main.json\" \"bun x tsc-alias -w -p tsconfig.main.json\"" \
 		"bun x esbuild src/cli/api.ts $(ESBUILD_CLI_FLAGS) --watch" \
 		"bun x nodemon --watch dist/cli/index.js --watch dist/cli/server.js --delay 500ms --exec 'NODE_ENV=development node dist/cli/index.js server --host $(or $(BACKEND_HOST),localhost) --port $(or $(BACKEND_PORT),3000)'" \
@@ -182,7 +181,7 @@ endif
 
 
 start: node_modules/.installed build-main build-preload build-static ## Build and start Electron app
-	@NODE_ENV=development MUX_DISABLE_TELEMETRY=$(if $(MUX_ENABLE_TELEMETRY_IN_DEV),,$(or $(MUX_DISABLE_TELEMETRY),1)) bunx electron --remote-debugging-port=9222 .
+	@NODE_ENV=development bunx electron --remote-debugging-port=9222 .
 
 ## Build targets (can run in parallel)
 build: node_modules/.installed src/version.ts build-renderer build-main build-preload build-icons build-static ## Build all targets
