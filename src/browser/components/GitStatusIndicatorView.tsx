@@ -57,6 +57,8 @@ export interface GitStatusIndicatorViewProps {
   // Base ref for divergence (shared with review panel)
   baseRef: string;
   onBaseChange: (value: string) => void;
+  /** Callback when the base selector popover open state changes */
+  onPopoverOpenChange?: (open: boolean) => void;
   /** When true, shows blue pulsing styling to indicate agent is working */
   isWorking?: boolean;
   /** When true, shows shimmer effect to indicate git status is refreshing */
@@ -82,6 +84,7 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
   onModeChange,
   baseRef,
   onBaseChange,
+  onPopoverOpenChange,
   isWorking = false,
   isRefreshing = false,
 }) => {
@@ -255,7 +258,11 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
 
         <div className="flex items-center gap-2">
           <span className="text-muted-light">Base:</span>
-          <BaseSelectorPopover value={baseRef} onChange={onBaseChange} />
+          <BaseSelectorPopover
+            value={baseRef}
+            onChange={onBaseChange}
+            onOpenChange={onPopoverOpenChange}
+          />
         </div>
 
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
@@ -359,6 +366,13 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
         className="bg-modal-bg text-foreground border-separator-light z-[10000] max-h-[400px] w-auto max-w-96 min-w-0 overflow-auto px-3 py-2 font-mono text-[11px] whitespace-pre shadow-[0_4px_12px_rgba(0,0,0,0.5)]"
         onPointerDownOutside={(e) => {
           // Prevent HoverCard from closing when interacting with portal content (e.g., BaseSelectorPopover)
+          const target = e.target as HTMLElement | null;
+          if (target?.closest("[data-radix-popper-content-wrapper]")) {
+            e.preventDefault();
+          }
+        }}
+        onFocusOutside={(e) => {
+          // Prevent HoverCard from closing when focus moves to portal content
           const target = e.target as HTMLElement | null;
           if (target?.closest("[data-radix-popper-content-wrapper]")) {
             e.preventDefault();

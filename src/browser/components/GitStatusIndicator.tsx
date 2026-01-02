@@ -29,6 +29,7 @@ export const GitStatusIndicator: React.FC<GitStatusIndicatorProps> = ({
   isWorking = false,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
+  const [isPopoverOpen, setIsPopoverOpen] = useState(false);
   const trimmedWorkspaceId = workspaceId.trim();
   const isRefreshing = useGitStatusRefreshing(trimmedWorkspaceId);
 
@@ -57,6 +58,18 @@ export const GitStatusIndicator: React.FC<GitStatusIndicatorProps> = ({
       setBaseRef(value);
     },
     [setBaseRef]
+  );
+
+  // Prevent HoverCard from closing while the base selector popover is open
+  const handleHoverCardOpenChange = useCallback(
+    (open: boolean) => {
+      // Don't close if the popover is open
+      if (!open && isPopoverOpen) {
+        return;
+      }
+      setIsOpen(open);
+    },
+    [isPopoverOpen]
   );
 
   const handleModeChange = useCallback(
@@ -89,10 +102,11 @@ export const GitStatusIndicator: React.FC<GitStatusIndicatorProps> = ({
       isLoading={isLoading}
       errorMessage={errorMessage}
       isOpen={isOpen}
-      onOpenChange={setIsOpen}
+      onOpenChange={handleHoverCardOpenChange}
       onModeChange={handleModeChange}
       baseRef={baseRef}
       onBaseChange={handleBaseChange}
+      onPopoverOpenChange={setIsPopoverOpen}
       isWorking={isWorking}
       isRefreshing={isRefreshing}
     />

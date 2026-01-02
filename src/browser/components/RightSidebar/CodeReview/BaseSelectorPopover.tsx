@@ -21,11 +21,22 @@ const BASE_SUGGESTIONS = [
 interface BaseSelectorPopoverProps {
   value: string;
   onChange: (value: string) => void;
+  onOpenChange?: (open: boolean) => void;
   className?: string;
 }
 
-export function BaseSelectorPopover({ value, onChange, className }: BaseSelectorPopoverProps) {
+export function BaseSelectorPopover({
+  value,
+  onChange,
+  onOpenChange,
+  className,
+}: BaseSelectorPopoverProps) {
   const [isOpen, setIsOpen] = useState(false);
+
+  const handleOpenChange = (open: boolean) => {
+    setIsOpen(open);
+    onOpenChange?.(open);
+  };
   const [inputValue, setInputValue] = useState(value);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -75,7 +86,7 @@ export function BaseSelectorPopover({ value, onChange, className }: BaseSelector
   const filteredSuggestions = BASE_SUGGESTIONS.filter((s) => s.toLowerCase().includes(searchLower));
 
   return (
-    <Popover open={isOpen} onOpenChange={setIsOpen} modal>
+    <Popover open={isOpen} onOpenChange={handleOpenChange} modal>
       <PopoverTrigger asChild>
         <button
           className={cn(
