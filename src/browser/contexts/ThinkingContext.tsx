@@ -1,6 +1,5 @@
 import type { ReactNode } from "react";
 import React, { createContext, useContext, useEffect, useMemo, useCallback } from "react";
-import type { UIMode } from "@/common/types/mode";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import {
   readPersistedState,
@@ -11,7 +10,6 @@ import {
   getAgentIdKey,
   getModelKey,
   getProjectScopeId,
-  getModeKey,
   getThinkingLevelByModelKey,
   getThinkingLevelKey,
   getWorkspaceAISettingsByModeKey,
@@ -91,12 +89,7 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
         Record<string, { model: string; thinkingLevel: ThinkingLevel }>
       >;
 
-      const mode = readPersistedState<UIMode>(getModeKey(scopeId), "exec");
-      const rawAgentId = readPersistedState<string | undefined>(getAgentIdKey(scopeId), undefined);
-      const agentId =
-        typeof rawAgentId === "string" && rawAgentId.trim().length > 0
-          ? rawAgentId.trim().toLowerCase()
-          : mode;
+      const agentId = readPersistedState<string>(getAgentIdKey(scopeId), "exec");
 
       updatePersistedState<WorkspaceAISettingsByModeCache>(
         getWorkspaceAISettingsByModeKey(props.workspaceId),
@@ -111,16 +104,16 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
         {}
       );
 
-      // Only persist when the active agent matches the base mode so custom-agent overrides
+      // Only persist when the active agent is a base mode (exec/plan) so custom-agent overrides
       // don't clobber exec/plan defaults that other agents inherit.
-      if (!api || agentId !== mode) {
+      if (!api || (agentId !== "exec" && agentId !== "plan")) {
         return;
       }
 
       api.workspace
         .updateModeAISettings({
           workspaceId: props.workspaceId,
-          mode,
+          mode: agentId,
           aiSettings: { model, thinkingLevel: effective },
         })
         .catch(() => {

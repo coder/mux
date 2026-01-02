@@ -115,7 +115,7 @@ describe("buildContinueMessage", () => {
   test("returns undefined when no content provided", () => {
     const result = buildContinueMessage({
       model: "anthropic:claude-3-5-sonnet",
-      mode: "exec",
+      agentId: "exec",
     });
     expect(result).toBeUndefined();
   });
@@ -124,7 +124,7 @@ describe("buildContinueMessage", () => {
     const result = buildContinueMessage({
       text: "",
       model: "anthropic:claude-3-5-sonnet",
-      mode: "exec",
+      agentId: "exec",
     });
     expect(result).toBeUndefined();
   });
@@ -133,24 +133,24 @@ describe("buildContinueMessage", () => {
     const result = buildContinueMessage({
       text: "Continue with this",
       model: "anthropic:claude-3-5-sonnet",
-      mode: "exec",
+      agentId: "exec",
     });
     expect(result).toBeDefined();
     expect(result?.text).toBe("Continue with this");
     expect(result?.model).toBe("anthropic:claude-3-5-sonnet");
-    expect(result?.mode).toBe("exec");
+    expect(result?.agentId).toBe("exec");
   });
 
   test("returns message when only images provided", () => {
     const result = buildContinueMessage({
       imageParts: [{ url: "data:image/png;base64,abc", mediaType: "image/png" }],
       model: "anthropic:claude-3-5-sonnet",
-      mode: "plan",
+      agentId: "plan",
     });
     expect(result).toBeDefined();
     expect(result?.text).toBe("");
     expect(result?.imageParts).toHaveLength(1);
-    expect(result?.mode).toBe("plan");
+    expect(result?.agentId).toBe("plan");
   });
 
   test("returns message when only reviews provided", () => {
@@ -165,7 +165,7 @@ describe("buildContinueMessage", () => {
     const result = buildContinueMessage({
       reviews,
       model: "anthropic:claude-3-5-sonnet",
-      mode: "exec",
+      agentId: "exec",
     });
     expect(result).toBeDefined();
     expect(result?.text).toBe("");
@@ -184,7 +184,7 @@ describe("buildContinueMessage", () => {
       imageParts,
       reviews,
       model: "anthropic:claude-3-5-sonnet",
-      mode: "plan",
+      agentId: "plan",
     });
 
     expect(result).toBeDefined();
@@ -192,7 +192,7 @@ describe("buildContinueMessage", () => {
     expect(result?.imageParts).toHaveLength(1);
     expect(result?.reviews).toHaveLength(1);
     expect(result?.model).toBe("anthropic:claude-3-5-sonnet");
-    expect(result?.mode).toBe("plan");
+    expect(result?.agentId).toBe("plan");
   });
 });
 
@@ -201,7 +201,7 @@ describe("prepareCompactionMessage", () => {
     model: "anthropic:claude-3-5-sonnet",
     thinkingLevel: "medium",
     toolPolicy: [],
-    mode: "exec",
+    agentId: "exec",
   });
 
   test("passes through continueMessage as-is (caller should use buildContinueMessage)", () => {
@@ -209,7 +209,7 @@ describe("prepareCompactionMessage", () => {
     const continueMessage = buildContinueMessage({
       text: "Keep building",
       model: sendMessageOptions.model,
-      mode: "exec",
+      agentId: "exec",
     });
 
     const { metadata } = prepareCompactionMessage({
@@ -227,7 +227,7 @@ describe("prepareCompactionMessage", () => {
 
     // Model should be exactly what was passed in continueMessage
     expect(metadata.parsed.continueMessage?.model).toBe(sendMessageOptions.model);
-    expect(metadata.parsed.continueMessage?.mode).toBe("exec");
+    expect(metadata.parsed.continueMessage?.agentId).toBe("exec");
   });
 
   test("does not create continueMessage when no text or images provided", () => {
@@ -253,7 +253,7 @@ describe("prepareCompactionMessage", () => {
       continueMessage: buildContinueMessage({
         text: "Continue with this",
         model: sendMessageOptions.model,
-        mode: "exec",
+        agentId: "exec",
       }),
       sendMessageOptions,
     });
@@ -275,7 +275,7 @@ describe("prepareCompactionMessage", () => {
       continueMessage: buildContinueMessage({
         text: "Line 1\nLine 2",
         model: sendMessageOptions.model,
-        mode: "exec",
+        agentId: "exec",
       }),
       sendMessageOptions,
     });
@@ -296,7 +296,7 @@ describe("prepareCompactionMessage", () => {
       continueMessage: buildContinueMessage({
         text: "Continue",
         model: sendMessageOptions.model,
-        mode: "exec",
+        agentId: "exec",
       }),
       sendMessageOptions,
     });
@@ -318,7 +318,7 @@ describe("prepareCompactionMessage", () => {
       continueMessage: buildContinueMessage({
         text: "fix tests",
         model: sendMessageOptions.model,
-        mode: "exec",
+        agentId: "exec",
       }),
       sendMessageOptions,
     });
@@ -333,7 +333,7 @@ describe("prepareCompactionMessage", () => {
       continueMessage: buildContinueMessage({
         imageParts: [{ url: "data:image/png;base64,abc", mediaType: "image/png" }],
         model: sendMessageOptions.model,
-        mode: "exec",
+        agentId: "exec",
       }),
       sendMessageOptions,
     });
@@ -360,7 +360,7 @@ describe("prepareCompactionMessage", () => {
           },
         ],
         model: sendMessageOptions.model,
-        mode: "exec",
+        agentId: "exec",
       }),
       sendMessageOptions,
     });
@@ -389,7 +389,7 @@ describe("prepareCompactionMessage", () => {
           },
         ],
         model: sendMessageOptions.model,
-        mode: "exec",
+        agentId: "exec",
       }),
       sendMessageOptions,
     });
@@ -418,7 +418,7 @@ describe("prepareCompactionMessage", () => {
           },
         ],
         model: sendMessageOptions.model,
-        mode: "exec",
+        agentId: "exec",
       }),
       sendMessageOptions,
     });
@@ -459,7 +459,7 @@ describe("handlePlanShowCommand", () => {
         model: "anthropic:claude-3-5-sonnet",
         thinkingLevel: "off",
         toolPolicy: [],
-        mode: "exec",
+        agentId: "exec",
       },
       setImageAttachments: mock(() => undefined),
       setIsSending: mock(() => undefined),
@@ -528,7 +528,7 @@ describe("handlePlanOpenCommand", () => {
         model: "anthropic:claude-3-5-sonnet",
         thinkingLevel: "off",
         toolPolicy: [],
-        mode: "exec",
+        agentId: "exec",
       },
       setImageAttachments: mock(() => undefined),
       setIsSending: mock(() => undefined),
@@ -625,7 +625,7 @@ describe("handleCompactCommand", () => {
         model: "anthropic:claude-3-5-sonnet",
         thinkingLevel: "off",
         toolPolicy: [],
-        mode: "exec",
+        agentId: "exec",
       },
     };
   };

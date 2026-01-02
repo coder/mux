@@ -14,7 +14,7 @@ describe("buildContinueMessage", () => {
   test("returns undefined when no content provided", () => {
     const result = buildContinueMessage({
       model: "test-model",
-      mode: "exec",
+      agentId: "exec",
     });
     expect(result).toBeUndefined();
   });
@@ -23,7 +23,7 @@ describe("buildContinueMessage", () => {
     const result = buildContinueMessage({
       text: "",
       model: "test-model",
-      mode: "exec",
+      agentId: "exec",
     });
     expect(result).toBeUndefined();
   });
@@ -32,12 +32,12 @@ describe("buildContinueMessage", () => {
     const result = buildContinueMessage({
       text: "hello",
       model: "test-model",
-      mode: "exec",
+      agentId: "exec",
     });
     // Check individual fields instead of toEqual (branded type can't be matched with plain object)
     expect(result?.text).toBe("hello");
     expect(result?.model).toBe("test-model");
-    expect(result?.mode).toBe("exec");
+    expect(result?.agentId).toBe("exec");
     expect(result?.imageParts).toBeUndefined();
     expect(result?.reviews).toBeUndefined();
   });
@@ -46,18 +46,18 @@ describe("buildContinueMessage", () => {
     const result = buildContinueMessage({
       imageParts: [{ url: "data:image/png;base64,abc", mediaType: "image/png" }],
       model: "test-model",
-      mode: "plan",
+      agentId: "plan",
     });
     expect(result?.imageParts?.length).toBe(1);
     expect(result?.text).toBe("");
-    expect(result?.mode).toBe("plan");
+    expect(result?.agentId).toBe("plan");
   });
 
   test("returns message when only reviews provided", () => {
     const result = buildContinueMessage({
       reviews: [makeReview("a.ts")],
       model: "test-model",
-      mode: "exec",
+      agentId: "exec",
     });
     expect(result?.reviews?.length).toBe(1);
     expect(result?.text).toBe("");
@@ -66,40 +66,40 @@ describe("buildContinueMessage", () => {
 
 describe("rebuildContinueMessage", () => {
   test("returns undefined when persisted is undefined", () => {
-    const result = rebuildContinueMessage(undefined, { model: "default", mode: "exec" });
+    const result = rebuildContinueMessage(undefined, { model: "default", agentId: "exec" });
     expect(result).toBeUndefined();
   });
 
   test("returns undefined when persisted has no content", () => {
-    const result = rebuildContinueMessage({}, { model: "default", mode: "exec" });
+    const result = rebuildContinueMessage({}, { model: "default", agentId: "exec" });
     expect(result).toBeUndefined();
   });
 
   test("uses persisted values when available", () => {
     const result = rebuildContinueMessage(
-      { text: "continue", model: "persisted-model", mode: "plan" },
-      { model: "default", mode: "exec" }
+      { text: "continue", model: "persisted-model", agentId: "plan" },
+      { model: "default", agentId: "exec" }
     );
     expect(result?.text).toBe("continue");
     expect(result?.model).toBe("persisted-model");
-    expect(result?.mode).toBe("plan");
+    expect(result?.agentId).toBe("plan");
   });
 
   test("uses defaults when persisted values missing", () => {
     const result = rebuildContinueMessage(
       { text: "continue" },
-      { model: "default-model", mode: "plan" }
+      { model: "default-model", agentId: "plan" }
     );
     expect(result?.text).toBe("continue");
     expect(result?.model).toBe("default-model");
-    expect(result?.mode).toBe("plan");
+    expect(result?.agentId).toBe("plan");
   });
 
   test("preserves reviews from persisted data", () => {
     const review = makeReview("a.ts");
     const result = rebuildContinueMessage(
       { text: "review this", reviews: [review] },
-      { model: "m", mode: "exec" }
+      { model: "m", agentId: "exec" }
     );
     expect(result?.reviews?.length).toBe(1);
     expect(result?.reviews?.[0].filePath).toBe("a.ts");
@@ -111,7 +111,7 @@ describe("rebuildContinueMessage", () => {
         text: "with image",
         imageParts: [{ url: "data:image/png;base64,xyz", mediaType: "image/png" }],
       },
-      { model: "m", mode: "exec" }
+      { model: "m", agentId: "exec" }
     );
     expect(result?.imageParts?.length).toBe(1);
   });

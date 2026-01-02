@@ -10,14 +10,12 @@ import {
   type SetStateAction,
 } from "react";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import type { UIMode } from "@/common/types/mode";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import {
   deleteWorkspaceStorage,
   getAgentIdKey,
-  getModeKey,
   getModelKey,
   getThinkingLevelKey,
   getWorkspaceAISettingsByModeKey,
@@ -42,8 +40,9 @@ import { useRouter } from "@/browser/contexts/RouterContext";
  * This keeps a workspace's model/thinking consistent across devices/browsers.
  */
 function seedWorkspaceLocalStorageFromBackend(metadata: FrontendWorkspaceMetadata): void {
+  // Cache keyed by agentId (string) - includes exec, plan, and custom agents
   type WorkspaceAISettingsByModeCache = Partial<
-    Record<UIMode, { model: string; thinkingLevel: ThinkingLevel }>
+    Record<string, { model: string; thinkingLevel: ThinkingLevel }>
   >;
 
   const workspaceId = metadata.id;
@@ -93,9 +92,9 @@ function seedWorkspaceLocalStorageFromBackend(metadata: FrontendWorkspaceMetadat
     updatePersistedState(byModeKey, nextByMode);
   }
 
-  // Seed the active mode into the existing keys to avoid UI flash.
-  const activeMode = readPersistedState<UIMode>(getModeKey(workspaceId), "exec");
-  const active = nextByMode[activeMode] ?? nextByMode.exec ?? nextByMode.plan;
+  // Seed the active agent into the existing keys to avoid UI flash.
+  const activeAgentId = readPersistedState<string>(getAgentIdKey(workspaceId), "exec");
+  const active = nextByMode[activeAgentId] ?? nextByMode.exec ?? nextByMode.plan;
   if (!active) {
     return;
   }

@@ -37,8 +37,8 @@ declare const ContinueMessageBrand: unique symbol;
  */
 export type ContinueMessage = UserMessageContent & {
   model?: string;
-  /** Mode for the continue message (determines tool policy). Defaults to 'exec'. */
-  mode?: "exec" | "plan";
+  /** Agent ID for the continue message (determines tool policy via agent definitions). Defaults to 'exec'. */
+  agentId?: string;
   /** Brand marker - not present at runtime, enforces factory usage at compile time */
   readonly [ContinueMessageBrand]: true;
 };
@@ -52,7 +52,7 @@ export interface BuildContinueMessageOptions {
   imageParts?: ImagePart[];
   reviews?: ReviewNoteDataForDisplay[];
   model: string;
-  mode: "exec" | "plan";
+  agentId: string;
 }
 
 /**
@@ -76,7 +76,7 @@ export function buildContinueMessage(
     imageParts: opts.imageParts,
     reviews: opts.reviews,
     model: opts.model,
-    mode: opts.mode,
+    agentId: opts.agentId,
   } as ContinueMessage;
   return result;
 }
@@ -98,7 +98,7 @@ export type PersistedContinueMessage = Partial<Omit<ContinueMessage, typeof Cont
  */
 export function rebuildContinueMessage(
   persisted: PersistedContinueMessage | undefined,
-  defaults: { model: string; mode: "exec" | "plan" }
+  defaults: { model: string; agentId: string }
 ): ContinueMessage | undefined {
   if (!persisted) return undefined;
 
@@ -107,7 +107,7 @@ export function rebuildContinueMessage(
     imageParts: persisted.imageParts,
     reviews: persisted.reviews,
     model: persisted.model ?? defaults.model,
-    mode: persisted.mode ?? defaults.mode,
+    agentId: persisted.agentId ?? defaults.agentId,
   });
 }
 

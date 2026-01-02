@@ -3,15 +3,12 @@ import {
   getModelKey,
   getThinkingLevelByModelKey,
   getThinkingLevelKey,
-  getModeKey,
   getDisableWorkspaceAgentsKey,
 } from "@/common/constants/storage";
-import { modeToToolPolicy } from "@/common/utils/ui/modeUtils";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import { toGatewayModel, migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
 import type { SendMessageOptions } from "@/common/orpc/types";
-import type { UIMode } from "@/common/types/mode";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
@@ -66,15 +63,12 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
     updatePersistedState<ThinkingLevel>(scopedKey, thinkingLevel);
   }
 
-  // Read mode (workspace-specific)
-  const mode = readPersistedState<UIMode>(getModeKey(workspaceId), WORKSPACE_DEFAULTS.mode);
+  // Read selected agent id (workspace-specific)
+  const agentId = readPersistedState<string>(getAgentIdKey(workspaceId), WORKSPACE_DEFAULTS.mode);
 
-  // Read selected agent id (workspace-specific). If missing, fall back to the legacy mode key.
-  const rawAgentId = readPersistedState<string | undefined>(getAgentIdKey(workspaceId), undefined);
-  const agentId =
-    typeof rawAgentId === "string" && rawAgentId.trim().length > 0
-      ? rawAgentId.trim().toLowerCase()
-      : mode;
+  // Derive mode from agentId (plan agent → plan mode, everything else → exec mode)
+  // Used by backend for AI settings persistence and compaction detection
+  const mode = agentId === "plan" ? "plan" : "exec";
 
   // Get provider options
   const providerOptions = getProviderOptions();
@@ -93,9 +87,9 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
   return {
     model,
     agentId,
-    mode: mode === "exec" || mode === "plan" ? mode : "exec", // Only pass exec/plan to backend
+    mode,
     thinkingLevel: effectiveThinkingLevel,
-    toolPolicy: modeToToolPolicy(mode),
+    // toolPolicy is computed by backend from agent definitions (resolveToolPolicyForAgent)
     providerOptions,
     disableWorkspaceAgents: disableWorkspaceAgents || undefined, // Only include if true
     experiments: {

@@ -36,7 +36,7 @@ import {
 } from "@/common/orpc/types";
 import { defaultModel } from "@/common/utils/ai/models";
 import { ensureProvidersConfig } from "@/common/utils/providers/ensureProvidersConfig";
-import { modeToToolPolicy } from "@/common/utils/ui/modeUtils";
+
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { parseRuntimeModeAndHost, RUNTIME_MODE } from "@/common/types/runtime";
@@ -375,7 +375,7 @@ async function main(): Promise<void> {
     model,
     thinkingLevel,
     mode: cliMode,
-    toolPolicy: modeToToolPolicy(cliMode),
+    // toolPolicy is computed by backend from agent definitions (resolveToolPolicyForAgent)
     // Plan mode instructions are handled by the backend (has access to plan file path)
   });
 

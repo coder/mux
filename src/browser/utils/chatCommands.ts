@@ -886,7 +886,7 @@ export async function handleCompactCommand(
         imageParts: context.imageParts,
         reviews: context.reviews,
         model: sendMessageOptions.model,
-        mode: sendMessageOptions.mode === "plan" ? "plan" : "exec",
+        agentId: sendMessageOptions.agentId ?? "exec",
       }),
       model: parsed.model,
       sendMessageOptions,

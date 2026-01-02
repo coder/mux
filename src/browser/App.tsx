@@ -29,14 +29,13 @@ import { ThemeProvider, useTheme, type ThemeMode } from "./contexts/ThemeContext
 import { CommandPalette } from "./components/CommandPalette";
 import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sources";
 
-import type { UIMode } from "@/common/types/mode";
 import type { ThinkingLevel } from "@/common/types/thinking";
+import type { UIMode } from "@/common/types/mode";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { isWorkspaceForkSwitchEvent } from "./utils/workspaceEvents";
 import {
   EXPANDED_PROJECTS_KEY,
   getAgentIdKey,
-  getModeKey,
   getModelKey,
   getThinkingLevelByModelKey,
   getThinkingLevelKey,
@@ -331,15 +330,9 @@ function AppInner() {
         Record<string, { model: string; thinkingLevel: ThinkingLevel }>
       >;
 
-      const mode = readPersistedState<UIMode>(getModeKey(workspaceId), "exec");
-      const rawAgentId = readPersistedState<string | undefined>(
-        getAgentIdKey(workspaceId),
-        undefined
-      );
-      const agentId =
-        typeof rawAgentId === "string" && rawAgentId.trim().length > 0
-          ? rawAgentId.trim().toLowerCase()
-          : mode;
+      const agentId = readPersistedState<string>(getAgentIdKey(workspaceId), "exec");
+      // Derive mode from agentId (plan agent → plan mode, everything else → exec mode)
+      const mode: UIMode = agentId === "plan" ? "plan" : "exec";
 
       updatePersistedState<WorkspaceAISettingsByModeCache>(
         getWorkspaceAISettingsByModeKey(workspaceId),

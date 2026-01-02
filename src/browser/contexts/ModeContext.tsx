@@ -11,16 +11,11 @@ import React, {
 
 import { useAPI } from "@/browser/contexts/API";
 import { AgentProvider } from "@/browser/contexts/AgentContext";
-import {
-  readPersistedState,
-  updatePersistedState,
-  usePersistedState,
-} from "@/browser/hooks/usePersistedState";
+import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { matchesKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import {
   getAgentIdKey,
-  getModeKey,
   getProjectScopeId,
   getDisableWorkspaceAgentsKey,
   GLOBAL_SCOPE_ID,
@@ -58,9 +53,7 @@ export const ModeProvider: React.FC<ModeProviderProps> = (props) => {
   // Priority: workspace-scoped > project-scoped > global
   const scopeId = getScopeId(props.workspaceId, props.projectPath);
 
-  const legacyMode = readPersistedState<UIMode>(getModeKey(scopeId), "exec");
-
-  const [agentId, setAgentIdRaw] = usePersistedState<string>(getAgentIdKey(scopeId), legacyMode, {
+  const [agentId, setAgentIdRaw] = usePersistedState<string>(getAgentIdKey(scopeId), "exec", {
     listener: true,
   });
 
@@ -173,15 +166,6 @@ export const ModeProvider: React.FC<ModeProviderProps> = (props) => {
 
   const mode = useMemo(() => resolveModeFromAgentId(agentId), [agentId]);
 
-  // Keep legacy mode key in sync so older code paths (and downgrade clients) behave consistently.
-  useEffect(() => {
-    const modeKey = getModeKey(scopeId);
-    const existing = readPersistedState<UIMode>(modeKey, "exec");
-    if (existing !== mode) {
-      updatePersistedState(modeKey, mode);
-    }
-  }, [mode, scopeId]);
-
   const setMode = useCallback(
     (nextMode: UIMode) => {
       setAgentId(nextMode);
@@ -227,10 +211,15 @@ export const ModeProvider: React.FC<ModeProviderProps> = (props) => {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [cycleToNextAgent]);
 
+  // Find current agent descriptor - undefined until agents load
+  const normalizedAgentId = coerceAgentId(agentId);
+  const currentAgent = loaded ? agents.find((a) => a.id === normalizedAgentId) : undefined;
+
   const agentContextValue = useMemo(
     () => ({
-      agentId: coerceAgentId(agentId),
+      agentId: normalizedAgentId,
       setAgentId,
+      currentAgent,
       agents,
       loaded,
       loadFailed,
@@ -240,7 +229,8 @@ export const ModeProvider: React.FC<ModeProviderProps> = (props) => {
       setDisableWorkspaceAgents,
     }),
     [
-      agentId,
+      normalizedAgentId,
+      currentAgent,
       agents,
       loaded,
       loadFailed,

@@ -4,7 +4,6 @@ import { useAgent } from "@/browser/contexts/AgentContext";
 import { usePersistedState } from "./usePersistedState";
 import { getDefaultModel } from "./useModelsFromSettings";
 import { migrateGatewayModel, useGateway, isProviderSupported } from "./useGatewayModels";
-import { modeToToolPolicy } from "@/common/utils/ui/modeUtils";
 import { getModelKey } from "@/common/constants/storage";
 import type { SendMessageOptions } from "@/common/orpc/types";
 import type { UIMode } from "@/common/types/mode";
@@ -75,7 +74,7 @@ function constructSendMessageOptions(
     model,
     agentId,
     mode: mode === "exec" || mode === "plan" ? mode : "exec", // Only pass exec/plan to backend
-    toolPolicy: modeToToolPolicy(mode),
+    // toolPolicy is computed by backend from agent definitions (resolveToolPolicyForAgent)
     providerOptions,
     experiments: {
       postCompactionContext: experimentValues.postCompactionContext,

@@ -160,10 +160,6 @@ export function getPinnedAgentIdKey(scopeId: string): string {
 export function getDisableWorkspaceAgentsKey(scopeId: string): string {
   return `disableWorkspaceAgents:${scopeId}`;
 }
-export function getModeKey(workspaceId: string): string {
-  return `mode:${workspaceId}`;
-}
-
 /**
  * Get the localStorage key for the default runtime for a project
  * Defaults to worktree if not set; can only be changed via the "Default for project" checkbox.
@@ -411,7 +407,6 @@ const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string>
   getInputImagesKey,
   getAgentIdKey,
   getPinnedAgentIdKey,
-  getModeKey,
   getThinkingLevelKey,
   getAutoRetryKey,
   getRetryStateKey,

@@ -181,7 +181,7 @@ export function useResumeManager() {
             maxOutputTokens: lastUserMsg.compactionRequest.parsed.maxOutputTokens,
             continueMessage: rebuildContinueMessage(
               lastUserMsg.compactionRequest.parsed.continueMessage,
-              { model: options.model, mode: "exec" }
+              { model: options.model, agentId: options.agentId ?? "exec" }
             ),
           });
         }

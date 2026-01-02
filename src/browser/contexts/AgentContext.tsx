@@ -6,6 +6,8 @@ import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 export interface AgentContextValue {
   agentId: string;
   setAgentId: Dispatch<SetStateAction<string>>;
+  /** The current agent's descriptor, or undefined if agents haven't loaded yet */
+  currentAgent: AgentDefinitionDescriptor | undefined;
   agents: AgentDefinitionDescriptor[];
   loaded: boolean;
   loadFailed: boolean;

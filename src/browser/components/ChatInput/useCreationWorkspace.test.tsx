@@ -1,10 +1,10 @@
 import type { APIClient } from "@/browser/contexts/API";
 import type { DraftWorkspaceSettings } from "@/browser/hooks/useDraftWorkspaceSettings";
 import {
+  getAgentIdKey,
   getInputKey,
   getInputImagesKey,
   getModelKey,
-  getModeKey,
   getPendingScopeId,
   getProjectScopeId,
   getThinkingLevelKey,
@@ -430,7 +430,7 @@ describe("useCreationWorkspace", () => {
       nameGeneration: nameGenerationMock,
     });
 
-    persistedPreferences[getModeKey(getProjectScopeId(TEST_PROJECT_PATH))] = "plan";
+    persistedPreferences[getAgentIdKey(getProjectScopeId(TEST_PROJECT_PATH))] = "plan";
     // Set model preference for the project scope (read by getSendOptionsFromStorage)
     persistedPreferences[getModelKey(getProjectScopeId(TEST_PROJECT_PATH))] = "gpt-4";
 
@@ -485,14 +485,9 @@ describe("useCreationWorkspace", () => {
     await waitFor(() => expect(onWorkspaceCreated.mock.calls.length).toBe(1));
     expect(onWorkspaceCreated.mock.calls[0][0]).toEqual(TEST_METADATA);
 
-    const projectModeKey = getModeKey(getProjectScopeId(TEST_PROJECT_PATH));
-    expect(readPersistedStateCalls).toContainEqual([projectModeKey, null]);
-
-    const modeKey = getModeKey(TEST_WORKSPACE_ID);
     const pendingScopeId = getPendingScopeId(TEST_PROJECT_PATH);
     const pendingInputKey = getInputKey(pendingScopeId);
     const pendingImagesKey = getInputImagesKey(pendingScopeId);
-    expect(updatePersistedStateCalls).toContainEqual([modeKey, "plan"]);
     // Thinking is workspace-scoped, but this test doesn't set a project-scoped thinking preference.
     expect(updatePersistedStateCalls).toContainEqual([pendingInputKey, ""]);
     expect(updatePersistedStateCalls).toContainEqual([pendingImagesKey, undefined]);

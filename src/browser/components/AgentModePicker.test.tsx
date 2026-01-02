@@ -48,6 +48,7 @@ const noop = () => {
   // intentional noop for tests
 };
 const defaultContextProps = {
+  currentAgent: undefined,
   disableWorkspaceAgents: false,
   setDisableWorkspaceAgents: noop,
 };

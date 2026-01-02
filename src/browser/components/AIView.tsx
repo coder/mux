@@ -229,7 +229,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
       continueMessage: buildContinueMessage({
         text: "Continue",
         model: pendingSendOptions.model,
-        mode: pendingSendOptions.mode === "plan" ? "plan" : "exec",
+        agentId: pendingSendOptions.agentId ?? "exec",
       }),
     });
   }, [api, workspaceId, pendingSendOptions]);

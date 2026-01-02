@@ -7,25 +7,7 @@ import React, { useRef, useState, useLayoutEffect, useEffect } from "react";
 import { Loader2 } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
-import type { UIMode } from "@/common/types/mode";
 import type { VoiceInputState } from "@/browser/hooks/useVoiceInput";
-
-/** Canvas fill colors for the waveform (slightly lighter than CSS vars for visibility) */
-const MODE_COLORS: Record<UIMode, string> = {
-  plan: "hsl(210, 70%, 55%)",
-  exec: "hsl(268, 94%, 65%)",
-};
-
-/** Tailwind classes for recording state, keyed by mode */
-const RECORDING_CLASSES: Record<UIMode, string> = {
-  plan: "cursor-pointer border-plan-mode bg-plan-mode/10",
-  exec: "cursor-pointer border-exec-mode bg-exec-mode/10",
-};
-
-const TEXT_CLASSES: Record<UIMode, string> = {
-  plan: "text-plan-mode-light",
-  exec: "text-exec-mode-light",
-};
 
 // Waveform shows last 10 seconds of audio, sampled every 50ms (200 samples)
 const WINDOW_DURATION_MS = 10_000;
@@ -38,7 +20,8 @@ const RENDER_INTERVAL_MS = 1000 / 60;
 
 interface RecordingOverlayProps {
   state: VoiceInputState;
-  mode: UIMode;
+  /** CSS color value for agent (e.g., "var(--color-exec-mode)") */
+  agentColor: string;
   mediaRecorder: MediaRecorder | null;
   onStop: () => void;
 }
@@ -47,13 +30,15 @@ export const RecordingOverlay: React.FC<RecordingOverlayProps> = (props) => {
   const isRecording = props.state === "recording";
   const isRequesting = props.state === "requesting";
 
-  const containerClasses = cn(
-    "mb-1 flex w-full flex-col items-center justify-center gap-1 rounded-md border px-3 py-2 transition-all focus:outline-none",
-    isRecording ? RECORDING_CLASSES[props.mode] : "cursor-wait border-amber-500 bg-amber-500/10"
-  );
-
   // Status text for non-recording states
   const statusText = isRequesting ? "Requesting microphone..." : "Transcribing...";
+
+  // For recording state, we use inline styles with the agent color
+  // For other states (requesting/transcribing), use amber classes
+  const containerClasses = cn(
+    "mb-1 flex w-full flex-col items-center justify-center gap-1 rounded-md border px-3 py-2 transition-all focus:outline-none",
+    isRecording ? "cursor-pointer" : "cursor-wait border-amber-500 bg-amber-500/10"
+  );
 
   return (
     <button
@@ -62,12 +47,20 @@ export const RecordingOverlay: React.FC<RecordingOverlayProps> = (props) => {
       disabled={!isRecording}
       className={containerClasses}
       aria-label={isRecording ? "Stop recording" : statusText}
+      style={
+        isRecording
+          ? {
+              borderColor: props.agentColor,
+              backgroundColor: `color-mix(in srgb, ${props.agentColor}, transparent 90%)`,
+            }
+          : undefined
+      }
     >
       <div className="flex h-8 w-full items-center justify-center">
         {isRecording && props.mediaRecorder ? (
           <SlidingWaveform
             mediaRecorder={props.mediaRecorder}
-            color={MODE_COLORS[props.mode]}
+            color={props.agentColor}
             height={32}
           />
         ) : (
@@ -76,12 +69,14 @@ export const RecordingOverlay: React.FC<RecordingOverlayProps> = (props) => {
       </div>
 
       <span
-        className={cn(
-          "text-xs font-medium",
-          isRecording ? TEXT_CLASSES[props.mode] : "text-amber-500"
-        )}
+        className="text-xs font-medium"
+        style={isRecording ? { color: props.agentColor } : undefined}
       >
-        {isRecording ? <RecordingHints /> : statusText}
+        {isRecording ? (
+          <RecordingHints />
+        ) : (
+          <span className="text-amber-500">{statusText}</span>
+        )}
       </span>
     </button>
   );

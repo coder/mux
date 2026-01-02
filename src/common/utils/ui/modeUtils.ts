@@ -1,5 +1,4 @@
-import type { UIMode } from "@/common/types/mode";
-import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
+
 
 /**
  * Generate the system instruction for Plan Mode with file path context.
@@ -61,20 +60,4 @@ export function getPlanFileHint(planFilePath: string, planExists: boolean): stri
   return `A plan file exists at: ${planFilePath}. If a previously developed plan is relevant to the current work, read it and follow it. Otherwise, ignore it.`;
 }
 
-/**
- * Get the tool policy for a given UI mode.
- * In plan mode, file_edit_* tools remain enabled (agent needs them to write plan file),
- * but strict path enforcement in file_edit_operation.ts restricts edits to only the plan file.
- */
-export function modeToToolPolicy(mode: UIMode): ToolPolicy {
-  if (mode === "plan") {
-    return [
-      { regex_match: "propose_plan", action: "enable" },
-      // file_edit_* stays enabled - agent needs it to write plan file
-      // Path restriction is enforced in file_edit_operation.ts
-    ];
-  }
 
-  // exec mode
-  return [{ regex_match: "propose_plan", action: "disable" }];
-}

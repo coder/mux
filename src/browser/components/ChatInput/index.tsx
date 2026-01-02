@@ -308,15 +308,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const { open } = useSettings();
   const { selectedWorkspace } = useWorkspaceContext();
   const [mode] = useMode();
-  const { agentId, agents } = useAgent();
+  const { agentId, currentAgent } = useAgent();
 
-  // Get the active agent's uiColor for focus border styling.
-  // Backend resolves uiColor from inheritance chain; we just use it directly.
-  const focusBorderColor = useMemo(() => {
-    const normalizedId = typeof agentId === "string" ? agentId.trim().toLowerCase() : "";
-    const descriptor = agents.find((a) => a.id === normalizedId);
-    return descriptor?.uiColor ?? "var(--color-border-light)";
-  }, [agentId, agents]);
+  // Use current agent's uiColor, or neutral border until agents load
+  const focusBorderColor = currentAgent?.uiColor ?? "var(--color-border-light)";
   const {
     models,
     customModels,
@@ -1531,7 +1526,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
               imageParts,
               reviews: reviewsData,
               model: sendMessageOptions.model,
-              mode: sendMessageOptions.mode === "plan" ? "plan" : "exec",
+              agentId: sendMessageOptions.agentId ?? "exec",
             }),
             sendMessageOptions,
           });
@@ -1603,7 +1598,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                 imageParts,
                 reviews: reviewsData,
                 model: sendMessageOptions.model,
-                mode: sendMessageOptions.mode === "plan" ? "plan" : "exec",
+                agentId: sendMessageOptions.agentId ?? "exec",
               }),
               model: parsed.model,
               sendMessageOptions,
@@ -1976,7 +1971,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             {voiceInput.state !== "idle" ? (
               <RecordingOverlay
                 state={voiceInput.state}
-                mode={mode}
+                agentColor={focusBorderColor}
                 mediaRecorder={voiceInput.mediaRecorder}
                 onStop={voiceInput.toggle}
               />
@@ -2037,7 +2032,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     requiresSecureContext={voiceInput.requiresSecureContext}
                     onToggle={voiceInput.toggle}
                     disabled={disabled || isSendInFlight}
-                    mode={mode}
+                    agentColor={focusBorderColor}
                   />
                 </div>
               </>

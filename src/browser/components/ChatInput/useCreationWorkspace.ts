@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback } from "react";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { RuntimeConfig, RuntimeMode } from "@/common/types/runtime";
 import type { ThinkingLevel } from "@/common/types/thinking";
-import type { UIMode } from "@/common/types/mode";
 import { parseRuntimeString } from "@/browser/utils/chatCommands";
 import { useDraftWorkspaceSettings } from "@/browser/hooks/useDraftWorkspaceSettings";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
@@ -12,7 +11,6 @@ import {
   getInputKey,
   getInputImagesKey,
   getModelKey,
-  getModeKey,
   getThinkingLevelKey,
   getWorkspaceAISettingsByModeKey,
   getPendingScopeId,
@@ -48,10 +46,6 @@ function syncCreationPreferences(projectPath: string, workspaceId: string): void
   if (projectAgentId) {
     updatePersistedState(getAgentIdKey(workspaceId), projectAgentId);
   }
-  const projectMode = readPersistedState<UIMode | null>(getModeKey(projectScopeId), null);
-  if (projectMode) {
-    updatePersistedState(getModeKey(workspaceId), projectMode);
-  }
 
   const projectThinkingLevel = readPersistedState<ThinkingLevel | null>(
     getThinkingLevelKey(projectScopeId),
@@ -62,13 +56,11 @@ function syncCreationPreferences(projectPath: string, workspaceId: string): void
   }
 
   if (projectModel) {
-    const effectiveMode: UIMode = projectMode ?? "exec";
-    const effectiveThinking: ThinkingLevel = projectThinkingLevel ?? "off";
-
-    const normalizedAgentId =
+    const effectiveAgentId =
       typeof projectAgentId === "string" && projectAgentId.trim().length > 0
         ? projectAgentId.trim().toLowerCase()
-        : effectiveMode;
+        : "exec";
+    const effectiveThinking: ThinkingLevel = projectThinkingLevel ?? "off";
 
     updatePersistedState<Partial<Record<string, { model: string; thinkingLevel: ThinkingLevel }>>>(
       getWorkspaceAISettingsByModeKey(workspaceId),
@@ -76,7 +68,7 @@ function syncCreationPreferences(projectPath: string, workspaceId: string): void
         const record = prev && typeof prev === "object" ? prev : {};
         return {
           ...(record as Partial<Record<string, { model: string; thinkingLevel: ThinkingLevel }>>),
-          [normalizedAgentId]: { model: projectModel, thinkingLevel: effectiveThinking },
+          [effectiveAgentId]: { model: projectModel, thinkingLevel: effectiveThinking },
         };
       },
       {}
