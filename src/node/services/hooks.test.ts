@@ -46,7 +46,7 @@ describe("hooks", () => {
   });
 
   describe("runWithHook", () => {
-    test("executes tool when hook prints __MUX_EXEC__", async () => {
+    test("executes tool when hook prints $MUX_EXEC", async () => {
       const hookDir = path.join(tempDir, ".mux");
       const hookPath = path.join(hookDir, "tool_hook");
       await fs.mkdir(hookDir, { recursive: true });
@@ -55,7 +55,7 @@ describe("hooks", () => {
       await fs.writeFile(
         hookPath,
         `#!/bin/bash
-echo __MUX_EXEC__
+echo $MUX_EXEC
 read RESULT
 `
       );
@@ -83,7 +83,7 @@ read RESULT
       expect(result).toEqual({ success: true, data: "test result" });
     });
 
-    test("blocks tool when hook exits before __MUX_EXEC__", async () => {
+    test("blocks tool when hook exits before $MUX_EXEC", async () => {
       const hookDir = path.join(tempDir, ".mux");
       const hookPath = path.join(hookDir, "tool_hook");
       await fs.mkdir(hookDir, { recursive: true });
@@ -130,7 +130,7 @@ exit 1
       await fs.writeFile(
         hookPath,
         `#!/bin/bash
-echo __MUX_EXEC__
+echo $MUX_EXEC
 read RESULT
 echo "Lint error: missing semicolon" >&2
 exit 1
@@ -169,7 +169,7 @@ exit 1
         `#!/bin/bash
 echo "TOOL=$MUX_TOOL" >&2
 echo "INPUT=$MUX_TOOL_INPUT" >&2
-echo __MUX_EXEC__
+echo $MUX_EXEC
 read RESULT
 `
       );
@@ -200,7 +200,7 @@ read RESULT
       await fs.writeFile(
         hookPath,
         `#!/bin/bash
-echo __MUX_EXEC__
+echo $MUX_EXEC
 read RESULT
 echo "GOT_RESULT=$RESULT" >&2
 `
@@ -231,7 +231,7 @@ echo "GOT_RESULT=$RESULT" >&2
         hookPath,
         `#!/bin/bash
 echo "SECRET=$MY_SECRET" >&2
-echo __MUX_EXEC__
+echo $MUX_EXEC
 read RESULT
 `
       );
@@ -261,7 +261,7 @@ read RESULT
       await fs.writeFile(
         hookPath,
         `#!/bin/bash
-echo __MUX_EXEC__
+echo $MUX_EXEC
 read RESULT
 echo "Hook received: $RESULT" >&2
 `
@@ -295,7 +295,7 @@ echo "Hook received: $RESULT" >&2
       await fs.writeFile(
         hookPath,
         `#!/bin/bash
-echo __MUX_EXEC__
+echo $MUX_EXEC
 read RESULT
 `
       );
@@ -330,7 +330,7 @@ read RESULT
       await fs.writeFile(
         hookPath,
         `#!/bin/bash
-echo __MUX_EXEC__
+echo $MUX_EXEC
 exit 0
 `
       );
@@ -363,7 +363,7 @@ exit 0
         hookPath,
         `#!/bin/bash
 sleep 0.15
-echo __MUX_EXEC__
+echo $MUX_EXEC
 read RESULT
 `
       );
@@ -400,7 +400,7 @@ read RESULT
       await fs.writeFile(
         hookPath,
         `#!/bin/bash
-echo __MUX_EXEC__
+echo $MUX_EXEC
 read RESULT
 sleep 0.15
 `
@@ -437,7 +437,7 @@ sleep 0.15
       await fs.writeFile(
         hookPath,
         `#!/bin/bash
-echo __MUX_EXEC__
+echo $MUX_EXEC
 read RESULT
 `
       );
@@ -472,7 +472,7 @@ read RESULT
       await fs.writeFile(
         hookPath,
         `#!/bin/bash
-echo __MUX_EXEC__
+echo $MUX_EXEC
 read RESULT
 echo "GOT_RESULT=$RESULT" >&2
 `
@@ -509,7 +509,7 @@ echo "GOT_RESULT=$RESULT" >&2
         hookPath,
         `#!/bin/bash
 sleep 0.15
-echo __MUX_EXEC__
+echo $MUX_EXEC
 read RESULT
 `
       );
@@ -538,7 +538,7 @@ read RESULT
       expect(toolExecuted).toBe(false);
       expect(hook.toolExecuted).toBe(false);
       expect(hook.success).toBe(false);
-      expect(hook.stderr).toContain("Hook timed out before __MUX_EXEC__");
+      expect(hook.stderr).toContain("Hook timed out before $MUX_EXEC");
       expect(result).toBeUndefined();
     });
 
@@ -550,7 +550,7 @@ read RESULT
       await fs.writeFile(
         hookPath,
         `#!/bin/bash
-echo __MUX_EXEC__
+echo $MUX_EXEC
 read RESULT
 sleep 0.15
 `
@@ -592,7 +592,7 @@ sleep 0.15
       await fs.writeFile(
         hookPath,
         `#!/bin/bash
-echo __MUX_EXEC__
+echo $MUX_EXEC
 read RESULT
 `
       );
@@ -640,7 +640,7 @@ fi
 len=$(wc -c < "$MUX_TOOL_INPUT_PATH")
 echo "LEN=$len" >&2
 
-echo __MUX_EXEC__
+echo $MUX_EXEC
 read RESULT
 `
       );

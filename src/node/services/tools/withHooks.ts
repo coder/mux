@@ -100,6 +100,12 @@ export function withHooks<TParameters, TResult>(
       return executeFn.call(tool, args, options) as TResult;
     }
 
+    // Extract abort signal from tool options (if present)
+    const abortSignal =
+      options && typeof options === "object" && "abortSignal" in options
+        ? (options as { abortSignal?: AbortSignal }).abortSignal
+        : undefined;
+
     // Execute tool within hook context
     log.debug("[withHooks] Running tool with hook", { toolName, hookPath });
 
@@ -113,6 +119,7 @@ export function withHooks<TParameters, TResult>(
         projectDir: config.cwd,
         runtimeTempDir: config.runtimeTempDir,
         env: config.env,
+        abortSignal,
       },
       () => Promise.resolve(executeFn.call(tool, args, options) as TResult),
       {
@@ -126,14 +133,14 @@ export function withHooks<TParameters, TResult>(
       }
     );
 
-    // Hook blocked tool execution (exited before __MUX_EXEC__)
+    // Hook blocked tool execution (exited before $MUX_EXEC)
     if (!hook.toolExecuted) {
       const blockOutput = truncateHookOutput(
         [hook.stdoutBeforeExec, hook.stderr].filter(Boolean).join("\n").trim()
       );
       log.debug("[withHooks] Hook blocked tool execution", { toolName, output: blockOutput });
       const errorResult: { error: string } = {
-        error: blockOutput || "Tool blocked by hook (exited before __MUX_EXEC__)",
+        error: blockOutput || "Tool blocked by hook (exited before $MUX_EXEC)",
       };
       return errorResult as TResult;
     }

@@ -13,9 +13,9 @@
  *   2. ~/.mux/tool_hook (user-level, personal)
  *
  * Protocol:
- *   1. Hook receives MUX_TOOL, MUX_TOOL_INPUT, etc. as env vars
+ *   1. Hook receives MUX_TOOL, MUX_TOOL_INPUT, MUX_EXEC, etc. as env vars
  *   2. Hook runs pre-logic
- *   3. Hook prints __MUX_EXEC__ to signal readiness
+ *   3. Hook prints $MUX_EXEC (the unique marker) to signal readiness
  *   4. Mux executes the tool, sends result JSON to hook's stdin
  *   5. Hook reads result, runs post-logic
  *   6. Hook exits (non-zero = failure fed back to LLM)
@@ -34,7 +34,7 @@ import { execBuffered, writeFileString } from "@/node/utils/runtime/helpers";
 const HOOK_FILENAME = "tool_hook";
 const TOOL_INPUT_ENV_LIMIT = 8_000;
 const DEFAULT_HOOK_PHASE_TIMEOUT_MS = 5 * 60_000; // 5 minutes
-const EXEC_MARKER = "__MUX_EXEC__";
+const EXEC_MARKER_PREFIX = "MUX_EXEC_";
 
 /** Shell-escape a string for safe use in bash -c commands */
 function shellEscape(str: string): string {
@@ -72,6 +72,8 @@ export interface HookContext {
   projectDir: string;
   /** Additional environment variables to pass to hook */
   env?: Record<string, string>;
+  /** External abort signal (e.g., from workspace deletion) */
+  abortSignal?: AbortSignal;
 }
 
 export interface HookResult {
@@ -163,6 +165,9 @@ export async function runWithHook<T>(
   const postHookTimeoutMs = timingOptions?.postHookTimeoutMs ?? DEFAULT_HOOK_PHASE_TIMEOUT_MS;
   const hookStartTime = Date.now();
 
+  // Generate a unique marker for this invocation to prevent accidental triggers
+  const execMarker = `${EXEC_MARKER_PREFIX}${crypto.randomUUID().replace(/-/g, "")}`;
+
   let toolInputPath: string | undefined;
   let toolInputEnv = context.toolInput;
   if (context.toolInput.length > TOOL_INPUT_ENV_LIMIT) {
@@ -192,15 +197,33 @@ export async function runWithHook<T>(
     MUX_TOOL_INPUT: toolInputEnv,
     MUX_WORKSPACE_ID: context.workspaceId,
     MUX_PROJECT_DIR: context.projectDir,
+    MUX_EXEC: execMarker,
   };
   if (toolInputPath) {
     hookEnv.MUX_TOOL_INPUT_PATH = toolInputPath;
   }
 
   const abortController = new AbortController();
-  let timeoutPhase: "pre" | "post" | undefined;
+  let timeoutPhase: "pre" | "post" | "external" | undefined;
   let preTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
   let postTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
+
+  // Forward external abort signal (e.g., workspace deletion)
+  if (context.abortSignal) {
+    if (context.abortSignal.aborted) {
+      timeoutPhase = "external";
+      abortController.abort();
+    } else {
+      context.abortSignal.addEventListener(
+        "abort",
+        () => {
+          timeoutPhase = "external";
+          abortController.abort();
+        },
+        { once: true }
+      );
+    }
+  }
 
   if (preHookTimeoutMs > 0) {
     preTimeoutHandle = setTimeout(() => {
@@ -293,7 +316,7 @@ export async function runWithHook<T>(
 
       stdoutBuffer += chunk;
 
-      const markerIdx = stdoutBuffer.indexOf(EXEC_MARKER);
+      const markerIdx = stdoutBuffer.indexOf(execMarker);
       if (markerIdx === -1) {
         continue;
       }
@@ -313,7 +336,7 @@ export async function runWithHook<T>(
 
       toolExecuted = true;
       stdoutBeforeExec = stdoutBuffer.slice(0, markerIdx);
-      stdoutAfterMarker = stdoutBuffer.slice(markerIdx + EXEC_MARKER.length);
+      stdoutAfterMarker = stdoutBuffer.slice(markerIdx + execMarker.length);
 
       // Execute tool + send result to hook stdin in the background so we can
       // continue draining stdout (hooks may log after __MUX_EXEC__).
@@ -394,9 +417,11 @@ export async function runWithHook<T>(
   }
 
   if (timeoutPhase === "pre") {
-    stderrOutput += `\nHook timed out before ${EXEC_MARKER} (${preHookTimeoutMs}ms)`;
+    stderrOutput += `\nHook timed out before $MUX_EXEC marker (${preHookTimeoutMs}ms)`;
   } else if (timeoutPhase === "post") {
     stderrOutput += `\nHook timed out after tool result was sent (${postHookTimeoutMs}ms)`;
+  } else if (timeoutPhase === "external") {
+    stderrOutput += `\nHook aborted (workspace deleted or request cancelled)`;
   }
   if (hookStdinWriteError) {
     stderrOutput += `\nFailed to write tool result to hook stdin: ${hookStdinWriteError.message}`;

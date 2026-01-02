@@ -11,15 +11,49 @@ Create `.mux/tool_hook`:
 
 ```bash
 #!/usr/bin/env bash
+set -euo pipefail
 
-# Pre-hook: load direnv environment
-eval "$(direnv export bash 2>/dev/null)"
+# ─────────────────────────────────────────────────────────────────────────────
+# PRE-HOOK: Runs before the tool executes
+# ─────────────────────────────────────────────────────────────────────────────
 
-# Signal mux to execute the tool
-echo __MUX_EXEC__
+# Load direnv/devenv environment so tools see correct PATH, env vars, etc.
+# This is critical for bash tools that need nvm, pyenv, virtualenvs, etc.
+eval "$(direnv export bash 2>/dev/null)" || true
 
-# Wait for tool result
-read MUX_RESULT
+# ─────────────────────────────────────────────────────────────────────────────
+# SIGNAL: Tell mux to execute the tool
+# $MUX_EXEC is a unique marker generated per invocation (prevents accidents)
+# ─────────────────────────────────────────────────────────────────────────────
+echo "$MUX_EXEC"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# POST-HOOK: Runs after the tool completes
+# Tool result is sent to stdin as JSON; read it with a timeout to avoid hangs
+# ─────────────────────────────────────────────────────────────────────────────
+read -t 300 MUX_RESULT || exit 0  # 5 min timeout; exit cleanly if mux disconnects
+
+# Run formatters/linters after file edits
+if [[ "$MUX_TOOL" == file_edit_* ]]; then
+  # Read tool input (may be in a file if large)
+  if [[ -n "${MUX_TOOL_INPUT_PATH:-}" ]]; then
+    input_json=$(cat "$MUX_TOOL_INPUT_PATH")
+  else
+    input_json=$MUX_TOOL_INPUT
+  fi
+
+  file=$(echo "$input_json" | jq -r '.file_path // empty')
+  [[ -z "$file" ]] && exit 0
+
+  # Format Python files with ruff
+  if [[ "$file" == *.py ]]; then
+    if ruff format "$file" 2>/dev/null; then
+      echo "Formatted: $file" >&2  # Agent sees this in hook_output
+    fi
+    # Check for errors (non-zero exit feeds back to agent)
+    ruff check "$file" 2>&1 || exit 1
+  fi
+fi
 ```
 
 Make it executable:
@@ -32,35 +66,41 @@ chmod +x .mux/tool_hook
 
 The hook wraps the entire tool lifecycle in a single invocation:
 
-```
-┌─────────────────────────────────────────┐
-│ 1. Hook starts, runs pre-hook logic     │
-│ 2. Hook prints __MUX_EXEC__             │
-│ 3. Mux executes the actual tool         │
-│ 4. Mux sends result JSON to hook stdin  │
-│ 5. Hook runs post-hook logic            │
-│ 6. Hook exits                           │
-└─────────────────────────────────────────┘
+```mermaid
+sequenceDiagram
+    participant Mux
+    participant Hook
+    participant Tool
+
+    Mux->>Hook: spawn hook (env: MUX_TOOL, MUX_EXEC, ...)
+    Note over Hook: Pre-hook logic<br/>(direnv, validation)
+    Hook->>Mux: echo $MUX_EXEC
+    Mux->>Tool: execute tool
+    Tool-->>Mux: result
+    Mux->>Hook: write result JSON to stdin
+    Note over Hook: Post-hook logic<br/>(lint, format)
+    Hook-->>Mux: exit code + output
 ```
 
 This design lets you:
 
 - **Set up environment** before tools run (direnv, virtualenv, nvm)
-- **Block tools** by exiting before `__MUX_EXEC__`
+- **Block tools** by exiting before `$MUX_EXEC`
 - **Inspect results** and run validation after tools complete
 - **Share state** between pre and post logic
 
 ## Environment Variables
 
-| Variable              | Description                                                                  |
-| --------------------- | ---------------------------------------------------------------------------- |
-| `MUX_TOOL`            | Tool name: `bash`, `file_edit_replace_string`, `file_read`, etc.             |
-| `MUX_TOOL_INPUT`      | JSON string with tool arguments (may be `__MUX_TOOL_INPUT_FILE__` if large)  |
-| `MUX_TOOL_INPUT_PATH` | Path to a file containing the full JSON tool input (set when input is large) |
-| `MUX_WORKSPACE_ID`    | Current workspace identifier                                                 |
-| `MUX_PROJECT_DIR`     | Workspace root directory                                                     |
+| Variable              | Description                                                                    |
+| --------------------- | ------------------------------------------------------------------------------ |
+| `MUX_EXEC`            | Unique marker to echo when ready for tool execution (e.g., `MUX_EXEC_a1b2...`) |
+| `MUX_TOOL`            | Tool name: `bash`, `file_edit_replace_string`, `file_read`, etc.               |
+| `MUX_TOOL_INPUT`      | JSON string with tool arguments (may be `__MUX_TOOL_INPUT_FILE__` if large)    |
+| `MUX_TOOL_INPUT_PATH` | Path to a file containing the full JSON tool input (set when input is large)   |
+| `MUX_WORKSPACE_ID`    | Current workspace identifier                                                   |
+| `MUX_PROJECT_DIR`     | Workspace root directory                                                       |
 
-After printing `__MUX_EXEC__`, the tool result is sent to stdin as a single JSON line. Read it with `read MUX_RESULT`.
+After printing `$MUX_EXEC`, the tool result is sent to stdin as a single JSON line. Read it with `read -t 300 MUX_RESULT` (use a timeout to avoid hangs if mux disconnects).
 
 If `MUX_TOOL_INPUT_PATH` is set, prefer reading tool args from that file (tool inputs can be too large to safely pass via env vars, especially over SSH).
 
@@ -71,28 +111,34 @@ If `MUX_TOOL_INPUT_PATH` is set, prefer reading tool args from that file (tool i
 | `0`       | Success - tool result returned to agent           |
 | Non-zero  | Failure - agent sees error and can attempt to fix |
 
-If the hook exits non-zero **before** `__MUX_EXEC__`, the tool is blocked entirely and the agent sees the error.
+If the hook exits non-zero **before** `$MUX_EXEC`, the tool is blocked entirely and the agent sees the error.
 
-If the hook exits non-zero **after** `__MUX_EXEC__`, the tool has already run but the agent sees the hook's error output (useful for lint/type failures).
+If the hook exits non-zero **after** `$MUX_EXEC`, the tool has already run but the agent sees the hook's error output (useful for lint/type failures).
 
 ## Timeouts
 
 Tool hooks are expected to be fast. To avoid hung hooks blocking the agent forever, mux enforces phase timeouts:
 
-- **Pre-hook timeout**: the hook must print `__MUX_EXEC__` within 5 minutes (otherwise the tool is not run)
+- **Pre-hook timeout**: the hook must print `$MUX_EXEC` within 5 minutes (otherwise the tool is not run)
 - **Post-hook timeout**: after mux sends the tool result to stdin, the hook must exit within 5 minutes
 
 Long-running tools (e.g. tests/builds) do **not** count against these timeouts.
 
+<Tip>
+  Always use `read -t 300 MUX_RESULT` (with a timeout) instead of bare `read MUX_RESULT`. If mux
+  crashes or disconnects before sending the result, a bare `read` will hang forever. The timeout
+  ensures your hook exits cleanly.
+</Tip>
+
 ## Hook Output
 
-The agent always sees hook output (stdout after `__MUX_EXEC__`, plus stderr) in the `hook_output` field of the tool result. This lets you communicate what the hook did—for example, if a formatter modified the file:
+The agent always sees hook output (stdout after `$MUX_EXEC`, plus stderr) in the `hook_output` field of the tool result. This lets you communicate what the hook did—for example, if a formatter modified the file:
 
 ```bash
 #!/usr/bin/env bash
 
-echo __MUX_EXEC__
-read MUX_RESULT
+echo "$MUX_EXEC"
+read -t 300 MUX_RESULT
 
 if [[ "$MUX_TOOL" == file_edit_* ]]; then
   input_json=$MUX_TOOL_INPUT
@@ -133,8 +179,8 @@ eval "$(direnv export bash 2>/dev/null)"
 # Or use nvm
 # source ~/.nvm/nvm.sh && nvm use
 
-echo __MUX_EXEC__
-read MUX_RESULT
+echo "$MUX_EXEC"
+read -t 300 MUX_RESULT
 ```
 
 ### Lint After File Edits
@@ -144,8 +190,8 @@ Run linters after any file modification:
 ```bash
 #!/usr/bin/env bash
 
-echo __MUX_EXEC__
-read MUX_RESULT
+echo "$MUX_EXEC"
+read -t 300 MUX_RESULT
 
 # Only lint after file edits
 if [[ "$MUX_TOOL" == file_edit_* ]]; then
@@ -187,8 +233,8 @@ if [[ "$MUX_TOOL" == "bash" ]]; then
   fi
 fi
 
-echo __MUX_EXEC__
-read MUX_RESULT
+echo "$MUX_EXEC"
+read -t 300 MUX_RESULT
 ```
 
 ### Measure Tool Duration
@@ -200,8 +246,8 @@ Track how long tools take:
 
 start=$(date +%s%N)
 
-echo __MUX_EXEC__
-read MUX_RESULT
+echo "$MUX_EXEC"
+read -t 300 MUX_RESULT
 
 end=$(date +%s%N)
 duration=$(( (end - start) / 1000000 ))
@@ -231,7 +277,7 @@ tool_input = json.loads(tool_input_raw)
 
 # Pre-hook logic here
 
-print('__MUX_EXEC__', flush=True)
+print(os.environ['MUX_EXEC'], flush=True)
 result = json.loads(input())
 
 # Post-hook logic here
@@ -265,7 +311,7 @@ For SSH workspaces, hooks execute **on the remote machine**. The hook file must 
 
 ## Debugging
 
-To debug your hook, write to stderr (stdout is reserved for the `__MUX_EXEC__` protocol):
+To debug your hook, write to stderr (stdout is reserved for the `$MUX_EXEC` protocol):
 
 ```bash
 #!/usr/bin/env bash
@@ -277,8 +323,8 @@ else
   echo "Input: $MUX_TOOL_INPUT" >&2
 fi
 
-echo __MUX_EXEC__
-read MUX_RESULT
+echo "$MUX_EXEC"
+read -t 300 MUX_RESULT
 
 echo "Result: $MUX_RESULT" >&2
 ```

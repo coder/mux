@@ -51,7 +51,7 @@ describe("withHooks", () => {
     await fs.writeFile(
       hookPath,
       `#!/bin/bash
-echo __MUX_EXEC__
+echo "$MUX_EXEC"
 read RESULT
 `
     );
@@ -112,7 +112,7 @@ exit 1
     await fs.writeFile(
       hookPath,
       `#!/bin/bash
-echo __MUX_EXEC__
+echo "$MUX_EXEC"
 read RESULT
 echo "Lint failed: syntax error" >&2
 exit 1
@@ -144,7 +144,7 @@ exit 1
     await fs.writeFile(
       hookPath,
       `#!/bin/bash
-echo __MUX_EXEC__
+echo "$MUX_EXEC"
 read RESULT
 echo "Formatted: test.ts" >&2
 exit 0
@@ -181,7 +181,7 @@ if [ "$MY_API_KEY" != "secret123" ]; then
   echo "SECRET not found" >&2
   exit 1
 fi
-echo __MUX_EXEC__
+echo "$MUX_EXEC"
 read RESULT
 `
     );
