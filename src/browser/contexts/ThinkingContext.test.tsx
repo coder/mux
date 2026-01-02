@@ -1,14 +1,26 @@
 import { GlobalWindow } from "happy-dom";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import React from "react";
 import { ThinkingProvider } from "./ThinkingContext";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
 import {
   getModelKey,
+  getProjectScopeId,
   getThinkingLevelByModelKey,
   getThinkingLevelKey,
 } from "@/common/constants/storage";
+import type { APIClient } from "@/browser/contexts/API";
+
+void mock.module("@/browser/contexts/API", () => ({
+  useAPI: () => ({
+    api: {} as APIClient,
+    status: "connected" as const,
+    error: null,
+  }),
+  APIProvider: ({ children }: { children: React.ReactNode }) => children,
+}));
+
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 
 // Setup basic DOM environment for testing-library
@@ -117,6 +129,38 @@ describe("ThinkingContext", () => {
 
     await waitFor(() => {
       expect(view.getByTestId("thinking").textContent).toBe("low:ws-1");
+    });
+  });
+
+  test("cycles thinking level via keybind in project-scoped (creation) flow", async () => {
+    const projectPath = "/Users/dev/my-project";
+
+    // Force a model with a multi-level thinking policy.
+    updatePersistedState(getModelKey(getProjectScopeId(projectPath)), "openai:gpt-4.1");
+
+    const ProjectChild: React.FC = () => {
+      const [thinkingLevel] = useThinkingLevel();
+      return <div data-testid="thinking-project">{thinkingLevel}</div>;
+    };
+
+    const view = render(
+      <ThinkingProvider projectPath={projectPath}>
+        <ProjectChild />
+      </ThinkingProvider>
+    );
+
+    await waitFor(() => {
+      expect(view.getByTestId("thinking-project").textContent).toBe("off");
+    });
+
+    act(() => {
+      window.dispatchEvent(
+        new window.KeyboardEvent("keydown", { key: "T", ctrlKey: true, shiftKey: true })
+      );
+    });
+
+    await waitFor(() => {
+      expect(view.getByTestId("thinking-project").textContent).toBe("low");
     });
   });
 });

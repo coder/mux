@@ -466,11 +466,8 @@ const AIViewInner: React.FC<AIViewProps> = ({
   // Handle keyboard shortcuts (using optional refs that are safe even if not initialized)
   useAIViewKeybinds({
     workspaceId,
-    currentModel: workspaceState?.currentModel ?? null,
     canInterrupt: workspaceState?.canInterrupt ?? false,
     showRetryBarrier,
-    currentWorkspaceThinking,
-    setThinkingLevel,
     setAutoRetry,
     chatInputAPI,
     jumpToBottom,

@@ -19,8 +19,9 @@ import {
 } from "@/common/constants/storage";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
-import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
+import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
 import { useAPI } from "@/browser/contexts/API";
+import { KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
 
 interface ThinkingContextType {
   thinkingLevel: ThinkingLevel;
@@ -129,6 +130,32 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
     },
     [api, defaultModel, props.workspaceId, scopeId, setThinkingLevelInternal]
   );
+
+  // Global keybind: cycle thinking level (Ctrl/Cmd+Shift+T).
+  // Implemented at the ThinkingProvider level so it works in both the workspace view
+  // and the "New Workspace" creation screen (which doesn't mount AIView).
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!matchesKeybind(e, KEYBINDS.TOGGLE_THINKING)) {
+        return;
+      }
+
+      e.preventDefault();
+
+      const model = getCanonicalModelForScope(scopeId, defaultModel);
+      const allowed = getThinkingPolicyForModel(model);
+      if (allowed.length <= 1) {
+        return;
+      }
+
+      const currentIndex = allowed.indexOf(thinkingLevel);
+      const nextIndex = (currentIndex + 1) % allowed.length;
+      setThinkingLevel(allowed[nextIndex]);
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [defaultModel, scopeId, thinkingLevel, setThinkingLevel]);
 
   // Memoize context value to prevent unnecessary re-renders of consumers.
   const contextValue = useMemo(

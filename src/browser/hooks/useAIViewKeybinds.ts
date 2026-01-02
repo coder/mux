@@ -1,22 +1,14 @@
 import { useEffect } from "react";
 import type { ChatInputAPI } from "@/browser/components/ChatInput";
 import { matchesKeybind, KEYBINDS, isEditableElement } from "@/browser/utils/ui/keybinds";
-import { getModelKey } from "@/common/constants/storage";
-import { readPersistedState } from "@/browser/hooks/usePersistedState";
-import type { ThinkingLevel } from "@/common/types/thinking";
-import { getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
-import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import type { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
 import { isCompactingStream, cancelCompaction } from "@/browser/utils/compaction/handler";
 import { useAPI } from "@/browser/contexts/API";
 
 interface UseAIViewKeybindsParams {
   workspaceId: string;
-  currentModel: string | null;
   canInterrupt: boolean;
   showRetryBarrier: boolean;
-  currentWorkspaceThinking: ThinkingLevel;
-  setThinkingLevel: (level: ThinkingLevel) => void;
   setAutoRetry: (value: boolean) => void;
   chatInputAPI: React.RefObject<ChatInputAPI | null>;
   jumpToBottom: () => void;
@@ -31,7 +23,6 @@ interface UseAIViewKeybindsParams {
  * Manages keyboard shortcuts for AIView:
  * - Esc (non-vim) or Ctrl+C (vim): Interrupt stream (always, regardless of selection)
  * - Ctrl+I: Focus chat input
- * - Ctrl+Shift+T: Cycle thinking level through allowed values for current model
  * - Ctrl+G: Jump to bottom
  * - Ctrl+T: Open terminal
  * - Ctrl+Shift+E: Open in editor
@@ -41,11 +32,8 @@ interface UseAIViewKeybindsParams {
  */
 export function useAIViewKeybinds({
   workspaceId,
-  currentModel,
   canInterrupt,
   showRetryBarrier,
-  currentWorkspaceThinking,
-  setThinkingLevel,
   setAutoRetry,
   chatInputAPI,
   jumpToBottom,
@@ -104,27 +92,6 @@ export function useAIViewKeybinds({
         return;
       }
 
-      // Cycle thinking level - works even when focused in input fields
-      if (matchesKeybind(e, KEYBINDS.TOGGLE_THINKING)) {
-        e.preventDefault();
-
-        // Get selected model from localStorage (what user sees in UI)
-        // Fall back to message history model, then to the Settings default model
-        const selectedModel = readPersistedState<string | null>(getModelKey(workspaceId), null);
-        const modelToUse = selectedModel ?? currentModel ?? getDefaultModel();
-
-        // Get allowed levels for this model
-        const allowed = getThinkingPolicyForModel(modelToUse);
-        if (allowed.length <= 1) {
-          return; // No cycling for single-option policies
-        }
-
-        // Cycle to the next allowed level
-        const currentIndex = allowed.indexOf(currentWorkspaceThinking);
-        const nextIndex = (currentIndex + 1) % allowed.length;
-        setThinkingLevel(allowed[nextIndex]);
-        return;
-      }
 
       // Open in editor / terminal - work even in input fields (global feel, like TOGGLE_MODE)
       if (matchesKeybind(e, KEYBINDS.OPEN_IN_EDITOR)) {
@@ -159,9 +126,6 @@ export function useAIViewKeybinds({
     canInterrupt,
     showRetryBarrier,
     setAutoRetry,
-    currentModel,
-    currentWorkspaceThinking,
-    setThinkingLevel,
     chatInputAPI,
     aggregator,
     setEditingMessage,
