@@ -150,13 +150,13 @@ chmod +x .git/hooks/prepare-commit-msg
 ```
 
 <Info>
-  This approach uses your normal Git identity for commits, but adds a trailer indicating AI involvement.
-  The hook only activates inside mux workspaces (detected via `MUX_WORKSPACE_ID`).
+  This approach uses your normal Git identity for commits, but adds a trailer indicating AI
+  involvement. The hook only activates inside mux workspaces (detected via `MUX_WORKSPACE_ID`).
 </Info>
 
 ### Comparison
 
-| Approach | Pros | Cons |
-|----------|------|------|
-| Separate account | Full separation, branch protection rules | Requires second GitHub account |
-| Co-authored-by hook | Single account, clear attribution | Less separation, hook per-repo |
+| Approach            | Pros                                     | Cons                           |
+| ------------------- | ---------------------------------------- | ------------------------------ |
+| Separate account    | Full separation, branch protection rules | Requires second GitHub account |
+| Co-authored-by hook | Single account, clear attribution        | Less separation, hook per-repo |
