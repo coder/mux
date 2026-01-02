@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useRef } from "react";
 import type { GitStatus } from "@/common/types/workspace";
 import { GIT_STATUS_INDICATOR_MODE_KEY } from "@/common/constants/storage";
 import { STORAGE_KEYS, WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
@@ -30,6 +30,7 @@ export const GitStatusIndicator: React.FC<GitStatusIndicatorProps> = ({
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [isPopoverOpen, setIsPopoverOpen] = useState(false);
+  const pendingHoverCardCloseRef = useRef(false);
   const trimmedWorkspaceId = workspaceId.trim();
   const isRefreshing = useGitStatusRefreshing(trimmedWorkspaceId);
 
@@ -60,16 +61,32 @@ export const GitStatusIndicator: React.FC<GitStatusIndicatorProps> = ({
     [setBaseRef]
   );
 
-  // Prevent HoverCard from closing while the base selector popover is open
+  // Prevent HoverCard from closing while the base selector popover is open.
+  // If Radix requests a close while the popover is open, defer the close until
+  // the popover closes (otherwise the hovercard can get "stuck" open).
   const handleHoverCardOpenChange = useCallback(
     (open: boolean) => {
-      // Don't close if the popover is open
       if (!open && isPopoverOpen) {
+        pendingHoverCardCloseRef.current = true;
         return;
       }
+
+      pendingHoverCardCloseRef.current = false;
       setIsOpen(open);
     },
     [isPopoverOpen]
+  );
+
+  const handlePopoverOpenChange = useCallback(
+    (open: boolean) => {
+      setIsPopoverOpen(open);
+
+      if (!open && pendingHoverCardCloseRef.current) {
+        pendingHoverCardCloseRef.current = false;
+        setIsOpen(false);
+      }
+    },
+    [setIsPopoverOpen]
   );
 
   const handleModeChange = useCallback(
@@ -106,7 +123,7 @@ export const GitStatusIndicator: React.FC<GitStatusIndicatorProps> = ({
       onModeChange={handleModeChange}
       baseRef={baseRef}
       onBaseChange={handleBaseChange}
-      onPopoverOpenChange={setIsPopoverOpen}
+      onPopoverOpenChange={handlePopoverOpenChange}
       isWorking={isWorking}
       isRefreshing={isRefreshing}
     />

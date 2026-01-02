@@ -6,6 +6,18 @@ import { ToggleGroup, ToggleGroupItem } from "./ui/toggle-group";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "./ui/hover-card";
 import { BaseSelectorPopover } from "./RightSidebar/CodeReview/BaseSelectorPopover";
 
+const RADIX_PORTAL_WRAPPER_SELECTOR = "[data-radix-popper-content-wrapper]" as const;
+
+function preventHoverCardDismissForRadixPortals(e: {
+  target: EventTarget | null;
+  preventDefault: () => void;
+}) {
+  const target = e.target;
+  if (target instanceof HTMLElement && target.closest(RADIX_PORTAL_WRAPPER_SELECTOR)) {
+    e.preventDefault();
+  }
+}
+
 // Helper for indicator colors
 const getIndicatorColor = (branch: number): string => {
   switch (branch) {
@@ -231,8 +243,8 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
   const additionsColor = isWorking ? "text-success-light" : "text-muted";
   const deletionsColor = isWorking ? "text-warning-light" : "text-muted";
 
-  // Popover content with git divergence details
-  const popoverContent = (
+  // HoverCard content with git divergence details
+  const hoverCardContent = (
     <>
       <div className="border-separator-light mb-2 flex flex-col gap-1 border-b pb-2">
         <div className="flex items-center gap-2">
@@ -364,22 +376,10 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
         sideOffset={8}
         collisionPadding={8}
         className="bg-modal-bg text-foreground border-separator-light z-[10000] max-h-[400px] w-auto max-w-96 min-w-0 overflow-auto px-3 py-2 font-mono text-[11px] whitespace-pre shadow-[0_4px_12px_rgba(0,0,0,0.5)]"
-        onPointerDownOutside={(e) => {
-          // Prevent HoverCard from closing when interacting with portal content (e.g., BaseSelectorPopover)
-          const target = e.target as HTMLElement | null;
-          if (target?.closest("[data-radix-popper-content-wrapper]")) {
-            e.preventDefault();
-          }
-        }}
-        onFocusOutside={(e) => {
-          // Prevent HoverCard from closing when focus moves to portal content
-          const target = e.target as HTMLElement | null;
-          if (target?.closest("[data-radix-popper-content-wrapper]")) {
-            e.preventDefault();
-          }
-        }}
+        onPointerDownOutside={preventHoverCardDismissForRadixPortals}
+        onFocusOutside={preventHoverCardDismissForRadixPortals}
       >
-        {popoverContent}
+        {hoverCardContent}
       </HoverCardContent>
     </HoverCard>
   );
