@@ -48,7 +48,8 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
   // Per-project default base (used for new workspaces in this project)
   const [defaultBase, setDefaultBase] = usePersistedState<string>(
     STORAGE_KEYS.reviewDefaultBase(projectPath),
-    WORKSPACE_DEFAULTS.reviewBase
+    WORKSPACE_DEFAULTS.reviewBase,
+    { listener: true }
   );
 
   const handleBaseChange = (value: string) => {

@@ -299,11 +299,17 @@ export class GitStatusStore {
     }
 
     try {
-      // Use per-project default base ref for git status
-      const baseRef = readPersistedState<string>(
+      // Use the same diff base as the review panel (per-workspace override,
+      // falling back to the project default).
+      const projectDefaultBase = readPersistedState<string>(
         STORAGE_KEYS.reviewDefaultBase(metadata.projectPath),
         WORKSPACE_DEFAULTS.reviewBase
       );
+      const baseRef = readPersistedState<string>(
+        STORAGE_KEYS.reviewDiffBase(metadata.id),
+        projectDefaultBase
+      );
+
       // Generate script with the configured base ref
       const script = generateGitStatusScript(baseRef);
 

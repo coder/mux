@@ -350,6 +350,28 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     sortOrder: sortOrder,
   });
 
+  // Keep filters in sync with persisted state when updates come from outside this panel
+  // (e.g., GitStatusIndicator base selector).
+  useEffect(() => {
+    setFilters((prev) => {
+      if (prev.diffBase === diffBase) {
+        return prev;
+      }
+
+      return { ...prev, diffBase };
+    });
+  }, [diffBase]);
+
+  // Git status uses diffBase too; refresh immediately when it changes.
+  const lastGitStatusBaseRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (lastGitStatusBaseRef.current !== null && lastGitStatusBaseRef.current !== diffBase) {
+      invalidateGitStatus(workspaceId);
+    }
+
+    lastGitStatusBaseRef.current = diffBase;
+  }, [workspaceId, diffBase]);
+
   // Keep showReadHunksRef in sync for stable callbacks
   showReadHunksRef.current = filters.showReadHunks;
 
