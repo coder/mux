@@ -410,13 +410,14 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
                 <div className="bg-destructive/10 text-destructive rounded px-2 py-1.5 text-[11px]">
                   {error}
                 </div>
-                {/* Signing toggle - show even on error for retry */}
-                {signingCapabilities?.publicKey && (
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5">
-                      <PenTool className="text-muted h-3 w-3" />
-                      <span className="text-muted text-[10px]">Sign message</span>
-                      {signingCapabilities.githubUser ? (
+                {/* Signing toggle - show even when unavailable (disabled with tooltip) */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <PenTool className="text-muted h-3 w-3" />
+                    <span className="text-muted text-[10px]">Sign message</span>
+                    {signingCapabilities?.publicKey ? (
+                      // Key available - show identity
+                      signingCapabilities.githubUser ? (
                         <span className="text-muted-foreground text-[10px]">
                           (@{signingCapabilities.githubUser})
                         </span>
@@ -433,15 +434,40 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
                             <p className="text-[11px]">{signingCapabilities.error}</p>
                           </TooltipContent>
                         </Tooltip>
-                      ) : null}
-                    </div>
-                    <Switch
-                      checked={signingEnabled}
-                      onCheckedChange={handleSigningToggle}
-                      className="h-4 w-7"
-                    />
+                      ) : null
+                    ) : (
+                      // No key - show help tooltip
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <HelpIndicator className="text-[10px]">?</HelpIndicator>
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-[200px]">
+                          <p className="text-[11px]">
+                            No Ed25519 key found. Add one at ~/.mux/id_ed25519 or
+                            ~/.ssh/id_ed25519 to enable signing.
+                          </p>
+                        </TooltipContent>
+                      </Tooltip>
+                    )}
                   </div>
-                )}
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span>
+                        <Switch
+                          checked={signingEnabled}
+                          onCheckedChange={handleSigningToggle}
+                          disabled={!signingCapabilities?.publicKey}
+                          className="h-4 w-7"
+                        />
+                      </span>
+                    </TooltipTrigger>
+                    {!signingCapabilities?.publicKey && (
+                      <TooltipContent>
+                        <p className="text-[11px]">No signing key available</p>
+                      </TooltipContent>
+                    )}
+                  </Tooltip>
+                </div>
                 <Button
                   onClick={() => void handleShare()}
                   disabled={isUploading}
