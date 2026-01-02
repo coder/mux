@@ -59,7 +59,8 @@ describe("TelemetryService enablement", () => {
     expect(enabled).toBe(false);
   });
 
-  test("disables telemetry in unpackaged Electron by default", () => {
+  test("enables telemetry in unpackaged Electron by default", () => {
+    // Telemetry is now enabled by default in dev mode (unpackaged Electron)
     const enabled = shouldEnableTelemetry(
       createContext({
         env: {},
@@ -68,7 +69,7 @@ describe("TelemetryService enablement", () => {
       })
     );
 
-    expect(enabled).toBe(false);
+    expect(enabled).toBe(true);
   });
 
   test("enables telemetry in packaged Electron by default", () => {
@@ -83,24 +84,11 @@ describe("TelemetryService enablement", () => {
     expect(enabled).toBe(true);
   });
 
-  test("disables telemetry in NODE_ENV=development by default", () => {
+  test("enables telemetry in NODE_ENV=development by default", () => {
+    // Telemetry is now enabled by default in dev mode
     const enabled = shouldEnableTelemetry(
       createContext({
         env: { NODE_ENV: "development" },
-        isElectron: false,
-      })
-    );
-
-    expect(enabled).toBe(false);
-  });
-
-  test("allows opting into telemetry in dev", () => {
-    const enabled = shouldEnableTelemetry(
-      createContext({
-        env: {
-          NODE_ENV: "development",
-          MUX_ENABLE_TELEMETRY_IN_DEV: "1",
-        },
         isElectron: false,
       })
     );

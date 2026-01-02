@@ -7,13 +7,14 @@ import { generateKeyPairSync } from "crypto";
 
 describe("SigningService", () => {
   const testKeyDir = join(homedir(), ".mux");
-  const testKeyPath = join(testKeyDir, "id_ed25519");
+  const testKeyPath = join(testKeyDir, "message_signing_key");
   let keyCreated = false;
 
   beforeAll(() => {
-    // Create a test Ed25519 key if none exists at either location
-    const sshKeyPath = join(homedir(), ".ssh", "id_ed25519");
-    if (!existsSync(testKeyPath) && !existsSync(sshKeyPath)) {
+    // Create a test Ed25519 key if none exists at the expected paths
+    const sshEd25519Path = join(homedir(), ".ssh", "id_ed25519");
+    const sshEcdsaPath = join(homedir(), ".ssh", "id_ecdsa");
+    if (!existsSync(testKeyPath) && !existsSync(sshEd25519Path) && !existsSync(sshEcdsaPath)) {
       mkdirSync(testKeyDir, { recursive: true });
       const { privateKey } = generateKeyPairSync("ed25519");
       const pemKey = privateKey.export({ type: "pkcs8", format: "pem" });
