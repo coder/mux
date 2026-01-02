@@ -43,7 +43,7 @@ async function getOriginUrlForBundle(
 }
 
 const TRACKING_BRANCHES_COMMAND =
-  "for branch in $(git for-each-ref --format='%(refname:short)' refs/remotes/origin/ | grep -v 'origin/HEAD'); do localname=\\${branch#origin/}; git show-ref --verify --quiet refs/heads/$localname || git branch $localname $branch; done";
+  "for branch in $(git for-each-ref --format='%(refname:short)' refs/remotes/origin/ | grep -v 'origin/HEAD'); do localname=${branch#origin/}; git show-ref --verify --quiet refs/heads/$localname || git branch $localname $branch; done";
 
 export interface GitBundleSyncParams {
   /** Local project path (where git bundle is created) */
