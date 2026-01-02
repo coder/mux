@@ -21,11 +21,22 @@ const BASE_SUGGESTIONS = [
 interface BaseSelectorPopoverProps {
   value: string;
   onChange: (value: string) => void;
+  onOpenChange?: (open: boolean) => void;
   className?: string;
 }
 
-export function BaseSelectorPopover({ value, onChange, className }: BaseSelectorPopoverProps) {
+export function BaseSelectorPopover({
+  value,
+  onChange,
+  onOpenChange,
+  className,
+}: BaseSelectorPopoverProps) {
   const [isOpen, setIsOpen] = useState(false);
+
+  const handleOpenChange = (open: boolean) => {
+    setIsOpen(open);
+    onOpenChange?.(open);
+  };
   const [inputValue, setInputValue] = useState(value);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -45,7 +56,7 @@ export function BaseSelectorPopover({ value, onChange, className }: BaseSelector
   const handleSelect = (selected: string) => {
     onChange(selected);
     setInputValue(selected);
-    setIsOpen(false);
+    handleOpenChange(false);
   };
 
   const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -53,11 +64,11 @@ export function BaseSelectorPopover({ value, onChange, className }: BaseSelector
       const trimmed = inputValue.trim();
       if (trimmed) {
         onChange(trimmed);
-        setIsOpen(false);
+        handleOpenChange(false);
       }
     } else if (e.key === "Escape") {
       setInputValue(value);
-      setIsOpen(false);
+      handleOpenChange(false);
     }
   };
 
@@ -75,7 +86,7 @@ export function BaseSelectorPopover({ value, onChange, className }: BaseSelector
   const filteredSuggestions = BASE_SUGGESTIONS.filter((s) => s.toLowerCase().includes(searchLower));
 
   return (
-    <Popover open={isOpen} onOpenChange={setIsOpen}>
+    <Popover open={isOpen} onOpenChange={handleOpenChange} modal>
       <PopoverTrigger asChild>
         <button
           className={cn(
@@ -86,7 +97,7 @@ export function BaseSelectorPopover({ value, onChange, className }: BaseSelector
           <span className="truncate">{value}</span>
         </button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-[160px] p-0">
+      <PopoverContent align="start" className="z-[10001] w-[160px] p-0">
         {/* Search/edit input */}
         <div className="border-border border-b px-2 py-1.5">
           <input

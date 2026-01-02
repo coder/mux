@@ -4,6 +4,19 @@ import type { GitCommit, GitBranchHeader } from "@/common/utils/git/parseGitLog"
 import { cn } from "@/common/lib/utils";
 import { ToggleGroup, ToggleGroupItem } from "./ui/toggle-group";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "./ui/hover-card";
+import { BaseSelectorPopover } from "./RightSidebar/CodeReview/BaseSelectorPopover";
+
+const RADIX_PORTAL_WRAPPER_SELECTOR = "[data-radix-popper-content-wrapper]" as const;
+
+function preventHoverCardDismissForRadixPortals(e: {
+  target: EventTarget | null;
+  preventDefault: () => void;
+}) {
+  const target = e.target;
+  if (target instanceof HTMLElement && target.closest(RADIX_PORTAL_WRAPPER_SELECTOR)) {
+    e.preventDefault();
+  }
+}
 
 // Helper for indicator colors
 const getIndicatorColor = (branch: number): string => {
@@ -53,6 +66,11 @@ export interface GitStatusIndicatorViewProps {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   onModeChange: (nextMode: GitStatusIndicatorMode) => void;
+  // Base ref for divergence (shared with review panel)
+  baseRef: string;
+  onBaseChange: (value: string) => void;
+  /** Callback when the base selector popover open state changes */
+  onPopoverOpenChange?: (open: boolean) => void;
   /** When true, shows blue pulsing styling to indicate agent is working */
   isWorking?: boolean;
   /** When true, shows shimmer effect to indicate git status is refreshing */
@@ -76,6 +94,9 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
   isOpen,
   onOpenChange,
   onModeChange,
+  baseRef,
+  onBaseChange,
+  onPopoverOpenChange,
   isWorking = false,
   isRefreshing = false,
 }) => {
@@ -222,8 +243,8 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
   const additionsColor = isWorking ? "text-success-light" : "text-muted";
   const deletionsColor = isWorking ? "text-warning-light" : "text-muted";
 
-  // Popover content with git divergence details
-  const popoverContent = (
+  // HoverCard content with git divergence details
+  const hoverCardContent = (
     <>
       <div className="border-separator-light mb-2 flex flex-col gap-1 border-b pb-2">
         <div className="flex items-center gap-2">
@@ -245,6 +266,15 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
               Commits
             </ToggleGroupItem>
           </ToggleGroup>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <span className="text-muted-light">Base:</span>
+          <BaseSelectorPopover
+            value={baseRef}
+            onChange={onBaseChange}
+            onOpenChange={onPopoverOpenChange}
+          />
         </div>
 
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
@@ -346,8 +376,10 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
         sideOffset={8}
         collisionPadding={8}
         className="bg-modal-bg text-foreground border-separator-light z-[10000] max-h-[400px] w-auto max-w-96 min-w-0 overflow-auto px-3 py-2 font-mono text-[11px] whitespace-pre shadow-[0_4px_12px_rgba(0,0,0,0.5)]"
+        onPointerDownOutside={preventHoverCardDismissForRadixPortals}
+        onFocusOutside={preventHoverCardDismissForRadixPortals}
       >
-        {popoverContent}
+        {hoverCardContent}
       </HoverCardContent>
     </HoverCard>
   );

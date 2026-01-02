@@ -221,6 +221,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
               <GitStatusIndicator
                 gitStatus={gitStatus}
                 workspaceId={workspaceId}
+                projectPath={projectPath}
                 tooltipPosition="right"
                 isWorking={isWorking}
               />

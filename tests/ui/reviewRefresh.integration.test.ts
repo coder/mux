@@ -1,6 +1,7 @@
 import { fireEvent, waitFor } from "@testing-library/react";
 
 import { shouldRunIntegrationTests, validateApiKeys } from "../testUtils";
+import { STORAGE_KEYS } from "@/constants/workspaceDefaults";
 import {
   cleanupSharedRepo,
   configureTestRetries,
@@ -20,6 +21,7 @@ import {
   assertRefreshButtonHasLastRefreshInfo,
   simulateFileModifyingToolEnd,
 } from "./helpers";
+import type { APIClient } from "@/browser/contexts/API";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 
 configureTestRetries(2);
@@ -48,6 +50,28 @@ async function setupReviewPanel(
 // MANUAL REFRESH TEST (fast, no LLM calls)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+function renderReviewPanelForRefreshTests(params: {
+  apiClient: APIClient;
+  metadata: FrontendWorkspaceMetadata;
+  workspaceId: string;
+}): RenderedApp {
+  // These refresh tests make uncommitted filesystem changes and expect them to show up in the
+  // ReviewPanel diff without toggling includeUncommitted.
+  //
+  // With the app's default review base now set to a branch ref (e.g. origin/main), the default
+  // diff would exclude uncommitted changes unless includeUncommitted is enabled. Force HEAD so the
+  // diff always reflects the working tree.
+  window.localStorage.setItem(
+    STORAGE_KEYS.reviewDiffBase(params.workspaceId),
+    JSON.stringify("HEAD")
+  );
+
+  return renderReviewPanel({
+    apiClient: params.apiClient,
+    metadata: params.metadata,
+  });
+}
+
 describeIntegration("ReviewPanel manual refresh (UI + ORPC)", () => {
   beforeAll(async () => {
     await createSharedRepo();
@@ -61,9 +85,10 @@ describeIntegration("ReviewPanel manual refresh (UI + ORPC)", () => {
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
       const cleanupDom = installDom();
 
-      const view = renderReviewPanel({
+      const view = renderReviewPanelForRefreshTests({
         apiClient: env.orpc,
         metadata,
+        workspaceId,
       });
 
       try {
@@ -110,9 +135,10 @@ describeIntegration("ReviewPanel manual refresh (UI + ORPC)", () => {
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
       const cleanupDom = installDom();
 
-      const view = renderReviewPanel({
+      const view = renderReviewPanelForRefreshTests({
         apiClient: env.orpc,
         metadata,
+        workspaceId,
       });
 
       try {
@@ -137,9 +163,10 @@ describeIntegration("ReviewPanel manual refresh (UI + ORPC)", () => {
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
       const cleanupDom = installDom();
 
-      const view = renderReviewPanel({
+      const view = renderReviewPanelForRefreshTests({
         apiClient: env.orpc,
         metadata,
+        workspaceId,
       });
 
       try {
@@ -194,9 +221,10 @@ describeIntegration("ReviewPanel simulated tool refresh (UI + ORPC, no LLM)", ()
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
       const cleanupDom = installDom();
 
-      const view = renderReviewPanel({
+      const view = renderReviewPanelForRefreshTests({
         apiClient: env.orpc,
         metadata,
+        workspaceId,
       });
 
       try {
@@ -234,9 +262,10 @@ describeIntegration("ReviewPanel simulated tool refresh (UI + ORPC, no LLM)", ()
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
       const cleanupDom = installDom();
 
-      const view = renderReviewPanel({
+      const view = renderReviewPanelForRefreshTests({
         apiClient: env.orpc,
         metadata,
+        workspaceId,
       });
 
       try {
@@ -286,9 +315,10 @@ describeIntegration("ReviewPanel simulated tool refresh (UI + ORPC, no LLM)", ()
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
       const cleanupDom = installDom();
 
-      const view = renderReviewPanel({
+      const view = renderReviewPanelForRefreshTests({
         apiClient: env.orpc,
         metadata,
+        workspaceId,
       });
 
       try {
@@ -351,9 +381,10 @@ describeIntegration("ReviewPanel auto refresh (UI + ORPC + live LLM)", () => {
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, collector, metadata }) => {
       const cleanupDom = installDom();
 
-      const view = renderReviewPanel({
+      const view = renderReviewPanelForRefreshTests({
         apiClient: env.orpc,
         metadata,
+        workspaceId,
       });
 
       try {
@@ -422,9 +453,10 @@ describeIntegration("ReviewPanel auto refresh (UI + ORPC + live LLM)", () => {
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
       const cleanupDom = installDom();
 
-      const view = renderReviewPanel({
+      const view = renderReviewPanelForRefreshTests({
         apiClient: env.orpc,
         metadata,
+        workspaceId,
       });
 
       try {

@@ -91,6 +91,7 @@ export type { TabType };
 interface RightSidebarProps {
   workspaceId: string;
   workspacePath: string;
+  projectPath: string;
   /** Custom width in pixels (persisted per-tab, provided by AIView) */
   width?: number;
   /** Drag start handler for resize */
@@ -106,6 +107,7 @@ interface RightSidebarProps {
 const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   workspaceId,
   workspacePath,
+  projectPath,
   width,
   onStartResize,
   isResizing = false,
@@ -336,6 +338,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
                   key={workspaceId}
                   workspaceId={workspaceId}
                   workspacePath={workspacePath}
+                  projectPath={projectPath}
                   onReviewNote={onReviewNote}
                   focusTrigger={focusTrigger}
                   isCreating={isCreating}

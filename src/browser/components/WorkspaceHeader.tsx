@@ -84,6 +84,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
           <GitStatusIndicator
             gitStatus={gitStatus}
             workspaceId={workspaceId}
+            projectPath={projectPath}
             tooltipPosition="bottom"
             isWorking={canInterrupt}
           />
