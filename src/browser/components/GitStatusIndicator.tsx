@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from "react";
 import type { GitStatus } from "@/common/types/workspace";
 import { GIT_STATUS_INDICATOR_MODE_KEY } from "@/common/constants/storage";
+import { STORAGE_KEYS } from "@/constants/workspaceDefaults";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useGitStatusRefreshing } from "@/browser/stores/GitStatusStore";
 import { GitStatusIndicatorView, type GitStatusIndicatorMode } from "./GitStatusIndicatorView";
@@ -9,6 +10,7 @@ import { useGitBranchDetails } from "./hooks/useGitBranchDetails";
 interface GitStatusIndicatorProps {
   gitStatus: GitStatus | null;
   workspaceId: string;
+  projectPath: string;
   tooltipPosition?: "right" | "bottom";
   /** When true, shows blue pulsing styling to indicate agent is working */
   isWorking?: boolean;
@@ -22,6 +24,7 @@ interface GitStatusIndicatorProps {
 export const GitStatusIndicator: React.FC<GitStatusIndicatorProps> = ({
   gitStatus,
   workspaceId,
+  projectPath,
   tooltipPosition = "right",
   isWorking = false,
 }) => {
@@ -33,6 +36,20 @@ export const GitStatusIndicator: React.FC<GitStatusIndicatorProps> = ({
     GIT_STATUS_INDICATOR_MODE_KEY,
     "line-delta",
     { listener: true }
+  );
+
+  // Per-project base ref (shared with review panel)
+  const [baseRef, setBaseRef] = usePersistedState<string>(
+    STORAGE_KEYS.reviewDefaultBase(projectPath),
+    "HEAD",
+    { listener: true }
+  );
+
+  const handleBaseChange = useCallback(
+    (value: string) => {
+      setBaseRef(value);
+    },
+    [setBaseRef]
   );
 
   const handleModeChange = useCallback(
@@ -67,6 +84,8 @@ export const GitStatusIndicator: React.FC<GitStatusIndicatorProps> = ({
       isOpen={isOpen}
       onOpenChange={setIsOpen}
       onModeChange={handleModeChange}
+      baseRef={baseRef}
+      onBaseChange={handleBaseChange}
       isWorking={isWorking}
       isRefreshing={isRefreshing}
     />
