@@ -149,11 +149,12 @@ const SigningBadge = ({
   );
 
   return (
-    <Tooltip delayDuration={0}>
+    <Tooltip>
       <TooltipTrigger asChild>
         <button
           onClick={onToggleSigning}
           disabled={!hasKey}
+          tabIndex={-1}
           className={cn(
             "flex items-center justify-center rounded p-0.5 transition-colors",
             hasKey ? "hover:bg-muted/50 cursor-pointer" : "cursor-default",
@@ -283,15 +284,15 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, signingCapabilitiesLoaded]);
 
-  // Auto-select URL text when share data becomes available
+  // Auto-select URL text when popover opens with share data or share completes
   useEffect(() => {
-    if (shareData && urlInputRef.current) {
+    if (isOpen && shareData && urlInputRef.current) {
       // Small delay to ensure input is rendered
       requestAnimationFrame(() => {
         urlInputRef.current?.select();
       });
     }
-  }, [shareData]);
+  }, [isOpen, shareData]);
 
   const isAlreadyShared = Boolean(shareData);
 
@@ -635,6 +636,7 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
                       className="text-muted hover:bg-destructive/10 hover:text-destructive rounded p-1 transition-colors"
                       aria-label="Delete shared link"
                       disabled={isBusy}
+                      tabIndex={-1}
                     >
                       {isDeleting ? (
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
