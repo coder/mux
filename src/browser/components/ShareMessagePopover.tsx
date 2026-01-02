@@ -462,8 +462,8 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
                         </TooltipTrigger>
                         <TooltipContent className="max-w-[200px]">
                           <p className="text-[11px]">
-                            No Ed25519 key found at ~/.mux/id_ed25519 or ~/.ssh/id_ed25519.
-                            Click to retry detection after adding a key.
+                            No Ed25519 key found at ~/.mux/id_ed25519 or ~/.ssh/id_ed25519. Click to
+                            retry detection after adding a key.
                           </p>
                         </TooltipContent>
                       </Tooltip>
