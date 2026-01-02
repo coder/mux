@@ -27,6 +27,7 @@ import {
 } from "@/common/constants/storage";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 import type { UIMode } from "@/common/types/mode";
+import { sortAgentsStable } from "@/browser/utils/agents";
 
 type ModeContextType = [UIMode, (mode: UIMode) => void];
 
@@ -209,8 +210,11 @@ export const ModeProvider: React.FC<ModeProviderProps> = (props) => {
     [setAgentId]
   );
 
-  // Get UI-selectable agents for cycling
-  const selectableAgents = useMemo(() => agents.filter((a) => a.uiSelectable), [agents]);
+  // Get UI-selectable agents in stable order for cycling
+  const selectableAgents = useMemo(
+    () => sortAgentsStable(agents.filter((a) => a.uiSelectable)),
+    [agents]
+  );
 
   // Cycle to next agent
   const cycleToNextAgent = useCallback(() => {
