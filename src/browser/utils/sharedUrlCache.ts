@@ -23,6 +23,8 @@ export interface ShareData {
   expiresAt?: number;
   /** When this entry was cached (for LRU eviction) */
   cachedAt: number;
+  /** Whether the share was signed with user's key */
+  signed?: boolean;
 }
 
 /**

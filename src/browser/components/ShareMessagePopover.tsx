@@ -284,6 +284,7 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
         mutateKey: result.mutateKey,
         expiresAt: result.expiresAt,
         cachedAt: Date.now(),
+        signed: Boolean(signature),
       };
 
       // Cache the share data
@@ -608,6 +609,32 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
               {/* Inline status: spinner while updating, checkmark on success */}
               {isUpdating && <Loader2 className="text-muted h-3.5 w-3.5 animate-spin" />}
               {showUpdated && <Check className="h-3.5 w-3.5 text-green-500" />}
+            </div>
+
+            {/* Signing status - show whether this share was signed */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <PenTool className="text-muted h-3 w-3" />
+                <span className="text-muted text-[10px]">Signed</span>
+                {shareData.signed ? (
+                  signingCapabilities?.githubUser ? (
+                    <span className="text-muted-foreground text-[10px]">
+                      (@{signingCapabilities.githubUser})
+                    </span>
+                  ) : signingCapabilities?.email ? (
+                    <span className="text-muted-foreground text-[10px]">
+                      ({signingCapabilities.email})
+                    </span>
+                  ) : null
+                ) : (
+                  <span className="text-muted-foreground text-[10px]">(not signed)</span>
+                )}
+              </div>
+              {shareData.signed ? (
+                <Check className="h-3.5 w-3.5 text-green-500" />
+              ) : (
+                <span className="text-muted text-[10px]">—</span>
+              )}
             </div>
 
             {error && (
