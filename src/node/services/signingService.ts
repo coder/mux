@@ -2,13 +2,16 @@
  * Signing Service
  *
  * Provides Ed25519 message signing for mux.md.
- * - Generates and caches Ed25519 keypair on first use
+ * - Loads Ed25519 key from ~/.mux/id_ed25519 or ~/.ssh/id_ed25519
  * - Signs content with private key
  * - Returns public key in OpenSSH format
  * - Detects GitHub username via `gh auth status`
  */
 
-import { generateKeyPairSync, sign, type KeyObject } from "crypto";
+import { createPrivateKey, createPublicKey, sign } from "crypto";
+import { existsSync, readFileSync } from "fs";
+import { homedir } from "os";
+import { join } from "path";
 import { execAsync } from "@/node/utils/disposableExec";
 import { log } from "@/node/services/log";
 
@@ -42,52 +45,259 @@ interface SignResult {
   githubUser: string | null;
 }
 
+/** Paths to check for Ed25519 keys, in order of preference */
+const KEY_PATHS = [join(homedir(), ".mux", "id_ed25519"), join(homedir(), ".ssh", "id_ed25519")];
+
 /**
  * Service for Ed25519 message signing.
- * Keypair is generated once and cached for the lifetime of the app.
+ * Loads key from ~/.mux/id_ed25519 or ~/.ssh/id_ed25519 on first use.
  */
 export class SigningService {
   private keyPair: KeyPair | null = null;
+  private keyLoadAttempted = false;
+  private keyLoadError: string | null = null;
   private githubStatusCache: GitHubStatus | null = null;
   private githubStatusPromise: Promise<GitHubStatus> | null = null;
 
   /**
-   * Get or generate the Ed25519 keypair.
-   * Keypair is cached for all subsequent calls.
+   * Load the Ed25519 keypair from disk.
+   * Tries ~/.mux/id_ed25519 first, then ~/.ssh/id_ed25519.
+   * Supports both PEM (PKCS8) and OpenSSH private key formats.
+   * Returns null if no Ed25519 key is found.
    */
-  private getKeyPair(): KeyPair {
-    if (this.keyPair) return this.keyPair;
+  private loadKeyPair(): KeyPair | null {
+    if (this.keyLoadAttempted) return this.keyPair;
+    this.keyLoadAttempted = true;
 
-    log.info("[SigningService] Generating Ed25519 keypair");
+    for (const keyPath of KEY_PATHS) {
+      if (!existsSync(keyPath)) continue;
 
-    // Generate Ed25519 keypair using Node's crypto
-    const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+      try {
+        log.info("[SigningService] Attempting to load key from:", keyPath);
+        const keyData = readFileSync(keyPath, "utf-8");
 
-    // Export private key in raw format for signing
-    const privateKeyBuffer = privateKey.export({ type: "pkcs8", format: "der" });
-    // PKCS8 DER for Ed25519 has 16 bytes prefix, raw key is last 32 bytes
-    const rawPrivateKey = Buffer.from(privateKeyBuffer.slice(-32));
+        // Detect format and parse accordingly
+        if (keyData.includes("-----BEGIN OPENSSH PRIVATE KEY-----")) {
+          // OpenSSH format - parse manually
+          const parsed = this.parseOpenSSHPrivateKey(keyData);
+          if (!parsed) {
+            log.info("[SigningService] Failed to parse OpenSSH key at", keyPath);
+            continue;
+          }
+          if (parsed.keyType !== "ssh-ed25519") {
+            log.info(
+              "[SigningService] Key at",
+              keyPath,
+              "is",
+              parsed.keyType,
+              "not ssh-ed25519, skipping"
+            );
+            continue;
+          }
 
-    // Convert PEM to OpenSSH format
-    const openSSHKey = this.pemToOpenSSH(publicKey);
+          // For Ed25519, the private key is 64 bytes (seed + public key) in OpenSSH format
+          // We need the first 32 bytes (the seed/private key)
+          const rawPrivateKey = parsed.privateKey.slice(0, 32);
+          const openSSHKey = this.rawToOpenSSH(parsed.publicKey);
 
-    this.keyPair = {
-      privateKey: rawPrivateKey,
-      publicKeyOpenSSH: openSSHKey,
-    };
+          this.keyPair = {
+            privateKey: rawPrivateKey,
+            publicKeyOpenSSH: openSSHKey,
+          };
 
-    log.info("[SigningService] Keypair generated, public key:", openSSHKey.slice(0, 50) + "...");
-    return this.keyPair;
+          log.info("[SigningService] Loaded Ed25519 key (OpenSSH format) from:", keyPath);
+          log.info("[SigningService] Public key:", openSSHKey.slice(0, 50) + "...");
+          return this.keyPair;
+        }
+
+        // PEM/PKCS8 format
+        const privateKey = createPrivateKey({
+          key: keyData,
+          format: "pem",
+        });
+
+        // Verify it's Ed25519
+        if (privateKey.asymmetricKeyType !== "ed25519") {
+          log.info(
+            "[SigningService] Key at",
+            keyPath,
+            "is",
+            privateKey.asymmetricKeyType,
+            "not ed25519, skipping"
+          );
+          continue;
+        }
+
+        // Extract raw private key (32 bytes)
+        const privateKeyDer = privateKey.export({ type: "pkcs8", format: "der" });
+        const rawPrivateKey = Buffer.from(privateKeyDer.slice(-32));
+
+        // Derive public key and convert to OpenSSH format
+        const pubKey = createPublicKey(privateKey);
+        const openSSHKey = this.derToOpenSSH(pubKey.export({ type: "spki", format: "der" }));
+
+        this.keyPair = {
+          privateKey: rawPrivateKey,
+          publicKeyOpenSSH: openSSHKey,
+        };
+
+        log.info("[SigningService] Loaded Ed25519 key (PEM format) from:", keyPath);
+        log.info("[SigningService] Public key:", openSSHKey.slice(0, 50) + "...");
+        return this.keyPair;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        log.warn("[SigningService] Failed to load key from", keyPath + ":", message);
+        // Continue to next path
+      }
+    }
+
+    this.keyLoadError = `No Ed25519 key found. Checked: ${KEY_PATHS.join(", ")}`;
+    log.info("[SigningService]", this.keyLoadError);
+    return null;
   }
 
   /**
-   * Convert a Node.js KeyObject to OpenSSH format.
+   * Parse an OpenSSH private key file.
+   * Returns the key type, public key, and private key as Buffers.
    */
-  private pemToOpenSSH(publicKey: KeyObject): string {
-    // Export as raw bytes (32 bytes for Ed25519)
-    const rawKey = publicKey.export({ type: "spki", format: "der" });
+  private parseOpenSSHPrivateKey(
+    keyData: string
+  ): { keyType: string; publicKey: Buffer; privateKey: Buffer } | null {
+    try {
+      // Remove header/footer and decode base64
+      const lines = keyData.split("\n");
+      const base64 = lines.filter((line) => !line.startsWith("-----")).join("");
+      const data = Buffer.from(base64, "base64");
+
+      // OpenSSH private key format:
+      // "openssh-key-v1" + null byte
+      // cipher name (string)
+      // kdf name (string)
+      // kdf options (string)
+      // number of keys (uint32)
+      // public key blob (string)
+      // private key blob (string) - encrypted or not
+
+      let offset = 0;
+
+      // Check magic
+      const magic = "openssh-key-v1\0";
+      if (data.toString("utf-8", 0, magic.length) !== magic) {
+        return null;
+      }
+      offset += magic.length;
+
+      // Read cipher name
+      const cipherLen = data.readUInt32BE(offset);
+      offset += 4;
+      const cipher = data.toString("utf-8", offset, offset + cipherLen);
+      offset += cipherLen;
+
+      // We only support unencrypted keys
+      if (cipher !== "none") {
+        log.info("[SigningService] Encrypted SSH key not supported (cipher:", cipher + ")");
+        return null;
+      }
+
+      // Read kdf name
+      const kdfLen = data.readUInt32BE(offset);
+      offset += 4;
+      offset += kdfLen; // skip kdf name
+
+      // Read kdf options
+      const kdfOptionsLen = data.readUInt32BE(offset);
+      offset += 4;
+      offset += kdfOptionsLen; // skip kdf options
+
+      // Read number of keys
+      const numKeys = data.readUInt32BE(offset);
+      offset += 4;
+
+      if (numKeys !== 1) {
+        log.info("[SigningService] Multiple keys in file not supported");
+        return null;
+      }
+
+      // Read public key blob
+      const pubKeyBlobLen = data.readUInt32BE(offset);
+      offset += 4;
+      const pubKeyBlob = data.slice(offset, offset + pubKeyBlobLen);
+      offset += pubKeyBlobLen;
+
+      // Parse public key blob to get key type
+      let pubOffset = 0;
+      const keyTypeLen = pubKeyBlob.readUInt32BE(pubOffset);
+      pubOffset += 4;
+      const keyType = pubKeyBlob.toString("utf-8", pubOffset, pubOffset + keyTypeLen);
+      pubOffset += keyTypeLen;
+
+      // Read the raw public key from the blob
+      const rawPubKeyLen = pubKeyBlob.readUInt32BE(pubOffset);
+      pubOffset += 4;
+      const rawPublicKey = pubKeyBlob.slice(pubOffset, pubOffset + rawPubKeyLen);
+
+      // Read private key section
+      const privSectionLen = data.readUInt32BE(offset);
+      offset += 4;
+      const privSection = data.slice(offset, offset + privSectionLen);
+
+      // Private section format:
+      // checkint (uint32) - random, must match
+      // checkint (uint32) - same value
+      // key type (string)
+      // public key (string)
+      // private key (string) - for ed25519, 64 bytes (seed + pub)
+      // comment (string)
+      // padding
+
+      let privOffset = 0;
+
+      // Skip checkints
+      privOffset += 8;
+
+      // Read key type again
+      const privKeyTypeLen = privSection.readUInt32BE(privOffset);
+      privOffset += 4;
+      privOffset += privKeyTypeLen;
+
+      // Read public key in private section
+      const privPubKeyLen = privSection.readUInt32BE(privOffset);
+      privOffset += 4;
+      privOffset += privPubKeyLen;
+
+      // Read private key
+      const privKeyLen = privSection.readUInt32BE(privOffset);
+      privOffset += 4;
+      const rawPrivateKey = privSection.slice(privOffset, privOffset + privKeyLen);
+
+      return { keyType, publicKey: rawPublicKey, privateKey: rawPrivateKey };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Convert raw 32-byte public key to OpenSSH format.
+   */
+  private rawToOpenSSH(rawPublicKey: Buffer): string {
+    const keyType = "ssh-ed25519";
+    const keyTypeLength = Buffer.alloc(4);
+    keyTypeLength.writeUInt32BE(keyType.length);
+
+    const keyDataLength = Buffer.alloc(4);
+    keyDataLength.writeUInt32BE(rawPublicKey.length);
+
+    const blob = Buffer.concat([keyTypeLength, Buffer.from(keyType), keyDataLength, rawPublicKey]);
+
+    return `ssh-ed25519 ${blob.toString("base64")}`;
+  }
+
+  /**
+   * Convert SPKI DER format public key to OpenSSH format.
+   */
+  private derToOpenSSH(spkiDer: Buffer): string {
     // SPKI DER for Ed25519 has 12 bytes prefix, raw key is last 32 bytes
-    const rawPublicKey = rawKey.slice(-32);
+    const rawPublicKey = spkiDer.slice(-32);
 
     // Build OpenSSH format: "ssh-ed25519" + key data
     // OpenSSH format: 4-byte length + "ssh-ed25519" + 4-byte length + 32-byte key
@@ -182,25 +392,25 @@ export class SigningService {
    * Get signing capabilities - whether signing is available and GitHub user status.
    */
   async getCapabilities(): Promise<SigningCapabilities> {
-    try {
-      const keyPair = this.getKeyPair();
-      const githubStatus = await this.detectGitHubUser();
+    const keyPair = this.loadKeyPair();
 
-      return {
-        available: true,
-        publicKey: keyPair.publicKeyOpenSSH,
-        githubUser: githubStatus.username,
-        githubError: githubStatus.error,
-      };
-    } catch (err) {
-      log.error("[SigningService] Failed to get capabilities:", err);
+    if (!keyPair) {
       return {
         available: false,
         publicKey: null,
         githubUser: null,
-        githubError: err instanceof Error ? err.message : String(err),
+        githubError: this.keyLoadError,
       };
     }
+
+    const githubStatus = await this.detectGitHubUser();
+
+    return {
+      available: true,
+      publicKey: keyPair.publicKeyOpenSSH,
+      githubUser: githubStatus.username,
+      githubError: githubStatus.error,
+    };
   }
 
   /**
@@ -208,9 +418,14 @@ export class SigningService {
    *
    * @param content - The content to sign (will be UTF-8 encoded)
    * @returns Signature and public key
+   * @throws Error if no Ed25519 key is available
    */
   async sign(content: string): Promise<SignResult> {
-    const keyPair = this.getKeyPair();
+    const keyPair = this.loadKeyPair();
+    if (!keyPair) {
+      throw new Error(this.keyLoadError ?? "No Ed25519 key available for signing");
+    }
+
     const githubStatus = await this.detectGitHubUser();
 
     // Sign the content using Ed25519
