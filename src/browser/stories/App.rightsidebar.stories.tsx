@@ -20,7 +20,7 @@ import {
   RIGHT_SIDEBAR_REVIEW_WIDTH_KEY,
 } from "@/common/constants/storage";
 import type { ComponentType } from "react";
-import type { MockSessionUsage } from "../../../.storybook/mocks/orpc";
+import type { MockSessionUsage } from "@/browser/stories/mocks/orpc";
 
 export default {
   ...appMeta,

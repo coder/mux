@@ -13,7 +13,7 @@ import { createGitStatusExecutor, expandProjects, selectWorkspace } from "./stor
 import { GIT_STATUS_INDICATOR_MODE_KEY } from "@/common/constants/storage";
 import { within, userEvent, waitFor } from "@storybook/test";
 
-import { createMockORPCClient } from "../../../.storybook/mocks/orpc";
+import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 
 export default {
   ...appMeta,

@@ -1,9 +1,9 @@
 ---
 title: Storybook
-description: Develop and test UI components in isolation
+description: Develop and test mux UI states in isolation
 ---
 
-Storybook is a tool for developing and testing UI components in isolation. It provides a sandboxed environment where you can build, view, and test components without running the full Electron application.
+Storybook renders mux's **renderer UI** without running the full Electron app.
 
 ## Starting Storybook
 
@@ -27,97 +27,70 @@ bun run storybook:build
 
 The output will be in `storybook-static/`.
 
-## Writing Stories
+## Writing Stories (full app only)
 
-Stories are colocated with their components. For example, `ErrorMessage.tsx` has its stories in `ErrorMessage.stories.tsx` in the same directory.
+mux intentionally uses **full-app** stories (no isolated component stories).
 
-### Basic Story Structure
+Stories live in `src/browser/stories/` and must be named `App.*.stories.tsx`.
 
-```typescript
-import type { Meta, StoryObj } from "@storybook/react";
-import { MyComponent } from "./MyComponent";
+Storybook is configured to load `src/browser/stories/**/*.stories.@(ts|tsx)` (see `.storybook/main.ts`).
 
-const meta = {
-  title: "Components/MyComponent",
-  component: MyComponent,
-  parameters: {
-    layout: "centered", // or "fullscreen" or "padded"
-  },
-  tags: ["autodocs"], // Enables automatic documentation
-} satisfies Meta<typeof MyComponent>;
+### Basic App story structure
 
-export default meta;
-type Story = StoryObj<typeof meta>;
+```tsx
+import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
+import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
+import { createWorkspace, groupWorkspacesByProject } from "./mockFactory";
 
-export const Default: Story = {
-  args: {
-    prop1: "value1",
-    prop2: "value2",
-  },
+export default {
+  ...appMeta,
+  title: "App/Sidebar",
 };
 
-export const Variant: Story = {
-  args: {
-    prop1: "different value",
-    prop2: "another value",
-  },
-};
-```
+export const SingleProject: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const workspaces = [createWorkspace({ id: "ws-1", name: "main", projectName: "my-app" })];
 
-### Component Examples
-
-See the existing stories for reference:
-
-- `src/components/ErrorMessage.stories.tsx` - Simple component with multiple states
-- `src/components/Modal.stories.tsx` - Complex component with children and multiple variants
-
-## Global Styles
-
-Storybook automatically applies the same global styles as the main app:
-
-- Color variables (`GlobalColors`)
-- Font definitions (`GlobalFonts`)
-- Scrollbar styles (`GlobalScrollbars`)
-
-These are configured in `.storybook/preview.tsx`.
-
-## Handling Electron APIs
-
-Some components depend on `window.api` for Electron IPC communication. For these components:
-
-1. **Preferred**: Extract the component logic to accept props instead of calling IPC directly
-2. **Alternative**: Mock the `window.api` object in `.storybook/preview.tsx`
-
-Example mock structure:
-
-```typescript
-window.api = {
-  workspace: {
-    create: async () => ({ success: true, metadata: { ... } }),
-    list: async () => ({ success: true, workspaces: [...] }),
-    // ...
-  },
-  // ... other IPC channels
+        return createMockORPCClient({
+          workspaces,
+          projects: groupWorkspacesByProject(workspaces),
+        });
+      }}
+    />
+  ),
 };
 ```
 
-## Benefits
+### Helpers & fixtures
 
-- **Isolated Development**: Build components without running the full Electron app
-- **Visual Testing**: See all component states at once
-- **Documentation**: Stories serve as living documentation with `autodocs`
-- **Faster Iteration**: Hot reload is faster than Electron rebuilds
-- **Accessibility**: Storybook addons can check accessibility issues
+- `src/browser/stories/meta.tsx` – shared `appMeta` + `AppWithMocks` wrapper
+- `src/browser/stories/mocks/orpc.ts` – `createMockORPCClient()` for building an `APIClient`
+- `src/browser/stories/mockFactory.ts` – deterministic fixtures (workspaces, messages, timestamps)
+- `src/browser/stories/storyHelpers.ts` / `storyPlayHelpers.ts` – localStorage + play-function helpers
+
+## Global styles & determinism
+
+- Global CSS is loaded from `src/browser/styles/globals.css` in `.storybook/preview.tsx`.
+- `.storybook/preview.tsx` stubs `Date.now()` to a stable value for deterministic snapshots; prefer using `NOW` / `STABLE_TIMESTAMP` from `mockFactory.ts` when constructing fixtures.
+
+## Examples
+
+See the existing stories for patterns:
+
+- `src/browser/stories/App.sidebar.stories.tsx`
+- `src/browser/stories/App.chat.stories.tsx`
+- `src/browser/stories/App.settings.stories.tsx`
 
 ## Configuration
 
-- `.storybook/main.ts` - Main Storybook configuration
-- `.storybook/preview.tsx` - Global decorators and parameters
-- `tsconfig.json` - Includes `.storybook/**/*.ts` for type checking
+- `.storybook/main.ts` - Main Storybook configuration (stories glob, addons, Vite config)
+- `.storybook/preview.tsx` - Global decorators and snapshot stabilization helpers
+- `tsconfig.json` - Includes `.storybook/**/*.ts(x)` for type checking
 
 ## Tips
 
-- Keep stories simple and focused on visual states
-- Use Storybook's Controls addon to make props interactive
-- Add multiple stories for different states (loading, error, success, etc.)
-- Use the `tags: ["autodocs"]` option to generate automatic documentation
+- Keep story data deterministic (no `Math.random()` / real `Date.now()` in fixtures).
+- Use `play` functions (`@storybook/test`) to navigate the UI into the desired state.
+- If async rendering changes element heights (Markdown, Mermaid, tool expansion), wait for scroll stabilization (double `requestAnimationFrame`) before snapshotting.

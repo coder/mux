@@ -18,7 +18,7 @@ import type { APIClient } from "@/browser/contexts/API";
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { createWorkspace, groupWorkspacesByProject } from "./mockFactory";
 import { selectWorkspace } from "./storyHelpers";
-import { createMockORPCClient } from "../../../.storybook/mocks/orpc";
+import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import { within, userEvent, waitFor } from "@storybook/test";
 import { getExperimentKey, EXPERIMENT_IDS } from "@/common/constants/experiments";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";

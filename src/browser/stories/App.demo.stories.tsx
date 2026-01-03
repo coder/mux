@@ -27,7 +27,7 @@ import {
   setWorkspaceInput,
   setWorkspaceModel,
 } from "./storyHelpers";
-import { createMockORPCClient } from "../../../.storybook/mocks/orpc";
+import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 export default {
   ...appMeta,
   title: "App/Demo",

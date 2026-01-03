@@ -13,7 +13,7 @@ import { shouldRunIntegrationTests } from "../testUtils";
 import { installDom } from "./dom";
 import { renderApp } from "./renderReviewPanel";
 import { cleanupView } from "./helpers";
-import { createMockORPCClient } from "../../.storybook/mocks/orpc";
+import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import type { ProjectConfig } from "@/node/config";
 import { expandProjects } from "@/browser/stories/storyHelpers";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";

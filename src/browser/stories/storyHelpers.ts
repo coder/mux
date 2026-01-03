@@ -36,7 +36,7 @@ import {
   createGitStatusOutput,
   type GitStatusFixture,
 } from "./mockFactory";
-import { createMockORPCClient, type MockSessionUsage } from "../../../.storybook/mocks/orpc";
+import { createMockORPCClient, type MockSessionUsage } from "@/browser/stories/mocks/orpc";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // WORKSPACE SELECTION

@@ -14,7 +14,7 @@ import type { APIClient } from "@/browser/contexts/API";
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { createWorkspace, groupWorkspacesByProject } from "./mockFactory";
 import { selectWorkspace } from "./storyHelpers";
-import { createMockORPCClient } from "../../../.storybook/mocks/orpc";
+import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import { within, userEvent, expect } from "@storybook/test";
 import { getMCPTestResultsKey } from "@/common/constants/storage";
 

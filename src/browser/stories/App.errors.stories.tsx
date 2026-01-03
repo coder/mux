@@ -21,7 +21,7 @@ import {
   setupCustomChatStory,
   expandProjects,
 } from "./storyHelpers";
-import { createMockORPCClient } from "../../../.storybook/mocks/orpc";
+import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import { userEvent, waitFor } from "@storybook/test";
 
 export default {

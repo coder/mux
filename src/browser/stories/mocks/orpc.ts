@@ -4,7 +4,10 @@
  * Creates a client that matches the AppRouter interface with configurable mock data.
  */
 import type { APIClient } from "@/browser/contexts/API";
-import type { AgentDefinitionDescriptor, AgentDefinitionPackage } from "@/common/types/agentDefinition";
+import type {
+  AgentDefinitionDescriptor,
+  AgentDefinitionPackage,
+} from "@/common/types/agentDefinition";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { ProjectConfig } from "@/node/config";
 import type {
@@ -22,10 +25,7 @@ import {
   type SubagentAiDefaults,
   type TaskSettings,
 } from "@/common/types/tasks";
-import {
-  normalizeModeAiDefaults,
-  type ModeAiDefaults,
-} from "@/common/types/modeAiDefaults";
+import { normalizeModeAiDefaults, type ModeAiDefaults } from "@/common/types/modeAiDefaults";
 import { normalizeAgentAiDefaults, type AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
 import { isWorkspaceArchived } from "@/common/utils/archive";
@@ -111,15 +111,49 @@ export interface MockORPCClientOptions {
   /** MCP workspace overrides per workspace */
   mcpOverrides?: Map<
     string,
-    { disabledServers?: string[]; enabledServers?: string[]; toolAllowlist?: Record<string, string[]> }
+    {
+      disabledServers?: string[];
+      enabledServers?: string[];
+      toolAllowlist?: Record<string, string[]>;
+    }
   >;
   /** MCP test results - maps server name to tools list or error */
-  mcpTestResults?: Map<string, { success: true; tools: string[] } | { success: false; error: string }>;
+  mcpTestResults?: Map<
+    string,
+    { success: true; tools: string[] } | { success: false; error: string }
+  >;
   /** Custom listBranches implementation (for testing non-git repos) */
-  listBranches?: (input: { projectPath: string }) => Promise<{ branches: string[]; recommendedTrunk: string | null }>;
+  listBranches?: (input: {
+    projectPath: string;
+  }) => Promise<{ branches: string[]; recommendedTrunk: string | null }>;
   /** Custom gitInit implementation (for testing git init flow) */
-  gitInit?: (input: { projectPath: string }) => Promise<{ success: true } | { success: false; error: string }>;
+  gitInit?: (input: {
+    projectPath: string;
+  }) => Promise<{ success: true } | { success: false; error: string }>;
 }
+
+interface MockBackgroundProcess {
+  id: string;
+  pid: number;
+  script: string;
+  displayName?: string;
+  startTime: number;
+  status: "running" | "exited" | "killed" | "failed";
+  exitCode?: number;
+}
+
+type MockMcpServers = Record<
+  string,
+  { command: string; disabled: boolean; toolAllowlist?: string[] }
+>;
+
+interface MockMcpOverrides {
+  disabledServers?: string[];
+  enabledServers?: string[];
+  toolAllowlist?: Record<string, string[]>;
+}
+
+type MockMcpTestResult = { success: true; tools: string[] } | { success: false; error: string };
 
 /**
  * Creates a mock ORPC client for Storybook.
@@ -140,21 +174,21 @@ export interface MockORPCClientOptions {
  */
 export function createMockORPCClient(options: MockORPCClientOptions = {}): APIClient {
   const {
-    projects = new Map(),
+    projects = new Map<string, ProjectConfig>(),
     workspaces = [],
     onChat,
     executeBash,
     providersConfig = {},
     providersList = [],
     onProjectRemove,
-    backgroundProcesses = new Map(),
-    sessionUsage = new Map(),
+    backgroundProcesses = new Map<string, MockBackgroundProcess[]>(),
+    sessionUsage = new Map<string, MockSessionUsage>(),
     workspaceStatsSnapshots = new Map<string, WorkspaceStatsSnapshot>(),
     statsTabVariant = "control",
     projectSecrets = new Map<string, Secret[]>(),
-    mcpServers = new Map(),
-    mcpOverrides = new Map(),
-    mcpTestResults = new Map(),
+    mcpServers = new Map<string, MockMcpServers>(),
+    mcpOverrides = new Map<string, MockMcpOverrides>(),
+    mcpTestResults = new Map<string, MockMcpTestResult>(),
     taskSettings: initialTaskSettings,
     modeAiDefaults: initialModeAiDefaults,
     subagentAiDefaults: initialSubagentAiDefaults,
@@ -179,6 +213,8 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
   };
 
   const workspaceMap = new Map(workspaces.map((w) => [w.id, w]));
+
+  let createdWorkspaceCounter = 0;
 
   const agentDefinitions: AgentDefinitionDescriptor[] =
     initialAgentDefinitions ??
@@ -261,44 +297,47 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
   // Cast to ORPCClient - TypeScript can't fully validate the proxy structure
   return {
     tokenizer: {
-      countTokens: async () => 0,
-      countTokensBatch: async (_input: { model: string; texts: string[] }) =>
-        _input.texts.map(() => 0),
-      calculateStats: async () => mockStats,
+      countTokens: () => Promise.resolve(0),
+      countTokensBatch: (_input: { model: string; texts: string[] }) =>
+        Promise.resolve(_input.texts.map(() => 0)),
+      calculateStats: () => Promise.resolve(mockStats),
     },
     features: {
-      getStatsTabState: async () => getStatsTabState(),
-      setStatsTabOverride: async (input: { override: "default" | "on" | "off" }) => {
+      getStatsTabState: () => Promise.resolve(getStatsTabState()),
+      setStatsTabOverride: (input: { override: "default" | "on" | "off" }) => {
         statsTabOverride = input.override;
-        return getStatsTabState();
+        return Promise.resolve(getStatsTabState());
       },
     },
     telemetry: {
-      track: async () => undefined,
-      status: async () => ({ enabled: true, explicit: false }),
+      track: () => Promise.resolve(undefined),
+      status: () => Promise.resolve({ enabled: true, explicit: false }),
     },
     signing: {
-      capabilities: async () => ({
-        publicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockKey",
-        githubUser: "mockuser",
-        email: "mockuser@example.com",
-        error: null,
-      }),
-      sign: async () => ({
-        signature: "mockSignature==",
-        publicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockKey",
-        githubUser: "mockuser",
-      }),
-      clearIdentityCache: async () => ({ success: true }),
+      capabilities: () =>
+        Promise.resolve({
+          publicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockKey",
+          githubUser: "mockuser",
+          email: "mockuser@example.com",
+          error: null,
+        }),
+      sign: () =>
+        Promise.resolve({
+          signature: "mockSignature==",
+          publicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockKey",
+          githubUser: "mockuser",
+        }),
+      clearIdentityCache: () => Promise.resolve({ success: true }),
     },
     server: {
-      getLaunchProject: async () => null,
-      getSshHost: async () => null,
-      setSshHost: async () => undefined,
+      getLaunchProject: () => Promise.resolve(null),
+      getSshHost: () => Promise.resolve(null),
+      setSshHost: () => Promise.resolve(undefined),
     },
     config: {
-      getConfig: async () => ({ taskSettings, agentAiDefaults, subagentAiDefaults, modeAiDefaults }),
-      saveConfig: async (input: {
+      getConfig: () =>
+        Promise.resolve({ taskSettings, agentAiDefaults, subagentAiDefaults, modeAiDefaults }),
+      saveConfig: (input: {
         taskSettings: unknown;
         agentAiDefaults?: unknown;
         subagentAiDefaults?: unknown;
@@ -323,29 +362,29 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           modeAiDefaults = deriveModeAiDefaults();
         }
 
-        return undefined;
+        return Promise.resolve(undefined);
       },
-      updateAgentAiDefaults: async (input: { agentAiDefaults: unknown }) => {
+      updateAgentAiDefaults: (input: { agentAiDefaults: unknown }) => {
         agentAiDefaults = normalizeAgentAiDefaults(input.agentAiDefaults);
         modeAiDefaults = deriveModeAiDefaults();
         subagentAiDefaults = deriveSubagentAiDefaults();
-        return undefined;
+        return Promise.resolve(undefined);
       },
-      updateModeAiDefaults: async (input: { modeAiDefaults: unknown }) => {
+      updateModeAiDefaults: (input: { modeAiDefaults: unknown }) => {
         modeAiDefaults = normalizeModeAiDefaults(input.modeAiDefaults);
         agentAiDefaults = normalizeAgentAiDefaults({ ...agentAiDefaults, ...modeAiDefaults });
         modeAiDefaults = deriveModeAiDefaults();
         subagentAiDefaults = deriveSubagentAiDefaults();
-        return undefined;
+        return Promise.resolve(undefined);
       },
     },
     agents: {
-      list: async (_input: { workspaceId: string }) => agentDefinitions,
-      get: async (input: { workspaceId: string; agentId: string }) => {
+      list: (_input: { workspaceId: string }) => Promise.resolve(agentDefinitions),
+      get: (input: { workspaceId: string; agentId: string }) => {
         const descriptor =
           agentDefinitions.find((agent) => agent.id === input.agentId) ?? agentDefinitions[0];
 
-        return {
+        const agentPackage = {
           id: descriptor.id,
           scope: descriptor.scope,
           frontmatter: {
@@ -359,110 +398,125 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           },
           body: "",
         } satisfies AgentDefinitionPackage;
+
+        return Promise.resolve(agentPackage);
       },
     },
     providers: {
-      list: async () => providersList,
-      getConfig: async () => providersConfig,
-      setProviderConfig: async () => ({ success: true, data: undefined }),
-      setModels: async () => ({ success: true, data: undefined }),
+      list: () => Promise.resolve(providersList),
+      getConfig: () => Promise.resolve(providersConfig),
+      setProviderConfig: () => Promise.resolve({ success: true, data: undefined }),
+      setModels: () => Promise.resolve({ success: true, data: undefined }),
     },
     general: {
-      listDirectory: async () => ({ entries: [], hasMore: false }),
-      ping: async (input: string) => `Pong: ${input}`,
+      listDirectory: () => Promise.resolve({ entries: [], hasMore: false }),
+      ping: (input: string) => Promise.resolve(`Pong: ${input}`),
       tick: async function* () {
-        // No-op generator
+        // No ticks in the mock, but keep the subscription open.
+        yield* [];
+        await new Promise<void>(() => undefined);
       },
     },
     projects: {
-      list: async () => Array.from(projects.entries()),
-      create: async () => ({
-        success: true,
-        data: { projectConfig: { workspaces: [] }, normalizedPath: "/mock/project" },
-      }),
-      pickDirectory: async () => null,
-      listBranches: async (input: { projectPath: string }) => {
+      list: () => Promise.resolve(Array.from(projects.entries())),
+      create: () =>
+        Promise.resolve({
+          success: true,
+          data: { projectConfig: { workspaces: [] }, normalizedPath: "/mock/project" },
+        }),
+      pickDirectory: () => Promise.resolve(null),
+      listBranches: (input: { projectPath: string }) => {
         if (customListBranches) {
           return customListBranches(input);
         }
-        return {
+        return Promise.resolve({
           branches: ["main", "develop", "feature/new-feature"],
           recommendedTrunk: "main",
-        };
+        });
       },
-      gitInit: async (input: { projectPath: string }) => {
+      gitInit: (input: { projectPath: string }) => {
         if (customGitInit) {
           return customGitInit(input);
         }
-        return { success: true as const };
+        return Promise.resolve({ success: true as const });
       },
-      remove: async (input: { projectPath: string }) => {
+      remove: (input: { projectPath: string }) => {
         if (onProjectRemove) {
-          return onProjectRemove(input.projectPath);
+          return Promise.resolve(onProjectRemove(input.projectPath));
         }
-        return { success: true, data: undefined };
+        return Promise.resolve({ success: true, data: undefined });
       },
       secrets: {
-        get: async (input: { projectPath: string }) =>
-          projectSecrets.get(input.projectPath) ?? [],
-        update: async (input: { projectPath: string; secrets: Secret[] }) => {
+        get: (input: { projectPath: string }) =>
+          Promise.resolve(projectSecrets.get(input.projectPath) ?? []),
+        update: (input: { projectPath: string; secrets: Secret[] }) => {
           projectSecrets.set(input.projectPath, input.secrets);
-          return { success: true, data: undefined };
+          return Promise.resolve({ success: true, data: undefined });
         },
       },
       mcp: {
-        list: async (input: { projectPath: string }) => mcpServers.get(input.projectPath) ?? {},
-        add: async () => ({ success: true, data: undefined }),
-        remove: async () => ({ success: true, data: undefined }),
-        test: async (input: { projectPath: string; name?: string }) => {
+        list: (input: { projectPath: string }) =>
+          Promise.resolve(mcpServers.get(input.projectPath) ?? {}),
+        add: () => Promise.resolve({ success: true, data: undefined }),
+        remove: () => Promise.resolve({ success: true, data: undefined }),
+        test: (input: { projectPath: string; name?: string }) => {
           if (input.name && mcpTestResults.has(input.name)) {
-            return mcpTestResults.get(input.name)!;
+            return Promise.resolve(mcpTestResults.get(input.name)!);
           }
           // Default: return empty tools
-          return { success: true, tools: [] };
+          return Promise.resolve({ success: true, tools: [] });
         },
-        setEnabled: async () => ({ success: true, data: undefined }),
-        setToolAllowlist: async () => ({ success: true, data: undefined }),
+        setEnabled: () => Promise.resolve({ success: true, data: undefined }),
+        setToolAllowlist: () => Promise.resolve({ success: true, data: undefined }),
       },
       idleCompaction: {
-        get: async () => ({ success: true, hours: null }),
-        set: async () => ({ success: true }),
+        get: () => Promise.resolve({ success: true, hours: null }),
+        set: () => Promise.resolve({ success: true }),
       },
     },
     workspace: {
-      list: async (input?: { archived?: boolean }) => {
+      list: (input?: { archived?: boolean }) => {
         if (input?.archived) {
-          return workspaces.filter((w) => isWorkspaceArchived(w.archivedAt, w.unarchivedAt));
+          return Promise.resolve(
+            workspaces.filter((w) => isWorkspaceArchived(w.archivedAt, w.unarchivedAt))
+          );
         }
-        return workspaces.filter((w) => !isWorkspaceArchived(w.archivedAt, w.unarchivedAt));
+        return Promise.resolve(
+          workspaces.filter((w) => !isWorkspaceArchived(w.archivedAt, w.unarchivedAt))
+        );
       },
-      archive: async () => ({ success: true }),
-      unarchive: async () => ({ success: true }),
-      create: async (input: { projectPath: string; branchName: string }) => ({
-        success: true,
-        metadata: {
-          id: Math.random().toString(36).substring(2, 12),
-          name: input.branchName,
-          projectPath: input.projectPath,
-          projectName: input.projectPath.split("/").pop() ?? "project",
-          namedWorkspacePath: `/mock/workspace/${input.branchName}`,
-          runtimeConfig: DEFAULT_RUNTIME_CONFIG,
-        },
-      }),
-      remove: async () => ({ success: true }),
-      rename: async (input: { workspaceId: string }) => ({
-        success: true,
-        data: { newWorkspaceId: input.workspaceId },
-      }),
-      fork: async () => ({ success: false, error: "Not implemented in mock" }),
-      sendMessage: async () => ({ success: true, data: undefined }),
-      resumeStream: async () => ({ success: true, data: undefined }),
-      interruptStream: async () => ({ success: true, data: undefined }),
-      clearQueue: async () => ({ success: true, data: undefined }),
-      truncateHistory: async () => ({ success: true, data: undefined }),
-      replaceChatHistory: async () => ({ success: true, data: undefined }),
-      getInfo: async (input: { workspaceId: string }) =>
-        workspaceMap.get(input.workspaceId) ?? null,
+      archive: () => Promise.resolve({ success: true }),
+      unarchive: () => Promise.resolve({ success: true }),
+      create: (input: { projectPath: string; branchName: string }) => {
+        createdWorkspaceCounter += 1;
+
+        return Promise.resolve({
+          success: true,
+          metadata: {
+            id: `ws-created-${createdWorkspaceCounter}`,
+            name: input.branchName,
+            projectPath: input.projectPath,
+            projectName: input.projectPath.split("/").pop() ?? "project",
+            namedWorkspacePath: `/mock/workspace/${input.branchName}`,
+            runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+          },
+        });
+      },
+      remove: () => Promise.resolve({ success: true }),
+      rename: (input: { workspaceId: string }) =>
+        Promise.resolve({
+          success: true,
+          data: { newWorkspaceId: input.workspaceId },
+        }),
+      fork: () => Promise.resolve({ success: false, error: "Not implemented in mock" }),
+      sendMessage: () => Promise.resolve({ success: true, data: undefined }),
+      resumeStream: () => Promise.resolve({ success: true, data: undefined }),
+      interruptStream: () => Promise.resolve({ success: true, data: undefined }),
+      clearQueue: () => Promise.resolve({ success: true, data: undefined }),
+      truncateHistory: () => Promise.resolve({ success: true, data: undefined }),
+      replaceChatHistory: () => Promise.resolve({ success: true, data: undefined }),
+      getInfo: (input: { workspaceId: string }) =>
+        Promise.resolve(workspaceMap.get(input.workspaceId) ?? null),
       executeBash: async (input: { workspaceId: string; script: string }) => {
         if (executeBash) {
           const result = await executeBash(input.workspaceId, input.script);
@@ -473,14 +527,12 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           data: { success: true, output: "", exitCode: 0, wall_duration_ms: 0 },
         };
       },
-      onChat: async function* (
-        input: { workspaceId: string },
-        options?: { signal?: AbortSignal }
-      ) {
+      onChat: async function* (input: { workspaceId: string }, options?: { signal?: AbortSignal }) {
         if (!onChat) {
           // Default mock behavior: subscriptions should remain open.
           // If this ends, WorkspaceStore will retry and reset state, which flakes stories.
-          yield { type: "caught-up" } as WorkspaceChatMessage;
+          const caughtUp: WorkspaceChatMessage = { type: "caught-up" };
+          yield caughtUp;
 
           await new Promise<void>((resolve) => {
             if (options?.signal?.aborted) {
@@ -505,13 +557,15 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         }
       },
       onMetadata: async function* () {
-        // Empty generator - no metadata updates in mock
-        return;
+        // No metadata updates in the mock, but keep the subscription open.
+        yield* [];
+        await new Promise<void>(() => undefined);
       },
       activity: {
-        list: async () => ({}),
+        list: () => Promise.resolve({}),
         subscribe: async function* () {
-          return;
+          yield* [];
+          await new Promise<void>(() => undefined);
         },
       },
       backgroundBashes: {
@@ -522,10 +576,10 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
             foregroundToolCallIds: [],
           };
           // Then hang forever (like a real subscription)
-          await new Promise(() => {});
+          await new Promise<void>(() => undefined);
         },
-        terminate: async () => ({ success: true, data: undefined }),
-        sendToBackground: async () => ({ success: true, data: undefined }),
+        terminate: () => Promise.resolve({ success: true, data: undefined }),
+        sendToBackground: () => Promise.resolve({ success: true, data: undefined }),
       },
       stats: {
         subscribe: async function* (input: { workspaceId: string }) {
@@ -533,25 +587,28 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           if (snapshot) {
             yield snapshot;
           }
+          await new Promise<void>(() => undefined);
         },
-        clear: async (input: { workspaceId: string }) => {
+        clear: (input: { workspaceId: string }) => {
           workspaceStatsSnapshots.delete(input.workspaceId);
-          return { success: true, data: undefined };
+          return Promise.resolve({ success: true, data: undefined });
         },
       },
-      getSessionUsage: async (input: { workspaceId: string }) => sessionUsage.get(input.workspaceId),
-      getSessionUsageBatch: async (input: { workspaceIds: string[] }) => {
+      getSessionUsage: (input: { workspaceId: string }) =>
+        Promise.resolve(sessionUsage.get(input.workspaceId)),
+      getSessionUsageBatch: (input: { workspaceIds: string[] }) => {
         const result: Record<string, MockSessionUsage | undefined> = {};
         for (const id of input.workspaceIds) {
           result[id] = sessionUsage.get(id);
         }
-        return result;
+        return Promise.resolve(result);
       },
       mcp: {
-        get: async (input: { workspaceId: string }) => mcpOverrides.get(input.workspaceId) ?? {},
-        set: async () => ({ success: true, data: undefined }),
+        get: (input: { workspaceId: string }) =>
+          Promise.resolve(mcpOverrides.get(input.workspaceId) ?? {}),
+        set: () => Promise.resolve({ success: true, data: undefined }),
       },
-      getFileCompletions: async (input: { workspaceId: string; query: string; limit?: number }) => {
+      getFileCompletions: (input: { workspaceId: string; query: string; limit?: number }) => {
         // Mock file paths for storybook - simulate typical project structure
         const mockPaths = [
           "src/browser/components/ChatInput/index.tsx",
@@ -568,38 +625,42 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         ];
         const query = input.query.toLowerCase();
         const filtered = mockPaths.filter((p) => p.toLowerCase().includes(query));
-        return { paths: filtered.slice(0, input.limit ?? 20) };
+        return Promise.resolve({ paths: filtered.slice(0, input.limit ?? 20) });
       },
     },
     window: {
-      setTitle: async () => undefined,
+      setTitle: () => Promise.resolve(undefined),
     },
     terminal: {
-      create: async () => ({
-        sessionId: "mock-session",
-        workspaceId: "mock-workspace",
-        cols: 80,
-        rows: 24,
-      }),
-      close: async () => undefined,
-      resize: async () => undefined,
+      create: () =>
+        Promise.resolve({
+          sessionId: "mock-session",
+          workspaceId: "mock-workspace",
+          cols: 80,
+          rows: 24,
+        }),
+      close: () => Promise.resolve(undefined),
+      resize: () => Promise.resolve(undefined),
       sendInput: () => undefined,
       onOutput: async function* () {
-        await new Promise(() => {});
+        yield* [];
+        await new Promise<void>(() => undefined);
       },
       onExit: async function* () {
-        await new Promise(() => {});
+        yield* [];
+        await new Promise<void>(() => undefined);
       },
-      openWindow: async () => undefined,
-      closeWindow: async () => undefined,
-      openNative: async () => undefined,
+      openWindow: () => Promise.resolve(undefined),
+      closeWindow: () => Promise.resolve(undefined),
+      openNative: () => Promise.resolve(undefined),
     },
     update: {
-      check: async () => undefined,
-      download: async () => undefined,
-      install: () => undefined,
+      check: () => Promise.resolve(undefined),
+      download: () => Promise.resolve(undefined),
+      install: () => Promise.resolve(undefined),
       onStatus: async function* () {
-        await new Promise(() => {});
+        yield* [];
+        await new Promise<void>(() => undefined);
       },
     },
   } as unknown as APIClient;

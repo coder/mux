@@ -5,7 +5,7 @@
 import { within, userEvent, waitFor } from "@storybook/test";
 
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
-import { createMockORPCClient, type MockSessionUsage } from "../../../.storybook/mocks/orpc";
+import { createMockORPCClient, type MockSessionUsage } from "@/browser/stories/mocks/orpc";
 import { expandProjects } from "./storyHelpers";
 import { createArchivedWorkspace, NOW } from "./mockFactory";
 import type { ProjectConfig } from "@/node/config";
