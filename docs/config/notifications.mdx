@@ -90,7 +90,7 @@ notify: {
     description:
       "Send a system notification to the user. Use this to alert the user about important events that require their attention, such as long-running task completion, errors requiring intervention, or questions. " +
       "Notifications appear as OS-native notifications (macOS Notification Center, Windows Toast, Linux). " +
-      "Use sparingly - only for events the user would want to be interrupted for. Do not use for routine status updates (use status_set instead).",
+      "Infer whether to send notifications from user instructions. If no instructions provided, reserve notifications for major wins or blocking issues. Do not use for routine status updates (use status_set instead).",
     schema: z
       .object({
         title: z
