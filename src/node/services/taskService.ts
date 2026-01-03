@@ -85,6 +85,22 @@ const POST_COMPACTION_PARENT_AWAIT_MAX_RETRIES = 10;
 const COMPLETED_REPORT_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 const COMPLETED_REPORT_CACHE_MAX_ENTRIES = 128;
 
+const AGENT_TASK_STATUS_TRANSITIONS: Record<AgentTaskStatus, readonly AgentTaskStatus[]> = {
+  queued: ["queued", "running", "awaiting_report", "reported"],
+  running: ["running", "awaiting_report", "reported"],
+  awaiting_report: ["awaiting_report", "running", "reported"],
+  reported: ["reported"],
+};
+
+function isAllowedAgentTaskStatusTransition(from: AgentTaskStatus, to: AgentTaskStatus): boolean {
+  return AGENT_TASK_STATUS_TRANSITIONS[from].includes(to);
+}
+
+function normalizeAgentTaskStatus(status: WorkspaceConfigEntry["taskStatus"]): AgentTaskStatus {
+  // Backward compatibility: older task workspaces may omit taskStatus.
+  // Treat missing as running so parallelism accounting is conservative.
+  return (status ?? "running") as AgentTaskStatus;
+}
 const ACTIVE_AGENT_TASK_STATUSES: ReadonlySet<AgentTaskStatus> = new Set([
   "queued",
   "running",
@@ -1787,28 +1803,62 @@ export class TaskService {
     }
   }
 
-  private async setTaskStatus(workspaceId: string, status: AgentTaskStatus): Promise<void> {
+  private async setTaskStatus(
+    workspaceId: string,
+    nextStatus: AgentTaskStatus,
+    options?: { allowMissing?: boolean }
+  ): Promise<void> {
     assert(workspaceId.length > 0, "setTaskStatus: workspaceId must be non-empty");
 
-    await this.editWorkspaceEntry(workspaceId, (ws) => {
-      ws.taskStatus = status;
-      if (status === "running") {
-        ws.taskPrompt = undefined;
-      }
-    });
+    let shouldStartWaiters = false;
+
+    const found = await this.editWorkspaceEntry(
+      workspaceId,
+      (ws) => {
+        const currentStatus = normalizeAgentTaskStatus(ws.taskStatus);
+        if (!isAllowedAgentTaskStatusTransition(currentStatus, nextStatus)) {
+          log.error("Invalid agent task status transition", {
+            workspaceId,
+            currentStatus,
+            nextStatus,
+            parentWorkspaceId: ws.parentWorkspaceId ?? null,
+            persistedStatus: ws.taskStatus ?? null,
+          });
+          shouldStartWaiters = currentStatus === "running";
+          return;
+        }
+
+        ws.taskStatus = nextStatus;
+        shouldStartWaiters = nextStatus === "running";
+
+        if (nextStatus !== "queued") {
+          ws.taskPrompt = undefined;
+        }
+
+        if (nextStatus === "reported") {
+          ws.reportedAt ??= getIsoNow();
+        } else if (ws.reportedAt !== undefined) {
+          // Defensive: reportedAt is only meaningful when taskStatus is reported.
+          ws.reportedAt = undefined;
+        }
+      },
+      { allowMissing: options?.allowMissing }
+    );
 
     await this.emitWorkspaceMetadata(workspaceId);
 
-    if (status === "running") {
-      const waiters = this.pendingStartWaitersByTaskId.get(workspaceId);
-      if (!waiters || waiters.length === 0) return;
-      this.pendingStartWaitersByTaskId.delete(workspaceId);
-      for (const waiter of waiters) {
-        try {
-          waiter.start();
-        } catch (error: unknown) {
-          log.error("Task start waiter callback failed", { workspaceId, error });
-        }
+    if (!found || !shouldStartWaiters) {
+      return;
+    }
+
+    const waiters = this.pendingStartWaitersByTaskId.get(workspaceId);
+    if (!waiters || waiters.length === 0) return;
+    this.pendingStartWaitersByTaskId.delete(workspaceId);
+    for (const waiter of waiters) {
+      try {
+        waiter.start();
+      } catch (error: unknown) {
+        log.error("Task start waiter callback failed", { workspaceId, error });
       }
     }
   }
@@ -1917,16 +1967,7 @@ export class TaskService {
       (lastText?.trim().length ? lastText : "(No assistant output found.)");
 
     // Notify clients immediately even if we can't delete the workspace yet.
-    await this.editWorkspaceEntry(
-      childWorkspaceId,
-      (ws) => {
-        ws.taskStatus = "reported";
-        ws.reportedAt = getIsoNow();
-      },
-      { allowMissing: true }
-    );
-
-    await this.emitWorkspaceMetadata(childWorkspaceId);
+    await this.setTaskStatus(childWorkspaceId, "reported", { allowMissing: true });
 
     await this.deliverReportToParent(parentWorkspaceId, entry, {
       reportMarkdown,
@@ -2055,16 +2096,7 @@ export class TaskService {
     }
 
     // Notify clients immediately even if we can't delete the workspace yet.
-    await this.editWorkspaceEntry(
-      childWorkspaceId,
-      (ws) => {
-        ws.taskStatus = "reported";
-        ws.reportedAt = getIsoNow();
-      },
-      { allowMissing: true }
-    );
-
-    await this.emitWorkspaceMetadata(childWorkspaceId);
+    await this.setTaskStatus(childWorkspaceId, "reported", { allowMissing: true });
 
     if (options?.stopStream) {
       // `agent_report` is terminal. Stop the child stream immediately to prevent any further token

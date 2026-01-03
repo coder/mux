@@ -1355,7 +1355,11 @@ describe("TaskService", () => {
     await new Promise((r) => setTimeout(r, 100));
 
     const internal = taskService as unknown as {
-      setTaskStatus: (workspaceId: string, status: "queued" | "running") => Promise<void>;
+      setTaskStatus: (
+        workspaceId: string,
+        status: "queued" | "running" | "awaiting_report" | "reported",
+        options?: { allowMissing?: boolean }
+      ) => Promise<void>;
       resolveWaiters: (taskId: string, report: { reportMarkdown: string; title?: string }) => void;
     };
 
@@ -1364,6 +1368,107 @@ describe("TaskService", () => {
 
     const report = await reportPromise;
     expect(report.reportMarkdown).toBe("ok");
+  });
+
+  test("setTaskStatus refuses invalid transitions out of reported", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-111";
+    const childId = "child-222";
+    const reportedAt = new Date().toISOString();
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
+              {
+                path: path.join(projectPath, "child"),
+                id: childId,
+                name: "agent_explore_child",
+                parentWorkspaceId: parentId,
+                agentType: "explore",
+                taskStatus: "reported",
+                reportedAt,
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
+    });
+
+    const { taskService } = createTaskServiceHarness(config);
+
+    const internal = taskService as unknown as {
+      setTaskStatus: (
+        workspaceId: string,
+        status: "queued" | "running" | "awaiting_report" | "reported"
+      ) => Promise<void>;
+    };
+
+    await internal.setTaskStatus(childId, "running");
+
+    const cfg = config.loadConfigOrDefault();
+    const child = Array.from(cfg.projects.values())
+      .flatMap((p) => p.workspaces)
+      .find((w) => w.id === childId);
+
+    expect(child?.taskStatus).toBe("reported");
+    expect(child?.reportedAt).toBe(reportedAt);
+  });
+
+  test("setTaskStatus stamps reportedAt when marking reported", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-111";
+    const childId = "child-222";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
+              {
+                path: path.join(projectPath, "child"),
+                id: childId,
+                name: "agent_explore_child",
+                parentWorkspaceId: parentId,
+                agentType: "explore",
+                taskStatus: "running",
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
+    });
+
+    const { taskService } = createTaskServiceHarness(config);
+
+    const internal = taskService as unknown as {
+      setTaskStatus: (
+        workspaceId: string,
+        status: "queued" | "running" | "awaiting_report" | "reported"
+      ) => Promise<void>;
+    };
+
+    await internal.setTaskStatus(childId, "reported");
+
+    const cfg = config.loadConfigOrDefault();
+    const child = Array.from(cfg.projects.values())
+      .flatMap((p) => p.workspaces)
+      .find((w) => w.id === childId);
+
+    expect(child?.taskStatus).toBe("reported");
+    expect(child?.reportedAt).toBeTruthy();
+    expect(Number.isNaN(Date.parse(child!.reportedAt!))).toBe(false);
   });
 
   test("waitForAgentReport returns immediately for reported tasks (no hang)", async () => {
