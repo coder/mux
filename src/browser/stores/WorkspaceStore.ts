@@ -493,10 +493,14 @@ export class WorkspaceStore {
     },
     "init-output": (workspaceId, aggregator, data) => {
       applyWorkspaceChatEventToAggregator(aggregator, data);
-      this.states.bump(workspaceId);
+      // Init output can be very high-frequency (e.g. installs, rsync). Like stream/tool deltas,
+      // we update aggregator state immediately but coalesce UI bumps to keep the renderer responsive.
+      this.scheduleIdleStateBump(workspaceId);
     },
     "init-end": (workspaceId, aggregator, data) => {
       applyWorkspaceChatEventToAggregator(aggregator, data);
+      // Avoid a double-bump if an init-output idle bump is pending.
+      this.cancelPendingIdleBump(workspaceId);
       this.states.bump(workspaceId);
     },
     "queued-message-changed": (workspaceId, _aggregator, data) => {
