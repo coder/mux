@@ -221,6 +221,11 @@ const AIViewInner: React.FC<AIViewProps> = ({
   // to avoid injecting it into the summarization request.
   const handleForceCompaction = useCallback(() => {
     if (!api) return;
+
+    // Force compaction queues a message while a stream is active.
+    // Match user-send semantics: background any running foreground bash so we don't block.
+    handleMessageSentBackground();
+
     void executeCompaction({
       api,
       workspaceId,
@@ -231,7 +236,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
         agentId: pendingSendOptions.agentId ?? "exec",
       }),
     });
-  }, [api, workspaceId, pendingSendOptions]);
+  }, [api, workspaceId, pendingSendOptions, handleMessageSentBackground]);
 
   // Force compaction when live usage shows we're about to hit context limit
   useForceCompaction({

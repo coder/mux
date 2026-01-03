@@ -1,0 +1,107 @@
+import { act, fireEvent, waitFor } from "@testing-library/react";
+
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { getInputKey } from "@/common/constants/storage";
+
+export class ChatHarness {
+  constructor(
+    private readonly container: HTMLElement,
+    private readonly workspaceId: string
+  ) {}
+
+  private async getActiveTextarea(): Promise<HTMLTextAreaElement> {
+    return waitFor(
+      () => {
+        // There can be multiple ChatInput instances mounted (e.g., ProjectPage + Workspace view).
+        // Use the last textarea in DOM order to target the active view.
+        const textareas = Array.from(
+          this.container.querySelectorAll('textarea[aria-label="Message Claude"]')
+        ) as HTMLTextAreaElement[];
+
+        if (textareas.length === 0) {
+          throw new Error("Chat textarea not found");
+        }
+
+        // Prefer the last enabled textarea in DOM order (workspace view should be enabled once ready).
+        const enabled = [...textareas].reverse().find((el) => !el.disabled);
+        if (!enabled) {
+          throw new Error(`Chat textarea is disabled (found ${textareas.length})`);
+        }
+
+        return enabled;
+      },
+      { timeout: 10_000 }
+    );
+  }
+
+  async send(text: string): Promise<void> {
+    const textarea = await this.getActiveTextarea();
+    textarea.focus();
+
+    // happy-dom + React can be flaky for synthetic textarea input events.
+    // Since ChatInput uses usePersistedState, updating the persisted key is both deterministic
+    // and exercises the real UI state path.
+    act(() => {
+      updatePersistedState(getInputKey(this.workspaceId), text);
+    });
+
+    await waitFor(
+      () => {
+        if (textarea.value !== text) {
+          throw new Error(`Textarea value mismatch: "${textarea.value}"`);
+        }
+      },
+      { timeout: 5_000 }
+    );
+
+    const chatInputSection = textarea.closest('[data-component="ChatInputSection"]');
+    if (!chatInputSection) {
+      throw new Error("ChatInputSection not found for textarea");
+    }
+
+    const sendButton = await waitFor(
+      () => {
+        const el = chatInputSection.querySelector(
+          'button[aria-label="Send message"]'
+        ) as HTMLButtonElement | null;
+        if (!el) {
+          throw new Error("Send button not found");
+        }
+        if (el.disabled) {
+          throw new Error("Send button disabled");
+        }
+        return el;
+      },
+      { timeout: 10_000 }
+    );
+
+    fireEvent.click(sendButton);
+  }
+
+  async expectTranscriptContains(
+    needle: string | RegExp,
+    timeoutMs: number = 30_000
+  ): Promise<void> {
+    await waitFor(
+      () => {
+        const text = this.container.textContent ?? "";
+        if (typeof needle === "string") {
+          expect(text).toContain(needle);
+        } else {
+          expect(text).toMatch(needle);
+        }
+      },
+      { timeout: timeoutMs }
+    );
+  }
+
+  async expectTranscriptNotContains(needle: string, timeoutMs: number = 30_000): Promise<void> {
+    await waitFor(
+      () => {
+        const text = this.container.textContent ?? "";
+        expect(text).not.toContain(needle);
+      },
+      { timeout: timeoutMs }
+    );
+  }
+}

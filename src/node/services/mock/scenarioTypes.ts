@@ -2,6 +2,8 @@ import type { CompletedMessagePart } from "@/common/types/stream";
 import type { StreamErrorType } from "@/common/types/errors";
 import type { ThinkingLevel } from "@/common/types/thinking";
 
+import type { LanguageModelV2Usage } from "@ai-sdk/provider";
+
 export type MockEventKind =
   | "stream-start"
   | "stream-delta"
@@ -9,7 +11,8 @@ export type MockEventKind =
   | "stream-error"
   | "reasoning-delta"
   | "tool-start"
-  | "tool-end";
+  | "tool-end"
+  | "usage-delta";
 
 export interface MockAssistantEventBase {
   kind: MockEventKind;
@@ -20,7 +23,7 @@ export interface MockStreamStartEvent extends MockAssistantEventBase {
   kind: "stream-start";
   messageId: string;
   model: string;
-  mode?: "plan" | "exec";
+  mode?: "plan" | "exec" | "compact";
 }
 
 export interface MockStreamDeltaEvent extends MockAssistantEventBase {
@@ -57,6 +60,17 @@ export interface MockToolStartEvent extends MockAssistantEventBase {
   args: unknown;
 }
 
+export interface MockUsageDeltaEvent extends MockAssistantEventBase {
+  kind: "usage-delta";
+  /** Step-level usage (for context window display) */
+  usage: LanguageModelV2Usage;
+  providerMetadata?: Record<string, unknown>;
+
+  /** Cumulative usage (for cost display) */
+  cumulativeUsage: LanguageModelV2Usage;
+  cumulativeProviderMetadata?: Record<string, unknown>;
+}
+
 export interface MockToolEndEvent extends MockAssistantEventBase {
   kind: "tool-end";
   toolCallId: string;
@@ -71,7 +85,8 @@ export type MockAssistantEvent =
   | MockStreamErrorEvent
   | MockReasoningEvent
   | MockToolStartEvent
-  | MockToolEndEvent;
+  | MockToolEndEvent
+  | MockUsageDeltaEvent;
 
 export interface ScenarioTurn {
   user: {
