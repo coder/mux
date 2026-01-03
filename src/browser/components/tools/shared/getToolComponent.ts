@@ -17,6 +17,7 @@ import { AskUserQuestionToolCall } from "../AskUserQuestionToolCall";
 import { ProposePlanToolCall } from "../ProposePlanToolCall";
 import { TodoToolCall } from "../TodoToolCall";
 import { StatusSetToolCall } from "../StatusSetToolCall";
+import { UserNotifyToolCall } from "../UserNotifyToolCall";
 import { BashBackgroundListToolCall } from "../BashBackgroundListToolCall";
 import { BashBackgroundTerminateToolCall } from "../BashBackgroundTerminateToolCall";
 import { BashOutputToolCall } from "../BashOutputToolCall";
@@ -76,6 +77,7 @@ const TOOL_REGISTRY: Record<string, ToolRegistryEntry> = {
   },
   todo_write: { component: TodoToolCall, schema: TOOL_DEFINITIONS.todo_write.schema },
   status_set: { component: StatusSetToolCall, schema: TOOL_DEFINITIONS.status_set.schema },
+  user_notify: { component: UserNotifyToolCall, schema: TOOL_DEFINITIONS.user_notify.schema },
   web_fetch: { component: WebFetchToolCall, schema: TOOL_DEFINITIONS.web_fetch.schema },
   bash_background_list: {
     component: BashBackgroundListToolCall,

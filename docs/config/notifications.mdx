@@ -1,0 +1,109 @@
+---
+title: Notifications
+description: Configure how agents notify you about important events
+---
+
+## Overview
+
+Mux agents can send system notifications to alert you about important events. Notifications appear as native OS notifications (macOS Notification Center, Windows Toast, Linux notification daemon) and work even when Mux is in the background.
+
+The `user_notify` tool gives agents the ability to send these notifications. You control when and how agents use this tool through your prompts or Agent rules.
+
+## Quick examples
+
+```text
+Notify me when you have this test passing.
+```
+
+```text
+Notify me before finishing your message.
+```
+
+```text
+Notify me once you're halfway through.
+```
+
+```text
+Work on these 5 tasks. Notify me after each one completes.
+```
+
+## Controlling notification behavior
+
+### Via Agent rules (AGENTS.md)
+
+Add notification guidance to your `AGENTS.md` file for consistent behavior across sessions:
+
+```markdown
+## Notifications
+
+- Notify on CI failures or deployment issues
+- Notify when waiting for user input longer than 30 seconds
+- Do not notify for routine status updates
+- Do not notify when user is actively watching the workspace
+```
+
+More specific rules:
+
+```markdown
+## Notifications
+
+Only send notifications for:
+
+1. Test failures
+2. Build errors
+3. Questions that block progress
+
+Never notify for:
+
+- Successful routine operations
+- Status updates (use status_set instead)
+- Non-blocking warnings
+```
+
+See [Instruction Files](/agents/instruction-files) for more on configuring agent behavior per-project.
+
+## Platform notes
+
+Notifications use your operating system's native notification system:
+
+| Platform | Notification Type                               |
+| -------- | ----------------------------------------------- |
+| macOS    | Notification Center                             |
+| Windows  | Toast notifications                             |
+| Linux    | Desktop notifications (via notification daemon) |
+
+Notification settings (sound, Do Not Disturb, etc.) are controlled by your OS preferences, not Mux.
+
+## Tool definition
+
+The `user_notify` tool definition from source:
+
+{/* BEGIN USER_NOTIFY_TOOL */}
+
+```typescript
+user_notify: {
+    description:
+      "Send a system notification to the user. " +
+      "Notifications appear as OS-native notifications (macOS Notification Center, Windows Toast, Linux). " +
+      "If the user has not indicated when they want a notification, use them sparingly.",
+    schema: z
+      .object({
+        title: z
+          .string()
+          .min(1)
+          .max(64)
+          .describe("Short notification title (max 64 chars). Should be concise and actionable."),
+        message: z
+          .string()
+          .max(200)
+          .optional()
+          .describe(
+            "Optional notification body with more details (max 200 chars). " +
+              "Keep it brief - users may only see a preview."
+          ),
+      })
+      .strict(),
+  },
+```
+
+{/* END USER_NOTIFY_TOOL */}

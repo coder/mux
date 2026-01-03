@@ -19,7 +19,7 @@ import type {
   ReasoningEndEvent,
 } from "@/common/types/stream";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
-import type { TodoItem, StatusSetToolResult } from "@/common/types/tools";
+import type { TodoItem, StatusSetToolResult, UserNotifyToolResult } from "@/common/types/tools";
 
 import type { WorkspaceChatMessage, StreamErrorMessage, DeleteMessage } from "@/common/orpc/types";
 import { isInitStart, isInitOutput, isInitEnd, isMuxMessage } from "@/common/orpc/types";
@@ -1249,6 +1249,32 @@ export class StreamingMessageAggregator {
         url,
       };
       this.savePersistedAgentStatus(this.agentStatus);
+    }
+
+    // Handle browser notifications when Electron wasn't available
+    if (toolName === "user_notify" && hasSuccessResult(output)) {
+      const result = output as Extract<UserNotifyToolResult, { success: true }>;
+      if (result.notifiedVia === "browser") {
+        this.sendBrowserNotification(result.title, result.message);
+      }
+    }
+  }
+
+  /**
+   * Send a browser notification using the Web Notifications API
+   * Only called when Electron notifications are unavailable
+   */
+  private sendBrowserNotification(title: string, body?: string): void {
+    if (!("Notification" in window)) return;
+
+    if (Notification.permission === "granted") {
+      new Notification(title, { body });
+    } else if (Notification.permission !== "denied") {
+      void Notification.requestPermission().then((perm) => {
+        if (perm === "granted") {
+          new Notification(title, { body });
+        }
+      });
     }
   }
 

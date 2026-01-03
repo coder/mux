@@ -76,7 +76,8 @@
               "config/mcp-servers",
               "config/project-secrets",
               "config/agentic-git-identity",
-              "config/keybinds"
+              "config/keybinds",
+              "config/notifications"
             ]
           },
           {
@@ -131,6 +132,7 @@
     { "source": "/project-secrets", "destination": "/config/project-secrets" },
     { "source": "/agentic-git-identity", "destination": "/config/agentic-git-identity" },
     { "source": "/keybinds", "destination": "/config/keybinds" },
+    { "source": "/notifications", "destination": "/config/notifications" },
     { "source": "/cli", "destination": "/guides/cli" },
     { "source": "/context-management", "destination": "/guides/context-management" },
     { "source": "/sharing", "destination": "/guides/sharing" },

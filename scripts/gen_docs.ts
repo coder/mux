@@ -274,11 +274,55 @@ async function syncBuiltinAgents(): Promise<boolean> {
 }
 
 // ---------------------------------------------------------------------------
+// User notify tool docs sync
+// ---------------------------------------------------------------------------
+
+function generateUserNotifyBlock(): string {
+  const toolDefsPath = path.join(
+    import.meta.dir,
+    "..",
+    "src",
+    "common",
+    "utils",
+    "tools",
+    "toolDefinitions.ts"
+  );
+  const source = fs.readFileSync(toolDefsPath, "utf-8");
+
+  const regionStart = "// #region USER_NOTIFY_DOCS";
+  const regionEnd = "// #endregion USER_NOTIFY_DOCS";
+
+  const startIdx = source.indexOf(regionStart);
+  const endIdx = source.indexOf(regionEnd);
+
+  if (startIdx === -1 || endIdx === -1) {
+    throw new Error("Could not find USER_NOTIFY_DOCS region in toolDefinitions.ts");
+  }
+
+  const snippet = source.slice(startIdx + regionStart.length, endIdx).trim();
+  return "```typescript\n" + snippet + "\n```";
+}
+
+async function syncUserNotifyDocs(): Promise<boolean> {
+  return syncDoc({
+    docsFile: "config/notifications.mdx",
+    sourceLabel: "src/common/utils/tools/toolDefinitions.ts",
+    markerName: "USER_NOTIFY_TOOL",
+    generateBlock: generateUserNotifyBlock,
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
-  const results = await Promise.all([syncSystemPrompt(), syncKnownModels(), syncBuiltinAgents()]);
+  const results = await Promise.all([
+    syncSystemPrompt(),
+    syncKnownModels(),
+    syncBuiltinAgents(),
+    syncUserNotifyDocs(),
+  ]);
 
   if (results.some((r) => !r)) {
     process.exit(1);

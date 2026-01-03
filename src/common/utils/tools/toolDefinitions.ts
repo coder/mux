@@ -768,6 +768,31 @@ export const TOOL_DEFINITIONS = {
       code: z.string().min(1).describe("JavaScript code to execute in the PTC sandbox"),
     }),
   },
+  // #region USER_NOTIFY_DOCS
+  user_notify: {
+    description:
+      "Send a system notification to the user. " +
+      "Notifications appear as OS-native notifications (macOS Notification Center, Windows Toast, Linux). " +
+      "If the user has not indicated when they want a notification, use them sparingly.",
+    schema: z
+      .object({
+        title: z
+          .string()
+          .min(1)
+          .max(64)
+          .describe("Short notification title (max 64 chars). Should be concise and actionable."),
+        message: z
+          .string()
+          .max(200)
+          .optional()
+          .describe(
+            "Optional notification body with more details (max 200 chars). " +
+              "Keep it brief - users may only see a preview."
+          ),
+      })
+      .strict(),
+  },
+  // #endregion USER_NOTIFY_DOCS
 } as const;
 
 // -----------------------------------------------------------------------------
@@ -1063,6 +1088,7 @@ export function getAvailableTools(
     "todo_write",
     "todo_read",
     "status_set",
+    "user_notify",
     "web_fetch",
   ];
 

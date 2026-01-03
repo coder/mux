@@ -310,3 +310,16 @@ export interface WebFetchToolArgs {
 
 // WebFetchToolResult derived from Zod schema (single source of truth)
 export type WebFetchToolResult = z.infer<typeof WebFetchToolResultSchema>;
+
+// User Notify Tool Types
+export type UserNotifyToolResult =
+  | {
+      success: true;
+      notifiedVia: "electron" | "browser";
+      title: string;
+      message?: string;
+    }
+  | {
+      success: false;
+      error: string;
+    };

@@ -12,6 +12,7 @@ import { createAskUserQuestionTool } from "@/node/services/tools/ask_user_questi
 import { createProposePlanTool } from "@/node/services/tools/propose_plan";
 import { createTodoWriteTool, createTodoReadTool } from "@/node/services/tools/todo";
 import { createStatusSetTool } from "@/node/services/tools/status_set";
+import { createUserNotifyTool } from "@/node/services/tools/user_notify";
 import { createTaskTool } from "@/node/services/tools/task";
 import { createTaskAwaitTool } from "@/node/services/tools/task_await";
 import { createTaskTerminateTool } from "@/node/services/tools/task_terminate";
@@ -302,6 +303,7 @@ export async function getToolsForModel(
     todo_write: createTodoWriteTool(config),
     todo_read: createTodoReadTool(config),
     status_set: createStatusSetTool(config),
+    user_notify: createUserNotifyTool(config),
   };
 
   // Base tools available for all models

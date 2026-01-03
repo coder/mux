@@ -9,6 +9,7 @@ export const TOOL_FLOW_PROMPTS = {
   READ_TEST_FILE: "Now read that file",
   RECALL_TEST_FILE: "What did it contain?",
   REASONING_QUICKSORT: "Explain quicksort algorithm step by step",
+  USER_NOTIFY: "Notify me that the task is complete",
 } as const;
 
 const fileReadTurn: ScenarioTurn = {
@@ -389,6 +390,63 @@ const reasoningQuicksortTurn: ScenarioTurn = {
   },
 };
 
+const userNotifyTurn: ScenarioTurn = {
+  user: {
+    text: TOOL_FLOW_PROMPTS.USER_NOTIFY,
+    thinkingLevel: "medium",
+    mode: "exec",
+  },
+  assistant: {
+    messageId: "msg-tool-user-notify",
+    events: [
+      {
+        kind: "stream-start",
+        delay: 0,
+        messageId: "msg-tool-user-notify",
+        model: KNOWN_MODELS.GPT.id,
+      },
+      {
+        kind: "tool-start",
+        delay: STREAM_BASE_DELAY,
+        toolCallId: "tool-user-notify-1",
+        toolName: "user_notify",
+        args: {
+          title: "Task Complete",
+          message: "Your requested task has been completed successfully.",
+        },
+      },
+      {
+        kind: "tool-end",
+        delay: STREAM_BASE_DELAY * 2,
+        toolCallId: "tool-user-notify-1",
+        toolName: "user_notify",
+        result: {
+          success: true,
+          notifiedVia: "electron",
+          title: "Task Complete",
+          message: "Your requested task has been completed successfully.",
+        },
+      },
+      {
+        kind: "stream-delta",
+        delay: STREAM_BASE_DELAY * 2 + 100,
+        text: "I've sent you a notification that the task is complete.",
+      },
+      {
+        kind: "stream-end",
+        delay: STREAM_BASE_DELAY * 3,
+        metadata: {
+          model: KNOWN_MODELS.GPT.id,
+          inputTokens: 50,
+          outputTokens: 30,
+          systemMessageTokens: 10,
+        },
+        parts: [{ type: "text", text: "I've sent you a notification that the task is complete." }],
+      },
+    ],
+  },
+};
+
 export const scenarios: ScenarioTurn[] = [
   fileReadTurn,
   listDirectoryTurn,
@@ -396,4 +454,5 @@ export const scenarios: ScenarioTurn[] = [
   readTestFileTurn,
   recallTestFileTurn,
   reasoningQuicksortTurn,
+  userNotifyTurn,
 ];
