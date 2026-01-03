@@ -856,17 +856,16 @@ function WorkspaceInitMessageCard({
             showsVerticalScrollIndicator
           >
             {message.lines.map((line, index) => {
-              const isErrorLine = line.startsWith("ERROR:");
               return (
                 <Text
                   key={`${message.id}-line-${index}`}
                   style={{
                     fontFamily: theme.typography.familyMono,
                     fontSize: theme.typography.sizes.caption,
-                    color: isErrorLine ? theme.colors.danger : theme.colors.foregroundPrimary,
+                    color: line.isError ? theme.colors.danger : theme.colors.foregroundPrimary,
                   }}
                 >
-                  {line}
+                  {line.line}
                 </Text>
               );
             })}
