@@ -18,12 +18,12 @@ export type { APIClient };
 
 // Discriminated union for type-safe state handling
 export type APIState =
-  | { status: "connecting"; api: null; error: null }
-  | { status: "connected"; api: APIClient; error: null }
-  | { status: "degraded"; api: APIClient; error: null } // Connected but pings failing
-  | { status: "reconnecting"; api: null; error: null; attempt: number }
-  | { status: "auth_required"; api: null; error: string | null }
-  | { status: "error"; api: null; error: string };
+  | { status: "connecting"; api: null; error: null; connectionEpoch: number }
+  | { status: "connected"; api: APIClient; error: null; connectionEpoch: number }
+  | { status: "degraded"; api: APIClient; error: null; connectionEpoch: number } // Connected but pings failing
+  | { status: "reconnecting"; api: null; error: null; attempt: number; connectionEpoch: number }
+  | { status: "auth_required"; api: null; error: string | null; connectionEpoch: number }
+  | { status: "error"; api: null; error: string; connectionEpoch: number };
 
 interface APIStateMethods {
   authenticate: (token: string) => void;
@@ -107,6 +107,10 @@ function createBrowserClient(
 }
 
 export const APIProvider = (props: APIProviderProps) => {
+  // Connection epoch increments each time we establish a new connection.
+  // WorkspaceStore uses this to detect stale subscriptions and restart them.
+  const connectionEpochRef = useRef(0);
+
   // If client is provided externally, start in connected state immediately
   const [state, setState] = useState<ConnectionState>(() => {
     if (props.client) {
@@ -159,6 +163,9 @@ export const APIProvider = (props: APIProviderProps) => {
           .then(() => {
             hasConnectedRef.current = true;
             reconnectAttemptRef.current = 0;
+            consecutivePingFailuresRef.current = 0;
+            // Increment epoch on successful connection to signal subscriptions to restart
+            connectionEpochRef.current++;
             window.__ORPC_CLIENT__ = client;
             cleanupRef.current = cleanup;
             setState({ status: "connected", client, cleanup });
@@ -191,6 +198,13 @@ export const APIProvider = (props: APIProviderProps) => {
 
       ws.addEventListener("close", (event) => {
         cleanup();
+
+        // Log close details for debugging stale connection issues
+        if (hasConnectedRef.current) {
+          console.warn(
+            `[API] WebSocket closed: code=${event.code}, reason=${event.reason || "(none)"}, wasClean=${event.wasClean}`
+          );
+        }
 
         // Auth-specific close codes
         if (event.code === 1008 || event.code === 4401) {
@@ -275,13 +289,15 @@ export const APIProvider = (props: APIProviderProps) => {
         if (state.status === "degraded") {
           setState({ status: "connected", client, cleanup });
         }
-      } catch {
-        // Ping failed
+      } catch (err) {
+        // Ping failed - log for debugging stale connection issues
         consecutivePingFailuresRef.current++;
-        if (
-          consecutivePingFailuresRef.current >= CONSECUTIVE_FAILURES_FOR_DEGRADED &&
-          state.status === "connected"
-        ) {
+        const failCount = consecutivePingFailuresRef.current;
+        console.warn(
+          `[API] Liveness ping failed (${failCount}/${CONSECUTIVE_FAILURES_FOR_DEGRADED}):`,
+          err instanceof Error ? err.message : String(err)
+        );
+        if (failCount >= CONSECUTIVE_FAILURES_FOR_DEGRADED && state.status === "connected") {
           setState({ status: "degraded", client, cleanup });
         }
       }
@@ -308,19 +324,45 @@ export const APIProvider = (props: APIProviderProps) => {
   // Convert internal state to the discriminated union API
   const value = useMemo((): UseAPIResult => {
     const base = { authenticate, retry };
+    const epoch = connectionEpochRef.current;
     switch (state.status) {
       case "connecting":
-        return { status: "connecting", api: null, error: null, ...base };
+        return { status: "connecting", api: null, error: null, connectionEpoch: epoch, ...base };
       case "connected":
-        return { status: "connected", api: state.client, error: null, ...base };
+        return {
+          status: "connected",
+          api: state.client,
+          error: null,
+          connectionEpoch: epoch,
+          ...base,
+        };
       case "degraded":
-        return { status: "degraded", api: state.client, error: null, ...base };
+        return {
+          status: "degraded",
+          api: state.client,
+          error: null,
+          connectionEpoch: epoch,
+          ...base,
+        };
       case "reconnecting":
-        return { status: "reconnecting", api: null, error: null, attempt: state.attempt, ...base };
+        return {
+          status: "reconnecting",
+          api: null,
+          error: null,
+          attempt: state.attempt,
+          connectionEpoch: epoch,
+          ...base,
+        };
       case "auth_required":
-        return { status: "auth_required", api: null, error: state.error ?? null, ...base };
+        return {
+          status: "auth_required",
+          api: null,
+          error: state.error ?? null,
+          connectionEpoch: epoch,
+          ...base,
+        };
       case "error":
-        return { status: "error", api: null, error: state.error, ...base };
+        return { status: "error", api: null, error: state.error, connectionEpoch: epoch, ...base };
     }
   }, [state, authenticate, retry]);
 

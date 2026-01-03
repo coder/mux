@@ -67,7 +67,7 @@ describe("WorkspaceStore", () => {
     mockOnModelUsed = mock(() => undefined);
     store = new WorkspaceStore(mockOnModelUsed);
     // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
-    store.setClient(mockClient as any);
+    store.setClient(mockClient as any, 1);
   });
 
   afterEach(() => {
