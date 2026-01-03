@@ -46,13 +46,25 @@ See [Instruction Files](/agents/instruction-files) for more on scoped instructio
 
 ### Disable notifications for a specific agent
 
-If you have an agent that should not interrupt you (e.g. a `review` agent), disable notifications just for that agent:
+If you have an agent that should not interrupt you (e.g. a `review` agent), remove `notify` from that agent's tool policy:
 
-```markdown
-## Agent: review
+```md
+# .mux/agents/review.md
 
-- Never call the notify tool
-- Keep feedback in chat (no system notifications)
+---
+
+name: Review
+description: Terse reviewer-style feedback
+base: exec
+tools:
+remove: - notify
+
+---
+
+You are a code reviewer.
+
+- Focus on correctness, risks, and test coverage.
+- Prefer short, actionable comments.
 ```
 
 ## Platform notes

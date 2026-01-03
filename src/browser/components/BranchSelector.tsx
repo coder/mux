@@ -50,6 +50,8 @@ export function BranchSelector({ workspaceId, workspaceName, className }: Branch
   useEffect(() => {
     if (!api) return;
 
+    let cancelled = false;
+
     void (async () => {
       try {
         const result = await api.workspace.executeBash({
@@ -58,6 +60,8 @@ export function BranchSelector({ workspaceId, workspaceName, className }: Branch
           options: { timeout_secs: 5 },
         });
 
+        if (cancelled) return;
+
         if (result.success && result.data.success && result.data.output?.trim()) {
           setCurrentBranch(result.data.output.trim());
         } else {
@@ -65,9 +69,15 @@ export function BranchSelector({ workspaceId, workspaceName, className }: Branch
           setCurrentBranch(false);
         }
       } catch {
-        setCurrentBranch(false);
+        if (!cancelled) {
+          setCurrentBranch(false);
+        }
       }
     })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [api, workspaceId]);
 
   const fetchLocalBranches = useCallback(async () => {
