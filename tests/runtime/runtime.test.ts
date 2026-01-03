@@ -76,9 +76,24 @@ describeIntegration("Runtime integration tests", () => {
 
       // DockerRuntime is slower than local/ssh, and the integration job has a hard
       // time budget. Keep the Docker coverage focused on the core Runtime contract.
-      const describeLocalOnly = type === "local" ? describe : describe.skip;
+      //
+      // NOTE: Avoid assigning `describe.skip` or `test.skip` to variables. Bun's Jest
+      // compatibility can lose the skip semantics when these functions are detached.
+      const describeLocalOnly = (...args: Parameters<typeof describe>) => {
+        if (type === "local") {
+          describe(...args);
+        } else {
+          describe.skip(...args);
+        }
+      };
 
-      const describeNonDocker = type === "docker" ? describe.skip : describe;
+      const describeNonDocker = (...args: Parameters<typeof describe>) => {
+        if (type === "docker") {
+          describe.skip(...args);
+        } else {
+          describe(...args);
+        }
+      };
 
       // Running these runtime contract tests with test.concurrent can easily overwhelm
       // the docker/ssh fixtures in CI and cause the overall integration job to hit its
@@ -86,8 +101,20 @@ describeIntegration("Runtime integration tests", () => {
       // for remote runtimes.
       const testForRuntime = type === "local" ? test.concurrent : test;
       const isRemote = type !== "local";
-      const testLocalOnly = isRemote ? test.skip : testForRuntime;
-      const testDockerOnly = type === "docker" ? testForRuntime : test.skip;
+      const testLocalOnly = (...args: Parameters<typeof test>) => {
+        if (isRemote) {
+          test.skip(...args);
+        } else {
+          testForRuntime(...args);
+        }
+      };
+      const testDockerOnly = (...args: Parameters<typeof test>) => {
+        if (type === "docker") {
+          testForRuntime(...args);
+        } else {
+          test.skip(...args);
+        }
+      };
       const createRuntime = (): Runtime =>
         createTestRuntime(
           type,
