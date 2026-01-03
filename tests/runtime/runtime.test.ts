@@ -79,42 +79,37 @@ describeIntegration("Runtime integration tests", () => {
       //
       // NOTE: Avoid assigning `describe.skip` or `test.skip` to variables. Bun's Jest
       // compatibility can lose the skip semantics when these functions are detached.
-      const describeLocalOnly = (...args: Parameters<typeof describe>) => {
-        if (type === "local") {
-          describe(...args);
-        } else {
-          describe.skip(...args);
-        }
-      };
-
-      const describeNonDocker = (...args: Parameters<typeof describe>) => {
-        if (type === "docker") {
-          describe.skip(...args);
-        } else {
-          describe(...args);
-        }
-      };
+      function describeIf(shouldRun: boolean) {
+        return (...args: Parameters<typeof describe>) => {
+          if (shouldRun) {
+            describe(...args);
+          } else {
+            describe.skip(...args);
+          }
+        };
+      }
 
       // Running these runtime contract tests with test.concurrent can easily overwhelm
       // the docker/ssh fixtures in CI and cause the overall integration job to hit its
       // 10-minute timeout. Keep runtime tests deterministic by running them sequentially
       // for remote runtimes.
       const testForRuntime = type === "local" ? test.concurrent : test;
+      function testIf(shouldRun: boolean) {
+        return (...args: Parameters<typeof test>) => {
+          if (shouldRun) {
+            testForRuntime(...args);
+          } else {
+            test.skip(...args);
+          }
+        };
+      }
+
       const isRemote = type !== "local";
-      const testLocalOnly = (...args: Parameters<typeof test>) => {
-        if (isRemote) {
-          test.skip(...args);
-        } else {
-          testForRuntime(...args);
-        }
-      };
-      const testDockerOnly = (...args: Parameters<typeof test>) => {
-        if (type === "docker") {
-          testForRuntime(...args);
-        } else {
-          test.skip(...args);
-        }
-      };
+
+      const describeLocalOnly = describeIf(type === "local");
+      const describeNonDocker = describeIf(type !== "docker");
+      const testLocalOnly = testIf(!isRemote);
+      const testDockerOnly = testIf(type === "docker");
       const createRuntime = (): Runtime =>
         createTestRuntime(
           type,
