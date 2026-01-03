@@ -80,11 +80,16 @@ export interface DescendantAgentTaskInfo {
 
 type AgentTaskWorkspaceEntry = WorkspaceConfigEntry & { projectPath: string };
 
-
 const POST_COMPACTION_PARENT_AWAIT_DELAY_MS = 50;
 const POST_COMPACTION_PARENT_AWAIT_MAX_RETRIES = 10;
 const COMPLETED_REPORT_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 const COMPLETED_REPORT_CACHE_MAX_ENTRIES = 128;
+
+const ACTIVE_AGENT_TASK_STATUSES: ReadonlySet<AgentTaskStatus> = new Set([
+  "queued",
+  "running",
+  "awaiting_report",
+]);
 
 interface AgentTaskIndex {
   byId: Map<string, AgentTaskWorkspaceEntry>;
@@ -176,6 +181,28 @@ function buildAgentWorkspaceName(agentType: string, workspaceId: string): string
   return name.length <= 64 ? name : `agent_${workspaceId}`.slice(0, 64);
 }
 
+function shouldDeferParentResumeForCompaction(messages: MuxMessage[]): boolean {
+  if (messages.length === 0) {
+    return true;
+  }
+
+  const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
+  const muxMeta = lastUserMsg?.metadata?.muxMetadata;
+  const type = muxMeta && typeof muxMeta === "object" ? (muxMeta as { type?: unknown }).type : null;
+  return type === "compaction-request";
+}
+
+function buildParentAwaitSystemInstructions(activeTaskIds: string[]): string {
+  const taskIdsJson = JSON.stringify(activeTaskIds);
+
+  return (
+    `You have active background sub-agent task(s) (${activeTaskIds.join(", ")}). ` +
+    "Before writing your final response, wait for these sub-agent tasks to finish and report. " +
+    `Call task_await with task_ids=${taskIdsJson} (do not omit task_ids; omitting may include long-running bash/background processes like dev servers). ` +
+    "If any are still queued/running/awaiting_report after that, call task_await again with the same task_ids. " +
+    "Once all are completed, write your final response integrating their reports."
+  );
+}
 function getIsoNow(): string {
   return new Date().toISOString();
 }
@@ -325,19 +352,29 @@ export class TaskService {
     }
   }
 
+  private clearPostCompactionAwaitTimer(workspaceId: string): void {
+    const trimmed = workspaceId.trim();
+    if (trimmed.length === 0) {
+      return;
+    }
+
+    const existingTimer = this.postCompactionAwaitTimers.get(trimmed);
+    if (!existingTimer) {
+      return;
+    }
+
+    clearTimeout(existingTimer);
+    this.postCompactionAwaitTimers.delete(trimmed);
+  }
+
   private async handleWorkspaceRemoved(workspaceId: string): Promise<void> {
     assert(workspaceId.length > 0, "handleWorkspaceRemoved: workspaceId must be non-empty");
 
-    const existingTimer = this.postCompactionAwaitTimers.get(workspaceId);
-    if (existingTimer) {
-      clearTimeout(existingTimer);
-      this.postCompactionAwaitTimers.delete(workspaceId);
-    }
+    this.clearPostCompactionAwaitTimer(workspaceId);
 
     const config = this.config.loadConfigOrDefault();
-    const directChildTaskIds = this.listAgentTaskWorkspaces(config)
-      .filter((t) => t.parentWorkspaceId === workspaceId && typeof t.id === "string")
-      .map((t) => t.id!);
+    const directChildTaskIds =
+      this.buildAgentTaskIndex(config).childrenByParent.get(workspaceId) ?? [];
 
     if (directChildTaskIds.length === 0) {
       return;
@@ -364,16 +401,16 @@ export class TaskService {
       return;
     }
 
-    const existing = this.postCompactionAwaitTimers.get(trimmed);
-    if (existing) {
-      clearTimeout(existing);
-    }
+    this.clearPostCompactionAwaitTimer(trimmed);
 
     const timer = setTimeout(() => {
       this.postCompactionAwaitTimers.delete(trimmed);
       void this.ensureParentAwaitingTasksPostCompaction(trimmed, retryCount).catch(
         (error: unknown) => {
-          log.error("ensureParentAwaitingTasksPostCompaction failed", { workspaceId: trimmed, error });
+          log.error("ensureParentAwaitingTasksPostCompaction failed", {
+            workspaceId: trimmed,
+            error,
+          });
         }
       );
     }, POST_COMPACTION_PARENT_AWAIT_DELAY_MS);
@@ -406,26 +443,11 @@ export class TaskService {
     // If compaction is still in progress (history empty or last user message is still the
     // compaction-request), wait and retry.
     const historyResult = await this.historyService.getHistory(workspaceId);
-    if (historyResult.success) {
-      const messages = historyResult.data;
-      if (messages.length === 0) {
-        if (retryCount < POST_COMPACTION_PARENT_AWAIT_MAX_RETRIES) {
-          this.scheduleParentAwaitAfterCompaction(workspaceId, retryCount + 1);
-        }
-        return;
+    if (historyResult.success && shouldDeferParentResumeForCompaction(historyResult.data)) {
+      if (retryCount < POST_COMPACTION_PARENT_AWAIT_MAX_RETRIES) {
+        this.scheduleParentAwaitAfterCompaction(workspaceId, retryCount + 1);
       }
-
-      const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
-      const muxMeta = lastUserMsg?.metadata?.muxMetadata;
-      if (muxMeta && typeof muxMeta === "object" && "type" in muxMeta) {
-        const type = (muxMeta as { type?: unknown }).type;
-        if (type === "compaction-request") {
-          if (retryCount < POST_COMPACTION_PARENT_AWAIT_MAX_RETRIES) {
-            this.scheduleParentAwaitAfterCompaction(workspaceId, retryCount + 1);
-          }
-          return;
-        }
-      }
+      return;
     }
 
     const freshCfg = this.config.loadConfigOrDefault();
@@ -440,12 +462,7 @@ export class TaskService {
     const resumeResult = await this.workspaceService.resumeStream(workspaceId, {
       model,
       thinkingLevel: entry.workspace.aiSettings?.thinkingLevel,
-      additionalSystemInstructions:
-        `You have active background sub-agent task(s) (${activeTaskIds.join(", ")}). ` +
-        "You MUST NOT end your turn while any sub-agent tasks are queued/running/awaiting_report. " +
-        "Call task_await now to wait for them to finish (omit timeout_secs to wait up to 10 minutes). " +
-        "If any tasks are still queued/running/awaiting_report after that, call task_await again. " +
-        "Only once all tasks are completed should you write your final response, integrating their reports.",
+      additionalSystemInstructions: buildParentAwaitSystemInstructions(activeTaskIds),
     });
     if (!resumeResult.success) {
       log.error("Failed to resume parent after compaction with active background tasks", {
@@ -981,35 +998,42 @@ export class TaskService {
     };
   }
 
-  waitForAgentReport(
+  async waitForAgentReport(
     taskId: string,
     options?: { timeoutMs?: number; abortSignal?: AbortSignal; requestingWorkspaceId?: string }
   ): Promise<{ reportMarkdown: string; title?: string }> {
     assert(taskId.length > 0, "waitForAgentReport: taskId must be non-empty");
 
-    const cached = this.completedReportsByTaskId.get(taskId);
+    const cached = this.getCompletedReportCacheEntry(taskId);
     if (cached) {
-      const nowMs = Date.now();
-      if (cached.expiresAtMs > nowMs) {
-        return Promise.resolve({ reportMarkdown: cached.reportMarkdown, title: cached.title });
-      }
-      this.completedReportsByTaskId.delete(taskId);
+      return { reportMarkdown: cached.reportMarkdown, title: cached.title };
     }
 
     const timeoutMs = options?.timeoutMs ?? 10 * 60 * 1000; // 10 minutes
     assert(Number.isFinite(timeoutMs) && timeoutMs > 0, "waitForAgentReport: timeoutMs invalid");
 
+    // Validate existence early to avoid waiting on never-resolving task IDs.
+    const cfg = this.config.loadConfigOrDefault();
+    const taskWorkspaceEntry = this.findWorkspaceEntry(cfg, taskId);
+    if (!taskWorkspaceEntry) {
+      throw new Error("Task not found");
+    }
+
+    // If the task already reported but we missed caching the report (e.g. restart + TTL expiry),
+    // avoid blocking until timeout. Instead, best-effort fetch the report payload from persisted
+    // history/partial and return immediately.
+    if (taskWorkspaceEntry.workspace.taskStatus === "reported") {
+      const reportArgs = await this.readLatestAgentReportArgs(taskId);
+      if (!reportArgs) {
+        throw new Error("Task already reported (agent_report payload not found)");
+      }
+      this.cacheCompletedReport(taskId, reportArgs);
+      return reportArgs;
+    }
+
     const requestingWorkspaceId = coerceNonEmptyString(options?.requestingWorkspaceId);
 
     return new Promise<{ reportMarkdown: string; title?: string }>((resolve, reject) => {
-      // Validate existence early to avoid waiting on never-resolving task IDs.
-      const cfg = this.config.loadConfigOrDefault();
-      const taskWorkspaceEntry = this.findWorkspaceEntry(cfg, taskId);
-      if (!taskWorkspaceEntry) {
-        reject(new Error("Task not found"));
-        return;
-      }
-
       let timeout: ReturnType<typeof setTimeout> | null = null;
       let startWaiter: PendingTaskStartWaiter | null = null;
       let abortListener: (() => void) | null = null;
@@ -1156,6 +1180,34 @@ export class TaskService {
     return this.hasActiveDescendantAgentTasks(cfg, workspaceId);
   }
 
+  private *iterateDescendantAgentTasksFromIndex(
+    index: AgentTaskIndex,
+    workspaceId: string
+  ): Generator<{ taskId: string; entry: AgentTaskWorkspaceEntry; depth: number }, void> {
+    assert(
+      workspaceId.length > 0,
+      "iterateDescendantAgentTasksFromIndex: workspaceId must be non-empty"
+    );
+
+    const stack: Array<{ taskId: string; depth: number }> = [];
+    for (const childTaskId of index.childrenByParent.get(workspaceId) ?? []) {
+      stack.push({ taskId: childTaskId, depth: 1 });
+    }
+
+    while (stack.length > 0) {
+      const next = stack.pop()!;
+
+      const entry = index.byId.get(next.taskId);
+      if (entry) {
+        yield { taskId: next.taskId, entry, depth: next.depth };
+      }
+
+      for (const childTaskId of index.childrenByParent.get(next.taskId) ?? []) {
+        stack.push({ taskId: childTaskId, depth: next.depth + 1 });
+      }
+    }
+  }
+
   listActiveDescendantAgentTaskIds(workspaceId: string): string[] {
     assert(
       workspaceId.length > 0,
@@ -1165,20 +1217,11 @@ export class TaskService {
     const cfg = this.config.loadConfigOrDefault();
     const index = this.buildAgentTaskIndex(cfg);
 
-    const activeStatuses = new Set<AgentTaskStatus>(["queued", "running", "awaiting_report"]);
     const result: string[] = [];
-    const stack: string[] = [...(index.childrenByParent.get(workspaceId) ?? [])];
-    while (stack.length > 0) {
-      const next = stack.pop()!;
-      const status = index.byId.get(next)?.taskStatus;
-      if (status && activeStatuses.has(status)) {
-        result.push(next);
-      }
-      const children = index.childrenByParent.get(next);
-      if (children) {
-        for (const child of children) {
-          stack.push(child);
-        }
+    for (const { taskId, entry } of this.iterateDescendantAgentTasksFromIndex(index, workspaceId)) {
+      const status = entry.taskStatus;
+      if (status && ACTIVE_AGENT_TASK_STATUSES.has(status)) {
+        result.push(taskId);
       }
     }
     return result;
@@ -1198,25 +1241,19 @@ export class TaskService {
 
     const result: DescendantAgentTaskInfo[] = [];
 
-    const stack: Array<{ taskId: string; depth: number }> = [];
-    for (const childTaskId of index.childrenByParent.get(workspaceId) ?? []) {
-      stack.push({ taskId: childTaskId, depth: 1 });
-    }
-
-    while (stack.length > 0) {
-      const next = stack.pop()!;
-      const entry = index.byId.get(next.taskId);
-      if (!entry) continue;
-
+    for (const { taskId, entry, depth } of this.iterateDescendantAgentTasksFromIndex(
+      index,
+      workspaceId
+    )) {
       assert(
         entry.parentWorkspaceId,
-        `listDescendantAgentTasks: task ${next.taskId} is missing parentWorkspaceId`
+        `listDescendantAgentTasks: task ${taskId} is missing parentWorkspaceId`
       );
 
       const status: AgentTaskStatus = entry.taskStatus ?? "running";
       if (!statusFilter || statusFilter.has(status)) {
         result.push({
-          taskId: next.taskId,
+          taskId,
           status,
           parentWorkspaceId: entry.parentWorkspaceId,
           agentType: entry.agentType,
@@ -1225,12 +1262,8 @@ export class TaskService {
           createdAt: entry.createdAt,
           modelString: entry.aiSettings?.model,
           thinkingLevel: entry.aiSettings?.thinkingLevel,
-          depth: next.depth,
+          depth,
         });
-      }
-
-      for (const childTaskId of index.childrenByParent.get(next.taskId) ?? []) {
-        stack.push({ taskId: childTaskId, depth: next.depth + 1 });
       }
     }
 
@@ -1257,7 +1290,6 @@ export class TaskService {
     const parentById = this.buildAgentTaskIndex(cfg).parentById;
 
     const nowMs = Date.now();
-    this.cleanupExpiredCompletedReports(nowMs);
 
     const result: string[] = [];
     for (const taskId of taskIds) {
@@ -1268,11 +1300,9 @@ export class TaskService {
       }
 
       // Preserve scope checks for tasks whose workspace was cleaned up after completion.
-      const cached = this.completedReportsByTaskId.get(taskId);
-      if (cached && cached.expiresAtMs > nowMs) {
-        if (cached.ancestorWorkspaceIds.includes(ancestorWorkspaceId)) {
-          result.push(taskId);
-        }
+      const cached = this.getCompletedReportCacheEntry(taskId, nowMs);
+      if (cached?.ancestorWorkspaceIds.includes(ancestorWorkspaceId)) {
+        result.push(taskId);
       }
     }
 
@@ -1315,10 +1345,8 @@ export class TaskService {
 
     // The task workspace may have been removed after it reported (cleanup). Preserve scope checks
     // by consulting the completed-report cache, which tracks the task's ancestor chain.
-    const nowMs = Date.now();
-    this.cleanupExpiredCompletedReports(nowMs);
-    const cached = this.completedReportsByTaskId.get(taskId);
-    if (cached && cached.expiresAtMs > nowMs) {
+    const cached = this.getCompletedReportCacheEntry(taskId);
+    if (cached) {
       return cached.ancestorWorkspaceIds.includes(ancestorWorkspaceId);
     }
 
@@ -1435,19 +1463,10 @@ export class TaskService {
 
     const index = this.buildAgentTaskIndex(config);
 
-    const activeStatuses = new Set<AgentTaskStatus>(["queued", "running", "awaiting_report"]);
-    const stack: string[] = [...(index.childrenByParent.get(workspaceId) ?? [])];
-    while (stack.length > 0) {
-      const next = stack.pop()!;
-      const status = index.byId.get(next)?.taskStatus;
-      if (status && activeStatuses.has(status)) {
+    for (const { entry } of this.iterateDescendantAgentTasksFromIndex(index, workspaceId)) {
+      const status = entry.taskStatus;
+      if (status && ACTIVE_AGENT_TASK_STATUSES.has(status)) {
         return true;
-      }
-      const children = index.childrenByParent.get(next);
-      if (children) {
-        for (const child of children) {
-          stack.push(child);
-        }
       }
     }
 
@@ -1814,24 +1833,11 @@ export class TaskService {
       }
 
       const historyResult = await this.historyService.getHistory(workspaceId);
-      if (historyResult.success) {
-        const messages = historyResult.data;
-        // If the parent is undergoing compaction, avoid resuming mid-compaction (history is being
-        // rewritten). Instead, schedule a follow-up nudge after compaction completes.
-        if (messages.length === 0) {
-          this.scheduleParentAwaitAfterCompaction(workspaceId);
-          return;
-        }
-
-        const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
-        const muxMeta = lastUserMsg?.metadata?.muxMetadata;
-        if (muxMeta && typeof muxMeta === "object" && "type" in muxMeta) {
-          const type = (muxMeta as { type?: unknown }).type;
-          if (type === "compaction-request") {
-            this.scheduleParentAwaitAfterCompaction(workspaceId);
-            return;
-          }
-        }
+      // If the parent is undergoing compaction, avoid resuming mid-compaction (history is being
+      // rewritten). Instead, schedule a follow-up nudge after compaction completes.
+      if (historyResult.success && shouldDeferParentResumeForCompaction(historyResult.data)) {
+        this.scheduleParentAwaitAfterCompaction(workspaceId);
+        return;
       }
 
       const activeTaskIds = this.listActiveDescendantAgentTaskIds(workspaceId);
@@ -1840,12 +1846,7 @@ export class TaskService {
       const resumeResult = await this.workspaceService.resumeStream(workspaceId, {
         model,
         thinkingLevel: entry.workspace.aiSettings?.thinkingLevel,
-        additionalSystemInstructions:
-          `You have active background sub-agent task(s) (${activeTaskIds.join(", ")}). ` +
-          "You MUST NOT end your turn while any sub-agent tasks are queued/running/awaiting_report. " +
-          "Call task_await now to wait for them to finish (omit timeout_secs to wait up to 10 minutes). " +
-          "If any tasks are still queued/running/awaiting_report after that, call task_await again. " +
-          "Only once all tasks are completed should you write your final response, integrating their reports.",
+        additionalSystemInstructions: buildParentAwaitSystemInstructions(activeTaskIds),
       });
       if (!resumeResult.success) {
         log.error("Failed to resume parent with active background tasks", {
@@ -2144,6 +2145,23 @@ export class TaskService {
     }
   }
 
+  private getCompletedReportCacheEntry(
+    taskId: string,
+    nowMs = Date.now()
+  ): CompletedAgentReportCacheEntry | null {
+    const cached = this.completedReportsByTaskId.get(taskId);
+    if (!cached) {
+      return null;
+    }
+
+    if (cached.expiresAtMs <= nowMs) {
+      this.completedReportsByTaskId.delete(taskId);
+      return null;
+    }
+
+    return cached;
+  }
+
   private enforceCompletedReportCacheLimit(): void {
     while (this.completedReportsByTaskId.size > COMPLETED_REPORT_CACHE_MAX_ENTRIES) {
       const first = this.completedReportsByTaskId.keys().next();
@@ -2152,7 +2170,10 @@ export class TaskService {
     }
   }
 
-  private resolveWaiters(taskId: string, report: { reportMarkdown: string; title?: string }): void {
+  private cacheCompletedReport(
+    taskId: string,
+    report: { reportMarkdown: string; title?: string }
+  ): void {
     const nowMs = Date.now();
     this.cleanupExpiredCompletedReports(nowMs);
 
@@ -2167,6 +2188,10 @@ export class TaskService {
       ancestorWorkspaceIds,
     });
     this.enforceCompletedReportCacheLimit();
+  }
+
+  private resolveWaiters(taskId: string, report: { reportMarkdown: string; title?: string }): void {
+    this.cacheCompletedReport(taskId, report);
 
     const waiters = this.pendingWaitersByTaskId.get(taskId);
     if (!waiters || waiters.length === 0) {
@@ -2431,9 +2456,8 @@ export class TaskService {
       if (!parentWorkspaceId) return;
       if (ws.taskStatus !== "reported") return;
 
-      const hasChildren = this.listAgentTaskWorkspaces(config).some(
-        (t) => t.parentWorkspaceId === currentWorkspaceId
-      );
+      const index = this.buildAgentTaskIndex(config);
+      const hasChildren = (index.childrenByParent.get(currentWorkspaceId) ?? []).length > 0;
       if (hasChildren) return;
 
       const removeResult = await this.workspaceService.remove(currentWorkspaceId, true);

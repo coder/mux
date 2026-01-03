@@ -140,7 +140,7 @@ function createWorkspaceServiceMocks(
 
   const listenersByEvent = new Map<string, Array<(...args: unknown[]) => void>>();
 
-  let workspaceService: WorkspaceService;
+  const workspaceService = {} as unknown as WorkspaceService;
 
   const emit =
     overrides?.emit ??
@@ -163,13 +163,13 @@ function createWorkspaceServiceMocks(
       return workspaceService;
     });
 
-  workspaceService = {
+  Object.assign(workspaceService as unknown as Record<string, unknown>, {
     sendMessage,
     resumeStream,
     remove,
     emit,
     on,
-  } as unknown as WorkspaceService;
+  });
 
   return {
     workspaceService,
@@ -924,7 +924,10 @@ describe("TaskService", () => {
 
     const { aiService } = createAIServiceMocks(config);
     const { workspaceService, resumeStream } = createWorkspaceServiceMocks();
-    const { historyService, taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+    const { historyService, taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
 
     const writeHistory = await historyService.appendToHistory(
       rootWorkspaceId,
@@ -1003,7 +1006,10 @@ describe("TaskService", () => {
 
     const { aiService } = createAIServiceMocks(config);
     const { workspaceService, resumeStream } = createWorkspaceServiceMocks();
-    const { historyService, taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+    const { historyService, taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
 
     const writeHistory = await historyService.appendToHistory(
       rootWorkspaceId,
@@ -1358,6 +1364,64 @@ describe("TaskService", () => {
 
     const report = await reportPromise;
     expect(report.reportMarkdown).toBe("ok");
+  });
+
+  test("waitForAgentReport returns immediately for reported tasks (no hang)", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-111";
+    const childId = "child-222";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
+              {
+                path: path.join(projectPath, "child"),
+                id: childId,
+                name: "agent_explore_child",
+                parentWorkspaceId: parentId,
+                agentType: "explore",
+                taskStatus: "reported",
+                reportedAt: new Date().toISOString(),
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
+    });
+
+    const { historyService, taskService } = createTaskServiceHarness(config);
+
+    // Persist the agent_report tool-call so waitForAgentReport can recover after restarts.
+    const historyMsg = createMuxMessage(
+      "assistant-child-history",
+      "assistant",
+      "",
+      { timestamp: Date.now() },
+      [
+        {
+          type: "dynamic-tool",
+          toolCallId: "agent-report-call-1",
+          toolName: "agent_report",
+          input: { reportMarkdown: "Hello from child", title: "Result" },
+          state: "output-available",
+          output: { success: true },
+        },
+      ]
+    );
+
+    const append = await historyService.appendToHistory(childId, historyMsg);
+    expect(append.success).toBe(true);
+
+    const report = await taskService.waitForAgentReport(childId, { timeoutMs: 25 });
+    expect(report.reportMarkdown).toBe("Hello from child");
+    expect(report.title).toBe("Result");
   });
 
   test("waitForAgentReport returns cached report even after workspace is removed", async () => {
