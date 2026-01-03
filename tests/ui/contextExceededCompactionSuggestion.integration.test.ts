@@ -4,7 +4,7 @@
  * (if the user has one configured).
  */
 
-import { waitFor } from "@testing-library/react";
+import { fireEvent, waitFor } from "@testing-library/react";
 
 import { shouldRunIntegrationTests } from "../testUtils";
 import {
@@ -30,12 +30,13 @@ describeIntegration("Context exceeded compaction suggestion (UI)", () => {
     await cleanupSharedRepo();
   });
 
-  test("suggests /compact -m <model> when a higher-context known model is available", async () => {
+  test("offers compaction in the Stream interrupted banner when a higher-context model is available", async () => {
     await withSharedWorkspace("openai", async ({ env, workspaceId, metadata }) => {
       const cleanupDom = installDom();
 
       await setupProviders(env, { xai: { apiKey: "dummy" } });
-      const suggestion = "/compact -m grok";
+      const expectedCompactionCommand = "/compact -m xai:grok-4-1-fast";
+      const suggestedModel = "Grok";
 
       const apiClient = env.orpc as unknown as APIClient;
       const view = renderApp({ apiClient, metadata });
@@ -75,21 +76,43 @@ describeIntegration("Context exceeded compaction suggestion (UI)", () => {
           { timeout: 30_000 }
         );
 
-        // And we should render an action button for one-click retry.
+        // And we should render an action button for one-click compaction + retry.
         await waitFor(
           () => {
-            const button = view.queryByRole("button", { name: "Retry with compaction" });
+            const button = view.queryByRole("button", { name: "Compact & retry" });
             if (!button) {
-              throw new Error("Expected Retry with compaction button");
+              throw new Error("Expected Compact & retry button");
             }
           },
           { timeout: 10_000 }
         );
-        // And we should offer an opportunistic compaction command using a larger-context model.
+
+        // Banner text should clarify that we're not switching the workspace model,
+        // just compacting with a higher-context model to unblock.
         await waitFor(
           () => {
-            if (!view.container.textContent?.includes(suggestion)) {
-              throw new Error(`Expected ${suggestion} suggestion`);
+            if (!view.container.textContent?.includes("workspace model stays the same")) {
+              throw new Error("Expected compaction banner to clarify model is unchanged");
+            }
+            if (!view.container.textContent?.includes(suggestedModel)) {
+              throw new Error(`Expected compaction banner to mention ${suggestedModel}`);
+            }
+          },
+          { timeout: 10_000 }
+        );
+
+        // Clicking the CTA should actually send a compaction request message.
+        // We assert on the rendered /compact command (from muxMetadata.rawCommand).
+        const button = view.getByRole("button", { name: "Compact & retry" });
+        if (view.container.textContent?.includes(expectedCompactionCommand)) {
+          throw new Error("Compaction command should not be present before clicking");
+        }
+        fireEvent.click(button);
+
+        await waitFor(
+          () => {
+            if (!view.container.textContent?.includes(expectedCompactionCommand)) {
+              throw new Error(`Expected compaction command: ${expectedCompactionCommand}`);
             }
           },
           { timeout: 10_000 }

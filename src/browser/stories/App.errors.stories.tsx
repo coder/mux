@@ -105,8 +105,8 @@ const LARGE_DIFF = [
 /** Stream error messages in chat */
 
 /**
- * Context exceeded error should show a best-effort /compact -m <model> suggestion
- * when a larger-context known model is configured.
+ * Context exceeded error should offer a best-effort compaction action in the
+ * Stream interrupted banner when a larger-context known model is configured.
  */
 export const ContextExceededSuggestion: AppStory = {
   render: () => (

@@ -23,6 +23,7 @@ import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { WORKSPACE_ONLY_COMMANDS } from "@/constants/slashCommands";
 import type { Toast } from "@/browser/components/ChatInputToast";
 import type { ParsedCommand } from "@/browser/utils/slashCommands/types";
+import { formatCompactionCommandLine } from "@/browser/utils/compaction/format";
 import { applyCompactionOverrides } from "@/browser/utils/messages/compactionOptions";
 import {
   resolveCompactionModel,
@@ -704,23 +705,6 @@ export async function executeCompaction(
   }
 
   return { success: true };
-}
-
-/**
- * Format compaction command *line* for display.
- *
- * Intentionally excludes the multiline continue payload; that content is stored in
- * `muxMetadata.parsed.continueMessage` and is shown/edited separately.
- */
-function formatCompactionCommandLine(options: CompactionOptions): string {
-  let cmd = "/compact";
-  if (options.maxOutputTokens) {
-    cmd += ` -t ${options.maxOutputTokens}`;
-  }
-  if (options.model) {
-    cmd += ` -m ${options.model}`;
-  }
-  return cmd;
 }
 
 // ============================================================================
