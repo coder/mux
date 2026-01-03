@@ -54,6 +54,7 @@
               },
               "plan-mode",
               "vscode-extension",
+              "acp",
               "models",
               {
                 "group": "Keyboard Shortcuts",

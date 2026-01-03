@@ -54,6 +54,10 @@ if (subcommand === "run") {
   process.argv.splice(env.firstArgIndex, 1);
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   require("./server");
+} else if (subcommand === "acp") {
+  process.argv.splice(env.firstArgIndex, 1);
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  require("./acp");
 } else if (subcommand === "api") {
   process.argv.splice(env.firstArgIndex, 1);
   // Must use native import() to load ESM module - trpc-cli requires ESM with top-level await.
@@ -103,6 +107,7 @@ if (subcommand === "run") {
     program.command("run").description("Run a one-off agent task");
   }
   program.command("server").description("Start the HTTP/WebSocket ORPC server");
+  program.command("acp").description("Start an ACP (Agent Client Protocol) stdio bridge");
   program.command("api").description("Interact with the mux API via a running server");
   program
     .command("desktop")
