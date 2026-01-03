@@ -417,6 +417,7 @@ export interface CustomChatSetupOptions {
   workspaceId?: string;
   workspaceName?: string;
   projectName?: string;
+  providersConfig?: ProvidersConfigMap;
   chatHandler: ChatHandler;
 }
 
@@ -446,5 +447,6 @@ export function setupCustomChatStory(opts: CustomChatSetupOptions): APIClient {
     projects: groupWorkspacesByProject(workspaces),
     workspaces,
     onChat: createOnChatAdapter(chatHandlers),
+    providersConfig: opts.providersConfig,
   });
 }

@@ -102,7 +102,64 @@ const LARGE_DIFF = [
 // STORIES
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/** Stream error message in chat */
+/** Stream error messages in chat */
+
+/**
+ * Context exceeded error should show a best-effort /compact -m <model> suggestion
+ * when a larger-context known model is configured.
+ */
+export const ContextExceededSuggestion: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const workspaceId = "ws-context-exceeded";
+        // Disable auto-retry to keep this story deterministic (no countdown timer)
+        localStorage.setItem(getAutoRetryKey(workspaceId), JSON.stringify(false));
+
+        return setupCustomChatStory({
+          workspaceId,
+          providersConfig: {
+            openai: { apiKeySet: true },
+            xai: { apiKeySet: true },
+          },
+          chatHandler: (callback: (event: WorkspaceChatMessage) => void) => {
+            setTimeout(() => {
+              callback(
+                createUserMessage("msg-1", "Can you help me with this huge codebase?", {
+                  historySequence: 1,
+                  timestamp: STABLE_TIMESTAMP - 100000,
+                })
+              );
+              callback({ type: "caught-up" });
+
+              // Simulate a stream start with a smaller-context model...
+              callback({
+                type: "stream-start",
+                workspaceId,
+                messageId: "assistant-1",
+                model: "openai:gpt-5.2",
+                historySequence: 2,
+                startTime: STABLE_TIMESTAMP - 90000,
+                mode: "exec",
+              });
+
+              // ...and then the stream failing with a context limit error.
+              callback({
+                type: "stream-error",
+                messageId: "assistant-1",
+                error:
+                  "Context length exceeded: the conversation is too long to send to this model.",
+                errorType: "context_exceeded",
+              });
+            }, 50);
+            // eslint-disable-next-line @typescript-eslint/no-empty-function
+            return () => {};
+          },
+        });
+      }}
+    />
+  ),
+};
 export const StreamError: AppStory = {
   render: () => (
     <AppWithMocks

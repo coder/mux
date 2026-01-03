@@ -19,7 +19,7 @@ import type { APIClient } from "@/browser/contexts/API";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getModelKey } from "@/common/constants/storage";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
-import { getModelStats } from "@/common/utils/tokens/modelStats";
+import { setupProviders } from "../ipc/setup";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
@@ -67,43 +67,6 @@ function createForceContextExceededClient(client: APIClient): APIClient {
   }) as unknown as APIClient;
 }
 
-type KnownModel = (typeof KNOWN_MODELS)[keyof typeof KNOWN_MODELS];
-
-function pickOpenAIContextUpgrade(): { currentModelId: string; suggestion: string } {
-  const openaiModels: Array<{ model: KnownModel; maxInputTokens: number }> = [];
-
-  for (const model of Object.values(KNOWN_MODELS)) {
-    if (model.provider !== "openai") {
-      continue;
-    }
-
-    const stats = getModelStats(model.id);
-    if (!stats?.max_input_tokens) {
-      continue;
-    }
-
-    openaiModels.push({ model, maxInputTokens: stats.max_input_tokens });
-  }
-
-  openaiModels.sort((a, b) => a.maxInputTokens - b.maxInputTokens);
-
-  if (openaiModels.length < 2) {
-    throw new Error("Test requires at least two OpenAI KNOWN_MODELS with model stats");
-  }
-
-  const current = openaiModels[0];
-  const best = openaiModels[openaiModels.length - 1];
-  if (best.maxInputTokens <= current.maxInputTokens) {
-    throw new Error("Test requires an OpenAI model with a strictly larger context window");
-  }
-
-  const modelArg = best.model.aliases?.[0] ?? best.model.id;
-  return {
-    currentModelId: current.model.id,
-    suggestion: `/compact -m ${modelArg}`,
-  };
-}
-
 describeIntegration("Context exceeded compaction suggestion (UI)", () => {
   beforeAll(async () => {
     await createSharedRepo();
@@ -117,8 +80,9 @@ describeIntegration("Context exceeded compaction suggestion (UI)", () => {
     await withSharedWorkspace("openai", async ({ env, workspaceId, metadata }) => {
       const cleanupDom = installDom();
 
-      const { currentModelId, suggestion } = pickOpenAIContextUpgrade();
-      updatePersistedState(getModelKey(workspaceId), currentModelId);
+      await setupProviders(env, { xai: { apiKey: "dummy" } });
+      updatePersistedState(getModelKey(workspaceId), KNOWN_MODELS.GPT.id);
+      const suggestion = "/compact -m grok";
 
       const apiClient = createForceContextExceededClient(env.orpc as unknown as APIClient);
       const view = renderApp({ apiClient, metadata });
