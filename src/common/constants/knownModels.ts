@@ -17,6 +17,10 @@ interface KnownModelDefinition {
   warm?: boolean;
   /** Optional tokenizer override for ai-tokenizer */
   tokenizerOverride?: string;
+  /** Context window size in tokens */
+  contextWindow?: number;
+  /** Brief description of the model's strengths */
+  description?: string;
 }
 
 interface KnownModel extends KnownModelDefinition {
@@ -32,6 +36,8 @@ const MODEL_DEFINITIONS = {
     providerModelId: "claude-opus-4-5",
     aliases: ["opus"],
     warm: true,
+    contextWindow: 200_000,
+    description: "Most capable, best for complex reasoning and nuanced tasks",
   },
   SONNET: {
     provider: "anthropic",
@@ -39,12 +45,16 @@ const MODEL_DEFINITIONS = {
     aliases: ["sonnet"],
     warm: true,
     tokenizerOverride: "anthropic/claude-sonnet-4.5",
+    contextWindow: 200_000,
+    description: "Balanced performance and speed, supports extended 1M context",
   },
   HAIKU: {
     provider: "anthropic",
     providerModelId: "claude-haiku-4-5",
     aliases: ["haiku"],
     tokenizerOverride: "anthropic/claude-3.5-haiku",
+    contextWindow: 200_000,
+    description: "Fast and cost-effective for simpler tasks",
   },
   GPT: {
     provider: "openai",
@@ -52,11 +62,15 @@ const MODEL_DEFINITIONS = {
     aliases: ["gpt"],
     warm: true,
     tokenizerOverride: "openai/gpt-5",
+    contextWindow: 272_000,
+    description: "OpenAI flagship, strong general-purpose performance",
   },
   GPT_PRO: {
     provider: "openai",
     providerModelId: "gpt-5.2-pro",
     aliases: ["gpt-pro"],
+    contextWindow: 272_000,
+    description: "Enhanced reasoning with extended thinking capabilities",
   },
   GPT_CODEX: {
     provider: "openai",
@@ -64,11 +78,15 @@ const MODEL_DEFINITIONS = {
     aliases: ["codex"],
     warm: true,
     tokenizerOverride: "openai/gpt-5",
+    contextWindow: 272_000,
+    description: "Optimized for code generation and understanding",
   },
   GPT_MINI: {
     provider: "openai",
     providerModelId: "gpt-5.1-codex-mini",
     aliases: ["codex-mini"],
+    contextWindow: 272_000,
+    description: "Compact Codex variant, faster with lower cost",
   },
   GPT_CODEX_MAX: {
     provider: "openai",
@@ -76,28 +94,38 @@ const MODEL_DEFINITIONS = {
     aliases: ["codex-max"],
     warm: true,
     tokenizerOverride: "openai/gpt-5",
+    contextWindow: 272_000,
+    description: "Maximum capability Codex for complex code tasks",
   },
   GEMINI_3_PRO: {
     provider: "google",
     providerModelId: "gemini-3-pro-preview",
     aliases: ["gemini-3", "gemini-3-pro"],
     tokenizerOverride: "google/gemini-2.5-pro",
+    contextWindow: 1_000_000,
+    description: "Google flagship with 1M token context window",
   },
   GEMINI_3_FLASH: {
     provider: "google",
     providerModelId: "gemini-3-flash-preview",
     aliases: ["gemini-3-flash"],
     tokenizerOverride: "google/gemini-2.5-pro",
+    contextWindow: 1_000_000,
+    description: "Fast Gemini variant with 1M context",
   },
   GROK_4_1: {
     provider: "xai",
     providerModelId: "grok-4-1-fast",
     aliases: ["grok", "grok-4", "grok-4.1", "grok-4-1"],
+    contextWindow: 131_072,
+    description: "xAI flagship model, strong reasoning capabilities",
   },
   GROK_CODE: {
     provider: "xai",
     providerModelId: "grok-code-fast-1",
     aliases: ["grok-code"],
+    contextWindow: 131_072,
+    description: "xAI code-specialized model",
   },
 } as const satisfies Record<string, KnownModelDefinition>;
 

@@ -1,5 +1,5 @@
 import React from "react";
-import { Check, Eye, Pencil, Star, Trash2, X } from "lucide-react";
+import { Check, Eye, Info, Pencil, Trash2, X } from "lucide-react";
 import { createEditKeyHandler } from "@/browser/utils/ui/keybinds";
 import { GatewayIcon } from "@/browser/components/icons/GatewayIcon";
 import { cn } from "@/common/lib/utils";
@@ -7,13 +7,23 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/ui
 import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
 import { Button } from "@/browser/components/ui/button";
 
+/** Format token count as human-readable string (e.g., 200000 -> "200K") */
+function formatTokenCount(tokens: number): string {
+  if (tokens >= 1_000_000) {
+    return `${(tokens / 1_000_000).toFixed(tokens % 1_000_000 === 0 ? 0 : 1)}M`;
+  }
+  if (tokens >= 1_000) {
+    return `${(tokens / 1_000).toFixed(tokens % 1_000 === 0 ? 0 : 1)}K`;
+  }
+  return tokens.toString();
+}
+
 export interface ModelRowProps {
   provider: string;
   modelId: string;
   fullId: string;
   aliases?: string[];
   isCustom: boolean;
-  isDefault: boolean;
   isEditing: boolean;
   editValue?: string;
   editError?: string | null;
@@ -23,7 +33,10 @@ export interface ModelRowProps {
   isGatewayEnabled?: boolean;
   /** Whether this model is hidden from the selector */
   isHiddenFromSelector?: boolean;
-  onSetDefault: () => void;
+  /** Context window size in tokens */
+  contextWindow?: number;
+  /** Brief description of the model */
+  description?: string;
   onStartEdit?: () => void;
   onSaveEdit?: () => void;
   onCancelEdit?: () => void;
@@ -72,6 +85,21 @@ export function ModelRow(props: ModelRowProps) {
                   </span>
                 </TooltipTrigger>
                 <TooltipContent align="center">Use with /m {props.aliases[0]}</TooltipContent>
+              </Tooltip>
+            )}
+            {props.contextWindow && (
+              <span className="text-muted-light shrink-0 text-[10px]">
+                {formatTokenCount(props.contextWindow)}
+              </span>
+            )}
+            {props.description && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Info className="text-muted-light h-3 w-3 shrink-0 cursor-help" />
+                </TooltipTrigger>
+                <TooltipContent align="center" className="max-w-xs">
+                  {props.description}
+                </TooltipContent>
               </Tooltip>
             )}
           </div>
@@ -163,31 +191,6 @@ export function ModelRow(props: ModelRowProps) {
                 </TooltipContent>
               </Tooltip>
             )}
-            {/* Favorite/default button */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => {
-                    if (!props.isDefault) props.onSetDefault();
-                  }}
-                  className={cn(
-                    "h-6 w-6",
-                    props.isDefault
-                      ? "cursor-default text-yellow-400 hover:text-yellow-400"
-                      : "text-muted hover:text-yellow-400"
-                  )}
-                  disabled={props.isDefault}
-                  aria-label={props.isDefault ? "Current default model" : "Set as default model"}
-                >
-                  <Star className={cn("h-3.5 w-3.5", props.isDefault && "fill-current")} />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent align="center">
-                {props.isDefault ? "Default model" : "Set as default"}
-              </TooltipContent>
-            </Tooltip>
             {/* Edit/delete buttons only for custom models */}
             {props.isCustom && (
               <>
