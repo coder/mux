@@ -160,7 +160,7 @@ export class DockerRuntime extends RemoteRuntime {
     return `cd ${shescape.quote(cwd)}`;
   }
 
-  protected spawnRemoteProcess(fullCommand: string, options: ExecOptions): SpawnResult {
+  protected spawnRemoteProcess(fullCommand: string, _options: ExecOptions): SpawnResult {
     // Verify container name is available
     if (!this.containerName) {
       throw new RuntimeError(
@@ -171,16 +171,11 @@ export class DockerRuntime extends RemoteRuntime {
       );
     }
 
-    // Build docker exec args
-    const dockerArgs: string[] = ["exec", "-i"];
-
-    // Add environment variables directly to docker exec
-    const envVars = { ...options.env };
-    for (const [key, value] of Object.entries(envVars)) {
-      dockerArgs.push("-e", `${key}=${value}`);
-    }
-
-    dockerArgs.push(this.containerName, "bash", "-c", fullCommand);
+    // Build docker exec args.
+    //
+    // Note: RemoteRuntime.exec() injects env vars via `export ...`, so we don't need `docker exec -e`
+    // here (and avoiding `-e` keeps quoting behavior consistent with SSH).
+    const dockerArgs: string[] = ["exec", "-i", this.containerName, "bash", "-c", fullCommand];
 
     // Spawn docker exec command
     const process = spawn("docker", dockerArgs, {

@@ -23,6 +23,19 @@ function projectWithNoWorkspaces(path: string): [string, ProjectConfig] {
   return [path, { workspaces: [] }];
 }
 
+function findRuntimeButton(container: HTMLElement, label: string): HTMLButtonElement | null {
+  const group = container.querySelector(
+    '[data-component="RuntimeTypeGroup"]'
+  ) as HTMLElement | null;
+  if (!group) {
+    return null;
+  }
+
+  const buttons = Array.from(group.querySelectorAll("button"));
+  const button = buttons.find((btn) => btn.textContent?.includes(label));
+  return (button ?? null) as HTMLButtonElement | null;
+}
+
 describeIntegration("Docker runtime selection (UI)", () => {
   test("selecting Docker shows image input", async () => {
     const cleanupDom = installDom();
@@ -36,19 +49,6 @@ describeIntegration("Docker runtime selection (UI)", () => {
     });
 
     const view = renderApp({ apiClient: client });
-
-    const findRuntimeButton = (label: string): HTMLButtonElement | null => {
-      const group = view.container.querySelector(
-        '[data-component="RuntimeTypeGroup"]'
-      ) as HTMLElement | null;
-      if (!group) {
-        return null;
-      }
-
-      const buttons = Array.from(group.querySelectorAll("button"));
-      const button = buttons.find((btn) => btn.textContent?.includes(label));
-      return (button ?? null) as HTMLButtonElement | null;
-    };
 
     try {
       await view.waitForReady();
@@ -64,14 +64,14 @@ describeIntegration("Docker runtime selection (UI)", () => {
         { timeout: 5_000 }
       );
 
-      const dockerButton = findRuntimeButton("Docker");
+      const dockerButton = findRuntimeButton(view.container, "Docker");
       expect(dockerButton).toBeTruthy();
       fireEvent.click(dockerButton!);
 
       // Verify Docker button becomes active
       await waitFor(
         () => {
-          const btn = findRuntimeButton("Docker");
+          const btn = findRuntimeButton(view.container, "Docker");
           if (!btn) throw new Error("Docker button not found");
           if (btn.getAttribute("aria-pressed") !== "true") {
             throw new Error("Docker runtime not selected");
@@ -102,7 +102,7 @@ describeIntegration("Docker runtime selection (UI)", () => {
       expect(imageInput.value).toBe("ubuntu:22.04");
 
       // Switching to SSH should hide Docker image input and show host input
-      const sshButton = findRuntimeButton("SSH");
+      const sshButton = findRuntimeButton(view.container, "SSH");
       expect(sshButton).toBeTruthy();
       fireEvent.click(sshButton!);
 
@@ -137,19 +137,6 @@ describeIntegration("Docker runtime selection (UI)", () => {
 
     const view = renderApp({ apiClient: client });
 
-    const findRuntimeButton = (label: string): HTMLButtonElement | null => {
-      const group = view.container.querySelector(
-        '[data-component="RuntimeTypeGroup"]'
-      ) as HTMLElement | null;
-      if (!group) {
-        return null;
-      }
-
-      const buttons = Array.from(group.querySelectorAll("button"));
-      const button = buttons.find((btn) => btn.textContent?.includes(label));
-      return (button ?? null) as HTMLButtonElement | null;
-    };
-
     try {
       await view.waitForReady();
 
@@ -167,7 +154,7 @@ describeIntegration("Docker runtime selection (UI)", () => {
       // Local should be forced when repo is not a git repository
       await waitFor(
         () => {
-          const localButton = findRuntimeButton("Local");
+          const localButton = findRuntimeButton(view.container, "Local");
           if (!localButton) throw new Error("Local button not found");
           if (localButton.getAttribute("aria-pressed") !== "true") {
             throw new Error("Local runtime not selected for non-git repo");
@@ -176,7 +163,7 @@ describeIntegration("Docker runtime selection (UI)", () => {
         { timeout: 2_000 }
       );
 
-      const dockerButton = findRuntimeButton("Docker");
+      const dockerButton = findRuntimeButton(view.container, "Docker");
       expect(dockerButton).toBeTruthy();
       expect(dockerButton!.disabled).toBe(true);
     } finally {
