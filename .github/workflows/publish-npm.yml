@@ -24,12 +24,17 @@ jobs:
 
       - uses: ./.github/actions/setup-mux
 
-      # Sets up .npmrc with the auth token
+      # Configure npm for publishing.
+      # We rely on npm "trusted publishing" (OIDC) instead of a long-lived NPM_TOKEN.
       - uses: actions/setup-node@v4
         with:
+          node-version: "22"
           registry-url: "https://registry.npmjs.org"
 
-      - run: sudo npm i -g npm@latest
+      # npm trusted publishing requires npm CLI >= 11.5.1.
+      - run: |
+          sudo npm i -g npm@^11.5.1
+          npm --version
 
       - name: Generate unique version from git
         id: version
@@ -120,17 +125,7 @@ jobs:
         if: steps.check-exists.outputs.exists == 'false'
         run: npm publish --tag ${{ steps.version.outputs.tag }}
 
-      - name: Update dist-tag (version already exists)
-        if: steps.check-exists.outputs.exists == 'true' && github.ref_type == 'tag'
+      - name: Skip (version already exists)
+        if: steps.check-exists.outputs.exists == 'true'
         run: |
-          PACKAGE_NAME=$(node -p "require('./package.json').name")
-          VERSION="${{ steps.version.outputs.version }}"
-          TAG="${{ steps.version.outputs.tag }}"
-
-          echo "Version ${VERSION} already published, updating dist-tag to ${TAG}"
-          npm dist-tag add "${PACKAGE_NAME}@${VERSION}" "${TAG}"
-
-      - name: Skip (pre-release already exists)
-        if: steps.check-exists.outputs.exists == 'true' && github.ref_type != 'tag'
-        run: |
-          echo "⏭️ Pre-release version already exists, skipping"
+          echo "Version ${{ steps.version.outputs.version }} already exists on npm; skipping publish."
