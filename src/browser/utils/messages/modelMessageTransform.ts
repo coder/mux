@@ -422,51 +422,94 @@ function splitMixedContentMessages(messages: ModelMessage[]): ModelMessage[] {
       }
     }
 
-    for (const group of groups) {
+    for (let groupIndex = 0; groupIndex < groups.length; groupIndex++) {
+      const group = groups[groupIndex];
       if (group.parts.length === 0) {
         continue;
       }
 
-      if (group.type === "tool-call") {
-        const partsToInclude = group.parts.filter(
-          (p) => p.type === "tool-call" && toolResultsById.has(p.toolCallId)
-        );
+      // If text is immediately followed by tool calls, keep them together.
+      // Text before tool_use is allowed by Anthropic; only *text after tool_use* is invalid.
+      if (group.type === "text") {
+        const nextGroup = groups[groupIndex + 1];
+        if (nextGroup?.type === "tool-call" && nextGroup.parts.length > 0) {
+          const toolPartsToInclude = nextGroup.parts.filter(
+            (p) => p.type === "tool-call" && toolResultsById.has(p.toolCallId)
+          );
 
-        if (partsToInclude.length === 0) {
+          // If none of the tool calls have results, keep just the text portion.
+          if (toolPartsToInclude.length === 0) {
+            result.push({ role: "assistant", content: group.parts });
+            groupIndex++;
+            continue;
+          }
+
+          const newAssistantMsg: AssistantModelMessage = {
+            role: "assistant",
+            content: [...group.parts, ...toolPartsToInclude],
+          };
+          result.push(newAssistantMsg);
+
+          const relevantResults: ToolModelMessage["content"] = [];
+          for (const part of toolPartsToInclude) {
+            if (part.type !== "tool-call") {
+              continue;
+            }
+            const results = toolResultsById.get(part.toolCallId);
+            if (results) {
+              relevantResults.push(...results);
+              toolResultsById.delete(part.toolCallId);
+            }
+          }
+
+          if (relevantResults.length > 0) {
+            const newToolMsg: ToolModelMessage = {
+              role: "tool",
+              content: relevantResults,
+            };
+            result.push(newToolMsg);
+          }
+
+          groupIndex++;
           continue;
         }
 
-        const newAssistantMsg: AssistantModelMessage = {
-          role: "assistant",
-          content: partsToInclude,
-        };
-        result.push(newAssistantMsg);
+        result.push({ role: "assistant", content: group.parts });
+        continue;
+      }
 
-        const relevantResults: ToolModelMessage["content"] = [];
-        for (const part of partsToInclude) {
-          if (part.type !== "tool-call") {
-            continue;
-          }
-          const results = toolResultsById.get(part.toolCallId);
-          if (results) {
-            relevantResults.push(...results);
-            toolResultsById.delete(part.toolCallId);
-          }
-        }
+      const partsToInclude = group.parts.filter(
+        (p) => p.type === "tool-call" && toolResultsById.has(p.toolCallId)
+      );
 
-        if (relevantResults.length > 0) {
-          const newToolMsg: ToolModelMessage = {
-            role: "tool",
-            content: relevantResults,
-          };
-          result.push(newToolMsg);
+      if (partsToInclude.length === 0) {
+        continue;
+      }
+
+      const newAssistantMsg: AssistantModelMessage = {
+        role: "assistant",
+        content: partsToInclude,
+      };
+      result.push(newAssistantMsg);
+
+      const relevantResults: ToolModelMessage["content"] = [];
+      for (const part of partsToInclude) {
+        if (part.type !== "tool-call") {
+          continue;
         }
-      } else {
-        const newAssistantMsg: AssistantModelMessage = {
-          role: "assistant",
-          content: group.parts,
+        const results = toolResultsById.get(part.toolCallId);
+        if (results) {
+          relevantResults.push(...results);
+          toolResultsById.delete(part.toolCallId);
+        }
+      }
+
+      if (relevantResults.length > 0) {
+        const newToolMsg: ToolModelMessage = {
+          role: "tool",
+          content: relevantResults,
         };
-        result.push(newAssistantMsg);
+        result.push(newToolMsg);
       }
     }
 
