@@ -11,11 +11,7 @@ import React, {
 
 import { useAPI } from "@/browser/contexts/API";
 import { AgentProvider } from "@/browser/contexts/AgentContext";
-import {
-  readPersistedString,
-  updatePersistedState,
-  usePersistedState,
-} from "@/browser/hooks/usePersistedState";
+import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { matchesKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import {
@@ -46,13 +42,6 @@ function coerceAgentId(value: unknown): string {
   return typeof value === "string" && value.trim().length > 0 ? value.trim().toLowerCase() : "exec";
 }
 
-function getLegacyModeKey(scopeId: string): string {
-  return `mode:${scopeId}`;
-}
-
-function coerceLegacyMode(value: string | undefined): UIMode | undefined {
-  return value === "plan" || value === "exec" ? value : undefined;
-}
 function resolveModeFromAgentId(agentId: string): UIMode {
   const normalizedAgentId = coerceAgentId(agentId);
   return normalizedAgentId === "plan" ? "plan" : "exec";
@@ -64,15 +53,9 @@ export const ModeProvider: React.FC<ModeProviderProps> = (props) => {
   // Priority: workspace-scoped > project-scoped > global
   const scopeId = getScopeId(props.workspaceId, props.projectPath);
 
-  const legacyMode = coerceLegacyMode(readPersistedString(getLegacyModeKey(scopeId)));
-
-  const [agentId, setAgentIdRaw] = usePersistedState<string>(
-    getAgentIdKey(scopeId),
-    legacyMode ?? "exec",
-    {
-      listener: true,
-    }
-  );
+  const [agentId, setAgentIdRaw] = usePersistedState<string>(getAgentIdKey(scopeId), "exec", {
+    listener: true,
+  });
 
   // Toggle to use project agents only (ignore workspace worktree agents)
   const [disableWorkspaceAgents, setDisableWorkspaceAgents] = usePersistedState<boolean>(
@@ -182,31 +165,6 @@ export const ModeProvider: React.FC<ModeProviderProps> = (props) => {
   }, [fetchAgents, props.projectPath, props.workspaceId, disableWorkspaceAgents]);
 
   const mode = useMemo(() => resolveModeFromAgentId(agentId), [agentId]);
-
-  // One-time migration: if the new agentId key is missing, seed it from the legacy mode key.
-  // This keeps send-options (which read localStorage directly) consistent across upgrades.
-  useEffect(() => {
-    if (!legacyMode) {
-      return;
-    }
-
-    const agentIdKey = getAgentIdKey(scopeId);
-    const existingAgentId = readPersistedString(agentIdKey);
-    if (existingAgentId !== undefined) {
-      return;
-    }
-
-    updatePersistedState(agentIdKey, legacyMode);
-  }, [legacyMode, scopeId]);
-
-  // Keep legacy mode key in sync so older code paths (and downgrade clients) behave consistently.
-  useEffect(() => {
-    const modeKey = getLegacyModeKey(scopeId);
-    const existing = coerceLegacyMode(readPersistedString(modeKey));
-    if (existing !== mode) {
-      updatePersistedState(modeKey, mode);
-    }
-  }, [mode, scopeId]);
 
   const setMode = useCallback(
     (nextMode: UIMode) => {

@@ -5,11 +5,7 @@ import {
   getThinkingLevelKey,
   getDisableWorkspaceAgentsKey,
 } from "@/common/constants/storage";
-import {
-  readPersistedState,
-  readPersistedString,
-  updatePersistedState,
-} from "@/browser/hooks/usePersistedState";
+import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import { toGatewayModel, migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
 import type { SendMessageOptions } from "@/common/orpc/types";
@@ -67,25 +63,8 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
     updatePersistedState<ThinkingLevel>(scopedKey, thinkingLevel);
   }
 
-  const agentIdKey = getAgentIdKey(workspaceId);
-
-  // Read selected agentId (workspace-specific).
-  // Migration: if missing, fall back to the legacy mode key and seed agentId so non-hook readers
-  // (auto-retry/resume) behave consistently across upgrades.
-  const persistedAgentId = readPersistedString(agentIdKey);
-  const agentIdFromStorage =
-    typeof persistedAgentId === "string" && persistedAgentId.trim().length > 0
-      ? persistedAgentId.trim().toLowerCase()
-      : undefined;
-
-  const legacyMode = readPersistedString(`mode:${workspaceId}`);
-  const legacyAgentId = legacyMode === "plan" || legacyMode === "exec" ? legacyMode : undefined;
-
-  const agentId = agentIdFromStorage ?? legacyAgentId ?? WORKSPACE_DEFAULTS.mode;
-
-  if (persistedAgentId === undefined && legacyAgentId !== undefined) {
-    updatePersistedState(agentIdKey, legacyAgentId);
-  }
+  // Read selected agent id (workspace-specific)
+  const agentId = readPersistedState<string>(getAgentIdKey(workspaceId), WORKSPACE_DEFAULTS.mode);
 
   // Derive mode from agentId (plan agent → plan mode, everything else → exec mode)
   // Used by backend for AI settings persistence and compaction detection

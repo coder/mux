@@ -147,13 +147,6 @@ export function getPinnedAgentIdKey(scopeId: string): string {
   return `pinnedAgentId:${scopeId}`;
 }
 /**
- * LEGACY: UI mode key for a scope.
- * Format: "mode:{scopeId}"
- *
- * Kept for downgrade compatibility only; new code should persist agentId:{scopeId}.
- */
-
-/**
  * Get the localStorage key for "disable workspace agents" toggle per scope.
  * When true, workspace-specific agents are disabled - only built-in and global agents are loaded.
  * Useful for "unbricking" when iterating on agent files in a workspace worktree.
@@ -408,8 +401,6 @@ const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string>
   getInputKey,
   getInputImagesKey,
   getAgentIdKey,
-  // LEGACY: UI mode key (kept in sync for downgrade compatibility)
-  (workspaceId: string) => `mode:${workspaceId}`,
   getPinnedAgentIdKey,
   getThinkingLevelKey,
   getAutoRetryKey,
