@@ -70,54 +70,18 @@ The `propose_plan` tool call in chat includes:
 
 ## Workflow Example
 
-```
-User: "Add user authentication to the app"
-         │
-         ▼
-┌─────────────────────────────────────┐
-│  Agent reads codebase, writes plan  │
-│  to ~/.mux/plans/<project>/<name>.md│
-└─────────────────────────────────────┘
-         │
-         ▼
-┌─────────────────────────────────────┐
-│  Agent calls propose_plan           │
-│  (plan displayed in chat)           │
-└─────────────────────────────────────┘
-         │
-         ├─────────────────────────────────┐
-         │                                 │
-         ▼                                 ▼
-┌─────────────────────┐       ┌─────────────────────────┐
-│  User provides      │       │  User clicks "Edit"     │
-│  feedback in chat   │       │  → edits in nvim/vscode │
-└─────────────────────┘       └─────────────────────────┘
-         │                                 │
-         │                                 │ (external edits)
-         │                                 ▼
-         │                    ┌─────────────────────────┐
-         │                    │  User sends message     │
-         │                    │  → mux detects changes  │
-         │                    │  → diff injected        │
-         │                    └─────────────────────────┘
-         │                                 │
-         ▼                                 ▼
-┌─────────────────────────────────────────────────────────┐
-│  Agent revises plan based on feedback                   │
-│  (cycles back to propose_plan)                          │
-└─────────────────────────────────────────────────────────┘
-         │
-         │  (when satisfied)
-         ▼
-┌─────────────────────────────────────┐
-│  User switches to Exec mode         │
-│  (Cmd+Shift+M)                      │
-└─────────────────────────────────────┘
-         │
-         ▼
-┌─────────────────────────────────────┐
-│  Agent implements the plan          │
-└─────────────────────────────────────┘
+```mermaid
+graph TD
+  A["User request"] --> B["Agent reads codebase\nwrites plan file"]
+  B --> C["Agent calls propose_plan\n(plan displayed in chat)"]
+  C --> D{"Review + iterate"}
+  D --> E["User feedback in chat"]
+  D --> F["User clicks Edit\nedits plan in editor"]
+  F --> G["User sends message\nmux detects changes\ninjects diff"]
+  E --> H["Agent revises plan\n(cycles back to propose_plan)"]
+  G --> H
+  H --> I["User switches to Exec mode"]
+  I --> J["Agent implements the plan"]
 ```
 
 ## Customizing Plan Mode Behavior

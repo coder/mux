@@ -10,13 +10,22 @@ mux layers instructions from two locations:
 1. `~/.mux/AGENTS.md` (+ optional `AGENTS.local.md`) — global defaults
 2. `<workspace>/AGENTS.md` (+ optional `AGENTS.local.md`) — workspace-specific context
 
-Priority within each location: `AGENTS.md` → `AGENT.md` → `CLAUDE.md` (first match wins). If the base file is found, mux also appends `AGENTS.local.md` from the same directory when present.
+Within each location, mux picks the first matching base file:
 
-<Info>mux strips HTML-style markdown comments (`<!-- ... -->`) from instruction files before sending them to the model. Use these comments for editor-only metadata—they will not reach the agent.</Info>
+1. `AGENTS.md`
+2. `AGENT.md`
+3. `CLAUDE.md`
 
-## Scoped Instructions
+If a base file is found, mux also appends `AGENTS.local.md` from the same directory (when present).
 
-mux supports **Scoped Instructions** that activate only in specific contexts. You define them using special headings in your instruction files:
+<Info>
+  mux strips HTML-style markdown comments (`<!-- ... -->`) from instruction files before sending them
+  to the model. Use these comments for editor-only metadata—they will not reach the agent.
+</Info>
+
+## Scoped instructions
+
+mux supports **scoped instructions** that activate only in specific contexts. You define them using special headings in your instruction files:
 
 - `Agent: <agentId>` — Active only for a specific agent definition (e.g., plan, exec, explore).
 - `Mode: <mode>` — Active only in specific interaction modes (e.g., plan, exec).
@@ -129,12 +138,12 @@ Customize how the AI uses specific tools by appending instructions to their desc
 
 - Run `prettier --write` after editing files
 
-# Tool: status_set
+## Tool: status_set
 
-- Set status url to the Pull Request once opened
+- Set status URL to the Pull Request once opened
 ```
 
-**Available tools**: `bash`, `file_read`, `file_edit_replace_string`, `file_edit_insert`, `propose_plan`, `todo_write`, `todo_read`, `status_set`, `web_search`.
+**Common tools** (varies by model/provider): `bash`, `file_read`, `file_edit_replace_string`, `file_edit_insert`, `propose_plan`, `ask_user_question`, `todo_write`, `todo_read`, `status_set`, `web_fetch`, `web_search`.
 
 ## Practical layout
 

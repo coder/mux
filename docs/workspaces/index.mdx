@@ -3,54 +3,51 @@ title: Workspaces
 description: Isolated development environments for parallel agent work
 ---
 
-Workspaces in mux provide isolated development environments for parallel agent work. Each workspace maintains its own Git state, allowing you to explore different approaches, run multiple tasks simultaneously, or test changes without affecting your main repository.
+Workspaces let you run multiple agent sessions in parallel.
+
+Each workspace has its own chat history and, depending on runtime, its own working directory and Git checkout state.
 
 ## Runtimes
 
-mux supports three [runtime types](/runtime/):
+Runtimes decide where a workspace runs and how isolated its filesystem is:
 
-- **[Local](/runtime/local)**: Run directly in your project directory. No isolation—best for quick edits to your working copy.
+- **[Local](/runtime/local)**: Runs directly in your project directory. No filesystem isolation.
+- **[Worktree](/runtime/worktree)**: Creates a local [git worktree](https://git-scm.com/docs/git-worktree) for per-workspace isolation while still sharing `.git`.
+- **[SSH](/runtime/ssh)**: Runs on a remote host over SSH (useful for security isolation and heavy parallelism).
 
-- **[Worktree](/runtime/worktree)**: Isolated directories using [git worktrees](https://git-scm.com/docs/git-worktree). Worktrees share `.git` with your main repository while maintaining independent working changes.
+## Key concepts
 
-- **[SSH](/runtime/ssh)**: Remote execution over SSH. Ideal for heavy workloads, security isolation, or leveraging remote infrastructure.
+- **Branch flexibility**: A workspace can switch branches, use detached HEAD, or create new branches as needed.
+- **Commit visibility**: Local + worktree runtimes share the same Git repository. Commits made in one workspace are immediately visible to your other worktrees and your main checkout.
+- **Parallel execution**: Multiple workspaces can work on different tasks concurrently.
 
-## Choosing a Runtime
+## Reviewing changes
 
-The runtime is selected when you create a workspace:
+A few common workflows (from "agent edits only" → "agent owns the PR"):
 
-- **Local**: Quick tasks in your current working copy
-- **Worktree**: Best for parallel agent work with isolation
-- **SSH**: Heavy workloads, security, or remote infrastructure
-
-## Key Concepts
-
-- **Isolation**: Each workspace has independent working changes and Git state
-- **Branch flexibility**: Workspaces can switch branches, enter detached HEAD state, or create new branches as needed
-- **Parallel execution**: Run multiple workspaces simultaneously on different tasks
-- **Shared commits**: Local workspaces (using worktrees) share commits with the main repository immediately
-
-## Reviewing Code
-
-Here are a few practical approaches to reviewing changes from workspaces, depending on how much you want your agent to interact with `git`:
-
-- **Agent codes, commits, and pushes**: Ask agent to submit a PR and review changes in your git Web UI (GitHub, GitLab, etc.)
+- **Agent edits only**: Open the workspace directory and stage/commit yourself (`git add -p`).
+- **Agent commits**: Review locally from your main checkout (for example `git show <workspace-branch>`), then push when you’re satisfied.
+- **Agent commits + pushes**: Ask the agent to open a PR and review in GitHub/GitLab.
   - Also see: [Agentic Git Identity](/config/agentic-git-identity)
-  - This is the preferred approach for `mux` development but requires additional care with repository security.
-- **Agent codes and commits**: Review changes from the main repository via `git diff <workspace-branch>`, push changes when deemed acceptable.
-- **Agent codes**: Enter worktree (click Terminal icon in workspace top bar), run `git add -p` and progressively accept changes into a commit.
+  - This requires granting the workspace git push credentials; prefer a dedicated identity/token.
 
-## Reviewing Functionality
+## Reviewing functionality (UI, behavior)
 
-Some changes (especially UI ones) require the Human to determine acceptability. An effective approach for this is:
+Some changes (especially UI ones) are faster to review by running the workspace locally.
 
-1. Ask agent to commit WIP when it's ready for Human review
-2. Human, in main repository, checks out the workspace branch in a detached HEAD state: `git checkout --detach <workspace-branch>` (for local workspaces)
+1. Ask the agent to commit when it’s ready for review.
+2. If the workspace is a **worktree**, check out the branch in a detached HEAD state from your main checkout:
 
-**Note**: For local workspaces, this workflow uses the detached HEAD state because the branch is already checked out in the workspace and you cannot check out the same branch multiple times across worktrees.
+   ```bash
+   git checkout --detach <workspace-branch>
+   ```
 
-If you want faster iteration in between commits, you can hop into the workspace directory and run a dev server (e.g. `bun dev`) there directly and observe the agent's work in real-time.
+<Note>
+  Detached HEAD is useful here because a branch can only be checked out by one worktree at a time.
+</Note>
+
+If you want faster iteration between commits, open the workspace directory and run a dev server (for example `bun dev`) there directly.
 
 ---
 
-See the specific workspace type pages for detailed setup and usage instructions.
+See the runtime pages for setup and trade-offs.

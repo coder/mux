@@ -3,14 +3,11 @@ title: Why Parallelize?
 description: Use cases for running multiple AI agents in parallel
 ---
 
-Here are some specific use cases we enable:
+A few reasons parallel workspaces matter:
 
-- **Contextual continuity between relevant changes**:
-  - e.g. create a workspace for `code-review`, `refactor`, and `new-feature`
-- **GPT-5-Pro**: use the slow but powerful GPT-5-Pro for complex issues
-  - Run in the background for hours on end
-  - The stream will automatically resume after restarts or intermittent connection issues. We show
-    a subtle indicator when the model completes.
-- **A/B testing**: test a variety of approaches to the same problem,
-  abandon the bad ones.
-- **Tangent management**: launch tangents in `mux` away from main work
+- **Keep context aligned**: Create dedicated workspaces for threads like `code-review`, `refactor`, and `new-feature`.
+- **Run long jobs in the background**: Kick off a slow, high-accuracy model for a deep investigation or refactor.
+  - Streams resume after restarts or intermittent connection issues.
+  - mux shows an indicator when the model finishes.
+- **A/B implementations**: Try multiple approaches to the same problem and keep the best one.
+- **Tangent management**: Fork or create a new workspace for side quests so the main thread stays focused.

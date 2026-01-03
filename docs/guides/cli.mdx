@@ -3,7 +3,7 @@ title: Command Line Interface
 description: Run one-off agent tasks from the command line with mux run
 ---
 
-Mux provides a CLI for running one-off agent tasks without the desktop app. Unlike the interactive desktop experience, `mux run` executes a single request to completion and exits.
+mux provides a CLI for running one-off agent tasks without the desktop app. Unlike the interactive desktop experience, `mux run` executes a single request to completion and exits.
 
 ## `mux run`
 
@@ -39,7 +39,7 @@ mux run --json "List all TypeScript files" | jq '.type'
 | `--json`               |       | Output NDJSON for programmatic use                 | Off               |
 | `--quiet`              | `-q`  | Only output final result                           | Off               |
 | `--workspace-id <id>`  |       | Explicit workspace ID                              | Auto-generated    |
-| `--config-root <path>` |       | Mux config directory                               | `~/.mux`          |
+| `--config-root <path>` |       | mux config directory                               | `~/.mux`          |
 
 ### Runtimes
 

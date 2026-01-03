@@ -7,7 +7,7 @@ description: Share reusable workflows and references with skills
 
 Agent Skills are reusable, file-based “playbooks” that you can share across projects or keep project-local.
 
-Mux follows the Agent Skills specification and exposes skills to models in two steps:
+mux follows the Agent Skills specification and exposes skills to models in two steps:
 
 1. **Index in the system prompt**: mux lists available skills (name + description).
 2. **Tool-based loading**: the agent calls tools to load a full skill when needed.
@@ -16,7 +16,7 @@ This keeps the system prompt small while still making skills discoverable.
 
 ## Where skills live
 
-Mux discovers skills from two roots:
+mux discovers skills from two roots:
 
 - **Project-local**: `<projectRoot>/.mux/skills/<skill-name>/SKILL.md`
 - **Global**: `~/.mux/skills/<skill-name>/SKILL.md`
@@ -24,7 +24,7 @@ Mux discovers skills from two roots:
 If a skill exists in both locations, **project-local overrides global**.
 
 <Info>
-  Mux reads skills using the active workspace runtime. For SSH workspaces, skills are read from the
+  mux reads skills using the active workspace runtime. For SSH workspaces, skills are read from the
   remote host.
 </Info>
 
@@ -45,7 +45,7 @@ Skill directory names must match `^[a-z0-9]+(?:-[a-z0-9]+)*$` (1–64 chars).
 ## `SKILL.md` format
 
 `SKILL.md` must start with YAML frontmatter delimited by `---` on its own line.
-Mux enforces a 1MB maximum file size for `SKILL.md`.
+mux enforces a 1MB maximum file size for `SKILL.md`.
 
 Required fields:
 
@@ -58,7 +58,7 @@ Optional fields:
 - `compatibility`
 - `metadata` (string key/value map)
 
-Mux ignores unknown frontmatter keys (for example `allowed-tools`).
+mux ignores unknown frontmatter keys (for example `allowed-tools`).
 
 Example:
 
@@ -78,7 +78,7 @@ metadata:
 
 ## Using skills in mux
 
-Mux injects an `<agent-skills>` block into the system prompt listing the available skills.
+mux injects an `<agent-skills>` block into the system prompt listing the available skills.
 
 To load a skill, the agent calls:
 
