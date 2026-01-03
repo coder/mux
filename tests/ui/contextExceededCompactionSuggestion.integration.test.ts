@@ -75,6 +75,16 @@ describeIntegration("Context exceeded compaction suggestion (UI)", () => {
           { timeout: 30_000 }
         );
 
+        // And we should render an action button for one-click retry.
+        await waitFor(
+          () => {
+            const button = view.queryByRole("button", { name: "Retry with compaction" });
+            if (!button) {
+              throw new Error("Expected Retry with compaction button");
+            }
+          },
+          { timeout: 10_000 }
+        );
         // And we should offer an opportunistic compaction command using a larger-context model.
         await waitFor(
           () => {

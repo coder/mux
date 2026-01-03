@@ -82,7 +82,9 @@ export const MessageRenderer = React.memo<MessageRendererProps>(
       case "reasoning":
         return <ReasoningMessage message={message} className={className} />;
       case "stream-error":
-        return <StreamErrorMessage message={message} className={className} />;
+        return (
+          <StreamErrorMessage message={message} workspaceId={workspaceId} className={className} />
+        );
       case "history-hidden":
         return <HistoryHiddenMessage message={message} className={className} />;
       case "workspace-init":
