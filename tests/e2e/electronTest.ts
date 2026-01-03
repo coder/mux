@@ -280,6 +280,7 @@ export const electronTest = base.extend<ElectronFixtures>({
       }
       electronEnv.ELECTRON_DISABLE_SECURITY_WARNINGS = "true";
       electronEnv.MUX_MOCK_AI = electronEnv.MUX_MOCK_AI ?? "1";
+      electronEnv.MUX_MOCK_AI_MODE = electronEnv.MUX_MOCK_AI_MODE ?? "scenario";
       electronEnv.MUX_ROOT = configRoot;
       electronEnv.MUX_E2E = "1";
       electronEnv.MUX_E2E_LOAD_DIST = shouldLoadDist ? "1" : "0";

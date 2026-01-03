@@ -395,8 +395,8 @@ export class AIService extends EventEmitter {
   private mcpServerManager?: MCPServerManager;
   private telemetryService?: TelemetryService;
   private readonly initStateManager: InitStateManager;
-  private readonly mockModeEnabled: boolean;
-  private readonly mockScenarioPlayer?: MockScenarioPlayer;
+  private mockModeEnabled: boolean;
+  private mockScenarioPlayer?: MockScenarioPlayer;
   private readonly backgroundProcessManager?: BackgroundProcessManager;
 
   /**
@@ -429,13 +429,11 @@ export class AIService extends EventEmitter {
     this.streamManager = new StreamManager(historyService, partialService, sessionUsageService);
     void this.ensureSessionsDir();
     this.setupStreamEventForwarding();
-    this.mockModeEnabled = process.env.MUX_MOCK_AI === "1";
-    if (this.mockModeEnabled) {
+    this.mockModeEnabled = false;
+
+    if (process.env.MUX_MOCK_AI === "1") {
       log.info("AIService running in MUX_MOCK_AI mode");
-      this.mockScenarioPlayer = new MockScenarioPlayer({
-        aiService: this,
-        historyService,
-      });
+      this.enableMockMode();
     }
   }
 
@@ -500,6 +498,20 @@ export class AIService extends EventEmitter {
 
   isMockModeEnabled(): boolean {
     return this.mockModeEnabled;
+  }
+
+  enableMockMode(options?: { mode?: "router" | "scenario" }): void {
+    this.mockModeEnabled = true;
+
+    this.mockScenarioPlayer ??= new MockScenarioPlayer(
+      {
+        aiService: this,
+        historyService: this.historyService,
+      },
+      {
+        mode: options?.mode,
+      }
+    );
   }
 
   async getWorkspaceMetadata(workspaceId: string): Promise<Result<WorkspaceMetadata>> {

@@ -14,7 +14,14 @@ import type {
   ScenarioTurn,
 } from "./scenarioTypes";
 import { allScenarios } from "./scenarios";
-import type { StreamStartEvent, StreamDeltaEvent, StreamEndEvent } from "@/common/types/stream";
+import { MockAiRouter, readMockAiModeFromEnv, type MockAiMode } from "./mockAiRouter";
+import { buildMockStreamEventsFromReply } from "./mockAiStreamAdapter";
+import type {
+  StreamStartEvent,
+  StreamDeltaEvent,
+  StreamEndEvent,
+  UsageDeltaEvent,
+} from "@/common/types/stream";
 import type { ToolCallStartEvent, ToolCallEndEvent } from "@/common/types/stream";
 import type { ReasoningDeltaEvent } from "@/common/types/stream";
 import { getTokenizerForModel } from "@/node/utils/main/tokenizer";
@@ -23,6 +30,7 @@ import { KNOWN_MODELS } from "@/common/constants/knownModels";
 const MOCK_TOKENIZER_MODEL = KNOWN_MODELS.GPT.id;
 const TOKENIZE_TIMEOUT_MS = 150;
 let tokenizerFallbackLogged = false;
+let tokenizerUnavailableLogged = false;
 
 function approximateTokenCount(text: string): number {
   const normalizedLength = text.trim().length;
@@ -34,9 +42,14 @@ function approximateTokenCount(text: string): number {
 
 async function tokenizeWithMockModel(text: string, context: string): Promise<number> {
   assert(typeof text === "string", `Mock scenario ${context} expects string input`);
+
+  // Prefer fast approximate token counting in mock mode.
+  // We only use the real tokenizer if it's available and responds quickly.
   const approximateTokens = approximateTokenCount(text);
+
   let fallbackUsed = false;
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  let tokenizerErrorMessage: string | undefined;
 
   const fallbackPromise = new Promise<number>((resolve) => {
     timeoutId = setTimeout(() => {
@@ -46,61 +59,50 @@ async function tokenizeWithMockModel(text: string, context: string): Promise<num
   });
 
   const actualPromise = (async () => {
-    const tokenizer = await getTokenizerForModel(MOCK_TOKENIZER_MODEL);
-    assert(
-      typeof tokenizer.encoding === "string" && tokenizer.encoding.length > 0,
-      `Tokenizer for ${MOCK_TOKENIZER_MODEL} must expose a non-empty encoding`
-    );
-    const tokens = await tokenizer.countTokens(text);
-    assert(
-      Number.isFinite(tokens) && tokens >= 0,
-      `Tokenizer for ${MOCK_TOKENIZER_MODEL} returned invalid token count`
-    );
-    return tokens;
+    try {
+      const tokenizer = await getTokenizerForModel(MOCK_TOKENIZER_MODEL);
+      assert(
+        typeof tokenizer.encoding === "string" && tokenizer.encoding.length > 0,
+        `Tokenizer for ${MOCK_TOKENIZER_MODEL} must expose a non-empty encoding`
+      );
+      const tokens = await tokenizer.countTokens(text);
+      assert(
+        Number.isFinite(tokens) && tokens >= 0,
+        `Tokenizer for ${MOCK_TOKENIZER_MODEL} returned invalid token count`
+      );
+      return tokens;
+    } catch (error) {
+      tokenizerErrorMessage = error instanceof Error ? error.message : String(error);
+      return approximateTokens;
+    }
   })();
 
-  let tokens: number;
-  try {
-    tokens = await Promise.race([actualPromise, fallbackPromise]);
-  } catch (error) {
-    if (timeoutId !== undefined) {
-      clearTimeout(timeoutId);
-    }
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    throw new Error(
-      `[MockScenarioPlayer] Failed to tokenize ${context} with ${MOCK_TOKENIZER_MODEL}: ${errorMessage}`
-    );
-  }
+  const tokens = await Promise.race([actualPromise, fallbackPromise]);
 
-  if (!fallbackUsed && timeoutId !== undefined) {
+  if (timeoutId !== undefined) {
     clearTimeout(timeoutId);
   }
 
-  actualPromise
-    .then((resolvedTokens) => {
-      if (fallbackUsed && !tokenizerFallbackLogged) {
-        tokenizerFallbackLogged = true;
-        log.debug(
-          `[MockScenarioPlayer] Tokenizer fallback used for ${context}; emitted ${approximateTokens}, background tokenizer returned ${resolvedTokens}`
-        );
-      }
-    })
-    .catch((error) => {
-      if (fallbackUsed && !tokenizerFallbackLogged) {
-        tokenizerFallbackLogged = true;
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        log.debug(
-          `[MockScenarioPlayer] Tokenizer fallback used for ${context}; background error: ${errorMessage}`
-        );
-      }
+  if (fallbackUsed && !tokenizerFallbackLogged) {
+    tokenizerFallbackLogged = true;
+    void actualPromise.then((resolvedTokens) => {
+      log.debug(
+        `[MockScenarioPlayer] Tokenizer fallback used for ${context}; emitted ${approximateTokens}, background tokenizer returned ${resolvedTokens}`
+      );
     });
+  }
 
-  if (fallbackUsed) {
-    assert(
-      Number.isFinite(tokens) && tokens >= 0,
-      `Token fallback produced invalid count for ${context}`
+  if (tokenizerErrorMessage && !tokenizerUnavailableLogged) {
+    tokenizerUnavailableLogged = true;
+    log.debug(
+      `[MockScenarioPlayer] Tokenizer unavailable for ${context}; using approximate (${tokenizerErrorMessage})`
     );
   }
+
+  assert(
+    Number.isFinite(tokens) && tokens >= 0,
+    `Token counting produced invalid count for ${context}`
+  );
 
   return tokens;
 }
@@ -119,10 +121,20 @@ interface ActiveStream {
 
 export class MockScenarioPlayer {
   private readonly scenarios: ScenarioTurn[] = allScenarios;
+  private readonly router = new MockAiRouter();
+  private readonly mode: MockAiMode;
   private readonly activeStreams = new Map<string, ActiveStream>();
   private readonly completedTurns = new Set<number>();
+  private nextMockMessageId = 0;
 
-  constructor(private readonly deps: MockPlayerDeps) {}
+  constructor(
+    private readonly deps: MockPlayerDeps,
+    options?: {
+      mode?: MockAiMode;
+    }
+  ) {
+    this.mode = options?.mode ?? readMockAiModeFromEnv();
+  }
 
   isStreaming(workspaceId: string): boolean {
     return this.activeStreams.has(workspaceId);
@@ -151,39 +163,63 @@ export class MockScenarioPlayer {
   async play(messages: MuxMessage[], workspaceId: string): Promise<Result<void, SendMessageError>> {
     const latest = messages[messages.length - 1];
     if (!latest || latest.role !== "user") {
-      return Err({ type: "unknown", raw: "Mock scenario expected a user message" });
+      return Err({ type: "unknown", raw: "Mock AI expected a user message" });
     }
 
     const latestText = this.extractText(latest);
-    const turnIndex = this.findTurnIndex(latestText);
-    if (turnIndex === -1) {
-      return Err({
-        type: "unknown",
-        raw: `Mock scenario turn mismatch. No scripted response for "${latestText}"`,
+
+    let events: MockAssistantEvent[];
+    let messageId: string;
+    let scenarioTurnIndex: number | undefined;
+
+    if (this.mode === "scenario") {
+      const turnIndex = this.findTurnIndex(latestText);
+      if (turnIndex !== -1) {
+        const turn = this.scenarios[turnIndex];
+        if (
+          typeof turn.user.editOfTurn === "number" &&
+          !this.completedTurns.has(turn.user.editOfTurn)
+        ) {
+          return Err({
+            type: "unknown",
+            raw: `Mock scenario turn "${turn.user.text}" requires completion of turn index ${turn.user.editOfTurn}`,
+          });
+        }
+
+        messageId = turn.assistant.messageId;
+        events = turn.assistant.events;
+        scenarioTurnIndex = turnIndex;
+      } else {
+        const reply = this.router.route({
+          messages,
+          latestUserMessage: latest,
+          latestUserText: latestText,
+        });
+
+        messageId = `msg-mock-${this.nextMockMessageId++}`;
+        events = buildMockStreamEventsFromReply(reply, { messageId });
+      }
+    } else {
+      const reply = this.router.route({
+        messages,
+        latestUserMessage: latest,
+        latestUserText: latestText,
       });
+
+      messageId = `msg-mock-${this.nextMockMessageId++}`;
+      events = buildMockStreamEventsFromReply(reply, { messageId });
     }
 
-    const turn = this.scenarios[turnIndex];
-    if (
-      typeof turn.user.editOfTurn === "number" &&
-      !this.completedTurns.has(turn.user.editOfTurn)
-    ) {
-      return Err({
-        type: "unknown",
-        raw: `Mock scenario turn "${turn.user.text}" requires completion of turn index ${turn.user.editOfTurn}`,
-      });
-    }
-
-    const streamStart = turn.assistant.events.find(
+    const streamStart = events.find(
       (event): event is MockStreamStartEvent => event.kind === "stream-start"
     );
     if (!streamStart) {
-      return Err({ type: "unknown", raw: "Mock scenario turn missing stream-start" });
+      return Err({ type: "unknown", raw: "Mock AI turn missing stream-start" });
     }
 
     let historySequence = this.computeNextHistorySequence(messages);
 
-    const assistantMessage = createMuxMessage(turn.assistant.messageId, "assistant", "", {
+    const assistantMessage = createMuxMessage(messageId, "assistant", "", {
       timestamp: Date.now(),
       model: streamStart.model,
     });
@@ -202,8 +238,12 @@ export class MockScenarioPlayer {
       this.stop(workspaceId);
     }
 
-    this.scheduleEvents(workspaceId, turn, historySequence);
-    this.completedTurns.add(turnIndex);
+    this.scheduleEvents(workspaceId, events, messageId, historySequence);
+
+    if (scenarioTurnIndex !== undefined) {
+      this.completedTurns.add(scenarioTurnIndex);
+    }
+
     return Ok(undefined);
   }
 
@@ -211,19 +251,24 @@ export class MockScenarioPlayer {
     // No-op for mock scenario; events are deterministic and do not support mid-stream replay
   }
 
-  private scheduleEvents(workspaceId: string, turn: ScenarioTurn, historySequence: number): void {
+  private scheduleEvents(
+    workspaceId: string,
+    events: MockAssistantEvent[],
+    messageId: string,
+    historySequence: number
+  ): void {
     const timers: Array<ReturnType<typeof setTimeout>> = [];
     this.activeStreams.set(workspaceId, {
       timers,
-      messageId: turn.assistant.messageId,
+      messageId,
       eventQueue: [],
       isProcessing: false,
     });
 
-    for (const event of turn.assistant.events) {
+    for (const event of events) {
       const timer = setTimeout(() => {
         this.enqueueEvent(workspaceId, () =>
-          this.dispatchEvent(workspaceId, event, turn.assistant.messageId, historySequence)
+          this.dispatchEvent(workspaceId, event, messageId, historySequence)
         );
       }, event.delay);
       timers.push(timer);
@@ -307,6 +352,19 @@ export class MockScenarioPlayer {
           timestamp: Date.now(),
         };
         this.deps.aiService.emit("tool-call-start", payload);
+        break;
+      }
+      case "usage-delta": {
+        const payload: UsageDeltaEvent = {
+          type: "usage-delta",
+          workspaceId,
+          messageId,
+          usage: event.usage,
+          providerMetadata: event.providerMetadata,
+          cumulativeUsage: event.cumulativeUsage,
+          cumulativeProviderMetadata: event.cumulativeProviderMetadata,
+        };
+        this.deps.aiService.emit("usage-delta", payload);
         break;
       }
       case "tool-end": {
