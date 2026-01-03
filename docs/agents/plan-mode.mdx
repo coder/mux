@@ -68,22 +68,6 @@ The `propose_plan` tool call in chat includes:
 - **Show Text/Markdown Toggle**: Switch between rendered and raw views.
 - **Start Here**: Replace chat history with this plan as context (useful for long sessions).
 
-## Workflow Example
-
-```mermaid
-graph TD
-  A["User request"] --> B["Agent reads codebase\nwrites plan file"]
-  B --> C["Agent calls propose_plan\n(plan displayed in chat)"]
-  C --> D{"Review + iterate"}
-  D --> E["User feedback in chat"]
-  D --> F["User clicks Edit\nedits plan in editor"]
-  F --> G["User sends message\nmux detects changes\ninjects diff"]
-  E --> H["Agent revises plan\n(cycles back to propose_plan)"]
-  G --> H
-  H --> I["User switches to Exec mode"]
-  I --> J["Agent implements the plan"]
-```
-
 ## Customizing Plan Mode Behavior
 
 Use [scoped instructions](/agents/instruction-files) to customize how the agent behaves in plan mode:
