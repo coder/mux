@@ -398,6 +398,12 @@ export class AIService extends EventEmitter {
   private readonly mockModeEnabled: boolean;
   private readonly mockScenarioPlayer?: MockScenarioPlayer;
   private readonly backgroundProcessManager?: BackgroundProcessManager;
+
+  /**
+   * Tracks workspaces where Anthropic thinking had to be disabled due to missing signed
+   * thinking blocks in history. Used to avoid spamming logs on every request.
+   */
+  private readonly anthropicThinkingDisableReasonsByWorkspace = new Map<string, string>();
   private taskService?: TaskService;
 
   constructor(
@@ -1352,19 +1358,39 @@ export class AIService extends EventEmitter {
       // blocks for tool calls, disable thinking for this request.
       if (providerName === "anthropic" && effectiveThinkingLevel !== "off") {
         const disableReason = getAnthropicThinkingDisableReason(finalMessages);
+        const previouslyDisabledReason =
+          this.anthropicThinkingDisableReasonsByWorkspace.get(workspaceId);
+
         if (disableReason) {
-          log.warn(
-            "Disabling Anthropic thinking for this request (missing signed thinking blocks)",
-            {
-              workspaceId,
-              reason: disableReason,
-            }
-          );
+          if (!previouslyDisabledReason) {
+            log.warn(
+              "Disabling Anthropic thinking for this request (missing signed thinking blocks)",
+              {
+                workspaceId,
+                reason: disableReason,
+              }
+            );
+          } else {
+            // Avoid spamming logs - this can happen on every request for legacy workspaces.
+            log.debug(
+              "Disabling Anthropic thinking for this request (missing signed thinking blocks)",
+              {
+                workspaceId,
+                reason: disableReason,
+              }
+            );
+          }
+
+          this.anthropicThinkingDisableReasonsByWorkspace.set(workspaceId, disableReason);
+
           effectiveThinkingLevel = "off";
           transformedMessages = transformModelMessages(modelMessages, providerName, {
             anthropicThinkingEnabled: false,
           });
           finalMessages = applyCacheControl(transformedMessages, modelString);
+        } else if (previouslyDisabledReason) {
+          // History may have been compacted/cleared; allow thinking again.
+          this.anthropicThinkingDisableReasonsByWorkspace.delete(workspaceId);
         }
       }
 

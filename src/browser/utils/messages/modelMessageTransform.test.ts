@@ -54,24 +54,21 @@ describe("modelMessageTransform", () => {
 
       const result = transformModelMessages([assistantMsg, toolMsg], "anthropic");
 
-      expect(result).toHaveLength(4);
+      expect(result).toHaveLength(3);
       expect(result[0].role).toBe("assistant");
       expect((result[0] as AssistantModelMessage).content).toEqual([
         { type: "text", text: "Before" },
-      ]);
-      expect(result[1].role).toBe("assistant");
-      expect((result[1] as AssistantModelMessage).content).toEqual([
         { type: "tool-call", toolCallId: "call1", toolName: "bash", input: { script: "pwd" } },
       ]);
-      expect(result[2].role).toBe("tool");
-      expect((result[2] as ToolModelMessage).content[0]).toEqual({
+      expect(result[1].role).toBe("tool");
+      expect((result[1] as ToolModelMessage).content[0]).toEqual({
         type: "tool-result",
         toolCallId: "call1",
         toolName: "bash",
         output: { type: "json", value: { stdout: "/home/user" } },
       });
-      expect(result[3].role).toBe("assistant");
-      expect((result[3] as AssistantModelMessage).content).toEqual([
+      expect(result[2].role).toBe("assistant");
+      expect((result[2] as AssistantModelMessage).content).toEqual([
         { type: "text", text: "After" },
       ]);
     });
@@ -106,33 +103,56 @@ describe("modelMessageTransform", () => {
 
       const result = transformModelMessages([assistantMsg, toolMsg], "anthropic");
 
-      expect(result).toHaveLength(6);
+      expect(result).toHaveLength(4);
       expect(result[0].role).toBe("assistant");
       expect((result[0] as AssistantModelMessage).content).toEqual([
         { type: "text", text: "Step 1" },
+        { type: "tool-call", toolCallId: "call1", toolName: "bash", input: { script: "pwd" } },
       ]);
-      expect(result[1].role).toBe("assistant");
-      expect((result[1] as AssistantModelMessage).content[0]).toEqual({
-        type: "tool-call",
-        toolCallId: "call1",
-        toolName: "bash",
-        input: { script: "pwd" },
-      });
-      expect(result[2].role).toBe("tool");
-      expect((result[2] as ToolModelMessage).content[0]).toMatchObject({ toolCallId: "call1" });
-      expect(result[3].role).toBe("assistant");
-      expect((result[3] as AssistantModelMessage).content).toEqual([
+      expect(result[1].role).toBe("tool");
+      expect((result[1] as ToolModelMessage).content[0]).toMatchObject({ toolCallId: "call1" });
+      expect(result[2].role).toBe("assistant");
+      expect((result[2] as AssistantModelMessage).content).toEqual([
         { type: "text", text: "Step 2" },
+        { type: "tool-call", toolCallId: "call2", toolName: "bash", input: { script: "ls" } },
       ]);
-      expect(result[4].role).toBe("assistant");
-      expect((result[4] as AssistantModelMessage).content[0]).toEqual({
-        type: "tool-call",
-        toolCallId: "call2",
-        toolName: "bash",
-        input: { script: "ls" },
+      expect(result[3].role).toBe("tool");
+      expect((result[3] as ToolModelMessage).content[0]).toMatchObject({ toolCallId: "call2" });
+    });
+
+    it("preserves signed reasoning in assistant messages that contain tool calls when thinking is enabled", () => {
+      const assistantMsg: AssistantModelMessage = {
+        role: "assistant",
+        content: [
+          {
+            type: "reasoning",
+            text: "thinking",
+            providerOptions: { anthropic: { signature: "sig" } },
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          } as any,
+          { type: "text", text: "I'll check." },
+          { type: "tool-call", toolCallId: "call1", toolName: "bash", input: { script: "pwd" } },
+        ],
+      };
+      const toolMsg: ToolModelMessage = {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call1",
+            toolName: "bash",
+            output: { type: "json", value: { stdout: "/home/user" } },
+          },
+        ],
+      };
+
+      const result = transformModelMessages([assistantMsg, toolMsg], "anthropic", {
+        anthropicThinkingEnabled: true,
       });
-      expect(result[5].role).toBe("tool");
-      expect((result[5] as ToolModelMessage).content[0]).toMatchObject({ toolCallId: "call2" });
+
+      expect(result).toHaveLength(2);
+      expect((result[0] as AssistantModelMessage).content[0]).toMatchObject({ type: "reasoning" });
+      expect(getAnthropicThinkingDisableReason(result)).toBeUndefined();
     });
 
     it("should insert empty reasoning for final assistant message when Anthropic thinking is enabled", () => {
