@@ -67,11 +67,24 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = ({ workspaceId, classNa
   const isContextExceeded =
     lastMessage?.type === "stream-error" && lastMessage.errorType === "context_exceeded";
 
+  // Check if we're in a compaction recovery flow: the last user message was a compaction request
+  // that failed. This persists the compaction UI even if the retry fails with a different error.
+  const triggerUserMessage = useMemo(() => {
+    if (!workspaceState) return null;
+    return findTriggerUserMessage(workspaceState.messages);
+  }, [workspaceState]);
+
+  const isCompactionRecoveryFlow =
+    lastMessage?.type === "stream-error" && !!triggerUserMessage?.compactionRequest;
+
+  // Show compaction UI if either: original context_exceeded OR we're retrying a failed compaction
+  const showCompactionUI = isContextExceeded || isCompactionRecoveryFlow;
+
   // This is a rare error state; we only need a snapshot of provider config to make a
   // best-effort suggestion (no subscriptions / real-time updates required).
   useEffect(() => {
     if (!api) return;
-    if (!isContextExceeded) return;
+    if (!showCompactionUI) return;
     if (providersConfig) return;
 
     let active = true;
@@ -89,10 +102,21 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = ({ workspaceId, classNa
     return () => {
       active = false;
     };
-  }, [api, isContextExceeded, providersConfig]);
-  const contextExceededModel = isContextExceeded
-    ? (lastMessage.model ?? workspaceState?.currentModel)
-    : null;
+  }, [api, showCompactionUI, providersConfig]);
+
+  // For compaction recovery, use the model from the original compaction request or fall back to workspace model
+  const compactionTargetModel = useMemo(() => {
+    if (!showCompactionUI) return null;
+    // If retrying a failed compaction, use the model from that request
+    if (triggerUserMessage?.compactionRequest?.parsed.model) {
+      return triggerUserMessage.compactionRequest.parsed.model;
+    }
+    // Otherwise use the model from the error or workspace
+    if (lastMessage?.type === "stream-error") {
+      return lastMessage.model ?? workspaceState?.currentModel ?? null;
+    }
+    return workspaceState?.currentModel ?? null;
+  }, [showCompactionUI, triggerUserMessage, lastMessage, workspaceState?.currentModel]);
 
   // Read autoRetry preference from localStorage
   const [autoRetry, setAutoRetry] = usePersistedState<boolean>(
@@ -160,23 +184,15 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = ({ workspaceId, classNa
 
   const compactionSuggestion = useMemo<CompactionSuggestion | null>(() => {
     // Opportunistic: only attempt suggestions when we can confidently identify the model.
-    if (!isContextExceeded || !contextExceededModel) {
+    if (!showCompactionUI || !compactionTargetModel) {
       return null;
     }
 
     return getHigherContextCompactionSuggestion({
-      currentModel: contextExceededModel,
+      currentModel: compactionTargetModel,
       providersConfig,
     });
-  }, [contextExceededModel, isContextExceeded, providersConfig]);
-
-  const triggerUserMessage = useMemo(() => {
-    if (!isContextExceeded || !workspaceState) {
-      return null;
-    }
-
-    return findTriggerUserMessage(workspaceState.messages);
-  }, [isContextExceeded, workspaceState]);
+  }, [compactionTargetModel, showCompactionUI, providersConfig]);
 
   async function handleRetryWithCompaction(): Promise<void> {
     const insertIntoChatInput = (text: string, imageParts?: ImagePart[]): void => {
@@ -327,7 +343,7 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = ({ workspaceId, classNa
       : formatted.message;
   };
 
-  const details = isContextExceeded ? (
+  const details = showCompactionUI ? (
     <div className="font-primary text-foreground/80 pl-8 text-[12px]">
       <span className="text-warning font-semibold">Context window exceeded.</span>{" "}
       {compactionSuggestion ? (
@@ -379,10 +395,10 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = ({ workspaceId, classNa
       </button>
     );
   } else {
-    const onClick = isContextExceeded ? () => void handleRetryWithCompaction() : handleManualRetry;
+    const onClick = showCompactionUI ? () => void handleRetryWithCompaction() : handleManualRetry;
 
     let label = "Retry";
-    if (isContextExceeded) {
+    if (showCompactionUI) {
       if (isRetryingWithCompaction) {
         label = "Starting...";
       } else if (!compactionSuggestion || !triggerUserMessage) {
@@ -398,7 +414,7 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = ({ workspaceId, classNa
       <button
         className="bg-warning font-primary text-background cursor-pointer rounded border-none px-4 py-2 text-xs font-semibold whitespace-nowrap transition-all duration-200 hover:-translate-y-px hover:brightness-120 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50"
         onClick={onClick}
-        disabled={isContextExceeded && isRetryingWithCompaction}
+        disabled={showCompactionUI && isRetryingWithCompaction}
       >
         {label}
       </button>
