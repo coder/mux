@@ -100,10 +100,22 @@ describeIntegration("Context exceeded compaction suggestion (UI)", () => {
 
         fireEvent.change(textarea, { target: { value: "Trigger context error" } });
 
+        await waitFor(
+          () => {
+            if (textarea.value !== "Trigger context error") {
+              throw new Error("Textarea value did not update");
+            }
+          },
+          { timeout: 10_000 }
+        );
+
         const sendButton = await waitFor(
           () => {
             const el = view.container.querySelector('button[aria-label="Send message"]');
             if (!el) throw new Error("Send button not found");
+            if ((el as HTMLButtonElement).disabled) {
+              throw new Error("Send button is disabled");
+            }
             return el as HTMLButtonElement;
           },
           { timeout: 10_000 }
