@@ -43,18 +43,17 @@ function createForceContextExceededClient(client: APIClient): APIClient {
           }
 
           return async (args: SendMessageArgs) => {
-            if (!args.options) {
-              return originalSendMessage.call(workspace, args);
-            }
+            const model = args.options?.model ?? KNOWN_MODELS.GPT.id;
 
             return originalSendMessage.call(workspace, {
               ...args,
               options: {
-                ...args.options,
+                ...(args.options ?? { model }),
+                model,
                 providerOptions: {
-                  ...args.options.providerOptions,
+                  ...(args.options?.providerOptions ?? {}),
                   openai: {
-                    ...(args.options.providerOptions?.openai ?? {}),
+                    ...(args.options?.providerOptions?.openai ?? {}),
                     forceContextLimitError: true,
                   },
                 },
