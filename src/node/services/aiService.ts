@@ -34,6 +34,7 @@ import { injectFileAtMentions } from "./fileAtMentions";
 import {
   transformModelMessages,
   validateAnthropicCompliance,
+  getAnthropicThinkingDisableReason,
   addInterruptedSentinel,
   filterEmptyAssistantMessages,
   injectModeTransition,
@@ -1034,15 +1035,16 @@ export class AIService extends EventEmitter {
 
       // Mode (plan|exec|compact) is derived from the selected agent definition.
       const effectiveMuxProviderOptions: MuxProviderOptions = muxProviderOptions ?? {};
+      let effectiveThinkingLevel: ThinkingLevel = thinkingLevel ?? "off";
 
-      // For xAI models, swap between reasoning and non-reasoning variants based on thinkingLevel
+      // For xAI models, swap between reasoning and non-reasoning variants based on thinking level
       // Similar to how OpenAI handles reasoning vs non-reasoning models
       let effectiveModelString = modelString;
       const [providerName, modelId] = parseModelString(modelString);
       if (providerName === "xai" && modelId === "grok-4-1-fast") {
         // xAI Grok only supports full reasoning (no medium/low)
         // Map to appropriate variant based on thinking level
-        if (thinkingLevel && thinkingLevel !== "off") {
+        if (effectiveThinkingLevel !== "off") {
           effectiveModelString = "xai:grok-4-1-fast-reasoning";
         } else {
           effectiveModelString = "xai:grok-4-1-fast-non-reasoning";
@@ -1050,7 +1052,7 @@ export class AIService extends EventEmitter {
         log.debug("Mapping xAI Grok model to variant", {
           original: modelString,
           effective: effectiveModelString,
-          thinkingLevel,
+          thinkingLevel: effectiveThinkingLevel,
         });
       }
 
@@ -1073,7 +1075,7 @@ export class AIService extends EventEmitter {
       // EXCEPTION: When extended thinking is enabled, preserve reasoning-only messages
       // to comply with Extended Thinking API requirements
       const preserveReasoningOnly =
-        providerName === "anthropic" && thinkingLevel !== undefined && thinkingLevel !== "off";
+        providerName === "anthropic" && effectiveThinkingLevel !== "off";
       const filteredMessages = filterEmptyAssistantMessages(messages, preserveReasoningOnly);
       log.debug(`Filtered ${messages.length - filteredMessages.length} empty assistant messages`);
       log.debug_obj(`${workspaceId}/1a_filtered_messages.json`, filteredMessages);
@@ -1339,13 +1341,33 @@ export class AIService extends EventEmitter {
       log.debug_obj(`${workspaceId}/2_model_messages.json`, modelMessages);
 
       // Apply ModelMessage transforms based on provider requirements
-      const transformedMessages = transformModelMessages(modelMessages, providerName, {
-        anthropicThinkingEnabled:
-          providerName === "anthropic" && thinkingLevel !== undefined && thinkingLevel !== "off",
+      let transformedMessages = transformModelMessages(modelMessages, providerName, {
+        anthropicThinkingEnabled: providerName === "anthropic" && effectiveThinkingLevel !== "off",
       });
 
       // Apply cache control for Anthropic models AFTER transformation
-      const finalMessages = applyCacheControl(transformedMessages, modelString);
+      let finalMessages = applyCacheControl(transformedMessages, modelString);
+
+      // Self-healing: If Anthropic thinking is enabled but we cannot replay signed thinking
+      // blocks for tool calls, disable thinking for this request.
+      if (providerName === "anthropic" && effectiveThinkingLevel !== "off") {
+        const disableReason = getAnthropicThinkingDisableReason(finalMessages);
+        if (disableReason) {
+          log.warn(
+            "Disabling Anthropic thinking for this request (missing signed thinking blocks)",
+            {
+              workspaceId,
+              reason: disableReason,
+            }
+          );
+          effectiveThinkingLevel = "off";
+          transformedMessages = transformModelMessages(modelMessages, providerName, {
+            anthropicThinkingEnabled: false,
+          });
+          finalMessages = applyCacheControl(transformedMessages, modelString);
+        }
+      }
+
       log.debug_obj(`${workspaceId}/3_final_messages.json`, finalMessages);
 
       // Validate the messages meet Anthropic requirements (Anthropic only)
@@ -1731,7 +1753,7 @@ export class AIService extends EventEmitter {
       // Pass workspaceId to derive stable promptCacheKey for OpenAI caching
       const providerOptions = buildProviderOptions(
         modelString,
-        thinkingLevel ?? "off",
+        effectiveThinkingLevel,
         filteredMessages,
         (id) => this.streamManager.isResponseIdLost(id),
         effectiveMuxProviderOptions,
@@ -1756,7 +1778,7 @@ export class AIService extends EventEmitter {
             ])
           ),
           providerOptions,
-          thinkingLevel,
+          thinkingLevel: effectiveThinkingLevel,
           maxOutputTokens,
           mode: effectiveMode,
           agentId: effectiveAgentId,
