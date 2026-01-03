@@ -19,7 +19,7 @@ import type {
   ReasoningEndEvent,
 } from "@/common/types/stream";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
-import type { TodoItem, StatusSetToolResult, UserNotifyToolResult } from "@/common/types/tools";
+import type { TodoItem, StatusSetToolResult, NotifyToolResult } from "@/common/types/tools";
 
 import type { WorkspaceChatMessage, StreamErrorMessage, DeleteMessage } from "@/common/orpc/types";
 import { isInitStart, isInitOutput, isInitEnd, isMuxMessage } from "@/common/orpc/types";
@@ -259,6 +259,10 @@ export class StreamingMessageAggregator {
   private readonly createdAt: string;
   // Workspace unarchived timestamp (used for recency calculation to bump restored workspaces)
   private unarchivedAt?: string;
+
+  // Optional callback for navigating to a workspace (set by parent component)
+  // Used for notification click handling in browser mode
+  onNavigateToWorkspace?: (workspaceId: string) => void;
 
   constructor(createdAt: string, workspaceId?: string, unarchivedAt?: string) {
     this.createdAt = createdAt;
@@ -1252,27 +1256,39 @@ export class StreamingMessageAggregator {
     }
 
     // Handle browser notifications when Electron wasn't available
-    if (toolName === "user_notify" && hasSuccessResult(output)) {
-      const result = output as Extract<UserNotifyToolResult, { success: true }>;
+    if (toolName === "notify" && hasSuccessResult(output)) {
+      const result = output as Extract<NotifyToolResult, { success: true }>;
       if (result.notifiedVia === "browser") {
-        this.sendBrowserNotification(result.title, result.message);
+        this.sendBrowserNotification(result.title, result.message, result.workspaceId);
       }
     }
   }
 
   /**
    * Send a browser notification using the Web Notifications API
-   * Only called when Electron notifications are unavailable
+   * Only called when Electron notifications are unavailable.
+   * Clicking the notification navigates to the workspace.
    */
-  private sendBrowserNotification(title: string, body?: string): void {
+  private sendBrowserNotification(title: string, body?: string, workspaceId?: string): void {
     if (!("Notification" in window)) return;
 
+    const showNotification = () => {
+      const notification = new Notification(title, { body });
+      if (workspaceId) {
+        notification.onclick = () => {
+          // Focus the window and navigate to the workspace
+          window.focus();
+          this.onNavigateToWorkspace?.(workspaceId);
+        };
+      }
+    };
+
     if (Notification.permission === "granted") {
-      new Notification(title, { body });
+      showNotification();
     } else if (Notification.permission !== "denied") {
       void Notification.requestPermission().then((perm) => {
         if (perm === "granted") {
-          new Notification(title, { body });
+          showNotification();
         }
       });
     }

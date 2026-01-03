@@ -408,8 +408,8 @@ const userNotifyTurn: ScenarioTurn = {
       {
         kind: "tool-start",
         delay: STREAM_BASE_DELAY,
-        toolCallId: "tool-user-notify-1",
-        toolName: "user_notify",
+        toolCallId: "tool-notify-1",
+        toolName: "notify",
         args: {
           title: "Task Complete",
           message: "Your requested task has been completed successfully.",
@@ -418,8 +418,8 @@ const userNotifyTurn: ScenarioTurn = {
       {
         kind: "tool-end",
         delay: STREAM_BASE_DELAY * 2,
-        toolCallId: "tool-user-notify-1",
-        toolName: "user_notify",
+        toolCallId: "tool-notify-1",
+        toolName: "notify",
         result: {
           success: true,
           notifiedVia: "electron",

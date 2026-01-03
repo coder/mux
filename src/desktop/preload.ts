@@ -36,4 +36,10 @@ contextBridge.exposeInMainWorld("api", {
   // NOTE: This is intentionally async so the preload script does not rely on Node builtins
   // like `child_process` (which can break in hardened/sandboxed environments).
   getIsRosetta: () => ipcRenderer.invoke("mux:get-is-rosetta"),
+  // Register a callback for notification clicks (navigates to workspace)
+  onNotificationClicked: (callback: (data: { workspaceId: string }) => void) => {
+    ipcRenderer.on("mux:notification-clicked", (_event, data: { workspaceId: string }) =>
+      callback(data)
+    );
+  },
 });

@@ -320,6 +320,9 @@ export class WorkspaceStore {
   // Idle compaction notification callbacks (called when backend signals idle compaction needed)
   private idleCompactionCallbacks = new Set<(workspaceId: string) => void>();
 
+  // Global callback for navigating to a workspace (set by App, used for notification clicks)
+  private navigateToWorkspaceCallback: ((workspaceId: string) => void) | null = null;
+
   // Tracks when a file-modifying tool (file_edit_*, bash) last completed per workspace.
   // ReviewPanel subscribes to trigger diff refresh. Two structures:
   // - timestamps: actual Date.now() values for cache invalidation checks
@@ -592,6 +595,17 @@ export class WorkspaceStore {
   }
   setClient(client: RouterClient<AppRouter>) {
     this.client = client;
+  }
+
+  /**
+   * Set the callback for navigating to a workspace (used for notification clicks)
+   */
+  setNavigateToWorkspace(callback: (workspaceId: string) => void): void {
+    this.navigateToWorkspaceCallback = callback;
+    // Update existing aggregators with the callback
+    for (const aggregator of this.aggregators.values()) {
+      aggregator.onNavigateToWorkspace = callback;
+    }
   }
 
   /**
@@ -1567,10 +1581,12 @@ export class WorkspaceStore {
   ): StreamingMessageAggregator {
     if (!this.aggregators.has(workspaceId)) {
       // Create new aggregator with required createdAt and workspaceId for localStorage persistence
-      this.aggregators.set(
-        workspaceId,
-        new StreamingMessageAggregator(createdAt, workspaceId, unarchivedAt)
-      );
+      const aggregator = new StreamingMessageAggregator(createdAt, workspaceId, unarchivedAt);
+      // Wire up navigation callback for notification clicks
+      if (this.navigateToWorkspaceCallback) {
+        aggregator.onNavigateToWorkspace = this.navigateToWorkspaceCallback;
+      }
+      this.aggregators.set(workspaceId, aggregator);
       this.workspaceCreatedAt.set(workspaceId, createdAt);
     } else if (unarchivedAt) {
       // Update unarchivedAt on existing aggregator (e.g., after restore from archive)

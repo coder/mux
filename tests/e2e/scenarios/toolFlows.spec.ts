@@ -142,9 +142,9 @@ test.describe("tool and reasoning flows", () => {
 
     const toolStartEvent = timeline.events[toolStartIndex];
     if (!toolStartEvent) {
-      throw new Error("Timeline missing tool-call-start event for user_notify flow");
+      throw new Error("Timeline missing tool-call-start event for notify flow");
     }
-    expect(toolStartEvent.toolName).toBe("user_notify");
+    expect(toolStartEvent.toolName).toBe("notify");
     expect(toolStartEvent.args).toMatchObject({
       title: "Task Complete",
       message: "Your requested task has been completed successfully.",
@@ -152,9 +152,9 @@ test.describe("tool and reasoning flows", () => {
 
     const toolEndEvent = timeline.events[toolEndIndex];
     if (!toolEndEvent) {
-      throw new Error("Timeline missing tool-call-end event for user_notify flow");
+      throw new Error("Timeline missing tool-call-end event for notify flow");
     }
-    expect(toolEndEvent.toolName).toBe("user_notify");
+    expect(toolEndEvent.toolName).toBe("notify");
     expect(toolEndEvent.result).toMatchObject({
       success: true,
       title: "Task Complete",

@@ -289,25 +289,25 @@ function generateUserNotifyBlock(): string {
   );
   const source = fs.readFileSync(toolDefsPath, "utf-8");
 
-  const regionStart = "// #region USER_NOTIFY_DOCS";
-  const regionEnd = "// #endregion USER_NOTIFY_DOCS";
+  const regionStart = "// #region NOTIFY_DOCS";
+  const regionEnd = "// #endregion NOTIFY_DOCS";
 
   const startIdx = source.indexOf(regionStart);
   const endIdx = source.indexOf(regionEnd);
 
   if (startIdx === -1 || endIdx === -1) {
-    throw new Error("Could not find USER_NOTIFY_DOCS region in toolDefinitions.ts");
+    throw new Error("Could not find NOTIFY_DOCS region in toolDefinitions.ts");
   }
 
   const snippet = source.slice(startIdx + regionStart.length, endIdx).trim();
   return "```typescript\n" + snippet + "\n```";
 }
 
-async function syncUserNotifyDocs(): Promise<boolean> {
+async function syncNotifyDocs(): Promise<boolean> {
   return syncDoc({
     docsFile: "config/notifications.mdx",
     sourceLabel: "src/common/utils/tools/toolDefinitions.ts",
-    markerName: "USER_NOTIFY_TOOL",
+    markerName: "NOTIFY_TOOL",
     generateBlock: generateUserNotifyBlock,
   });
 }
@@ -321,7 +321,7 @@ async function main(): Promise<void> {
     syncSystemPrompt(),
     syncKnownModels(),
     syncBuiltinAgents(),
-    syncUserNotifyDocs(),
+    syncNotifyDocs(),
   ]);
 
   if (results.some((r) => !r)) {

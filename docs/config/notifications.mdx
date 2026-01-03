@@ -7,7 +7,7 @@ description: Configure how agents notify you about important events
 
 Mux agents can send system notifications to alert you about important events. Notifications appear as native OS notifications (macOS Notification Center, Windows Toast, Linux notification daemon) and work even when Mux is in the background.
 
-The `user_notify` tool gives agents the ability to send these notifications. You control when and how agents use this tool through your prompts or Agent rules.
+The `notify` tool gives agents the ability to send these notifications. Clicking a notification takes you directly to the workspace that sent it. You control when and how agents use this tool through your prompts or scoped instructions.
 
 ## Quick examples
 
@@ -29,20 +29,24 @@ Work on these 5 tasks. Notify me after each one completes.
 
 ## Controlling notification behavior
 
-### Via Agent rules (AGENTS.md)
+### Via Tool scoped instructions (recommended)
 
-Add notification guidance to your `AGENTS.md` file for consistent behavior across sessions:
+The authoritative way to configure the `notify` tool is via a `Tool: notify` scoped instruction in your system prompt or AGENTS.md:
 
 ```markdown
-## Notifications
+## Tool: notify
 
 - Notify on CI failures or deployment issues
 - Notify when waiting for user input longer than 30 seconds
 - Do not notify for routine status updates
-- Do not notify when user is actively watching the workspace
+- Use status_set for progress updates instead
 ```
 
-More specific rules:
+See [Instruction Files](/agents/instruction-files) for more on scoped instructions.
+
+### Via AGENTS.md
+
+You can also add notification guidance to a dedicated section in your `AGENTS.md` file:
 
 ```markdown
 ## Notifications
@@ -60,8 +64,6 @@ Never notify for:
 - Non-blocking warnings
 ```
 
-See [Instruction Files](/agents/instruction-files) for more on configuring agent behavior per-project.
-
 ## Platform notes
 
 Notifications use your operating system's native notification system:
@@ -76,16 +78,16 @@ Notification settings (sound, Do Not Disturb, etc.) are controlled by your OS pr
 
 ## Tool definition
 
-The `user_notify` tool definition from source:
+The `notify` tool definition from source:
 
-{/* BEGIN USER_NOTIFY_TOOL */}
+{/* BEGIN NOTIFY_TOOL */}
 
 ```typescript
-user_notify: {
+notify: {
     description:
-      "Send a system notification to the user. " +
+      "Send a system notification to the user. Use this to alert the user about important events that require their attention, such as long-running task completion, errors requiring intervention, or questions. " +
       "Notifications appear as OS-native notifications (macOS Notification Center, Windows Toast, Linux). " +
-      "If the user has not indicated when they want a notification, use them sparingly.",
+      "Use sparingly - only for events the user would want to be interrupted for. Do not use for routine status updates (use status_set instead).",
     schema: z
       .object({
         title: z
@@ -106,4 +108,4 @@ user_notify: {
   },
 ```
 
-{/* END USER_NOTIFY_TOOL */}
+{/* END NOTIFY_TOOL */}

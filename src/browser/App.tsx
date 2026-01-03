@@ -601,6 +601,24 @@ function AppInner() {
       );
   }, [projects, setSelectedWorkspace, setWorkspaceMetadata]);
 
+  // Set up navigation callback for notification clicks
+  useEffect(() => {
+    const navigateToWorkspace = (workspaceId: string) => {
+      const metadata = workspaceMetadata.get(workspaceId);
+      if (metadata) {
+        setSelectedWorkspace(toWorkspaceSelection(metadata));
+      }
+    };
+
+    // Wire up the callback in the workspace store (for browser notifications)
+    workspaceStore.setNavigateToWorkspace(navigateToWorkspace);
+
+    // Listen for Electron notification clicks (IPC from main process)
+    window.api?.onNotificationClicked?.((data) => {
+      navigateToWorkspace(data.workspaceId);
+    });
+  }, [workspaceMetadata, setSelectedWorkspace, workspaceStore]);
+
   const handleProviderConfig = useCallback(
     async (provider: string, keyPath: string[], value: string) => {
       if (!api) {

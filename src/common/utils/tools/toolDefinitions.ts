@@ -768,12 +768,12 @@ export const TOOL_DEFINITIONS = {
       code: z.string().min(1).describe("JavaScript code to execute in the PTC sandbox"),
     }),
   },
-  // #region USER_NOTIFY_DOCS
-  user_notify: {
+  // #region NOTIFY_DOCS
+  notify: {
     description:
-      "Send a system notification to the user. " +
+      "Send a system notification to the user. Use this to alert the user about important events that require their attention, such as long-running task completion, errors requiring intervention, or questions. " +
       "Notifications appear as OS-native notifications (macOS Notification Center, Windows Toast, Linux). " +
-      "If the user has not indicated when they want a notification, use them sparingly.",
+      "Use sparingly - only for events the user would want to be interrupted for. Do not use for routine status updates (use status_set instead).",
     schema: z
       .object({
         title: z
@@ -792,7 +792,7 @@ export const TOOL_DEFINITIONS = {
       })
       .strict(),
   },
-  // #endregion USER_NOTIFY_DOCS
+  // #endregion NOTIFY_DOCS
 } as const;
 
 // -----------------------------------------------------------------------------
@@ -1088,7 +1088,7 @@ export function getAvailableTools(
     "todo_write",
     "todo_read",
     "status_set",
-    "user_notify",
+    "notify",
     "web_fetch",
   ];
 

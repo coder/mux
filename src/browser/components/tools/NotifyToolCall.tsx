@@ -1,15 +1,15 @@
 import React from "react";
-import type { UserNotifyToolResult } from "@/common/types/tools";
+import type { NotifyToolResult } from "@/common/types/tools";
 import { ToolContainer, ToolHeader, StatusIndicator, ToolIcon } from "./shared/ToolPrimitives";
 import { getStatusDisplay, type ToolStatus } from "./shared/toolUtils";
 
-interface UserNotifyToolCallProps {
+interface NotifyToolCallProps {
   args: { title: string; message?: string };
-  result?: UserNotifyToolResult;
+  result?: NotifyToolResult;
   status?: ToolStatus;
 }
 
-export const UserNotifyToolCall: React.FC<UserNotifyToolCallProps> = ({
+export const NotifyToolCall: React.FC<NotifyToolCallProps> = ({
   args,
   result,
   status = "pending",
@@ -25,7 +25,7 @@ export const UserNotifyToolCall: React.FC<UserNotifyToolCallProps> = ({
   return (
     <ToolContainer expanded={false}>
       <ToolHeader>
-        <ToolIcon emoji="🔔" toolName="user_notify" />
+        <ToolIcon emoji="🔔" toolName="notify" />
         <span className="text-muted-foreground truncate italic">{args.title}</span>
         {args.message && (
           <span className="text-muted-foreground/60 hidden truncate @[300px]:inline">
