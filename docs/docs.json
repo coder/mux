@@ -28,56 +28,79 @@
         "tab": "Documentation",
         "groups": [
           {
-            "group": "Introduction",
-            "pages": ["index", "install", "cli", "why-parallelize"]
+            "group": "Getting Started",
+            "pages": [
+              "index",
+              "install",
+              "getting-started/why-parallelize",
+              "getting-started/mux-codes"
+            ]
           },
           {
-            "group": "Features",
+            "group": "Workspaces",
             "pages": [
+              "workspaces",
+              "workspaces/fork",
               {
-                "group": "Workspaces",
+                "group": "Runtimes",
                 "pages": [
-                  "workspaces",
-                  {
-                    "group": "Runtimes",
-                    "pages": ["runtime", "runtime/local", "runtime/worktree", "runtime/ssh"]
-                  },
-                  "fork",
-                  {
-                    "group": "Hooks",
-                    "pages": [
-                      "hooks/init",
-                      "hooks/tools"
-                    ]
-                  }
+                  "runtime",
+                  "runtime/local",
+                  "runtime/worktree",
+                  "runtime/ssh"
                 ]
               },
-              "plan-mode",
-              "vscode-extension",
-              "models",
               {
-                "group": "Keyboard Shortcuts",
-                "pages": ["keybinds", "vim-mode"]
-              },
-              "context-management",
-              "sharing",
-              "instruction-files",
-              "agents",
-              "agent-skills",
-              "mcp-servers",
-              {
-                "group": "Project Secrets",
-                "pages": ["project-secrets", "agentic-git-identity"]
+                "group": "Hooks",
+                "pages": [
+                  "hooks/init",
+                  "hooks/tools"
+                ]
               }
             ]
           },
           {
-            "group": "Advanced",
-            "pages": ["prompting-tips", "system-prompt", "telemetry", "mux-codes"]
+            "group": "Agents",
+            "pages": [
+              "agents",
+              "agents/instruction-files",
+              "agents/agent-skills",
+              "agents/plan-mode",
+              "agents/system-prompt"
+            ]
           },
           {
-            "group": "Development",
-            "pages": ["storybook", "benchmarking", "AGENTS"]
+            "group": "Configuration",
+            "pages": [
+              "config/models",
+              "config/mcp-servers",
+              "config/project-secrets",
+              "config/agentic-git-identity",
+              "config/keybinds"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/cli",
+              "guides/context-management",
+              "guides/sharing",
+              "guides/prompting-tips",
+              "guides/vim-mode"
+            ]
+          },
+          {
+            "group": "Integrations",
+            "pages": ["integrations/vscode-extension"]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "reference/telemetry",
+              "reference/storybook",
+              "reference/benchmarking",
+              "AGENTS"
+            ]
           }
         ]
       }
@@ -93,5 +116,29 @@
   },
   "contextual": {
     "options": ["copy", "view", "chatgpt", "claude", "cursor", "vscode"]
-  }
+  },
+  "redirects": [
+    { "source": "/why-parallelize", "destination": "/getting-started/why-parallelize" },
+    { "source": "/mux-codes", "destination": "/getting-started/mux-codes" },
+    { "source": "/fork", "destination": "/workspaces/fork" },
+    { "source": "/init-hooks", "destination": "/hooks/init" },
+    { "source": "/agent-skills", "destination": "/agents/agent-skills" },
+    { "source": "/instruction-files", "destination": "/agents/instruction-files" },
+    { "source": "/plan-mode", "destination": "/agents/plan-mode" },
+    { "source": "/system-prompt", "destination": "/agents/system-prompt" },
+    { "source": "/models", "destination": "/config/models" },
+    { "source": "/mcp-servers", "destination": "/config/mcp-servers" },
+    { "source": "/project-secrets", "destination": "/config/project-secrets" },
+    { "source": "/agentic-git-identity", "destination": "/config/agentic-git-identity" },
+    { "source": "/keybinds", "destination": "/config/keybinds" },
+    { "source": "/cli", "destination": "/guides/cli" },
+    { "source": "/context-management", "destination": "/guides/context-management" },
+    { "source": "/sharing", "destination": "/guides/sharing" },
+    { "source": "/prompting-tips", "destination": "/guides/prompting-tips" },
+    { "source": "/vim-mode", "destination": "/guides/vim-mode" },
+    { "source": "/vscode-extension", "destination": "/integrations/vscode-extension" },
+    { "source": "/telemetry", "destination": "/reference/telemetry" },
+    { "source": "/storybook", "destination": "/reference/storybook" },
+    { "source": "/benchmarking", "destination": "/reference/benchmarking" }
+  ]
 }

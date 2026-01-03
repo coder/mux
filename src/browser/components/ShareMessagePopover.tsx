@@ -137,7 +137,7 @@ const SigningBadge = ({
 
       {/* Docs link - always visible */}
       <a
-        href="https://mux.coder.com/sharing"
+        href="https://mux.coder.com/guides/sharing"
         target="_blank"
         rel="noopener noreferrer"
         className="text-muted-foreground hover:text-foreground block text-[10px] underline"
