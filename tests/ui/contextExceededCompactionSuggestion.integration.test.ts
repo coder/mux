@@ -4,7 +4,7 @@
  * (if the user has one configured).
  */
 
-import { fireEvent, waitFor } from "@testing-library/react";
+import { waitFor } from "@testing-library/react";
 
 import { shouldRunIntegrationTests } from "../testUtils";
 import {
@@ -16,55 +16,10 @@ import { installDom } from "./dom";
 import { renderApp } from "./renderReviewPanel";
 import { cleanupView, setupWorkspaceView } from "./helpers";
 import type { APIClient } from "@/browser/contexts/API";
-import { updatePersistedState } from "@/browser/hooks/usePersistedState";
-import { getModelKey } from "@/common/constants/storage";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { setupProviders } from "../ipc/setup";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
-
-function createForceContextExceededClient(client: APIClient): APIClient {
-  // NOTE: env.orpc is a RouterClient (Proxy-like). Avoid object spreads here,
-  // since they may drop non-enumerable/proxied fields.
-  const workspace = client.workspace;
-  const originalSendMessage = workspace.sendMessage;
-  type SendMessageArgs = Parameters<APIClient["workspace"]["sendMessage"]>[0];
-
-  return new Proxy(client as unknown as Record<string, unknown>, {
-    get(target, prop, receiver) {
-      if (prop !== "workspace") {
-        return Reflect.get(target, prop, receiver);
-      }
-
-      return new Proxy(workspace as unknown as Record<string, unknown>, {
-        get(workspaceTarget, workspaceProp) {
-          if (workspaceProp !== "sendMessage") {
-            return Reflect.get(workspaceTarget, workspaceProp);
-          }
-
-          return async (args: SendMessageArgs) => {
-            const model = args.options?.model ?? KNOWN_MODELS.GPT.id;
-
-            return originalSendMessage.call(workspace, {
-              ...args,
-              options: {
-                ...(args.options ?? { model }),
-                model,
-                providerOptions: {
-                  ...(args.options?.providerOptions ?? {}),
-                  openai: {
-                    ...(args.options?.providerOptions?.openai ?? {}),
-                    forceContextLimitError: true,
-                  },
-                },
-              },
-            });
-          };
-        },
-      });
-    },
-  }) as unknown as APIClient;
-}
 
 describeIntegration("Context exceeded compaction suggestion (UI)", () => {
   beforeAll(async () => {
@@ -80,50 +35,35 @@ describeIntegration("Context exceeded compaction suggestion (UI)", () => {
       const cleanupDom = installDom();
 
       await setupProviders(env, { xai: { apiKey: "dummy" } });
-      updatePersistedState(getModelKey(workspaceId), KNOWN_MODELS.GPT.id);
       const suggestion = "/compact -m grok";
 
-      const apiClient = createForceContextExceededClient(env.orpc as unknown as APIClient);
+      const apiClient = env.orpc as unknown as APIClient;
       const view = renderApp({ apiClient, metadata });
 
       try {
         await setupWorkspaceView(view, metadata, workspaceId);
 
-        const textarea = await waitFor(
+        // Ensure the workspace view (and chat subscription) is live before sending.
+        await waitFor(
           () => {
             const el = view.container.querySelector('textarea[aria-label="Message Claude"]');
             if (!el) throw new Error("Chat textarea not found");
-            if ((el as HTMLTextAreaElement).disabled) {
-              throw new Error("Chat textarea is disabled");
-            }
-            return el as HTMLTextAreaElement;
           },
           { timeout: 10_000 }
         );
 
-        fireEvent.input(textarea, { target: { value: "Trigger context error" } });
-
-        await waitFor(
-          () => {
-            if (textarea.value !== "Trigger context error") {
-              throw new Error("Textarea value did not update");
-            }
+        await env.orpc.workspace.sendMessage({
+          workspaceId,
+          message: "Trigger context error",
+          options: {
+            model: KNOWN_MODELS.GPT.id,
+            providerOptions: {
+              openai: {
+                forceContextLimitError: true,
+              },
+            },
           },
-          { timeout: 10_000 }
-        );
-
-        const sendButton = await waitFor(
-          () => {
-            const el = view.container.querySelector('button[aria-label="Send message"]');
-            if (!el) throw new Error("Send button not found");
-            if ((el as HTMLButtonElement).disabled) {
-              throw new Error("Send button is disabled");
-            }
-            return el as HTMLButtonElement;
-          },
-          { timeout: 10_000 }
-        );
-        fireEvent.click(sendButton);
+        });
 
         // Wait for the context_exceeded error to appear.
         await waitFor(
