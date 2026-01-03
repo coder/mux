@@ -92,7 +92,6 @@ export function useAIViewKeybinds({
         return;
       }
 
-
       // Open in editor / terminal - work even in input fields (global feel, like TOGGLE_MODE)
       if (matchesKeybind(e, KEYBINDS.OPEN_IN_EDITOR)) {
         e.preventDefault();

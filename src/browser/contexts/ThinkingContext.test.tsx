@@ -11,10 +11,12 @@ import {
   getThinkingLevelKey,
 } from "@/common/constants/storage";
 import type { APIClient } from "@/browser/contexts/API";
+import type { RecursivePartial } from "@/browser/testUtils";
 
+const currentClientMock: RecursivePartial<APIClient> = {};
 void mock.module("@/browser/contexts/API", () => ({
   useAPI: () => ({
-    api: {} as APIClient,
+    api: currentClientMock as APIClient,
     status: "connected" as const,
     error: null,
   }),

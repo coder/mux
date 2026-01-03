@@ -44,7 +44,6 @@ import { useOpenTerminal } from "@/browser/hooks/useOpenTerminal";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 
-import { useThinking } from "@/browser/contexts/ThinkingContext";
 import {
   useWorkspaceState,
   useWorkspaceAggregator,
@@ -300,9 +299,6 @@ const AIViewInner: React.FC<AIViewProps> = ({
   const handleCompactClick = useCallback(() => {
     chatInputAPI.current?.prependText("/compact\n");
   }, []);
-
-  // Thinking level state from context
-  const { thinkingLevel: currentWorkspaceThinking, setThinkingLevel } = useThinking();
 
   // Handlers for editing messages
   const handleEditUserMessage = useCallback(
