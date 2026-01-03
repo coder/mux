@@ -552,6 +552,17 @@ export class AgentSession {
       // Process the continue message content (handles reviews -> text formatting + metadata)
       const { finalText, metadata } = prepareUserMessageForSend(continueMessage);
 
+      // Legacy compatibility: older clients stored `continueMessage.mode` (exec/plan) and compaction
+      // requests run with agentId="compact". Avoid falling back to the compact agent for the
+      // post-compaction follow-up.
+      const legacyMode = (continueMessage as { mode?: unknown }).mode;
+      const legacyAgentId = legacyMode === "plan" || legacyMode === "exec" ? legacyMode : undefined;
+
+      const fallbackAgentId =
+        continueMessage.agentId ??
+        legacyAgentId ??
+        (options.agentId && options.agentId !== "compact" ? options.agentId : undefined) ??
+        "exec";
       // Build options for the queued message (strip compaction-specific fields)
       // agentId determines tool policy via resolveToolPolicyForAgent in aiService
       const sanitizedOptions: Omit<
@@ -559,7 +570,7 @@ export class AgentSession {
         "muxMetadata" | "mode" | "editMessageId" | "imageParts" | "maxOutputTokens"
       > & { imageParts?: typeof continueMessage.imageParts; muxMetadata?: typeof metadata } = {
         model: continueMessage.model ?? options.model,
-        agentId: continueMessage.agentId ?? options.agentId ?? "exec",
+        agentId: fallbackAgentId,
         thinkingLevel: options.thinkingLevel,
         additionalSystemInstructions: options.additionalSystemInstructions,
         providerOptions: options.providerOptions,
