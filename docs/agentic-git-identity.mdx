@@ -113,7 +113,11 @@ git config --global --add credential.helper '!gh auth git-credential'
 
 ## Alternative: Co-Author Attribution
 
-If you prefer to keep using your personal GitHub account but still want clear attribution for AI-generated commits, you can add a `Co-authored-by` trailer using Git's built-in hooks.
+If you prefer to keep using your personal GitHub account but still want clear attribution for AI-generated commits, you can add a `Co-authored-by` trailer to commits.
+
+The simplest approach is to ask the agent via system prompt to include a `Co-authored-by: AI Assistant <ai@example.com>` trailer in commit messages. This works well in practice since agents generally follow formatting instructions reliably.
+
+For guaranteed attribution, you can use Git's built-in hooks instead:
 
 ### Using a Git Hook
 
