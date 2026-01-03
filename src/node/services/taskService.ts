@@ -80,6 +80,9 @@ export interface DescendantAgentTaskInfo {
 
 type AgentTaskWorkspaceEntry = WorkspaceConfigEntry & { projectPath: string };
 
+
+const POST_COMPACTION_PARENT_AWAIT_DELAY_MS = 50;
+const POST_COMPACTION_PARENT_AWAIT_MAX_RETRIES = 10;
 const COMPLETED_REPORT_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 const COMPLETED_REPORT_CACHE_MAX_ENTRIES = 128;
 
@@ -192,6 +195,7 @@ export class TaskService {
   // Bounded by TTL + max entries (see COMPLETED_REPORT_CACHE_*).
   private readonly completedReportsByTaskId = new Map<string, CompletedAgentReportCacheEntry>();
   private readonly remindedAwaitingReport = new Set<string>();
+  private readonly postCompactionAwaitTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(
     private readonly config: Config,
@@ -324,6 +328,12 @@ export class TaskService {
   private async handleWorkspaceRemoved(workspaceId: string): Promise<void> {
     assert(workspaceId.length > 0, "handleWorkspaceRemoved: workspaceId must be non-empty");
 
+    const existingTimer = this.postCompactionAwaitTimers.get(workspaceId);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+      this.postCompactionAwaitTimers.delete(workspaceId);
+    }
+
     const config = this.config.loadConfigOrDefault();
     const directChildTaskIds = this.listAgentTaskWorkspaces(config)
       .filter((t) => t.parentWorkspaceId === workspaceId && typeof t.id === "string")
@@ -345,6 +355,103 @@ export class TaskService {
           error: terminateResult.error,
         });
       }
+    }
+  }
+
+  private scheduleParentAwaitAfterCompaction(workspaceId: string, retryCount = 0): void {
+    const trimmed = workspaceId.trim();
+    if (trimmed.length === 0) {
+      return;
+    }
+
+    const existing = this.postCompactionAwaitTimers.get(trimmed);
+    if (existing) {
+      clearTimeout(existing);
+    }
+
+    const timer = setTimeout(() => {
+      this.postCompactionAwaitTimers.delete(trimmed);
+      void this.ensureParentAwaitingTasksPostCompaction(trimmed, retryCount).catch(
+        (error: unknown) => {
+          log.error("ensureParentAwaitingTasksPostCompaction failed", { workspaceId: trimmed, error });
+        }
+      );
+    }, POST_COMPACTION_PARENT_AWAIT_DELAY_MS);
+
+    this.postCompactionAwaitTimers.set(trimmed, timer);
+  }
+
+  private async ensureParentAwaitingTasksPostCompaction(
+    workspaceId: string,
+    retryCount: number
+  ): Promise<void> {
+    // Only relevant for root/parent workspaces.
+    const cfg = this.config.loadConfigOrDefault();
+    const entry = this.findWorkspaceEntry(cfg, workspaceId);
+    if (!entry) {
+      return;
+    }
+    if (entry.workspace.parentWorkspaceId) {
+      return;
+    }
+
+    // Skip if workspace is gone (or being removed) or already streaming again.
+    if (!this.config.findWorkspace(workspaceId)) {
+      return;
+    }
+    if (this.aiService.isStreaming(workspaceId)) {
+      return;
+    }
+
+    // If compaction is still in progress (history empty or last user message is still the
+    // compaction-request), wait and retry.
+    const historyResult = await this.historyService.getHistory(workspaceId);
+    if (historyResult.success) {
+      const messages = historyResult.data;
+      if (messages.length === 0) {
+        if (retryCount < POST_COMPACTION_PARENT_AWAIT_MAX_RETRIES) {
+          this.scheduleParentAwaitAfterCompaction(workspaceId, retryCount + 1);
+        }
+        return;
+      }
+
+      const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
+      const muxMeta = lastUserMsg?.metadata?.muxMetadata;
+      if (muxMeta && typeof muxMeta === "object" && "type" in muxMeta) {
+        const type = (muxMeta as { type?: unknown }).type;
+        if (type === "compaction-request") {
+          if (retryCount < POST_COMPACTION_PARENT_AWAIT_MAX_RETRIES) {
+            this.scheduleParentAwaitAfterCompaction(workspaceId, retryCount + 1);
+          }
+          return;
+        }
+      }
+    }
+
+    const freshCfg = this.config.loadConfigOrDefault();
+    const hasActiveDescendants = this.hasActiveDescendantAgentTasks(freshCfg, workspaceId);
+    if (!hasActiveDescendants) {
+      return;
+    }
+
+    const activeTaskIds = this.listActiveDescendantAgentTaskIds(workspaceId);
+    const model = entry.workspace.aiSettings?.model ?? defaultModel;
+
+    const resumeResult = await this.workspaceService.resumeStream(workspaceId, {
+      model,
+      thinkingLevel: entry.workspace.aiSettings?.thinkingLevel,
+      additionalSystemInstructions:
+        `You have active background sub-agent task(s) (${activeTaskIds.join(", ")}). ` +
+        "You MUST NOT end your turn while any sub-agent tasks are queued/running/awaiting_report. " +
+        "Call task_await now to wait for them to finish (omit timeout_secs to wait up to 10 minutes). " +
+        "If any tasks are still queued/running/awaiting_report after that, call task_await again. " +
+        "Only once all tasks are completed should you write your final response, integrating their reports.",
+    });
+    if (!resumeResult.success) {
+      log.error("Failed to resume parent after compaction with active background tasks", {
+        workspaceId,
+        error: resumeResult.error,
+      });
     }
   }
 
@@ -1704,6 +1811,27 @@ export class TaskService {
 
       if (this.aiService.isStreaming(workspaceId)) {
         return;
+      }
+
+      const historyResult = await this.historyService.getHistory(workspaceId);
+      if (historyResult.success) {
+        const messages = historyResult.data;
+        // If the parent is undergoing compaction, avoid resuming mid-compaction (history is being
+        // rewritten). Instead, schedule a follow-up nudge after compaction completes.
+        if (messages.length === 0) {
+          this.scheduleParentAwaitAfterCompaction(workspaceId);
+          return;
+        }
+
+        const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
+        const muxMeta = lastUserMsg?.metadata?.muxMetadata;
+        if (muxMeta && typeof muxMeta === "object" && "type" in muxMeta) {
+          const type = (muxMeta as { type?: unknown }).type;
+          if (type === "compaction-request") {
+            this.scheduleParentAwaitAfterCompaction(workspaceId);
+            return;
+          }
+        }
       }
 
       const activeTaskIds = this.listActiveDescendantAgentTaskIds(workspaceId);

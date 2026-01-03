@@ -924,7 +924,13 @@ describe("TaskService", () => {
 
     const { aiService } = createAIServiceMocks(config);
     const { workspaceService, resumeStream } = createWorkspaceServiceMocks();
-    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+    const { historyService, taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+
+    const writeHistory = await historyService.appendToHistory(
+      rootWorkspaceId,
+      createMuxMessage("user-root", "user", "hi", { timestamp: Date.now() })
+    );
+    expect(writeHistory.success).toBe(true);
 
     const internal = taskService as unknown as {
       handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
@@ -946,6 +952,99 @@ describe("TaskService", () => {
         thinkingLevel: "medium",
       })
     );
+
+    const resumeCalls = (resumeStream as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    const options = resumeCalls[0]?.[1];
+    if (!options || typeof options !== "object") {
+      throw new Error("Expected resumeStream to be called with an options object");
+    }
+
+    const additionalSystemInstructions = (options as { additionalSystemInstructions?: unknown })
+      .additionalSystemInstructions;
+    expect(typeof additionalSystemInstructions).toBe("string");
+    expect(additionalSystemInstructions).toContain(childTaskId);
+  });
+
+  test("defers auto-resume during compaction until history is rewritten", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const childTaskId = "task-222";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              {
+                path: path.join(projectPath, "root"),
+                id: rootWorkspaceId,
+                name: "root",
+                aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+              },
+              {
+                path: path.join(projectPath, "child-task"),
+                id: childTaskId,
+                name: "agent_explore_child",
+                parentWorkspaceId: rootWorkspaceId,
+                agentType: "explore",
+                taskStatus: "running",
+                taskModelString: "openai:gpt-5.2",
+                taskThinkingLevel: "medium",
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, resumeStream } = createWorkspaceServiceMocks();
+    const { historyService, taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+
+    const writeHistory = await historyService.appendToHistory(
+      rootWorkspaceId,
+      createMuxMessage("compaction-request", "user", "/compact", {
+        timestamp: Date.now(),
+        muxMetadata: {
+          type: "compaction-request",
+          rawCommand: "/compact",
+          parsed: {},
+        },
+      })
+    );
+    expect(writeHistory.success).toBe(true);
+
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+    };
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: rootWorkspaceId,
+      messageId: "assistant-compaction",
+      metadata: { model: "openai:gpt-5.2" },
+      parts: [],
+    });
+
+    // Should not resume immediately while compaction is in progress.
+    expect(resumeStream).toHaveBeenCalledTimes(0);
+
+    const clearResult = await historyService.clearHistory(rootWorkspaceId);
+    expect(clearResult.success).toBe(true);
+
+    const appendSummary = await historyService.appendToHistory(
+      rootWorkspaceId,
+      createMuxMessage("summary", "assistant", "summary", { timestamp: Date.now() })
+    );
+    expect(appendSummary.success).toBe(true);
+
+    await new Promise((resolve) => setTimeout(resolve, 250));
+
+    expect(resumeStream).toHaveBeenCalledTimes(1);
 
     const resumeCalls = (resumeStream as unknown as { mock: { calls: unknown[][] } }).mock.calls;
     const options = resumeCalls[0]?.[1];
