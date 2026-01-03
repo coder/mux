@@ -99,7 +99,16 @@ describeIntegration("Context exceeded compaction suggestion (UI)", () => {
         );
 
         fireEvent.change(textarea, { target: { value: "Trigger context error" } });
-        fireEvent.keyDown(textarea, { key: "Enter", code: "Enter" });
+
+        const sendButton = await waitFor(
+          () => {
+            const el = view.container.querySelector('button[aria-label="Send message"]');
+            if (!el) throw new Error("Send button not found");
+            return el as HTMLButtonElement;
+          },
+          { timeout: 10_000 }
+        );
+        fireEvent.click(sendButton);
 
         // Wait for the context_exceeded error to appear.
         await waitFor(
