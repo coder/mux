@@ -31,7 +31,7 @@ Work on these 5 tasks. Notify me after each one completes.
 
 ### Via Tool scoped instructions (recommended)
 
-The authoritative way to configure the `notify` tool is via a `Tool: notify` scoped instruction in your system prompt or AGENTS.md:
+The recommended way to configure the `notify` tool is via a `Tool: notify` scoped instruction in your system prompt or AGENTS.md:
 
 ```markdown
 ## Tool: notify
@@ -44,24 +44,15 @@ The authoritative way to configure the `notify` tool is via a `Tool: notify` sco
 
 See [Instruction Files](/agents/instruction-files) for more on scoped instructions.
 
-### Via AGENTS.md
+### Disable notifications for a specific agent
 
-You can also add notification guidance to a dedicated section in your `AGENTS.md` file:
+If you have an agent that should not interrupt you (e.g. a `review` agent), disable notifications just for that agent:
 
 ```markdown
-## Notifications
+## Agent: review
 
-Only send notifications for:
-
-1. Test failures
-2. Build errors
-3. Questions that block progress
-
-Never notify for:
-
-- Successful routine operations
-- Status updates (use status_set instead)
-- Non-blocking warnings
+- Never call the notify tool
+- Keep feedback in chat (no system notifications)
 ```
 
 ## Platform notes

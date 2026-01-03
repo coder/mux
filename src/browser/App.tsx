@@ -140,6 +140,11 @@ function AppInner() {
   // Track last-read timestamps for unread indicators
   const { lastReadTimestamps, onToggleUnread } = useUnreadTracking(selectedWorkspace);
 
+  const workspaceMetadataRef = useRef(workspaceMetadata);
+  useEffect(() => {
+    workspaceMetadataRef.current = workspaceMetadata;
+  }, [workspaceMetadata]);
+
   // Auto-resume interrupted streams on app startup and when failures occur
   useResumeManager();
 
@@ -604,20 +609,24 @@ function AppInner() {
   // Set up navigation callback for notification clicks
   useEffect(() => {
     const navigateToWorkspace = (workspaceId: string) => {
-      const metadata = workspaceMetadata.get(workspaceId);
+      const metadata = workspaceMetadataRef.current.get(workspaceId);
       if (metadata) {
         setSelectedWorkspace(toWorkspaceSelection(metadata));
       }
     };
 
-    // Wire up the callback in the workspace store (for browser notifications)
+    // Single source of truth: WorkspaceStore owns the navigation callback.
+    // Browser notifications and Electron notification clicks both route through this.
     workspaceStore.setNavigateToWorkspace(navigateToWorkspace);
 
-    // Listen for Electron notification clicks (IPC from main process)
-    window.api?.onNotificationClicked?.((data) => {
-      navigateToWorkspace(data.workspaceId);
+    const unsubscribe = window.api?.onNotificationClicked?.((data) => {
+      workspaceStore.navigateToWorkspace(data.workspaceId);
     });
-  }, [workspaceMetadata, setSelectedWorkspace, workspaceStore]);
+
+    return () => {
+      unsubscribe?.();
+    };
+  }, [setSelectedWorkspace, workspaceStore]);
 
   const handleProviderConfig = useCallback(
     async (provider: string, keyPath: string[], value: string) => {

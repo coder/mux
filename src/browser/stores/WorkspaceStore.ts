@@ -608,6 +608,10 @@ export class WorkspaceStore {
     }
   }
 
+  navigateToWorkspace(workspaceId: string): void {
+    this.navigateToWorkspaceCallback?.(workspaceId);
+  }
+
   /**
    * Dispatch resume check event for a workspace.
    * Triggers useResumeManager to check if interrupted stream can be resumed.

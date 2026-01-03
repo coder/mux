@@ -24,7 +24,8 @@ declare global {
     // Async getter (used in Electron) for environments where preload cannot use Node builtins
     getIsRosetta?: () => Promise<boolean>;
     // Register a callback for notification clicks (navigates to workspace)
-    onNotificationClicked?: (callback: (data: { workspaceId: string }) => void) => void;
+    // Returns an unsubscribe function.
+    onNotificationClicked?: (callback: (data: { workspaceId: string }) => void) => () => void;
     // Optional ORPC-backed API surfaces populated in tests/storybook mocks
     tokenizer?: unknown;
     providers?: unknown;
