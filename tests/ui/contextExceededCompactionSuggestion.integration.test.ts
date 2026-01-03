@@ -93,6 +93,9 @@ describeIntegration("Context exceeded compaction suggestion (UI)", () => {
           () => {
             const el = view.container.querySelector('textarea[aria-label="Message Claude"]');
             if (!el) throw new Error("Chat textarea not found");
+            if ((el as HTMLTextAreaElement).disabled) {
+              throw new Error("Chat textarea is disabled");
+            }
             return el as HTMLTextAreaElement;
           },
           { timeout: 10_000 }
