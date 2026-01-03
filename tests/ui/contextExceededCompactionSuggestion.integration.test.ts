@@ -101,7 +101,7 @@ describeIntegration("Context exceeded compaction suggestion (UI)", () => {
           { timeout: 10_000 }
         );
 
-        fireEvent.change(textarea, { target: { value: "Trigger context error" } });
+        fireEvent.input(textarea, { target: { value: "Trigger context error" } });
 
         await waitFor(
           () => {
