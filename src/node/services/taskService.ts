@@ -227,6 +227,19 @@ export class TaskService {
           log.error("TaskService.handleStreamEnd failed", { error });
         });
     });
+
+    this.workspaceService.on("metadata", (event) => {
+      // If the parent workspace is removed, any descendant tasks become unreachable/unawaitable.
+      // Clean them up to avoid leaving orphaned sub-agent workspaces around.
+      if (event.metadata !== null) return;
+
+      void this.handleWorkspaceRemoved(event.workspaceId).catch((error: unknown) => {
+        log.error("TaskService.handleWorkspaceRemoved failed", {
+          workspaceId: event.workspaceId,
+          error,
+        });
+      });
+    });
   }
 
   private async emitWorkspaceMetadata(workspaceId: string): Promise<void> {
@@ -264,7 +277,79 @@ export class TaskService {
     return found;
   }
 
+  private async cleanupOrphanedAgentTasks(): Promise<void> {
+    const config = this.config.loadConfigOrDefault();
+
+    const orphanRoots: Array<{ taskId: string; parentWorkspaceId: string }> = [];
+
+    for (const task of this.listAgentTaskWorkspaces(config)) {
+      const taskId = coerceNonEmptyString(task.id);
+      const parentWorkspaceId = coerceNonEmptyString(task.parentWorkspaceId);
+      if (!taskId || !parentWorkspaceId) continue;
+
+      if (this.config.findWorkspace(parentWorkspaceId)) {
+        continue;
+      }
+
+      orphanRoots.push({ taskId, parentWorkspaceId });
+    }
+
+    if (orphanRoots.length === 0) {
+      return;
+    }
+
+    log.warn("Cleaning up orphaned agent tasks (parent workspace missing)", {
+      count: orphanRoots.length,
+      taskIds: orphanRoots.map((t) => t.taskId),
+    });
+
+    for (const orphan of orphanRoots) {
+      const terminateResult = await this.terminateDescendantAgentTask(
+        orphan.parentWorkspaceId,
+        orphan.taskId
+      );
+      if (!terminateResult.success) {
+        if (/not found/i.test(terminateResult.error)) {
+          continue;
+        }
+        log.error("Failed to clean up orphaned agent task", {
+          taskId: orphan.taskId,
+          parentWorkspaceId: orphan.parentWorkspaceId,
+          error: terminateResult.error,
+        });
+      }
+    }
+  }
+
+  private async handleWorkspaceRemoved(workspaceId: string): Promise<void> {
+    assert(workspaceId.length > 0, "handleWorkspaceRemoved: workspaceId must be non-empty");
+
+    const config = this.config.loadConfigOrDefault();
+    const directChildTaskIds = this.listAgentTaskWorkspaces(config)
+      .filter((t) => t.parentWorkspaceId === workspaceId && typeof t.id === "string")
+      .map((t) => t.id!);
+
+    if (directChildTaskIds.length === 0) {
+      return;
+    }
+
+    for (const taskId of directChildTaskIds) {
+      const terminateResult = await this.terminateDescendantAgentTask(workspaceId, taskId);
+      if (!terminateResult.success) {
+        if (/not found/i.test(terminateResult.error)) {
+          continue;
+        }
+        log.error("Failed to terminate descendant agent task for removed workspace", {
+          workspaceId,
+          taskId,
+          error: terminateResult.error,
+        });
+      }
+    }
+  }
+
   async initialize(): Promise<void> {
+    await this.cleanupOrphanedAgentTasks();
     await this.maybeStartQueuedTasks();
 
     const config = this.config.loadConfigOrDefault();

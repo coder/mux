@@ -121,6 +121,7 @@ function createWorkspaceServiceMocks(
     resumeStream: ReturnType<typeof mock>;
     remove: ReturnType<typeof mock>;
     emit: ReturnType<typeof mock>;
+    on: ReturnType<typeof mock>;
   }>
 ): {
   workspaceService: WorkspaceService;
@@ -128,6 +129,7 @@ function createWorkspaceServiceMocks(
   resumeStream: ReturnType<typeof mock>;
   remove: ReturnType<typeof mock>;
   emit: ReturnType<typeof mock>;
+  on: ReturnType<typeof mock>;
 } {
   const sendMessage =
     overrides?.sendMessage ?? mock((): Promise<Result<void>> => Promise.resolve(Ok(undefined)));
@@ -135,19 +137,47 @@ function createWorkspaceServiceMocks(
     overrides?.resumeStream ?? mock((): Promise<Result<void>> => Promise.resolve(Ok(undefined)));
   const remove =
     overrides?.remove ?? mock((): Promise<Result<void>> => Promise.resolve(Ok(undefined)));
-  const emit = overrides?.emit ?? mock(() => true);
 
-  return {
-    workspaceService: {
-      sendMessage,
-      resumeStream,
-      remove,
-      emit,
-    } as unknown as WorkspaceService,
+  const listenersByEvent = new Map<string, Array<(...args: unknown[]) => void>>();
+
+  let workspaceService: WorkspaceService;
+
+  const emit =
+    overrides?.emit ??
+    mock((event: string, ...args: unknown[]) => {
+      const listeners = listenersByEvent.get(event);
+      if (listeners) {
+        for (const listener of listeners) {
+          listener(...args);
+        }
+      }
+      return true;
+    });
+
+  const on =
+    overrides?.on ??
+    mock((event: string, listener: (...args: unknown[]) => void) => {
+      const list = listenersByEvent.get(event) ?? [];
+      list.push(listener);
+      listenersByEvent.set(event, list);
+      return workspaceService;
+    });
+
+  workspaceService = {
     sendMessage,
     resumeStream,
     remove,
     emit,
+    on,
+  } as unknown as WorkspaceService;
+
+  return {
+    workspaceService,
+    sendMessage,
+    resumeStream,
+    remove,
+    emit,
+    on,
   };
 }
 
@@ -1036,6 +1066,107 @@ describe("TaskService", () => {
 
     expect(remove).toHaveBeenNthCalledWith(1, childTaskId, true);
     expect(remove).toHaveBeenNthCalledWith(2, parentTaskId, true);
+  });
+
+  test("initialize cleans up orphaned agent tasks when parent workspace is missing", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const missingParentId = "missing-parent";
+    const orphanId = "task-orphan";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              {
+                path: path.join(projectPath, "orphan"),
+                id: orphanId,
+                name: "agent_explore_orphan",
+                parentWorkspaceId: missingParentId,
+                agentType: "explore",
+                taskStatus: "queued",
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const remove = mock(async (workspaceId: string): Promise<Result<void>> => {
+      await config.removeWorkspace(workspaceId);
+      return Ok(undefined);
+    });
+    const { workspaceService } = createWorkspaceServiceMocks({ remove });
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+
+    await taskService.initialize();
+
+    expect(remove).toHaveBeenCalledWith(orphanId, true);
+    expect(config.findWorkspace(orphanId)).toBeNull();
+  });
+
+  test("handleWorkspaceRemoved terminates descendant tasks for a removed workspace", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const parentTaskId = "task-parent";
+    const childTaskId = "task-child";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
+              {
+                path: path.join(projectPath, "parent-task"),
+                id: parentTaskId,
+                name: "agent_exec_parent",
+                parentWorkspaceId: rootWorkspaceId,
+                agentType: "exec",
+                taskStatus: "running",
+              },
+              {
+                path: path.join(projectPath, "child-task"),
+                id: childTaskId,
+                name: "agent_explore_child",
+                parentWorkspaceId: parentTaskId,
+                agentType: "explore",
+                taskStatus: "running",
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const remove = mock(async (workspaceId: string): Promise<Result<void>> => {
+      await config.removeWorkspace(workspaceId);
+      return Ok(undefined);
+    });
+    const { workspaceService } = createWorkspaceServiceMocks({ remove });
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+
+    const internal = taskService as unknown as {
+      handleWorkspaceRemoved: (workspaceId: string) => Promise<void>;
+    };
+
+    await internal.handleWorkspaceRemoved(rootWorkspaceId);
+
+    expect(remove).toHaveBeenNthCalledWith(1, childTaskId, true);
+    expect(remove).toHaveBeenNthCalledWith(2, parentTaskId, true);
+
+    expect(config.findWorkspace(childTaskId)).toBeNull();
+    expect(config.findWorkspace(parentTaskId)).toBeNull();
   });
 
   test("initialize resumes awaiting_report tasks after restart", async () => {
