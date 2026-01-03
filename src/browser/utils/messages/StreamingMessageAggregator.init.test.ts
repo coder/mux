@@ -5,7 +5,7 @@ import { INIT_HOOK_MAX_LINES } from "@/common/constants/toolLimits";
 interface InitDisplayedMessage {
   type: "workspace-init";
   status: "running" | "success" | "error";
-  lines: string[];
+  lines: Array<{ line: string; isError: boolean }>;
   exitCode: number | null;
   truncatedLines?: number;
 }
@@ -42,7 +42,10 @@ describe("Init display after cleanup changes", () => {
 
     messages = aggregator.getDisplayedMessages();
     expect(messages).toHaveLength(1);
-    expect((messages[0] as InitDisplayedMessage).lines).toContain("Installing dependencies...");
+    expect((messages[0] as InitDisplayedMessage).lines).toContainEqual({
+      line: "Installing dependencies...",
+      isError: false,
+    });
 
     // Simulate init end (flushes immediately)
     aggregator.handleMessage({
@@ -113,9 +116,9 @@ describe("Init display after cleanup changes", () => {
     expect(initMsg.truncatedLines).toBe(50);
 
     // Should have the most recent lines (tail)
-    expect(initMsg.lines[INIT_HOOK_MAX_LINES - 1]).toBe(`Line ${totalLines - 1}`);
+    expect(initMsg.lines[INIT_HOOK_MAX_LINES - 1]?.line).toBe(`Line ${totalLines - 1}`);
     // First line should be from when truncation started
-    expect(initMsg.lines[0]).toBe("Line 50");
+    expect(initMsg.lines[0]?.line).toBe("Line 50");
   });
 
   it("should capture truncatedLines from init-end event", () => {

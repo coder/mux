@@ -203,7 +203,7 @@ export class StreamingMessageAggregator {
   private initState: {
     status: "running" | "success" | "error";
     hookPath: string;
-    lines: string[];
+    lines: Array<{ line: string; isError: boolean }>;
     exitCode: number | null;
     startTime: number;
     endTime: number | null;
@@ -1410,14 +1410,15 @@ export class StreamingMessageAggregator {
         console.error("Received init-output with missing line field", { data });
         return;
       }
-      const line = data.isError ? `ERROR: ${data.line}` : data.line;
+      const line = data.line.trimEnd();
+      const isError = data.isError === true;
 
       // Truncation: keep only the most recent MAX_LINES (matches backend)
       if (this.initState.lines.length >= INIT_HOOK_MAX_LINES) {
         this.initState.lines.shift(); // Drop oldest line
         this.initState.truncatedLines = (this.initState.truncatedLines ?? 0) + 1;
       }
-      this.initState.lines.push(line.trimEnd());
+      this.initState.lines.push({ line, isError });
 
       // Throttle cache invalidation during fast streaming to avoid re-render per line
       this.initOutputThrottleTimer ??= setTimeout(() => {

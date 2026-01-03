@@ -71,7 +71,7 @@ describe("StreamingMessageAggregator", () => {
       if (initMsg1?.type === "workspace-init" && initMsg2?.type === "workspace-init") {
         expect(initMsg1.lines).not.toBe(initMsg2.lines);
         expect(initMsg2.lines).toHaveLength(1);
-        expect(initMsg2.lines[0]).toBe("Line 1");
+        expect(initMsg2.lines[0]).toEqual({ line: "Line 1", isError: false });
       }
     });
 

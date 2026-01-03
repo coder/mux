@@ -1165,13 +1165,13 @@ export const InitHookError: AppStory = {
               } as WorkspaceChatMessage);
               emit({
                 type: "init-output",
-                line: "ERROR: Failed to install package 'missing-dep'",
+                line: "Failed to install package 'missing-dep'",
                 timestamp: STABLE_TIMESTAMP - 108000,
                 isError: true,
               } as WorkspaceChatMessage);
               emit({
                 type: "init-output",
-                line: "ERROR: npm ERR! code E404",
+                line: "npm ERR! code E404",
                 timestamp: STABLE_TIMESTAMP - 107500,
                 isError: true,
               } as WorkspaceChatMessage);

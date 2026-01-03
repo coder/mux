@@ -369,7 +369,7 @@ export type DisplayedMessage =
       historySequence: number; // Position in message stream (-1 for ephemeral, non-persisted events)
       status: "running" | "success" | "error";
       hookPath: string; // Path to the init script being executed
-      lines: string[]; // Accumulated output lines (stderr prefixed with "ERROR:")
+      lines: Array<{ line: string; isError: boolean }>; // Accumulated output lines (stderr tagged via isError)
       exitCode: number | null; // Final exit code (null while running)
       timestamp: number;
       durationMs: number | null; // Duration in milliseconds (null while running)

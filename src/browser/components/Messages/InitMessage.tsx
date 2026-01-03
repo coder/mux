@@ -34,11 +34,6 @@ export const InitMessage = React.memo<InitMessageProps>(({ message, className })
   const durationText =
     message.durationMs !== null ? ` in ${formatDuration(message.durationMs)}` : "";
 
-  // Prepend truncation notice if lines were dropped
-  const outputText = message.truncatedLines
-    ? `... ${message.truncatedLines.toLocaleString()} earlier lines truncated ...\n${message.lines.join("\n")}`
-    : message.lines.join("\n");
-
   return (
     <div
       className={cn(
@@ -86,7 +81,18 @@ export const InitMessage = React.memo<InitMessageProps>(({ message, className })
             isError ? "text-danger-soft" : "text-light"
           )}
         >
-          {outputText}
+          {message.truncatedLines && (
+            <span className="text-muted">
+              ... {message.truncatedLines.toLocaleString()} earlier lines truncated ...
+              {"\n"}
+            </span>
+          )}
+          {message.lines.map((line, idx) => (
+            <span key={idx} className={line.isError ? "text-danger-soft" : undefined}>
+              {line.line}
+              {idx < message.lines.length - 1 ? "\n" : ""}
+            </span>
+          ))}
         </pre>
       )}
     </div>

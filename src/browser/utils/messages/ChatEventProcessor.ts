@@ -43,7 +43,7 @@ import type { StreamStartEvent, StreamEndEvent } from "@/common/types/stream";
 export interface InitState {
   hookPath: string;
   status: "running" | "success" | "error";
-  lines: string[];
+  lines: Array<{ line: string; isError: boolean }>;
   exitCode: number | null;
 
   /** Start timestamp from init-start. */
@@ -139,8 +139,7 @@ export function createChatEventProcessor(): ChatEventProcessor {
         console.error("Init-output line was not a string", { line: event.line, event });
         return;
       }
-      const prefix = event.isError ? "ERROR: " : "";
-      initState.lines.push(`${prefix}${event.line}`);
+      initState.lines.push({ line: event.line.trimEnd(), isError: event.isError === true });
       return;
     }
 
