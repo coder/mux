@@ -8,7 +8,7 @@ export { ResultSchema } from "./schemas/result";
 export { RuntimeConfigSchema, RuntimeModeSchema } from "./schemas/runtime";
 
 // Project schemas
-export { ProjectConfigSchema, WorkspaceConfigSchema } from "./schemas/project";
+export { ProjectConfigSchema, SectionConfigSchema, WorkspaceConfigSchema } from "./schemas/project";
 
 // Workspace schemas
 export { WorkspaceAISettingsSchema } from "./schemas/workspaceAiSettings";

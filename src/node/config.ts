@@ -535,6 +535,7 @@ export class Config {
               taskTrunkBranch: workspace.taskTrunkBranch,
               archivedAt: workspace.archivedAt,
               unarchivedAt: workspace.unarchivedAt,
+              sectionId: workspace.sectionId,
             };
 
             // Migrate missing createdAt to config for next load
@@ -590,6 +591,8 @@ export class Config {
             // Preserve archived timestamps from config
             metadata.archivedAt ??= workspace.archivedAt;
             metadata.unarchivedAt ??= workspace.unarchivedAt;
+            // Preserve section assignment from config
+            metadata.sectionId ??= workspace.sectionId;
             // Migrate to config for next load
             workspace.id = metadata.id;
             workspace.name = metadata.name;
@@ -625,6 +628,7 @@ export class Config {
               taskTrunkBranch: workspace.taskTrunkBranch,
               archivedAt: workspace.archivedAt,
               unarchivedAt: workspace.unarchivedAt,
+              sectionId: workspace.sectionId,
             };
 
             // Save to config for next load
@@ -659,6 +663,7 @@ export class Config {
             taskThinkingLevel: workspace.taskThinkingLevel,
             taskPrompt: workspace.taskPrompt,
             taskTrunkBranch: workspace.taskTrunkBranch,
+            sectionId: workspace.sectionId,
           };
           workspaceMetadata.push(this.addPathsToMetadata(metadata, workspace.path, projectPath));
         }

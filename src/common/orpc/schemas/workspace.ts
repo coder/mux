@@ -79,6 +79,9 @@ export const WorkspaceMetadataSchema = z.object({
     description:
       "ISO 8601 timestamp when workspace was last unarchived. Used for recency calculation to bump restored workspaces to top.",
   }),
+  sectionId: z.string().optional().meta({
+    description: "ID of the section this workspace belongs to (optional, unsectioned if absent)",
+  }),
 });
 
 export const FrontendWorkspaceMetadataSchema = WorkspaceMetadataSchema.extend({

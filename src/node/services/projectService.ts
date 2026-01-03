@@ -1,4 +1,7 @@
 import type { Config, ProjectConfig } from "@/node/config";
+import type { SectionConfig } from "@/common/types/project";
+import { DEFAULT_SECTION_COLOR } from "@/common/constants/ui";
+import { randomBytes } from "crypto";
 import { validateProjectPath, isGitRepository } from "@/node/utils/pathUtils";
 import { listLocalBranches, detectDefaultTrunkBranch } from "@/node/git";
 import type { Result } from "@/common/types/result";
@@ -378,6 +381,242 @@ export class ProjectService {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return Err(`Failed to set idle compaction hours: ${message}`);
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Section Management
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * List all sections for a project, sorted by linked-list order.
+   */
+  listSections(projectPath: string): SectionConfig[] {
+    try {
+      const config = this.config.loadConfigOrDefault();
+      const project = config.projects.get(projectPath);
+      if (!project) return [];
+      return this.sortSectionsByLinkedList(project.sections ?? []);
+    } catch (error) {
+      log.error("Failed to list sections:", error);
+      return [];
+    }
+  }
+
+  /**
+   * Sort sections by following nextId linked list.
+   */
+  private sortSectionsByLinkedList(sections: SectionConfig[]): SectionConfig[] {
+    if (sections.length === 0) return [];
+
+    const byId = new Map(sections.map((s) => [s.id, s]));
+    // Find head: section not referenced by any other section's nextId
+    const referencedIds = new Set(sections.map((s) => s.nextId).filter(Boolean));
+    const heads = sections.filter((s) => !referencedIds.has(s.id));
+    const head = heads[0];
+
+    const result: SectionConfig[] = [];
+    const visited = new Set<string>();
+
+    let current: SectionConfig | undefined = head;
+    while (current && !visited.has(current.id)) {
+      visited.add(current.id);
+      result.push(current);
+      current = current.nextId ? byId.get(current.nextId) : undefined;
+    }
+
+    // Append orphaned sections
+    for (const s of sections) {
+      if (!visited.has(s.id)) result.push(s);
+    }
+
+    return result;
+  }
+
+  /**
+   * Create a new section in a project.
+   */
+  async createSection(
+    projectPath: string,
+    name: string,
+    color?: string
+  ): Promise<Result<SectionConfig>> {
+    try {
+      const config = this.config.loadConfigOrDefault();
+      const project = config.projects.get(projectPath);
+
+      if (!project) {
+        return Err(`Project not found: ${projectPath}`);
+      }
+
+      const sections = project.sections ?? [];
+
+      const section: SectionConfig = {
+        id: randomBytes(4).toString("hex"),
+        name,
+        color: color ?? DEFAULT_SECTION_COLOR,
+        nextId: null, // new section is last
+      };
+
+      // Find current tail (nextId is null/undefined) and point it to new section
+      const sorted = this.sortSectionsByLinkedList(sections);
+      if (sorted.length > 0) {
+        const tail = sorted[sorted.length - 1];
+        tail.nextId = section.id;
+      }
+
+      project.sections = [...sections, section];
+      await this.config.saveConfig(config);
+      return Ok(section);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Err(`Failed to create section: ${message}`);
+    }
+  }
+
+  /**
+   * Update section name and/or color.
+   */
+  async updateSection(
+    projectPath: string,
+    sectionId: string,
+    updates: { name?: string; color?: string }
+  ): Promise<Result<void>> {
+    try {
+      const config = this.config.loadConfigOrDefault();
+      const project = config.projects.get(projectPath);
+
+      if (!project) {
+        return Err(`Project not found: ${projectPath}`);
+      }
+
+      const sections = project.sections ?? [];
+      const sectionIndex = sections.findIndex((s) => s.id === sectionId);
+
+      if (sectionIndex === -1) {
+        return Err(`Section not found: ${sectionId}`);
+      }
+
+      const section = sections[sectionIndex];
+      if (updates.name !== undefined) section.name = updates.name;
+      if (updates.color !== undefined) section.color = updates.color;
+
+      await this.config.saveConfig(config);
+      return Ok(undefined);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Err(`Failed to update section: ${message}`);
+    }
+  }
+
+  /**
+   * Remove a section. Workspaces in this section become unsectioned.
+   */
+  async removeSection(projectPath: string, sectionId: string): Promise<Result<void>> {
+    try {
+      const config = this.config.loadConfigOrDefault();
+      const project = config.projects.get(projectPath);
+
+      if (!project) {
+        return Err(`Project not found: ${projectPath}`);
+      }
+
+      const sections = project.sections ?? [];
+      const sectionIndex = sections.findIndex((s) => s.id === sectionId);
+
+      if (sectionIndex === -1) {
+        return Err(`Section not found: ${sectionId}`);
+      }
+
+      // Remove sectionId from all workspaces in this section
+      for (const workspace of project.workspaces) {
+        if (workspace.sectionId === sectionId) {
+          workspace.sectionId = undefined;
+        }
+      }
+
+      // Remove the section
+      project.sections = sections.filter((s) => s.id !== sectionId);
+      await this.config.saveConfig(config);
+      return Ok(undefined);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Err(`Failed to remove section: ${message}`);
+    }
+  }
+
+  /**
+   * Reorder sections by providing the full ordered list of section IDs.
+   */
+  async reorderSections(projectPath: string, sectionIds: string[]): Promise<Result<void>> {
+    try {
+      const config = this.config.loadConfigOrDefault();
+      const project = config.projects.get(projectPath);
+
+      if (!project) {
+        return Err(`Project not found: ${projectPath}`);
+      }
+
+      const sections = project.sections ?? [];
+      const sectionMap = new Map(sections.map((s) => [s.id, s]));
+
+      // Validate all IDs exist
+      for (const id of sectionIds) {
+        if (!sectionMap.has(id)) {
+          return Err(`Section not found: ${id}`);
+        }
+      }
+
+      // Update nextId pointers based on array order
+      for (let i = 0; i < sectionIds.length; i++) {
+        const section = sectionMap.get(sectionIds[i])!;
+        section.nextId = i < sectionIds.length - 1 ? sectionIds[i + 1] : null;
+      }
+
+      await this.config.saveConfig(config);
+      return Ok(undefined);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Err(`Failed to reorder sections: ${message}`);
+    }
+  }
+
+  /**
+   * Assign a workspace to a section (or remove from section with null).
+   */
+  async assignWorkspaceToSection(
+    projectPath: string,
+    workspaceId: string,
+    sectionId: string | null
+  ): Promise<Result<void>> {
+    try {
+      const config = this.config.loadConfigOrDefault();
+      const project = config.projects.get(projectPath);
+
+      if (!project) {
+        return Err(`Project not found: ${projectPath}`);
+      }
+
+      // Validate section exists if not null
+      if (sectionId !== null) {
+        const sections = project.sections ?? [];
+        if (!sections.some((s) => s.id === sectionId)) {
+          return Err(`Section not found: ${sectionId}`);
+        }
+      }
+
+      // Find and update workspace
+      const workspace = project.workspaces.find((w) => w.id === workspaceId);
+      if (!workspace) {
+        return Err(`Workspace not found: ${workspaceId}`);
+      }
+
+      workspace.sectionId = sectionId ?? undefined;
+      await this.config.saveConfig(config);
+      return Ok(undefined);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Err(`Failed to assign workspace to section: ${message}`);
     }
   }
 }

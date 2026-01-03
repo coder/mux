@@ -5,6 +5,25 @@ import { WorkspaceAISettingsByModeSchema, WorkspaceAISettingsSchema } from "./wo
 
 const ThinkingLevelSchema = z.enum(["off", "low", "medium", "high", "xhigh"]);
 
+/**
+ * Section schema for organizing workspaces within a project.
+ * Sections are project-scoped and persist to config.json.
+ */
+export const SectionConfigSchema = z.object({
+  id: z.string().meta({
+    description: "Unique section ID (8 hex chars)",
+  }),
+  name: z.string().meta({
+    description: "Display name for the section",
+  }),
+  color: z.string().optional().meta({
+    description: "Accent color (hex value like #ff6b6b or preset name)",
+  }),
+  nextId: z.string().nullable().optional().meta({
+    description: "ID of the next section in display order (null = last, undefined treated as null)",
+  }),
+});
+
 export const WorkspaceConfigSchema = z.object({
   path: z.string().meta({
     description: "Absolute path to workspace directory - REQUIRED for backward compatibility",
@@ -85,10 +104,16 @@ export const WorkspaceConfigSchema = z.object({
     description:
       "ISO 8601 timestamp when workspace was last unarchived. Used for recency calculation to bump restored workspaces to top.",
   }),
+  sectionId: z.string().optional().meta({
+    description: "ID of the section this workspace belongs to (optional, unsectioned if absent)",
+  }),
 });
 
 export const ProjectConfigSchema = z.object({
   workspaces: z.array(WorkspaceConfigSchema),
+  sections: z.array(SectionConfigSchema).optional().meta({
+    description: "Sections for organizing workspaces within this project",
+  }),
   idleCompactionHours: z.number().min(1).nullable().optional().meta({
     description:
       "Hours of inactivity before auto-compacting workspaces. null/undefined = disabled.",

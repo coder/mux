@@ -4,12 +4,18 @@
  */
 
 import type { z } from "zod";
-import type { ProjectConfigSchema, WorkspaceConfigSchema } from "../orpc/schemas";
+import type {
+  ProjectConfigSchema,
+  SectionConfigSchema,
+  WorkspaceConfigSchema,
+} from "../orpc/schemas";
 import type { TaskSettings, SubagentAiDefaults } from "./tasks";
 import type { ModeAiDefaults } from "./modeAiDefaults";
 import type { AgentAiDefaults } from "./agentAiDefaults";
 
 export type Workspace = z.infer<typeof WorkspaceConfigSchema>;
+
+export type SectionConfig = z.infer<typeof SectionConfigSchema>;
 
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 

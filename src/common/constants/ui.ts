@@ -81,3 +81,26 @@ export const FORCE_COMPACTION_BUFFER_PERCENT = 5;
  * Duration (ms) to show "copied" feedback after copying to clipboard
  */
 export const COPY_FEEDBACK_DURATION_MS = 2000;
+
+/**
+ * Predefined color palette for project sections.
+ * Each color is designed to work well with the dark theme.
+ * Format: [name, hex value]
+ */
+export const SECTION_COLOR_PALETTE = [
+  ["Red", "#e54545"],
+  ["Orange", "#e5853a"],
+  ["Yellow", "#d9b836"],
+  ["Green", "#4caf7c"],
+  ["Teal", "#4ab5a7"],
+  ["Blue", "#5a9bd4"],
+  ["Purple", "#9c6bd4"],
+  ["Pink", "#d465a5"],
+] as const;
+
+export type SectionColorName = (typeof SECTION_COLOR_PALETTE)[number][0];
+
+/**
+ * Default color for new sections (first in palette)
+ */
+export const DEFAULT_SECTION_COLOR = SECTION_COLOR_PALETTE[0][1];

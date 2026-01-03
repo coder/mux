@@ -9,9 +9,10 @@ import {
   type ReactNode,
 } from "react";
 import { useAPI } from "@/browser/contexts/API";
-import type { ProjectConfig } from "@/node/config";
+import type { ProjectConfig, SectionConfig } from "@/common/types/project";
 import type { BranchListResult } from "@/common/orpc/types";
 import type { Secret } from "@/common/types/secrets";
+import type { Result } from "@/common/types/result";
 
 interface WorkspaceModalState {
   isOpen: boolean;
@@ -45,6 +46,25 @@ export interface ProjectContext {
   getBranchesForProject: (projectPath: string) => Promise<BranchListResult>;
   getSecrets: (projectPath: string) => Promise<Secret[]>;
   updateSecrets: (projectPath: string, secrets: Secret[]) => Promise<void>;
+
+  // Section operations
+  createSection: (
+    projectPath: string,
+    name: string,
+    color?: string
+  ) => Promise<Result<SectionConfig>>;
+  updateSection: (
+    projectPath: string,
+    sectionId: string,
+    updates: { name?: string; color?: string }
+  ) => Promise<Result<void>>;
+  removeSection: (projectPath: string, sectionId: string) => Promise<Result<void>>;
+  reorderSections: (projectPath: string, sectionIds: string[]) => Promise<Result<void>>;
+  assignWorkspaceToSection: (
+    projectPath: string,
+    workspaceId: string,
+    sectionId: string | null
+  ) => Promise<Result<void>>;
 }
 
 const ProjectContext = createContext<ProjectContext | undefined>(undefined);
@@ -227,6 +247,79 @@ export function ProjectProvider(props: { children: ReactNode }) {
     [api]
   );
 
+  // Section operations
+  const createSection = useCallback(
+    async (projectPath: string, name: string, color?: string): Promise<Result<SectionConfig>> => {
+      if (!api) return { success: false, error: "API not connected" };
+      const result = await api.projects.sections.create({ projectPath, name, color });
+      if (result.success) {
+        await refreshProjects();
+      }
+      return result;
+    },
+    [api, refreshProjects]
+  );
+
+  const updateSection = useCallback(
+    async (
+      projectPath: string,
+      sectionId: string,
+      updates: { name?: string; color?: string }
+    ): Promise<Result<void>> => {
+      if (!api) return { success: false, error: "API not connected" };
+      const result = await api.projects.sections.update({ projectPath, sectionId, ...updates });
+      if (result.success) {
+        await refreshProjects();
+      }
+      return result;
+    },
+    [api, refreshProjects]
+  );
+
+  const removeSection = useCallback(
+    async (projectPath: string, sectionId: string): Promise<Result<void>> => {
+      if (!api) return { success: false, error: "API not connected" };
+      const result = await api.projects.sections.remove({ projectPath, sectionId });
+      if (result.success) {
+        await refreshProjects();
+      }
+      return result;
+    },
+    [api, refreshProjects]
+  );
+
+  const reorderSections = useCallback(
+    async (projectPath: string, sectionIds: string[]): Promise<Result<void>> => {
+      if (!api) return { success: false, error: "API not connected" };
+      const result = await api.projects.sections.reorder({ projectPath, sectionIds });
+      if (result.success) {
+        await refreshProjects();
+      }
+      return result;
+    },
+    [api, refreshProjects]
+  );
+
+  const assignWorkspaceToSection = useCallback(
+    async (
+      projectPath: string,
+      workspaceId: string,
+      sectionId: string | null
+    ): Promise<Result<void>> => {
+      if (!api) return { success: false, error: "API not connected" };
+      const result = await api.projects.sections.assignWorkspace({
+        projectPath,
+        workspaceId,
+        sectionId,
+      });
+      if (result.success) {
+        await refreshProjects();
+      }
+      return result;
+    },
+    [api, refreshProjects]
+  );
+
   const value = useMemo<ProjectContext>(
     () => ({
       projects,
@@ -243,6 +336,11 @@ export function ProjectProvider(props: { children: ReactNode }) {
       getBranchesForProject,
       getSecrets,
       updateSecrets,
+      createSection,
+      updateSection,
+      removeSection,
+      reorderSections,
+      assignWorkspaceToSection,
     }),
     [
       projects,
@@ -257,6 +355,11 @@ export function ProjectProvider(props: { children: ReactNode }) {
       getBranchesForProject,
       getSecrets,
       updateSecrets,
+      createSection,
+      updateSection,
+      removeSection,
+      reorderSections,
+      assignWorkspaceToSection,
     ]
   );
 
