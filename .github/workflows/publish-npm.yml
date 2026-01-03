@@ -1,5 +1,17 @@
 name: Publish to NPM
 
+# Uses NPM Trusted Publishing with OIDC - no secrets required!
+#
+# SETUP (one-time, on npmjs.com):
+#   1. Go to https://www.npmjs.com/package/mux/access
+#   2. Under "Trusted Publisher", click "GitHub Actions"
+#   3. Configure:
+#      - Owner: coder
+#      - Repository: mux
+#      - Workflow filename: publish-npm.yml
+#      - Environment: (leave blank)
+#   4. Click "Set up connection"
+
 on:
   push:
     branches:
@@ -8,14 +20,13 @@ on:
       - "v*"
   workflow_dispatch:
 
-permissions:
-  contents: read
-  id-token: write # Required for OIDC trusted publishing
-
 jobs:
   publish:
     name: Publish to NPM
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # Required for OIDC trusted publishing
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -24,17 +35,12 @@ jobs:
 
       - uses: ./.github/actions/setup-mux
 
-      # Configure npm for publishing.
-      # We rely on npm "trusted publishing" (OIDC) instead of a long-lived NPM_TOKEN.
+      # Setup Node.js 24+ for npm v11+ required by OIDC trusted publishing.
+      # Node 22 ships with npm 10.x which does NOT support OIDC.
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "24"
           registry-url: "https://registry.npmjs.org"
-
-      # npm trusted publishing requires npm CLI >= 11.5.1.
-      - run: |
-          sudo npm i -g npm@^11.5.1
-          npm --version
 
       - name: Generate unique version from git
         id: version
