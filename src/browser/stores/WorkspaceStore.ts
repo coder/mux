@@ -595,6 +595,10 @@ export class WorkspaceStore {
    * Triggers useResumeManager to check if interrupted stream can be resumed.
    */
   private dispatchResumeCheck(workspaceId: string): void {
+    if (typeof window === "undefined") {
+      return;
+    }
+
     window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.RESUME_CHECK_REQUESTED, { workspaceId }));
   }
 
