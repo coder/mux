@@ -270,7 +270,7 @@ export const StreamErrorMessage: React.FC<StreamErrorMessageProps> = ({
       <div className="font-primary text-error mb-3 flex items-center gap-2.5 text-[13px] font-semibold tracking-wide">
         <span className="text-base leading-none">●</span>
         <span>Stream Error</span>
-        <code className="text-text-secondary bg-code-bg border-foreground/10 rounded-sm border px-2 py-0.5 font-mono text-[10px] tracking-wider uppercase">
+        <code className="bg-foreground/5 text-foreground/80 border-foreground/10 rounded-sm border px-2 py-0.5 font-mono text-[10px] tracking-wider uppercase">
           {message.errorType}
         </code>
         {showCount && (
@@ -279,16 +279,16 @@ export const StreamErrorMessage: React.FC<StreamErrorMessageProps> = ({
           </span>
         )}
       </div>
-      <div className="text-foreground font-mono text-[13px] leading-relaxed break-words">
+      <div className="text-foreground font-mono text-[13px] leading-relaxed break-words whitespace-pre-wrap">
         {message.error}
       </div>
 
       {compactionSuggestion && (
-        <div className="mt-3 text-[12px] leading-relaxed">
-          <div className="text-text-secondary font-primary text-[11px] font-semibold tracking-wide uppercase">
+        <div className="border-foreground/10 bg-foreground/5 mt-3 rounded-sm border px-3 py-2 text-[12px] leading-relaxed">
+          <div className="font-primary text-foreground/70 text-[11px] font-semibold tracking-wide uppercase">
             Suggestion
           </div>
-          <div className="text-text-secondary mt-1">
+          <div className="text-foreground/80 mt-1">
             {(compactionSuggestion.configuredVia === "mux-gateway"
               ? "A Mux Gateway-enabled"
               : "A configured") + " model with a larger context window is available: "}
@@ -311,14 +311,14 @@ export const StreamErrorMessage: React.FC<StreamErrorMessageProps> = ({
                     ? "Retry compaction"
                     : "Retry with compaction"}
               </Button>
-              <span className="text-text-secondary text-[11px]">
+              <span className="text-foreground/70 text-[11px]">
                 {triggerUserMessage.compactionRequest
                   ? "Runs /compact again using the suggested model."
                   : "Runs /compact using the suggested model, then re-sends your last message."}
               </span>
             </div>
           )}
-          <code className="text-foreground bg-code-bg border-foreground/10 mt-2 inline-block rounded-sm border px-2 py-1 font-mono text-[12px]">
+          <code className="bg-foreground/10 text-foreground border-foreground/10 mt-2 inline-block rounded-sm border px-2 py-1 font-mono text-[12px]">
             {compactionSuggestion.command}
           </code>
         </div>
