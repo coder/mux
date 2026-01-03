@@ -132,15 +132,66 @@ export abstract class RemoteRuntime implements Runtime {
     // Spawn the remote process (SSH or Docker)
     const { process: childProcess, preExec } = this.spawnRemoteProcess(fullCommand, options);
 
-    // Wait for any pre-exec work (e.g., SSH connection pool)
-    if (preExec) {
-      await preExec;
+    // Wrap in DisposableProcess for cleanup.
+    //
+    // Important: Register process event handlers before awaiting preExec.
+    // Otherwise fast commands (like `mkdir`) can exit before we subscribe to
+    // the "close" event, leaving `exitCode` unresolved forever.
+    const disposable = new DisposableProcess(childProcess);
+
+    // Track if we killed the process due to timeout or abort
+    let timedOut = false;
+    let aborted = false;
+
+    // Create promises for exit code and duration immediately.
+    const exitCode = new Promise<number>((resolve, reject) => {
+      childProcess.on("close", (code, signal) => {
+        if (aborted || options.abortSignal?.aborted) {
+          resolve(EXIT_CODE_ABORTED);
+          return;
+        }
+        if (timedOut) {
+          resolve(EXIT_CODE_TIMEOUT);
+          return;
+        }
+        const finalExitCode = code ?? (signal ? -1 : 0);
+
+        // Let subclass handle exit code (e.g., SSH connection pool)
+        this.onExitCode(finalExitCode, options);
+
+        resolve(finalExitCode);
+      });
+
+      childProcess.on("error", (err) => {
+        reject(
+          new RuntimeError(
+            `Failed to execute ${this.commandPrefix} command: ${err.message}`,
+            "exec",
+            err
+          )
+        );
+      });
+    });
+
+    const duration = exitCode.then(() => performance.now() - startTime);
+
+    // Handle abort signal
+    if (options.abortSignal) {
+      options.abortSignal.addEventListener("abort", () => {
+        aborted = true;
+        disposable[Symbol.dispose]();
+      });
     }
 
-    log.debug(`${this.commandPrefix} command: ${fullCommand}`);
+    // Handle timeout
+    if (options.timeout !== undefined) {
+      const timeoutHandle = setTimeout(() => {
+        timedOut = true;
+        disposable[Symbol.dispose]();
+      }, options.timeout * 1000);
 
-    // Wrap in DisposableProcess for automatic cleanup
-    const disposable = new DisposableProcess(childProcess);
+      void exitCode.finally(() => clearTimeout(timeoutHandle));
+    }
 
     // Convert Node.js streams to Web Streams
     const stdout = Readable.toWeb(childProcess.stdout!) as unknown as ReadableStream<Uint8Array>;
@@ -190,59 +241,18 @@ export abstract class RemoteRuntime implements Runtime {
       },
     });
 
-    // Track if we killed the process due to timeout or abort
-    let timedOut = false;
-    let aborted = false;
-
-    // Create promises for exit code and duration
-    const exitCode = new Promise<number>((resolve, reject) => {
-      childProcess.on("close", (code, signal) => {
-        if (aborted || options.abortSignal?.aborted) {
-          resolve(EXIT_CODE_ABORTED);
-          return;
-        }
-        if (timedOut) {
-          resolve(EXIT_CODE_TIMEOUT);
-          return;
-        }
-        const finalExitCode = code ?? (signal ? -1 : 0);
-
-        // Let subclass handle exit code (e.g., SSH connection pool)
-        this.onExitCode(finalExitCode, options);
-
-        resolve(finalExitCode);
-      });
-
-      childProcess.on("error", (err) => {
-        reject(
-          new RuntimeError(
-            `Failed to execute ${this.commandPrefix} command: ${err.message}`,
-            "exec",
-            err
-          )
-        );
-      });
-    });
-
-    const duration = exitCode.then(() => performance.now() - startTime);
-
-    // Handle abort signal
-    if (options.abortSignal) {
-      options.abortSignal.addEventListener("abort", () => {
-        aborted = true;
+    // Wait for any pre-exec work (e.g., SSH connection pool)
+    if (preExec) {
+      try {
+        await preExec;
+      } catch (error) {
+        // Ensure we don't leak a child process if preExec fails.
         disposable[Symbol.dispose]();
-      });
+        throw error;
+      }
     }
 
-    // Handle timeout
-    if (options.timeout !== undefined) {
-      const timeoutHandle = setTimeout(() => {
-        timedOut = true;
-        disposable[Symbol.dispose]();
-      }, options.timeout * 1000);
-
-      void exitCode.finally(() => clearTimeout(timeoutHandle));
-    }
+    log.debug(`${this.commandPrefix} command: ${fullCommand}`);
 
     return { stdout, stderr, stdin, exitCode, duration };
   }
