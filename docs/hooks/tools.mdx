@@ -150,11 +150,9 @@ Mux searches for each hook file in this order:
 1. Project-level: `.mux/<hook>`
 2. User-level: `~/.mux/<hook>`
 
-This applies to `tool_pre`, `tool_post`, `tool_env`, and the legacy `tool_hook`.
+This applies to `tool_pre`, `tool_post`, and `tool_env`.
 
 For SSH workspaces, hooks execute **on the remote machine**.
-
-**Priority:** `tool_pre`/`tool_post` take precedence over the legacy `tool_hook` when both exist.
 
 </Accordion>
 
@@ -172,24 +170,6 @@ Hooks must complete within 5 minutes or they're terminated. Long-running tools (
 | **Runs**       | Before tool              | After tool            | Sourced in bash shell   |
 | **Applies to** | All tools                | All tools             | `bash` tool only        |
 | **Use case**   | Block force-push         | Run ruff/eslint       | direnv, nvm, virtualenv |
-
-</Accordion>
-
-<Accordion title="Legacy: tool_hook">
-
-The original `tool_hook` mechanism uses a marker protocol where a single hook handles both pre and post logic:
-
-```bash
-#!/usr/bin/env bash
-# Pre-hook logic here
-
-echo "$MUX_EXEC"        # Signal: run the tool
-read -t 300 MUX_RESULT  # Read tool result from stdin
-
-# Post-hook logic here
-```
-
-This still works but `tool_pre` + `tool_post` are simpler—no protocol to learn. If both exist, `tool_pre`/`tool_post` take precedence.
 
 </Accordion>
 
