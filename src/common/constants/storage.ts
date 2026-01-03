@@ -147,8 +147,10 @@ export function getPinnedAgentIdKey(scopeId: string): string {
   return `pinnedAgentId:${scopeId}`;
 }
 /**
- * Get the localStorage key for the UI mode for a workspace
- * Format: "mode:{workspaceId}"
+ * LEGACY: UI mode key for a scope.
+ * Format: "mode:{scopeId}"
+ *
+ * Kept for downgrade compatibility only; new code should persist agentId:{scopeId}.
  */
 
 /**
@@ -406,6 +408,8 @@ const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string>
   getInputKey,
   getInputImagesKey,
   getAgentIdKey,
+  // LEGACY: UI mode key (kept in sync for downgrade compatibility)
+  (workspaceId: string) => `mode:${workspaceId}`,
   getPinnedAgentIdKey,
   getThinkingLevelKey,
   getAutoRetryKey,

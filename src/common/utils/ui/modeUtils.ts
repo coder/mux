@@ -1,5 +1,3 @@
-
-
 /**
  * Generate the system instruction for Plan Mode with file path context.
  *
@@ -59,5 +57,3 @@ export function getPlanFileHint(planFilePath: string, planExists: boolean): stri
 
   return `A plan file exists at: ${planFilePath}. If a previously developed plan is relevant to the current work, read it and follow it. Otherwise, ignore it.`;
 }
-
-

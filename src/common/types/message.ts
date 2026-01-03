@@ -85,7 +85,12 @@ export function buildContinueMessage(
  * Persisted ContinueMessage shape - what we read from storage/history.
  * May be missing fields if saved by older code versions.
  */
-export type PersistedContinueMessage = Partial<Omit<ContinueMessage, typeof ContinueMessageBrand>>;
+export type PersistedContinueMessage =
+  // Older versions stored `mode` instead of `agentId`.
+  // Keep `mode` here so rebuildContinueMessage can migrate existing history.
+  Partial<Omit<ContinueMessage, typeof ContinueMessageBrand>> & {
+    mode?: "exec" | "plan";
+  };
 
 /**
  * Rebuild a ContinueMessage from persisted data.
@@ -102,12 +107,20 @@ export function rebuildContinueMessage(
 ): ContinueMessage | undefined {
   if (!persisted) return undefined;
 
+  const persistedAgentId =
+    typeof persisted.agentId === "string" && persisted.agentId.trim().length > 0
+      ? persisted.agentId.trim()
+      : undefined;
+
+  const legacyAgentId =
+    persisted.mode === "plan" || persisted.mode === "exec" ? persisted.mode : undefined;
+
   return buildContinueMessage({
     text: persisted.text,
     imageParts: persisted.imageParts,
     reviews: persisted.reviews,
     model: persisted.model ?? defaults.model,
-    agentId: persisted.agentId ?? defaults.agentId,
+    agentId: persistedAgentId ?? legacyAgentId ?? defaults.agentId,
   });
 }
 

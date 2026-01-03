@@ -72,11 +72,7 @@ export const RecordingOverlay: React.FC<RecordingOverlayProps> = (props) => {
         className="text-xs font-medium"
         style={isRecording ? { color: props.agentColor } : undefined}
       >
-        {isRecording ? (
-          <RecordingHints />
-        ) : (
-          <span className="text-amber-500">{statusText}</span>
-        )}
+        {isRecording ? <RecordingHints /> : <span className="text-amber-500">{statusText}</span>}
       </span>
     </button>
   );

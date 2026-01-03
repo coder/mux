@@ -85,6 +85,21 @@ describe("rebuildContinueMessage", () => {
     expect(result?.agentId).toBe("plan");
   });
 
+  test("migrates legacy mode to agentId", () => {
+    const result = rebuildContinueMessage(
+      { text: "continue", mode: "plan" },
+      { model: "default-model", agentId: "exec" }
+    );
+    expect(result?.agentId).toBe("plan");
+  });
+
+  test("prefers persisted agentId over legacy mode", () => {
+    const result = rebuildContinueMessage(
+      { text: "continue", agentId: "custom-agent", mode: "plan" },
+      { model: "default-model", agentId: "exec" }
+    );
+    expect(result?.agentId).toBe("custom-agent");
+  });
   test("uses defaults when persisted values missing", () => {
     const result = rebuildContinueMessage(
       { text: "continue" },

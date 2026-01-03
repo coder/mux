@@ -46,7 +46,6 @@ import { TURNS_BETWEEN_ATTACHMENTS } from "@/common/constants/attachments";
 import { extractEditedFileDiffs } from "@/common/utils/messages/extractEditedFiles";
 import { isValidModelFormat } from "@/common/utils/ai/models";
 
-
 /**
  * Tracked file state for detecting external edits.
  * Uses timestamp-based polling with diff injection.
