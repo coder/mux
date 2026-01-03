@@ -76,6 +76,11 @@ name: My Agent # Display name in UI
 
 # Optional
 description: What this agent does # Shown in tooltips
+
+# Auto-include file context (workspace-root relative globs)
+include_files:
+  - docs/**/*.md
+  - src/**/*.ts
 base: exec # Inherit from another agent (exec, plan, or custom agent id)
 
 # UI settings

@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { IncludeFileGlobSchema } from "./agentSkill";
+
 export const AgentDefinitionScopeSchema = z.enum(["built-in", "project", "global"]);
 
 // Agent IDs come from filenames (<agentId>.md).
@@ -46,7 +48,7 @@ const AgentDefinitionAiDefaultsSchema = z
 
 const AgentDefinitionPromptSchema = z
   .object({
-    // When true, append this agent's body to the base agent's body (default: false = replace)
+    // When true, append this agent's body to the base agent's body (default: true); set false to replace.
     append: z.boolean().optional(),
   })
   .strip();
@@ -67,6 +69,12 @@ export const AgentDefinitionFrontmatterSchema = z
     name: z.string().min(1).max(128),
     description: z.string().min(1).max(1024).optional(),
 
+    /**
+     * Glob patterns for files to automatically include in context when this agent runs.
+     * Patterns are relative to the workspace root (where tools run).
+     * Example: ["docs/**", "src/**"]
+     */
+    include_files: z.array(IncludeFileGlobSchema).max(20).optional(),
     // Inheritance: reference a built-in or custom agent ID
     base: AgentIdSchema.optional(),
 

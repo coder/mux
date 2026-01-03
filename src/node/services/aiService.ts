@@ -30,6 +30,7 @@ import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import type { FileState, EditedFileAttachment } from "@/node/services/agentSession";
 import { log } from "./log";
+import { injectAgentIncludeFiles } from "./agentIncludeFiles";
 import { injectFileAtMentions } from "./fileAtMentions";
 import {
   transformModelMessages,
@@ -80,6 +81,7 @@ import { readPlanFile } from "@/node/utils/runtime/helpers";
 import {
   readAgentDefinition,
   resolveAgentBody,
+  resolveAgentIncludeFilesPatterns,
 } from "@/node/services/agentDefinitions/agentDefinitionsService";
 import { resolveToolPolicyForAgent } from "@/node/services/agentDefinitions/resolveToolPolicy";
 import { isPlanLikeInResolvedChain } from "@/common/utils/agentTools";
@@ -1294,9 +1296,34 @@ export class AIService extends EventEmitter {
         postCompactionAttachments
       );
 
+      // Inject agent include_files context as an in-memory synthetic user message.
+      // This keeps the system message stable (cache-friendly), while still giving the model
+      // immediate, structured file context.
+      let messagesWithAgentIncludeFiles = messagesWithPostCompaction;
+      try {
+        const includeFilePatterns = await resolveAgentIncludeFilesPatterns(
+          runtime,
+          agentDiscoveryPath,
+          agentDefinition.id
+        );
+
+        messagesWithAgentIncludeFiles = await injectAgentIncludeFiles(messagesWithPostCompaction, {
+          runtime,
+          workspacePath,
+          patterns: includeFilePatterns,
+          abortSignal,
+        });
+      } catch (error) {
+        log.warn("Failed to inject agent include_files; continuing without it", {
+          workspaceId,
+          agentId: agentDefinition.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+
       // Expand @file mentions (e.g. @src/foo.ts#L1-20) into an in-memory synthetic user message.
       // This keeps chat history clean while giving the model immediate file context.
-      const messagesWithFileAtMentions = await injectFileAtMentions(messagesWithPostCompaction, {
+      const messagesWithFileAtMentions = await injectFileAtMentions(messagesWithAgentIncludeFiles, {
         runtime,
         workspacePath,
         abortSignal,

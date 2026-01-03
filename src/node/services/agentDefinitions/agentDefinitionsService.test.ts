@@ -10,6 +10,7 @@ import {
   discoverAgentDefinitions,
   readAgentDefinition,
   resolveAgentBody,
+  resolveAgentIncludeFilesPatterns,
 } from "./agentDefinitionsService";
 
 async function writeAgent(root: string, id: string, name: string): Promise<void> {
@@ -228,5 +229,69 @@ Project body.
     });
     expect(skippedPkg.scope).toBe("global");
     expect(skippedPkg.frontmatter.name).toBe("Test Global");
+  });
+
+  test("resolveAgentIncludeFilesPatterns inherits by default, stops when prompt.append is false", async () => {
+    using tempDir = new DisposableTempDir("agent-include-files-patterns");
+    const agentsRoot = path.join(tempDir.path, ".mux", "agents");
+    await fs.mkdir(agentsRoot, { recursive: true });
+
+    await fs.writeFile(
+      path.join(agentsRoot, "base.md"),
+      `---
+name: Base
+include_files:
+  - "README.md"
+  - "src/*.ts"
+---
+Base instructions.
+`,
+      "utf-8"
+    );
+
+    await fs.writeFile(
+      path.join(agentsRoot, "child.md"),
+      `---
+name: Child
+base: base
+include_files:
+  - "src/*.ts"
+  - "docs/**/*.md"
+---
+Child instructions.
+`,
+      "utf-8"
+    );
+
+    await fs.writeFile(
+      path.join(agentsRoot, "replacer.md"),
+      `---
+name: Replacer
+base: base
+prompt:
+  append: false
+include_files:
+  - "only-child.txt"
+---
+Replaced body.
+`,
+      "utf-8"
+    );
+
+    const roots = { projectRoot: agentsRoot, globalRoot: agentsRoot };
+    const runtime = new LocalRuntime(tempDir.path);
+
+    const childPatterns = await resolveAgentIncludeFilesPatterns(runtime, tempDir.path, "child", {
+      roots,
+    });
+    expect(childPatterns).toEqual(["README.md", "src/*.ts", "docs/**/*.md"]);
+
+    const replacerPatterns = await resolveAgentIncludeFilesPatterns(
+      runtime,
+      tempDir.path,
+      "replacer",
+      { roots }
+    );
+    expect(replacerPatterns).toEqual(["only-child.txt"]);
   });
 });
