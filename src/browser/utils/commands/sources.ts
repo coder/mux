@@ -539,7 +539,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
       section: section.help,
       run: () => {
         try {
-          window.open("https://mux.coder.com/keybinds", "_blank");
+          window.open("https://mux.coder.com/config/keybinds", "_blank");
         } catch {
           /* ignore */
         }

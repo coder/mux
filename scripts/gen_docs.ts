@@ -7,8 +7,8 @@
  *   bun scripts/gen_docs.ts check   # check mode (verify docs are up-to-date)
  *
  * This script synchronizes:
- *   - docs/system-prompt.mdx: snippet from src/node/services/systemMessage.ts
- *   - docs/models.mdx: table from src/common/constants/knownModels.ts
+ *   - docs/agents/system-prompt.mdx: snippet from src/node/services/systemMessage.ts
+ *   - docs/config/models.mdx: table from src/common/constants/knownModels.ts
  */
 
 import * as fs from "fs";
@@ -116,7 +116,7 @@ function generateSystemPromptBlock(): string {
 
 async function syncSystemPrompt(): Promise<boolean> {
   return syncDoc({
-    docsFile: "system-prompt.mdx",
+    docsFile: "agents/system-prompt.mdx",
     sourceLabel: "src/node/services/systemMessage.ts",
     markerName: "SYSTEM_PROMPT_DOCS",
     generateBlock: generateSystemPromptBlock,
@@ -170,7 +170,7 @@ function generateKnownModelsTable(): string {
 
 async function syncKnownModels(): Promise<boolean> {
   return syncDoc({
-    docsFile: "models.mdx",
+    docsFile: "config/models.mdx",
     sourceLabel: "src/common/constants/knownModels.ts",
     markerName: "KNOWN_MODELS_TABLE",
     generateBlock: generateKnownModelsTable,
@@ -266,7 +266,7 @@ function generateBuiltinAgentsBlock(): string {
 
 async function syncBuiltinAgents(): Promise<boolean> {
   return syncDoc({
-    docsFile: "agents.mdx",
+    docsFile: "agents/index.mdx",
     sourceLabel: "src/node/builtinAgents/*.md",
     markerName: "BUILTIN_AGENTS",
     generateBlock: generateBuiltinAgentsBlock,
