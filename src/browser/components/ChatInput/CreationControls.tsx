@@ -110,7 +110,7 @@ function SectionPicker(props: SectionPickerProps) {
 
   return (
     <div
-      className="flex items-center gap-2.5 rounded-md border px-3 py-2 transition-colors"
+      className="inline-flex w-fit items-center gap-2.5 rounded-md border px-3 py-1.5 transition-colors"
       style={{
         borderColor: selectedSection ? sectionColor : "var(--color-border-medium)",
         borderLeftWidth: selectedSection ? "3px" : "1px",
