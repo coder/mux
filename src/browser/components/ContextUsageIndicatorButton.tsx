@@ -36,24 +36,16 @@ interface ContextUsageIndicatorButtonProps {
   idleCompaction?: IdleCompactionConfig;
 }
 
-/** Tick marks for percentage scale */
-const PercentTickMarks: React.FC = () => {
-  const ticks = [0, 25, 50, 75, 100];
-  return (
-    <div className="relative mt-0.5 h-3 w-full">
-      {ticks.map((pct) => (
-        <div
-          key={pct}
-          className="absolute flex flex-col items-center"
-          style={{ left: `${pct}%`, transform: "translateX(-50%)" }}
-        >
-          <div className="bg-border-medium h-1 w-px" />
-          <span className="text-muted text-[9px]">{pct}%</span>
-        </div>
-      ))}
-    </div>
-  );
-};
+/** Tick marks for percentage scale - inline labels only */
+const PercentTickMarks: React.FC = () => (
+  <div className="text-muted flex justify-between text-[9px]">
+    <span>0</span>
+    <span>25</span>
+    <span>50</span>
+    <span>75</span>
+    <span>100%</span>
+  </div>
+);
 
 /** Unified auto-compact settings panel */
 const AutoCompactSettings: React.FC<{
@@ -114,48 +106,51 @@ const AutoCompactSettings: React.FC<{
       {showUsageSlider && <PercentTickMarks />}
 
       {/* Auto-Compact Triggers section */}
-      <div className="border-separator-light space-y-2.5 border-t pt-3">
+      <div className="border-separator-light space-y-2 border-t pt-3">
         <div className="text-foreground text-[11px] font-medium">Auto-Compact Triggers</div>
 
         {/* Usage-based trigger */}
         {usageConfig && data.maxTokens && (
-          <div className="flex items-center justify-between">
-            <span className="text-muted text-[11px]">When usage reaches</span>
-            <span className="text-foreground text-[11px] font-medium">
-              {isUsageEnabled ? `${usageConfig.threshold}%` : "Off"}
-            </span>
+          <div className="bg-background-secondary rounded px-2 py-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-foreground text-[11px] font-medium">Usage-based</span>
+              <span className="text-muted text-[11px]">
+                {isUsageEnabled ? `at ${usageConfig.threshold}%` : "Off"}
+              </span>
+            </div>
+            <div className="text-muted mt-0.5 text-[10px]">Drag threshold on meter above</div>
           </div>
         )}
 
         {/* Idle-based trigger */}
         {idleConfig && (
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5">
-              <Hourglass className="text-muted h-3 w-3" />
-              <span className="text-muted text-[11px]">After idle for</span>
+          <div className="bg-background-secondary rounded px-2 py-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-foreground text-[11px] font-medium">Idle-based</span>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="number"
+                  min={1}
+                  value={idleInputValue}
+                  onChange={(e) => setIdleInputValue(e.target.value)}
+                  onBlur={handleIdleBlur}
+                  disabled={!isIdleEnabled}
+                  className={cn(
+                    "border-border-medium bg-background focus:border-accent h-5 w-10 rounded border px-1 text-center text-[11px] focus:outline-none",
+                    !isIdleEnabled && "opacity-50"
+                  )}
+                />
+                <span className={cn("text-[10px]", isIdleEnabled ? "text-muted" : "text-muted/50")}>
+                  hrs
+                </span>
+                <Switch
+                  checked={isIdleEnabled}
+                  onCheckedChange={handleIdleToggle}
+                  className="scale-75"
+                />
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <input
-                type="number"
-                min={1}
-                value={idleInputValue}
-                onChange={(e) => setIdleInputValue(e.target.value)}
-                onBlur={handleIdleBlur}
-                disabled={!isIdleEnabled}
-                className={cn(
-                  "border-border-medium bg-background-secondary focus:border-accent h-5 w-12 rounded border px-1.5 text-center text-[11px] focus:outline-none",
-                  !isIdleEnabled && "opacity-50"
-                )}
-              />
-              <span className={cn("text-[11px]", isIdleEnabled ? "text-foreground" : "text-muted")}>
-                hours
-              </span>
-              <Switch
-                checked={isIdleEnabled}
-                onCheckedChange={handleIdleToggle}
-                className="scale-75"
-              />
-            </div>
+            <div className="text-muted mt-0.5 text-[10px]">Compact after workspace inactivity</div>
           </div>
         )}
       </div>
