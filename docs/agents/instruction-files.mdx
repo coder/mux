@@ -25,12 +25,22 @@ If a base file is found, mux also appends `AGENTS.local.md` from the same direct
 
 ## Scoped instructions
 
-mux supports **scoped instructions** that activate only in specific contexts. You define them using special headings in your instruction files:
+mux supports **scoped instructions** that activate only in specific contexts. You define them using special headings:
 
-- `Agent: <agentId>` — Active only for a specific agent definition (e.g., plan, exec, explore).
-- `Mode: <mode>` — Active only in specific interaction modes (e.g., plan, exec).
 - `Model: <regex>` — Active only for specific models (e.g., GPT-4, Claude).
 - `Tool: <tool_name>` — Appended to the description of specific tools.
+
+These scoped headings work identically in both:
+
+1. **AGENTS.md files** (global `~/.mux/AGENTS.md` or workspace `<workspace>/AGENTS.md`)
+2. **Custom agent definitions** (the Markdown body of `.mux/agents/<name>.md` files)
+
+When searching for a matching section, mux checks sources in this order: agent definition → workspace AGENTS.md → global AGENTS.md. The first match wins.
+
+<Note>
+  Agent-specific and mode-specific scoped instructions (`Agent:` and `Mode:`) have been removed. Use
+  [custom agent definitions](/agents) instead to customize behavior per agent.
+</Note>
 
 ### General Rules
 
@@ -38,62 +48,6 @@ mux supports **scoped instructions** that activate only in specific contexts. Yo
 - **First Match Wins**: Only the _first_ matching section found is used. Overriding global defaults is as simple as defining the same section in your workspace.
 - **Isolation**: These sections are **stripped** from the general `<custom-instructions>` block. Their content is injected only where it belongs (e.g., into a specific tool's description or a special XML tag).
 - **Boundaries**: A section's content includes everything until the next heading of the same or higher level.
-
----
-
-### Mode Prompts
-
-Use mode-specific sections to optimize context and customize behavior for specific workflow stages. The active mode's content is injected via a `<mode>` tag.
-
-**Syntax**: `Mode: <mode>` (case-insensitive)
-
-**Example**:
-
-```markdown
-# General Instructions
-
-- Be concise
-
-## Mode: Plan
-
-When planning:
-
-- Focus on goals and trade-offs
-- Propose alternatives with pros/cons
-
-## Mode: Compact
-
-- Preserve key decisions
-- Be extremely concise
-```
-
-**Available modes**:
-
-- **exec** (default) — Normal operations.
-- **plan** — Active in Plan Mode.
-- **compact** — Used during `/compact` to guide history summarization.
-
-### Agent Prompts
-
-Use agent-specific sections to customize behavior for a single agent definition. The selected agent’s content is injected via an `<agent-...>` tag.
-
-**Syntax**: `Agent: <agentId>` (case-insensitive)
-
-**Example**:
-
-```markdown
-## Agent: review
-
-When reviewing:
-
-- Prefer short, high-signal comments
-- Call out risky changes and missing tests
-```
-
-Notes:
-
-- `agentId` comes from the agent definition filename (e.g., `.mux/agents/review.md` → `review`).
-- `Mode:` prompts still apply based on the selected agent’s base policy. Use `Mode:` for shared behavior across multiple agents; use `Agent:` for per-agent behavior.
 
 ---
 
@@ -153,6 +107,6 @@ Customize how the AI uses specific tools by appending instructions to their desc
   AGENTS.local.md    # Personal tweaks (gitignored)
 
 my-project/
-  AGENTS.md          # Project instructions (may include "Mode: Plan", etc.)
+  AGENTS.md          # Project instructions
   AGENTS.local.md    # Personal tweaks (gitignored)
 ```

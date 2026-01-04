@@ -77,32 +77,6 @@ function removeSectionsByHeading(markdown: string, headingMatcher: HeadingMatche
 }
 
 /**
- * Extract the content under a heading titled "Mode: <mode>" (case-insensitive).
- */
-
-/**
- * Extract the content under a heading titled "Agent: <agentId>" (case-insensitive).
- */
-export function extractAgentSection(markdown: string, agentId: string): string | null {
-  if (!markdown || !agentId) return null;
-
-  const expectedHeading = `agent: ${agentId}`.toLowerCase();
-  return extractSectionByHeading(
-    markdown,
-    (headingText) => headingText.toLowerCase() === expectedHeading
-  );
-}
-export function extractModeSection(markdown: string, mode: string): string | null {
-  if (!markdown || !mode) return null;
-
-  const expectedHeading = `mode: ${mode}`.toLowerCase();
-  return extractSectionByHeading(
-    markdown,
-    (headingText) => headingText.toLowerCase() === expectedHeading
-  );
-}
-
-/**
  * Extract the first section whose heading matches "Model: <regex>" and whose regex matches
  * the provided model identifier. Matching is case-insensitive by default unless the regex
  * heading explicitly specifies flags via /pattern/flags syntax.
@@ -161,11 +135,6 @@ export function stripScopedInstructionSections(markdown: string): string {
 
   return removeSectionsByHeading(markdown, (headingText) => {
     const normalized = headingText.trim().toLowerCase();
-    return (
-      normalized.startsWith("agent:") ||
-      normalized.startsWith("mode:") ||
-      normalized.startsWith("model:") ||
-      normalized.startsWith("tool:")
-    );
+    return normalized.startsWith("model:") || normalized.startsWith("tool:");
   });
 }

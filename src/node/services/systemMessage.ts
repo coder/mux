@@ -5,8 +5,6 @@ import {
   readInstructionSetFromRuntime,
 } from "@/node/utils/main/instructionFiles";
 import {
-  extractAgentSection,
-  extractModeSection,
   extractModelSection,
   extractToolSection,
   stripScopedInstructionSections,
@@ -180,30 +178,50 @@ function getSystemDirectory(): string {
 }
 
 /**
+ * Search instruction sources in priority order: agent → context → global.
+ * Returns the first non-null result from the extractor function.
+ */
+function searchInstructionSources<T>(
+  sources: { agent?: string | null; context?: string | null; global?: string | null },
+  extractor: (source: string) => T | null
+): T | null {
+  // Priority: agent definition → workspace/project AGENTS.md → global AGENTS.md
+  for (const src of [sources.agent, sources.context, sources.global]) {
+    if (src) {
+      const result = extractor(src);
+      if (result !== null) return result;
+    }
+  }
+  return null;
+}
+
+/**
  * Extract tool-specific instructions from instruction sources.
- * Searches context (workspace/project) first, then falls back to global instructions.
+ * Searches agent instructions first, then context (workspace/project), then global.
  *
  * @param globalInstructions Global instructions from ~/.mux/AGENTS.md
  * @param contextInstructions Context instructions from workspace/project AGENTS.md
  * @param modelString Active model identifier to determine available tools
+ * @param options.enableAgentReport Whether to include agent_report in available tools
+ * @param options.agentInstructions Optional agent definition body (searched first)
  * @returns Map of tool names to their additional instructions
  */
 export function extractToolInstructions(
   globalInstructions: string | null,
   contextInstructions: string | null,
   modelString: string,
-  options?: { enableAgentReport?: boolean }
+  options?: { enableAgentReport?: boolean; agentInstructions?: string }
 ): Record<string, string> {
   const availableTools = getAvailableTools(modelString, undefined, options);
   const toolInstructions: Record<string, string> = {};
+  const sources = {
+    agent: options?.agentInstructions,
+    context: contextInstructions,
+    global: globalInstructions,
+  };
 
   for (const toolName of availableTools) {
-    // Try context instructions first, then global
-    const content =
-      (contextInstructions && extractToolSection(contextInstructions, toolName)) ??
-      (globalInstructions && extractToolSection(globalInstructions, toolName)) ??
-      null;
-
+    const content = searchInstructionSources(sources, (src) => extractToolSection(src, toolName));
     if (content) {
       toolInstructions[toolName] = content;
     }
@@ -220,13 +238,15 @@ export function extractToolInstructions(
  * @param runtime - Runtime for reading workspace files (supports SSH)
  * @param workspacePath - Workspace directory path
  * @param modelString - Active model identifier to determine available tools
+ * @param agentInstructions - Optional agent definition body (searched first for tool sections)
  * @returns Map of tool names to their additional instructions
  */
 export async function readToolInstructions(
   metadata: WorkspaceMetadata,
   runtime: Runtime,
   workspacePath: string,
-  modelString: string
+  modelString: string,
+  agentInstructions?: string
 ): Promise<Record<string, string>> {
   const [globalInstructions, contextInstructions] = await readInstructionSources(
     metadata,
@@ -236,6 +256,7 @@ export async function readToolInstructions(
 
   return extractToolInstructions(globalInstructions, contextInstructions, modelString, {
     enableAgentReport: Boolean(metadata.parentWorkspaceId),
+    agentInstructions,
   });
 }
 
@@ -267,7 +288,7 @@ async function readInstructionSources(
  * Instruction layers:
  * 1. Global: ~/.mux/AGENTS.md (always included)
  * 2. Context: workspace/AGENTS.md OR project/AGENTS.md (workspace takes precedence)
- * 3. Mode: Extracts "Mode: <mode>" section from context then global (if mode provided)
+ * 3. Model: Extracts "Model: <regex>" section from context then global (if modelString provided)
  *
  * File search order: AGENTS.md → AGENT.md → CLAUDE.md
  * Local variants: AGENTS.local.md appended if found (for .gitignored personal preferences)
@@ -275,7 +296,6 @@ async function readInstructionSources(
  * @param metadata - Workspace metadata (contains projectPath)
  * @param runtime - Runtime for reading workspace files (supports SSH)
  * @param workspacePath - Workspace directory path
- * @param mode - Optional mode name (e.g., "plan", "exec")
  * @param additionalSystemInstructions - Optional instructions appended last
  * @param modelString - Active model identifier used for Model-specific sections
  * @param mcpServers - Optional MCP server configuration (name -> command)
@@ -285,12 +305,10 @@ export async function buildSystemMessage(
   metadata: WorkspaceMetadata,
   runtime: Runtime,
   workspacePath: string,
-  mode?: string,
   additionalSystemInstructions?: string,
   modelString?: string,
   mcpServers?: MCPServerMap,
   options?: {
-    agentId?: string;
     agentSystemPrompt?: string;
   }
 ): Promise<string> {
@@ -312,11 +330,6 @@ export async function buildSystemMessage(
   // Add agent skills context (if any)
   systemMessage += await buildAgentSkillsContext(runtime, workspacePath);
 
-  const agentPrompt = options?.agentSystemPrompt?.trim();
-  if (agentPrompt) {
-    systemMessage += `\n<agent-instructions>\n${agentPrompt}\n</agent-instructions>`;
-  }
-
   // Read instruction sets
   const [globalInstructions, contextInstructions] = await readInstructionSources(
     metadata,
@@ -324,12 +337,20 @@ export async function buildSystemMessage(
     workspacePath
   );
 
+  const agentPrompt = options?.agentSystemPrompt?.trim() ?? null;
+
   // Combine: global + context (workspace takes precedence over project) after stripping scoped sections
+  // Also strip scoped sections from agent prompt for consistency
   const sanitizeScopedInstructions = (input?: string | null): string | undefined => {
     if (!input) return undefined;
     const stripped = stripScopedInstructionSections(input);
     return stripped.trim().length > 0 ? stripped : undefined;
   };
+
+  const sanitizedAgentPrompt = sanitizeScopedInstructions(agentPrompt);
+  if (sanitizedAgentPrompt) {
+    systemMessage += `\n<agent-instructions>\n${sanitizedAgentPrompt}\n</agent-instructions>`;
+  }
 
   const customInstructionSources = [
     sanitizeScopedInstructions(globalInstructions),
@@ -337,48 +358,16 @@ export async function buildSystemMessage(
   ].filter((value): value is string => Boolean(value));
   const customInstructions = customInstructionSources.join("\n\n");
 
-  // Extract agent-specific section (context first, then global fallback)
-  const agentId = options?.agentId;
-  let agentContent: string | null = null;
-  if (agentId) {
-    agentContent =
-      (contextInstructions && extractAgentSection(contextInstructions, agentId)) ??
-      (globalInstructions && extractAgentSection(globalInstructions, agentId)) ??
-      null;
-  }
-
-  // Extract mode-specific section (context first, then global fallback)
-  let modeContent: string | null = null;
-  if (mode) {
-    modeContent =
-      (contextInstructions && extractModeSection(contextInstructions, mode)) ??
-      (globalInstructions && extractModeSection(globalInstructions, mode)) ??
-      null;
-  }
-
-  // Extract model-specific section based on active model identifier (context first)
-  let modelContent: string | null = null;
-  if (modelString) {
-    modelContent =
-      (contextInstructions && extractModelSection(contextInstructions, modelString)) ??
-      (globalInstructions && extractModelSection(globalInstructions, modelString)) ??
-      null;
-  }
+  // Extract model-specific section based on active model identifier
+  const modelContent = modelString
+    ? searchInstructionSources(
+        { agent: agentPrompt, context: contextInstructions, global: globalInstructions },
+        (src) => extractModelSection(src, modelString)
+      )
+    : null;
 
   if (customInstructions) {
     systemMessage += `\n<custom-instructions>\n${customInstructions}\n</custom-instructions>`;
-  }
-
-  const modeSection = buildTaggedSection(modeContent, mode, "mode");
-  if (agentId) {
-    const agentSection = buildTaggedSection(agentContent, `agent-${agentId}`, "agent");
-    if (agentSection) {
-      systemMessage += agentSection;
-    }
-  }
-
-  if (modeSection) {
-    systemMessage += modeSection;
   }
 
   if (modelContent && modelString) {
