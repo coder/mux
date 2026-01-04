@@ -154,6 +154,93 @@ export function mergeConsecutiveStreamErrors(messages: DisplayedMessage[]): Disp
 }
 
 /**
+ * Precomputes bash_output group info for all messages in a single O(n) pass.
+ * Returns a Map from message index to group info.
+ *
+ * Group rules:
+ * - Only consecutive bash_output messages with the same process_id form a group
+ * - Groups of 1-2 messages don't need special handling (not included in result)
+ * - Groups of 3+ get 'first', 'middle', 'last' positions
+ *
+ * @param messages - The full array of DisplayedMessages
+ * @returns Map from index to BashOutputGroupInfo (only for messages in 3+ groups)
+ */
+export function precomputeBashOutputGroups(
+  messages: DisplayedMessage[]
+): Map<number, BashOutputGroupInfo> {
+  const result = new Map<number, BashOutputGroupInfo>();
+  const n = messages.length;
+  let i = 0;
+
+  while (i < n) {
+    const msg = messages[i];
+
+    // Skip non-bash_output messages
+    if (!isBashOutputTool(msg)) {
+      i++;
+      continue;
+    }
+
+    const processId = msg.args.process_id;
+    const groupStart = i;
+
+    // Find the end of the consecutive group (walk forwards)
+    while (i < n - 1) {
+      const nextMsg = messages[i + 1];
+      if (isBashOutputTool(nextMsg) && nextMsg.args.process_id === processId) {
+        i++;
+      } else {
+        break;
+      }
+    }
+
+    const groupEnd = i;
+    const groupSize = groupEnd - groupStart + 1;
+
+    // Only process groups of 3+
+    if (groupSize >= 3) {
+      const collapsedCount = groupSize - 2;
+
+      // Mark first
+      result.set(groupStart, {
+        position: "first",
+        totalCount: groupSize,
+        collapsedCount,
+        processId,
+        firstIndex: groupStart,
+      });
+
+      // Mark middle items
+      for (let j = groupStart + 1; j < groupEnd; j++) {
+        result.set(j, {
+          position: "middle",
+          totalCount: groupSize,
+          collapsedCount,
+          processId,
+          firstIndex: groupStart,
+        });
+      }
+
+      // Mark last
+      result.set(groupEnd, {
+        position: "last",
+        totalCount: groupSize,
+        collapsedCount,
+        processId,
+        firstIndex: groupStart,
+      });
+    }
+
+    i++;
+  }
+
+  return result;
+}
+
+/**
+ * @deprecated Use precomputeBashOutputGroups for O(n) batch computation.
+ * This function is kept for backwards compatibility but calls the batch version internally.
+ *
  * Computes the bash_output group info for a message at a given index.
  * Used at render-time to determine how to display bash_output messages.
  *

@@ -9,6 +9,9 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const disableMermaid = process.env.VITE_DISABLE_MERMAID === "1";
 
+// Sourcemaps: off in production by default, opt-in via MUX_RENDERER_SOURCEMAPS=1
+const enableRendererSourcemaps = process.env.MUX_RENDERER_SOURCEMAPS === "1";
+
 // Vite server configuration (for dev-server remote access)
 const devServerHost = process.env.MUX_VITE_HOST ?? "127.0.0.1"; // Secure by default
 const devServerPort = Number(process.env.MUX_VITE_PORT ?? "5173");
@@ -51,10 +54,12 @@ export default defineConfig(({ mode }) => ({
   },
   base: "./",
   build: {
-    outDir: "dist",
+    // Renderer output goes to dist/renderer so we can safely clean it without touching main/preload
+    outDir: "dist/renderer",
     assetsDir: ".",
-    emptyOutDir: false,
-    sourcemap: true,
+    emptyOutDir: true,
+    // Sourcemaps: always enabled in dev, opt-in in production via MUX_RENDERER_SOURCEMAPS=1
+    sourcemap: mode === "development" || enableRendererSourcemaps,
     minify: "esbuild",
     rollupOptions: {
       input: {
@@ -73,6 +78,13 @@ export default defineConfig(({ mode }) => ({
           }
           if (normalizedId.includes("node_modules/ai-tokenizer/")) {
             return "tokenizer-base";
+          }
+          // Split large deps into their own chunks for on-demand loading
+          if (normalizedId.includes("node_modules/mermaid/")) {
+            return "mermaid";
+          }
+          if (normalizedId.includes("node_modules/ghostty-web/")) {
+            return "ghostty-web";
           }
           return undefined;
         },

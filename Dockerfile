@@ -91,11 +91,9 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy bundled server and frontend assets
-# Vite outputs JS/CSS/HTML directly to dist/ (assetsDir: ".")
+# Vite outputs to dist/renderer/ (assetsDir: ".")
 COPY --from=builder /app/dist/server-bundle.js ./dist/
-COPY --from=builder /app/dist/*.html ./dist/
-COPY --from=builder /app/dist/*.js ./dist/
-COPY --from=builder /app/dist/*.css ./dist/
+COPY --from=builder /app/dist/renderer ./dist/renderer
 COPY --from=builder /app/dist/static ./dist/static
 
 # Copy only native modules needed at runtime (node-pty for terminal support)

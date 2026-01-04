@@ -82,8 +82,8 @@ export class TerminalWindowManager {
       );
       terminalWindow.webContents.openDevTools();
     } else {
-      // Production mode (or E2E dist mode) - load from built files
-      await terminalWindow.loadFile(path.join(__dirname, "../terminal.html"), {
+      // Production mode (or E2E dist mode) - load from built files in dist/renderer/
+      await terminalWindow.loadFile(path.join(__dirname, "../renderer/terminal.html"), {
         query: { workspaceId },
       });
     }

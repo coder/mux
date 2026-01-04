@@ -26,7 +26,7 @@ const BASE_DEV_SERVER_PORT = Number(process.env.MUX_E2E_DEVSERVER_PORT_BASE ?? "
 const shouldLoadDist = process.env.MUX_E2E_LOAD_DIST === "1";
 
 const REQUIRED_DIST_FILES = [
-  path.join(appRoot, "dist", "index.html"),
+  path.join(appRoot, "dist", "renderer", "index.html"),
   path.join(appRoot, "dist", "cli", "index.js"),
   path.join(appRoot, "dist", "desktop", "main.js"),
   path.join(appRoot, "dist", "preload.js"),

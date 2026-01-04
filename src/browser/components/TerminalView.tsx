@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState } from "react";
-import { init, Terminal, FitAddon } from "ghostty-web";
+import type { Terminal as GhosttyTerminal, FitAddon as GhosttyFitAddon } from "ghostty-web";
 import { useTerminalSession } from "@/browser/hooks/useTerminalSession";
 import { useAPI } from "@/browser/contexts/API";
 
@@ -11,8 +11,8 @@ interface TerminalViewProps {
 
 export function TerminalView({ workspaceId, sessionId, visible }: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const termRef = useRef<Terminal | null>(null);
-  const fitAddonRef = useRef<FitAddon | null>(null);
+  const termRef = useRef<GhosttyTerminal | null>(null);
+  const fitAddonRef = useRef<GhosttyFitAddon | null>(null);
   const [terminalError, setTerminalError] = useState<string | null>(null);
   const [terminalReady, setTerminalReady] = useState(false);
   const [terminalSize, setTerminalSize] = useState<{ cols: number; rows: number } | null>(null);
@@ -74,19 +74,22 @@ export function TerminalView({ workspaceId, sessionId, visible }: TerminalViewPr
       return;
     }
 
-    let terminal: Terminal | null = null;
+    let terminal: GhosttyTerminal | null = null;
 
     const initTerminal = async () => {
       try {
+        // Dynamically load ghostty-web (large WASM module - keep out of initial bundle)
+        const ghostty = await import("ghostty-web");
+
         // Initialize ghostty-web WASM module (idempotent, safe to call multiple times)
-        await init();
+        await ghostty.init();
 
         // Resolve CSS variables for xterm.js (canvas rendering doesn't support CSS vars)
         const styles = getComputedStyle(document.documentElement);
         const terminalBg = styles.getPropertyValue("--color-terminal-bg").trim() || "#1e1e1e";
         const terminalFg = styles.getPropertyValue("--color-terminal-fg").trim() || "#d4d4d4";
 
-        terminal = new Terminal({
+        terminal = new ghostty.Terminal({
           fontSize: 14,
           fontFamily: "JetBrains Mono, Menlo, Monaco, monospace",
           cursorBlink: true,
@@ -96,7 +99,7 @@ export function TerminalView({ workspaceId, sessionId, visible }: TerminalViewPr
           },
         });
 
-        const fitAddon = new FitAddon();
+        const fitAddon = new ghostty.FitAddon();
         terminal.loadAddon(fitAddon);
 
         terminal.open(containerRef.current!);
