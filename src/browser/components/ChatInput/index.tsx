@@ -24,6 +24,7 @@ import {
 } from "@/browser/hooks/usePersistedState";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
+import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useMode } from "@/browser/contexts/ModeContext";
 import { useAgent } from "@/browser/contexts/AgentContext";
 import { ThinkingSliderComponent } from "../ThinkingSlider";
@@ -498,6 +499,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const openModelSelector = useCallback(() => {
     modelSelectorRef.current?.open();
   }, []);
+  // Section selection state for creation variant (must be before useCreationWorkspace)
+  const { projects } = useProjectContext();
+  const [selectedSectionId, setSelectedSectionId] = useState<string | null>(
+    variant === "creation" ? (props.pendingSectionId ?? null) : null
+  );
+  const creationSections =
+    variant === "creation" ? (projects.get(props.projectPath)?.sections ?? []) : [];
+
   // Creation-specific state (hook always called, but only used when variant === "creation")
   // This avoids conditional hook calls which violate React rules
   const creationState = useCreationWorkspace(
@@ -506,7 +515,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           projectPath: props.projectPath,
           onWorkspaceCreated: props.onWorkspaceCreated,
           message: input,
-          sectionId: props.pendingSectionId,
+          sectionId: selectedSectionId,
         }
       : {
           // Dummy values for workspace variant (never used)
@@ -1939,6 +1948,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
               projectName={props.projectName}
               nameState={creationState.nameState}
               isNonGitRepo={creationState.branchesLoaded && creationState.branches.length === 0}
+              sections={creationSections}
+              selectedSectionId={selectedSectionId}
+              onSectionChange={setSelectedSectionId}
             />
           )}
 

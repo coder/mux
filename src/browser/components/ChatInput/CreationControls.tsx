@@ -7,6 +7,8 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { SSHIcon, WorktreeIcon, LocalIcon } from "../icons/RuntimeIcons";
 import { DocsLink } from "../DocsLink";
 import type { WorkspaceNameState } from "@/browser/hooks/useWorkspaceName";
+import type { SectionConfig } from "@/common/types/project";
+import { DEFAULT_SECTION_COLOR } from "@/common/constants/ui";
 
 interface CreationControlsProps {
   branches: string[];
@@ -27,6 +29,12 @@ interface CreationControlsProps {
   nameState: WorkspaceNameState;
   /** Whether this is a non-git repository (for disabling worktree/SSH) */
   isNonGitRepo: boolean;
+  /** Available sections for this project */
+  sections?: SectionConfig[];
+  /** Currently selected section ID */
+  selectedSectionId?: string | null;
+  /** Callback when section selection changes */
+  onSectionChange?: (sectionId: string | null) => void;
 }
 
 /** Runtime type button group with icons and colors */
@@ -83,6 +91,62 @@ const RUNTIME_OPTIONS: Array<{
       "bg-transparent text-muted border-transparent hover:border-[var(--color-runtime-ssh)]/40",
   },
 ];
+
+/** Aesthetic section picker with color accent */
+interface SectionPickerProps {
+  sections: SectionConfig[];
+  selectedSectionId: string | null;
+  onSectionChange: (sectionId: string | null) => void;
+  disabled?: boolean;
+}
+
+function SectionPicker(props: SectionPickerProps) {
+  const { sections, selectedSectionId, onSectionChange, disabled } = props;
+
+  const selectedSection = selectedSectionId
+    ? sections.find((s) => s.id === selectedSectionId)
+    : null;
+  const sectionColor = selectedSection?.color || DEFAULT_SECTION_COLOR;
+
+  return (
+    <div
+      className="flex items-center gap-2.5 rounded-md border px-3 py-2 transition-colors"
+      style={{
+        borderColor: selectedSection ? sectionColor : "var(--color-border-medium)",
+        borderLeftWidth: selectedSection ? "3px" : "1px",
+        backgroundColor: selectedSection ? `${sectionColor}08` : "transparent",
+      }}
+      data-testid="section-selector"
+      data-selected-section={selectedSectionId ?? ""}
+    >
+      {/* Color indicator dot */}
+      <div
+        className="size-2.5 shrink-0 rounded-full transition-colors"
+        style={{
+          backgroundColor: selectedSection ? sectionColor : "var(--color-muted)",
+          opacity: selectedSection ? 1 : 0.4,
+        }}
+      />
+      <label className="text-muted-foreground shrink-0 text-xs">Section</label>
+      <select
+        value={selectedSectionId ?? ""}
+        onChange={(e) => onSectionChange(e.target.value || null)}
+        disabled={disabled}
+        className={cn(
+          "bg-transparent text-sm font-medium focus:outline-none disabled:opacity-50 cursor-pointer",
+          selectedSection ? "text-foreground" : "text-muted"
+        )}
+      >
+        <option value="">None</option>
+        {sections.map((section) => (
+          <option key={section.id} value={section.id}>
+            {section.name}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
 
 function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
   const disabledModes = props.disabledModes ?? [];
@@ -255,6 +319,16 @@ export function CreationControls(props: CreationControlsProps) {
         {/* Error display */}
         {nameState.error && <span className="text-xs text-red-500">{nameState.error}</span>}
       </div>
+
+      {/* Section selector - only shown when project has sections */}
+      {props.sections && props.sections.length > 0 && (
+        <SectionPicker
+          sections={props.sections}
+          selectedSectionId={props.selectedSectionId ?? null}
+          onSectionChange={props.onSectionChange ?? (() => {})}
+          disabled={props.disabled}
+        />
+      )}
 
       {/* Runtime type - button group */}
       <div className="flex flex-col gap-1.5" data-component="RuntimeTypeGroup">
