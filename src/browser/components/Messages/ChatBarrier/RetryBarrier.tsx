@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useAPI } from "@/browser/contexts/API";
 import { buildSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import { usePersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
@@ -59,6 +59,13 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = ({ workspaceId, classNa
 
   const { api } = useAPI();
   const [isRetryingWithCompaction, setIsRetryingWithCompaction] = useState(false);
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
   const [providersConfig, setProvidersConfig] = useState<ProvidersConfigMap | null>(null);
 
   const lastMessage = workspaceState
@@ -219,7 +226,9 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = ({ workspaceId, classNa
       return;
     }
 
-    setIsRetryingWithCompaction(true);
+    if (isMountedRef.current) {
+      setIsRetryingWithCompaction(true);
+    }
     try {
       // Read fresh values at click-time (workspace might have switched models).
       const sendMessageOptions = buildSendMessageOptions(workspaceId);
@@ -303,7 +312,9 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = ({ workspaceId, classNa
       console.error("Failed to retry with compaction", error);
       insertIntoChatInput(suggestedCommandLine + "\n");
     } finally {
-      setIsRetryingWithCompaction(false);
+      if (isMountedRef.current) {
+        setIsRetryingWithCompaction(false);
+      }
     }
   }
 
