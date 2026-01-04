@@ -24,6 +24,33 @@ describe("TOOL_DEFINITIONS", () => {
     );
   });
 
+  it("accepts ask_user_question headers longer than 12 characters", () => {
+    const parsed = TOOL_DEFINITIONS.ask_user_question.schema.safeParse({
+      questions: [
+        {
+          question: "How should docs be formatted?",
+          header: "Documentation",
+          options: [
+            { label: "Inline", description: "Explain in code comments" },
+            { label: "Sections", description: "Separate markdown sections" },
+          ],
+          multiSelect: false,
+        },
+        {
+          question: "Should we show error handling?",
+          header: "Error Handling",
+          options: [
+            { label: "Minimal", description: "Let errors bubble" },
+            { label: "Basic", description: "Catch common errors" },
+          ],
+          multiSelect: false,
+        },
+      ],
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
   it("rejects task(kind=bash) tool calls (bash is a separate tool)", () => {
     const parsed = TOOL_DEFINITIONS.task.schema.safeParse({
       // Legacy shape; should not validate against the current task schema.
