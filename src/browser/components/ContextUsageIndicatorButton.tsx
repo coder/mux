@@ -161,6 +161,11 @@ const AutoCompactSettings: React.FC<{
           Unknown model limits - showing relative usage only
         </div>
       )}
+
+      {/* Persistence note */}
+      <div className="text-muted border-separator-light border-t pt-2 text-[10px]">
+        Usage threshold saved per model{idleConfig && "; idle timer saved per project"}
+      </div>
     </div>
   );
 };
