@@ -14,6 +14,7 @@ import {
   FILE_SUGGESTION_KEYS,
 } from "../CommandSuggestions";
 import type { Toast } from "../ChatInputToast";
+import { ConnectionStatusToast } from "../ConnectionStatusToast";
 import { ChatInputToast } from "../ChatInputToast";
 import { createCommandToast, createErrorToast } from "../ChatInputToasts";
 import { parseCommand } from "@/browser/utils/slashCommands/parser";
@@ -1833,6 +1834,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     return `Type a message... (${hints.join(", ")})`;
   })();
 
+  const activeToast = toast ?? (variant === "creation" ? creationState.toast : null);
+
   // No wrapper needed - parent controls layout for both variants
   const Wrapper = React.Fragment;
   const wrapperProps = {};
@@ -1863,8 +1866,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       >
         <div className={cn("w-full", variant !== "creation" && "mx-auto max-w-4xl")}>
           {/* Toast - show shared toast (slash commands) or variant-specific toast */}
+          {!activeToast && <ConnectionStatusToast />}
           <ChatInputToast
-            toast={toast ?? (variant === "creation" ? creationState.toast : null)}
+            toast={activeToast}
             onDismiss={() => {
               handleToastDismiss();
               if (variant === "creation") {
