@@ -24,6 +24,7 @@ const ContextUsageBarComponent: React.FC<ContextUsageBarProps> = ({
   const percentageDisplay = data.maxTokens ? ` (${data.totalPercentage.toFixed(1)}%)` : "";
 
   const showWarning = !data.maxTokens;
+  const showThresholdSlider = autoCompaction && data.maxTokens;
 
   return (
     <div data-testid={testId} className="relative flex flex-col gap-1">
@@ -42,7 +43,7 @@ const ContextUsageBarComponent: React.FC<ContextUsageBarProps> = ({
 
       <div className="relative w-full overflow-hidden py-2">
         <TokenMeter segments={data.segments} orientation="horizontal" />
-        {autoCompaction && data.maxTokens && <HorizontalThresholdSlider config={autoCompaction} />}
+        {showThresholdSlider && <HorizontalThresholdSlider config={autoCompaction} />}
       </div>
 
       {showWarning && (
