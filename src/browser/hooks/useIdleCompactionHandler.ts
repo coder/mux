@@ -10,6 +10,9 @@
  * Status display is handled data-driven: the compaction request message includes
  * displayStatus metadata, which the aggregator reads to set sidebar status.
  * Status is cleared when the summary message with compacted: "idle" arrives.
+ *
+ * SERIALIZATION: Only one idle compaction runs at a time to avoid thundering herd
+ * when the hourly check finds multiple eligible workspaces simultaneously.
  */
 
 import { useEffect, useRef } from "react";
@@ -26,15 +29,62 @@ export interface IdleCompactionHandlerParams {
 /**
  * Hook to automatically trigger idle compaction when the backend signals it's needed.
  * Should be called at a high level (e.g., App or AIView) to handle all workspaces.
+ *
+ * Compactions are serialized: only one runs at a time, with others queued.
  */
 export function useIdleCompactionHandler(params: IdleCompactionHandlerParams): void {
   const { api } = params;
 
   // Track which workspaces we've triggered compaction for (to prevent duplicates)
   const triggeredWorkspacesRef = useRef(new Set<string>());
+  // Queue of workspaces waiting for compaction (serialization)
+  const queueRef = useRef<string[]>([]);
+  // Whether a compaction is currently in progress
+  const isRunningRef = useRef(false);
 
   useEffect(() => {
     if (!api) return;
+
+    const processNextInQueue = () => {
+      // If already running or queue is empty, nothing to do
+      if (isRunningRef.current || queueRef.current.length === 0) {
+        return;
+      }
+
+      const workspaceId = queueRef.current.shift()!;
+      isRunningRef.current = true;
+
+      // Use buildSendMessageOptions to get correct model, gateway, thinking level, etc.
+      const sendMessageOptions = buildSendMessageOptions(workspaceId);
+
+      const cleanup = () => {
+        // Always clear from triggered set after completion (success, failure, or rejection).
+        // This allows the workspace to be re-triggered on subsequent hourly checks
+        // if it becomes idle again. Backend eligibility checks (already_compacted,
+        // currently_streaming) provide authoritative deduplication.
+        triggeredWorkspacesRef.current.delete(workspaceId);
+        isRunningRef.current = false;
+        // Process next queued workspace
+        processNextInQueue();
+      };
+
+      // Status is handled data-driven via displayStatus in the message metadata
+      executeCompaction({
+        api,
+        workspaceId,
+        sendMessageOptions,
+        source: "idle-compaction",
+      })
+        .then((result) => {
+          if (!result.success) {
+            console.error("Idle compaction failed:", result.error);
+          }
+        })
+        .catch((error) => {
+          console.error("Idle compaction threw:", error);
+        })
+        .finally(cleanup);
+    };
 
     const handleIdleCompactionNeeded = (workspaceId: string) => {
       // Skip if already triggered for this workspace
@@ -43,26 +93,10 @@ export function useIdleCompactionHandler(params: IdleCompactionHandlerParams): v
       }
 
       triggeredWorkspacesRef.current.add(workspaceId);
+      queueRef.current.push(workspaceId);
 
-      // Use buildSendMessageOptions to get correct model, gateway, thinking level, etc.
-      const sendMessageOptions = buildSendMessageOptions(workspaceId);
-
-      // Status is handled data-driven via displayStatus in the message metadata
-      void executeCompaction({
-        api,
-        workspaceId,
-        sendMessageOptions,
-        source: "idle-compaction",
-      }).then((result) => {
-        if (!result.success) {
-          console.error("Idle compaction failed:", result.error);
-        }
-        // Always clear from triggered set after completion (success or failure).
-        // This allows the workspace to be re-triggered on subsequent hourly checks
-        // if it becomes idle again. Backend eligibility checks (already_compacted,
-        // currently_streaming) provide authoritative deduplication.
-        triggeredWorkspacesRef.current.delete(workspaceId);
-      });
+      // Try to process (will only run if nothing is in progress)
+      processNextInQueue();
     };
 
     const unsubscribe = workspaceStore.onIdleCompactionNeeded(handleIdleCompactionNeeded);

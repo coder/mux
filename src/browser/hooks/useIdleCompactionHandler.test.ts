@@ -163,14 +163,37 @@ describe("useIdleCompactionHandler", () => {
     await Promise.resolve();
   });
 
-  test("allows different workspaces to compact simultaneously", async () => {
+  test("serializes compactions - only one runs at a time", async () => {
+    // Make executeCompaction hang until we resolve it
+    let resolveFirst:
+      | ((val: { success: true } | { success: false; error: string }) => void)
+      | null = null;
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
+    executeCompactionResolver = () => {};
+
     renderHook(() => useIdleCompactionHandler({ api: mockApi as never }));
 
+    // Trigger two events for different workspaces
     capturedCallback!("workspace-1");
     capturedCallback!("workspace-2");
     await Promise.resolve();
 
+    // Only the first should have started (serialization)
+    expect(executeCompactionCalls).toHaveLength(1);
+    expect(executeCompactionCalls[0]?.workspaceId).toBe("workspace-1");
+
+    // Capture the resolver for the first call, then resolve it
+    resolveFirst = executeCompactionResolver;
+    resolveFirst?.({ success: true });
+    // Extra ticks for .then(), .catch(), .finally() chain
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // Now the second should start
     expect(executeCompactionCalls).toHaveLength(2);
+    expect(executeCompactionCalls[1]?.workspaceId).toBe("workspace-2");
   });
 
   test("clears workspace from triggered set after success", async () => {
@@ -178,8 +201,11 @@ describe("useIdleCompactionHandler", () => {
 
     // First trigger
     capturedCallback!("workspace-123");
+    // Extra ticks for .then(), .catch(), .finally() chain
     await Promise.resolve();
-    await Promise.resolve(); // Extra tick for .then()
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
 
     expect(executeCompactionCalls).toHaveLength(1);
 
@@ -202,8 +228,11 @@ describe("useIdleCompactionHandler", () => {
 
     // First trigger (will fail)
     capturedCallback!("workspace-123");
+    // Extra ticks for .then(), .catch(), .finally() chain
     await Promise.resolve();
-    await Promise.resolve(); // Extra tick for .then()
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
 
     expect(executeCompactionCalls).toHaveLength(1);
 
