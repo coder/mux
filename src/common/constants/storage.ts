@@ -174,13 +174,15 @@ export function getTrunkBranchKey(projectPath: string): string {
 }
 
 /**
- * Get the localStorage key for last SSH host preference for a project
- * Stores the last entered SSH host separately from runtime mode
- * so it persists when switching between runtime modes
- * Format: "lastSshHost:{projectPath}"
+ * Get the localStorage key for the last runtime config used per provider for a project.
+ *
+ * Value shape is a provider-keyed object (e.g. { ssh: { host }, docker: { image } }) so we can
+ * add new options without adding more storage keys.
+ *
+ * Format: "lastRuntimeConfig:{projectPath}"
  */
-export function getLastSshHostKey(projectPath: string): string {
-  return `lastSshHost:${projectPath}`;
+export function getLastRuntimeConfigKey(projectPath: string): string {
+  return `lastRuntimeConfig:${projectPath}`;
 }
 
 /**

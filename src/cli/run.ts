@@ -53,18 +53,22 @@ function parseRuntimeConfig(value: string | undefined, srcBaseDir: string): Runt
     return { type: "local" };
   }
 
-  const { mode, host } = parseRuntimeModeAndHost(value);
+  const parsed = parseRuntimeModeAndHost(value);
+  if (!parsed) {
+    throw new Error(
+      `Invalid runtime: '${value}'. Use 'local', 'worktree', 'ssh <host>', or 'docker <image>'`
+    );
+  }
 
-  switch (mode) {
+  switch (parsed.mode) {
     case RUNTIME_MODE.LOCAL:
       return { type: "local" };
     case RUNTIME_MODE.WORKTREE:
       return { type: "worktree", srcBaseDir };
     case RUNTIME_MODE.SSH:
-      if (!host.trim()) {
-        throw new Error("SSH runtime requires a host (e.g., --runtime 'ssh user@host')");
-      }
-      return { type: "ssh", host: host.trim(), srcBaseDir };
+      return { type: "ssh", host: parsed.host, srcBaseDir };
+    case RUNTIME_MODE.DOCKER:
+      return { type: "docker", image: parsed.image };
     default:
       return { type: "local" };
   }

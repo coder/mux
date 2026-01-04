@@ -15,7 +15,7 @@
  * srcBaseDir (base directory for all workspaces):
  *   - Where mux stores ALL workspace directories
  *   - Local: ~/.mux/src (tilde expanded to full path by LocalRuntime)
- *   - SSH: /home/user/workspace (must be absolute path, no tilde allowed)
+ *   - SSH: /home/user/workspace (tilde paths are allowed and are resolved before use)
  *
  * Workspace Path Computation:
  *   {srcBaseDir}/{projectName}/{workspaceName}
@@ -416,6 +416,11 @@ export interface Runtime {
    */
   tempDir(): Promise<string>;
 }
+
+/**
+ * Result of checking if a runtime type is available for a project.
+ */
+export type RuntimeAvailability = { available: true } | { available: false; reason: string };
 
 /**
  * Error thrown by runtime implementations

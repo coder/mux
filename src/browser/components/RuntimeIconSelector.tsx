@@ -1,7 +1,7 @@
 import React from "react";
 import { cn } from "@/common/lib/utils";
 import { RUNTIME_MODE, type RuntimeMode } from "@/common/types/runtime";
-import { SSHIcon, WorktreeIcon, LocalIcon } from "./icons/RuntimeIcons";
+import { SSHIcon, WorktreeIcon, LocalIcon, DockerIcon } from "./icons/RuntimeIcons";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 
 interface RuntimeIconSelectorProps {
@@ -36,6 +36,11 @@ const RUNTIME_STYLES = {
     active:
       "bg-[var(--color-runtime-local)]/30 text-foreground border-[var(--color-runtime-local)]/60",
   },
+  docker: {
+    idle: "bg-transparent text-muted border-[var(--color-runtime-docker)]/30 hover:border-[var(--color-runtime-docker)]/50",
+    active:
+      "bg-[var(--color-runtime-docker)]/20 text-[var(--color-runtime-docker-text)] border-[var(--color-runtime-docker)]/60",
+  },
 } as const;
 
 const RUNTIME_INFO: Record<RuntimeMode, { label: string; description: string }> = {
@@ -50,6 +55,10 @@ const RUNTIME_INFO: Record<RuntimeMode, { label: string; description: string }> 
   ssh: {
     label: "SSH",
     description: "Remote clone on SSH host",
+  },
+  docker: {
+    label: "Docker",
+    description: "Isolated container per workspace",
   },
 };
 
@@ -74,7 +83,9 @@ function RuntimeIconButton(props: RuntimeIconButtonProps) {
       ? SSHIcon
       : props.mode === RUNTIME_MODE.WORKTREE
         ? WorktreeIcon
-        : LocalIcon;
+        : props.mode === RUNTIME_MODE.DOCKER
+          ? DockerIcon
+          : LocalIcon;
 
   return (
     <Tooltip>
@@ -127,7 +138,12 @@ function RuntimeIconButton(props: RuntimeIconButtonProps) {
  * Each tooltip has a "Default for project" checkbox to persist the preference.
  */
 export function RuntimeIconSelector(props: RuntimeIconSelectorProps) {
-  const modes: RuntimeMode[] = [RUNTIME_MODE.LOCAL, RUNTIME_MODE.WORKTREE, RUNTIME_MODE.SSH];
+  const modes: RuntimeMode[] = [
+    RUNTIME_MODE.LOCAL,
+    RUNTIME_MODE.WORKTREE,
+    RUNTIME_MODE.SSH,
+    RUNTIME_MODE.DOCKER,
+  ];
   const disabledModes = props.disabledModes ?? [];
 
   return (
