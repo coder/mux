@@ -860,6 +860,100 @@ describeIntegration("Runtime integration tests", () => {
       });
     });
 
+    describe("forkWorkspace", () => {
+      test.concurrent("forks from the source workspace's current branch", async () => {
+        const runtime = createSSHRuntime();
+        const projectName = `fork-test-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+        const projectPath = `/some/path/${projectName}`;
+
+        const sourceWorkspaceName = "source";
+        const newWorkspaceName = "forked";
+
+        const sourceWorkspacePath = `${srcBaseDir}/${projectName}/${sourceWorkspaceName}`;
+        const newWorkspacePath = `${srcBaseDir}/${projectName}/${newWorkspaceName}`;
+
+        // Create a source workspace repo with a non-trunk branch checked out.
+        await execBuffered(
+          runtime,
+          [
+            `mkdir -p "${sourceWorkspacePath}"`,
+            `cd "${sourceWorkspacePath}"`,
+            `git init`,
+            `git config user.email "test@example.com"`,
+            `git config user.name "Test"`,
+            `echo "root" > root.txt`,
+            `git add root.txt`,
+            `git commit -m "root"`,
+            `git checkout -b feature`,
+            `echo "feature" > feature.txt`,
+            `git add feature.txt`,
+            `git commit -m "feature"`,
+          ].join(" && "),
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+
+        // Sanity check the source branch.
+        const sourceBranchCheck = await execBuffered(
+          runtime,
+          `git -C "${sourceWorkspacePath}" branch --show-current`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+        expect(sourceBranchCheck.stdout.trim()).toBe("feature");
+
+        const initLogger = {
+          logStep(_message: string) {},
+          logStdout(_line: string) {},
+          logStderr(_line: string) {},
+          logComplete(_exitCode: number) {},
+        };
+
+        const forkResult = await runtime.forkWorkspace({
+          projectPath,
+          sourceWorkspaceName,
+          newWorkspaceName,
+          initLogger,
+        });
+
+        expect(forkResult.success).toBe(true);
+        if (!forkResult.success) return;
+
+        expect(forkResult.workspacePath).toBe(newWorkspacePath);
+        expect(forkResult.sourceBranch).toBe("feature");
+
+        const newBranchCheck = await execBuffered(
+          runtime,
+          `git -C "${newWorkspacePath}" branch --show-current`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+        expect(newBranchCheck.stdout.trim()).toBe(newWorkspaceName);
+
+        // Verify the new workspace is based on the source branch commit.
+        const fileCheck = await execBuffered(
+          runtime,
+          `test -f "${newWorkspacePath}/feature.txt" && echo "exists" || echo "missing"`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+        expect(fileCheck.stdout.trim()).toBe("exists");
+
+        // initWorkspace should be able to run on a forked repo without trying to re-sync.
+        // (The absence of a .mux/init hook means it will complete immediately.)
+        const initResult = await runtime.initWorkspace({
+          projectPath,
+          branchName: newWorkspaceName,
+          trunkBranch: "feature",
+          workspacePath: newWorkspacePath,
+          initLogger,
+        });
+        expect(initResult.success).toBe(true);
+
+        // Cleanup
+        await execBuffered(runtime, `rm -rf "${srcBaseDir}/${projectName}"`, {
+          cwd: "/home/testuser",
+          timeout: 30,
+        });
+      });
+    });
+
     describe("deleteWorkspace", () => {
       test.concurrent("successfully deletes directory", async () => {
         const runtime = createSSHRuntime();

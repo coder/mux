@@ -932,50 +932,84 @@ export class SSHRuntime implements Runtime {
     const { projectPath, branchName, trunkBranch, workspacePath, initLogger, abortSignal } = params;
 
     try {
-      // 1. Sync project to remote with retry for transient SSH failures
-      // Errors like "pack-objects died" occur when SSH drops mid-transfer
-      initLogger.logStep("Syncing project files to remote...");
-      const maxSyncAttempts = 3;
-      for (let attempt = 1; attempt <= maxSyncAttempts; attempt++) {
-        try {
-          await this.syncProjectToRemote(projectPath, workspacePath, initLogger, abortSignal);
-          break;
-        } catch (error) {
-          const errorMsg = getErrorMessage(error);
-          const isRetryable =
-            errorMsg.includes("pack-objects died") ||
-            errorMsg.includes("Connection reset") ||
-            errorMsg.includes("Connection closed") ||
-            errorMsg.includes("Broken pipe");
+      // If the workspace directory already exists and contains a git repo (e.g. forked from
+      // another SSH workspace), skip the expensive local→remote sync step.
+      const workspacePathArg = expandTildeForSSH(workspacePath);
+      let shouldSync = true;
 
-          if (!isRetryable || attempt === maxSyncAttempts) {
-            initLogger.logStderr(`Failed to sync project: ${errorMsg}`);
-            initLogger.logComplete(-1);
-            return {
-              success: false,
-              error: `Failed to sync project: ${errorMsg}`,
-            };
-          }
-
-          // Clean up partial remote state before retry
-          log.info(`Sync failed (attempt ${attempt}/${maxSyncAttempts}), will retry: ${errorMsg}`);
-          try {
-            const rmStream = await this.exec(`rm -rf ${shescape.quote(workspacePath)}`, {
-              cwd: "~",
-              timeout: 30,
-            });
-            await rmStream.exitCode;
-          } catch {
-            // Ignore cleanup errors
-          }
-
-          initLogger.logStep(
-            `Sync failed, retrying (attempt ${attempt + 1}/${maxSyncAttempts})...`
+      try {
+        const dirCheck = await execBuffered(this, `test -d ${workspacePathArg}`, {
+          cwd: "/tmp",
+          timeout: 10,
+          abortSignal,
+        });
+        if (dirCheck.exitCode === 0) {
+          const gitCheck = await execBuffered(
+            this,
+            `git -C ${workspacePathArg} rev-parse --is-inside-work-tree`,
+            {
+              cwd: "/tmp",
+              timeout: 20,
+              abortSignal,
+            }
           );
-          await new Promise((r) => setTimeout(r, attempt * 1000));
+          shouldSync = gitCheck.exitCode !== 0;
         }
+      } catch {
+        // Default to syncing on unexpected errors.
+        shouldSync = true;
       }
-      initLogger.logStep("Files synced successfully");
+
+      if (shouldSync) {
+        // 1. Sync project to remote with retry for transient SSH failures
+        // Errors like "pack-objects died" occur when SSH drops mid-transfer
+        initLogger.logStep("Syncing project files to remote...");
+        const maxSyncAttempts = 3;
+        for (let attempt = 1; attempt <= maxSyncAttempts; attempt++) {
+          try {
+            await this.syncProjectToRemote(projectPath, workspacePath, initLogger, abortSignal);
+            break;
+          } catch (error) {
+            const errorMsg = getErrorMessage(error);
+            const isRetryable =
+              errorMsg.includes("pack-objects died") ||
+              errorMsg.includes("Connection reset") ||
+              errorMsg.includes("Connection closed") ||
+              errorMsg.includes("Broken pipe");
+
+            if (!isRetryable || attempt === maxSyncAttempts) {
+              initLogger.logStderr(`Failed to sync project: ${errorMsg}`);
+              initLogger.logComplete(-1);
+              return {
+                success: false,
+                error: `Failed to sync project: ${errorMsg}`,
+              };
+            }
+
+            // Clean up partial remote state before retry
+            log.info(
+              `Sync failed (attempt ${attempt}/${maxSyncAttempts}), will retry: ${errorMsg}`
+            );
+            try {
+              const rmStream = await this.exec(`rm -rf ${workspacePathArg}`, {
+                cwd: "~",
+                timeout: 30,
+              });
+              await rmStream.exitCode;
+            } catch {
+              // Ignore cleanup errors
+            }
+
+            initLogger.logStep(
+              `Sync failed, retrying (attempt ${attempt + 1}/${maxSyncAttempts})...`
+            );
+            await new Promise((r) => setTimeout(r, attempt * 1000));
+          }
+        }
+        initLogger.logStep("Files synced successfully");
+      } else {
+        initLogger.logStep("Remote workspace already contains a git repo; skipping sync");
+      }
 
       // 2. Fetch latest from origin before checkout (best-effort)
       // This ensures new branches start from the latest origin state, not a stale bundle
@@ -1438,16 +1472,150 @@ export class SSHRuntime implements Runtime {
     }
   }
 
-  forkWorkspace(_params: WorkspaceForkParams): Promise<WorkspaceForkResult> {
-    // SSH forking is not yet implemented due to unresolved complexities:
-    // - Users expect the new workspace's filesystem state to match the remote workspace,
-    //   not the local project (which may be out of sync or on a different commit)
-    // - This requires: detecting the branch, copying remote state, handling uncommitted changes
-    // - For now, users should create a new workspace from the desired branch instead
-    return Promise.resolve({
-      success: false,
-      error: "Forking SSH workspaces is not yet implemented. Create a new workspace instead.",
-    });
+  async forkWorkspace(params: WorkspaceForkParams): Promise<WorkspaceForkResult> {
+    const { projectPath, sourceWorkspaceName, newWorkspaceName, initLogger } = params;
+
+    // Compute workspace paths using canonical method
+    const sourceWorkspacePath = this.getWorkspacePath(projectPath, sourceWorkspaceName);
+    const newWorkspacePath = this.getWorkspacePath(projectPath, newWorkspaceName);
+
+    // For SSH commands, tilde must be expanded using $HOME - plain quoting won't expand it.
+    const sourceWorkspacePathArg = expandTildeForSSH(sourceWorkspacePath);
+    const newWorkspacePathArg = expandTildeForSSH(newWorkspacePath);
+
+    try {
+      // Guard: avoid clobbering an existing directory.
+      {
+        const exists = await execBuffered(this, `test -e ${newWorkspacePathArg}`, {
+          cwd: "/tmp",
+          timeout: 10,
+        });
+        if (exists.exitCode === 0) {
+          return { success: false, error: `Workspace already exists at ${newWorkspacePath}` };
+        }
+      }
+
+      // Detect current branch from the source workspace.
+      initLogger.logStep("Detecting source workspace branch...");
+      const branchResult = await execBuffered(
+        this,
+        `git -C ${sourceWorkspacePathArg} branch --show-current`,
+        {
+          cwd: "/tmp",
+          timeout: 30,
+        }
+      );
+      const sourceBranch = branchResult.stdout.trim();
+
+      if (branchResult.exitCode !== 0 || sourceBranch.length === 0) {
+        return {
+          success: false,
+          error: "Failed to detect branch in source workspace",
+        };
+      }
+
+      // Ensure parent directory exists.
+      initLogger.logStep("Preparing remote workspace...");
+      const parentDir = path.posix.dirname(newWorkspacePath);
+      const mkdirResult = await execBuffered(this, `mkdir -p ${expandTildeForSSH(parentDir)}`, {
+        cwd: "/tmp",
+        timeout: 10,
+      });
+      if (mkdirResult.exitCode !== 0) {
+        return {
+          success: false,
+          error: `Failed to prepare remote workspace: ${mkdirResult.stderr || mkdirResult.stdout}`,
+        };
+      }
+
+      // Clone the repo from the source workspace on the remote host.
+      // NOTE: This intentionally does not attempt to copy uncommitted changes.
+      initLogger.logStep("Cloning workspace on remote...");
+      const cloneResult = await execBuffered(
+        this,
+        `git clone --quiet ${sourceWorkspacePathArg} ${newWorkspacePathArg}`,
+        {
+          cwd: "/tmp",
+          timeout: 300,
+        }
+      );
+      if (cloneResult.exitCode !== 0) {
+        return {
+          success: false,
+          error: `Failed to clone workspace: ${cloneResult.stderr || cloneResult.stdout}`,
+        };
+      }
+
+      // Best-effort: create local tracking branches for all remote branches.
+      // This keeps initWorkspace semantics consistent with syncProjectToRemote().
+      initLogger.logStep("Creating local tracking branches...");
+      try {
+        await execBuffered(
+          this,
+          `cd ${newWorkspacePathArg} && for branch in $(git for-each-ref --format='%(refname:short)' refs/remotes/origin/ | grep -v 'origin/HEAD'); do localname=\${branch#origin/}; git show-ref --verify --quiet refs/heads/$localname || git branch $localname $branch; done`,
+          {
+            cwd: "/tmp",
+            timeout: 30,
+          }
+        );
+      } catch {
+        // Ignore - best-effort.
+      }
+
+      // Best-effort: preserve the origin URL from the source workspace, if one exists.
+      try {
+        const originResult = await execBuffered(
+          this,
+          `git -C ${sourceWorkspacePathArg} remote get-url origin 2>/dev/null || true`,
+          {
+            cwd: "/tmp",
+            timeout: 10,
+          }
+        );
+        const originUrl = originResult.stdout.trim();
+        if (originUrl.length > 0) {
+          await execBuffered(
+            this,
+            `git -C ${newWorkspacePathArg} remote set-url origin ${shescape.quote(originUrl)}`,
+            {
+              cwd: "/tmp",
+              timeout: 10,
+            }
+          );
+        } else {
+          await execBuffered(
+            this,
+            `git -C ${newWorkspacePathArg} remote remove origin 2>/dev/null || true`,
+            {
+              cwd: "/tmp",
+              timeout: 10,
+            }
+          );
+        }
+      } catch {
+        // Ignore - best-effort.
+      }
+
+      // Checkout the destination branch, creating it from sourceBranch if needed.
+      initLogger.logStep(`Checking out branch: ${newWorkspaceName}`);
+      const checkoutCmd =
+        `git checkout ${shescape.quote(newWorkspaceName)} 2>/dev/null || ` +
+        `git checkout -b ${shescape.quote(newWorkspaceName)} ${shescape.quote(sourceBranch)}`;
+      const checkoutResult = await execBuffered(this, checkoutCmd, {
+        cwd: newWorkspacePath,
+        timeout: 120,
+      });
+      if (checkoutResult.exitCode !== 0) {
+        return {
+          success: false,
+          error: `Failed to checkout forked branch: ${checkoutResult.stderr || checkoutResult.stdout}`,
+        };
+      }
+
+      return { success: true, workspacePath: newWorkspacePath, sourceBranch };
+    } catch (error) {
+      return { success: false, error: getErrorMessage(error) };
+    }
   }
 
   /**
