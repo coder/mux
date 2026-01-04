@@ -36,14 +36,15 @@ interface ContextUsageIndicatorButtonProps {
   idleCompaction?: IdleCompactionConfig;
 }
 
-/** Tick marks for percentage scale - inline labels only */
+/** Tick marks with lines attached to the meter */
 const PercentTickMarks: React.FC = () => (
-  <div className="text-muted flex justify-between text-[9px]">
-    <span>0</span>
-    <span>25</span>
-    <span>50</span>
-    <span>75</span>
-    <span>100%</span>
+  <div className="flex justify-between px-px">
+    {[0, 25, 50, 75, 100].map((pct) => (
+      <div key={pct} className="flex flex-col items-center">
+        <div className="bg-border-medium h-1.5 w-px" />
+        <span className="text-muted text-[9px]">{pct}</span>
+      </div>
+    ))}
   </div>
 );
 
@@ -65,7 +66,6 @@ const AutoCompactSettings: React.FC<{
   const percentageDisplay = data.maxTokens ? ` (${data.totalPercentage.toFixed(1)}%)` : "";
 
   const showUsageSlider = usageConfig && data.maxTokens;
-  const isUsageEnabled = usageConfig && usageConfig.threshold < 100;
   const isIdleEnabled = idleConfig?.hours !== null && idleConfig?.hours !== undefined;
 
   const handleIdleToggle = (enabled: boolean) => {
@@ -85,75 +85,64 @@ const AutoCompactSettings: React.FC<{
   };
 
   return (
-    <div className="flex flex-col gap-3">
-      {/* Context Usage display */}
-      <div className="flex items-baseline justify-between">
-        <span className="text-foreground font-medium">Context Usage</span>
-        <span className="text-muted text-xs">
-          {totalDisplay}
-          {maxDisplay}
-          {percentageDisplay}
-        </span>
+    <div className="flex flex-col gap-2">
+      {/* Context Usage header with instruction */}
+      <div>
+        <div className="flex items-baseline justify-between">
+          <span className="text-foreground font-medium">Context Usage</span>
+          <span className="text-muted text-xs">
+            {totalDisplay}
+            {maxDisplay}
+            {percentageDisplay}
+          </span>
+        </div>
+        {showUsageSlider && (
+          <div className="text-muted mt-1 text-[10px]">
+            Drag blue slider to adjust usage-based auto-compaction
+          </div>
+        )}
       </div>
 
       {/* Token meter with threshold slider */}
-      <div className="relative w-full overflow-hidden py-2">
+      <div className="relative w-full overflow-hidden py-1">
         <TokenMeter segments={data.segments} orientation="horizontal" />
         {showUsageSlider && <HorizontalThresholdSlider config={usageConfig} />}
       </div>
 
-      {/* Tick marks */}
+      {/* Tick marks - directly attached to meter */}
       {showUsageSlider && <PercentTickMarks />}
 
-      {/* Auto-Compact Triggers section */}
-      <div className="border-separator-light space-y-2 border-t pt-3">
-        <div className="text-foreground text-[11px] font-medium">Auto-Compact Triggers</div>
-
-        {/* Usage-based trigger */}
-        {usageConfig && data.maxTokens && (
-          <div className="bg-background-secondary rounded px-2 py-1.5">
-            <div className="flex items-center justify-between">
-              <span className="text-foreground text-[11px] font-medium">Usage-based</span>
-              <span className="text-muted text-[11px]">
-                {isUsageEnabled ? `at ${usageConfig.threshold}%` : "Off"}
+      {/* Idle-based auto-compact */}
+      {idleConfig && (
+        <div className="border-separator-light border-t pt-2">
+          <div className="flex items-center justify-between">
+            <span className="text-foreground text-[11px] font-medium">Idle-based auto-compact</span>
+            <div className="flex items-center gap-1.5">
+              <input
+                type="number"
+                min={1}
+                value={idleInputValue}
+                onChange={(e) => setIdleInputValue(e.target.value)}
+                onBlur={handleIdleBlur}
+                disabled={!isIdleEnabled}
+                className={cn(
+                  "border-border-medium bg-background-secondary focus:border-accent h-5 w-10 rounded border px-1 text-center text-[11px] focus:outline-none",
+                  !isIdleEnabled && "opacity-50"
+                )}
+              />
+              <span className={cn("text-[10px]", isIdleEnabled ? "text-muted" : "text-muted/50")}>
+                hrs
               </span>
+              <Switch
+                checked={isIdleEnabled}
+                onCheckedChange={handleIdleToggle}
+                className="scale-75"
+              />
             </div>
-            <div className="text-muted mt-0.5 text-[10px]">Drag threshold on meter above</div>
           </div>
-        )}
-
-        {/* Idle-based trigger */}
-        {idleConfig && (
-          <div className="bg-background-secondary rounded px-2 py-1.5">
-            <div className="flex items-center justify-between">
-              <span className="text-foreground text-[11px] font-medium">Idle-based</span>
-              <div className="flex items-center gap-1.5">
-                <input
-                  type="number"
-                  min={1}
-                  value={idleInputValue}
-                  onChange={(e) => setIdleInputValue(e.target.value)}
-                  onBlur={handleIdleBlur}
-                  disabled={!isIdleEnabled}
-                  className={cn(
-                    "border-border-medium bg-background focus:border-accent h-5 w-10 rounded border px-1 text-center text-[11px] focus:outline-none",
-                    !isIdleEnabled && "opacity-50"
-                  )}
-                />
-                <span className={cn("text-[10px]", isIdleEnabled ? "text-muted" : "text-muted/50")}>
-                  hrs
-                </span>
-                <Switch
-                  checked={isIdleEnabled}
-                  onCheckedChange={handleIdleToggle}
-                  className="scale-75"
-                />
-              </div>
-            </div>
-            <div className="text-muted mt-0.5 text-[10px]">Compact after workspace inactivity</div>
-          </div>
-        )}
-      </div>
+          <div className="text-muted mt-0.5 text-[10px]">Compact after workspace inactivity</div>
+        </div>
+      )}
 
       {/* Warning for unknown model limits */}
       {!data.maxTokens && (
