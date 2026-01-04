@@ -54,12 +54,17 @@ export function useIdleCompactionHours(
   const setHours = useCallback(
     (newHours: number | null) => {
       if (!projectPath || !api) return;
+      const previousHours = hours;
       // Optimistic update
       setHoursState(newHours);
-      // Persist to backend (fire and forget - errors are rare for config saves)
-      void api.projects.idleCompaction.set({ projectPath, hours: newHours });
+      // Persist to backend, revert on failure
+      void api.projects.idleCompaction.set({ projectPath, hours: newHours }).then((result) => {
+        if (!result.success) {
+          setHoursState(previousHours);
+        }
+      });
     },
-    [api, projectPath]
+    [api, projectPath, hours]
   );
 
   return { hours, setHours };
