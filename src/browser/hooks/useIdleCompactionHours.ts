@@ -39,9 +39,15 @@ export function useIdleCompactionHours(
   // Load initial value from backend
   useEffect(() => {
     if (!projectPath || !api) return;
+    let cancelled = false;
     void api.projects.idleCompaction.get({ projectPath }).then((result) => {
-      setHoursState(result.hours);
+      if (!cancelled) {
+        setHoursState(result.hours);
+      }
     });
+    return () => {
+      cancelled = true;
+    };
   }, [api, projectPath]);
 
   // Setter that persists to backend
