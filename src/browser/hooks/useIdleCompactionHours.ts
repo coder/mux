@@ -36,6 +36,7 @@ export function useIdleCompactionHours(
   const { api } = useAPI();
   const [hours, setHoursState] = useState<number | null>(null);
 
+  // Guards for out-of-order async responses (e.g., rapid toggles or project switches).
   const currentProjectPathRef = useRef<string | null>(projectPath);
   currentProjectPathRef.current = projectPath;
   const latestSaveRequestIdRef = useRef(0);
@@ -64,8 +65,7 @@ export function useIdleCompactionHours(
   const setHours = useCallback(
     (newHours: number | null) => {
       if (!projectPath || !api) return;
-      const requestId = latestSaveRequestIdRef.current + 1;
-      latestSaveRequestIdRef.current = requestId;
+      const requestId = ++latestSaveRequestIdRef.current;
 
       const previousHours = hours;
       const projectPathAtCall = projectPath;
