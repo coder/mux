@@ -40,6 +40,7 @@ import { SectionHeader } from "./SectionHeader";
 import { AddSectionButton } from "./AddSectionButton";
 import { WorkspaceSectionDropZone } from "./WorkspaceSectionDropZone";
 import { WorkspaceDragLayer } from "./WorkspaceDragLayer";
+import { DraggableSection } from "./DraggableSection";
 import type { SectionConfig } from "@/common/types/project";
 
 // Re-export WorkspaceSelection for backwards compatibility
@@ -223,6 +224,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     createSection,
     updateSection,
     removeSection,
+    reorderSections,
     assignWorkspaceToSection,
   } = useProjectContext();
 
@@ -735,6 +737,29 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 })();
                               };
 
+                              // Handle section reorder (drag section onto another section)
+                              const handleSectionReorder = (
+                                draggedSectionId: string,
+                                targetSectionId: string
+                              ) => {
+                                void (async () => {
+                                  // Compute new order: move dragged section to position of target
+                                  const currentOrder = sections.map((s) => s.id);
+                                  const draggedIndex = currentOrder.indexOf(draggedSectionId);
+                                  const targetIndex = currentOrder.indexOf(targetSectionId);
+
+                                  if (draggedIndex === -1 || targetIndex === -1) return;
+
+                                  // Remove dragged from current position
+                                  const newOrder = [...currentOrder];
+                                  newOrder.splice(draggedIndex, 1);
+                                  // Insert at target position
+                                  newOrder.splice(targetIndex, 0, draggedSectionId);
+
+                                  await reorderSections(projectPath, newOrder);
+                                })();
+                              };
+
                               // Render section with its workspaces
                               const renderSection = (section: SectionConfig) => {
                                 const sectionWorkspaces = bySectionId.get(section.id) ?? [];
@@ -746,50 +771,58 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   expandedSections[sectionExpandedKey] ?? true;
 
                                 return (
-                                  <WorkspaceSectionDropZone
+                                  <DraggableSection
                                     key={section.id}
-                                    projectPath={projectPath}
                                     sectionId={section.id}
-                                    onDrop={handleWorkspaceSectionDrop}
+                                    projectPath={projectPath}
+                                    onReorder={handleSectionReorder}
                                   >
-                                    <SectionHeader
-                                      section={section}
-                                      isExpanded={isSectionExpanded}
-                                      workspaceCount={sectionWorkspaces.length}
-                                      onToggleExpand={() => toggleSection(projectPath, section.id)}
-                                      onAddWorkspace={() => {
-                                        // Create workspace in this section
-                                        handleAddWorkspace(projectPath, section.id);
-                                      }}
-                                      onRename={(name) => {
-                                        void updateSection(projectPath, section.id, { name });
-                                      }}
-                                      onChangeColor={(color) => {
-                                        void updateSection(projectPath, section.id, { color });
-                                      }}
-                                      onDelete={() => {
-                                        void removeSection(projectPath, section.id);
-                                      }}
-                                    />
-                                    {isSectionExpanded && (
-                                      <div className="pb-1">
-                                        {sectionWorkspaces.length > 0 ? (
-                                          renderAgeTiers(
-                                            sectionWorkspaces,
-                                            getSectionTierKey(projectPath, section.id, 0).replace(
-                                              ":tier:0",
-                                              ":tier"
-                                            ),
-                                            section.id
-                                          )
-                                        ) : (
-                                          <div className="text-muted px-3 py-2 text-center text-xs italic">
-                                            No workspaces in this section
-                                          </div>
-                                        )}
-                                      </div>
-                                    )}
-                                  </WorkspaceSectionDropZone>
+                                    <WorkspaceSectionDropZone
+                                      projectPath={projectPath}
+                                      sectionId={section.id}
+                                      onDrop={handleWorkspaceSectionDrop}
+                                    >
+                                      <SectionHeader
+                                        section={section}
+                                        isExpanded={isSectionExpanded}
+                                        workspaceCount={sectionWorkspaces.length}
+                                        onToggleExpand={() =>
+                                          toggleSection(projectPath, section.id)
+                                        }
+                                        onAddWorkspace={() => {
+                                          // Create workspace in this section
+                                          handleAddWorkspace(projectPath, section.id);
+                                        }}
+                                        onRename={(name) => {
+                                          void updateSection(projectPath, section.id, { name });
+                                        }}
+                                        onChangeColor={(color) => {
+                                          void updateSection(projectPath, section.id, { color });
+                                        }}
+                                        onDelete={() => {
+                                          void removeSection(projectPath, section.id);
+                                        }}
+                                      />
+                                      {isSectionExpanded && (
+                                        <div className="pb-1">
+                                          {sectionWorkspaces.length > 0 ? (
+                                            renderAgeTiers(
+                                              sectionWorkspaces,
+                                              getSectionTierKey(projectPath, section.id, 0).replace(
+                                                ":tier:0",
+                                                ":tier"
+                                              ),
+                                              section.id
+                                            )
+                                          ) : (
+                                            <div className="text-muted px-3 py-2 text-center text-xs italic">
+                                              No workspaces in this section
+                                            </div>
+                                          )}
+                                        </div>
+                                      )}
+                                    </WorkspaceSectionDropZone>
+                                  </DraggableSection>
                                 );
                               };
 
