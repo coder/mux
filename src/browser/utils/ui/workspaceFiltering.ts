@@ -394,10 +394,31 @@ export function partitionWorkspacesBySection(
     bySectionId.set(section.id, []);
   }
 
+  // Build workspace lookup for parent resolution
+  const byId = new Map<string, FrontendWorkspaceMetadata>();
   for (const workspace of workspaces) {
-    const sectionId = workspace.sectionId;
-    if (sectionId && sectionIds.has(sectionId)) {
-      const list = bySectionId.get(sectionId)!;
+    byId.set(workspace.id, workspace);
+  }
+
+  // Resolve effective section for a workspace (inherit from parent if unset)
+  const resolveSection = (workspace: FrontendWorkspaceMetadata): string | undefined => {
+    if (workspace.sectionId && sectionIds.has(workspace.sectionId)) {
+      return workspace.sectionId;
+    }
+    // Inherit from parent if child has no section
+    if (workspace.parentWorkspaceId) {
+      const parent = byId.get(workspace.parentWorkspaceId);
+      if (parent) {
+        return resolveSection(parent);
+      }
+    }
+    return undefined;
+  };
+
+  for (const workspace of workspaces) {
+    const effectiveSectionId = resolveSection(workspace);
+    if (effectiveSectionId) {
+      const list = bySectionId.get(effectiveSectionId)!;
       list.push(workspace);
     } else {
       unsectioned.push(workspace);

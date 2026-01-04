@@ -109,6 +109,7 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
               setIsEditing(false);
             }
           }}
+          data-testid="section-rename-input"
           className="bg-background/50 text-foreground min-w-0 flex-1 rounded border border-white/20 px-1.5 py-0.5 text-xs font-medium outline-none"
         />
       ) : (

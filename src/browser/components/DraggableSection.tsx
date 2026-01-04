@@ -32,7 +32,7 @@ export const DraggableSection: React.FC<DraggableSectionProps> = ({
   const [{ isDragging }, drag, dragPreview] = useDrag(
     () => ({
       type: SECTION_DRAG_TYPE,
-      item: { type: SECTION_DRAG_TYPE, sectionId, projectPath } as SectionDragItem,
+      item: { type: SECTION_DRAG_TYPE, sectionId, projectPath } satisfies SectionDragItem,
       collect: (monitor) => ({
         isDragging: monitor.isDragging(),
       }),

@@ -6,9 +6,10 @@ import {
   buildSortedWorkspacesByProject,
   getVisibleWorkspaces,
   getAllVisibleWorkspaces,
+  partitionWorkspacesBySection,
 } from "./workspaceFiltering";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import type { ProjectConfig } from "@/common/types/project";
+import type { ProjectConfig, SectionConfig } from "@/common/types/project";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 
 describe("partitionWorkspacesByAge", () => {
@@ -648,5 +649,98 @@ describe("buildSortedWorkspacesByProject", () => {
     const result = buildSortedWorkspacesByProject(projects, metadata, {});
 
     expect(result.get("/project/a")).toHaveLength(0);
+  });
+});
+
+describe("partitionWorkspacesBySection", () => {
+  const createWorkspace = (
+    id: string,
+    sectionId?: string,
+    parentWorkspaceId?: string
+  ): FrontendWorkspaceMetadata => ({
+    id,
+    name: `workspace-${id}`,
+    projectName: "test-project",
+    projectPath: "/test/project",
+    namedWorkspacePath: `/test/project/workspace-${id}`,
+    runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+    sectionId,
+    parentWorkspaceId,
+  });
+
+  it("should partition workspaces by section", () => {
+    const workspaces = [
+      createWorkspace("ws1", "section-a"),
+      createWorkspace("ws2", "section-b"),
+      createWorkspace("ws3"), // unsectioned
+    ];
+    const sections: SectionConfig[] = [
+      { id: "section-a", name: "A" },
+      { id: "section-b", name: "B" },
+    ];
+
+    const result = partitionWorkspacesBySection(workspaces, sections);
+
+    expect(result.unsectioned.map((w: FrontendWorkspaceMetadata) => w.id)).toEqual(["ws3"]);
+    expect(
+      result.bySectionId.get("section-a")?.map((w: FrontendWorkspaceMetadata) => w.id)
+    ).toEqual(["ws1"]);
+    expect(
+      result.bySectionId.get("section-b")?.map((w: FrontendWorkspaceMetadata) => w.id)
+    ).toEqual(["ws2"]);
+  });
+
+  it("should keep child workspaces directly after their parent within a section", () => {
+    // Parent in section-a, child also in section-a
+    // Input order from flattenWorkspaceTree: parent, child (already correct)
+    const workspaces = [
+      createWorkspace("parent", "section-a"),
+      createWorkspace("child", "section-a", "parent"),
+    ];
+    const sections: SectionConfig[] = [{ id: "section-a", name: "A" }];
+
+    const result = partitionWorkspacesBySection(workspaces, sections);
+
+    // Child should be directly after parent
+    expect(
+      result.bySectionId.get("section-a")?.map((w: FrontendWorkspaceMetadata) => w.id)
+    ).toEqual(["parent", "child"]);
+  });
+
+  it("should keep child workspaces with parent even when child has no sectionId (inherits parent section)", () => {
+    // BUG REPRODUCTION: Parent in section-a, child has no sectionId
+    // Child should render under parent in section-a, NOT in unsectioned
+    const workspaces = [
+      createWorkspace("parent", "section-a"),
+      createWorkspace("child", undefined, "parent"), // child without sectionId
+    ];
+    const sections: SectionConfig[] = [{ id: "section-a", name: "A" }];
+
+    const result = partitionWorkspacesBySection(workspaces, sections);
+
+    // Child should inherit parent's section placement
+    expect(
+      result.bySectionId.get("section-a")?.map((w: FrontendWorkspaceMetadata) => w.id)
+    ).toEqual(["parent", "child"]);
+    // Unsectioned should be empty
+    expect(result.unsectioned).toHaveLength(0);
+  });
+
+  it("should handle nested children inheriting section from root parent", () => {
+    // Root in section-a, child1 and grandchild have no sectionId
+    const workspaces = [
+      createWorkspace("root", "section-a"),
+      createWorkspace("child1", undefined, "root"),
+      createWorkspace("grandchild", undefined, "child1"),
+    ];
+    const sections: SectionConfig[] = [{ id: "section-a", name: "A" }];
+
+    const result = partitionWorkspacesBySection(workspaces, sections);
+
+    // All should be in section-a, in tree order
+    expect(
+      result.bySectionId.get("section-a")?.map((w: FrontendWorkspaceMetadata) => w.id)
+    ).toEqual(["root", "child1", "grandchild"]);
+    expect(result.unsectioned).toHaveLength(0);
   });
 });

@@ -2,18 +2,20 @@
  * Integration tests for workspace sections.
  *
  * Tests verify:
+ * - Section creation via UI (Add Section button)
  * - Section and drop zone UI elements render with proper data attributes
  * - Workspace creation with sectionId assigns to that section
  * - Section "+" button pre-selects section in creation flow
  * - Section removal invariants (blocked by active workspaces, clears archived)
  * - Section reordering via API and UI reflection
  *
- * Limitation: react-dnd-html5-backend doesn't work with happy-dom for drag
- * simulation, so actual drag-drop gestures are tested in Storybook. These tests
- * verify UI infrastructure and backend behavior.
+ * Testing approach:
+ * - Section CRUD operations use UI interactions (click, type, Enter)
+ * - Workspace creation uses ORPC for speed (setup/teardown is acceptable per AGENTS.md)
+ * - DnD gestures tested in Storybook (react-dnd-html5-backend doesn't work in happy-dom)
  */
 
-import { waitFor } from "@testing-library/react";
+import { fireEvent, waitFor } from "@testing-library/react";
 
 import { shouldRunIntegrationTests } from "../testUtils";
 import {
@@ -85,6 +87,57 @@ function getSectionIdsInOrder(container: HTMLElement): string[] {
     .filter((id): id is string => id !== null);
 }
 
+/**
+ * Create a section via UI (clicking Add Section button, typing name, pressing Enter).
+ * Returns the created section's ID.
+ */
+async function createSectionViaUI(
+  container: HTMLElement,
+  sectionName: string,
+  timeoutMs = 5_000
+): Promise<string> {
+  // Click the Add Section button
+  const addButton = await waitFor(
+    () => {
+      const btn = container.querySelector('[data-testid="add-section-button"]');
+      if (!btn) throw new Error("Add section button not found");
+      return btn as HTMLElement;
+    },
+    { timeout: timeoutMs }
+  );
+  fireEvent.click(addButton);
+
+  // Type the section name
+  const input = await waitFor(
+    () => {
+      const el = container.querySelector('[data-testid="add-section-input"]');
+      if (!el) throw new Error("Add section input not found");
+      return el as HTMLInputElement;
+    },
+    { timeout: timeoutMs }
+  );
+  fireEvent.change(input, { target: { value: sectionName } });
+  fireEvent.keyDown(input, { key: "Enter" });
+
+  // Wait for section to appear and return its ID
+  const section = await waitFor(
+    () => {
+      // Find section by name (text content)
+      const sections = container.querySelectorAll("[data-section-id]");
+      for (const s of sections) {
+        if (s.textContent?.includes(sectionName)) {
+          const id = s.getAttribute("data-section-id");
+          if (id) return { id, element: s };
+        }
+      }
+      throw new Error(`Section "${sectionName}" not found after creation`);
+    },
+    { timeout: timeoutMs }
+  );
+
+  return section.id;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // TESTS
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -102,11 +155,11 @@ describeIntegration("Workspace Sections", () => {
   // UI Infrastructure
   // ─────────────────────────────────────────────────────────────────────────────
 
-  test("renders section with drop zone and workspace with draggable attributes", async () => {
+  test("create section via UI and verify drop zones render", async () => {
     const env = getSharedEnv();
     const projectPath = getSharedRepoPath();
 
-    // Create a workspace
+    // Create a workspace first (ORPC is fine for setup)
     const branchName = generateBranchName("test-section-ui");
     const trunkBranch = await detectDefaultTrunkBranch(projectPath);
     const wsResult = await env.orpc.workspace.create({
@@ -118,24 +171,17 @@ describeIntegration("Workspace Sections", () => {
     const workspaceId = wsResult.metadata.id;
     const metadata = wsResult.metadata;
 
-    // Create a section
-    const sectionResult = await env.orpc.projects.sections.create({
-      projectPath,
-      name: "Test Section",
-    });
-    if (!sectionResult.success) throw new Error(`Failed to create section: ${sectionResult.error}`);
-    const sectionId = sectionResult.data.id;
-
     const cleanupDom = installDom();
     expandProjects([projectPath]);
 
     const view = renderApp({ apiClient: env.orpc, metadata });
+    let sectionId: string | undefined;
 
     try {
       await setupWorkspaceView(view, metadata, workspaceId);
 
-      // Wait for section to appear
-      await waitForSection(view.container, sectionId);
+      // Create section via UI (clicking Add Section button, typing name, Enter)
+      sectionId = await createSectionViaUI(view.container, "Test Section");
 
       // Verify section drop zone exists (for workspace drag-drop)
       const sectionDropZone = findSectionDropZone(view.container, sectionId);
@@ -158,7 +204,9 @@ describeIntegration("Workspace Sections", () => {
     } finally {
       await cleanupView(view, cleanupDom);
       await env.orpc.workspace.remove({ workspaceId });
-      await env.orpc.projects.sections.remove({ projectPath, sectionId });
+      if (sectionId) {
+        await env.orpc.projects.sections.remove({ projectPath, sectionId });
+      }
     }
   }, 60_000);
 
@@ -213,7 +261,7 @@ describeIntegration("Workspace Sections", () => {
     const projectPath = getSharedRepoPath();
     const trunkBranch = await detectDefaultTrunkBranch(projectPath);
 
-    // Create workspace to ensure project exists
+    // Create workspace to ensure project exists (ORPC for setup is acceptable)
     const setupWs = await env.orpc.workspace.create({
       projectPath,
       branchName: generateBranchName("setup-section-add"),
@@ -221,24 +269,17 @@ describeIntegration("Workspace Sections", () => {
     });
     if (!setupWs.success) throw new Error(`Setup failed: ${setupWs.error}`);
 
-    // Create a section
-    const sectionResult = await env.orpc.projects.sections.create({
-      projectPath,
-      name: "Add Button Section",
-    });
-    if (!sectionResult.success) throw new Error(`Failed to create section: ${sectionResult.error}`);
-    const sectionId = sectionResult.data.id;
-
     const cleanupDom = installDom();
     expandProjects([projectPath]);
 
     const view = renderApp({ apiClient: env.orpc, metadata: setupWs.metadata });
+    let sectionId: string | undefined;
 
     try {
       await setupWorkspaceView(view, setupWs.metadata, setupWs.metadata.id);
 
-      // Wait for section header to appear
-      await waitForSection(view.container, sectionId);
+      // Create section via UI
+      sectionId = await createSectionViaUI(view.container, "Add Button Section");
 
       // Find the "+" button in the section header
       const sectionHeader = view.container.querySelector(`[data-section-id="${sectionId}"]`);
@@ -250,7 +291,7 @@ describeIntegration("Workspace Sections", () => {
       expect(addButton).not.toBeNull();
 
       // Click the add button - this should navigate to create page with section context
-      (addButton as HTMLElement).click();
+      fireEvent.click(addButton as HTMLElement);
 
       // Wait for the create page to show section selector with this section pre-selected
       await waitFor(
@@ -269,7 +310,9 @@ describeIntegration("Workspace Sections", () => {
     } finally {
       await cleanupView(view, cleanupDom);
       await env.orpc.workspace.remove({ workspaceId: setupWs.metadata.id });
-      await env.orpc.projects.sections.remove({ projectPath, sectionId });
+      if (sectionId) {
+        await env.orpc.projects.sections.remove({ projectPath, sectionId });
+      }
     }
   }, 60_000);
 

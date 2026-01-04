@@ -46,6 +46,7 @@ export const AddSectionButton: React.FC<AddSectionButtonProps> = ({ onCreateSect
             }
           }}
           placeholder="Section name..."
+          data-testid="add-section-input"
           className="bg-background/50 text-foreground min-w-0 flex-1 rounded border border-white/20 px-1.5 py-0.5 text-[11px] outline-none"
         />
       </div>
@@ -57,6 +58,7 @@ export const AddSectionButton: React.FC<AddSectionButtonProps> = ({ onCreateSect
       <TooltipTrigger asChild>
         <button
           onClick={() => setIsCreating(true)}
+          data-testid="add-section-button"
           className="text-muted/60 hover:text-muted flex w-full cursor-pointer items-center justify-center gap-1 border-none bg-transparent px-2 py-0.5 text-[11px] transition-colors"
         >
           <Plus size={12} />
