@@ -53,11 +53,6 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
     }
   }, [showColorPicker]);
 
-  // Sync hex input when color changes from picker or presets
-  useEffect(() => {
-    setHexInputValue(sectionColor);
-  }, [sectionColor]);
-
   const handleSubmitRename = () => {
     const trimmed = editValue.trim();
     if (trimmed && trimmed !== section.name) {
@@ -69,6 +64,11 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
   };
 
   const sectionColor = section.color ?? SECTION_COLOR_PALETTE[0][1];
+
+  // Sync hex input when color changes from picker or presets
+  useEffect(() => {
+    setHexInputValue(sectionColor);
+  }, [sectionColor]);
 
   return (
     <div
