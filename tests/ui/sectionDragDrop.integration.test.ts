@@ -73,6 +73,13 @@ async function waitForSection(
   );
 }
 
+/**
+ * Get the section ID from a workspace row's data attribute.
+ */
+function getWorkspaceSectionId(workspaceRow: HTMLElement): string {
+  return workspaceRow.getAttribute("data-section-id") ?? "";
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // TESTS
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -195,6 +202,93 @@ describeIntegration("Section Drag and Drop (UI)", () => {
       expect(workspaceInfo?.sectionId).toBeUndefined();
     } finally {
       // Cleanup
+      await env.orpc.workspace.remove({ workspaceId });
+      await env.orpc.projects.sections.remove({ projectPath, sectionId });
+    }
+  }, 60_000);
+
+  test("UI updates workspace section after assignment via context action", async () => {
+    const env = getSharedEnv();
+    const projectPath = getSharedRepoPath();
+
+    // Create a workspace first (this implicitly adds the project)
+    const branchName = generateBranchName("test-section-ui-update");
+    const trunkBranch = await detectDefaultTrunkBranch(projectPath);
+    const wsResult = await env.orpc.workspace.create({
+      projectPath,
+      branchName,
+      trunkBranch,
+    });
+    if (!wsResult.success) throw new Error(`Failed to create workspace: ${wsResult.error}`);
+    const workspaceId = wsResult.metadata.id;
+    const metadata = wsResult.metadata;
+
+    // Create a section
+    const sectionResult = await env.orpc.projects.sections.create({
+      projectPath,
+      name: "UI Update Section",
+    });
+    if (!sectionResult.success) throw new Error(`Failed to create section: ${sectionResult.error}`);
+    const sectionId = sectionResult.data.id;
+
+    const cleanupDom = installDom();
+    expandProjects([projectPath]);
+
+    const view = renderApp({ apiClient: env.orpc, metadata });
+
+    try {
+      await setupWorkspaceView(view, metadata, workspaceId);
+
+      // Wait for section to appear
+      await waitForSection(view.container, sectionId);
+
+      // Verify workspace is initially unsectioned
+      let workspaceRow = findWorkspaceRow(view.container, workspaceId);
+      expect(workspaceRow).not.toBeNull();
+      expect(getWorkspaceSectionId(workspaceRow!)).toBe("");
+
+      // Assign workspace to section via backend API (simulating what drop handler does)
+      // This should emit a metadata update via WorkspaceService.refreshAndEmitMetadata
+      const assignResult = await env.orpc.projects.sections.assignWorkspace({
+        projectPath,
+        workspaceId,
+        sectionId,
+      });
+      expect(assignResult.success).toBe(true);
+
+      // Wait for UI to reflect the change - workspace row should now show section ID
+      await waitFor(
+        () => {
+          workspaceRow = findWorkspaceRow(view.container, workspaceId);
+          if (!workspaceRow) throw new Error("Workspace row not found");
+          const currentSectionId = getWorkspaceSectionId(workspaceRow);
+          if (currentSectionId !== sectionId) {
+            throw new Error(`Expected sectionId ${sectionId}, got "${currentSectionId}"`);
+          }
+        },
+        { timeout: 5_000 }
+      );
+
+      // Unassign and verify UI updates
+      await env.orpc.projects.sections.assignWorkspace({
+        projectPath,
+        workspaceId,
+        sectionId: null,
+      });
+
+      await waitFor(
+        () => {
+          workspaceRow = findWorkspaceRow(view.container, workspaceId);
+          if (!workspaceRow) throw new Error("Workspace row not found");
+          const currentSectionId = getWorkspaceSectionId(workspaceRow);
+          if (currentSectionId !== "") {
+            throw new Error(`Expected empty sectionId, got "${currentSectionId}"`);
+          }
+        },
+        { timeout: 5_000 }
+      );
+    } finally {
+      await cleanupView(view, cleanupDom);
       await env.orpc.workspace.remove({ workspaceId });
       await env.orpc.projects.sections.remove({ projectPath, sectionId });
     }

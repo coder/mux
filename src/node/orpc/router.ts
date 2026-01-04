@@ -940,13 +940,18 @@ export const router = (authToken?: string) => {
         assignWorkspace: t
           .input(schemas.projects.sections.assignWorkspace.input)
           .output(schemas.projects.sections.assignWorkspace.output)
-          .handler(({ context, input }) =>
-            context.projectService.assignWorkspaceToSection(
+          .handler(async ({ context, input }) => {
+            const result = await context.projectService.assignWorkspaceToSection(
               input.projectPath,
               input.workspaceId,
               input.sectionId
-            )
-          ),
+            );
+            if (result.success) {
+              // Emit metadata update so frontend receives the sectionId change
+              await context.workspaceService.refreshAndEmitMetadata(input.workspaceId);
+            }
+            return result;
+          }),
       },
     },
     nameGeneration: {

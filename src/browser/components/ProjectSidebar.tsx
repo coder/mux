@@ -210,6 +210,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     archiveWorkspace: onArchiveWorkspace,
     renameWorkspace: onRenameWorkspace,
     beginWorkspaceCreation: onAddWorkspace,
+    refreshWorkspaceMetadata,
   } = useWorkspaceContext();
 
   // Get project state and operations from context
@@ -721,11 +722,17 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 workspaceId: string,
                                 targetSectionId: string | null
                               ) => {
-                                void assignWorkspaceToSection(
-                                  projectPath,
-                                  workspaceId,
-                                  targetSectionId
-                                );
+                                void (async () => {
+                                  const result = await assignWorkspaceToSection(
+                                    projectPath,
+                                    workspaceId,
+                                    targetSectionId
+                                  );
+                                  if (result.success) {
+                                    // Refresh workspace metadata so UI shows updated sectionId
+                                    await refreshWorkspaceMetadata();
+                                  }
+                                })();
                               };
 
                               // Render section with its workspaces

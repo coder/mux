@@ -15,5 +15,6 @@ export function getWorkspaceSidebarKey(meta: FrontendWorkspaceMetadata): string 
     meta.status ?? "", // Working/idle status indicator
     meta.parentWorkspaceId ?? "", // Nested sidebar indentation/order
     meta.agentType ?? "", // Agent preset badge/label (future)
+    meta.sectionId ?? "", // Section grouping for sidebar organization
   ].join("|");
 }

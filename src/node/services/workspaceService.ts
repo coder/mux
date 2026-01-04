@@ -845,6 +845,17 @@ export class WorkspaceService extends EventEmitter {
     return allMetadata.find((m) => m.id === workspaceId) ?? null;
   }
 
+  /**
+   * Refresh workspace metadata from config and emit to subscribers.
+   * Useful when external changes (like section assignment) modify workspace config.
+   */
+  async refreshAndEmitMetadata(workspaceId: string): Promise<void> {
+    const metadata = await this.getInfo(workspaceId);
+    if (metadata) {
+      this.emit("metadata", { workspaceId, metadata });
+    }
+  }
+
   async rename(workspaceId: string, newName: string): Promise<Result<{ newWorkspaceId: string }>> {
     try {
       if (this.aiService.isStreaming(workspaceId)) {
