@@ -7,7 +7,7 @@ import { execSync } from "node:child_process";
 import { Config } from "@/node/config";
 import { HistoryService } from "@/node/services/historyService";
 import { PartialService } from "@/node/services/partialService";
-import { TaskService } from "@/node/services/taskService";
+import { TaskService, type AgentTaskStatus } from "@/node/services/taskService";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { Ok, Err, type Result } from "@/common/types/result";
 import type { StreamEndEvent } from "@/common/types/stream";
@@ -15,8 +15,21 @@ import { createMuxMessage } from "@/common/types/message";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { AIService } from "@/node/services/aiService";
 import type { WorkspaceService } from "@/node/services/workspaceService";
-import type { InitStateManager } from "@/node/services/initStateManager";
-import { InitStateManager as RealInitStateManager } from "@/node/services/initStateManager";
+import {
+  InitStateManager as RealInitStateManager,
+  type InitStateManager,
+} from "@/node/services/initStateManager";
+interface TaskServiceStatusInternal {
+  setTaskStatus: (
+    workspaceId: string,
+    status: AgentTaskStatus,
+    options?: { allowMissing?: boolean }
+  ) => Promise<void>;
+}
+
+interface TaskServiceWaiterInternal extends TaskServiceStatusInternal {
+  resolveWaiters: (taskId: string, report: { reportMarkdown: string; title?: string }) => void;
+}
 
 function initGitRepo(projectPath: string): void {
   execSync("git init -b main", { cwd: projectPath, stdio: "ignore" });
@@ -384,15 +397,8 @@ describe("TaskService", () => {
     expect(queued.data.status).toBe("queued");
 
     // Free the slot by marking the first task as reported.
-    await config.editConfig((cfg) => {
-      for (const [_project, project] of cfg.projects) {
-        const ws = project.workspaces.find((w) => w.id === running.data.taskId);
-        if (ws) {
-          ws.taskStatus = "reported";
-        }
-      }
-      return cfg;
-    });
+    const internal = taskService as unknown as TaskServiceStatusInternal;
+    await internal.setTaskStatus(running.data.taskId, "reported");
 
     await taskService.initialize();
 
@@ -488,9 +494,8 @@ describe("TaskService", () => {
       requestingWorkspaceId: parentTask.data.taskId,
     });
 
-    const internal = taskService as unknown as {
+    const internal = taskService as unknown as TaskServiceWaiterInternal & {
       maybeStartQueuedTasks: () => Promise<void>;
-      resolveWaiters: (taskId: string, report: { reportMarkdown: string; title?: string }) => void;
     };
 
     await internal.maybeStartQueuedTasks();
@@ -609,15 +614,8 @@ describe("TaskService", () => {
     );
 
     // Free slot and start queued tasks.
-    await config.editConfig((cfg) => {
-      for (const [_project, project] of cfg.projects) {
-        const ws = project.workspaces.find((w) => w.id === running.data.taskId);
-        if (ws) {
-          ws.taskStatus = "reported";
-        }
-      }
-      return cfg;
-    });
+    const internal = taskService as unknown as TaskServiceStatusInternal;
+    await internal.setTaskStatus(running.data.taskId, "reported");
 
     await taskService.initialize();
 
@@ -1354,14 +1352,7 @@ describe("TaskService", () => {
     // Wait longer than timeout while task is still queued.
     await new Promise((r) => setTimeout(r, 100));
 
-    const internal = taskService as unknown as {
-      setTaskStatus: (
-        workspaceId: string,
-        status: "queued" | "running" | "awaiting_report" | "reported",
-        options?: { allowMissing?: boolean }
-      ) => Promise<void>;
-      resolveWaiters: (taskId: string, report: { reportMarkdown: string; title?: string }) => void;
-    };
+    const internal = taskService as unknown as TaskServiceWaiterInternal;
 
     await internal.setTaskStatus(childId, "running");
     internal.resolveWaiters(childId, { reportMarkdown: "ok" });
@@ -1403,12 +1394,7 @@ describe("TaskService", () => {
 
     const { taskService } = createTaskServiceHarness(config);
 
-    const internal = taskService as unknown as {
-      setTaskStatus: (
-        workspaceId: string,
-        status: "queued" | "running" | "awaiting_report" | "reported"
-      ) => Promise<void>;
-    };
+    const internal = taskService as unknown as TaskServiceStatusInternal;
 
     await internal.setTaskStatus(childId, "running");
 
@@ -1452,12 +1438,7 @@ describe("TaskService", () => {
 
     const { taskService } = createTaskServiceHarness(config);
 
-    const internal = taskService as unknown as {
-      setTaskStatus: (
-        workspaceId: string,
-        status: "queued" | "running" | "awaiting_report" | "reported"
-      ) => Promise<void>;
-    };
+    const internal = taskService as unknown as TaskServiceStatusInternal;
 
     await internal.setTaskStatus(childId, "reported");
 
@@ -1560,9 +1541,7 @@ describe("TaskService", () => {
 
     const { taskService } = createTaskServiceHarness(config);
 
-    const internal = taskService as unknown as {
-      resolveWaiters: (taskId: string, report: { reportMarkdown: string; title?: string }) => void;
-    };
+    const internal = taskService as unknown as TaskServiceWaiterInternal;
     internal.resolveWaiters(childId, { reportMarkdown: "ok", title: "t" });
 
     await config.removeWorkspace(childId);
@@ -1603,9 +1582,7 @@ describe("TaskService", () => {
 
     const { taskService } = createTaskServiceHarness(config);
 
-    const internal = taskService as unknown as {
-      resolveWaiters: (taskId: string, report: { reportMarkdown: string; title?: string }) => void;
-    };
+    const internal = taskService as unknown as TaskServiceWaiterInternal;
     internal.resolveWaiters(childId, { reportMarkdown: "ok", title: "t" });
 
     await config.removeWorkspace(childId);
@@ -1645,9 +1622,7 @@ describe("TaskService", () => {
 
     const { taskService } = createTaskServiceHarness(config);
 
-    const internal = taskService as unknown as {
-      resolveWaiters: (taskId: string, report: { reportMarkdown: string; title?: string }) => void;
-    };
+    const internal = taskService as unknown as TaskServiceWaiterInternal;
     internal.resolveWaiters(childId, { reportMarkdown: "ok", title: "t" });
 
     await config.removeWorkspace(childId);
@@ -1687,8 +1662,7 @@ describe("TaskService", () => {
 
     const { taskService } = createTaskServiceHarness(config);
 
-    const internal = taskService as unknown as {
-      resolveWaiters: (taskId: string, report: { reportMarkdown: string; title?: string }) => void;
+    const internal = taskService as unknown as TaskServiceWaiterInternal & {
       cleanupExpiredCompletedReports: (nowMs: number) => void;
     };
     internal.resolveWaiters(childId, { reportMarkdown: "ok", title: "t" });

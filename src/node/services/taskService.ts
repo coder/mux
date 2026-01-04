@@ -1266,7 +1266,7 @@ export class TaskService {
         `listDescendantAgentTasks: task ${taskId} is missing parentWorkspaceId`
       );
 
-      const status: AgentTaskStatus = entry.taskStatus ?? "running";
+      const status = normalizeAgentTaskStatus(entry.taskStatus);
       if (!statusFilter || statusFilter.has(status)) {
         result.push({
           taskId,
@@ -1446,7 +1446,7 @@ export class TaskService {
   private countActiveAgentTasks(config: ReturnType<Config["loadConfigOrDefault"]>): number {
     let activeCount = 0;
     for (const task of this.listAgentTaskWorkspaces(config)) {
-      const status: AgentTaskStatus = task.taskStatus ?? "running";
+      const status = normalizeAgentTaskStatus(task.taskStatus);
       // If this task workspace is blocked in a foreground wait, do not count it towards parallelism.
       // This prevents deadlocks where a task spawns a nested task in the foreground while
       // maxParallelAgentTasks is low (e.g. 1).
@@ -1824,7 +1824,6 @@ export class TaskService {
             parentWorkspaceId: ws.parentWorkspaceId ?? null,
             persistedStatus: ws.taskStatus ?? null,
           });
-          shouldStartWaiters = currentStatus === "running";
           return;
         }
 
@@ -1953,8 +1952,7 @@ export class TaskService {
     workspace: WorkspaceConfigEntry;
   }): Promise<void> {
     const childWorkspaceId = entry.workspace.id;
-    const parentWorkspaceId = entry.workspace.parentWorkspaceId;
-    if (!childWorkspaceId || !parentWorkspaceId) {
+    if (!childWorkspaceId) {
       return;
     }
 
@@ -1966,35 +1964,10 @@ export class TaskService {
       "posting its last assistant output as a fallback.)*\n\n" +
       (lastText?.trim().length ? lastText : "(No assistant output found.)");
 
-    // Notify clients immediately even if we can't delete the workspace yet.
-    await this.setTaskStatus(childWorkspaceId, "reported", { allowMissing: true });
-
-    await this.deliverReportToParent(parentWorkspaceId, entry, {
+    await this.finalizeAgentTaskReport(childWorkspaceId, entry, {
       reportMarkdown,
       title: `Subagent (${agentType}) report (fallback)`,
     });
-
-    this.resolveWaiters(childWorkspaceId, {
-      reportMarkdown,
-      title: `Subagent (${agentType}) report (fallback)`,
-    });
-
-    await this.maybeStartQueuedTasks();
-    await this.cleanupReportedLeafTask(childWorkspaceId);
-
-    const postCfg = this.config.loadConfigOrDefault();
-    const hasActiveDescendants = this.hasActiveDescendantAgentTasks(postCfg, parentWorkspaceId);
-    if (!hasActiveDescendants && !this.aiService.isStreaming(parentWorkspaceId)) {
-      const resumeResult = await this.workspaceService.resumeStream(parentWorkspaceId, {
-        model: entry.workspace.taskModelString ?? defaultModel,
-      });
-      if (!resumeResult.success) {
-        log.error("Failed to auto-resume parent after fallback report", {
-          parentWorkspaceId,
-          error: resumeResult.error,
-        });
-      }
-    }
   }
 
   private async readLatestAssistantText(workspaceId: string): Promise<string | null> {
