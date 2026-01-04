@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import { Plus, Loader2 } from "lucide-react";
 import { SUPPORTED_PROVIDERS, PROVIDER_DISPLAY_NAMES } from "@/common/constants/providers";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
@@ -15,6 +15,10 @@ import {
   SelectValue,
 } from "@/browser/components/ui/select";
 import { Button } from "@/browser/components/ui/button";
+import { ModelSelector } from "@/browser/components/ModelSelector";
+import { MODE_AI_DEFAULTS_KEY } from "@/common/constants/storage";
+import { normalizeModeAiDefaults, type ModeAiDefaults } from "@/common/types/modeAiDefaults";
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 
 // Providers to exclude from the custom models UI (handled specially or internal)
 const HIDDEN_PROVIDERS = new Set(["mux-gateway"]);
@@ -37,12 +41,96 @@ export function ModelsSection() {
   const [editing, setEditing] = useState<EditingState | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Compaction model state
+  const [compactionModel, setCompactionModelState] = useState<string>("");
+  const [compactionLoaded, setCompactionLoaded] = useState(false);
+  const compactionSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const selectableProviders = SUPPORTED_PROVIDERS.filter(
     (provider) => !HIDDEN_PROVIDERS.has(provider)
   );
-  const { defaultModel, setDefaultModel, hiddenModels, hideModel, unhideModel } =
+  const { models, defaultModel, setDefaultModel, hiddenModels, hideModel, unhideModel } =
     useModelsFromSettings();
   const gateway = useGateway();
+
+  // Load compaction model from config on mount
+  useEffect(() => {
+    if (!api) return;
+
+    void api.config
+      .getConfig()
+      .then((cfg) => {
+        const normalized = normalizeModeAiDefaults(cfg.modeAiDefaults ?? {});
+        setCompactionModelState(normalized.compact?.modelString ?? "");
+        setCompactionLoaded(true);
+      })
+      .catch(() => {
+        setCompactionLoaded(true);
+      });
+  }, [api]);
+
+  // Debounced save for compaction model changes
+  const setCompactionModel = useCallback(
+    (model: string) => {
+      setCompactionModelState(model);
+
+      // Clear any pending save
+      if (compactionSaveTimerRef.current) {
+        clearTimeout(compactionSaveTimerRef.current);
+      }
+
+      compactionSaveTimerRef.current = setTimeout(() => {
+        if (!api) return;
+
+        // Update local cache immediately for non-React readers
+        updatePersistedState<ModeAiDefaults>(
+          MODE_AI_DEFAULTS_KEY,
+          (prev) => {
+            const next = { ...prev };
+            if (!model) {
+              if (next.compact) {
+                delete next.compact.modelString;
+                if (!next.compact.thinkingLevel) delete next.compact;
+              }
+            } else {
+              next.compact = { ...next.compact, modelString: model };
+            }
+            return next;
+          },
+          {}
+        );
+
+        // Persist to backend
+        void api.config.getConfig().then((cfg) => {
+          const existing = normalizeModeAiDefaults(cfg.modeAiDefaults ?? {});
+          const updated: ModeAiDefaults = { ...existing };
+
+          if (!model) {
+            if (updated.compact) {
+              delete updated.compact.modelString;
+              if (!updated.compact.thinkingLevel) {
+                delete updated.compact;
+              }
+            }
+          } else {
+            updated.compact = { ...updated.compact, modelString: model };
+          }
+
+          void api.config.updateModeAiDefaults({ modeAiDefaults: updated });
+        });
+      }, 400);
+    },
+    [api]
+  );
+
+  // Cleanup save timer on unmount
+  useEffect(() => {
+    return () => {
+      if (compactionSaveTimerRef.current) {
+        clearTimeout(compactionSaveTimerRef.current);
+      }
+    };
+  }, []);
 
   // Check if a model already exists (for duplicate prevention)
   const modelExists = useCallback(
@@ -169,15 +257,47 @@ export function ModelsSection() {
     modelId: model.providerModelId,
     fullId: model.id,
     aliases: model.aliases,
+    contextWindow: model.contextWindow,
+    description: model.description,
   }));
 
   const customModels = getCustomModels();
 
   return (
     <div className="space-y-4">
-      <p className="text-muted text-xs">
-        Manage your models. Click the star to set a default model for new workspaces.
-      </p>
+      {/* Model Defaults */}
+      {compactionLoaded && (
+        <div className="border-border-medium bg-background-secondary rounded-md border p-3">
+          <div className="text-foreground mb-3 text-sm font-medium">Model Defaults</div>
+
+          {/* Default Model */}
+          <div className="mb-4 space-y-1">
+            <div className="text-muted text-xs">Default Model</div>
+            <ModelSelector
+              value={defaultModel}
+              onChange={setDefaultModel}
+              models={models}
+              hiddenModels={hiddenModels}
+            />
+            <div className="text-muted-light text-[10px]">Used for new workspaces</div>
+          </div>
+
+          {/* Compaction Model */}
+          <div className="space-y-1">
+            <div className="text-muted text-xs">Compaction Model</div>
+            <ModelSelector
+              value={compactionModel}
+              emptyLabel="Use workspace model"
+              onChange={setCompactionModel}
+              models={models}
+              hiddenModels={hiddenModels}
+            />
+            <div className="text-muted-light text-[10px]">
+              Model used for compacting history. Falls back to workspace model if not set.
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Custom Models - shown first */}
       <div className="space-y-1.5">
@@ -236,14 +356,12 @@ export function ModelsSection() {
               modelId={model.modelId}
               fullId={model.fullId}
               isCustom={true}
-              isDefault={defaultModel === model.fullId}
               isEditing={isModelEditing}
               editValue={isModelEditing ? editing.newModelId : undefined}
               editError={isModelEditing ? error : undefined}
               saving={false}
               hasActiveEdit={editing !== null}
               isGatewayEnabled={gateway.modelUsesGateway(model.fullId)}
-              onSetDefault={() => setDefaultModel(model.fullId)}
               onStartEdit={() => handleStartEdit(model.provider, model.modelId)}
               onSaveEdit={handleSaveEdit}
               onCancelEdit={handleCancelEdit}
@@ -279,11 +397,11 @@ export function ModelsSection() {
             modelId={model.modelId}
             fullId={model.fullId}
             aliases={model.aliases}
+            contextWindow={model.contextWindow}
+            description={model.description}
             isCustom={false}
-            isDefault={defaultModel === model.fullId}
             isEditing={false}
             isGatewayEnabled={gateway.modelUsesGateway(model.fullId)}
-            onSetDefault={() => setDefaultModel(model.fullId)}
             isHiddenFromSelector={hiddenModels.includes(model.fullId)}
             onToggleVisibility={() =>
               hiddenModels.includes(model.fullId)
