@@ -40,6 +40,7 @@ import { SectionHeader } from "./SectionHeader";
 import { AddSectionButton } from "./AddSectionButton";
 import { WorkspaceSectionDropZone } from "./WorkspaceSectionDropZone";
 import { WorkspaceDragLayer } from "./WorkspaceDragLayer";
+import { SectionDragLayer } from "./SectionDragLayer";
 import { DraggableSection } from "./DraggableSection";
 import type { SectionConfig } from "@/common/types/project";
 
@@ -90,7 +91,7 @@ const DraggableProjectItemBase: React.FC<DraggableProjectItemProps> = ({
   const [{ isDragging }, drag, dragPreview] = useDrag(
     () => ({
       type: "PROJECT",
-      item: { projectPath },
+      item: { type: "PROJECT" as const, projectPath },
       collect: (monitor) => ({ isDragging: monitor.isDragging() }),
     }),
     [projectPath]
@@ -138,7 +139,16 @@ const DraggableProjectItem = React.memo(
 );
 
 // Custom drag layer to show a semi-transparent preview and enforce grabbing cursor
-type DragItem = { projectPath: string } | null;
+interface ProjectDragItem {
+  type: "PROJECT";
+  projectPath: string;
+}
+interface SectionDragItemLocal {
+  type: "SECTION_REORDER";
+  sectionId: string;
+  projectPath: string;
+}
+type DragItem = ProjectDragItem | SectionDragItemLocal | null;
 
 const ProjectDragLayer: React.FC = () => {
   const dragState = useDragLayer<{
@@ -166,7 +176,8 @@ const ProjectDragLayer: React.FC = () => {
     };
   }, [isDragging]);
 
-  if (!isDragging || !currentOffset || !item?.projectPath) return null;
+  // Only render for PROJECT type drags (not section reorder)
+  if (!isDragging || !currentOffset || !item?.projectPath || item.type !== "PROJECT") return null;
 
   const abbrevPath = PlatformPaths.abbreviate(item.projectPath);
   const { basename } = PlatformPaths.splitAbbreviated(abbrevPath);
@@ -440,6 +451,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       <DndProvider backend={HTML5Backend}>
         <ProjectDragLayer />
         <WorkspaceDragLayer />
+        <SectionDragLayer />
         <div
           className="font-primary bg-sidebar border-border-light flex flex-1 flex-col overflow-hidden border-r"
           role="navigation"
@@ -774,6 +786,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   <DraggableSection
                                     key={section.id}
                                     sectionId={section.id}
+                                    sectionName={section.name}
                                     projectPath={projectPath}
                                     onReorder={handleSectionReorder}
                                   >

@@ -8,11 +8,13 @@ const SECTION_DRAG_TYPE = "SECTION_REORDER";
 export interface SectionDragItem {
   type: typeof SECTION_DRAG_TYPE;
   sectionId: string;
+  sectionName: string;
   projectPath: string;
 }
 
 interface DraggableSectionProps {
   sectionId: string;
+  sectionName: string;
   projectPath: string;
   /** Called when a section is dropped onto this section (reorder) */
   onReorder: (draggedSectionId: string, targetSectionId: string) => void;
@@ -25,6 +27,7 @@ interface DraggableSectionProps {
  */
 export const DraggableSection: React.FC<DraggableSectionProps> = ({
   sectionId,
+  sectionName,
   projectPath,
   onReorder,
   children,
@@ -32,12 +35,17 @@ export const DraggableSection: React.FC<DraggableSectionProps> = ({
   const [{ isDragging }, drag, dragPreview] = useDrag(
     () => ({
       type: SECTION_DRAG_TYPE,
-      item: { type: SECTION_DRAG_TYPE, sectionId, projectPath } satisfies SectionDragItem,
+      item: {
+        type: SECTION_DRAG_TYPE,
+        sectionId,
+        sectionName,
+        projectPath,
+      } satisfies SectionDragItem,
       collect: (monitor) => ({
         isDragging: monitor.isDragging(),
       }),
     }),
-    [sectionId, projectPath]
+    [sectionId, sectionName, projectPath]
   );
 
   // Hide native drag preview
