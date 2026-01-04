@@ -161,6 +161,20 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
                   onChange={(newColor) => onChangeColor(newColor)}
                 />
               </div>
+              {/* Hex input */}
+              <div className="mt-2 flex items-center gap-1.5">
+                <input
+                  type="text"
+                  value={sectionColor}
+                  onChange={(e) => {
+                    const hex = e.target.value.trim();
+                    if (/^#[0-9a-fA-F]{6}$/.test(hex)) {
+                      onChangeColor(hex);
+                    }
+                  }}
+                  className="bg-background/50 text-foreground w-full rounded border border-white/20 px-1.5 py-0.5 text-xs outline-none"
+                />
+              </div>
             </div>
           )}
         </div>

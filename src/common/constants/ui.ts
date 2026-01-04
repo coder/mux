@@ -89,13 +89,14 @@ export const COPY_FEEDBACK_DURATION_MS = 2000;
  */
 export const SECTION_COLOR_PALETTE = [
   ["Gray", "#6b7280"],
+  ["Slate", "#64748b"],
   ["Blue", "#5a9bd4"],
+  ["Cyan", "#22d3ee"],
   ["Teal", "#4ab5a7"],
   ["Green", "#4caf7c"],
   ["Yellow", "#d9b836"],
   ["Orange", "#e5853a"],
   ["Red", "#e54545"],
-  ["Purple", "#9c6bd4"],
   ["Pink", "#d465a5"],
 ] as const;
 
