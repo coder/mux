@@ -30,6 +30,7 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(section.name);
   const [showColorPicker, setShowColorPicker] = useState(false);
+  const [hexInputValue, setHexInputValue] = useState(section.color ?? "");
   const inputRef = useRef<HTMLInputElement>(null);
   const colorPickerRef = useRef<HTMLDivElement>(null);
 
@@ -51,6 +52,11 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
       return () => document.removeEventListener("mousedown", handleClickOutside);
     }
   }, [showColorPicker]);
+
+  // Sync hex input when color changes from picker or presets
+  useEffect(() => {
+    setHexInputValue(sectionColor);
+  }, [sectionColor]);
 
   const handleSubmitRename = () => {
     const trimmed = editValue.trim();
@@ -165,11 +171,13 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
               <div className="mt-2 flex items-center gap-1.5">
                 <input
                   type="text"
-                  value={sectionColor}
+                  value={hexInputValue}
                   onChange={(e) => {
-                    const hex = e.target.value.trim();
-                    if (/^#[0-9a-fA-F]{6}$/.test(hex)) {
-                      onChangeColor(hex);
+                    const value = e.target.value;
+                    setHexInputValue(value);
+                    // Only apply valid hex colors
+                    if (/^#[0-9a-fA-F]{6}$/.test(value)) {
+                      onChangeColor(value);
                     }
                   }}
                   className="bg-background/50 text-foreground w-full rounded border border-white/20 px-1.5 py-0.5 text-xs outline-none"
