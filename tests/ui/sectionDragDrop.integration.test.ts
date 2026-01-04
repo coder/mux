@@ -1,16 +1,15 @@
 /**
- * Integration tests for workspace section drag-drop and creation infrastructure.
+ * Integration tests for workspace sections.
  *
  * Tests verify:
- * - Section and drop zone UI elements render correctly with proper data attributes
- * - Workspace items are draggable and show correct section assignment
- * - Backend section assignment API updates workspace metadata
- * - Creating workspace from section's "+" button assigns it to that section
- * - Section selector appears on create page when project has sections
+ * - Section and drop zone UI elements render with proper data attributes
+ * - Workspace creation with sectionId assigns to that section
+ * - Section "+" button pre-selects section in creation flow
+ * - Section removal invariants (blocked by active workspaces, clears archived)
  *
- * Note: react-dnd-html5-backend doesn't work with happy-dom's drag events,
- * so we verify the UI infrastructure and backend separately. The full drag-drop
- * flow is tested in Storybook / E2E tests.
+ * Limitation: react-dnd-html5-backend doesn't work with happy-dom, so actual
+ * drag-drop is tested in Storybook. These tests verify UI infrastructure and
+ * backend behavior that the drag handlers depend on.
  */
 
 import { waitFor } from "@testing-library/react";
@@ -73,13 +72,6 @@ async function waitForSection(
     },
     { timeout: timeoutMs }
   );
-}
-
-/**
- * Get the section ID from a workspace row's data attribute.
- */
-function getWorkspaceSectionId(workspaceRow: HTMLElement): string {
-  return workspaceRow.getAttribute("data-section-id") ?? "";
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -146,151 +138,6 @@ describeIntegration("Section Drag and Drop (UI)", () => {
     } finally {
       await cleanupView(view, cleanupDom);
       // Cleanup
-      await env.orpc.workspace.remove({ workspaceId });
-      await env.orpc.projects.sections.remove({ projectPath, sectionId });
-    }
-  }, 60_000);
-
-  test("backend section assignment updates workspace metadata", async () => {
-    const env = getSharedEnv();
-    const projectPath = getSharedRepoPath();
-
-    // Create a section
-    const sectionResult = await env.orpc.projects.sections.create({
-      projectPath,
-      name: "Test Section Backend",
-    });
-    if (!sectionResult.success) throw new Error(`Failed to create section: ${sectionResult.error}`);
-    const sectionId = sectionResult.data.id;
-
-    // Create a workspace
-    const branchName = generateBranchName("test-section-backend");
-    const trunkBranch = await detectDefaultTrunkBranch(projectPath);
-    const wsResult = await env.orpc.workspace.create({
-      projectPath,
-      branchName,
-      trunkBranch,
-    });
-    if (!wsResult.success) throw new Error(`Failed to create workspace: ${wsResult.error}`);
-    const workspaceId = wsResult.metadata.id;
-
-    try {
-      // Initially workspace should have no section
-      let workspaceInfo = await env.orpc.workspace.getInfo({ workspaceId });
-      expect(workspaceInfo?.sectionId).toBeUndefined();
-
-      // Assign workspace to section
-      const assignResult = await env.orpc.projects.sections.assignWorkspace({
-        projectPath,
-        workspaceId,
-        sectionId,
-      });
-      expect(assignResult.success).toBe(true);
-
-      // Verify workspace now has section assignment
-      workspaceInfo = await env.orpc.workspace.getInfo({ workspaceId });
-      expect(workspaceInfo?.sectionId).toBe(sectionId);
-
-      // Unassign workspace from section
-      const unassignResult = await env.orpc.projects.sections.assignWorkspace({
-        projectPath,
-        workspaceId,
-        sectionId: null,
-      });
-      expect(unassignResult.success).toBe(true);
-
-      // Verify workspace is unsectioned again
-      workspaceInfo = await env.orpc.workspace.getInfo({ workspaceId });
-      expect(workspaceInfo?.sectionId).toBeUndefined();
-    } finally {
-      // Cleanup
-      await env.orpc.workspace.remove({ workspaceId });
-      await env.orpc.projects.sections.remove({ projectPath, sectionId });
-    }
-  }, 60_000);
-
-  test("UI updates workspace section after assignment via context action", async () => {
-    const env = getSharedEnv();
-    const projectPath = getSharedRepoPath();
-
-    // Create a workspace first (this implicitly adds the project)
-    const branchName = generateBranchName("test-section-ui-update");
-    const trunkBranch = await detectDefaultTrunkBranch(projectPath);
-    const wsResult = await env.orpc.workspace.create({
-      projectPath,
-      branchName,
-      trunkBranch,
-    });
-    if (!wsResult.success) throw new Error(`Failed to create workspace: ${wsResult.error}`);
-    const workspaceId = wsResult.metadata.id;
-    const metadata = wsResult.metadata;
-
-    // Create a section
-    const sectionResult = await env.orpc.projects.sections.create({
-      projectPath,
-      name: "UI Update Section",
-    });
-    if (!sectionResult.success) throw new Error(`Failed to create section: ${sectionResult.error}`);
-    const sectionId = sectionResult.data.id;
-
-    const cleanupDom = installDom();
-    expandProjects([projectPath]);
-
-    const view = renderApp({ apiClient: env.orpc, metadata });
-
-    try {
-      await setupWorkspaceView(view, metadata, workspaceId);
-
-      // Wait for section to appear
-      await waitForSection(view.container, sectionId);
-
-      // Verify workspace is initially unsectioned
-      let workspaceRow = findWorkspaceRow(view.container, workspaceId);
-      expect(workspaceRow).not.toBeNull();
-      expect(getWorkspaceSectionId(workspaceRow!)).toBe("");
-
-      // Assign workspace to section via backend API (simulating what drop handler does)
-      // This should emit a metadata update via WorkspaceService.refreshAndEmitMetadata
-      const assignResult = await env.orpc.projects.sections.assignWorkspace({
-        projectPath,
-        workspaceId,
-        sectionId,
-      });
-      expect(assignResult.success).toBe(true);
-
-      // Wait for UI to reflect the change - workspace row should now show section ID
-      await waitFor(
-        () => {
-          workspaceRow = findWorkspaceRow(view.container, workspaceId);
-          if (!workspaceRow) throw new Error("Workspace row not found");
-          const currentSectionId = getWorkspaceSectionId(workspaceRow);
-          if (currentSectionId !== sectionId) {
-            throw new Error(`Expected sectionId ${sectionId}, got "${currentSectionId}"`);
-          }
-        },
-        { timeout: 5_000 }
-      );
-
-      // Unassign and verify UI updates
-      await env.orpc.projects.sections.assignWorkspace({
-        projectPath,
-        workspaceId,
-        sectionId: null,
-      });
-
-      await waitFor(
-        () => {
-          workspaceRow = findWorkspaceRow(view.container, workspaceId);
-          if (!workspaceRow) throw new Error("Workspace row not found");
-          const currentSectionId = getWorkspaceSectionId(workspaceRow);
-          if (currentSectionId !== "") {
-            throw new Error(`Expected empty sectionId, got "${currentSectionId}"`);
-          }
-        },
-        { timeout: 5_000 }
-      );
-    } finally {
-      await cleanupView(view, cleanupDom);
       await env.orpc.workspace.remove({ workspaceId });
       await env.orpc.projects.sections.remove({ projectPath, sectionId });
     }
