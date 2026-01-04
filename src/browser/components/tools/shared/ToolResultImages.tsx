@@ -118,12 +118,6 @@ export const ToolResultImages: React.FC<ToolResultImagesProps> = ({ result }) =>
       {/* Lightbox modal for full-size image viewing */}
       <Dialog open={selectedImage !== null} onOpenChange={() => setSelectedImage(null)}>
         <DialogContent
-          onKeyDown={(e) => {
-            // Prevent Escape from propagating to global handlers (stream interrupt)
-            if (e.key === "Escape") {
-              e.stopPropagation();
-            }
-          }}
           maxWidth="90vw"
           maxHeight="90vh"
           className="flex items-center justify-center bg-black/90 p-2"
