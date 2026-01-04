@@ -15,7 +15,7 @@
  * - DnD gestures tested in Storybook (react-dnd-html5-backend doesn't work in happy-dom)
  */
 
-import { fireEvent, waitFor } from "@testing-library/react";
+import { act, fireEvent, waitFor } from "@testing-library/react";
 
 import { shouldRunIntegrationTests } from "../testUtils";
 import {
@@ -105,9 +105,11 @@ async function createSectionViaUI(
     },
     { timeout: timeoutMs }
   );
-  fireEvent.click(addButton);
+  await act(async () => {
+    fireEvent.click(addButton);
+  });
 
-  // Type the section name
+  // Type the section name and submit
   const input = await waitFor(
     () => {
       const el = container.querySelector('[data-testid="add-section-input"]');
@@ -116,8 +118,17 @@ async function createSectionViaUI(
     },
     { timeout: timeoutMs }
   );
-  fireEvent.change(input, { target: { value: sectionName } });
-  fireEvent.keyDown(input, { key: "Enter" });
+
+  await act(async () => {
+    // Set value directly and dispatch input event for React
+    input.value = sectionName;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    fireEvent.change(input, { target: { value: sectionName } });
+  });
+
+  await act(async () => {
+    fireEvent.keyDown(input, { key: "Enter" });
+  });
 
   // Wait for section to appear and return its ID
   const section = await waitFor(
@@ -127,7 +138,7 @@ async function createSectionViaUI(
       for (const s of sections) {
         if (s.textContent?.includes(sectionName)) {
           const id = s.getAttribute("data-section-id");
-          if (id) return { id, element: s };
+          if (id && id !== "") return { id, element: s };
         }
       }
       throw new Error(`Section "${sectionName}" not found after creation`);
