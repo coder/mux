@@ -1,40 +1,60 @@
 /**
- * Hook to manage idle compaction hours setting per model.
+ * Hook to manage idle compaction hours setting per project.
  *
  * Returns `null` when disabled, number of hours when enabled.
- * Stored in localStorage per-model (like auto-compaction threshold).
+ * Persists to backend project config (where idleCompactionService reads it).
  */
 
-import { usePersistedState } from "@/browser/hooks/usePersistedState";
-import { getIdleCompactionHoursKey } from "@/common/constants/storage";
+import { useCallback, useEffect, useState } from "react";
+import { useAPI } from "@/browser/contexts/API";
 
 interface UseIdleCompactionHoursParams {
-  /** Model identifier for per-model storage (e.g., "claude-sonnet-4-5") */
-  model: string | null;
+  /** Project path for backend persistence */
+  projectPath: string | null;
 }
 
 export interface UseIdleCompactionHoursResult {
   /** Hours of inactivity before idle compaction triggers, or null if disabled */
   hours: number | null;
-  /** Update the idle compaction hours setting */
+  /** Update the idle compaction hours setting (persists to backend) */
   setHours: (hours: number | null) => void;
 }
 
 /**
  * Hook for idle compaction hours setting.
- * - Setting is per-model (different models have different context windows)
- * - null means disabled for that model
+ * - Setting is per-project (idle compaction is about workspace inactivity, not model context)
+ * - null means disabled for that project
+ * - Persists to backend so idleCompactionService can read it
  *
- * @param params - Object containing model identifier
+ * @param params - Object containing project path
  * @returns Settings object with hours value and setter
  */
 export function useIdleCompactionHours(
   params: UseIdleCompactionHoursParams
 ): UseIdleCompactionHoursResult {
-  const { model } = params;
-  // Use model for storage key, fall back to "default" if no model
-  const storageKey = getIdleCompactionHoursKey(model ?? "default");
-  const [hours, setHours] = usePersistedState<number | null>(storageKey, null, { listener: true });
+  const { projectPath } = params;
+  const { api } = useAPI();
+  const [hours, setHoursState] = useState<number | null>(null);
+
+  // Load initial value from backend
+  useEffect(() => {
+    if (!projectPath || !api) return;
+    void api.projects.idleCompaction.get({ projectPath }).then((result) => {
+      setHoursState(result.hours);
+    });
+  }, [api, projectPath]);
+
+  // Setter that persists to backend
+  const setHours = useCallback(
+    (newHours: number | null) => {
+      if (!projectPath || !api) return;
+      // Optimistic update
+      setHoursState(newHours);
+      // Persist to backend (fire and forget - errors are rare for config saves)
+      void api.projects.idleCompaction.set({ projectPath, hours: newHours });
+    },
+    [api, projectPath]
+  );
 
   return { hours, setHours };
 }

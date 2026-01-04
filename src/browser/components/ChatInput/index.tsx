@@ -400,9 +400,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     [autoCompactThreshold, setAutoCompactThreshold]
   );
 
-  // Idle compaction settings (per-model, stored in localStorage like auto-compact threshold)
+  // Idle compaction settings (per-project, persisted to backend for idleCompactionService)
   const { hours: idleCompactionHours, setHours: setIdleCompactionHours } = useIdleCompactionHours({
-    model: usageModel,
+    projectPath: selectedWorkspace?.projectPath ?? null,
   });
   const idleCompactionProps = useMemo(
     () => ({

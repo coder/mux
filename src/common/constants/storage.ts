@@ -393,15 +393,6 @@ export function getAutoCompactionThresholdKey(model: string): string {
 }
 
 /**
- * Get the localStorage key for idle compaction hours per model
- * Format: "idleCompaction:hours:{model}"
- * Stored per-model for consistency with auto-compaction threshold
- */
-export function getIdleCompactionHoursKey(model: string): string {
-  return `idleCompaction:hours:${model}`;
-}
-
-/**
  * List of workspace-scoped key functions that should be copied on fork and deleted on removal
  */
 const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string> = [

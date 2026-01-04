@@ -116,7 +116,6 @@ const AutoCompactSettings: React.FC<{
       {/* Auto-Compact Triggers section */}
       <div className="border-separator-light space-y-2.5 border-t pt-3">
         <div className="text-foreground text-[11px] font-medium">Auto-Compact Triggers</div>
-        <div className="text-muted text-[10px]">Settings are per-model</div>
 
         {/* Usage-based trigger */}
         {usageConfig && data.maxTokens && (
