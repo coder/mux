@@ -1198,6 +1198,69 @@ export const InitHookError: AppStory = {
 };
 
 /**
+ * Context meter with high usage and idle compaction enabled.
+ * Shows the context usage indicator badge in the chat input area with the
+ * hourglass badge indicating idle compaction is configured.
+ */
+export const ContextMeterWithIdleCompaction: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-context-meter",
+          workspaceName: "feature/auth",
+          projectName: "my-app",
+          idleCompactionHours: 4,
+          messages: [
+            createUserMessage("msg-1", "Help me refactor the authentication module", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 300000,
+            }),
+            createAssistantMessage(
+              "msg-2",
+              "I'll help you refactor the authentication module. Let me first review the current implementation.",
+              {
+                historySequence: 2,
+                timestamp: STABLE_TIMESTAMP - 290000,
+                // High context usage to show the meter prominently (65% of 200k = 130k tokens)
+                contextUsage: { inputTokens: 130000, outputTokens: 2000 },
+                toolCalls: [
+                  createFileReadTool(
+                    "call-1",
+                    "src/auth/index.ts",
+                    'export { login, logout, verifyToken } from "./handlers";'
+                  ),
+                ],
+              }
+            ),
+          ],
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    // Wait for the context meter to appear (it shows token usage)
+    await waitFor(
+      () => {
+        // Look for the context meter button which shows token counts
+        canvas.getByRole("button", { name: /context/i });
+      },
+      { timeout: 5000 }
+    );
+  },
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Shows the Context Meter with high usage (~65%) and idle compaction enabled (4h). " +
+          "The meter displays an hourglass badge indicating idle compaction is configured.",
+      },
+    },
+  },
+};
+
+/**
  * Story showing a propose_plan tool call with Plan UI.
  * Tests the plan card rendering with icon action buttons at the bottom.
  */

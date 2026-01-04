@@ -238,6 +238,7 @@ export interface SimpleChatSetupOptions {
   workspaceId?: string;
   workspaceName?: string;
   projectName?: string;
+  projectPath?: string;
   messages: ChatMuxMessage[];
   gitStatus?: GitStatusFixture;
   /** Git diff output for Review tab */
@@ -249,6 +250,8 @@ export interface SimpleChatSetupOptions {
   sessionUsage?: MockSessionUsage;
   /** Optional custom chat handler for emitting additional events (e.g., queued-message-changed) */
   onChat?: (workspaceId: string, emit: (msg: WorkspaceChatMessage) => void) => void;
+  /** Idle compaction hours for context meter (null = disabled) */
+  idleCompactionHours?: number | null;
 }
 
 /**
@@ -257,11 +260,14 @@ export interface SimpleChatSetupOptions {
  */
 export function setupSimpleChatStory(opts: SimpleChatSetupOptions): APIClient {
   const workspaceId = opts.workspaceId ?? "ws-chat";
+  const projectName = opts.projectName ?? "my-app";
+  const projectPath = opts.projectPath ?? `/home/user/projects/${projectName}`;
   const workspaces = [
     createWorkspace({
       id: workspaceId,
       name: opts.workspaceName ?? "feature",
-      projectName: opts.projectName ?? "my-app",
+      projectName,
+      projectPath,
     }),
   ];
 
@@ -287,6 +293,12 @@ export function setupSimpleChatStory(opts: SimpleChatSetupOptions): APIClient {
     ? new Map([[workspaceId, opts.sessionUsage]])
     : undefined;
 
+  // Set up idle compaction hours map
+  const idleCompactionHours =
+    opts.idleCompactionHours !== undefined
+      ? new Map([[projectPath, opts.idleCompactionHours]])
+      : undefined;
+
   // Create onChat handler that combines static messages with custom handler
   const baseOnChat = createOnChatAdapter(chatHandlers);
   const onChat = opts.onChat
@@ -307,6 +319,7 @@ export function setupSimpleChatStory(opts: SimpleChatSetupOptions): APIClient {
     backgroundProcesses: bgProcesses,
     statsTabVariant: opts.statsTabEnabled ? "stats" : "control",
     sessionUsage: sessionUsageMap,
+    idleCompactionHours,
   });
 }
 

@@ -130,6 +130,8 @@ export interface MockORPCClientOptions {
   gitInit?: (input: {
     projectPath: string;
   }) => Promise<{ success: true } | { success: false; error: string }>;
+  /** Idle compaction hours per project (null = disabled) */
+  idleCompactionHours?: Map<string, number | null>;
 }
 
 interface MockBackgroundProcess {
@@ -470,8 +472,14 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         setToolAllowlist: () => Promise.resolve({ success: true, data: undefined }),
       },
       idleCompaction: {
-        get: () => Promise.resolve({ success: true, hours: null }),
-        set: () => Promise.resolve({ success: true }),
+        get: (input: { projectPath: string }) =>
+          Promise.resolve({ hours: options.idleCompactionHours?.get(input.projectPath) ?? null }),
+        set: (input: { projectPath: string; hours: number | null }) => {
+          if (options.idleCompactionHours) {
+            options.idleCompactionHours.set(input.projectPath, input.hours);
+          }
+          return Promise.resolve({ success: true, data: undefined });
+        },
       },
     },
     workspace: {

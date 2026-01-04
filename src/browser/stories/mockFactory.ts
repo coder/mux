@@ -221,6 +221,8 @@ export function createAssistantMessage(
     toolCalls?: MuxPart[];
     /** Mark as partial/interrupted message (unfinished stream) */
     partial?: boolean;
+    /** Custom context usage for testing context meter display */
+    contextUsage?: { inputTokens: number; outputTokens: number; totalTokens?: number };
   }
 ): ChatMuxMessage {
   const parts: MuxPart[] = [];
@@ -231,6 +233,12 @@ export function createAssistantMessage(
   if (opts.toolCalls) {
     parts.push(...opts.toolCalls);
   }
+  const contextUsage = opts.contextUsage ?? {
+    inputTokens: 100,
+    outputTokens: 50,
+    totalTokens: 150,
+  };
+  contextUsage.totalTokens ??= contextUsage.inputTokens + contextUsage.outputTokens;
   return {
     type: "message",
     id,
@@ -240,8 +248,8 @@ export function createAssistantMessage(
       historySequence: opts.historySequence,
       timestamp: opts.timestamp ?? STABLE_TIMESTAMP,
       model: opts.model ?? DEFAULT_MODEL,
-      usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
-      contextUsage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+      usage: contextUsage,
+      contextUsage,
       duration: 1000,
       partial: opts.partial,
     },
