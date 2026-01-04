@@ -40,7 +40,7 @@ interface ContextUsageIndicatorButtonProps {
 const PercentTickMarks: React.FC = () => {
   const ticks = [0, 25, 50, 75, 100];
   return (
-    <div className="-mt-1 relative h-5 w-full">
+    <div className="relative -mt-1 h-5 w-full">
       {ticks.map((pct) => {
         const transform =
           pct === 0 ? "translateX(0%)" : pct === 100 ? "translateX(-100%)" : "translateX(-50%)";
