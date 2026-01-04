@@ -83,6 +83,18 @@ function entryKey(hash: string): string {
 }
 
 /**
+ * Pre-warm the hash cache for content.
+ * Ensures consistent hashing between setShareData and getShareData calls
+ * by waiting for the async SHA-256 computation to complete.
+ */
+export async function warmHashCache(content: string): Promise<void> {
+  // Trigger the fallback hash (which kicks off async SHA-256)
+  hashContent(content);
+  // Wait for async hash to complete and populate cache
+  await hashContentAsync(content);
+}
+
+/**
  * Get the cached share data for content, if it exists and hasn't expired.
  */
 export function getShareData(content: string): ShareData | undefined {

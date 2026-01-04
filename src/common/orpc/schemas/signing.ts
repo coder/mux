@@ -11,13 +11,20 @@ import { z } from "zod";
 
 export const signingCapabilitiesInput = z.object({});
 
+export const signingErrorOutput = z.object({
+  /** Error message */
+  message: z.string(),
+  /** True if a compatible key was found but requires a passphrase */
+  hasEncryptedKey: z.boolean(),
+});
+
 export const signingCapabilitiesOutput = z.object({
   /** Public key in OpenSSH format (ssh-ed25519 AAAA...), null if no Ed25519 key found */
   publicKey: z.string().nullable(),
   /** Detected GitHub username, if any */
   githubUser: z.string().nullable(),
-  /** Error message if key loading or identity detection failed */
-  error: z.string().nullable(),
+  /** Error info if key loading or identity detection failed */
+  error: signingErrorOutput.nullable(),
 });
 
 export type SigningCapabilities = z.infer<typeof signingCapabilitiesOutput>;

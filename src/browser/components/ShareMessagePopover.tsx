@@ -91,18 +91,28 @@ const SigningBadge = ({
   onRetryKeyDetection,
 }: SigningBadgeProps) => {
   const hasKey = Boolean(capabilities?.publicKey);
+  const hasEncryptedKey = capabilities?.error?.hasEncryptedKey ?? false;
 
-  // Color states: blue = signed/enabled with key, muted = disabled or no key
+  // Color states:
+  // - blue = signed/enabled with key
+  // - yellow/warning = encrypted key found but unusable
+  // - muted = disabled or no key at all
   const isActive = signed || (signingEnabled && hasKey);
-  const iconColor = isActive ? "text-blue-400" : "text-muted";
+  const iconColor = isActive ? "text-blue-400" : hasEncryptedKey ? "text-yellow-500" : "text-muted";
+
+  // Determine status header text
+  const getStatusHeader = () => {
+    if (signed) return "✓ Signed";
+    if (signingEnabled && hasKey) return "Signing enabled";
+    if (hasEncryptedKey) return "⚠ Key requires passphrase";
+    return "Signing disabled";
+  };
 
   // Build tooltip content with full signing info
   const tooltipContent = (
     <div className="space-y-1.5">
       {/* Status header */}
-      <p className="font-medium">
-        {signed ? "✓ Signed" : signingEnabled && hasKey ? "Signing enabled" : "Signing disabled"}
-      </p>
+      <p className="font-medium">{getStatusHeader()}</p>
 
       {/* Show signing details when key is available */}
       {hasKey && capabilities && (
@@ -114,8 +124,29 @@ const SigningBadge = ({
         </div>
       )}
 
+      {/* Encrypted key warning message */}
+      {!hasKey && hasEncryptedKey && (
+        <p className="text-muted-foreground text-[10px]">
+          Create an unencrypted key at ~/.mux/message_signing_key or use ssh-add
+          {onRetryKeyDetection && (
+            <>
+              {" · "}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRetryKeyDetection();
+                }}
+                className="text-foreground underline hover:no-underline"
+              >
+                Retry
+              </button>
+            </>
+          )}
+        </p>
+      )}
+
       {/* No key message + retry */}
-      {!hasKey && (
+      {!hasKey && !hasEncryptedKey && (
         <p className="text-muted-foreground text-[10px]">
           No signing key found
           {onRetryKeyDetection && (

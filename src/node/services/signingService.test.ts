@@ -86,6 +86,7 @@ describe("SigningService", () => {
 
       expect(caps.publicKey).toBeNull();
       expect(caps.error).toBeDefined();
+      expect(caps.error?.hasEncryptedKey).toBe(false);
     });
 
     it("should throw when getting credentials without a key", async () => {
@@ -116,6 +117,48 @@ describe("SigningService", () => {
       const caps = await service.getCapabilities();
 
       expect(caps.publicKey).toStartWith("ssh-ed25519 ");
+    });
+  });
+
+  describe("with encrypted key", () => {
+    const encryptedKeyPath = join(testDir, "id_encrypted");
+
+    beforeAll(() => {
+      // Generate a passphrase-protected key
+      execSync(`ssh-keygen -t ed25519 -f "${encryptedKeyPath}" -N "testpassword" -q`);
+    });
+
+    it("should detect encrypted key and return hasEncryptedKey=true", async () => {
+      const service = new SigningService([encryptedKeyPath]);
+      const caps = await service.getCapabilities();
+
+      expect(caps.publicKey).toBeNull();
+      expect(caps.error?.hasEncryptedKey).toBe(true);
+      expect(caps.error?.message).toContain("passphrase");
+    });
+
+    it("should skip encrypted key and use unencrypted fallback", async () => {
+      // Encrypted first, unencrypted second - should skip encrypted and use unencrypted
+      const service = new SigningService([encryptedKeyPath, ed25519KeyPath]);
+      const caps = await service.getCapabilities();
+
+      expect(caps.publicKey).toStartWith("ssh-ed25519 ");
+      // Key loaded successfully - error may exist for identity detection (gh not installed)
+      // but should NOT have hasEncryptedKey flag since we found a usable key
+      if (caps.error) {
+        expect(caps.error.hasEncryptedKey).toBe(false);
+      }
+    });
+
+    it("should reset hasEncryptedKey on cache clear", async () => {
+      const service = new SigningService([encryptedKeyPath]);
+      const caps1 = await service.getCapabilities();
+      expect(caps1.error?.hasEncryptedKey).toBe(true);
+
+      service.clearIdentityCache();
+      // After clearing, a fresh load should still detect the encrypted key
+      const caps2 = await service.getCapabilities();
+      expect(caps2.error?.hasEncryptedKey).toBe(true);
     });
   });
 });

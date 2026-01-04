@@ -252,6 +252,12 @@ export interface SimpleChatSetupOptions {
   onChat?: (workspaceId: string, emit: (msg: WorkspaceChatMessage) => void) => void;
   /** Idle compaction hours for context meter (null = disabled) */
   idleCompactionHours?: number | null;
+  /** Override signing capabilities (for testing warning states) */
+  signingCapabilities?: {
+    publicKey: string | null;
+    githubUser: string | null;
+    error: { message: string; hasEncryptedKey: boolean } | null;
+  };
 }
 
 /**
@@ -320,6 +326,7 @@ export function setupSimpleChatStory(opts: SimpleChatSetupOptions): APIClient {
     statsTabVariant: opts.statsTabEnabled ? "stats" : "control",
     sessionUsage: sessionUsageMap,
     idleCompactionHours,
+    signingCapabilities: opts.signingCapabilities,
   });
 }
 

@@ -132,6 +132,12 @@ export interface MockORPCClientOptions {
   }) => Promise<{ success: true } | { success: false; error: string }>;
   /** Idle compaction hours per project (null = disabled) */
   idleCompactionHours?: Map<string, number | null>;
+  /** Override signing capabilities response */
+  signingCapabilities?: {
+    publicKey: string | null;
+    githubUser: string | null;
+    error: { message: string; hasEncryptedKey: boolean } | null;
+  };
 }
 
 interface MockBackgroundProcess {
@@ -198,6 +204,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     agentDefinitions: initialAgentDefinitions,
     listBranches: customListBranches,
     gitInit: customGitInit,
+    signingCapabilities: customSigningCapabilities,
   } = options;
 
   // Feature flags
@@ -317,12 +324,13 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     },
     signing: {
       capabilities: () =>
-        Promise.resolve({
-          publicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockKey",
-          githubUser: "mockuser",
-          email: "mockuser@example.com",
-          error: null,
-        }),
+        Promise.resolve(
+          customSigningCapabilities ?? {
+            publicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockKey",
+            githubUser: "mockuser",
+            error: null,
+          }
+        ),
       sign: () =>
         Promise.resolve({
           signature: "mockSignature==",

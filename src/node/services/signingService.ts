@@ -26,13 +26,20 @@ interface IdentityStatus {
   error: string | null;
 }
 
+interface SigningError {
+  /** Error message */
+  message: string;
+  /** True if a compatible key was found but requires a passphrase */
+  hasEncryptedKey: boolean;
+}
+
 interface SigningCapabilities {
   /** Public key in OpenSSH format (ssh-ed25519 AAAA...), null if unavailable */
   publicKey: string | null;
   /** Detected GitHub username, if any */
   githubUser: string | null;
-  /** Error message if key loading or identity detection failed */
-  error: string | null;
+  /** Error info if key loading or identity detection failed */
+  error: SigningError | null;
 }
 
 interface SignCredentials {
@@ -64,6 +71,7 @@ export class SigningService {
   private keyPair: KeyPair | null = null;
   private keyLoadAttempted = false;
   private keyLoadError: string | null = null;
+  private hasEncryptedKey = false;
   private identityCache: IdentityStatus | null = null;
   private identityPromise: Promise<IdentityStatus> | null = null;
   private readonly keyPaths: string[];
@@ -124,13 +132,19 @@ export class SigningService {
             keyPath,
             "- skipping (passphrase required)"
           );
+          this.hasEncryptedKey = true;
           continue;
         }
         log.warn("[SigningService] Failed to load key from", keyPath + ":", message);
       }
     }
 
-    this.keyLoadError = `No signing key found. Create ~/.mux/message_signing_key or ensure ~/.ssh/id_ed25519 or ~/.ssh/id_ecdsa exists.`;
+    // Set appropriate error based on what we found
+    if (this.hasEncryptedKey) {
+      this.keyLoadError = `Signing key requires a passphrase. Create an unencrypted key at ~/.mux/message_signing_key or use ssh-add to load keys.`;
+    } else {
+      this.keyLoadError = `No signing key found. Create ~/.mux/message_signing_key or ensure ~/.ssh/id_ed25519 or ~/.ssh/id_ecdsa exists.`;
+    }
     log.info("[SigningService]", this.keyLoadError);
     return null;
   }
@@ -219,7 +233,9 @@ export class SigningService {
       return {
         publicKey: null,
         githubUser: null,
-        error: this.keyLoadError,
+        error: this.keyLoadError
+          ? { message: this.keyLoadError, hasEncryptedKey: this.hasEncryptedKey }
+          : null,
       };
     }
 
@@ -228,7 +244,7 @@ export class SigningService {
     return {
       publicKey: keyPair.publicKeyOpenSSH,
       githubUser: identity.githubUser,
-      error: identity.error,
+      error: identity.error ? { message: identity.error, hasEncryptedKey: false } : null,
     };
   }
 
@@ -265,6 +281,7 @@ export class SigningService {
     this.keyPair = null;
     this.keyLoadAttempted = false;
     this.keyLoadError = null;
+    this.hasEncryptedKey = false;
     this.identityCache = null;
     this.identityPromise = null;
     log.info("[SigningService] Cleared key and identity cache");
