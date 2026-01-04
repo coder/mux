@@ -1006,7 +1006,8 @@ export const router = (authToken?: string) => {
             input.branchName,
             input.trunkBranch,
             input.title,
-            input.runtimeConfig
+            input.runtimeConfig,
+            input.sectionId
           );
           if (!result.success) {
             return { success: false, error: result.error };

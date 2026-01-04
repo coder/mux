@@ -30,6 +30,8 @@ interface UseCreationWorkspaceOptions {
   onWorkspaceCreated: (metadata: FrontendWorkspaceMetadata) => void;
   /** Current message input for name generation */
   message: string;
+  /** Section ID to assign the new workspace to */
+  sectionId?: string | null;
 }
 
 function syncCreationPreferences(projectPath: string, workspaceId: string): void {
@@ -115,6 +117,7 @@ export function useCreationWorkspace({
   projectPath,
   onWorkspaceCreated,
   message,
+  sectionId,
 }: UseCreationWorkspaceOptions): UseCreationWorkspaceReturn {
   const { api } = useAPI();
   const [branches, setBranches] = useState<string[]>([]);
@@ -230,6 +233,7 @@ export function useCreationWorkspace({
           trunkBranch: settings.trunkBranch,
           title: identity.title,
           runtimeConfig,
+          sectionId: sectionId ?? undefined,
         });
 
         if (!createResult.success) {
@@ -320,6 +324,7 @@ export function useCreationWorkspace({
       settings.thinkingLevel,
       settings.trunkBranch,
       waitForGeneration,
+      sectionId,
     ]
   );
 

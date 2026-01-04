@@ -76,6 +76,7 @@ function AppInner() {
     selectedWorkspace,
     setSelectedWorkspace,
     pendingNewWorkspaceProject,
+    pendingNewWorkspaceSectionId,
     beginWorkspaceCreation,
   } = useWorkspaceContext();
   const { theme, setTheme, toggleTheme } = useTheme();
@@ -706,6 +707,7 @@ function AppInner() {
                   <ProjectPage
                     projectPath={projectPath}
                     projectName={projectName}
+                    pendingSectionId={pendingNewWorkspaceSectionId}
                     onProviderConfig={handleProviderConfig}
                     onWorkspaceCreated={(metadata) => {
                       // IMPORTANT: Add workspace to store FIRST (synchronous) to ensure

@@ -55,6 +55,8 @@ export interface ChatInputCreationVariant {
   variant: "creation";
   projectPath: string;
   projectName: string;
+  /** Section ID to pre-select (from sidebar section "+" button) */
+  pendingSectionId?: string | null;
   onWorkspaceCreated: (metadata: FrontendWorkspaceMetadata) => void;
   onProviderConfig?: (provider: string, keyPath: string[], value: string) => Promise<void>;
   onModelChange?: (model: string) => void;

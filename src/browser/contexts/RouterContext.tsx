@@ -6,10 +6,12 @@ import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar";
 
 export interface RouterContext {
   navigateToWorkspace: (workspaceId: string) => void;
-  navigateToProject: (projectPath: string) => void;
+  navigateToProject: (projectPath: string, sectionId?: string) => void;
   navigateToHome: () => void;
   currentWorkspaceId: string | null;
   currentProjectPath: string | null;
+  /** Section ID for pending workspace creation (from URL) */
+  pendingSectionId: string | null;
 }
 
 const RouterContext = createContext<RouterContext | undefined>(undefined);
@@ -69,15 +71,21 @@ function RouterContextInner(props: { children: ReactNode }) {
   const workspaceMatch = /^\/workspace\/(.+)$/.exec(location.pathname);
   const currentWorkspaceId = workspaceMatch ? decodeURIComponent(workspaceMatch[1]) : null;
   const currentProjectPath = location.pathname === "/project" ? searchParams.get("path") : null;
+  const pendingSectionId = location.pathname === "/project" ? searchParams.get("section") : null;
 
   const value: RouterContext = {
     navigateToWorkspace: (id: string) =>
       void navigate(`/workspace/${encodeURIComponent(id)}`, { replace: true }),
-    navigateToProject: (path: string) =>
-      void navigate(`/project?path=${encodeURIComponent(path)}`, { replace: true }),
+    navigateToProject: (path: string, sectionId?: string) => {
+      const url = sectionId
+        ? `/project?path=${encodeURIComponent(path)}&section=${encodeURIComponent(sectionId)}`
+        : `/project?path=${encodeURIComponent(path)}`;
+      void navigate(url, { replace: true });
+    },
     navigateToHome: () => void navigate("/", { replace: true }),
     currentWorkspaceId,
     currentProjectPath,
+    pendingSectionId,
   };
 
   return <RouterContext.Provider value={value}>{props.children}</RouterContext.Provider>;

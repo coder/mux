@@ -10,10 +10,13 @@ import { ArchivedWorkspaces } from "./ArchivedWorkspaces";
 import { useAPI } from "@/browser/contexts/API";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 import { GitInitBanner } from "./GitInitBanner";
+import { SectionSelector } from "./SectionSelector";
 
 interface ProjectPageProps {
   projectPath: string;
   projectName: string;
+  /** Section ID to pre-select when creating (from sidebar section "+" button) */
+  pendingSectionId?: string | null;
   onProviderConfig: (provider: string, keyPath: string[], value: string) => Promise<void>;
   onWorkspaceCreated: (metadata: FrontendWorkspaceMetadata) => void;
 }
@@ -35,12 +38,17 @@ function archivedListsEqual(
 export const ProjectPage: React.FC<ProjectPageProps> = ({
   projectPath,
   projectName,
+  pendingSectionId,
   onProviderConfig,
   onWorkspaceCreated,
 }) => {
   const { api } = useAPI();
   const chatInputRef = useRef<ChatInputAPI | null>(null);
   const [archivedWorkspaces, setArchivedWorkspaces] = useState<FrontendWorkspaceMetadata[]>([]);
+  // Section selection state - initialized from URL param if present
+  const [selectedSectionId, setSelectedSectionId] = useState<string | null>(
+    pendingSectionId ?? null
+  );
 
   // Git repository state for the banner
   const [branchesLoaded, setBranchesLoaded] = useState(false);
@@ -164,11 +172,18 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
                 {isNonGitRepo && (
                   <GitInitBanner projectPath={projectPath} onSuccess={loadBranches} />
                 )}
+                {/* Section selector - only shows when project has sections */}
+                <SectionSelector
+                  projectPath={projectPath}
+                  selectedSectionId={selectedSectionId}
+                  onSectionChange={setSelectedSectionId}
+                />
                 {/* ChatInput for workspace creation */}
                 <ChatInput
                   variant="creation"
                   projectPath={projectPath}
                   projectName={projectName}
+                  pendingSectionId={selectedSectionId}
                   onProviderConfig={onProviderConfig}
                   onReady={handleChatReady}
                   onWorkspaceCreated={onWorkspaceCreated}

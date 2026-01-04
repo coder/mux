@@ -302,6 +302,8 @@ export const workspace = {
       /** Human-readable title (e.g., "Fix plan mode over SSH") - optional for backwards compat */
       title: z.string().optional(),
       runtimeConfig: RuntimeConfigSchema.optional(),
+      /** Section ID to assign the new workspace to (optional) */
+      sectionId: z.string().optional(),
     }),
     output: z.discriminatedUnion("success", [
       z.object({ success: z.literal(true), metadata: FrontendWorkspaceMetadataSchema }),

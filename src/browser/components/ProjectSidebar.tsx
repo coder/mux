@@ -242,8 +242,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
   // Wrapper to close sidebar on mobile after adding workspace
   const handleAddWorkspace = useCallback(
-    (projectPath: string) => {
-      onAddWorkspace(projectPath);
+    (projectPath: string, sectionId?: string) => {
+      onAddWorkspace(projectPath, sectionId);
       if (window.innerWidth <= MOBILE_BREAKPOINT && !collapsed) {
         onToggleCollapsed();
       }
@@ -758,8 +758,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                       workspaceCount={sectionWorkspaces.length}
                                       onToggleExpand={() => toggleSection(projectPath, section.id)}
                                       onAddWorkspace={() => {
-                                        // TODO: Support creating workspace in section
-                                        handleAddWorkspace(projectPath);
+                                        // Create workspace in this section
+                                        handleAddWorkspace(projectPath, section.id);
                                       }}
                                       onRename={(name) => {
                                         void updateSection(projectPath, section.id, { name });

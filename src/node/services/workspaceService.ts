@@ -527,7 +527,8 @@ export class WorkspaceService extends EventEmitter {
     branchName: string,
     trunkBranch: string | undefined,
     title?: string,
-    runtimeConfig?: RuntimeConfig
+    runtimeConfig?: RuntimeConfig,
+    sectionId?: string
   ): Promise<Result<{ metadata: FrontendWorkspaceMetadata }>> {
     // Validate workspace name
     const validation = validateWorkspaceName(branchName);
@@ -633,6 +634,7 @@ export class WorkspaceService extends EventEmitter {
           title,
           createdAt: metadata.createdAt,
           runtimeConfig: finalRuntimeConfig,
+          sectionId,
         });
         return config;
       });

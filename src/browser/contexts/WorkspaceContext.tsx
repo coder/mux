@@ -173,7 +173,9 @@ export interface WorkspaceContext {
 
   // Workspace creation flow
   pendingNewWorkspaceProject: string | null;
-  beginWorkspaceCreation: (projectPath: string) => void;
+  /** Section ID to pre-select when creating a new workspace (from URL) */
+  pendingNewWorkspaceSectionId: string | null;
+  beginWorkspaceCreation: (projectPath: string, sectionId?: string) => void;
 
   // Helpers
   getWorkspaceInfo: (workspaceId: string) => Promise<FrontendWorkspaceMetadata | null>;
@@ -218,6 +220,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     navigateToHome,
     currentWorkspaceId,
     currentProjectPath,
+    pendingSectionId,
   } = useRouter();
 
   const workspaceStore = useWorkspaceStoreRaw();
@@ -243,6 +246,8 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
   // pendingNewWorkspaceProject is derived from currentProjectPath in URL
   const pendingNewWorkspaceProject = currentProjectPath;
+  // pendingNewWorkspaceSectionId is derived from section URL param
+  const pendingNewWorkspaceSectionId = pendingSectionId;
 
   // selectedWorkspace is derived from currentWorkspaceId in URL + workspaceMetadata
   const selectedWorkspace = useMemo(() => {
@@ -708,8 +713,8 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   );
 
   const beginWorkspaceCreation = useCallback(
-    (projectPath: string) => {
-      navigateToProject(projectPath);
+    (projectPath: string, sectionId?: string) => {
+      navigateToProject(projectPath, sectionId);
     },
     [navigateToProject]
   );
@@ -728,6 +733,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       selectedWorkspace,
       setSelectedWorkspace,
       pendingNewWorkspaceProject,
+      pendingNewWorkspaceSectionId,
       beginWorkspaceCreation,
       getWorkspaceInfo,
     }),
@@ -744,6 +750,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       selectedWorkspace,
       setSelectedWorkspace,
       pendingNewWorkspaceProject,
+      pendingNewWorkspaceSectionId,
       beginWorkspaceCreation,
       getWorkspaceInfo,
     ]

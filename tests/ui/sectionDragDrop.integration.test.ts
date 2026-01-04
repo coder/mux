@@ -1,10 +1,12 @@
 /**
- * Integration tests for workspace section drag-drop infrastructure.
+ * Integration tests for workspace section drag-drop and creation infrastructure.
  *
  * Tests verify:
  * - Section and drop zone UI elements render correctly with proper data attributes
  * - Workspace items are draggable and show correct section assignment
  * - Backend section assignment API updates workspace metadata
+ * - Creating workspace from section's "+" button assigns it to that section
+ * - Section selector appears on create page when project has sections
  *
  * Note: react-dnd-html5-backend doesn't work with happy-dom's drag events,
  * so we verify the UI infrastructure and backend separately. The full drag-drop
@@ -290,6 +292,117 @@ describeIntegration("Section Drag and Drop (UI)", () => {
     } finally {
       await cleanupView(view, cleanupDom);
       await env.orpc.workspace.remove({ workspaceId });
+      await env.orpc.projects.sections.remove({ projectPath, sectionId });
+    }
+  }, 60_000);
+
+  test("workspace created with sectionId is assigned to that section", async () => {
+    const env = getSharedEnv();
+    const projectPath = getSharedRepoPath();
+
+    // Create a section first
+    const branchName = generateBranchName("test-create-in-section");
+    const trunkBranch = await detectDefaultTrunkBranch(projectPath);
+
+    // Create workspace without section first to ensure project exists
+    const setupWs = await env.orpc.workspace.create({
+      projectPath,
+      branchName: generateBranchName("setup"),
+      trunkBranch,
+    });
+    if (!setupWs.success) throw new Error(`Setup failed: ${setupWs.error}`);
+
+    const sectionResult = await env.orpc.projects.sections.create({
+      projectPath,
+      name: "Target Section",
+    });
+    if (!sectionResult.success) throw new Error(`Failed to create section: ${sectionResult.error}`);
+    const sectionId = sectionResult.data.id;
+
+    let workspaceId: string | undefined;
+    try {
+      // Create workspace WITH sectionId
+      const wsResult = await env.orpc.workspace.create({
+        projectPath,
+        branchName,
+        trunkBranch,
+        sectionId, // This is the key - creating directly into a section
+      });
+      if (!wsResult.success) throw new Error(`Failed to create workspace: ${wsResult.error}`);
+      workspaceId = wsResult.metadata.id;
+
+      // Verify workspace metadata has the sectionId
+      const workspaceInfo = await env.orpc.workspace.getInfo({ workspaceId });
+      expect(workspaceInfo?.sectionId).toBe(sectionId);
+    } finally {
+      if (workspaceId) await env.orpc.workspace.remove({ workspaceId });
+      await env.orpc.workspace.remove({ workspaceId: setupWs.metadata.id });
+      await env.orpc.projects.sections.remove({ projectPath, sectionId });
+    }
+  }, 60_000);
+
+  test("clicking section add button sets pending section for creation", async () => {
+    const env = getSharedEnv();
+    const projectPath = getSharedRepoPath();
+    const trunkBranch = await detectDefaultTrunkBranch(projectPath);
+
+    // Create workspace to ensure project exists
+    const setupWs = await env.orpc.workspace.create({
+      projectPath,
+      branchName: generateBranchName("setup-section-add"),
+      trunkBranch,
+    });
+    if (!setupWs.success) throw new Error(`Setup failed: ${setupWs.error}`);
+
+    // Create a section
+    const sectionResult = await env.orpc.projects.sections.create({
+      projectPath,
+      name: "Add Button Section",
+    });
+    if (!sectionResult.success) throw new Error(`Failed to create section: ${sectionResult.error}`);
+    const sectionId = sectionResult.data.id;
+
+    const cleanupDom = installDom();
+    expandProjects([projectPath]);
+
+    const view = renderApp({ apiClient: env.orpc, metadata: setupWs.metadata });
+
+    try {
+      await setupWorkspaceView(view, setupWs.metadata, setupWs.metadata.id);
+
+      // Wait for section header to appear
+      await waitForSection(view.container, sectionId);
+
+      // Find the "+" button in the section header
+      const sectionHeader = view.container.querySelector(`[data-section-id="${sectionId}"]`);
+      expect(sectionHeader).not.toBeNull();
+
+      const addButton = sectionHeader!.querySelector(
+        'button[aria-label="New workspace in section"]'
+      );
+      expect(addButton).not.toBeNull();
+
+      // Click the add button - this should navigate to create page with section context
+      (addButton as HTMLElement).click();
+
+      // Wait for the create page to show section selector with this section pre-selected
+      await waitFor(
+        () => {
+          const sectionSelector = view.container.querySelector('[data-testid="section-selector"]');
+          if (!sectionSelector) {
+            throw new Error("Section selector not found on create page");
+          }
+          // Check that the section is selected (value should match sectionId)
+          const selectedValue = sectionSelector.getAttribute("data-selected-section");
+          if (selectedValue !== sectionId) {
+            throw new Error(`Expected section ${sectionId} to be selected, got ${selectedValue}`);
+          }
+        },
+        { timeout: 5_000 }
+      );
+    } finally {
+      await cleanupView(view, cleanupDom);
+      await env.orpc.workspace.remove({ workspaceId: setupWs.metadata.id });
       await env.orpc.projects.sections.remove({ projectPath, sectionId });
     }
   }, 60_000);
