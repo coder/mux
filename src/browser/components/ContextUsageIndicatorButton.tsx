@@ -38,13 +38,12 @@ interface ContextUsageIndicatorButtonProps {
 
 /** Tick marks with lines attached to the meter */
 const PercentTickMarks: React.FC = () => (
-  <div className="flex justify-between">
-    {[0, 25, 50, 75, 100].map((pct) => (
-      <div key={pct} className="flex flex-col items-center">
-        <div className="bg-border-medium h-1 w-px" />
-        <span className="text-muted text-[8px] leading-tight">{pct}</span>
-      </div>
-    ))}
+  <div className="text-muted flex justify-between text-[8px] leading-none">
+    <span>0</span>
+    <span>25</span>
+    <span>50</span>
+    <span>75</span>
+    <span>100</span>
   </div>
 );
 
