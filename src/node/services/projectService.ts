@@ -1,6 +1,7 @@
 import type { Config, ProjectConfig } from "@/node/config";
 import type { SectionConfig } from "@/common/types/project";
 import { DEFAULT_SECTION_COLOR } from "@/common/constants/ui";
+import { sortSectionsByLinkedList } from "@/common/utils/sections";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 import { randomBytes } from "crypto";
 import { validateProjectPath, isGitRepository } from "@/node/utils/pathUtils";
@@ -397,41 +398,11 @@ export class ProjectService {
       const config = this.config.loadConfigOrDefault();
       const project = config.projects.get(projectPath);
       if (!project) return [];
-      return this.sortSectionsByLinkedList(project.sections ?? []);
+      return sortSectionsByLinkedList(project.sections ?? []);
     } catch (error) {
       log.error("Failed to list sections:", error);
       return [];
     }
-  }
-
-  /**
-   * Sort sections by following nextId linked list.
-   */
-  private sortSectionsByLinkedList(sections: SectionConfig[]): SectionConfig[] {
-    if (sections.length === 0) return [];
-
-    const byId = new Map(sections.map((s) => [s.id, s]));
-    // Find head: section not referenced by any other section's nextId
-    const referencedIds = new Set(sections.map((s) => s.nextId).filter(Boolean));
-    const heads = sections.filter((s) => !referencedIds.has(s.id));
-    const head = heads[0];
-
-    const result: SectionConfig[] = [];
-    const visited = new Set<string>();
-
-    let current: SectionConfig | undefined = head;
-    while (current && !visited.has(current.id)) {
-      visited.add(current.id);
-      result.push(current);
-      current = current.nextId ? byId.get(current.nextId) : undefined;
-    }
-
-    // Append orphaned sections
-    for (const s of sections) {
-      if (!visited.has(s.id)) result.push(s);
-    }
-
-    return result;
   }
 
   /**
@@ -460,7 +431,7 @@ export class ProjectService {
       };
 
       // Find current tail (nextId is null/undefined) and point it to new section
-      const sorted = this.sortSectionsByLinkedList(sections);
+      const sorted = sortSectionsByLinkedList(sections);
       if (sorted.length > 0) {
         const tail = sorted[sorted.length - 1];
         tail.nextId = section.id;
