@@ -141,6 +141,91 @@ function timestamp(): string {
   return `${hours}:${minutes}:${seconds}.${ms}`;
 }
 
+function parseVersionInfo(version: unknown): {
+  buildTime?: string;
+  gitDescribe?: string;
+  gitCommit?: string;
+} {
+  if (typeof version !== "object" || version === null) {
+    return {};
+  }
+
+  const candidate = version as Record<string, unknown>;
+  const buildTime = typeof candidate.buildTime === "string" ? candidate.buildTime : undefined;
+  const gitDescribe =
+    typeof candidate.git_describe === "string" ? candidate.git_describe : undefined;
+  const gitCommit = typeof candidate.git_commit === "string" ? candidate.git_commit : undefined;
+
+  return { buildTime, gitDescribe, gitCommit };
+}
+
+function formatExtendedTimestamp(isoDate: string): string {
+  const date = new Date(isoDate);
+  return date.toLocaleString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    timeZoneName: "short",
+  });
+}
+
+function configureAboutPanel() {
+  if (process.platform !== "darwin") {
+    return;
+  }
+
+  const { buildTime, gitCommit, gitDescribe } = parseVersionInfo(VERSION satisfies unknown);
+
+  const lines: string[] = [];
+  if (buildTime) {
+    lines.push("Built: " + formatExtendedTimestamp(buildTime));
+  }
+  if (gitCommit) {
+    lines.push("Commit: " + gitCommit);
+  }
+
+  const options: Electron.AboutPanelOptionsOptions = {
+    applicationName: app.getName(),
+    applicationVersion: gitDescribe ?? app.getVersion(),
+  };
+
+  if (lines.length > 0) {
+    options.copyright = lines.join("\n");
+  }
+
+  app.setAboutPanelOptions(options);
+}
+
+async function showAboutDialog(owner: Electron.BaseWindow | undefined) {
+  const { buildTime, gitCommit, gitDescribe } = parseVersionInfo(VERSION satisfies unknown);
+
+  const lines: string[] = ["Version: " + (gitDescribe ?? app.getVersion())];
+  if (gitCommit) {
+    lines.push("Commit: " + gitCommit);
+  }
+  if (buildTime) {
+    lines.push("Built: " + formatExtendedTimestamp(buildTime));
+  }
+
+  const options = {
+    type: "info" as const,
+    title: "About " + app.getName(),
+    message: app.getName(),
+    detail: lines.join("\n"),
+    buttons: ["OK"],
+  };
+
+  if (owner instanceof BrowserWindow) {
+    await dialog.showMessageBox(owner, options);
+    return;
+  }
+
+  await dialog.showMessageBox(options);
+}
+
 function createMenu() {
   const template: MenuItemConstructorOptions[] = [
     {
@@ -207,6 +292,20 @@ function createMenu() {
         { role: "unhide" },
         { type: "separator" },
         { role: "quit" },
+      ],
+    });
+  }
+
+  if (process.platform !== "darwin") {
+    template.push({
+      label: "Help",
+      submenu: [
+        {
+          label: "About " + app.getName(),
+          click: (_item, focusedWindow) => {
+            showAboutDialog(focusedWindow).catch(console.error);
+          },
+        },
       ],
     });
   }
@@ -574,6 +673,8 @@ if (gotTheLock) {
           console.log("❌ Error installing React DevTools:", err);
         }
       }
+
+      configureAboutPanel();
 
       createMenu();
 
