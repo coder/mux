@@ -7,6 +7,7 @@ import {
   getVisibleWorkspaces,
   getAllVisibleWorkspaces,
   partitionWorkspacesBySection,
+  sortSectionsByLinkedList,
 } from "./workspaceFiltering";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { ProjectConfig, SectionConfig } from "@/common/types/project";
@@ -649,6 +650,53 @@ describe("buildSortedWorkspacesByProject", () => {
     const result = buildSortedWorkspacesByProject(projects, metadata, {});
 
     expect(result.get("/project/a")).toHaveLength(0);
+  });
+});
+
+describe("sortSectionsByLinkedList", () => {
+  it("should sort sections by nextId linked list", () => {
+    const sections: SectionConfig[] = [
+      { id: "c", name: "C", nextId: null },
+      { id: "a", name: "A", nextId: "b" },
+      { id: "b", name: "B", nextId: "c" },
+    ];
+
+    const sorted = sortSectionsByLinkedList(sections);
+    expect(sorted.map((s) => s.id)).toEqual(["a", "b", "c"]);
+  });
+
+  it("should handle empty array", () => {
+    expect(sortSectionsByLinkedList([])).toEqual([]);
+  });
+
+  it("should handle single section", () => {
+    const sections: SectionConfig[] = [{ id: "only", name: "Only", nextId: null }];
+    const sorted = sortSectionsByLinkedList(sections);
+    expect(sorted.map((s) => s.id)).toEqual(["only"]);
+  });
+
+  it("should handle reordered sections (C, A, B order)", () => {
+    // After reorder to C->A->B, the pointers should be: C->A->B->null
+    const sections: SectionConfig[] = [
+      { id: "a", name: "A", nextId: "b" },
+      { id: "b", name: "B", nextId: null },
+      { id: "c", name: "C", nextId: "a" },
+    ];
+
+    const sorted = sortSectionsByLinkedList(sections);
+    expect(sorted.map((s) => s.id)).toEqual(["c", "a", "b"]);
+  });
+
+  it("should append orphaned sections", () => {
+    // Section "orphan" is not in the linked list
+    const sections: SectionConfig[] = [
+      { id: "a", name: "A", nextId: "b" },
+      { id: "b", name: "B", nextId: null },
+      { id: "orphan", name: "Orphan", nextId: "nonexistent" },
+    ];
+
+    const sorted = sortSectionsByLinkedList(sections);
+    expect(sorted.map((s) => s.id)).toEqual(["a", "b", "orphan"]);
   });
 });
 

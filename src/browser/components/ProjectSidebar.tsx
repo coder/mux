@@ -23,6 +23,7 @@ import {
   getTierKey,
   getSectionExpandedKey,
   getSectionTierKey,
+  sortSectionsByLinkedList,
 } from "@/browser/utils/ui/workspaceFiltering";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { SidebarCollapseButton } from "./ui/SidebarCollapseButton";
@@ -615,7 +616,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               // Archived workspaces are excluded from workspaceMetadata so won't appear here
                               const allWorkspaces =
                                 sortedWorkspacesByProject.get(projectPath) ?? [];
-                              const sections = config.sections ?? [];
+                              const sections = sortSectionsByLinkedList(config.sections ?? []);
                               const depthByWorkspaceId = computeWorkspaceDepthMap(allWorkspaces);
 
                               const renderWorkspace = (
