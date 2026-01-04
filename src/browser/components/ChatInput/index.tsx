@@ -501,11 +501,39 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   }, []);
   // Section selection state for creation variant (must be before useCreationWorkspace)
   const { projects } = useProjectContext();
-  const [selectedSectionId, setSelectedSectionId] = useState<string | null>(
-    variant === "creation" ? (props.pendingSectionId ?? null) : null
-  );
-  const creationSections =
-    variant === "creation" ? (projects.get(props.projectPath)?.sections ?? []) : [];
+  const pendingSectionId = variant === "creation" ? (props.pendingSectionId ?? null) : null;
+  const creationProject = variant === "creation" ? projects.get(props.projectPath) : undefined;
+  const creationSections = creationProject?.sections ?? [];
+
+  const [selectedSectionId, setSelectedSectionId] = useState<string | null>(() => pendingSectionId);
+
+  // Keep local selection in sync with the URL-driven pending section (sidebar "+" button).
+  useEffect(() => {
+    if (variant !== "creation") {
+      return;
+    }
+
+    setSelectedSectionId(pendingSectionId);
+  }, [pendingSectionId, variant]);
+
+  // If the section disappears (e.g. deleted in another window), avoid creating a workspace
+  // with a dangling sectionId.
+  useEffect(() => {
+    if (variant !== "creation") {
+      return;
+    }
+
+    if (!creationProject || !selectedSectionId) {
+      return;
+    }
+
+    const stillExists = (creationProject.sections ?? []).some(
+      (section) => section.id === selectedSectionId
+    );
+    if (!stillExists) {
+      setSelectedSectionId(null);
+    }
+  }, [creationProject, selectedSectionId, variant]);
 
   // Creation-specific state (hook always called, but only used when variant === "creation")
   // This avoids conditional hook calls which violate React rules

@@ -8,7 +8,7 @@ import { SSHIcon, WorktreeIcon, LocalIcon } from "../icons/RuntimeIcons";
 import { DocsLink } from "../DocsLink";
 import type { WorkspaceNameState } from "@/browser/hooks/useWorkspaceName";
 import type { SectionConfig } from "@/common/types/project";
-import { DEFAULT_SECTION_COLOR } from "@/common/constants/ui";
+import { resolveSectionColor } from "@/common/constants/ui";
 
 interface CreationControlsProps {
   branches: string[];
@@ -106,7 +106,7 @@ function SectionPicker(props: SectionPickerProps) {
   const selectedSection = selectedSectionId
     ? sections.find((s) => s.id === selectedSectionId)
     : null;
-  const sectionColor = selectedSection?.color || DEFAULT_SECTION_COLOR;
+  const sectionColor = resolveSectionColor(selectedSection?.color);
 
   return (
     <div
@@ -127,13 +127,16 @@ function SectionPicker(props: SectionPickerProps) {
           opacity: selectedSection ? 1 : 0.4,
         }}
       />
-      <label className="text-muted-foreground shrink-0 text-xs">Section</label>
+      <label htmlFor="workspace-section" className="text-muted-foreground shrink-0 text-xs">
+        Section
+      </label>
       <select
+        id="workspace-section"
         value={selectedSectionId ?? ""}
         onChange={(e) => onSectionChange(e.target.value || null)}
         disabled={disabled}
         className={cn(
-          "bg-transparent text-sm font-medium focus:outline-none disabled:opacity-50 cursor-pointer",
+          "bg-transparent text-sm font-medium focus:outline-none cursor-pointer disabled:cursor-not-allowed disabled:opacity-50",
           selectedSection ? "text-foreground" : "text-muted"
         )}
       >
@@ -320,13 +323,13 @@ export function CreationControls(props: CreationControlsProps) {
         {nameState.error && <span className="text-xs text-red-500">{nameState.error}</span>}
 
         {/* Section selector - right-aligned, same row as workspace name */}
-        {props.sections && props.sections.length > 0 && (
+        {props.sections && props.sections.length > 0 && props.onSectionChange && (
           <>
             <div className="flex-1" />
             <SectionPicker
               sections={props.sections}
               selectedSectionId={props.selectedSectionId ?? null}
-              onSectionChange={props.onSectionChange ?? (() => {})}
+              onSectionChange={props.onSectionChange}
               disabled={props.disabled}
             />
           </>

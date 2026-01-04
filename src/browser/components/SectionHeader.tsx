@@ -3,7 +3,7 @@ import { cn } from "@/common/lib/utils";
 import { ChevronRight, Pencil, Trash2, Palette } from "lucide-react";
 import type { SectionConfig } from "@/common/types/project";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
-import { SECTION_COLOR_PALETTE } from "@/common/constants/ui";
+import { resolveSectionColor, SECTION_COLOR_PALETTE } from "@/common/constants/ui";
 import { HexColorPicker } from "react-colorful";
 
 interface SectionHeaderProps {
@@ -63,7 +63,7 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
     setIsEditing(false);
   };
 
-  const sectionColor = section.color ?? SECTION_COLOR_PALETTE[0][1];
+  const sectionColor = resolveSectionColor(section.color);
 
   // Sync hex input when color changes from picker or presets
   useEffect(() => {
