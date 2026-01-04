@@ -88,12 +88,13 @@ export const COPY_FEEDBACK_DURATION_MS = 2000;
  * Format: [name, hex value]
  */
 export const SECTION_COLOR_PALETTE = [
-  ["Red", "#e54545"],
-  ["Orange", "#e5853a"],
-  ["Yellow", "#d9b836"],
-  ["Green", "#4caf7c"],
-  ["Teal", "#4ab5a7"],
+  ["Gray", "#6b7280"],
   ["Blue", "#5a9bd4"],
+  ["Teal", "#4ab5a7"],
+  ["Green", "#4caf7c"],
+  ["Yellow", "#d9b836"],
+  ["Orange", "#e5853a"],
+  ["Red", "#e54545"],
   ["Purple", "#9c6bd4"],
   ["Pink", "#d465a5"],
 ] as const;
@@ -101,6 +102,6 @@ export const SECTION_COLOR_PALETTE = [
 export type SectionColorName = (typeof SECTION_COLOR_PALETTE)[number][0];
 
 /**
- * Default color for new sections (first in palette)
+ * Default color for new sections (neutral gray)
  */
 export const DEFAULT_SECTION_COLOR = SECTION_COLOR_PALETTE[0][1];

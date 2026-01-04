@@ -4,6 +4,7 @@ import { ChevronRight, Pencil, Trash2, Palette } from "lucide-react";
 import type { SectionConfig } from "@/common/types/project";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { SECTION_COLOR_PALETTE } from "@/common/constants/ui";
+import { HexColorPicker } from "react-colorful";
 
 interface SectionHeaderProps {
   section: SectionConfig;
@@ -134,7 +135,8 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
 
           {showColorPicker && (
             <div className="bg-background border-border absolute top-full right-0 z-50 mt-1 rounded border p-2 shadow-lg">
-              <div className="mb-2 grid grid-cols-4 gap-1">
+              {/* Preset swatches */}
+              <div className="mb-2 grid grid-cols-5 gap-1">
                 {SECTION_COLOR_PALETTE.map(([name, color]) => (
                   <button
                     key={color}
@@ -152,22 +154,11 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
                   />
                 ))}
               </div>
-              <div className="border-t border-white/10 pt-2">
-                <label className="text-muted mb-1 block text-[10px]">Custom hex</label>
-                <input
-                  type="text"
-                  defaultValue={sectionColor}
-                  placeholder="#ff6b6b"
-                  className="bg-background/50 text-foreground w-full rounded border border-white/20 px-1.5 py-0.5 text-xs outline-none"
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      const hex = (e.target as HTMLInputElement).value.trim();
-                      if (/^#[0-9a-fA-F]{6}$/.test(hex)) {
-                        onChangeColor(hex);
-                        setShowColorPicker(false);
-                      }
-                    }
-                  }}
+              {/* Full color picker */}
+              <div className="section-color-picker">
+                <HexColorPicker
+                  color={sectionColor}
+                  onChange={(newColor) => onChangeColor(newColor)}
                 />
               </div>
             </div>

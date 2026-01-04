@@ -1916,3 +1916,25 @@ input[type="checkbox"] {
       0 0 12px var(--color-accent);
   }
 }
+
+/* Section color picker - react-colorful sizing */
+.section-color-picker .react-colorful {
+  width: 150px;
+  height: 120px;
+}
+
+.section-color-picker .react-colorful__saturation {
+  border-radius: 4px 4px 0 0;
+}
+
+.section-color-picker .react-colorful__hue {
+  height: 12px;
+  border-radius: 0 0 4px 4px;
+}
+
+.section-color-picker .react-colorful__saturation-pointer,
+.section-color-picker .react-colorful__hue-pointer {
+  width: 14px;
+  height: 14px;
+}
+

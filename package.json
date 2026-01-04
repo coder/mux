@@ -105,6 +105,7 @@
     "posthog-node": "^5.17.0",
     "quickjs-emscripten": "^0.31.0",
     "quickjs-emscripten-core": "^0.31.0",
+    "react-colorful": "^5.6.1",
     "react-router-dom": "^7.11.0",
     "rehype-harden": "^1.1.5",
     "rehype-sanitize": "^6.0.0",
