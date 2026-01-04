@@ -5,7 +5,7 @@
  * Persists to backend project config (where idleCompactionService reads it).
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useAPI } from "@/browser/contexts/API";
 
 interface UseIdleCompactionHoursParams {
@@ -36,15 +36,25 @@ export function useIdleCompactionHours(
   const { api } = useAPI();
   const [hours, setHoursState] = useState<number | null>(null);
 
+  const currentProjectPathRef = useRef<string | null>(projectPath);
+  currentProjectPathRef.current = projectPath;
+  const latestSaveRequestIdRef = useRef(0);
+
   // Load initial value from backend
   useEffect(() => {
     if (!projectPath || !api) return;
     let cancelled = false;
-    void api.projects.idleCompaction.get({ projectPath }).then((result) => {
-      if (!cancelled) {
-        setHoursState(result.hours);
-      }
-    });
+    void api.projects.idleCompaction
+      .get({ projectPath })
+      .then((result) => {
+        if (!cancelled) {
+          setHoursState(result.hours);
+        }
+      })
+      .catch(() => {
+        // Ignore load errors; leaving state unchanged avoids clobbering newer
+        // values when switching projects quickly.
+      });
     return () => {
       cancelled = true;
     };
@@ -54,15 +64,29 @@ export function useIdleCompactionHours(
   const setHours = useCallback(
     (newHours: number | null) => {
       if (!projectPath || !api) return;
+      const requestId = latestSaveRequestIdRef.current + 1;
+      latestSaveRequestIdRef.current = requestId;
+
       const previousHours = hours;
+      const projectPathAtCall = projectPath;
+
       // Optimistic update
       setHoursState(newHours);
-      // Persist to backend, revert on failure
-      void api.projects.idleCompaction.set({ projectPath, hours: newHours }).then((result) => {
-        if (!result.success) {
+
+      // Persist to backend, revert on failure (including rejected IPC calls).
+      void api.projects.idleCompaction
+        .set({ projectPath: projectPathAtCall, hours: newHours })
+        .then((result) => {
+          if (!result.success) {
+            throw new Error(result.error ?? "Failed to set idle compaction hours");
+          }
+        })
+        .catch(() => {
+          // Only revert if this is still the latest update for the current project.
+          if (latestSaveRequestIdRef.current !== requestId) return;
+          if (currentProjectPathRef.current !== projectPathAtCall) return;
           setHoursState(previousHours);
-        }
-      });
+        });
     },
     [api, projectPath, hours]
   );
