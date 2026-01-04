@@ -38,11 +38,11 @@ interface ContextUsageIndicatorButtonProps {
 
 /** Tick marks with lines attached to the meter */
 const PercentTickMarks: React.FC = () => (
-  <div className="flex justify-between px-px">
+  <div className="flex justify-between">
     {[0, 25, 50, 75, 100].map((pct) => (
       <div key={pct} className="flex flex-col items-center">
-        <div className="bg-border-medium h-1.5 w-px" />
-        <span className="text-muted text-[9px]">{pct}</span>
+        <div className="bg-border-medium h-1 w-px" />
+        <span className="text-muted text-[8px] leading-tight">{pct}</span>
       </div>
     ))}
   </div>
@@ -103,14 +103,14 @@ const AutoCompactSettings: React.FC<{
         )}
       </div>
 
-      {/* Token meter with threshold slider */}
-      <div className="relative w-full overflow-hidden py-1">
-        <TokenMeter segments={data.segments} orientation="horizontal" />
-        {showUsageSlider && <HorizontalThresholdSlider config={usageConfig} />}
+      {/* Token meter with threshold slider + tick marks */}
+      <div>
+        <div className="relative w-full overflow-hidden">
+          <TokenMeter segments={data.segments} orientation="horizontal" />
+          {showUsageSlider && <HorizontalThresholdSlider config={usageConfig} />}
+        </div>
+        {showUsageSlider && <PercentTickMarks />}
       </div>
-
-      {/* Tick marks - directly attached to meter */}
-      {showUsageSlider && <PercentTickMarks />}
 
       {/* Idle-based auto-compact */}
       {idleConfig && (
