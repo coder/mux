@@ -15,6 +15,7 @@ import type {
   FileEditInsertToolResult,
   FileEditReplaceStringToolResult,
   FileEditReplaceLinesToolResult,
+  NotifyToolResult,
 } from "@/common/types/tools";
 
 // Tool-output from AI SDK is often wrapped like: { type: 'json', value: <payload> }
@@ -139,6 +140,33 @@ function redactAskUserQuestion(output: unknown): unknown {
   return rewrapJsonContainer(unwrapped.wrapped, summary);
 }
 
+function isNotifyResult(val: unknown): val is NotifyToolResult {
+  return (
+    typeof val === "object" &&
+    val !== null &&
+    "success" in val &&
+    typeof (val as { success: unknown }).success === "boolean"
+  );
+}
+
+/**
+ * Redact notify tool output to remove internal routing fields (notifiedVia, workspaceId).
+ * The model only needs to know the notification succeeded.
+ */
+function redactNotify(output: unknown): unknown {
+  const unwrapped = unwrapJsonContainer(output);
+  const val = unwrapped.value;
+
+  if (!isNotifyResult(val)) return output;
+
+  if (val.success) {
+    return rewrapJsonContainer(unwrapped.wrapped, { success: true });
+  }
+
+  // Failure payloads pass through unchanged
+  return output;
+}
+
 // Public API - registry entrypoint. Add new tools here as needed.
 export function redactToolOutput(toolName: string, output: unknown): unknown {
   switch (toolName) {
@@ -149,6 +177,8 @@ export function redactToolOutput(toolName: string, output: unknown): unknown {
       return redactFileEditReplace(output);
     case "file_edit_insert":
       return redactFileEditInsert(output);
+    case "notify":
+      return redactNotify(output);
     default:
       return output;
   }
