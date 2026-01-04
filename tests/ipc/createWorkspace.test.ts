@@ -35,7 +35,7 @@ import { getSrcBaseDir } from "../../src/common/types/runtime";
 import type { FrontendWorkspaceMetadata } from "../../src/common/types/workspace";
 import { createRuntime } from "../../src/node/runtime/runtimeFactory";
 import type { SSHRuntime } from "../../src/node/runtime/SSHRuntime";
-import { streamToString } from "../../src/node/runtime/SSHRuntime";
+import { streamToString } from "../../src/node/runtime/streamUtils";
 
 const execAsync = promisify(exec);
 

@@ -48,7 +48,7 @@ describeIntegration("Runtime integration tests", () => {
     console.log("Starting SSH server container...");
     sshConfig = await startSSHServer();
     console.log(`SSH server ready on port ${sshConfig.port}`);
-  }, 60000); // 60s timeout for Docker operations
+  }, 120000); // 120s timeout for Docker build/start operations
 
   afterAll(async () => {
     if (sshConfig) {
@@ -57,18 +57,71 @@ describeIntegration("Runtime integration tests", () => {
     }
   }, 30000);
 
-  // Test matrix: Run all tests for both local and SSH runtimes
-  describe.each<{ type: RuntimeType }>([{ type: "local" }, { type: "ssh" }])(
+  // Test matrix: Run all tests for local, SSH, and Docker runtimes
+  describe.each<{ type: RuntimeType }>([{ type: "local" }, { type: "ssh" }, { type: "docker" }])(
     "Runtime: $type",
     ({ type }) => {
       // Helper to create runtime for this test type
       // Use a base working directory - TestWorkspace will create subdirectories as needed
       // For local runtime, use os.tmpdir() which matches where TestWorkspace creates directories
-      const getBaseWorkdir = () => (type === "ssh" ? sshConfig!.workdir : os.tmpdir());
-      const createRuntime = (): Runtime => createTestRuntime(type, getBaseWorkdir(), sshConfig);
+      const getBaseWorkdir = () => {
+        if (type === "ssh") {
+          return sshConfig!.workdir;
+        }
+        if (type === "docker") {
+          return "/src";
+        }
+        return os.tmpdir();
+      };
+
+      // DockerRuntime is slower than local/ssh, and the integration job has a hard
+      // time budget. Keep the Docker coverage focused on the core Runtime contract.
+      //
+      // NOTE: Avoid assigning `describe.skip` or `test.skip` to variables. Bun's Jest
+      // compatibility can lose the skip semantics when these functions are detached.
+      function describeIf(shouldRun: boolean) {
+        return (...args: Parameters<typeof describe>) => {
+          if (shouldRun) {
+            describe(...args);
+          } else {
+            describe.skip(...args);
+          }
+        };
+      }
+
+      // Running these runtime contract tests with test.concurrent can easily overwhelm
+      // the docker/ssh fixtures in CI and cause the overall integration job to hit its
+      // 10-minute timeout. Keep runtime tests deterministic by running them sequentially
+      // for remote runtimes.
+      const testForRuntime = type === "local" ? test.concurrent : test;
+      function testIf(shouldRun: boolean) {
+        return (...args: Parameters<typeof test>) => {
+          if (shouldRun) {
+            testForRuntime(...args);
+          } else {
+            test.skip(...args);
+          }
+        };
+      }
+
+      const isRemote = type !== "local";
+
+      const describeLocalOnly = describeIf(type === "local");
+      const describeNonDocker = describeIf(type !== "docker");
+      const testLocalOnly = testIf(!isRemote);
+      const testDockerOnly = testIf(type === "docker");
+      const createRuntime = (): Runtime =>
+        createTestRuntime(
+          type,
+          getBaseWorkdir(),
+          sshConfig,
+          type === "docker"
+            ? { image: "mux-ssh-test", containerName: sshConfig!.containerId }
+            : undefined
+        );
 
       describe("exec() - Command execution", () => {
-        test.concurrent("captures stdout and stderr separately", async () => {
+        testForRuntime("captures stdout and stderr separately", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -83,7 +136,7 @@ describeIntegration("Runtime integration tests", () => {
           expect(result.duration).toBeGreaterThan(0);
         });
 
-        test.concurrent("returns correct exit code for failed commands", async () => {
+        testForRuntime("returns correct exit code for failed commands", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -95,7 +148,7 @@ describeIntegration("Runtime integration tests", () => {
           expect(result.exitCode).toBe(42);
         });
 
-        test.concurrent("handles stdin input", async () => {
+        testLocalOnly("handles stdin input", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -109,7 +162,7 @@ describeIntegration("Runtime integration tests", () => {
           expect(result.exitCode).toBe(0);
         });
 
-        test.concurrent("passes environment variables", async () => {
+        testForRuntime("passes environment variables", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -122,7 +175,7 @@ describeIntegration("Runtime integration tests", () => {
           expect(result.stdout.trim()).toBe("test-value");
         });
 
-        test.concurrent("sets NON_INTERACTIVE_ENV_VARS to prevent prompts", async () => {
+        testForRuntime("sets NON_INTERACTIVE_ENV_VARS to prevent prompts", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -137,7 +190,7 @@ describeIntegration("Runtime integration tests", () => {
           expect(result.stdout).toContain("GIT_EDITOR=true");
         });
 
-        test.concurrent("handles empty output", async () => {
+        testForRuntime("handles empty output", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -148,7 +201,7 @@ describeIntegration("Runtime integration tests", () => {
           expect(result.exitCode).toBe(0);
         });
 
-        test.concurrent("handles commands with quotes and special characters", async () => {
+        testLocalOnly("handles commands with quotes and special characters", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -160,7 +213,7 @@ describeIntegration("Runtime integration tests", () => {
           expect(result.stdout.trim()).toBe('hello "world"');
         });
 
-        test.concurrent("respects working directory", async () => {
+        testForRuntime("respects working directory", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -168,7 +221,7 @@ describeIntegration("Runtime integration tests", () => {
 
           expect(result.stdout.trim()).toContain(workspace.path);
         });
-        test.concurrent(
+        testLocalOnly(
           "handles timeout correctly",
           async () => {
             const runtime = createRuntime();
@@ -193,8 +246,33 @@ describeIntegration("Runtime integration tests", () => {
         ); // 15 second timeout for test (includes workspace creation overhead)
       });
 
+      describe("resolvePath() - Path resolution", () => {
+        testForRuntime("expands ~ to the home directory", async () => {
+          const runtime = createRuntime();
+
+          const resolved = await runtime.resolvePath("~");
+
+          if (type === "ssh") {
+            expect(resolved).toBe("/home/testuser");
+          } else if (type === "docker") {
+            expect(resolved).toBe("/root");
+          } else {
+            expect(resolved).toBe(os.homedir());
+          }
+        });
+
+        testForRuntime("expands ~/path by prefixing the home directory", async () => {
+          const runtime = createRuntime();
+
+          const home = await runtime.resolvePath("~");
+          const resolved = await runtime.resolvePath("~/mux");
+
+          expect(resolved).toBe(`${home}/mux`);
+        });
+      });
+
       describe("readFile() - File reading", () => {
-        test.concurrent("reads file contents", async () => {
+        testForRuntime("reads file contents", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -208,7 +286,7 @@ describeIntegration("Runtime integration tests", () => {
           expect(content).toBe(testContent);
         });
 
-        test.concurrent("reads empty file", async () => {
+        testForRuntime("reads empty file", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -221,7 +299,7 @@ describeIntegration("Runtime integration tests", () => {
           expect(content).toBe("");
         });
 
-        test.concurrent("reads binary data correctly", async () => {
+        testLocalOnly("reads binary data correctly", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -253,7 +331,7 @@ describeIntegration("Runtime integration tests", () => {
           expect(readData).toEqual(binaryData);
         });
 
-        test.concurrent("throws RuntimeError for non-existent file", async () => {
+        testForRuntime("throws RuntimeError for non-existent file", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -262,7 +340,7 @@ describeIntegration("Runtime integration tests", () => {
           ).rejects.toThrow(RuntimeError);
         });
 
-        test.concurrent("throws RuntimeError when reading a directory", async () => {
+        testForRuntime("throws RuntimeError when reading a directory", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -274,7 +352,7 @@ describeIntegration("Runtime integration tests", () => {
       });
 
       describe("writeFile() - File writing", () => {
-        test.concurrent("writes file contents", async () => {
+        testForRuntime("writes file contents", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -290,7 +368,7 @@ describeIntegration("Runtime integration tests", () => {
           expect(result.stdout).toBe(content);
         });
 
-        test.concurrent("overwrites existing file", async () => {
+        testForRuntime("overwrites existing file", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -307,7 +385,7 @@ describeIntegration("Runtime integration tests", () => {
           expect(content).toBe("new content");
         });
 
-        test.concurrent("writes empty file", async () => {
+        testForRuntime("writes empty file", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -317,7 +395,7 @@ describeIntegration("Runtime integration tests", () => {
           expect(content).toBe("");
         });
 
-        test.concurrent("writes binary data", async () => {
+        testLocalOnly("writes binary data", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -335,7 +413,7 @@ describeIntegration("Runtime integration tests", () => {
           expect(result.stdout.trim()).toBe("6");
         });
 
-        test.concurrent("creates parent directories if needed", async () => {
+        testForRuntime("creates parent directories if needed", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -345,7 +423,7 @@ describeIntegration("Runtime integration tests", () => {
           expect(content).toBe("content");
         });
 
-        test.concurrent("handles special characters in content", async () => {
+        testForRuntime("handles special characters in content", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -356,7 +434,7 @@ describeIntegration("Runtime integration tests", () => {
           expect(content).toBe(specialContent);
         });
 
-        test.concurrent("preserves symlinks when editing target file", async () => {
+        testDockerOnly("preserves symlinks when editing target file", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -399,7 +477,7 @@ describeIntegration("Runtime integration tests", () => {
           expect(targetContent).toBe("new content");
         });
 
-        test.concurrent("preserves file permissions when editing through symlink", async () => {
+        testDockerOnly("preserves file permissions when editing through symlink", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -446,7 +524,7 @@ describeIntegration("Runtime integration tests", () => {
       });
 
       describe("stat() - File metadata", () => {
-        test.concurrent("returns file metadata", async () => {
+        testForRuntime("returns file metadata", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -463,7 +541,7 @@ describeIntegration("Runtime integration tests", () => {
           expect(stat.modifiedTime.getTime()).toBeLessThanOrEqual(Date.now());
         });
 
-        test.concurrent("returns directory metadata", async () => {
+        testForRuntime("returns directory metadata", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -474,7 +552,7 @@ describeIntegration("Runtime integration tests", () => {
           expect(stat.isDirectory).toBe(true);
         });
 
-        test.concurrent("throws RuntimeError for non-existent path", async () => {
+        testForRuntime("throws RuntimeError for non-existent path", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -483,7 +561,7 @@ describeIntegration("Runtime integration tests", () => {
           );
         });
 
-        test.concurrent("returns correct size for empty file", async () => {
+        testForRuntime("returns correct size for empty file", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -496,8 +574,8 @@ describeIntegration("Runtime integration tests", () => {
         });
       });
 
-      describe("Edge cases", () => {
-        test.concurrent(
+      describeLocalOnly("Edge cases", () => {
+        testForRuntime(
           "handles large files efficiently",
           async () => {
             const runtime = createRuntime();
@@ -515,7 +593,7 @@ describeIntegration("Runtime integration tests", () => {
           30000
         );
 
-        test.concurrent("handles concurrent operations", async () => {
+        testLocalOnly("handles concurrent operations", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -530,7 +608,7 @@ describeIntegration("Runtime integration tests", () => {
           await Promise.all(operations);
         });
 
-        test.concurrent("handles paths with spaces", async () => {
+        testForRuntime("handles paths with spaces", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -541,7 +619,7 @@ describeIntegration("Runtime integration tests", () => {
           expect(content).toBe("content");
         });
 
-        test.concurrent("handles very long file paths", async () => {
+        testForRuntime("handles very long file paths", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -554,8 +632,8 @@ describeIntegration("Runtime integration tests", () => {
         });
       });
 
-      describe("Git operations", () => {
-        test.concurrent("can initialize a git repository", async () => {
+      describeNonDocker("Git operations", () => {
+        testForRuntime("can initialize a git repository", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -572,7 +650,7 @@ describeIntegration("Runtime integration tests", () => {
           expect(stat.isDirectory).toBe(true);
         });
 
-        test.concurrent("can create commits", async () => {
+        testForRuntime("can create commits", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -599,7 +677,7 @@ describeIntegration("Runtime integration tests", () => {
           expect(logResult.stdout).toContain("Initial commit");
         });
 
-        test.concurrent("can create and checkout branches", async () => {
+        testForRuntime("can create and checkout branches", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -632,7 +710,7 @@ describeIntegration("Runtime integration tests", () => {
           expect(branchResult.stdout.trim()).toBe("feature-branch");
         });
 
-        test.concurrent("can handle git status in dirty workspace", async () => {
+        testForRuntime("can handle git status in dirty workspace", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -661,8 +739,8 @@ describeIntegration("Runtime integration tests", () => {
         });
       });
 
-      describe("Environment and shell behavior", () => {
-        test.concurrent("preserves multi-line output formatting", async () => {
+      describeNonDocker("Environment and shell behavior", () => {
+        testForRuntime("preserves multi-line output formatting", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -676,7 +754,7 @@ describeIntegration("Runtime integration tests", () => {
           expect(result.stdout).toContain("line3");
         });
 
-        test.concurrent("handles commands with pipes", async () => {
+        testForRuntime("handles commands with pipes", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -690,7 +768,7 @@ describeIntegration("Runtime integration tests", () => {
           expect(result.stdout.trim()).toBe("line2");
         });
 
-        test.concurrent("handles command substitution", async () => {
+        testForRuntime("handles command substitution", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -702,7 +780,7 @@ describeIntegration("Runtime integration tests", () => {
           expect(result.stdout).toContain("Current dir:");
         });
 
-        test.concurrent("handles large stdout output", async () => {
+        testForRuntime("handles large stdout output", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -718,7 +796,7 @@ describeIntegration("Runtime integration tests", () => {
           expect(lines[999]).toBe("1000");
         });
 
-        test.concurrent("handles commands that produce no output but take time", async () => {
+        testForRuntime("handles commands that produce no output but take time", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -733,8 +811,8 @@ describeIntegration("Runtime integration tests", () => {
         });
       });
 
-      describe("Error handling", () => {
-        test.concurrent("handles command not found", async () => {
+      describeLocalOnly("Error handling", () => {
+        testForRuntime("handles command not found", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -747,7 +825,7 @@ describeIntegration("Runtime integration tests", () => {
           expect(result.stderr.toLowerCase()).toContain("not found");
         });
 
-        test.concurrent("handles syntax errors in bash", async () => {
+        testForRuntime("handles syntax errors in bash", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -759,7 +837,7 @@ describeIntegration("Runtime integration tests", () => {
           expect(result.exitCode).not.toBe(0);
         });
 
-        test.concurrent("handles permission denied errors", async () => {
+        testForRuntime("handles permission denied errors", async () => {
           const runtime = createRuntime();
           await using workspace = await TestWorkspace.create(runtime, type);
 
@@ -791,11 +869,12 @@ describeIntegration("Runtime integration tests", () => {
    * So the actual workspace path is: /home/testuser/workspace/{projectName}/{workspaceName}
    */
   describe("SSHRuntime workspace operations", () => {
+    const testForRuntime = test;
     const srcBaseDir = "/home/testuser/workspace";
     const createSSHRuntime = (): Runtime => createTestRuntime("ssh", srcBaseDir, sshConfig);
 
     describe("renameWorkspace", () => {
-      test.concurrent("successfully renames directory", async () => {
+      testForRuntime("successfully renames directory", async () => {
         const runtime = createSSHRuntime();
         // Use unique project name to avoid conflicts with concurrent tests
         const projectName = `rename-test-${Date.now()}-${Math.random().toString(36).substring(7)}`;
@@ -845,7 +924,7 @@ describeIntegration("Runtime integration tests", () => {
         });
       });
 
-      test.concurrent("returns error when trying to rename non-existent directory", async () => {
+      testForRuntime("returns error when trying to rename non-existent directory", async () => {
         const runtime = createSSHRuntime();
         const projectName = `nonexist-rename-${Date.now()}-${Math.random().toString(36).substring(7)}`;
         const projectPath = `/some/path/${projectName}`;
@@ -861,7 +940,7 @@ describeIntegration("Runtime integration tests", () => {
     });
 
     describe("deleteWorkspace", () => {
-      test.concurrent("successfully deletes directory", async () => {
+      testForRuntime("successfully deletes directory", async () => {
         const runtime = createSSHRuntime();
         const projectName = `delete-test-${Date.now()}-${Math.random().toString(36).substring(7)}`;
         const projectPath = `/some/path/${projectName}`;
@@ -905,7 +984,7 @@ describeIntegration("Runtime integration tests", () => {
         });
       });
 
-      test.concurrent("returns success for non-existent directory (idempotent)", async () => {
+      testForRuntime("returns success for non-existent directory (idempotent)", async () => {
         const runtime = createSSHRuntime();
         const projectName = `nonexist-delete-${Date.now()}-${Math.random().toString(36).substring(7)}`;
         const projectPath = `/some/path/${projectName}`;

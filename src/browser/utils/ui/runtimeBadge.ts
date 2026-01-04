@@ -24,3 +24,19 @@ export function extractSshHostname(runtimeConfig?: RuntimeConfig): string | null
 
   return hostname || null;
 }
+
+/**
+ * Extract Docker image from Docker runtime config.
+ * Returns null if runtime is not Docker.
+ *
+ * Examples:
+ * - "ubuntu:22.04" -> "ubuntu:22.04"
+ * - "ghcr.io/myorg/dev-image:latest" -> "ghcr.io/myorg/dev-image:latest"
+ */
+export function extractDockerImage(runtimeConfig?: RuntimeConfig): string | null {
+  if (!runtimeConfig?.type || runtimeConfig.type !== "docker") {
+    return null;
+  }
+
+  return runtimeConfig.image || null;
+}

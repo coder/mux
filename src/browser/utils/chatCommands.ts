@@ -18,7 +18,7 @@ import {
 import type { ReviewNoteData } from "@/common/types/review";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { RuntimeConfig } from "@/common/types/runtime";
-import { RUNTIME_MODE, SSH_RUNTIME_PREFIX } from "@/common/types/runtime";
+import { RUNTIME_MODE, parseRuntimeModeAndHost } from "@/common/types/runtime";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { WORKSPACE_ONLY_COMMANDS } from "@/constants/slashCommands";
 import type { Toast } from "@/browser/components/ChatInputToast";
@@ -439,9 +439,12 @@ async function handleForkCommand(
 }
 
 /**
- * Parse runtime string from -r flag into RuntimeConfig for backend
+ * Parse runtime string from -r flag into RuntimeConfig for backend.
+ * Uses shared parseRuntimeModeAndHost for parsing, then converts to RuntimeConfig.
+ *
  * Supports formats:
  * - "ssh <host>" or "ssh <user@host>" -> SSH runtime
+ * - "docker <image>" -> Docker container runtime
  * - "worktree" -> Worktree runtime (git worktrees)
  * - "local" -> Local runtime (project-dir, no isolation)
  * - undefined -> Worktree runtime (default)
@@ -450,42 +453,45 @@ export function parseRuntimeString(
   runtime: string | undefined,
   _workspaceName: string
 ): RuntimeConfig | undefined {
-  if (!runtime) {
-    return undefined; // Default to worktree (backend decides)
-  }
+  // Use shared parser from common/types/runtime
+  const parsed = parseRuntimeModeAndHost(runtime);
 
-  const trimmed = runtime.trim();
-  const lowerTrimmed = trimmed.toLowerCase();
-
-  // Worktree runtime (explicit or default)
-  if (lowerTrimmed === RUNTIME_MODE.WORKTREE) {
-    return undefined; // Explicit worktree - let backend use default
-  }
-
-  // Local runtime (project-dir, no isolation)
-  if (lowerTrimmed === RUNTIME_MODE.LOCAL) {
-    // Return "local" type without srcBaseDir to indicate project-dir runtime
-    return { type: RUNTIME_MODE.LOCAL };
-  }
-
-  // Parse "ssh <host>" or "ssh <user@host>" format
-  if (lowerTrimmed === RUNTIME_MODE.SSH || lowerTrimmed.startsWith(SSH_RUNTIME_PREFIX)) {
-    const hostPart = trimmed.slice(SSH_RUNTIME_PREFIX.length - 1).trim(); // Preserve original case for host
-    if (!hostPart) {
+  // null means invalid input (e.g., "ssh" without host, "docker" without image)
+  if (parsed === null) {
+    // Determine which error to throw based on input
+    const trimmed = runtime?.trim().toLowerCase() ?? "";
+    if (trimmed === RUNTIME_MODE.SSH || trimmed.startsWith("ssh ")) {
       throw new Error("SSH runtime requires host (e.g., 'ssh hostname' or 'ssh user@host')");
     }
-
-    // Accept both "hostname" and "user@hostname" formats
-    // SSH will use current user or ~/.ssh/config if user not specified
-    // Use tilde path - backend will resolve it via runtime.resolvePath()
-    return {
-      type: RUNTIME_MODE.SSH,
-      host: hostPart,
-      srcBaseDir: "~/mux", // Default remote base directory (tilde will be resolved by backend)
-    };
+    if (trimmed === RUNTIME_MODE.DOCKER || trimmed.startsWith("docker ")) {
+      throw new Error("Docker runtime requires image (e.g., 'docker ubuntu:22.04')");
+    }
+    throw new Error(
+      `Unknown runtime type: '${runtime ?? ""}'. Use 'ssh <host>', 'docker <image>', 'worktree', or 'local'`
+    );
   }
 
-  throw new Error(`Unknown runtime type: '${runtime}'. Use 'ssh <host>', 'worktree', or 'local'`);
+  // Convert ParsedRuntime to RuntimeConfig
+  switch (parsed.mode) {
+    case RUNTIME_MODE.WORKTREE:
+      return undefined; // Let backend use default worktree config
+
+    case RUNTIME_MODE.LOCAL:
+      return { type: RUNTIME_MODE.LOCAL };
+
+    case RUNTIME_MODE.SSH:
+      return {
+        type: RUNTIME_MODE.SSH,
+        host: parsed.host,
+        srcBaseDir: "~/mux", // Default remote base directory (tilde resolved by backend)
+      };
+
+    case RUNTIME_MODE.DOCKER:
+      return {
+        type: RUNTIME_MODE.DOCKER,
+        image: parsed.image,
+      };
+  }
 }
 
 export interface CreateWorkspaceOptions {

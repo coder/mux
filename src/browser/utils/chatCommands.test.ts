@@ -101,12 +101,37 @@ describe("parseRuntimeString", () => {
     });
   });
 
-  test("throws error for unknown runtime type", () => {
+  test("parses docker runtime with image", () => {
+    const result = parseRuntimeString("docker ubuntu:22.04", workspaceName);
+    expect(result).toEqual({
+      type: "docker",
+      image: "ubuntu:22.04",
+    });
+  });
+
+  test("parses docker with registry image", () => {
+    const result = parseRuntimeString("docker ghcr.io/myorg/dev:latest", workspaceName);
+    expect(result).toEqual({
+      type: "docker",
+      image: "ghcr.io/myorg/dev:latest",
+    });
+  });
+
+  test("throws error for docker without image", () => {
     expect(() => parseRuntimeString("docker", workspaceName)).toThrow(
-      "Unknown runtime type: 'docker'. Use 'ssh <host>', 'worktree', or 'local'"
+      "Docker runtime requires image"
     );
+    expect(() => parseRuntimeString("docker ", workspaceName)).toThrow(
+      "Docker runtime requires image"
+    );
+  });
+
+  test("throws error for unknown runtime type", () => {
     expect(() => parseRuntimeString("remote", workspaceName)).toThrow(
-      "Unknown runtime type: 'remote'. Use 'ssh <host>', 'worktree', or 'local'"
+      "Unknown runtime type: 'remote'. Use 'ssh <host>', 'docker <image>', 'worktree', or 'local'"
+    );
+    expect(() => parseRuntimeString("kubernetes", workspaceName)).toThrow(
+      "Unknown runtime type: 'kubernetes'. Use 'ssh <host>', 'docker <image>', 'worktree', or 'local'"
     );
   });
 });
