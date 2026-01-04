@@ -28,7 +28,7 @@ export const AddSectionButton: React.FC<AddSectionButtonProps> = ({ onCreateSect
 
   if (isCreating) {
     return (
-      <div className="mt-1 flex items-center gap-1.5 py-1 pl-2">
+      <div className="mt-0.5 flex items-center gap-1.5 py-1 pl-3">
         <Plus size={10} className="text-muted/60 shrink-0" />
         <input
           ref={inputRef}
@@ -55,7 +55,7 @@ export const AddSectionButton: React.FC<AddSectionButtonProps> = ({ onCreateSect
       <TooltipTrigger asChild>
         <button
           onClick={() => setIsCreating(true)}
-          className="text-muted/60 hover:text-muted mt-1 flex w-full cursor-pointer items-center gap-1.5 border-none bg-transparent py-1 pl-2 text-[11px] transition-colors"
+          className="text-muted/60 hover:text-muted mt-0.5 flex w-full cursor-pointer items-center gap-1.5 border-none bg-transparent py-1 pl-3 text-[11px] transition-colors"
         >
           <Plus size={10} />
           <span>Add section</span>
