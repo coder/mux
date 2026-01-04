@@ -1,5 +1,5 @@
 import { electronTest as test, electronExpect as expect } from "../electronTest";
-import { PERMISSION_MODE_PROMPTS } from "@/node/services/mock/scenarios/permissionModes";
+import { MOCK_PERMISSION_MODE_PROMPTS } from "../mockAiPrompts";
 
 test.skip(
   ({ browserName }) => browserName !== "chromium",
@@ -12,7 +12,7 @@ test.describe("permission mode behavior", () => {
     await ui.chat.setMode("Plan");
 
     const timeline = await ui.chat.captureStreamTimeline(async () => {
-      await ui.chat.sendMessage(PERMISSION_MODE_PROMPTS.PLAN_REFACTOR);
+      await ui.chat.sendMessage(MOCK_PERMISSION_MODE_PROMPTS.PLAN_REFACTOR);
     });
 
     if (timeline.events.length === 0) {
@@ -34,7 +34,7 @@ test.describe("permission mode behavior", () => {
     await ui.chat.setMode("Exec");
 
     const timeline = await ui.chat.captureStreamTimeline(async () => {
-      await ui.chat.sendMessage(PERMISSION_MODE_PROMPTS.EXECUTE_PLAN);
+      await ui.chat.sendMessage(MOCK_PERMISSION_MODE_PROMPTS.EXECUTE_PLAN);
     });
 
     if (timeline.events.length === 0) {

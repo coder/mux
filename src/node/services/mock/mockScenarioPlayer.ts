@@ -11,10 +11,8 @@ import type {
   MockAssistantEvent,
   MockStreamErrorEvent,
   MockStreamStartEvent,
-  ScenarioTurn,
 } from "./scenarioTypes";
-import { allScenarios } from "./scenarios";
-import { MockAiRouter, readMockAiModeFromEnv, type MockAiMode } from "./mockAiRouter";
+import { MockAiRouter } from "./mockAiRouter";
 import { buildMockStreamEventsFromReply } from "./mockAiStreamAdapter";
 import type {
   StreamStartEvent,
@@ -41,7 +39,7 @@ function approximateTokenCount(text: string): number {
 }
 
 async function tokenizeWithMockModel(text: string, context: string): Promise<number> {
-  assert(typeof text === "string", `Mock scenario ${context} expects string input`);
+  assert(typeof text === "string", `Mock stream ${context} expects string input`);
 
   // Prefer fast approximate token counting in mock mode.
   // We only use the real tokenizer if it's available and responds quickly.
@@ -120,21 +118,11 @@ interface ActiveStream {
 }
 
 export class MockScenarioPlayer {
-  private readonly scenarios: ScenarioTurn[] = allScenarios;
   private readonly router = new MockAiRouter();
-  private readonly mode: MockAiMode;
   private readonly activeStreams = new Map<string, ActiveStream>();
-  private readonly completedTurns = new Set<number>();
   private nextMockMessageId = 0;
 
-  constructor(
-    private readonly deps: MockPlayerDeps,
-    options?: {
-      mode?: MockAiMode;
-    }
-  ) {
-    this.mode = options?.mode ?? readMockAiModeFromEnv();
-  }
+  constructor(private readonly deps: MockPlayerDeps) {}
 
   isStreaming(workspaceId: string): boolean {
     return this.activeStreams.has(workspaceId);
@@ -160,7 +148,13 @@ export class MockScenarioPlayer {
     this.activeStreams.delete(workspaceId);
   }
 
-  async play(messages: MuxMessage[], workspaceId: string): Promise<Result<void, SendMessageError>> {
+  async play(
+    messages: MuxMessage[],
+    workspaceId: string,
+    options?: {
+      model?: string;
+    }
+  ): Promise<Result<void, SendMessageError>> {
     const latest = messages[messages.length - 1];
     if (!latest || latest.role !== "user") {
       return Err({ type: "unknown", raw: "Mock AI expected a user message" });
@@ -168,47 +162,17 @@ export class MockScenarioPlayer {
 
     const latestText = this.extractText(latest);
 
-    let events: MockAssistantEvent[];
-    let messageId: string;
-    let scenarioTurnIndex: number | undefined;
+    const reply = this.router.route({
+      messages,
+      latestUserMessage: latest,
+      latestUserText: latestText,
+    });
 
-    if (this.mode === "scenario") {
-      const turnIndex = this.findTurnIndex(latestText);
-      if (turnIndex !== -1) {
-        const turn = this.scenarios[turnIndex];
-        if (
-          typeof turn.user.editOfTurn === "number" &&
-          !this.completedTurns.has(turn.user.editOfTurn)
-        ) {
-          return Err({
-            type: "unknown",
-            raw: `Mock scenario turn "${turn.user.text}" requires completion of turn index ${turn.user.editOfTurn}`,
-          });
-        }
-
-        messageId = turn.assistant.messageId;
-        events = turn.assistant.events;
-        scenarioTurnIndex = turnIndex;
-      } else {
-        const reply = this.router.route({
-          messages,
-          latestUserMessage: latest,
-          latestUserText: latestText,
-        });
-
-        messageId = `msg-mock-${this.nextMockMessageId++}`;
-        events = buildMockStreamEventsFromReply(reply, { messageId });
-      }
-    } else {
-      const reply = this.router.route({
-        messages,
-        latestUserMessage: latest,
-        latestUserText: latestText,
-      });
-
-      messageId = `msg-mock-${this.nextMockMessageId++}`;
-      events = buildMockStreamEventsFromReply(reply, { messageId });
-    }
+    const messageId = `msg-mock-${this.nextMockMessageId++}`;
+    const events = buildMockStreamEventsFromReply(reply, {
+      messageId,
+      model: options?.model,
+    });
 
     const streamStart = events.find(
       (event): event is MockStreamStartEvent => event.kind === "stream-start"
@@ -240,15 +204,11 @@ export class MockScenarioPlayer {
 
     this.scheduleEvents(workspaceId, events, messageId, historySequence);
 
-    if (scenarioTurnIndex !== undefined) {
-      this.completedTurns.add(scenarioTurnIndex);
-    }
-
     return Ok(undefined);
   }
 
   async replayStream(_workspaceId: string): Promise<void> {
-    // No-op for mock scenario; events are deterministic and do not support mid-stream replay
+    // No-op for mock streams; events are deterministic and do not support mid-stream replay.
   }
 
   private scheduleEvents(
@@ -324,7 +284,7 @@ export class MockScenarioPlayer {
         break;
       }
       case "reasoning-delta": {
-        // Mock scenarios use the same tokenization logic as real streams for consistency
+        // Mock streams use the same tokenization logic as real streams for consistency
         const tokens = await tokenizeWithMockModel(event.text, "reasoning-delta text");
         const payload: ReasoningDeltaEvent = {
           type: "reasoning-delta",
@@ -338,7 +298,7 @@ export class MockScenarioPlayer {
         break;
       }
       case "tool-start": {
-        // Mock scenarios use the same tokenization logic as real streams for consistency
+        // Mock streams use the same tokenization logic as real streams for consistency
         const inputText = JSON.stringify(event.args);
         const tokens = await tokenizeWithMockModel(inputText, "tool-call args");
         const payload: ToolCallStartEvent = {
@@ -381,7 +341,7 @@ export class MockScenarioPlayer {
         break;
       }
       case "stream-delta": {
-        // Mock scenarios use the same tokenization logic as real streams for consistency
+        // Mock streams use the same tokenization logic as real streams for consistency
         let tokens: number;
         try {
           tokens = await tokenizeWithMockModel(event.text, "stream-delta text");
@@ -489,19 +449,5 @@ export class MockScenarioPlayer {
       }
     }
     return maxSequence + 1;
-  }
-
-  private findTurnIndex(text: string): number {
-    const normalizedText = text.trim();
-    for (let index = 0; index < this.scenarios.length; index += 1) {
-      if (this.completedTurns.has(index)) {
-        continue;
-      }
-      const candidate = this.scenarios[index];
-      if (candidate.user.text.trim() === normalizedText) {
-        return index;
-      }
-    }
-    return -1;
   }
 }

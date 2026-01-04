@@ -1,6 +1,5 @@
 import type { CompletedMessagePart } from "@/common/types/stream";
 import type { StreamErrorType } from "@/common/types/errors";
-import type { ThinkingLevel } from "@/common/types/thinking";
 
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 
@@ -87,18 +86,5 @@ export type MockAssistantEvent =
   | MockToolStartEvent
   | MockToolEndEvent
   | MockUsageDeltaEvent;
-
-export interface ScenarioTurn {
-  user: {
-    text: string;
-    thinkingLevel: ThinkingLevel;
-    mode: "plan" | "exec";
-    editOfTurn?: number;
-  };
-  assistant: {
-    messageId: string;
-    events: MockAssistantEvent[];
-  };
-}
 
 export const STREAM_BASE_DELAY = 250;

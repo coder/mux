@@ -500,18 +500,13 @@ export class AIService extends EventEmitter {
     return this.mockModeEnabled;
   }
 
-  enableMockMode(options?: { mode?: "router" | "scenario" }): void {
+  enableMockMode(): void {
     this.mockModeEnabled = true;
 
-    this.mockScenarioPlayer ??= new MockScenarioPlayer(
-      {
-        aiService: this,
-        historyService: this.historyService,
-      },
-      {
-        mode: options?.mode,
-      }
-    );
+    this.mockScenarioPlayer ??= new MockScenarioPlayer({
+      aiService: this,
+      historyService: this.historyService,
+    });
   }
 
   async getWorkspaceMetadata(workspaceId: string): Promise<Result<WorkspaceMetadata>> {
@@ -1038,7 +1033,7 @@ export class AIService extends EventEmitter {
   ): Promise<Result<void, SendMessageError>> {
     try {
       if (this.mockModeEnabled && this.mockScenarioPlayer) {
-        return await this.mockScenarioPlayer.play(messages, workspaceId);
+        return await this.mockScenarioPlayer.play(messages, workspaceId, { model: modelString });
       }
 
       // DEBUG: Log streamMessage call

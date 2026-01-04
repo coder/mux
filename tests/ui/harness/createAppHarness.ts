@@ -44,7 +44,7 @@ export async function createAppHarness(options?: {
   const env = await createTestEnvironment();
 
   if (options?.aiMode !== "none") {
-    env.services.aiService.enableMockMode({ mode: "router" });
+    env.services.aiService.enableMockMode();
   }
 
   let workspaceId: string | undefined;

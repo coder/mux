@@ -1,7 +1,7 @@
 import { electronTest as test, electronExpect as expect } from "../electronTest";
-import { LIST_PROGRAMMING_LANGUAGES } from "@/node/services/mock/scenarios/basicChat";
+import { MOCK_LIST_PROGRAMMING_LANGUAGES } from "../mockAiPrompts";
 
-const SIMPLE_PROMPT = LIST_PROGRAMMING_LANGUAGES;
+const SIMPLE_PROMPT = MOCK_LIST_PROGRAMMING_LANGUAGES;
 
 test.skip(
   ({ browserName }) => browserName !== "chromium",

@@ -1,5 +1,5 @@
 import { electronTest as test, electronExpect as expect } from "../electronTest";
-import { LIST_PROGRAMMING_LANGUAGES } from "@/node/services/mock/scenarios/basicChat";
+import { MOCK_LIST_PROGRAMMING_LANGUAGES } from "../mockAiPrompts";
 
 test.skip(
   ({ browserName }) => browserName !== "chromium",
@@ -11,7 +11,7 @@ test.describe("persistence", () => {
     await ui.projects.openFirstWorkspace();
 
     await ui.chat.captureStreamTimeline(async () => {
-      await ui.chat.sendMessage(LIST_PROGRAMMING_LANGUAGES);
+      await ui.chat.sendMessage(MOCK_LIST_PROGRAMMING_LANGUAGES);
     });
     await ui.chat.expectTranscriptContains("Python");
 
@@ -26,7 +26,7 @@ test.describe("persistence", () => {
     await ui.projects.openFirstWorkspace();
 
     await ui.chat.captureStreamTimeline(async () => {
-      await ui.chat.sendMessage(LIST_PROGRAMMING_LANGUAGES);
+      await ui.chat.sendMessage(MOCK_LIST_PROGRAMMING_LANGUAGES);
     });
 
     // Navigate through settings (potential state corruption points)

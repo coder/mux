@@ -11,10 +11,33 @@ function chunkText(text: string, chunkChars: number): string[] {
     return [];
   }
 
+  // Stream in word-ish chunks so tests can assert on meaningful substrings.
+  // (Fixed-width chunking can split tokens like "README.md" across boundaries.)
   const chunks: string[] = [];
-  for (let i = 0; i < text.length; i += chunkChars) {
-    chunks.push(text.slice(i, i + chunkChars));
+
+  let cursor = 0;
+  while (cursor < text.length) {
+    const remaining = text.length - cursor;
+    if (remaining <= chunkChars) {
+      chunks.push(text.slice(cursor));
+      break;
+    }
+
+    const window = text.slice(cursor, cursor + chunkChars);
+    const lastNewline = window.lastIndexOf("\n");
+    const lastSpace = window.lastIndexOf(" ");
+    const splitAt = Math.max(lastNewline, lastSpace);
+
+    if (splitAt <= 0) {
+      chunks.push(window);
+      cursor += chunkChars;
+      continue;
+    }
+
+    chunks.push(text.slice(cursor, cursor + splitAt + 1));
+    cursor += splitAt + 1;
   }
+
   return chunks;
 }
 
@@ -55,29 +78,80 @@ export function buildMockStreamEventsFromReply(
     ...(mode && { mode }),
   });
 
+  let nextDelay = 5;
+
   if (reply.usage) {
     events.push({
       kind: "usage-delta",
-      delay: 5,
+      delay: nextDelay,
       usage: reply.usage,
       cumulativeUsage: reply.usage,
     });
+    nextDelay += 5;
   }
+
+  if (reply.reasoningDeltas && reply.reasoningDeltas.length > 0) {
+    for (const delta of reply.reasoningDeltas) {
+      events.push({
+        kind: "reasoning-delta",
+        delay: nextDelay,
+        text: delta,
+      });
+      nextDelay += 5;
+    }
+  }
+
+  if (reply.toolCalls && reply.toolCalls.length > 0) {
+    for (const toolCall of reply.toolCalls) {
+      events.push({
+        kind: "tool-start",
+        delay: nextDelay,
+        toolCallId: toolCall.toolCallId,
+        toolName: toolCall.toolName,
+        args: toolCall.args,
+      });
+      nextDelay += 5;
+
+      events.push({
+        kind: "tool-end",
+        delay: nextDelay,
+        toolCallId: toolCall.toolCallId,
+        toolName: toolCall.toolName,
+        result: toolCall.result,
+      });
+      nextDelay += 5;
+    }
+  }
+
+  const chunkBaseDelay = nextDelay + 5;
 
   const chunks = chunkText(reply.assistantText, chunkChars);
   for (const [index, chunk] of chunks.entries()) {
     events.push({
       kind: "stream-delta",
-      delay: 10 + index * chunkDelayMs,
+      delay: chunkBaseDelay + index * chunkDelayMs,
       text: chunk,
     });
+  }
+
+  const terminalDelay = chunkBaseDelay + chunks.length * chunkDelayMs;
+
+  if (reply.error) {
+    events.push({
+      kind: "stream-error",
+      delay: terminalDelay,
+      error: reply.error.message,
+      errorType: reply.error.type,
+    });
+
+    return events;
   }
 
   const parts: CompletedMessagePart[] = [{ type: "text", text: reply.assistantText }];
 
   events.push({
     kind: "stream-end",
-    delay: 10 + chunks.length * chunkDelayMs,
+    delay: terminalDelay,
     metadata: {
       model,
       systemMessageTokens: 0,
