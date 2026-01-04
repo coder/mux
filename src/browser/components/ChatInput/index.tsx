@@ -68,6 +68,7 @@ import { ContextUsageIndicatorButton } from "../ContextUsageIndicatorButton";
 import { useWorkspaceUsage } from "@/browser/stores/WorkspaceStore";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { useAutoCompactionSettings } from "@/browser/hooks/useAutoCompactionSettings";
+import { useIdleCompactionHours } from "@/browser/hooks/useIdleCompactionHours";
 import { calculateTokenMeterData } from "@/common/utils/tokens/tokenMeterUtils";
 import {
   matchesKeybind,
@@ -397,6 +398,18 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const autoCompactionProps = useMemo(
     () => ({ threshold: autoCompactThreshold, setThreshold: setAutoCompactThreshold }),
     [autoCompactThreshold, setAutoCompactThreshold]
+  );
+
+  // Idle compaction settings (per-model, stored in localStorage like auto-compact threshold)
+  const { hours: idleCompactionHours, setHours: setIdleCompactionHours } = useIdleCompactionHours({
+    model: usageModel,
+  });
+  const idleCompactionProps = useMemo(
+    () => ({
+      hours: idleCompactionHours,
+      setHours: setIdleCompactionHours,
+    }),
+    [idleCompactionHours, setIdleCompactionHours]
   );
 
   const setPreferredModel = useCallback(
@@ -2122,6 +2135,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   <ContextUsageIndicatorButton
                     data={contextUsageData}
                     autoCompaction={autoCompactionProps}
+                    idleCompaction={idleCompactionProps}
                   />
                 )}
                 <AgentModePicker onComplete={() => inputRef.current?.focus()} />
