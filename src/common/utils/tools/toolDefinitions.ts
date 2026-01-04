@@ -32,7 +32,7 @@ export const AskUserQuestionOptionSchema = z
 export const AskUserQuestionQuestionSchema = z
   .object({
     question: z.string().min(1),
-    header: z.string().min(1).max(12),
+    header: z.string().min(1).max(32).describe("Short label shown in the UI (keep it concise)"),
     options: z.array(AskUserQuestionOptionSchema).min(2).max(4),
     multiSelect: z.boolean(),
   })
