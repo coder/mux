@@ -191,6 +191,8 @@
     "react-compiler-runtime": "^1.0.0",
     "react-dnd": "^16.0.1",
     "react-dnd-html5-backend": "^16.0.1",
+    "react-dnd-test-backend": "^16.0.1",
+    "react-dnd-test-utils": "^16.0.1",
     "react-dom": "^18.2.0",
     "rehype-katex": "^7.0.1",
     "rehype-raw": "^7.0.0",

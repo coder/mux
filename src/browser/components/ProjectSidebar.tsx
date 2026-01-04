@@ -38,6 +38,7 @@ import { usePopoverError } from "@/browser/hooks/usePopoverError";
 import { PopoverError } from "./PopoverError";
 import { SectionHeader } from "./SectionHeader";
 import { AddSectionButton } from "./AddSectionButton";
+import { WorkspaceSectionDropZone } from "./WorkspaceSectionDropZone";
 import type { SectionConfig } from "@/common/types/project";
 
 // Re-export WorkspaceSelection for backwards compatibility
@@ -220,7 +221,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     createSection,
     updateSection,
     removeSection,
-    assignWorkspaceToSection: _assignWorkspaceToSection,
+    assignWorkspaceToSection,
   } = useProjectContext();
 
   // Mobile breakpoint for auto-closing sidebar
@@ -600,7 +601,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               const sections = config.sections ?? [];
                               const depthByWorkspaceId = computeWorkspaceDepthMap(allWorkspaces);
 
-                              const renderWorkspace = (metadata: FrontendWorkspaceMetadata) => (
+                              const renderWorkspace = (
+                                metadata: FrontendWorkspaceMetadata,
+                                sectionId?: string
+                              ) => (
                                 <WorkspaceListItem
                                   key={metadata.id}
                                   metadata={metadata}
@@ -613,13 +617,15 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   onArchiveWorkspace={handleArchiveWorkspace}
                                   onToggleUnread={_onToggleUnread}
                                   depth={depthByWorkspaceId[metadata.id] ?? 0}
+                                  sectionId={sectionId}
                                 />
                               );
 
                               // Render age tiers for a list of workspaces
                               const renderAgeTiers = (
                                 workspaces: FrontendWorkspaceMetadata[],
-                                tierKeyPrefix: string
+                                tierKeyPrefix: string,
+                                sectionId?: string
                               ): React.ReactNode => {
                                 const { recent, buckets } = partitionWorkspacesByAge(
                                   workspaces,
@@ -678,7 +684,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                       </button>
                                       {isTierExpanded && (
                                         <>
-                                          {bucket.map(renderWorkspace)}
+                                          {bucket.map((ws) => renderWorkspace(ws, sectionId))}
                                           {(() => {
                                             const nextTier = findNextNonEmptyTier(
                                               buckets,
@@ -696,7 +702,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
                                 return (
                                   <>
-                                    {recent.map(renderWorkspace)}
+                                    {recent.map((ws) => renderWorkspace(ws, sectionId))}
                                     {firstTier !== -1 && renderTier(firstTier)}
                                   </>
                                 );
@@ -707,6 +713,18 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 allWorkspaces,
                                 sections
                               );
+
+                              // Handle workspace drop into section
+                              const handleWorkspaceSectionDrop = (
+                                workspaceId: string,
+                                targetSectionId: string | null
+                              ) => {
+                                void assignWorkspaceToSection(
+                                  projectPath,
+                                  workspaceId,
+                                  targetSectionId
+                                );
+                              };
 
                               // Render section with its workspaces
                               const renderSection = (section: SectionConfig) => {
@@ -719,7 +737,12 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   expandedSections[sectionExpandedKey] ?? true;
 
                                 return (
-                                  <div key={section.id}>
+                                  <WorkspaceSectionDropZone
+                                    key={section.id}
+                                    projectPath={projectPath}
+                                    sectionId={section.id}
+                                    onDrop={handleWorkspaceSectionDrop}
+                                  >
                                     <SectionHeader
                                       section={section}
                                       isExpanded={isSectionExpanded}
@@ -747,7 +770,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                             getSectionTierKey(projectPath, section.id, 0).replace(
                                               ":tier:0",
                                               ":tier"
-                                            )
+                                            ),
+                                            section.id
                                           )
                                         ) : (
                                           <div className="text-muted px-3 py-2 text-center text-xs italic">
@@ -756,18 +780,38 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                         )}
                                       </div>
                                     )}
-                                  </div>
+                                  </WorkspaceSectionDropZone>
                                 );
                               };
 
                               return (
                                 <>
-                                  {/* Unsectioned workspaces first */}
-                                  {unsectioned.length > 0 &&
+                                  {/* Unsectioned workspaces first - always show drop zone when sections exist */}
+                                  {sections.length > 0 ? (
+                                    <WorkspaceSectionDropZone
+                                      projectPath={projectPath}
+                                      sectionId={null}
+                                      onDrop={handleWorkspaceSectionDrop}
+                                      testId="unsectioned-drop-zone"
+                                    >
+                                      {unsectioned.length > 0 ? (
+                                        renderAgeTiers(
+                                          unsectioned,
+                                          getTierKey(projectPath, 0).replace(":0", "")
+                                        )
+                                      ) : (
+                                        <div className="text-muted px-3 py-2 text-center text-xs italic">
+                                          No unsectioned workspaces
+                                        </div>
+                                      )}
+                                    </WorkspaceSectionDropZone>
+                                  ) : (
+                                    unsectioned.length > 0 &&
                                     renderAgeTiers(
                                       unsectioned,
                                       getTierKey(projectPath, 0).replace(":0", "")
-                                    )}
+                                    )
+                                  )}
 
                                   {/* Sections */}
                                   {sections.map(renderSection)}

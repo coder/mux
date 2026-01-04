@@ -71,6 +71,7 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
         borderLeftWidth: 3,
         borderLeftColor: sectionColor,
       }}
+      data-section-id={section.id}
     >
       {/* Expand/Collapse Button */}
       <button

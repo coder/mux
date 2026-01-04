@@ -41,6 +41,11 @@ export function installDom(): () => void {
   (globalThis as unknown as { Node: unknown }).Node = domWindow.Node;
   // Image is used by react-dnd-html5-backend for drag preview
   (globalThis as unknown as { Image: unknown }).Image = domWindow.Image ?? class MockImage {};
+  // DataTransfer is used by drag-drop tests
+  if (!(globalThis as unknown as { DataTransfer?: unknown }).DataTransfer) {
+    (globalThis as unknown as { DataTransfer: unknown }).DataTransfer =
+      domWindow.DataTransfer ?? class MockDataTransfer {};
+  }
 
   // happy-dom doesn't always define these on globalThis in node env.
   if (!globalThis.requestAnimationFrame) {

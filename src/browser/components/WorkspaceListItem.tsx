@@ -4,12 +4,14 @@ import { useGitStatus } from "@/browser/stores/GitStatusStore";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import React, { useState } from "react";
+import { useDrag } from "react-dnd";
 import { GitStatusIndicator } from "./GitStatusIndicator";
 import { RuntimeBadge } from "./RuntimeBadge";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
 import { Shimmer } from "./ai-elements/shimmer";
 import { ArchiveIcon } from "./icons/ArchiveIcon";
+import { WORKSPACE_DRAG_TYPE, type WorkspaceDragItem } from "./WorkspaceSectionDropZone";
 
 export interface WorkspaceSelection {
   projectPath: string;
@@ -25,6 +27,8 @@ export interface WorkspaceListItemProps {
   isSelected: boolean;
   isArchiving?: boolean;
   depth?: number;
+  /** Section ID this workspace belongs to (for drag-drop targeting) */
+  sectionId?: string;
   /** @deprecated No longer used since status dot was removed, kept for API compatibility */
   lastReadTimestamp?: number;
   // Event handlers
@@ -41,6 +45,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
   isSelected,
   isArchiving,
   depth,
+  sectionId,
   lastReadTimestamp: _lastReadTimestamp,
   onSelectWorkspace,
   onArchiveWorkspace,
@@ -107,11 +112,31 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
   const safeDepth = typeof depth === "number" && Number.isFinite(depth) ? Math.max(0, depth) : 0;
   const paddingLeft = 9 + Math.min(32, safeDepth) * 12;
 
+  // Drag handle for moving workspace between sections
+  const [{ isDragging }, drag] = useDrag(
+    () => ({
+      type: WORKSPACE_DRAG_TYPE,
+      item: (): WorkspaceDragItem => ({
+        type: WORKSPACE_DRAG_TYPE,
+        workspaceId,
+        projectPath,
+        currentSectionId: sectionId,
+      }),
+      collect: (monitor) => ({
+        isDragging: monitor.isDragging(),
+      }),
+      canDrag: !isDisabled,
+    }),
+    [workspaceId, projectPath, sectionId, isDisabled]
+  );
+
   return (
     <React.Fragment>
       <div
+        ref={drag}
         className={cn(
           "py-1.5 pr-2 border-l-[3px] border-transparent transition-all duration-150 text-[13px] relative flex gap-2",
+          isDragging && "opacity-50",
           isDisabled
             ? "cursor-default opacity-70"
             : "cursor-pointer hover:bg-hover [&:hover_button]:opacity-100",
@@ -153,6 +178,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
         aria-disabled={isDisabled}
         data-workspace-path={namedWorkspacePath}
         data-workspace-id={workspaceId}
+        data-section-id={sectionId ?? ""}
         data-git-status={gitStatus ? JSON.stringify(gitStatus) : undefined}
       >
         {/* Archive button - vertically centered against entire item */}

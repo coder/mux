@@ -151,6 +151,8 @@
         "react-compiler-runtime": "^1.0.0",
         "react-dnd": "^16.0.1",
         "react-dnd-html5-backend": "^16.0.1",
+        "react-dnd-test-backend": "^16.0.1",
+        "react-dnd-test-utils": "^16.0.1",
         "react-dom": "^18.2.0",
         "rehype-katex": "^7.0.1",
         "rehype-raw": "^7.0.0",
@@ -3153,6 +3155,10 @@
     "react-dnd": ["react-dnd@16.0.1", "", { "dependencies": { "@react-dnd/invariant": "^4.0.1", "@react-dnd/shallowequal": "^4.0.1", "dnd-core": "^16.0.1", "fast-deep-equal": "^3.1.3", "hoist-non-react-statics": "^3.3.2" }, "peerDependencies": { "@types/hoist-non-react-statics": ">= 3.3.1", "@types/node": ">= 12", "@types/react": ">= 16", "react": ">= 16.14" }, "optionalPeers": ["@types/hoist-non-react-statics", "@types/node", "@types/react"] }, "sha512-QeoM/i73HHu2XF9aKksIUuamHPDvRglEwdHL4jsp784BgUuWcg6mzfxT0QDdQz8Wj0qyRKx2eMg8iZtWvU4E2Q=="],
 
     "react-dnd-html5-backend": ["react-dnd-html5-backend@16.0.1", "", { "dependencies": { "dnd-core": "^16.0.1" } }, "sha512-Wu3dw5aDJmOGw8WjH1I1/yTH+vlXEL4vmjk5p+MHxP8HuHJS1lAGeIdG/hze1AvNeXWo/JgULV87LyQOr+r5jw=="],
+
+    "react-dnd-test-backend": ["react-dnd-test-backend@16.0.1", "", { "dependencies": { "dnd-core": "^16.0.1" } }, "sha512-sUsQKMmoachP3AGaHLZD4JZWq2dHPoiLRG3YVuC0gXJtGENk3PVR+uRIrml7BEnnTyv+RVeoNK2ziL38Ggh8cw=="],
+
+    "react-dnd-test-utils": ["react-dnd-test-utils@16.0.1", "", { "peerDependencies": { "@testing-library/react": ">= 11", "@types/node": "*", "@types/react": ">= 16", "@types/react-dom": ">= 16", "react": ">= 16.14", "react-dnd": ">= 11.1.3", "react-dnd-html5-backend": ">= 11.1.3", "react-dnd-test-backend": ">= 10.0.0", "react-dom": ">= 16.14" }, "optionalPeers": ["@testing-library/react", "@types/react", "@types/react-dom", "react-dnd-html5-backend", "react-dnd-test-backend"] }, "sha512-hKt6HYUAuN1oVtpVIpHwxeZLqtjwfzK2wFyfQUs7Pbi6muxXK+ZDOHEUmaI3WcoWb0nhZOyX3+FwmBsrA288Eg=="],
 
     "react-docgen": ["react-docgen@8.0.2", "", { "dependencies": { "@babel/core": "^7.28.0", "@babel/traverse": "^7.28.0", "@babel/types": "^7.28.2", "@types/babel__core": "^7.20.5", "@types/babel__traverse": "^7.20.7", "@types/doctrine": "^0.0.9", "@types/resolve": "^1.20.2", "doctrine": "^3.0.0", "resolve": "^1.22.1", "strip-indent": "^4.0.0" } }, "sha512-+NRMYs2DyTP4/tqWz371Oo50JqmWltR1h2gcdgUMAWZJIAvrd0/SqlCfx7tpzpl/s36rzw6qH2MjoNrxtRNYhA=="],
 
