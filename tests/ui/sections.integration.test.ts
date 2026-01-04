@@ -6,10 +6,11 @@
  * - Workspace creation with sectionId assigns to that section
  * - Section "+" button pre-selects section in creation flow
  * - Section removal invariants (blocked by active workspaces, clears archived)
+ * - Section reordering via API and UI reflection
  *
- * Limitation: react-dnd-html5-backend doesn't work with happy-dom, so actual
- * drag-drop is tested in Storybook. These tests verify UI infrastructure and
- * backend behavior that the drag handlers depend on.
+ * Limitation: react-dnd-html5-backend doesn't work with happy-dom for drag
+ * simulation, so actual drag-drop gestures are tested in Storybook. These tests
+ * verify UI infrastructure and backend behavior.
  */
 
 import { waitFor } from "@testing-library/react";
@@ -74,11 +75,21 @@ async function waitForSection(
   );
 }
 
+/**
+ * Get all section IDs in DOM order.
+ */
+function getSectionIdsInOrder(container: HTMLElement): string[] {
+  const sections = container.querySelectorAll("[data-section-id]");
+  return Array.from(sections)
+    .map((el) => el.getAttribute("data-section-id"))
+    .filter((id): id is string => id !== null);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // TESTS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-describeIntegration("Section Drag and Drop (UI)", () => {
+describeIntegration("Workspace Sections", () => {
   beforeAll(async () => {
     await createSharedRepo();
   });
@@ -87,7 +98,11 @@ describeIntegration("Section Drag and Drop (UI)", () => {
     await cleanupSharedRepo();
   });
 
-  test("renders section with drop zone and workspace with draggable attribute", async () => {
+  // ─────────────────────────────────────────────────────────────────────────────
+  // UI Infrastructure
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  test("renders section with drop zone and workspace with draggable attributes", async () => {
     const env = getSharedEnv();
     const projectPath = getSharedRepoPath();
 
@@ -122,7 +137,7 @@ describeIntegration("Section Drag and Drop (UI)", () => {
       // Wait for section to appear
       await waitForSection(view.container, sectionId);
 
-      // Verify section drop zone exists
+      // Verify section drop zone exists (for workspace drag-drop)
       const sectionDropZone = findSectionDropZone(view.container, sectionId);
       expect(sectionDropZone).not.toBeNull();
 
@@ -130,25 +145,30 @@ describeIntegration("Section Drag and Drop (UI)", () => {
       const unsectionedZone = findUnsectionedDropZone(view.container);
       expect(unsectionedZone).not.toBeNull();
 
-      // Verify workspace row exists and has draggable attribute (for drag source)
+      // Verify workspace row exists and has data-section-id attribute
       const workspaceRow = findWorkspaceRow(view.container, workspaceId);
       expect(workspaceRow).not.toBeNull();
-      // Workspace should have data-section-id (empty for unsectioned)
       expect(workspaceRow!.hasAttribute("data-section-id")).toBe(true);
+
+      // Verify section has drag-related attribute for reordering
+      const sectionDragWrapper = view.container.querySelector(
+        `[data-section-drag-id="${sectionId}"]`
+      );
+      expect(sectionDragWrapper).not.toBeNull();
     } finally {
       await cleanupView(view, cleanupDom);
-      // Cleanup
       await env.orpc.workspace.remove({ workspaceId });
       await env.orpc.projects.sections.remove({ projectPath, sectionId });
     }
   }, 60_000);
 
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Workspace Creation with Section
+  // ─────────────────────────────────────────────────────────────────────────────
+
   test("workspace created with sectionId is assigned to that section", async () => {
     const env = getSharedEnv();
     const projectPath = getSharedRepoPath();
-
-    // Create a section first
-    const branchName = generateBranchName("test-create-in-section");
     const trunkBranch = await detectDefaultTrunkBranch(projectPath);
 
     // Create workspace without section first to ensure project exists
@@ -171,9 +191,9 @@ describeIntegration("Section Drag and Drop (UI)", () => {
       // Create workspace WITH sectionId
       const wsResult = await env.orpc.workspace.create({
         projectPath,
-        branchName,
+        branchName: generateBranchName("test-create-in-section"),
         trunkBranch,
-        sectionId, // This is the key - creating directly into a section
+        sectionId,
       });
       if (!wsResult.success) throw new Error(`Failed to create workspace: ${wsResult.error}`);
       workspaceId = wsResult.metadata.id;
@@ -239,7 +259,6 @@ describeIntegration("Section Drag and Drop (UI)", () => {
           if (!sectionSelector) {
             throw new Error("Section selector not found on create page");
           }
-          // Check that the section is selected (value should match sectionId)
           const selectedValue = sectionSelector.getAttribute("data-selected-section");
           if (selectedValue !== sectionId) {
             throw new Error(`Expected section ${sectionId} to be selected, got ${selectedValue}`);
@@ -254,9 +273,139 @@ describeIntegration("Section Drag and Drop (UI)", () => {
     }
   }, 60_000);
 
-  // ═══════════════════════════════════════════════════════════════════════════════
-  // SECTION REMOVAL INVARIANTS
-  // ═══════════════════════════════════════════════════════════════════════════════
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Section Reordering
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  test("reorderSections API updates section order", async () => {
+    const env = getSharedEnv();
+    const projectPath = getSharedRepoPath();
+    const trunkBranch = await detectDefaultTrunkBranch(projectPath);
+
+    // Create a workspace to ensure project exists
+    const setupWs = await env.orpc.workspace.create({
+      projectPath,
+      branchName: generateBranchName("setup-reorder-api"),
+      trunkBranch,
+    });
+    if (!setupWs.success) throw new Error(`Setup failed: ${setupWs.error}`);
+
+    // Create three sections (they'll be in creation order: A, B, C)
+    const sectionA = await env.orpc.projects.sections.create({
+      projectPath,
+      name: "Section A",
+    });
+    if (!sectionA.success) throw new Error(`Failed to create section: ${sectionA.error}`);
+
+    const sectionB = await env.orpc.projects.sections.create({
+      projectPath,
+      name: "Section B",
+    });
+    if (!sectionB.success) throw new Error(`Failed to create section: ${sectionB.error}`);
+
+    const sectionC = await env.orpc.projects.sections.create({
+      projectPath,
+      name: "Section C",
+    });
+    if (!sectionC.success) throw new Error(`Failed to create section: ${sectionC.error}`);
+
+    try {
+      // Verify initial order
+      let sections = await env.orpc.projects.sections.list({ projectPath });
+      expect(sections.map((s) => s.name)).toEqual(["Section A", "Section B", "Section C"]);
+
+      // Reorder to C, A, B
+      const reorderResult = await env.orpc.projects.sections.reorder({
+        projectPath,
+        sectionIds: [sectionC.data.id, sectionA.data.id, sectionB.data.id],
+      });
+      expect(reorderResult.success).toBe(true);
+
+      // Verify new order
+      sections = await env.orpc.projects.sections.list({ projectPath });
+      expect(sections.map((s) => s.name)).toEqual(["Section C", "Section A", "Section B"]);
+    } finally {
+      await env.orpc.workspace.remove({ workspaceId: setupWs.metadata.id });
+      await env.orpc.projects.sections.remove({ projectPath, sectionId: sectionA.data.id });
+      await env.orpc.projects.sections.remove({ projectPath, sectionId: sectionB.data.id });
+      await env.orpc.projects.sections.remove({ projectPath, sectionId: sectionC.data.id });
+    }
+  }, 60_000);
+
+  test("UI reflects section order after reorder via API", async () => {
+    const env = getSharedEnv();
+    const projectPath = getSharedRepoPath();
+    const trunkBranch = await detectDefaultTrunkBranch(projectPath);
+
+    // Create a workspace to ensure project exists
+    const setupWs = await env.orpc.workspace.create({
+      projectPath,
+      branchName: generateBranchName("setup-reorder-ui"),
+      trunkBranch,
+    });
+    if (!setupWs.success) throw new Error(`Setup failed: ${setupWs.error}`);
+
+    // Create two sections
+    const sectionFirst = await env.orpc.projects.sections.create({
+      projectPath,
+      name: "First Section",
+    });
+    if (!sectionFirst.success) throw new Error(`Failed to create section: ${sectionFirst.error}`);
+
+    const sectionSecond = await env.orpc.projects.sections.create({
+      projectPath,
+      name: "Second Section",
+    });
+    if (!sectionSecond.success) throw new Error(`Failed to create section: ${sectionSecond.error}`);
+
+    const cleanupDom = installDom();
+    expandProjects([projectPath]);
+
+    const view = renderApp({ apiClient: env.orpc, metadata: setupWs.metadata });
+
+    try {
+      await setupWorkspaceView(view, setupWs.metadata, setupWs.metadata.id);
+
+      // Wait for sections to appear
+      await waitForSection(view.container, sectionFirst.data.id);
+      await waitForSection(view.container, sectionSecond.data.id);
+
+      // Verify initial DOM order
+      let orderedIds = getSectionIdsInOrder(view.container);
+      expect(orderedIds).toEqual([sectionFirst.data.id, sectionSecond.data.id]);
+
+      // Reorder via API (swap order)
+      const reorderResult = await env.orpc.projects.sections.reorder({
+        projectPath,
+        sectionIds: [sectionSecond.data.id, sectionFirst.data.id],
+      });
+      expect(reorderResult.success).toBe(true);
+
+      // Wait for UI to update
+      await waitFor(
+        () => {
+          const ids = getSectionIdsInOrder(view.container);
+          if (ids[0] !== sectionSecond.data.id) {
+            throw new Error(`Expected ${sectionSecond.data.id} first, got ${ids[0]}`);
+          }
+        },
+        { timeout: 5_000 }
+      );
+
+      // Verify new DOM order
+      orderedIds = getSectionIdsInOrder(view.container);
+      expect(orderedIds).toEqual([sectionSecond.data.id, sectionFirst.data.id]);
+    } finally {
+      await cleanupView(view, cleanupDom);
+      await env.orpc.workspace.remove({ workspaceId: setupWs.metadata.id });
+      await env.orpc.projects.sections.remove({ projectPath, sectionId: sectionFirst.data.id });
+      await env.orpc.projects.sections.remove({ projectPath, sectionId: sectionSecond.data.id });
+    }
+  }, 60_000);
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Section Removal Invariants
+  // ─────────────────────────────────────────────────────────────────────────────
 
   test("cannot remove section with active (non-archived) workspaces", async () => {
     const env = getSharedEnv();
@@ -272,19 +421,17 @@ describeIntegration("Section Drag and Drop (UI)", () => {
     if (!setupWs.success) throw new Error(`Setup failed: ${setupWs.error}`);
 
     // Create a section
-    const sectionName = `test-section-${Date.now()}`;
     const sectionResult = await env.orpc.projects.sections.create({
       projectPath,
-      name: sectionName,
+      name: `test-section-${Date.now()}`,
     });
     expect(sectionResult.success).toBe(true);
     const sectionId = sectionResult.success ? sectionResult.data.id : "";
 
     // Create a workspace in that section
-    const branchName = generateBranchName("section-removal-test");
     const wsResult = await env.orpc.workspace.create({
       projectPath,
-      branchName,
+      branchName: generateBranchName("section-removal-test"),
       trunkBranch,
       sectionId,
     });
@@ -302,7 +449,6 @@ describeIntegration("Section Drag and Drop (UI)", () => {
         expect(removeResult.error).toContain("active workspace");
       }
     } finally {
-      // Cleanup: remove workspaces first, then section
       await env.orpc.workspace.remove({ workspaceId });
       await env.orpc.workspace.remove({ workspaceId: setupWs.metadata.id });
       await env.orpc.projects.sections.remove({ projectPath, sectionId });
@@ -323,19 +469,17 @@ describeIntegration("Section Drag and Drop (UI)", () => {
     if (!setupWs.success) throw new Error(`Setup failed: ${setupWs.error}`);
 
     // Create a section
-    const sectionName = `test-section-archive-${Date.now()}`;
     const sectionResult = await env.orpc.projects.sections.create({
       projectPath,
-      name: sectionName,
+      name: `test-section-archive-${Date.now()}`,
     });
     expect(sectionResult.success).toBe(true);
     const sectionId = sectionResult.success ? sectionResult.data.id : "";
 
     // Create a workspace in that section
-    const branchName = generateBranchName("archive-section-test");
     const wsResult = await env.orpc.workspace.create({
       projectPath,
-      branchName,
+      branchName: generateBranchName("archive-section-test"),
       trunkBranch,
       sectionId,
     });
@@ -365,7 +509,6 @@ describeIntegration("Section Drag and Drop (UI)", () => {
       expect(wsInfo).not.toBeNull();
       expect(wsInfo?.sectionId).toBeUndefined();
     } finally {
-      // Cleanup
       await env.orpc.workspace.remove({ workspaceId });
       await env.orpc.workspace.remove({ workspaceId: setupWs.metadata.id });
       // Section already removed in test, but try anyway in case test failed early
