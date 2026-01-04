@@ -86,5 +86,3 @@ export type MockAssistantEvent =
   | MockToolStartEvent
   | MockToolEndEvent
   | MockUsageDeltaEvent;
-
-export const STREAM_BASE_DELAY = 250;

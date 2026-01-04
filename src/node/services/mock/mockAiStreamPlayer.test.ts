@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { EventEmitter } from "events";
-import { MockScenarioPlayer } from "./mockScenarioPlayer";
+import { MockAiStreamPlayer } from "./mockAiStreamPlayer";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import { Ok } from "@/common/types/result";
 import type { HistoryService } from "@/node/services/historyService";
@@ -24,12 +24,20 @@ class InMemoryHistoryService {
   }
 }
 
-describe("MockScenarioPlayer", () => {
+function readWorkspaceId(payload: unknown): string | undefined {
+  if (!payload || typeof payload !== "object") return undefined;
+  if (!("workspaceId" in payload)) return undefined;
+
+  const workspaceId = (payload as { workspaceId?: unknown }).workspaceId;
+  return typeof workspaceId === "string" ? workspaceId : undefined;
+}
+
+describe("MockAiStreamPlayer", () => {
   test("appends assistant placeholder even when router turn ends with stream error", async () => {
     const historyStub = new InMemoryHistoryService();
     const aiServiceStub = new EventEmitter();
 
-    const player = new MockScenarioPlayer({
+    const player = new MockAiStreamPlayer({
       historyService: historyStub as unknown as HistoryService,
       aiService: aiServiceStub as unknown as AIService,
     });
@@ -76,5 +84,62 @@ describe("MockScenarioPlayer", () => {
     expect(secondSeq).toBe(firstSeq + 1);
 
     player.stop(workspaceId);
+  });
+
+  test("stop prevents queued stream events from emitting", async () => {
+    const historyStub = new InMemoryHistoryService();
+    const aiServiceStub = new EventEmitter();
+
+    const player = new MockAiStreamPlayer({
+      historyService: historyStub as unknown as HistoryService,
+      aiService: aiServiceStub as unknown as AIService,
+    });
+
+    const workspaceId = "workspace-2";
+
+    let deltaCount = 0;
+    let abortCount = 0;
+    let stopped = false;
+
+    aiServiceStub.on("stream-abort", (payload: unknown) => {
+      if (readWorkspaceId(payload) === workspaceId) {
+        abortCount += 1;
+      }
+    });
+
+    const firstDelta = new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error("Timed out waiting for stream-delta"));
+      }, 1000);
+
+      aiServiceStub.on("stream-delta", (payload: unknown) => {
+        if (readWorkspaceId(payload) !== workspaceId) return;
+
+        deltaCount += 1;
+
+        if (!stopped) {
+          stopped = true;
+          clearTimeout(timeout);
+          player.stop(workspaceId);
+          resolve();
+        }
+      });
+    });
+
+    const forceTurnUser = createMuxMessage("user-force", "user", "[force] keep streaming", {
+      timestamp: Date.now(),
+    });
+
+    const playResult = await player.play([forceTurnUser], workspaceId);
+    expect(playResult.success).toBe(true);
+
+    await firstDelta;
+
+    const deltasAtStop = deltaCount;
+
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    expect(deltaCount).toBe(deltasAtStop);
+    expect(abortCount).toBe(1);
   });
 });

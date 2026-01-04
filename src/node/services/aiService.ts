@@ -71,7 +71,7 @@ import type {
 } from "@/node/services/tools/code_execution";
 import type { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
 import type { ToolBridge } from "@/node/services/ptc/toolBridge";
-import { MockScenarioPlayer } from "./mock/mockScenarioPlayer";
+import { MockAiStreamPlayer } from "./mock/mockAiStreamPlayer";
 import { EnvHttpProxyAgent, type Dispatcher } from "undici";
 import { getPlanFilePath } from "@/common/utils/planStorage";
 import { getPlanFileHint, getPlanModeInstruction } from "@/common/utils/ui/modeUtils";
@@ -396,7 +396,7 @@ export class AIService extends EventEmitter {
   private telemetryService?: TelemetryService;
   private readonly initStateManager: InitStateManager;
   private mockModeEnabled: boolean;
-  private mockScenarioPlayer?: MockScenarioPlayer;
+  private mockAiStreamPlayer?: MockAiStreamPlayer;
   private readonly backgroundProcessManager?: BackgroundProcessManager;
 
   /**
@@ -503,7 +503,7 @@ export class AIService extends EventEmitter {
   enableMockMode(): void {
     this.mockModeEnabled = true;
 
-    this.mockScenarioPlayer ??= new MockScenarioPlayer({
+    this.mockAiStreamPlayer ??= new MockAiStreamPlayer({
       aiService: this,
       historyService: this.historyService,
     });
@@ -1032,8 +1032,8 @@ export class AIService extends EventEmitter {
     disableWorkspaceAgents?: boolean
   ): Promise<Result<void, SendMessageError>> {
     try {
-      if (this.mockModeEnabled && this.mockScenarioPlayer) {
-        return await this.mockScenarioPlayer.play(messages, workspaceId, { model: modelString });
+      if (this.mockModeEnabled && this.mockAiStreamPlayer) {
+        return await this.mockAiStreamPlayer.play(messages, workspaceId, { model: modelString });
       }
 
       // DEBUG: Log streamMessage call
@@ -1862,8 +1862,8 @@ export class AIService extends EventEmitter {
     workspaceId: string,
     options?: { soft?: boolean; abandonPartial?: boolean }
   ): Promise<Result<void>> {
-    if (this.mockModeEnabled && this.mockScenarioPlayer) {
-      this.mockScenarioPlayer.stop(workspaceId);
+    if (this.mockModeEnabled && this.mockAiStreamPlayer) {
+      this.mockAiStreamPlayer.stop(workspaceId);
       return Ok(undefined);
     }
     return this.streamManager.stopStream(workspaceId, options);
@@ -1873,8 +1873,8 @@ export class AIService extends EventEmitter {
    * Check if a workspace is currently streaming
    */
   isStreaming(workspaceId: string): boolean {
-    if (this.mockModeEnabled && this.mockScenarioPlayer) {
-      return this.mockScenarioPlayer.isStreaming(workspaceId);
+    if (this.mockModeEnabled && this.mockAiStreamPlayer) {
+      return this.mockAiStreamPlayer.isStreaming(workspaceId);
     }
     return this.streamManager.isStreaming(workspaceId);
   }
@@ -1883,8 +1883,8 @@ export class AIService extends EventEmitter {
    * Get the current stream state for a workspace
    */
   getStreamState(workspaceId: string): string {
-    if (this.mockModeEnabled && this.mockScenarioPlayer) {
-      return this.mockScenarioPlayer.isStreaming(workspaceId) ? "streaming" : "idle";
+    if (this.mockModeEnabled && this.mockAiStreamPlayer) {
+      return this.mockAiStreamPlayer.isStreaming(workspaceId) ? "streaming" : "idle";
     }
     return this.streamManager.getStreamState(workspaceId);
   }
@@ -1894,7 +1894,7 @@ export class AIService extends EventEmitter {
    * Used to re-establish streaming context on frontend reconnection
    */
   getStreamInfo(workspaceId: string): ReturnType<typeof this.streamManager.getStreamInfo> {
-    if (this.mockModeEnabled && this.mockScenarioPlayer) {
+    if (this.mockModeEnabled && this.mockAiStreamPlayer) {
       return undefined;
     }
     return this.streamManager.getStreamInfo(workspaceId);
@@ -1905,8 +1905,8 @@ export class AIService extends EventEmitter {
    * Emits the same events that would be emitted during live streaming
    */
   async replayStream(workspaceId: string): Promise<void> {
-    if (this.mockModeEnabled && this.mockScenarioPlayer) {
-      await this.mockScenarioPlayer.replayStream(workspaceId);
+    if (this.mockModeEnabled && this.mockAiStreamPlayer) {
+      await this.mockAiStreamPlayer.replayStream(workspaceId);
       return;
     }
     await this.streamManager.replayStream(workspaceId);

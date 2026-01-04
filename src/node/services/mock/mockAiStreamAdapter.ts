@@ -1,5 +1,5 @@
 import type { CompletedMessagePart } from "@/common/types/stream";
-import type { MockAssistantEvent } from "./scenarioTypes";
+import type { MockAssistantEvent } from "./mockAiEventTypes";
 import type { MockAiRouterReply } from "./mockAiRouter";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 

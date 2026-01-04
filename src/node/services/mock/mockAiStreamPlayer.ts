@@ -11,7 +11,7 @@ import type {
   MockAssistantEvent,
   MockStreamErrorEvent,
   MockStreamStartEvent,
-} from "./scenarioTypes";
+} from "./mockAiEventTypes";
 import { MockAiRouter } from "./mockAiRouter";
 import { buildMockStreamEventsFromReply } from "./mockAiStreamAdapter";
 import type {
@@ -85,7 +85,7 @@ async function tokenizeWithMockModel(text: string, context: string): Promise<num
     tokenizerFallbackLogged = true;
     void actualPromise.then((resolvedTokens) => {
       log.debug(
-        `[MockScenarioPlayer] Tokenizer fallback used for ${context}; emitted ${approximateTokens}, background tokenizer returned ${resolvedTokens}`
+        `[MockAiStreamPlayer] Tokenizer fallback used for ${context}; emitted ${approximateTokens}, background tokenizer returned ${resolvedTokens}`
       );
     });
   }
@@ -93,7 +93,7 @@ async function tokenizeWithMockModel(text: string, context: string): Promise<num
   if (tokenizerErrorMessage && !tokenizerUnavailableLogged) {
     tokenizerUnavailableLogged = true;
     log.debug(
-      `[MockScenarioPlayer] Tokenizer unavailable for ${context}; using approximate (${tokenizerErrorMessage})`
+      `[MockAiStreamPlayer] Tokenizer unavailable for ${context}; using approximate (${tokenizerErrorMessage})`
     );
   }
 
@@ -115,9 +115,10 @@ interface ActiveStream {
   messageId: string;
   eventQueue: Array<() => Promise<void>>;
   isProcessing: boolean;
+  cancelled: boolean;
 }
 
-export class MockScenarioPlayer {
+export class MockAiStreamPlayer {
   private readonly router = new MockAiRouter();
   private readonly activeStreams = new Map<string, ActiveStream>();
   private nextMockMessageId = 0;
@@ -132,10 +133,7 @@ export class MockScenarioPlayer {
     const active = this.activeStreams.get(workspaceId);
     if (!active) return;
 
-    // Clear all pending timers
-    for (const timer of active.timers) {
-      clearTimeout(timer);
-    }
+    active.cancelled = true;
 
     // Emit stream-abort event to mirror real streaming behavior
     this.deps.aiService.emit("stream-abort", {
@@ -145,7 +143,7 @@ export class MockScenarioPlayer {
       reason: "user_cancelled",
     });
 
-    this.activeStreams.delete(workspaceId);
+    this.cleanup(workspaceId);
   }
 
   async play(
@@ -223,11 +221,12 @@ export class MockScenarioPlayer {
       messageId,
       eventQueue: [],
       isProcessing: false,
+      cancelled: false,
     });
 
     for (const event of events) {
       const timer = setTimeout(() => {
-        this.enqueueEvent(workspaceId, () =>
+        this.enqueueEvent(workspaceId, messageId, () =>
           this.dispatchEvent(workspaceId, event, messageId, historySequence)
         );
       }, event.delay);
@@ -235,9 +234,9 @@ export class MockScenarioPlayer {
     }
   }
 
-  private enqueueEvent(workspaceId: string, handler: () => Promise<void>): void {
+  private enqueueEvent(workspaceId: string, messageId: string, handler: () => Promise<void>): void {
     const active = this.activeStreams.get(workspaceId);
-    if (!active) return;
+    if (!active || active.cancelled || active.messageId !== messageId) return;
 
     active.eventQueue.push(handler);
     void this.processQueue(workspaceId);
@@ -269,6 +268,11 @@ export class MockScenarioPlayer {
     messageId: string,
     historySequence: number
   ): Promise<void> {
+    const active = this.activeStreams.get(workspaceId);
+    if (!active || active.cancelled || active.messageId !== messageId) {
+      return;
+    }
+
     switch (event.kind) {
       case "stream-start": {
         const payload: StreamStartEvent = {
@@ -286,6 +290,7 @@ export class MockScenarioPlayer {
       case "reasoning-delta": {
         // Mock streams use the same tokenization logic as real streams for consistency
         const tokens = await tokenizeWithMockModel(event.text, "reasoning-delta text");
+        if (active.cancelled) return;
         const payload: ReasoningDeltaEvent = {
           type: "reasoning-delta",
           workspaceId,
@@ -301,6 +306,7 @@ export class MockScenarioPlayer {
         // Mock streams use the same tokenization logic as real streams for consistency
         const inputText = JSON.stringify(event.args);
         const tokens = await tokenizeWithMockModel(inputText, "tool-call args");
+        if (active.cancelled) return;
         const payload: ToolCallStartEvent = {
           type: "tool-call-start",
           workspaceId,
@@ -387,6 +393,7 @@ export class MockScenarioPlayer {
         // Update history with completed message (mirrors real StreamManager behavior)
         // Fetch the current message from history to get its historySequence
         const historyResult = await this.deps.historyService.getHistory(workspaceId);
+        if (active.cancelled) return;
         if (historyResult.success) {
           const existingMessage = historyResult.data.find((msg) => msg.id === messageId);
           if (existingMessage?.metadata?.historySequence !== undefined) {
@@ -411,6 +418,8 @@ export class MockScenarioPlayer {
           }
         }
 
+        if (active.cancelled) return;
+
         this.deps.aiService.emit("stream-end", payload);
         this.cleanup(workspaceId);
         break;
@@ -421,6 +430,8 @@ export class MockScenarioPlayer {
   private cleanup(workspaceId: string): void {
     const active = this.activeStreams.get(workspaceId);
     if (!active) return;
+
+    active.cancelled = true;
 
     // Clear all pending timers
     for (const timer of active.timers) {
