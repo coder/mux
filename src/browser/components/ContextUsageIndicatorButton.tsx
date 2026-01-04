@@ -37,16 +37,27 @@ interface ContextUsageIndicatorButtonProps {
 }
 
 /** Tick marks with vertical lines attached to the meter */
-const PercentTickMarks: React.FC = () => (
-  <div className="-mt-1 flex justify-between">
-    {[0, 25, 50, 75, 100].map((pct) => (
-      <div key={pct} className="flex flex-col items-center">
-        <div className="bg-border-medium h-[3px] w-px" />
-        <span className="text-muted text-[8px] leading-tight">{pct}</span>
-      </div>
-    ))}
-  </div>
-);
+const PercentTickMarks: React.FC = () => {
+  const ticks = [0, 25, 50, 75, 100];
+  return (
+    <div className="-mt-1 relative h-5 w-full">
+      {ticks.map((pct) => {
+        const transform =
+          pct === 0 ? "translateX(0%)" : pct === 100 ? "translateX(-100%)" : "translateX(-50%)";
+        return (
+          <div
+            key={pct}
+            className="absolute flex flex-col items-center"
+            style={{ left: `${pct}%`, transform }}
+          >
+            <div className="bg-border-medium h-[3px] w-px" />
+            <span className="text-muted text-[8px] leading-tight">{pct}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
 
 /** Unified auto-compact settings panel */
 const AutoCompactSettings: React.FC<{
