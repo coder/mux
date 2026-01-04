@@ -249,8 +249,8 @@ export function CreationControls(props: CreationControlsProps) {
 
   return (
     <div className="mb-3 flex flex-col gap-4">
-      {/* Project name / workspace name header row */}
-      <div className="flex items-center" data-component="WorkspaceNameGroup">
+      {/* Project name / workspace name header row - wraps on narrow viewports */}
+      <div className="flex flex-wrap items-center gap-y-2" data-component="WorkspaceNameGroup">
         <h2 className="text-foreground shrink-0 text-lg font-semibold">{props.projectName}</h2>
         <span className="text-muted-foreground mx-2 text-lg">/</span>
 
@@ -318,17 +318,20 @@ export function CreationControls(props: CreationControlsProps) {
 
         {/* Error display */}
         {nameState.error && <span className="text-xs text-red-500">{nameState.error}</span>}
-      </div>
 
-      {/* Section selector - only shown when project has sections */}
-      {props.sections && props.sections.length > 0 && (
-        <SectionPicker
-          sections={props.sections}
-          selectedSectionId={props.selectedSectionId ?? null}
-          onSectionChange={props.onSectionChange ?? (() => {})}
-          disabled={props.disabled}
-        />
-      )}
+        {/* Section selector - right-aligned, same row as workspace name */}
+        {props.sections && props.sections.length > 0 && (
+          <>
+            <div className="flex-1" />
+            <SectionPicker
+              sections={props.sections}
+              selectedSectionId={props.selectedSectionId ?? null}
+              onSectionChange={props.onSectionChange ?? (() => {})}
+              disabled={props.disabled}
+            />
+          </>
+        )}
+      </div>
 
       {/* Runtime type - button group */}
       <div className="flex flex-col gap-1.5" data-component="RuntimeTypeGroup">
