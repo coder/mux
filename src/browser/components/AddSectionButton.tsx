@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
-import { FolderPlus } from "lucide-react";
+import { Plus } from "lucide-react";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 
 interface AddSectionButtonProps {
@@ -28,8 +28,8 @@ export const AddSectionButton: React.FC<AddSectionButtonProps> = ({ onCreateSect
 
   if (isCreating) {
     return (
-      <div className="flex items-center gap-1 px-2 py-1">
-        <FolderPlus size={12} className="text-muted shrink-0" />
+      <div className="mt-1 flex items-center gap-1.5 px-3 py-1">
+        <Plus size={10} className="text-muted/60 shrink-0" />
         <input
           ref={inputRef}
           type="text"
@@ -44,7 +44,7 @@ export const AddSectionButton: React.FC<AddSectionButtonProps> = ({ onCreateSect
             }
           }}
           placeholder="Section name..."
-          className="bg-background/50 text-foreground min-w-0 flex-1 rounded border border-white/20 px-1.5 py-0.5 text-xs outline-none"
+          className="bg-background/50 text-foreground min-w-0 flex-1 rounded border border-white/20 px-1.5 py-0.5 text-[11px] outline-none"
         />
       </div>
     );
@@ -55,9 +55,9 @@ export const AddSectionButton: React.FC<AddSectionButtonProps> = ({ onCreateSect
       <TooltipTrigger asChild>
         <button
           onClick={() => setIsCreating(true)}
-          className="text-muted hover:text-foreground hover:bg-hover flex w-full cursor-pointer items-center gap-1.5 border-none bg-transparent px-2 py-1.5 text-xs transition-colors"
+          className="text-muted/60 hover:text-muted mt-1 flex w-full cursor-pointer items-center gap-1.5 border-none bg-transparent px-3 py-1 text-[11px] transition-colors"
         >
-          <FolderPlus size={12} />
+          <Plus size={10} />
           <span>Add section</span>
         </button>
       </TooltipTrigger>

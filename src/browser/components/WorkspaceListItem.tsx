@@ -3,8 +3,9 @@ import { cn } from "@/common/lib/utils";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useDrag } from "react-dnd";
+import { getEmptyImage } from "react-dnd-html5-backend";
 import { GitStatusIndicator } from "./GitStatusIndicator";
 import { RuntimeBadge } from "./RuntimeBadge";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
@@ -113,22 +114,30 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
   const paddingLeft = 9 + Math.min(32, safeDepth) * 12;
 
   // Drag handle for moving workspace between sections
-  const [{ isDragging }, drag] = useDrag(
+  const [{ isDragging }, drag, dragPreview] = useDrag(
     () => ({
       type: WORKSPACE_DRAG_TYPE,
-      item: (): WorkspaceDragItem => ({
+      item: (): WorkspaceDragItem & { displayTitle?: string; runtimeConfig?: unknown } => ({
         type: WORKSPACE_DRAG_TYPE,
         workspaceId,
         projectPath,
         currentSectionId: sectionId,
+        // Extra fields for custom drag layer preview
+        displayTitle,
+        runtimeConfig: metadata.runtimeConfig,
       }),
       collect: (monitor) => ({
         isDragging: monitor.isDragging(),
       }),
       canDrag: !isDisabled,
     }),
-    [workspaceId, projectPath, sectionId, isDisabled]
+    [workspaceId, projectPath, sectionId, isDisabled, displayTitle, metadata.runtimeConfig]
   );
+
+  // Hide native drag preview; we render a custom preview via WorkspaceDragLayer
+  useEffect(() => {
+    dragPreview(getEmptyImage(), { captureDraggingState: true });
+  }, [dragPreview]);
 
   return (
     <React.Fragment>

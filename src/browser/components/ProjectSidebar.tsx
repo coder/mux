@@ -39,6 +39,7 @@ import { PopoverError } from "./PopoverError";
 import { SectionHeader } from "./SectionHeader";
 import { AddSectionButton } from "./AddSectionButton";
 import { WorkspaceSectionDropZone } from "./WorkspaceSectionDropZone";
+import { WorkspaceDragLayer } from "./WorkspaceDragLayer";
 import type { SectionConfig } from "@/common/types/project";
 
 // Re-export WorkspaceSelection for backwards compatibility
@@ -435,6 +436,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     <RenameProvider onRenameWorkspace={onRenameWorkspace}>
       <DndProvider backend={HTML5Backend}>
         <ProjectDragLayer />
+        <WorkspaceDragLayer />
         <div
           className="font-primary bg-sidebar border-border-light flex flex-1 flex-col overflow-hidden border-r"
           role="navigation"
