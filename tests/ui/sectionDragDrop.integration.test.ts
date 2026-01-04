@@ -406,4 +406,123 @@ describeIntegration("Section Drag and Drop (UI)", () => {
       await env.orpc.projects.sections.remove({ projectPath, sectionId });
     }
   }, 60_000);
+
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // SECTION REMOVAL INVARIANTS
+  // ═══════════════════════════════════════════════════════════════════════════════
+
+  test("cannot remove section with active (non-archived) workspaces", async () => {
+    const env = getSharedEnv();
+    const projectPath = getSharedRepoPath();
+    const trunkBranch = await detectDefaultTrunkBranch(projectPath);
+
+    // Create a setup workspace first to ensure project is registered
+    const setupWs = await env.orpc.workspace.create({
+      projectPath,
+      branchName: generateBranchName("setup-removal"),
+      trunkBranch,
+    });
+    if (!setupWs.success) throw new Error(`Setup failed: ${setupWs.error}`);
+
+    // Create a section
+    const sectionName = `test-section-${Date.now()}`;
+    const sectionResult = await env.orpc.projects.sections.create({
+      projectPath,
+      name: sectionName,
+    });
+    expect(sectionResult.success).toBe(true);
+    const sectionId = sectionResult.success ? sectionResult.data.id : "";
+
+    // Create a workspace in that section
+    const branchName = generateBranchName("section-removal-test");
+    const wsResult = await env.orpc.workspace.create({
+      projectPath,
+      branchName,
+      trunkBranch,
+      sectionId,
+    });
+    expect(wsResult.success).toBe(true);
+    const workspaceId = wsResult.success ? wsResult.metadata.id : "";
+
+    try {
+      // Attempt to remove the section - should fail
+      const removeResult = await env.orpc.projects.sections.remove({
+        projectPath,
+        sectionId,
+      });
+      expect(removeResult.success).toBe(false);
+      if (!removeResult.success) {
+        expect(removeResult.error).toContain("active workspace");
+      }
+    } finally {
+      // Cleanup: remove workspaces first, then section
+      await env.orpc.workspace.remove({ workspaceId });
+      await env.orpc.workspace.remove({ workspaceId: setupWs.metadata.id });
+      await env.orpc.projects.sections.remove({ projectPath, sectionId });
+    }
+  }, 30_000);
+
+  test("removing section clears sectionId from archived workspaces", async () => {
+    const env = getSharedEnv();
+    const projectPath = getSharedRepoPath();
+    const trunkBranch = await detectDefaultTrunkBranch(projectPath);
+
+    // Create a setup workspace first to ensure project is registered
+    const setupWs = await env.orpc.workspace.create({
+      projectPath,
+      branchName: generateBranchName("setup-archive"),
+      trunkBranch,
+    });
+    if (!setupWs.success) throw new Error(`Setup failed: ${setupWs.error}`);
+
+    // Create a section
+    const sectionName = `test-section-archive-${Date.now()}`;
+    const sectionResult = await env.orpc.projects.sections.create({
+      projectPath,
+      name: sectionName,
+    });
+    expect(sectionResult.success).toBe(true);
+    const sectionId = sectionResult.success ? sectionResult.data.id : "";
+
+    // Create a workspace in that section
+    const branchName = generateBranchName("archive-section-test");
+    const wsResult = await env.orpc.workspace.create({
+      projectPath,
+      branchName,
+      trunkBranch,
+      sectionId,
+    });
+    expect(wsResult.success).toBe(true);
+    const workspaceId = wsResult.success ? wsResult.metadata.id : "";
+
+    try {
+      // Archive the workspace
+      const archiveResult = await env.orpc.workspace.archive({ workspaceId });
+      expect(archiveResult.success).toBe(true);
+
+      // Verify workspace is archived and has sectionId
+      let wsInfo = await env.orpc.workspace.getInfo({ workspaceId });
+      expect(wsInfo).not.toBeNull();
+      expect(wsInfo?.sectionId).toBe(sectionId);
+      expect(wsInfo?.archivedAt).toBeDefined();
+
+      // Now remove the section - should succeed since workspace is archived
+      const removeResult = await env.orpc.projects.sections.remove({
+        projectPath,
+        sectionId,
+      });
+      expect(removeResult.success).toBe(true);
+
+      // Verify workspace's sectionId is now cleared
+      wsInfo = await env.orpc.workspace.getInfo({ workspaceId });
+      expect(wsInfo).not.toBeNull();
+      expect(wsInfo?.sectionId).toBeUndefined();
+    } finally {
+      // Cleanup
+      await env.orpc.workspace.remove({ workspaceId });
+      await env.orpc.workspace.remove({ workspaceId: setupWs.metadata.id });
+      // Section already removed in test, but try anyway in case test failed early
+      await env.orpc.projects.sections.remove({ projectPath, sectionId }).catch(() => {});
+    }
+  }, 30_000);
 });
