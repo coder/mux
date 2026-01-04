@@ -270,7 +270,10 @@ describeIntegration("Workspace Sections", () => {
       expect(addButton).not.toBeNull();
 
       // Click the add button - this should navigate to create page with section context
-      fireEvent.click(addButton as HTMLElement);
+      // Wrap in act() to ensure React state updates are properly flushed
+      await act(async () => {
+        fireEvent.click(addButton as HTMLElement);
+      });
 
       // Wait for the create page to show section selector with this section pre-selected
       await waitFor(

@@ -88,6 +88,15 @@ export function installDom(): () => void {
       IntersectionObserver;
   }
 
+  // React DOM's getCurrentEventPriority reads window.event to determine update priority.
+  // In happy-dom, this may be undefined, causing errors. Polyfill with undefined-safe getter.
+  if (!("event" in domWindow)) {
+    Object.defineProperty(domWindow, "event", {
+      get: () => undefined,
+      configurable: true,
+    });
+  }
+
   // matchMedia is used by some components and by Radix.
   if (!domWindow.matchMedia) {
     domWindow.matchMedia = ((_query: string) => {
