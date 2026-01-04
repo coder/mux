@@ -5,8 +5,6 @@ import {
   readInstructionSetFromRuntime,
 } from "@/node/utils/main/instructionFiles";
 import {
-  extractAgentSection,
-  extractModeSection,
   extractModelSection,
   extractToolSection,
   stripScopedInstructionSections,
@@ -267,7 +265,7 @@ async function readInstructionSources(
  * Instruction layers:
  * 1. Global: ~/.mux/AGENTS.md (always included)
  * 2. Context: workspace/AGENTS.md OR project/AGENTS.md (workspace takes precedence)
- * 3. Mode: Extracts "Mode: <mode>" section from context then global (if mode provided)
+ * 3. Model: Extracts "Model: <regex>" section from context then global (if modelString provided)
  *
  * File search order: AGENTS.md → AGENT.md → CLAUDE.md
  * Local variants: AGENTS.local.md appended if found (for .gitignored personal preferences)
@@ -275,7 +273,6 @@ async function readInstructionSources(
  * @param metadata - Workspace metadata (contains projectPath)
  * @param runtime - Runtime for reading workspace files (supports SSH)
  * @param workspacePath - Workspace directory path
- * @param mode - Optional mode name (e.g., "plan", "exec")
  * @param additionalSystemInstructions - Optional instructions appended last
  * @param modelString - Active model identifier used for Model-specific sections
  * @param mcpServers - Optional MCP server configuration (name -> command)
@@ -285,12 +282,10 @@ export async function buildSystemMessage(
   metadata: WorkspaceMetadata,
   runtime: Runtime,
   workspacePath: string,
-  mode?: string,
   additionalSystemInstructions?: string,
   modelString?: string,
   mcpServers?: MCPServerMap,
   options?: {
-    agentId?: string;
     agentSystemPrompt?: string;
   }
 ): Promise<string> {
@@ -337,25 +332,6 @@ export async function buildSystemMessage(
   ].filter((value): value is string => Boolean(value));
   const customInstructions = customInstructionSources.join("\n\n");
 
-  // Extract agent-specific section (context first, then global fallback)
-  const agentId = options?.agentId;
-  let agentContent: string | null = null;
-  if (agentId) {
-    agentContent =
-      (contextInstructions && extractAgentSection(contextInstructions, agentId)) ??
-      (globalInstructions && extractAgentSection(globalInstructions, agentId)) ??
-      null;
-  }
-
-  // Extract mode-specific section (context first, then global fallback)
-  let modeContent: string | null = null;
-  if (mode) {
-    modeContent =
-      (contextInstructions && extractModeSection(contextInstructions, mode)) ??
-      (globalInstructions && extractModeSection(globalInstructions, mode)) ??
-      null;
-  }
-
   // Extract model-specific section based on active model identifier (context first)
   let modelContent: string | null = null;
   if (modelString) {
@@ -367,18 +343,6 @@ export async function buildSystemMessage(
 
   if (customInstructions) {
     systemMessage += `\n<custom-instructions>\n${customInstructions}\n</custom-instructions>`;
-  }
-
-  const modeSection = buildTaggedSection(modeContent, mode, "mode");
-  if (agentId) {
-    const agentSection = buildTaggedSection(agentContent, `agent-${agentId}`, "agent");
-    if (agentSection) {
-      systemMessage += agentSection;
-    }
-  }
-
-  if (modeSection) {
-    systemMessage += modeSection;
   }
 
   if (modelContent && modelString) {

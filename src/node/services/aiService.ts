@@ -1396,14 +1396,10 @@ export class AIService extends EventEmitter {
         metadata,
         runtime,
         workspacePath,
-        effectiveMode,
         effectiveAdditionalInstructions,
         modelString,
         mcpServers,
-        {
-          agentId: effectiveAgentId,
-          agentSystemPrompt,
-        }
+        { agentSystemPrompt }
       );
 
       // Count system message tokens for cost tracking

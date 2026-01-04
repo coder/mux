@@ -61,52 +61,12 @@ describe("buildSystemMessage", () => {
     mockHomedir?.mockRestore();
   });
 
-  test("includes mode-specific section when mode is provided", async () => {
-    // Write instruction file with mode section to projectDir
+  test("includes general instructions in custom-instructions", async () => {
     await fs.writeFile(
       path.join(projectDir, "AGENTS.md"),
       `# General Instructions
 Always be helpful.
-
-## Mode: Plan
-Focus on planning and design.
-Use diagrams where appropriate.
-`
-    );
-
-    const metadata: WorkspaceMetadata = {
-      id: "test-workspace",
-      name: "test-workspace",
-      projectName: "test-project",
-      projectPath: projectDir,
-      runtimeConfig: DEFAULT_RUNTIME_CONFIG,
-    };
-
-    const systemMessage = await buildSystemMessage(metadata, runtime, workspaceDir, "plan");
-
-    const customInstructions = extractTagContent(systemMessage, "custom-instructions") ?? "";
-    expect(customInstructions).toContain("Always be helpful.");
-    expect(customInstructions).not.toContain("Focus on planning and design.");
-
-    // Should include the mode-specific content
-    expect(systemMessage).toContain("<plan>");
-    expect(systemMessage).toContain("Focus on planning and design");
-    expect(systemMessage).toContain("Use diagrams where appropriate");
-    expect(systemMessage).toContain("</plan>");
-
-    // Should also include general instructions
-    expect(systemMessage).toContain("Always be helpful");
-  });
-
-  test("excludes mode-specific section when mode is not provided", async () => {
-    // Write instruction file with mode section to projectDir
-    await fs.writeFile(
-      path.join(projectDir, "AGENTS.md"),
-      `# General Instructions
-Always be helpful.
-
-## Mode: Plan
-Focus on planning and design.
+Use clear examples.
 `
     );
 
@@ -120,113 +80,9 @@ Focus on planning and design.
 
     const systemMessage = await buildSystemMessage(metadata, runtime, workspaceDir);
 
-    // Should NOT include the <plan> mode-specific tag
-    expect(systemMessage).not.toContain("<plan>");
-    expect(systemMessage).not.toContain("</plan>");
-
     const customInstructions = extractTagContent(systemMessage, "custom-instructions") ?? "";
     expect(customInstructions).toContain("Always be helpful.");
-    expect(customInstructions).not.toContain("Focus on planning and design.");
-  });
-
-  test("prefers project mode section over global mode section", async () => {
-    // Write global instruction file with mode section
-    await fs.writeFile(
-      path.join(globalDir, "AGENTS.md"),
-      `# Global Instructions
-
-## Mode: Plan
-Global plan instructions.
-`
-    );
-
-    // Write project instruction file with mode section
-    await fs.writeFile(
-      path.join(projectDir, "AGENTS.md"),
-      `# Project Instructions
-
-## Mode: Plan
-Project plan instructions (should win).
-`
-    );
-
-    const metadata: WorkspaceMetadata = {
-      id: "test-workspace",
-      name: "test-workspace",
-      projectName: "test-project",
-      projectPath: projectDir,
-      runtimeConfig: DEFAULT_RUNTIME_CONFIG,
-    };
-
-    const systemMessage = await buildSystemMessage(metadata, runtime, workspaceDir, "plan");
-
-    // Should include project mode section in the <plan> tag (project wins)
-    expect(systemMessage).toMatch(/<plan>\s*Project plan instructions \(should win\)\./s);
-    // Global instructions are still present in <custom-instructions> section (that's correct)
-    // But the mode-specific <plan> section should only have project content
-    expect(systemMessage).not.toMatch(/<plan>[^<]*Global plan instructions/s);
-  });
-
-  test("falls back to global mode section when project has none", async () => {
-    // Write global instruction file with mode section
-    await fs.writeFile(
-      path.join(globalDir, "AGENTS.md"),
-      `# Global Instructions
-
-## Mode: Plan
-Global plan instructions.
-`
-    );
-
-    // Write project instruction file WITHOUT mode section
-    await fs.writeFile(
-      path.join(projectDir, "AGENTS.md"),
-      `# Project Instructions
-Just general project stuff.
-`
-    );
-
-    const metadata: WorkspaceMetadata = {
-      id: "test-workspace",
-      name: "test-workspace",
-      projectName: "test-project",
-      projectPath: projectDir,
-      runtimeConfig: DEFAULT_RUNTIME_CONFIG,
-    };
-
-    const systemMessage = await buildSystemMessage(metadata, runtime, workspaceDir, "plan");
-
-    // Should include global mode section as fallback
-    expect(systemMessage).toContain("Global plan instructions");
-  });
-
-  test("handles mode with special characters by sanitizing tag name", async () => {
-    await fs.writeFile(
-      path.join(projectDir, "AGENTS.md"),
-      `## Mode: My-Special_Mode!
-Special mode instructions.
-`
-    );
-
-    const metadata: WorkspaceMetadata = {
-      id: "test-workspace",
-      name: "test-workspace",
-      projectName: "test-project",
-      projectPath: projectDir,
-      runtimeConfig: DEFAULT_RUNTIME_CONFIG,
-    };
-
-    const systemMessage = await buildSystemMessage(
-      metadata,
-      runtime,
-      workspaceDir,
-      "My-Special_Mode!"
-    );
-
-    // Tag should be sanitized to only contain valid characters
-    expect(systemMessage).toContain("<my-special_mode->");
-    expect(systemMessage).toContain("Special mode instructions");
-    expect(systemMessage).toContain("</my-special_mode->");
+    expect(customInstructions).toContain("Use clear examples.");
   });
 
   test("includes model-specific section when regex matches active model", async () => {
@@ -250,7 +106,6 @@ Respond to Sonnet tickets in two sentences max.
       metadata,
       runtime,
       workspaceDir,
-      undefined,
       undefined,
       "anthropic:claude-3.5-sonnet"
     );
@@ -292,7 +147,6 @@ General details only.
       runtime,
       workspaceDir,
       undefined,
-      undefined,
       "openai:gpt-5.1-codex"
     );
 
@@ -308,108 +162,18 @@ General details only.
   });
 
   describe("instruction scoping matrix", () => {
-    test("includes agent-specific section when agentId is provided", async () => {
-      await fs.writeFile(
-        path.join(projectDir, "AGENTS.md"),
-        `# General Instructions
-Always be helpful.
-
-## Agent: foo
-Foo instructions.
-
-## Agent: bar
-Bar instructions.
-`
-      );
-
-      const metadata: WorkspaceMetadata = {
-        id: "test-workspace",
-        name: "test-workspace",
-        projectName: "test-project",
-        projectPath: projectDir,
-        runtimeConfig: DEFAULT_RUNTIME_CONFIG,
-      };
-
-      const systemMessage = await buildSystemMessage(
-        metadata,
-        runtime,
-        workspaceDir,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        { agentId: "foo" }
-      );
-
-      const customInstructions = extractTagContent(systemMessage, "custom-instructions") ?? "";
-      expect(customInstructions).toContain("Always be helpful.");
-      expect(customInstructions).not.toContain("Foo instructions.");
-      expect(customInstructions).not.toContain("Bar instructions.");
-
-      const agentFoo = extractTagContent(systemMessage, "agent-foo") ?? "";
-      expect(agentFoo).toContain("Foo instructions.");
-      expect(agentFoo).not.toContain("Bar instructions.");
-
-      expect(systemMessage).not.toContain("<agent-bar>");
-    });
-
-    test("prefers project agent section over global fallback", async () => {
-      await fs.writeFile(
-        path.join(globalDir, "AGENTS.md"),
-        `# Global Instructions
-## Agent: foo
-Global foo.
-`
-      );
-
-      await fs.writeFile(
-        path.join(projectDir, "AGENTS.md"),
-        `# Project Instructions
-## Agent: foo
-Project foo.
-`
-      );
-
-      const metadata: WorkspaceMetadata = {
-        id: "test-workspace",
-        name: "test-workspace",
-        projectName: "test-project",
-        projectPath: projectDir,
-        runtimeConfig: DEFAULT_RUNTIME_CONFIG,
-      };
-
-      const systemMessage = await buildSystemMessage(
-        metadata,
-        runtime,
-        workspaceDir,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        { agentId: "foo" }
-      );
-
-      const agentFoo = extractTagContent(systemMessage, "agent-foo") ?? "";
-      expect(agentFoo).toContain("Project foo.");
-      expect(agentFoo).not.toContain("Global foo.");
-    });
-
     interface Scenario {
       name: string;
       mdContent: string;
-      mode?: string;
       model?: string;
       assert: (message: string) => void;
     }
 
     const scopingScenarios: Scenario[] = [
       {
-        name: "strips scoped sections when no mode or model provided",
+        name: "strips model sections when no model provided",
         mdContent: `# Notes
 General guidance for everyone.
-
-## Mode: Plan
-Plan depth instructions.
 
 ## Model: sonnet
 Anthropic-only instructions.
@@ -417,32 +181,8 @@ Anthropic-only instructions.
         assert: (message) => {
           const custom = extractTagContent(message, "custom-instructions") ?? "";
           expect(custom).toContain("General guidance for everyone.");
-          expect(custom).not.toContain("Plan depth instructions.");
           expect(custom).not.toContain("Anthropic-only instructions.");
-          expect(message).not.toContain("Plan depth instructions.");
           expect(message).not.toContain("Anthropic-only instructions.");
-        },
-      },
-      {
-        name: "injects only the requested mode section",
-        mdContent: `General context for all contributors.
-
-## Mode: Plan
-Plan-only reminders.
-
-## Mode: Exec
-Exec reminders.
-`,
-        mode: "plan",
-        assert: (message) => {
-          const custom = extractTagContent(message, "custom-instructions") ?? "";
-          expect(custom).toContain("General context for all contributors.");
-          expect(custom).not.toContain("Plan-only reminders.");
-          expect(custom).not.toContain("Exec reminders.");
-
-          const planSection = extractTagContent(message, "plan") ?? "";
-          expect(planSection).toContain("Plan-only reminders.");
-          expect(planSection).not.toContain("Exec reminders.");
         },
       },
       {
@@ -468,32 +208,6 @@ OpenAI-only instructions.
           expect(message).not.toContain("Anthropic-only instructions.");
         },
       },
-      {
-        name: "supports simultaneous mode and model scoping",
-        mdContent: `General instructions for everyone.
-
-## Mode: Exec
-Stay focused on implementation details.
-
-## Model: sonnet
-Answer in two sentences max.
-`,
-        mode: "exec",
-        model: "anthropic:claude-3.5-sonnet",
-        assert: (message) => {
-          const custom = extractTagContent(message, "custom-instructions") ?? "";
-          expect(custom).toContain("General instructions for everyone.");
-          expect(custom).not.toContain("Stay focused on implementation details.");
-          expect(custom).not.toContain("Answer in two sentences max.");
-
-          const execSection = extractTagContent(message, "exec") ?? "";
-          expect(execSection).toContain("Stay focused on implementation details.");
-
-          const sonnetSection =
-            extractTagContent(message, "model-anthropic-claude-3-5-sonnet") ?? "";
-          expect(sonnetSection).toContain("Answer in two sentences max.");
-        },
-      },
     ];
 
     for (const scenario of scopingScenarios) {
@@ -512,7 +226,6 @@ Answer in two sentences max.
           metadata,
           runtime,
           workspaceDir,
-          scenario.mode,
           undefined,
           scenario.model
         );
