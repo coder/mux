@@ -15,7 +15,7 @@ import type {
 import { createAuthMiddleware } from "./authMiddleware";
 import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
 
-import { createRuntime } from "@/node/runtime/runtimeFactory";
+import { createRuntime, checkRuntimeAvailability } from "@/node/runtime/runtimeFactory";
 import { readPlanFile } from "@/node/utils/runtime/helpers";
 import { secretsToRecord } from "@/common/types/secrets";
 import { roundToBase2 } from "@/common/telemetry/utils";
@@ -620,6 +620,12 @@ export const router = (authToken?: string) => {
             input.query,
             input.limit
           );
+        }),
+      runtimeAvailability: t
+        .input(schemas.projects.runtimeAvailability.input)
+        .output(schemas.projects.runtimeAvailability.output)
+        .handler(async ({ input }) => {
+          return checkRuntimeAvailability(input.projectPath);
         }),
       listBranches: t
         .input(schemas.projects.listBranches.input)

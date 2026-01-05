@@ -465,7 +465,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const { projects } = useProjectContext();
   const pendingSectionId = variant === "creation" ? (props.pendingSectionId ?? null) : null;
   const creationProject = variant === "creation" ? projects.get(props.projectPath) : undefined;
-  const creationSections = creationProject?.sections ?? [];
 
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(() => pendingSectionId);
 
@@ -533,13 +532,21 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           disabled: isSendInFlight,
           projectName: props.projectName,
           nameState: creationState.nameState,
-          isNonGitRepo: creationState.branchesLoaded && creationState.branches.length === 0,
+          runtimeAvailability: creationState.runtimeAvailability,
         } satisfies React.ComponentProps<typeof CreationControls>)
       : null;
   const hasTypedText = input.trim().length > 0;
   const hasImages = imageAttachments.length > 0;
   const hasReviews = attachedReviews.length > 0;
-  const canSend = (hasTypedText || hasImages || hasReviews) && !disabled && !isSendInFlight;
+  const isDockerMissingImage =
+    variant === "creation" &&
+    creationState.selectedRuntime.mode === "docker" &&
+    !creationState.selectedRuntime.image.trim();
+  const canSend =
+    (hasTypedText || hasImages || hasReviews) &&
+    !disabled &&
+    !isSendInFlight &&
+    !isDockerMissingImage;
 
   const creationProjectPath = variant === "creation" ? props.projectPath : "";
 

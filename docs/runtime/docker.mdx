@@ -1,0 +1,27 @@
+---
+title: Docker Runtime
+description: Run agents in isolated Docker containers
+---
+
+Docker runtime runs each workspace in a separate Docker container, providing full isolation.
+
+## Why use Docker runtime
+
+- **Full isolation**: Each workspace runs in its own container with no shared state
+- **Reproducible environments**: Pin exact images for consistent tooling
+- **Security**: Container sandboxing limits agent access to host system
+
+## How it works
+
+1. When you create a Docker workspace, mux starts a container from your chosen image
+2. Your project code is synced to `/src` inside the container via git bundle
+3. Commands run inside the container with `docker exec`
+4. Deleting the workspace removes the container
+
+## Configuration
+
+Select Docker in the workspace creation UI and specify an image:
+
+- `node:20` - Node.js with git pre-installed
+- `python:3.12` - Python with git pre-installed
+- Custom images with your toolchain

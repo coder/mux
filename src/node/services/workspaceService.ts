@@ -2306,6 +2306,10 @@ export class WorkspaceService extends EventEmitter {
       return Err(`Workspace ${workspaceId} is being removed`);
     }
 
+    // Wait for workspace initialization (container creation, code sync, etc.)
+    // Same behavior as AI tools - 5 min timeout, then proceeds anyway
+    await this.initStateManager.waitForInit(workspaceId);
+
     try {
       // Get workspace metadata
       const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
@@ -2336,6 +2340,13 @@ export class WorkspaceService extends EventEmitter {
         projectPath: metadata.projectPath,
         workspaceName: metadata.name,
       });
+
+      // Ensure runtime is ready (e.g., start Docker container if stopped)
+      const readyResult = await runtime.ensureReady();
+      if (!readyResult.ready) {
+        return Err(readyResult.error ?? "Runtime not ready");
+      }
+
       const workspacePath = runtime.getWorkspacePath(metadata.projectPath, metadata.name);
 
       // Create bash tool

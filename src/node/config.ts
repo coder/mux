@@ -24,6 +24,7 @@ import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility
 import { getMuxHome } from "@/common/constants/paths";
 import { PlatformPaths } from "@/common/utils/paths";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
+import { getContainerName as getDockerContainerName } from "@/node/runtime/DockerRuntime";
 
 // Re-export project types from dedicated types file (for preload usage)
 export type { Workspace, ProjectConfig, ProjectsConfig };
@@ -548,6 +549,17 @@ export class Config {
             if (!workspace.runtimeConfig) {
               workspace.runtimeConfig = metadata.runtimeConfig;
               configModified = true;
+            }
+
+            // Populate containerName for Docker workspaces (computed from project path and workspace name)
+            if (
+              metadata.runtimeConfig?.type === "docker" &&
+              !metadata.runtimeConfig.containerName
+            ) {
+              metadata.runtimeConfig = {
+                ...metadata.runtimeConfig,
+                containerName: getDockerContainerName(projectPath, metadata.name),
+              };
             }
 
             workspaceMetadata.push(this.addPathsToMetadata(metadata, workspace.path, projectPath));

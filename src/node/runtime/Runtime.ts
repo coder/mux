@@ -399,6 +399,16 @@ export interface Runtime {
   ): Promise<{ success: true; deletedPath: string } | { success: false; error: string }>;
 
   /**
+   * Ensure the runtime is ready for operations.
+   * - LocalRuntime: Always returns ready (no-op)
+   * - DockerRuntime: Starts container if stopped
+   * - SSHRuntime: Could verify connection (future)
+   *
+   * Called automatically by executeBash handler before first operation.
+   */
+  ensureReady(): Promise<{ ready: boolean; error?: string }>;
+
+  /**
    * Fork an existing workspace to create a new one
    * Creates a new workspace branching from the source workspace's current branch
    * - LocalRuntime: Detects source branch via git, creates new worktree from that branch

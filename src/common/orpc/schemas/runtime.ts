@@ -59,6 +59,10 @@ export const RuntimeConfigSchema = z.union([
   // Docker runtime - each workspace runs in its own container
   z.object({
     type: z.literal("docker"),
-    image: z.string().meta({ description: "Docker image to use (e.g., ubuntu:22.04)" }),
+    image: z.string().meta({ description: "Docker image to use (e.g., node:20)" }),
+    containerName: z
+      .string()
+      .optional()
+      .meta({ description: "Container name (populated after workspace creation)" }),
   }),
 ]);

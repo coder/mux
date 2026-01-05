@@ -1,10 +1,6 @@
 import React, { useCallback, useEffect } from "react";
-import {
-  RUNTIME_MODE,
-  RUNTIME_MODES_REQUIRING_GIT,
-  type RuntimeMode,
-  type ParsedRuntime,
-} from "@/common/types/runtime";
+import { RUNTIME_MODE, type RuntimeMode, type ParsedRuntime } from "@/common/types/runtime";
+import type { RuntimeAvailabilityMap } from "./useCreationWorkspace";
 import { Select } from "../Select";
 import { Loader2, Wand2 } from "lucide-react";
 import { cn } from "@/common/lib/utils";
@@ -32,8 +28,8 @@ interface CreationControlsProps {
   projectName: string;
   /** Workspace name/title generation state and actions */
   nameState: WorkspaceNameState;
-  /** Whether this is a non-git repository (for disabling worktree/SSH) */
-  isNonGitRepo: boolean;
+  /** Runtime availability for each mode (null while loading) */
+  runtimeAvailability: RuntimeAvailabilityMap | null;
   /** Available sections for this project */
   sections?: SectionConfig[];
   /** Currently selected section ID */
@@ -49,7 +45,7 @@ interface RuntimeButtonGroupProps {
   defaultMode: RuntimeMode;
   onSetDefault: (mode: RuntimeMode) => void;
   disabled?: boolean;
-  disabledModes?: RuntimeMode[];
+  runtimeAvailability?: RuntimeAvailabilityMap | null;
 }
 
 const RUNTIME_OPTIONS: Array<{
@@ -168,14 +164,15 @@ function SectionPicker(props: SectionPickerProps) {
 }
 
 function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
-  const disabledModes = props.disabledModes ?? [];
-
   return (
-    <div className="flex gap-1">
+    <div className="flex gap-1" role="group" aria-label="Runtime type">
       {RUNTIME_OPTIONS.map((option) => {
         const isActive = props.value === option.value;
         const isDefault = props.defaultMode === option.value;
-        const isModeDisabled = disabledModes.includes(option.value);
+        const availability = props.runtimeAvailability?.[option.value];
+        const isModeDisabled = availability !== undefined && !availability.available;
+        const disabledReason =
+          availability && !availability.available ? availability.reason : undefined;
         const Icon = option.Icon;
 
         return (
@@ -207,7 +204,7 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
                 <DocsLink path={option.docsPath} />
               </div>
               {isModeDisabled ? (
-                <p className="mt-1 text-yellow-500">Requires git repository</p>
+                <p className="mt-1 text-yellow-500">{disabledReason ?? "Unavailable"}</p>
               ) : (
                 <label className="mt-1.5 flex cursor-pointer items-center gap-1.5 text-xs">
                   <input
@@ -232,7 +229,7 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
  * Displays project name as header, workspace name with magic wand, and runtime/branch selectors.
  */
 export function CreationControls(props: CreationControlsProps) {
-  const { nameState, isNonGitRepo } = props;
+  const { nameState, runtimeAvailability } = props;
 
   // Extract mode from discriminated union for convenience
   const runtimeMode = props.selectedRuntime.mode;
@@ -241,6 +238,11 @@ export function CreationControls(props: CreationControlsProps) {
   const showTrunkBranchSelector = props.branches.length > 0 && runtimeMode !== RUNTIME_MODE.LOCAL;
 
   const { selectedRuntime, onSelectedRuntimeChange } = props;
+
+  // Check if git is required (worktree unavailable due to git)
+  const isNonGitRepo =
+    runtimeAvailability?.worktree?.available === false &&
+    runtimeAvailability.worktree.reason === "Requires git repository";
 
   // Force local runtime for non-git directories
   useEffect(() => {
@@ -387,7 +389,7 @@ export function CreationControls(props: CreationControlsProps) {
             defaultMode={props.defaultRuntimeMode}
             onSetDefault={props.onSetDefaultRuntime}
             disabled={props.disabled}
-            disabledModes={isNonGitRepo ? RUNTIME_MODES_REQUIRING_GIT : undefined}
+            runtimeAvailability={runtimeAvailability}
           />
 
           {/* Branch selector - shown for worktree/SSH */}
@@ -429,12 +431,16 @@ export function CreationControls(props: CreationControlsProps) {
           {/* Docker Image Input */}
           {selectedRuntime.mode === "docker" && (
             <div className="flex items-center gap-2">
-              <label className="text-muted-foreground text-xs">image</label>
+              <label htmlFor="docker-image" className="text-muted-foreground text-xs">
+                image
+              </label>
               <input
+                id="docker-image"
+                aria-label="Docker image"
                 type="text"
                 value={selectedRuntime.image}
                 onChange={(e) => onSelectedRuntimeChange({ mode: "docker", image: e.target.value })}
-                placeholder="ubuntu:22.04"
+                placeholder="node:20"
                 disabled={props.disabled}
                 className="bg-bg-dark text-foreground border-border-medium focus:border-accent h-7 w-36 rounded-md border px-2 text-sm focus:outline-none disabled:opacity-50"
               />

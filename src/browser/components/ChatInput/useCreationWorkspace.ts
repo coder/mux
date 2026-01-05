@@ -103,7 +103,15 @@ interface UseCreationWorkspaceReturn {
   creatingWithIdentity: WorkspaceIdentity | null;
   /** Reload branches (e.g., after git init) */
   reloadBranches: () => Promise<void>;
+  /** Runtime availability for each mode (null while loading) */
+  runtimeAvailability: RuntimeAvailabilityMap | null;
 }
+
+/** Runtime availability status for each mode */
+export type RuntimeAvailabilityMap = Record<
+  RuntimeMode,
+  { available: true } | { available: false; reason: string }
+>;
 
 /**
  * Hook for managing workspace creation state and logic
@@ -128,6 +136,9 @@ export function useCreationWorkspace({
   const [isSending, setIsSending] = useState(false);
   // The confirmed identity being used for workspace creation (set after waitForGeneration resolves)
   const [creatingWithIdentity, setCreatingWithIdentity] = useState<WorkspaceIdentity | null>(null);
+  const [runtimeAvailability, setRuntimeAvailability] = useState<RuntimeAvailabilityMap | null>(
+    null
+  );
 
   // Centralized draft workspace settings with automatic persistence
   const { settings, setSelectedRuntime, setDefaultRuntimeMode, setTrunkBranch, getRuntimeString } =
@@ -163,19 +174,23 @@ export function useCreationWorkspace({
     }
   }, [projectPath, api]);
 
-  // Load branches on mount with mounted guard
+  // Load branches and runtime availability on mount with mounted guard
   useEffect(() => {
     if (!projectPath.length || !api) return;
     let mounted = true;
     setBranchesLoaded(false);
     const doLoad = async () => {
       try {
-        const result = await api.projects.listBranches({ projectPath });
+        const [branchResult, availabilityResult] = await Promise.all([
+          api.projects.listBranches({ projectPath }),
+          api.projects.runtimeAvailability({ projectPath }),
+        ]);
         if (!mounted) return;
-        setBranches(result.branches);
-        setRecommendedTrunk(result.recommendedTrunk);
+        setBranches(branchResult.branches);
+        setRecommendedTrunk(branchResult.recommendedTrunk);
+        setRuntimeAvailability(availabilityResult);
       } catch (err) {
-        console.error("Failed to load branches:", err);
+        console.error("Failed to load project state:", err);
       } finally {
         if (mounted) {
           setBranchesLoaded(true);
@@ -213,6 +228,17 @@ export function useCreationWorkspace({
         const runtimeConfig: RuntimeConfig | undefined = runtimeString
           ? parseRuntimeString(runtimeString, "")
           : undefined;
+
+        // Validate Docker image is not empty
+        if (runtimeConfig?.type === "docker" && !runtimeConfig.image?.trim()) {
+          setToast({
+            id: Date.now().toString(),
+            type: "error",
+            message: "Docker image is required",
+          });
+          setIsSending(false);
+          return false;
+        }
 
         // Read send options fresh from localStorage at send time to avoid
         // race conditions with React state updates (requestAnimationFrame batching
@@ -340,5 +366,7 @@ export function useCreationWorkspace({
     creatingWithIdentity,
     // Reload branches (e.g., after git init)
     reloadBranches: loadBranches,
+    // Runtime availability for each mode
+    runtimeAvailability,
   };
 }

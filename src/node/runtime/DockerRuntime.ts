@@ -13,6 +13,8 @@
 
 import { spawn, exec } from "child_process";
 import * as path from "path";
+import * as fs from "fs/promises";
+import * as os from "os";
 import type {
   ExecOptions,
   WorkspaceCreationParams,
@@ -33,9 +35,6 @@ import { streamToString, shescape } from "./streamUtils";
 
 /** Hardcoded source directory inside container */
 const CONTAINER_SRC_DIR = "/src";
-
-/** Hardcoded background output directory inside container */
-const _CONTAINER_BG_OUTPUT_DIR = "/tmp/mux-bashes";
 
 /**
  * Result of running a Docker command
@@ -86,8 +85,82 @@ function runDockerCommand(command: string, timeoutMs = 30000): Promise<DockerCom
   });
 }
 
+/**
+ * Run docker run with streaming output (for image pull progress).
+ * Streams stdout/stderr to initLogger for visibility during image pulls.
+ */
+function streamDockerRun(
+  containerName: string,
+  image: string,
+  initLogger: InitLogger,
+  abortSignal?: AbortSignal,
+  timeoutMs = 600000 // 10 minutes for large image pulls
+): Promise<DockerCommandResult> {
+  return new Promise((resolve) => {
+    let stdout = "";
+    let stderr = "";
+    let resolved = false;
+
+    const finish = (result: DockerCommandResult) => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(timer);
+      abortSignal?.removeEventListener("abort", abortHandler);
+      resolve(result);
+    };
+
+    // Use spawn for streaming output - array args don't need shell escaping
+    const child = spawn("docker", [
+      "run",
+      "-d",
+      "--name",
+      containerName,
+      image,
+      "sleep",
+      "infinity",
+    ]);
+
+    const timer = setTimeout(() => {
+      child.kill();
+      void runDockerCommand(`docker rm -f ${containerName}`, 10000);
+      finish({ exitCode: -1, stdout, stderr: "Container creation timed out" });
+    }, timeoutMs);
+
+    const abortHandler = () => {
+      child.kill();
+      // Container might have been created before abort - clean it up
+      void runDockerCommand(`docker rm -f ${containerName}`, 10000);
+      finish({ exitCode: -1, stdout, stderr: "Aborted" });
+    };
+    abortSignal?.addEventListener("abort", abortHandler);
+
+    child.stdout?.on("data", (data: Buffer) => {
+      const text = data.toString();
+      stdout += text;
+      // docker run -d outputs container ID to stdout, not useful to stream
+    });
+
+    child.stderr?.on("data", (data: Buffer) => {
+      const text = data.toString();
+      stderr += text;
+      // Stream pull progress to init logger
+      for (const line of text.split("\n").filter((l) => l.trim())) {
+        initLogger.logStdout(line);
+      }
+    });
+
+    child.on("close", (code) => {
+      finish({ exitCode: code ?? -1, stdout, stderr });
+    });
+
+    child.on("error", (err) => {
+      finish({ exitCode: -1, stdout, stderr: err.message });
+    });
+  });
+}
+
 export interface DockerRuntimeConfig {
-  /** Docker image to use (e.g., ubuntu:22.04) */
+  /** Docker image to use (e.g., node:20) */
   image: string;
   /**
    * Container name for existing workspaces.
@@ -135,6 +208,13 @@ export class DockerRuntime extends RemoteRuntime {
     if (config.containerName) {
       this.containerName = config.containerName;
     }
+  }
+
+  /**
+   * Get the container name (if set)
+   */
+  public getContainerName(): string | undefined {
+    return this.containerName;
   }
 
   /**
@@ -217,70 +297,19 @@ export class DockerRuntime extends RemoteRuntime {
     return CONTAINER_SRC_DIR;
   }
 
+  // eslint-disable-next-line @typescript-eslint/require-await -- interface requires Promise return type
   async createWorkspace(params: WorkspaceCreationParams): Promise<WorkspaceCreationResult> {
-    try {
-      const { projectPath, branchName, initLogger } = params;
+    const { projectPath, branchName } = params;
 
-      // Generate container name
-      const containerName = getContainerName(projectPath, branchName);
+    // Generate and store container name - actual container creation happens in initWorkspace
+    // so that image pull progress is visible in the init section
+    const containerName = getContainerName(projectPath, branchName);
+    this.containerName = containerName;
 
-      initLogger.logStep(`Creating Docker container: ${containerName}...`);
-
-      // Check if container already exists
-      const checkResult = await runDockerCommand(`docker inspect ${containerName}`, 10000);
-      if (checkResult.exitCode === 0) {
-        return {
-          success: false,
-          error: `Workspace already exists: container ${containerName} is running`,
-        };
-      }
-
-      // Create and start container
-      // Use sleep infinity to keep container running
-      const runCmd = `docker run -d --name ${containerName} ${this.config.image} sleep infinity`;
-
-      initLogger.logStep(`Starting container with image ${this.config.image}...`);
-
-      const runResult = await runDockerCommand(runCmd, 60000);
-
-      if (runResult.exitCode !== 0) {
-        return {
-          success: false,
-          error: `Failed to create container: ${runResult.stderr}`,
-        };
-      }
-
-      // Create /src directory in container
-      initLogger.logStep("Preparing workspace directory...");
-      const mkdirResult = await runDockerCommand(
-        `docker exec ${containerName} mkdir -p ${CONTAINER_SRC_DIR}`,
-        10000
-      );
-
-      if (mkdirResult.exitCode !== 0) {
-        // Clean up container on failure
-        await runDockerCommand(`docker rm -f ${containerName}`, 10000);
-        return {
-          success: false,
-          error: `Failed to create workspace directory: ${mkdirResult.stderr}`,
-        };
-      }
-
-      // Store container name on runtime instance for exec operations
-      this.containerName = containerName;
-
-      initLogger.logStep("Container created successfully");
-
-      return {
-        success: true,
-        workspacePath: CONTAINER_SRC_DIR,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: getErrorMessage(error),
-      };
-    }
+    return {
+      success: true,
+      workspacePath: CONTAINER_SRC_DIR,
+    };
   }
 
   async initWorkspace(params: WorkspaceInitParams): Promise<WorkspaceInitResult> {
@@ -295,7 +324,70 @@ export class DockerRuntime extends RemoteRuntime {
       }
       const containerName = this.containerName;
 
-      // 1. Sync project to container using git bundle + docker cp
+      // 1. Create container (with image pull if needed)
+      initLogger.logStep(`Creating container from ${this.config.image}...`);
+
+      // Check if container already exists (e.g., from aborted previous attempt)
+      const checkResult = await runDockerCommand(`docker inspect ${containerName}`, 10000);
+      if (checkResult.exitCode === 0) {
+        // Container exists - check if running
+        const isRunning = await runDockerCommand(
+          `docker inspect -f '{{.State.Running}}' ${containerName}`,
+          10000
+        );
+        if (isRunning.exitCode === 0 && isRunning.stdout.trim() === "true") {
+          initLogger.logStderr(`Container ${containerName} already exists and is running`);
+          initLogger.logComplete(-1);
+          return {
+            success: false,
+            error: `Workspace already exists: container ${containerName}`,
+          };
+        }
+        // Stopped/dead container from app crash or unexpected termination - clean up
+        initLogger.logStep("Removing stale container from previous attempt...");
+        await runDockerCommand(`docker rm -f ${containerName}`, 10000);
+      }
+
+      if (abortSignal?.aborted) {
+        initLogger.logComplete(-1);
+        return { success: false, error: "Workspace creation aborted" };
+      }
+
+      // Create and start container with streaming output for image pull progress
+      const runResult = await streamDockerRun(
+        containerName,
+        this.config.image,
+        initLogger,
+        abortSignal
+      );
+      if (runResult.exitCode !== 0) {
+        initLogger.logStderr(`Failed to create container: ${runResult.stderr}`);
+        initLogger.logComplete(-1);
+        return {
+          success: false,
+          error: `Failed to create container: ${runResult.stderr}`,
+        };
+      }
+
+      // Create /src directory in container
+      initLogger.logStep("Preparing workspace directory...");
+      const mkdirResult = await runDockerCommand(
+        `docker exec ${containerName} mkdir -p ${CONTAINER_SRC_DIR}`,
+        10000
+      );
+      if (mkdirResult.exitCode !== 0) {
+        await runDockerCommand(`docker rm -f ${containerName}`, 10000);
+        initLogger.logStderr(`Failed to create workspace directory: ${mkdirResult.stderr}`);
+        initLogger.logComplete(-1);
+        return {
+          success: false,
+          error: `Failed to create workspace directory: ${mkdirResult.stderr}`,
+        };
+      }
+
+      initLogger.logStep("Container ready");
+
+      // 2. Sync project to container using git bundle + docker cp
       initLogger.logStep("Syncing project files to container...");
       try {
         await this.syncProjectToContainer(
@@ -309,6 +401,8 @@ export class DockerRuntime extends RemoteRuntime {
         const errorMsg = getErrorMessage(error);
         initLogger.logStderr(`Failed to sync project: ${errorMsg}`);
         initLogger.logComplete(-1);
+        // Clean up container on failure
+        await runDockerCommand(`docker rm -f ${containerName}`, 10000);
         return {
           success: false,
           error: `Failed to sync project: ${errorMsg}`,
@@ -316,7 +410,7 @@ export class DockerRuntime extends RemoteRuntime {
       }
       initLogger.logStep("Files synced successfully");
 
-      // 2. Checkout branch
+      // 3. Checkout branch
       initLogger.logStep(`Checking out branch: ${branchName}`);
       const checkoutCmd = `git checkout ${shescape.quote(branchName)} 2>/dev/null || git checkout -b ${shescape.quote(branchName)} ${shescape.quote(trunkBranch)}`;
 
@@ -336,6 +430,8 @@ export class DockerRuntime extends RemoteRuntime {
         const errorMsg = `Failed to checkout branch: ${stderr || stdout}`;
         initLogger.logStderr(errorMsg);
         initLogger.logComplete(-1);
+        // Clean up container on failure
+        await runDockerCommand(`docker rm -f ${containerName}`, 10000);
         return {
           success: false,
           error: errorMsg,
@@ -343,7 +439,7 @@ export class DockerRuntime extends RemoteRuntime {
       }
       initLogger.logStep("Branch checked out successfully");
 
-      // 3. Run .mux/init hook if it exists
+      // 4. Run .mux/init hook if it exists
       const hookExists = await checkInitHookExists(projectPath);
       if (hookExists) {
         const muxEnv = getMuxEnv(projectPath, "docker", branchName);
@@ -358,6 +454,10 @@ export class DockerRuntime extends RemoteRuntime {
       const errorMsg = getErrorMessage(error);
       initLogger.logStderr(`Initialization failed: ${errorMsg}`);
       initLogger.logComplete(-1);
+      // Clean up container on failure
+      if (this.containerName) {
+        await runDockerCommand(`docker rm -f ${this.containerName}`, 10000);
+      }
       return {
         success: false,
         error: errorMsg,
@@ -514,10 +614,207 @@ export class DockerRuntime extends RemoteRuntime {
     }
   }
 
-  forkWorkspace(_params: WorkspaceForkParams): Promise<WorkspaceForkResult> {
-    return Promise.resolve({
-      success: false,
-      error: "Forking Docker workspaces is not yet implemented. Create a new workspace instead.",
-    });
+  async forkWorkspace(params: WorkspaceForkParams): Promise<WorkspaceForkResult> {
+    const { projectPath, sourceWorkspaceName, newWorkspaceName, initLogger } = params;
+
+    const srcContainerName = getContainerName(projectPath, sourceWorkspaceName);
+    const destContainerName = getContainerName(projectPath, newWorkspaceName);
+    const hostTempPath = path.join(os.tmpdir(), `mux-fork-${Date.now()}.bundle`);
+    const containerBundlePath = "/tmp/fork.bundle";
+    let destContainerCreated = false;
+    let forkSucceeded = false;
+
+    try {
+      // 1. Verify source container exists
+      const srcCheck = await runDockerCommand(`docker inspect ${srcContainerName}`, 10000);
+      if (srcCheck.exitCode !== 0) {
+        return {
+          success: false,
+          error: `Source workspace container not found: ${srcContainerName}`,
+        };
+      }
+
+      // 2. Get current branch from source
+      initLogger.logStep("Detecting source workspace branch...");
+      const branchResult = await runDockerCommand(
+        `docker exec ${srcContainerName} git -C ${CONTAINER_SRC_DIR} branch --show-current`,
+        30000
+      );
+      const sourceBranch = branchResult.stdout.trim();
+      if (branchResult.exitCode !== 0 || sourceBranch.length === 0) {
+        return {
+          success: false,
+          error: "Failed to detect branch in source workspace (detached HEAD?)",
+        };
+      }
+
+      // 3. Create git bundle inside source container
+      initLogger.logStep("Creating git bundle from source...");
+      const bundleResult = await runDockerCommand(
+        `docker exec ${srcContainerName} git -C ${CONTAINER_SRC_DIR} bundle create ${containerBundlePath} --all`,
+        300000
+      );
+      if (bundleResult.exitCode !== 0) {
+        return { success: false, error: `Failed to create git bundle: ${bundleResult.stderr}` };
+      }
+
+      // 4. Transfer bundle to host
+      initLogger.logStep("Copying bundle from source container...");
+      const cpOutResult = await runDockerCommand(
+        `docker cp ${srcContainerName}:${containerBundlePath} ${shescape.quote(hostTempPath)}`,
+        300000
+      );
+      if (cpOutResult.exitCode !== 0) {
+        return {
+          success: false,
+          error: `Failed to copy bundle from source: ${cpOutResult.stderr}`,
+        };
+      }
+
+      // 5. Create destination container
+      initLogger.logStep(`Creating container: ${destContainerName}...`);
+      const runCmd = `docker run -d --name ${destContainerName} ${shescape.quote(this.config.image)} sleep infinity`;
+      const runResult = await runDockerCommand(runCmd, 60000);
+      if (runResult.exitCode !== 0) {
+        // Handle TOCTOU race - container may have been created between check and run
+        if (runResult.stderr.includes("already in use")) {
+          return {
+            success: false,
+            error: `Workspace already exists: container ${destContainerName}`,
+          };
+        }
+        return { success: false, error: `Failed to create container: ${runResult.stderr}` };
+      }
+      destContainerCreated = true;
+
+      // 6. Copy bundle into destination and clone
+      initLogger.logStep("Copying bundle to destination container...");
+      const cpInResult = await runDockerCommand(
+        `docker cp ${shescape.quote(hostTempPath)} ${destContainerName}:${containerBundlePath}`,
+        300000
+      );
+      if (cpInResult.exitCode !== 0) {
+        return {
+          success: false,
+          error: `Failed to copy bundle to destination: ${cpInResult.stderr}`,
+        };
+      }
+
+      initLogger.logStep("Cloning repository in destination...");
+      const cloneResult = await runDockerCommand(
+        `docker exec ${destContainerName} git clone ${containerBundlePath} ${CONTAINER_SRC_DIR}`,
+        300000
+      );
+      if (cloneResult.exitCode !== 0) {
+        return { success: false, error: `Failed to clone from bundle: ${cloneResult.stderr}` };
+      }
+
+      // 7. Create local tracking branches (best-effort)
+      initLogger.logStep("Creating local tracking branches...");
+      try {
+        const remotesResult = await runDockerCommand(
+          `docker exec ${destContainerName} git -C ${CONTAINER_SRC_DIR} branch -r`,
+          30000
+        );
+        if (remotesResult.exitCode === 0) {
+          const remotes = remotesResult.stdout
+            .split("\n")
+            .map((b) => b.trim())
+            .filter((b) => b.startsWith("origin/") && !b.includes("HEAD"));
+
+          for (const remote of remotes) {
+            const localName = remote.replace("origin/", "");
+            await runDockerCommand(
+              `docker exec ${destContainerName} git -C ${CONTAINER_SRC_DIR} branch ${shescape.quote(localName)} ${shescape.quote(remote)} 2>/dev/null || true`,
+              10000
+            );
+          }
+        }
+      } catch {
+        // Ignore - best-effort
+      }
+
+      // 8. Preserve origin URL (best-effort)
+      try {
+        const originResult = await runDockerCommand(
+          `docker exec ${srcContainerName} git -C ${CONTAINER_SRC_DIR} remote get-url origin 2>/dev/null || true`,
+          10000
+        );
+        const originUrl = originResult.stdout.trim();
+        if (originUrl.length > 0) {
+          await runDockerCommand(
+            `docker exec ${destContainerName} git -C ${CONTAINER_SRC_DIR} remote set-url origin ${shescape.quote(originUrl)}`,
+            10000
+          );
+        } else {
+          await runDockerCommand(
+            `docker exec ${destContainerName} git -C ${CONTAINER_SRC_DIR} remote remove origin 2>/dev/null || true`,
+            10000
+          );
+        }
+      } catch {
+        // Ignore - best-effort
+      }
+
+      // 9. Checkout destination branch
+      initLogger.logStep(`Checking out branch: ${newWorkspaceName}`);
+      const checkoutCmd =
+        `git checkout ${shescape.quote(newWorkspaceName)} 2>/dev/null || ` +
+        `git checkout -b ${shescape.quote(newWorkspaceName)} ${shescape.quote(sourceBranch)}`;
+      const checkoutResult = await runDockerCommand(
+        `docker exec ${destContainerName} bash -c 'cd ${CONTAINER_SRC_DIR} && ${checkoutCmd}'`,
+        120000
+      );
+      if (checkoutResult.exitCode !== 0) {
+        return {
+          success: false,
+          error: `Failed to checkout forked branch: ${checkoutResult.stderr || checkoutResult.stdout}`,
+        };
+      }
+
+      initLogger.logStep("Fork completed successfully");
+      forkSucceeded = true;
+      return { success: true, workspacePath: CONTAINER_SRC_DIR, sourceBranch };
+    } catch (error) {
+      return { success: false, error: getErrorMessage(error) };
+    } finally {
+      // 10. Cleanup (best-effort, ignore errors)
+      /* eslint-disable @typescript-eslint/no-empty-function */
+      // Clean up bundle in source container
+      await runDockerCommand(
+        `docker exec ${srcContainerName} rm -f ${containerBundlePath}`,
+        5000
+      ).catch(() => {});
+      // Clean up bundle in destination container (if it exists)
+      if (destContainerCreated) {
+        await runDockerCommand(
+          `docker exec ${destContainerName} rm -f ${containerBundlePath}`,
+          5000
+        ).catch(() => {});
+        // Remove orphaned destination container on failure
+        if (!forkSucceeded) {
+          await runDockerCommand(`docker rm -f ${destContainerName}`, 10000).catch(() => {});
+        }
+      }
+      // Clean up host temp file
+      await fs.unlink(hostTempPath).catch(() => {});
+      /* eslint-enable @typescript-eslint/no-empty-function */
+    }
+  }
+
+  /**
+   * Ensure the Docker container is running.
+   * `docker start` is idempotent - succeeds if already running, starts if stopped,
+   * and waits if container is in a transitional state (starting/restarting).
+   */
+  override async ensureReady(): Promise<{ ready: boolean; error?: string }> {
+    if (!this.containerName) {
+      return { ready: false, error: "Container name not set" };
+    }
+
+    const result = await runDockerCommand(`docker start ${this.containerName}`, 30000);
+    return result.exitCode === 0
+      ? { ready: true }
+      : { ready: false, error: result.stderr || "Failed to start container" };
   }
 }

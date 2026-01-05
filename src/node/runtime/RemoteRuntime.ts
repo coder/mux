@@ -445,6 +445,14 @@ export abstract class RemoteRuntime implements Runtime {
   }
 
   // Abstract methods that subclasses must implement
+
+  /**
+   * Remote runtimes are always ready (SSH connections are re-established as needed).
+   */
+  ensureReady(): Promise<{ ready: boolean; error?: string }> {
+    return Promise.resolve({ ready: true });
+  }
+
   abstract resolvePath(path: string): Promise<string>;
   abstract getWorkspacePath(projectPath: string, workspaceName: string): string;
   abstract createWorkspace(params: WorkspaceCreationParams): Promise<WorkspaceCreationResult>;

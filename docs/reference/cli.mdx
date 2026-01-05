@@ -28,24 +28,25 @@ mux run --json "List all TypeScript files" | jq '.type'
 
 ### Options
 
-| Option                 | Short | Description                                        | Default           |
-| ---------------------- | ----- | -------------------------------------------------- | ----------------- |
-| `--dir <path>`         | `-d`  | Project directory                                  | Current directory |
-| `--model <model>`      | `-m`  | Model to use (e.g., `anthropic:claude-sonnet-4-5`) | Default model     |
-| `--runtime <runtime>`  | `-r`  | Runtime: `local`, `worktree`, or `ssh <host>`      | `local`           |
-| `--mode <mode>`        |       | Agent mode: `plan` or `exec`                       | `exec`            |
-| `--thinking <level>`   | `-t`  | Thinking level: `off`, `low`, `medium`, `high`     | `medium`          |
-| `--timeout <duration>` |       | Timeout (e.g., `5m`, `300s`, `300000`)             | No timeout        |
-| `--json`               |       | Output NDJSON for programmatic use                 | Off               |
-| `--quiet`              | `-q`  | Only output final result                           | Off               |
-| `--workspace-id <id>`  |       | Explicit workspace ID                              | Auto-generated    |
-| `--config-root <path>` |       | mux config directory                               | `~/.mux`          |
+| Option                 | Short | Description                                                     | Default           |
+| ---------------------- | ----- | --------------------------------------------------------------- | ----------------- |
+| `--dir <path>`         | `-d`  | Project directory                                               | Current directory |
+| `--model <model>`      | `-m`  | Model to use (e.g., `anthropic:claude-sonnet-4-5`)              | Default model     |
+| `--runtime <runtime>`  | `-r`  | Runtime: `local`, `worktree`, `ssh <host>`, or `docker <image>` | `local`           |
+| `--mode <mode>`        |       | Agent mode: `plan` or `exec`                                    | `exec`            |
+| `--thinking <level>`   | `-t`  | Thinking level: `off`, `low`, `medium`, `high`                  | `medium`          |
+| `--timeout <duration>` |       | Timeout (e.g., `5m`, `300s`, `300000`)                          | No timeout        |
+| `--json`               |       | Output NDJSON for programmatic use                              | Off               |
+| `--quiet`              | `-q`  | Only output final result                                        | Off               |
+| `--workspace-id <id>`  |       | Explicit workspace ID                                           | Auto-generated    |
+| `--config-root <path>` |       | mux config directory                                            | `~/.mux`          |
 
 ### Runtimes
 
 - **`local`** (default): Runs directly in the specified directory. Best for one-off tasks.
 - **`worktree`**: Creates an isolated git worktree under `~/.mux/src`. Useful for parallel work.
 - **`ssh <host>`**: Runs on a remote machine via SSH. Example: `--runtime "ssh user@myserver.com"`
+- **`docker <image>`**: Runs in a Docker container. Example: `--runtime "docker node:20"`
 
 ### Output Modes
 

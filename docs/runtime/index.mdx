@@ -5,11 +5,12 @@ description: Configure where and how mux executes agent workspaces
 
 Runtimes determine where and how mux executes agent workspaces.
 
-| Runtime                           | Isolation                                  | Best For                                 |
-| --------------------------------- | ------------------------------------------ | ---------------------------------------- |
-| **[Local](/runtime/local)**       | All workspaces share the project directory | Quick edits to your working copy         |
-| **[Worktree](/runtime/worktree)** | Each workspace gets its own directory      | Running multiple agents in parallel      |
-| **[SSH](/runtime/ssh)**           | Remote execution over SSH                  | Security, performance, heavy parallelism |
+| Runtime                           | Isolation                                  | Best For                                  |
+| --------------------------------- | ------------------------------------------ | ----------------------------------------- |
+| **[Local](/runtime/local)**       | All workspaces share the project directory | Quick edits to your working copy          |
+| **[Worktree](/runtime/worktree)** | Each workspace gets its own directory      | Running multiple agents in parallel       |
+| **[SSH](/runtime/ssh)**           | Remote execution over SSH                  | Security, performance, heavy parallelism  |
+| **[Docker](/runtime/docker)**     | Isolated container per workspace           | Full isolation, reproducible environments |
 
 ## Choosing a Runtime
 
@@ -22,5 +23,6 @@ Choose a runtime when creating a workspace.
 - `local` — Local runtime
 - `worktree` — Worktree runtime
 - `ssh` — SSH runtime
+- `docker` — Docker runtime
 
 This lets your init hook adapt behavior, e.g., skip worktree-specific setup when running in local mode.

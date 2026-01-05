@@ -12,7 +12,7 @@ import { shouldRunIntegrationTests } from "../testUtils";
 import { installDom } from "./dom";
 import { renderApp } from "./renderReviewPanel";
 import { cleanupView } from "./helpers";
-import { createMockORPCClient } from "../../.storybook/mocks/orpc";
+import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import { expandProjects } from "@/browser/stories/storyHelpers";
 import type { ProjectConfig } from "@/node/config";
 

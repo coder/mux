@@ -1,6 +1,7 @@
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
 import {
   getEditorDeepLink,
+  getDockerDeepLink,
   isLocalhost,
   type DeepLinkEditor,
 } from "@/browser/utils/editorDeepLinks";
@@ -10,7 +11,7 @@ import {
   type EditorConfig,
 } from "@/common/constants/storage";
 import type { RuntimeConfig } from "@/common/types/runtime";
-import { isSSHRuntime } from "@/common/types/runtime";
+import { isSSHRuntime, isDockerRuntime } from "@/common/types/runtime";
 import type { APIClient } from "@/browser/contexts/API";
 import { getEditorDeepLinkFallbackUrl } from "@/browser/utils/openInEditorDeepLinkFallback";
 
@@ -32,6 +33,7 @@ export async function openInEditor(args: {
   const editorConfig = readPersistedState<EditorConfig>(EDITOR_CONFIG_KEY, DEFAULT_EDITOR_CONFIG);
 
   const isSSH = isSSHRuntime(args.runtimeConfig);
+  const isDocker = isDockerRuntime(args.runtimeConfig);
 
   // For custom editor with no command configured, open settings (if available)
   if (editorConfig.editor === "custom" && !editorConfig.customCommand) {
@@ -50,6 +52,37 @@ export async function openInEditor(args: {
         error: "Custom editors do not support Remote-SSH for SSH workspaces",
       };
     }
+  }
+
+  // Docker workspaces always use deep links (VS Code connects to container remotely)
+  if (isDocker && args.runtimeConfig?.type === "docker") {
+    if (editorConfig.editor === "zed") {
+      return { success: false, error: "Zed does not support Docker containers" };
+    }
+    if (editorConfig.editor === "custom") {
+      return { success: false, error: "Custom editors do not support Docker containers" };
+    }
+
+    const containerName = args.runtimeConfig.containerName;
+    if (!containerName) {
+      return {
+        success: false,
+        error: "Container name not available. Try reopening the workspace.",
+      };
+    }
+
+    const deepLink = getDockerDeepLink({
+      editor: editorConfig.editor as DeepLinkEditor,
+      containerName,
+      path: args.targetPath,
+    });
+
+    if (!deepLink) {
+      return { success: false, error: `${editorConfig.editor} does not support Docker containers` };
+    }
+
+    window.open(deepLink, "_blank");
+    return { success: true };
   }
 
   // Browser mode: use deep links instead of backend spawn

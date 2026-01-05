@@ -145,12 +145,6 @@ async function isDockerAvailable(): Promise<boolean> {
 /**
  * Check availability of all runtime types for a given project.
  * Returns a record of runtime mode to availability status.
- *
- * This consolidates runtime-specific availability checks:
- * - local: Always available
- * - worktree: Requires git repository
- * - ssh: Requires git repository
- * - docker: Requires Docker daemon running
  */
 export async function checkRuntimeAvailability(
   projectPath: string
@@ -166,8 +160,10 @@ export async function checkRuntimeAvailability(
     local: { available: true },
     worktree: isGit ? { available: true } : { available: false, reason: gitRequiredReason },
     ssh: isGit ? { available: true } : { available: false, reason: gitRequiredReason },
-    docker: dockerAvailable
-      ? { available: true }
-      : { available: false, reason: "Docker daemon not running" },
+    docker: !isGit
+      ? { available: false, reason: gitRequiredReason }
+      : !dockerAvailable
+        ? { available: false, reason: "Docker daemon not running" }
+        : { available: true },
   };
 }

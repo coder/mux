@@ -61,3 +61,38 @@ export function getEditorDeepLink(options: DeepLinkOptions): string | null {
 export function isLocalhost(hostname: string): boolean {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
 }
+
+/**
+ * Convert a string to hex encoding (for VS Code remote URIs).
+ */
+function toHex(str: string): string {
+  return Array.from(str)
+    .map((c) => c.charCodeAt(0).toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/**
+ * Generate a deep link URL to open a Docker container in VS Code/Cursor.
+ * Uses the attached-container URI scheme.
+ *
+ * @returns Deep link URL, or null if the editor doesn't support Docker containers
+ */
+export function getDockerDeepLink(options: {
+  editor: DeepLinkEditor;
+  containerName: string;
+  path: string;
+}): string | null {
+  const { editor, containerName, path } = options;
+
+  // Only VS Code and Cursor support attached-container
+  if (editor === "zed") {
+    return null;
+  }
+
+  // Format: vscode-remote://attached-container+<hex_encoded_json>/<path>
+  // The JSON must be: {"containerName":"/<container_name>"}
+  // Use // before path to preserve leading / inside container
+  const config = JSON.stringify({ containerName: `/${containerName}` });
+  const hexConfig = toHex(config);
+  return `${editor}://vscode-remote/attached-container+${hexConfig}/${path}`;
+}

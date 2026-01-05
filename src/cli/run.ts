@@ -190,7 +190,11 @@ program
   .argument("[message]", "instruction for the agent (can also be piped via stdin)")
   .option("-d, --dir <path>", "project directory", process.cwd())
   .option("-m, --model <model>", "model to use", defaultModel)
-  .option("-r, --runtime <runtime>", "runtime type: local, worktree, or 'ssh <host>'", "local")
+  .option(
+    "-r, --runtime <runtime>",
+    "runtime type: local, worktree, 'ssh <host>', or 'docker <image>'",
+    "local"
+  )
   .option("--mode <mode>", "agent mode: plan or exec", "exec")
   .option("-t, --thinking <level>", "thinking level: off, low, medium, high", "medium")
   .option("--timeout <duration>", "timeout (e.g., 5m, 300s, 300000)")

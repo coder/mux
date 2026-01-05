@@ -246,6 +246,56 @@ describeIntegration("Runtime integration tests", () => {
         ); // 15 second timeout for test (includes workspace creation overhead)
       });
 
+      describe("ensureReady() - Runtime readiness", () => {
+        testForRuntime("returns ready for running runtime", async () => {
+          const runtime = createRuntime();
+          const result = await runtime.ensureReady();
+          expect(result).toEqual({ ready: true });
+        });
+
+        testDockerOnly(
+          "starts stopped container and returns ready",
+          async () => {
+            // Use the shared SSH container which DockerRuntime is configured with
+            const containerName = sshConfig!.containerId;
+
+            // Stop the container
+            const { execSync } = await import("child_process");
+            execSync(`docker stop ${containerName}`, { timeout: 30000 });
+
+            try {
+              const runtime = createRuntime();
+              const result = await runtime.ensureReady();
+              expect(result).toEqual({ ready: true });
+
+              // Verify container is running again
+              const inspectOutput = execSync(
+                `docker inspect --format='{{.State.Running}}' ${containerName}`,
+                { encoding: "utf-8", timeout: 10000 }
+              );
+              expect(inspectOutput.trim()).toBe("true");
+            } finally {
+              // Ensure container is running for subsequent tests
+              execSync(`docker start ${containerName}`, { timeout: 30000 });
+            }
+          },
+          60000
+        );
+
+        testDockerOnly("returns error for non-existent container", async () => {
+          // Create a DockerRuntime pointing to a container that doesn't exist
+          const { DockerRuntime } = await import("@/node/runtime/DockerRuntime");
+          const runtime = new DockerRuntime({
+            image: "ubuntu:22.04",
+            containerName: "mux-nonexistent-container-12345",
+          });
+
+          const result = await runtime.ensureReady();
+          expect(result.ready).toBe(false);
+          expect(result.error).toBeDefined();
+        });
+      });
+
       describe("resolvePath() - Path resolution", () => {
         testForRuntime("expands ~ to the home directory", async () => {
           const runtime = createRuntime();
@@ -1087,6 +1137,90 @@ describeIntegration("Runtime integration tests", () => {
         const result = await runtime.deleteWorkspace(projectPath, "non-existent", false);
 
         // Should be idempotent - return success for non-existent workspaces
+        expect(result.success).toBe(true);
+      });
+    });
+  });
+
+  /**
+   * DockerRuntime-specific workspace operation tests
+   *
+   * Tests container lifecycle: create, delete, idempotent delete
+   */
+  describe("DockerRuntime workspace operations", () => {
+    const testForDocker = shouldRunIntegrationTests() ? test : test.skip;
+
+    // Helper to run docker commands on host
+    const dockerCommand = async (cmd: string): Promise<{ stdout: string; exitCode: number }> => {
+      const { spawn } = await import("child_process");
+      return new Promise((resolve) => {
+        const proc = spawn("bash", ["-c", cmd]);
+        let stdout = "";
+        proc.stdout.on("data", (data) => (stdout += data.toString()));
+        proc.on("close", (code) => resolve({ stdout, exitCode: code ?? 0 }));
+      });
+    };
+
+    describe("createWorkspace + deleteWorkspace", () => {
+      testForDocker(
+        "creates container and deletes it",
+        async () => {
+          const { DockerRuntime, getContainerName } = await import("@/node/runtime/DockerRuntime");
+          const projectName = `docker-lifecycle-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+          const workspaceName = "test-ws";
+          const projectPath = `/tmp/${projectName}`;
+          const containerName = getContainerName(projectPath, workspaceName);
+
+          const runtime = new DockerRuntime({ image: "ubuntu:22.04" });
+
+          // Create workspace
+          const createResult = await runtime.createWorkspace({
+            projectPath,
+            branchName: workspaceName,
+            trunkBranch: "main",
+            directoryName: workspaceName,
+            initLogger: {
+              logStep: () => {},
+              logStdout: () => {},
+              logStderr: () => {},
+              logComplete: () => {},
+            },
+          });
+
+          expect(createResult.success).toBe(true);
+          if (!createResult.success) return;
+
+          // Verify container exists
+          const inspectResult = await dockerCommand(
+            `docker inspect ${containerName} --format='{{.State.Running}}'`
+          );
+          expect(inspectResult.exitCode).toBe(0);
+          expect(inspectResult.stdout.trim()).toBe("true");
+
+          // Delete workspace
+          const deleteResult = await runtime.deleteWorkspace(projectPath, workspaceName, true);
+          expect(deleteResult.success).toBe(true);
+
+          // Verify container no longer exists
+          const afterInspect = await dockerCommand(`docker inspect ${containerName} 2>&1`);
+          expect(afterInspect.exitCode).not.toBe(0);
+        },
+        60000
+      );
+    });
+
+    describe("deleteWorkspace", () => {
+      testForDocker("returns success for non-existent container (idempotent)", async () => {
+        const { DockerRuntime } = await import("@/node/runtime/DockerRuntime");
+        const projectName = `docker-nonexist-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+        const projectPath = `/tmp/${projectName}`;
+
+        const runtime = new DockerRuntime({ image: "ubuntu:22.04" });
+
+        // Try to delete a workspace that doesn't exist
+        const result = await runtime.deleteWorkspace(projectPath, "non-existent", false);
+
+        // Should be idempotent - return success for non-existent containers
         expect(result.success).toBe(true);
       });
     });

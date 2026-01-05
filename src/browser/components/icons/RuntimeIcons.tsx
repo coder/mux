@@ -74,7 +74,7 @@ export function LocalIcon({ size = 10, className }: IconProps) {
   );
 }
 
-/** Container/box icon for Docker runtime */
+/** Container icon for Docker runtime */
 export function DockerIcon({ size = 10, className }: IconProps) {
   return (
     <svg
@@ -89,12 +89,11 @@ export function DockerIcon({ size = 10, className }: IconProps) {
       aria-label="Docker Runtime"
       className={className}
     >
-      {/* Container box with stacked layers */}
-      <rect x="2" y="6" width="12" height="8" rx="1" />
-      <line x1="2" y1="10" x2="14" y2="10" />
-      <line x1="5" y1="3" x2="5" y2="6" />
-      <line x1="8" y1="2" x2="8" y2="6" />
-      <line x1="11" y1="3" x2="11" y2="6" />
+      {/* Shipping container / cube icon */}
+      <path d="M2 5 L8 2 L14 5 L14 11 L8 14 L2 11 Z" />
+      <path d="M8 2 L8 14" />
+      <path d="M2 5 L8 8 L14 5" />
+      <path d="M8 8 L8 14" />
     </svg>
   );
 }

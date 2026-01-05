@@ -61,7 +61,8 @@
                   "runtime",
                   "runtime/local",
                   "runtime/worktree",
-                  "runtime/ssh"
+                  "runtime/ssh",
+                  "runtime/docker"
                 ]
               },
               {

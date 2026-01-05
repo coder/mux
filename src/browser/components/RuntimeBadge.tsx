@@ -2,10 +2,15 @@ import React from "react";
 import { Copy, Check } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import type { RuntimeConfig } from "@/common/types/runtime";
-import { isSSHRuntime, isWorktreeRuntime, isLocalProjectRuntime } from "@/common/types/runtime";
+import {
+  isSSHRuntime,
+  isWorktreeRuntime,
+  isLocalProjectRuntime,
+  isDockerRuntime,
+} from "@/common/types/runtime";
 import { extractSshHostname } from "@/browser/utils/ui/runtimeBadge";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
-import { SSHIcon, WorktreeIcon, LocalIcon } from "./icons/RuntimeIcons";
+import { SSHIcon, WorktreeIcon, LocalIcon, DockerIcon } from "./icons/RuntimeIcons";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 
 interface RuntimeBadgeProps {
@@ -38,6 +43,11 @@ const RUNTIME_STYLES = {
     idle: "bg-transparent text-muted border-[var(--color-runtime-local)]/50",
     working:
       "bg-[var(--color-runtime-local)]/30 text-[var(--color-runtime-local)] border-[var(--color-runtime-local)]/60 animate-pulse",
+  },
+  docker: {
+    idle: "bg-transparent text-muted border-[var(--color-runtime-docker)]/50",
+    working:
+      "bg-[var(--color-runtime-docker)]/20 text-[var(--color-runtime-docker-text)] border-[var(--color-runtime-docker)]/60 animate-pulse",
   },
 } as const;
 
@@ -155,6 +165,31 @@ export function RuntimeBadge({
         </TooltipTrigger>
         <TooltipContent align="end">
           <div>Local: project directory</div>
+          {branchName && <BranchWithLabel branchName={branchName} />}
+          {workspacePath && <PathWithCopy path={workspacePath} />}
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  // Docker runtime: show container icon with image name
+  if (isDockerRuntime(runtimeConfig)) {
+    const styles = isWorking ? RUNTIME_STYLES.docker.working : RUNTIME_STYLES.docker.idle;
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className={cn(
+              "inline-flex items-center rounded px-1 py-0.5 border transition-colors",
+              styles,
+              className
+            )}
+          >
+            <DockerIcon />
+          </span>
+        </TooltipTrigger>
+        <TooltipContent align="end">
+          <div>Docker: {runtimeConfig.image}</div>
           {branchName && <BranchWithLabel branchName={branchName} />}
           {workspacePath && <PathWithCopy path={workspacePath} />}
         </TooltipContent>
