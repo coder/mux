@@ -147,6 +147,11 @@ export abstract class LocalBaseRuntime implements Runtime {
 
     const duration = exitCode.then(() => performance.now() - startTime);
 
+    // Avoid unhandled promise rejections in fire-and-forget exec() callsites.
+    // Callers that await these promises will still observe the rejection.
+    void exitCode.catch(() => undefined);
+    void duration.catch(() => undefined);
+
     // Register process group cleanup with DisposableProcess
     // This ensures ALL background children are killed when process exits
     disposable.addCleanup(() => {
