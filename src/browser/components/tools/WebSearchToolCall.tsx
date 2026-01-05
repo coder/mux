@@ -14,7 +14,7 @@ import { useToolExpansion, getStatusDisplay, type ToolStatus } from "./shared/to
 import { JsonHighlight } from "./shared/HighlightedCode";
 
 interface WebSearchToolCallProps {
-  args: { query: string };
+  args: { query?: string }; // Anthropic puts query in args
   result?: unknown;
   status?: ToolStatus;
 }
@@ -33,6 +33,40 @@ function isEncryptedResult(result: unknown): boolean {
   );
 }
 
+/**
+ * Extract query from either args (Anthropic) or result.action.query (OpenAI)
+ */
+function extractQuery(args: { query?: string }, result: unknown): string | undefined {
+  if (args.query) return args.query;
+  // OpenAI puts query in result.action.query
+  if (
+    result !== null &&
+    typeof result === "object" &&
+    "action" in result &&
+    typeof (result as Record<string, unknown>).action === "object"
+  ) {
+    const action = (result as { action: Record<string, unknown> }).action;
+    if (typeof action.query === "string") return action.query;
+  }
+  return undefined;
+}
+
+/**
+ * Get result count - Anthropic returns array, OpenAI returns { sources: [] }
+ */
+function getResultCount(result: unknown): number {
+  if (Array.isArray(result)) return result.length;
+  if (
+    result !== null &&
+    typeof result === "object" &&
+    "sources" in result &&
+    Array.isArray((result as { sources: unknown }).sources)
+  ) {
+    return (result as { sources: unknown[] }).sources.length;
+  }
+  return 0;
+}
+
 export const WebSearchToolCall: React.FC<WebSearchToolCallProps> = ({
   args,
   result,
@@ -40,7 +74,8 @@ export const WebSearchToolCall: React.FC<WebSearchToolCallProps> = ({
 }) => {
   const { expanded, toggleExpanded } = useToolExpansion();
   const encrypted = isEncryptedResult(result);
-  const resultCount = Array.isArray(result) ? result.length : 0;
+  const query = extractQuery(args, result);
+  const resultCount = getResultCount(result);
 
   return (
     <ToolContainer expanded={expanded} className="@container">
@@ -48,7 +83,7 @@ export const WebSearchToolCall: React.FC<WebSearchToolCallProps> = ({
         <ExpandIcon expanded={expanded}>▶</ExpandIcon>
         <ToolIcon emoji="🌐" toolName="web_search" />
         <div className="text-text flex max-w-96 min-w-0 items-center gap-1.5">
-          <span className="font-monospace truncate">{args.query}</span>
+          <span className="font-monospace truncate">{query ?? "searching..."}</span>
         </div>
         {result !== undefined && resultCount > 0 && (
           <span className="text-secondary ml-2 text-[10px] whitespace-nowrap">
@@ -63,10 +98,12 @@ export const WebSearchToolCall: React.FC<WebSearchToolCallProps> = ({
         <ToolDetails>
           <DetailSection>
             <div className="bg-code-bg flex flex-wrap gap-4 rounded px-2 py-1.5 text-[11px] leading-[1.4]">
-              <div className="flex min-w-0 gap-1.5">
-                <span className="text-secondary font-medium">Query:</span>
-                <span className="text-text">{args.query}</span>
-              </div>
+{query && (
+                <div className="flex min-w-0 gap-1.5">
+                  <span className="text-secondary font-medium">Query:</span>
+                  <span className="text-text">{query}</span>
+                </div>
+              )}
             </div>
           </DetailSection>
 

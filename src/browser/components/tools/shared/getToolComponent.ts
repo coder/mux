@@ -101,7 +101,8 @@ const TOOL_REGISTRY: Record<string, ToolRegistryEntry> = {
     schema: TOOL_DEFINITIONS.task_terminate.schema,
   },
   // Provider-defined tool (Anthropic/OpenAI) - no TOOL_DEFINITIONS entry
-  web_search: { component: WebSearchToolCall, schema: z.object({ query: z.string() }) },
+  // Anthropic: args.query, OpenAI: args={}, query in result.action.query
+  web_search: { component: WebSearchToolCall, schema: z.object({ query: z.string().optional() }) },
 };
 
 /**
