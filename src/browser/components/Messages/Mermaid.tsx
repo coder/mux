@@ -193,26 +193,24 @@ export const Mermaid: React.FC<{ chart: string }> = ({ chart }) => {
 
   // During streaming errors, show last valid SVG if available, otherwise placeholder
   if (error) {
-    if (isStreaming || lastValidSvgRef.current) {
-      // Keep showing last valid render while streaming or during transient errors
-      if (lastValidSvgRef.current) {
-        // Fall through to render the container with lastValidSvgRef content
-      } else {
-        return (
-          <div
-            style={{
-              color: "var(--color-text-secondary)",
-              background: "var(--color-code-bg)",
-              padding: "12px",
-              fontStyle: "italic",
-            }}
-          >
-            Rendering diagram...
-          </div>
-        );
-      }
+    if (isStreaming && lastValidSvgRef.current) {
+      // Keep showing last valid render while streaming
+      // Fall through to render the container with lastValidSvgRef content
+    } else if (isStreaming) {
+      return (
+        <div
+          style={{
+            color: "var(--color-text-secondary)",
+            background: "var(--color-code-bg)",
+            padding: "12px",
+            fontStyle: "italic",
+          }}
+        >
+          Rendering diagram...
+        </div>
+      );
     } else {
-      // Not streaming and no valid render - show actual error
+      // Not streaming - show actual error
       return (
         <pre
           style={{
