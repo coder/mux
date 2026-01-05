@@ -64,6 +64,8 @@ export async function createCodeExecutionTool(
   return tool({
     description: `Execute sandboxed JavaScript to batch tools and transform outputs.
 
+**When to use:** Prefer this tool when making 2+ tool calls, especially when later calls depend on earlier results. Reduces round-trip latency.
+
 **Available tools (TypeScript definitions):**
 \`\`\`typescript
 ${muxTypes}
