@@ -1561,17 +1561,20 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         data-autofocus-state="done"
       >
         <div className={cn("w-full", variant !== "creation" && "mx-auto max-w-4xl")}>
-          {/* Toast - show shared toast (slash commands) or variant-specific toast */}
-          {!activeToast && <ConnectionStatusToast />}
-          <ChatInputToast
-            toast={activeToast}
-            onDismiss={() => {
-              handleToastDismiss();
-              if (variant === "creation") {
-                creationState.setToast(null);
-              }
-            }}
-          />
+          {/* Toasts (overlay) */}
+          <div className="pointer-events-none absolute right-[15px] bottom-full left-[15px] z-[1000] mb-2 flex flex-col gap-2 [&>*]:pointer-events-auto">
+            <ConnectionStatusToast wrap={false} />
+            <ChatInputToast
+              toast={activeToast}
+              wrap={false}
+              onDismiss={() => {
+                handleToastDismiss();
+                if (variant === "creation") {
+                  creationState.setToast(null);
+                }
+              }}
+            />
+          </div>
 
           {/* Attached reviews preview - show styled blocks with remove/edit buttons */}
           {/* Hide during send to avoid duplicate display with the sent message */}
