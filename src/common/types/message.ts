@@ -219,6 +219,12 @@ export interface MuxMetadata {
   mode?: AgentMode; // The mode active when this message was sent (assistant messages only)
   cmuxMetadata?: MuxFrontendMetadata; // Frontend-defined metadata, backend treats as black-box
   muxMetadata?: MuxFrontendMetadata; // Frontend-defined metadata, backend treats as black-box
+  /**
+   * @file mention snapshot token(s) this message provides content for.
+   * When present, injectFileAtMentions() skips re-reading these tokens,
+   * preserving prompt cache stability across turns.
+   */
+  fileAtMentionSnapshot?: string[];
 }
 
 // Extended tool part type that supports interrupted tool calls (input-available state)

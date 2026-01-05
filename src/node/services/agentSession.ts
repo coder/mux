@@ -4,7 +4,6 @@ import * as path from "path";
 import { stat, readFile } from "fs/promises";
 import { PlatformPaths } from "@/common/utils/paths";
 import { log } from "@/node/services/log";
-import { createMuxMessage } from "@/common/types/message";
 import type { Config } from "@/node/config";
 import type { AIService } from "@/node/services/aiService";
 import type { HistoryService } from "@/node/services/historyService";
@@ -25,13 +24,14 @@ import { createUnknownSendMessageError } from "@/node/services/utils/sendMessage
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
-import type {
-  ContinueMessage,
-  MuxFrontendMetadata,
-  MuxImagePart,
-  MuxMessage,
+import {
+  createMuxMessage,
+  prepareUserMessageForSend,
+  type ContinueMessage,
+  type MuxFrontendMetadata,
+  type MuxImagePart,
+  type MuxMessage,
 } from "@/common/types/message";
-import { prepareUserMessageForSend } from "@/common/types/message";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { MessageQueue } from "./messageQueue";
 import type { StreamEndEvent } from "@/common/types/stream";
@@ -45,6 +45,7 @@ import type { PostCompactionAttachment, PostCompactionExclusions } from "@/commo
 import { TURNS_BETWEEN_ATTACHMENTS } from "@/common/constants/attachments";
 import { extractEditedFileDiffs } from "@/common/utils/messages/extractEditedFiles";
 import { isValidModelFormat } from "@/common/utils/ai/models";
+import { materializeFileAtMentions } from "@/node/services/fileAtMentions";
 
 /**
  * Tracked file state for detecting external edits.
@@ -436,9 +437,26 @@ export class AgentSession {
           return Err(createUnknownSendMessageError(stopResult.error));
         }
       }
+
+      // Find the truncation target: the edited message or its preceding @file snapshot
+      // (snapshots are persisted immediately before their corresponding user message)
+      let truncateTargetId = options.editMessageId;
+      const historyResult = await this.historyService.getHistory(this.workspaceId);
+      if (historyResult.success) {
+        const messages = historyResult.data;
+        const editIndex = messages.findIndex((m) => m.id === options.editMessageId);
+        if (editIndex > 0) {
+          const precedingMsg = messages[editIndex - 1];
+          // Check if the preceding message is a @file snapshot (synthetic with fileAtMentionSnapshot)
+          if (precedingMsg.metadata?.synthetic && precedingMsg.metadata?.fileAtMentionSnapshot) {
+            truncateTargetId = precedingMsg.id;
+          }
+        }
+      }
+
       const truncateResult = await this.historyService.truncateAfterMessage(
         this.workspaceId,
-        options.editMessageId
+        truncateTargetId
       );
       if (!truncateResult.success) {
         const isMissingEditTarget =
@@ -517,8 +535,30 @@ export class AgentSession {
       additionalParts
     );
 
+    // Materialize @file mentions from the user message into a snapshot.
+    // This ensures prompt-cache stability: we read files once and persist the content,
+    // so subsequent turns don't re-read (which would change the prompt prefix if files changed).
+    // File changes after this point are surfaced via <system-file-update> diffs instead.
+    const snapshotResult = await this.materializeFileAtMentionsSnapshot(trimmedMessage);
+
+    // Persist snapshot (if any) BEFORE user message so file content precedes the instruction
+    // in the prompt (matching injectFileAtMentions ordering). Both must succeed or neither
+    // is persisted to avoid orphaned snapshots.
+    if (snapshotResult?.snapshotMessage) {
+      const snapshotAppendResult = await this.historyService.appendToHistory(
+        this.workspaceId,
+        snapshotResult.snapshotMessage
+      );
+      if (!snapshotAppendResult.success) {
+        return Err(createUnknownSendMessageError(snapshotAppendResult.error));
+      }
+    }
+
     const appendResult = await this.historyService.appendToHistory(this.workspaceId, userMessage);
     if (!appendResult.success) {
+      // Note: If we get here with a snapshot, the snapshot is already persisted but user message
+      // failed. This is a rare edge case (disk full mid-operation). The next edit will clean up
+      // the orphan via the truncation logic that removes preceding snapshots.
       return Err(createUnknownSendMessageError(appendResult.error));
     }
 
@@ -526,6 +566,11 @@ export class AgentSession {
     // If so, skip event emission + streaming to avoid races with dispose().
     if (this.disposed) {
       return Ok(undefined);
+    }
+
+    // Emit snapshot first (if any), then user message - maintains prompt ordering in UI
+    if (snapshotResult?.snapshotMessage) {
+      this.emitChatEvent({ ...snapshotResult.snapshotMessage, type: "message" });
     }
 
     // Add type: "message" for discriminated union (createMuxMessage doesn't add it)
@@ -1065,6 +1110,77 @@ export class AgentSession {
     }
 
     return attachments;
+  }
+
+  /**
+   * Materialize @file mentions from a user message into a persisted snapshot message.
+   *
+   * This reads the referenced files once and creates a synthetic message containing
+   * their content. The snapshot is persisted to history so subsequent sends don't
+   * re-read the files (which would bust prompt cache if files changed).
+   *
+   * Also registers file state for change detection via <system-file-update> diffs.
+   *
+   * @returns The snapshot message and list of materialized mentions, or null if no mentions found
+   */
+  private async materializeFileAtMentionsSnapshot(
+    messageText: string
+  ): Promise<{ snapshotMessage: MuxMessage; materializedTokens: string[] } | null> {
+    // Guard for test mocks that may not implement getWorkspaceMetadata
+    if (typeof this.aiService.getWorkspaceMetadata !== "function") {
+      return null;
+    }
+
+    const metadataResult = await this.aiService.getWorkspaceMetadata(this.workspaceId);
+    if (!metadataResult.success) {
+      log.debug("Cannot materialize @file mentions: workspace metadata not found", {
+        workspaceId: this.workspaceId,
+      });
+      return null;
+    }
+
+    const metadata = metadataResult.data;
+    const runtime = createRuntime(
+      metadata.runtimeConfig ?? { type: "local", srcBaseDir: this.config.srcDir },
+      { projectPath: metadata.projectPath }
+    );
+    const workspacePath = runtime.getWorkspacePath(metadata.projectPath, metadata.name);
+
+    const materialized = await materializeFileAtMentions(messageText, {
+      runtime,
+      workspacePath,
+    });
+
+    if (materialized.length === 0) {
+      return null;
+    }
+
+    // Register file state for each successfully read file (for change detection)
+    for (const mention of materialized) {
+      if (
+        mention.content !== undefined &&
+        mention.modifiedTimeMs !== undefined &&
+        mention.resolvedPath
+      ) {
+        this.recordFileState(mention.resolvedPath, {
+          content: mention.content,
+          timestamp: mention.modifiedTimeMs,
+        });
+      }
+    }
+
+    // Create a synthetic snapshot message (not persisted here - caller handles persistence)
+    const tokens = materialized.map((m) => m.token);
+    const blocks = materialized.map((m) => m.block).join("\n\n");
+
+    const snapshotId = `file-snapshot-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    const snapshotMessage = createMuxMessage(snapshotId, "user", blocks, {
+      timestamp: Date.now(),
+      synthetic: true,
+      fileAtMentionSnapshot: tokens,
+    });
+
+    return { snapshotMessage, materializedTokens: tokens };
   }
 
   /**

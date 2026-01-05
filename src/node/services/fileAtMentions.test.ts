@@ -6,7 +6,7 @@ import * as path from "path";
 import { createMuxMessage } from "@/common/types/message";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 
-import { injectFileAtMentions } from "./fileAtMentions";
+import { injectFileAtMentions, materializeFileAtMentions } from "./fileAtMentions";
 
 describe("injectFileAtMentions", () => {
   it("expands @file mentions from earlier user messages even when the latest has none", async () => {
@@ -160,6 +160,154 @@ describe("injectFileAtMentions", () => {
       });
 
       expect(result).toEqual(messages);
+    } finally {
+      await fsPromises.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("skips tokens that already have persisted snapshots (fileAtMentionSnapshot metadata)", async () => {
+    const tmpDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), "mux-file-at-mentions-"));
+
+    try {
+      await fsPromises.mkdir(path.join(tmpDir, "src"), { recursive: true });
+      await fsPromises.writeFile(
+        path.join(tmpDir, "src", "foo.ts"),
+        ["new line1", "new line2"].join("\n"),
+        "utf8"
+      );
+
+      const runtime = createRuntime({ type: "local" }, { projectPath: tmpDir });
+
+      // Simulate a message that has already-materialized snapshot
+      const snapshotMessage = createMuxMessage(
+        "snapshot-1",
+        "user",
+        '<mux-file path="src/foo.ts" range="L1-L2">\n```ts\nold line1\nold line2\n```\n</mux-file>',
+        {
+          timestamp: Date.now(),
+          synthetic: true,
+          fileAtMentionSnapshot: ["src/foo.ts"], // Token that was materialized
+        }
+      );
+      const userMessage = createMuxMessage("u1", "user", "Please check @src/foo.ts");
+      const messages = [snapshotMessage, userMessage];
+
+      const result = await injectFileAtMentions(messages, {
+        runtime,
+        workspacePath: tmpDir,
+      });
+
+      // Should NOT inject a new synthetic message because the token was already materialized
+      // The messages should remain unchanged (snapshot + user message)
+      expect(result).toHaveLength(2);
+      expect(result[0]).toEqual(snapshotMessage);
+      expect(result[1]).toEqual(userMessage);
+
+      // Verify the old content is preserved (not re-read from the file)
+      const snapshotText = result[0]?.parts.find((p) => p.type === "text")?.text ?? "";
+      expect(snapshotText).toContain("old line1");
+      expect(snapshotText).not.toContain("new line1");
+    } finally {
+      await fsPromises.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("materializeFileAtMentions", () => {
+  it("materializes @file mentions into snapshot blocks", async () => {
+    const tmpDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), "mux-materialize-"));
+
+    try {
+      await fsPromises.mkdir(path.join(tmpDir, "src"), { recursive: true });
+      await fsPromises.writeFile(
+        path.join(tmpDir, "src", "foo.ts"),
+        ["line1", "line2", "line3"].join("\n"),
+        "utf8"
+      );
+
+      const runtime = createRuntime({ type: "local" }, { projectPath: tmpDir });
+
+      const result = await materializeFileAtMentions("Please check @src/foo.ts", {
+        runtime,
+        workspacePath: tmpDir,
+      });
+
+      expect(result).toHaveLength(1);
+      expect(result[0]?.token).toBe("src/foo.ts");
+      expect(result[0]?.resolvedPath).toBe(path.join(tmpDir, "src", "foo.ts"));
+      expect(result[0]?.block).toContain('<mux-file path="src/foo.ts"');
+      expect(result[0]?.block).toContain("line1");
+      expect(result[0]?.block).toContain("line2");
+      expect(result[0]?.content).toBe("line1\nline2\nline3");
+      expect(typeof result[0]?.modifiedTimeMs).toBe("number");
+    } finally {
+      await fsPromises.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("materializes line range mentions", async () => {
+    const tmpDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), "mux-materialize-"));
+
+    try {
+      await fsPromises.mkdir(path.join(tmpDir, "src"), { recursive: true });
+      await fsPromises.writeFile(
+        path.join(tmpDir, "src", "foo.ts"),
+        ["line1", "line2", "line3", "line4"].join("\n"),
+        "utf8"
+      );
+
+      const runtime = createRuntime({ type: "local" }, { projectPath: tmpDir });
+
+      const result = await materializeFileAtMentions("Check @src/foo.ts#L2-3", {
+        runtime,
+        workspacePath: tmpDir,
+      });
+
+      expect(result).toHaveLength(1);
+      expect(result[0]?.token).toBe("src/foo.ts#L2-3");
+      expect(result[0]?.block).toContain('range="L2-L3"');
+      expect(result[0]?.block).toContain("line2");
+      expect(result[0]?.block).toContain("line3");
+      expect(result[0]?.block).not.toContain("line1");
+      expect(result[0]?.block).not.toContain("line4");
+    } finally {
+      await fsPromises.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns empty array when no @file mentions found", async () => {
+    const tmpDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), "mux-materialize-"));
+
+    try {
+      const runtime = createRuntime({ type: "local" }, { projectPath: tmpDir });
+
+      const result = await materializeFileAtMentions("No file mentions here", {
+        runtime,
+        workspacePath: tmpDir,
+      });
+
+      expect(result).toHaveLength(0);
+    } finally {
+      await fsPromises.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns error block for non-existent files", async () => {
+    const tmpDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), "mux-materialize-"));
+
+    try {
+      const runtime = createRuntime({ type: "local" }, { projectPath: tmpDir });
+
+      const result = await materializeFileAtMentions("Check @src/nonexistent.ts", {
+        runtime,
+        workspacePath: tmpDir,
+      });
+
+      expect(result).toHaveLength(1);
+      expect(result[0]?.token).toBe("src/nonexistent.ts");
+      expect(result[0]?.block).toContain("<mux-file-error");
+      expect(result[0]?.content).toBeUndefined();
+      expect(result[0]?.modifiedTimeMs).toBeUndefined();
     } finally {
       await fsPromises.rm(tmpDir, { recursive: true, force: true });
     }
