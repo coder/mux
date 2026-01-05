@@ -329,7 +329,7 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
 
   // Get preferred expiration from localStorage
   const getPreferredExpiration = (): ExpirationValue => {
-    return readPersistedState<ExpirationValue>(SHARE_EXPIRATION_KEY, "7d");
+    return readPersistedState<ExpirationValue>(SHARE_EXPIRATION_KEY, "never");
   };
 
   // Save preferred expiration to localStorage
