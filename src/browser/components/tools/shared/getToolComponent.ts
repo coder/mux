@@ -5,7 +5,7 @@
  * Both ToolMessage.tsx and NestedToolRenderer.tsx use this to avoid duplication.
  */
 import type { ComponentType } from "react";
-import type { ZodSchema } from "zod";
+import { z, type ZodSchema } from "zod";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 
 import { GenericToolCall } from "../GenericToolCall";
@@ -13,6 +13,7 @@ import { BashToolCall } from "../BashToolCall";
 import { FileEditToolCall } from "../FileEditToolCall";
 import { FileReadToolCall } from "../FileReadToolCall";
 import { WebFetchToolCall } from "../WebFetchToolCall";
+import { WebSearchToolCall } from "../WebSearchToolCall";
 import { AskUserQuestionToolCall } from "../AskUserQuestionToolCall";
 import { ProposePlanToolCall } from "../ProposePlanToolCall";
 import { TodoToolCall } from "../TodoToolCall";
@@ -99,6 +100,8 @@ const TOOL_REGISTRY: Record<string, ToolRegistryEntry> = {
     component: TaskTerminateToolCall,
     schema: TOOL_DEFINITIONS.task_terminate.schema,
   },
+  // Provider-defined tool (Anthropic/OpenAI) - no TOOL_DEFINITIONS entry
+  web_search: { component: WebSearchToolCall, schema: z.object({ query: z.string() }) },
 };
 
 /**

@@ -15,6 +15,7 @@ import {
   createGenericTool,
   createPendingTool,
   createProposePlanTool,
+  createWebSearchTool,
 } from "./mockFactory";
 
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
@@ -42,9 +43,18 @@ export const Conversation: AppStory = {
             }),
             createAssistantMessage(
               "msg-2",
-              "I'll help you add authentication. Let me check the current implementation.",
+              "I'll help you add authentication. Let me search for best practices first.",
               {
                 historySequence: 2,
+                timestamp: STABLE_TIMESTAMP - 295000,
+                toolCalls: [createWebSearchTool("call-0", "JWT authentication best practices", 5)],
+              }
+            ),
+            createAssistantMessage(
+              "msg-3",
+              "Great, let me check the current implementation.",
+              {
+                historySequence: 3,
                 timestamp: STABLE_TIMESTAMP - 290000,
                 toolCalls: [
                   createFileReadTool(
@@ -55,12 +65,12 @@ export const Conversation: AppStory = {
                 ],
               }
             ),
-            createUserMessage("msg-3", "Yes, add JWT token validation", {
-              historySequence: 3,
+            createUserMessage("msg-4", "Yes, add JWT token validation", {
+              historySequence: 4,
               timestamp: STABLE_TIMESTAMP - 280000,
             }),
-            createAssistantMessage("msg-4", "I'll add JWT validation. Here's the update:", {
-              historySequence: 4,
+            createAssistantMessage("msg-5", "I'll add JWT validation. Here's the update:", {
+              historySequence: 5,
               timestamp: STABLE_TIMESTAMP - 270000,
               toolCalls: [
                 createFileEditTool(

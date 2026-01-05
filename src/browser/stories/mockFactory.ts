@@ -306,6 +306,24 @@ export function createBashTool(
   };
 }
 
+export function createWebSearchTool(
+  toolCallId: string,
+  query: string,
+  resultCount = 5,
+  encrypted = true
+): MuxPart {
+  return {
+    type: "dynamic-tool",
+    toolCallId,
+    toolName: "web_search",
+    state: "output-available",
+    input: { query },
+    output: encrypted
+      ? Array.from({ length: resultCount }, () => ({ encryptedContent: "base64data..." }))
+      : [{ title: "Example Result", url: "https://example.com", snippet: "A sample snippet" }],
+  };
+}
+
 export function createTerminalTool(
   toolCallId: string,
   command: string,
