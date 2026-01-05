@@ -4,6 +4,7 @@ import { VERSION } from "@/version";
 import { SettingsButton } from "./SettingsButton";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import type { UpdateStatus } from "@/common/orpc/types";
+import { Download, Loader2, RefreshCw } from "lucide-react";
 
 import { useTutorial } from "@/browser/contexts/TutorialContext";
 import { useAPI } from "@/browser/contexts/API";
@@ -247,13 +248,15 @@ export function TitleBar() {
                 onClick={handleUpdateClick}
                 onMouseEnter={handleIndicatorHover}
               >
-                <span className="text-sm">
-                  {indicatorStatus === "disabled"
-                    ? "⊘"
-                    : indicatorStatus === "downloading"
-                      ? "⟳"
-                      : "↓"}
-                </span>
+                {indicatorStatus === "disabled" ? (
+                  <span className="text-sm">⊘</span>
+                ) : indicatorStatus === "downloading" ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : indicatorStatus === "downloaded" ? (
+                  <RefreshCw className="size-3.5" />
+                ) : (
+                  <Download className="size-3.5" />
+                )}
               </div>
             </TooltipTrigger>
             <TooltipContent align="start" className="pointer-events-auto">
