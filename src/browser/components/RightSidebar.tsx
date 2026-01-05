@@ -4,11 +4,7 @@ import {
   RIGHT_SIDEBAR_TAB_KEY,
   getRightSidebarLayoutKey,
 } from "@/common/constants/storage";
-import {
-  readPersistedState,
-  updatePersistedState,
-  usePersistedState,
-} from "@/browser/hooks/usePersistedState";
+import { readPersistedState, usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useWorkspaceUsage, useWorkspaceStatsSnapshot } from "@/browser/stores/WorkspaceStore";
 import { useFeatureFlags } from "@/browser/contexts/FeatureFlagsContext";
 import { CostsTab } from "./RightSidebar/CostsTab";
@@ -30,7 +26,6 @@ import {
   collectAllTabs,
   dockTabToEdge,
   getDefaultRightSidebarLayoutState,
-  getFocusedActiveTab,
   isRightSidebarLayoutState,
   moveTabToTabset,
   parseRightSidebarLayoutState,
@@ -557,19 +552,6 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     },
     [initialActiveTab, layoutRaw, setLayoutRaw]
   );
-
-  const focusedActiveTab = React.useMemo(
-    () => getFocusedActiveTab(layout, initialActiveTab),
-    [initialActiveTab, layout]
-  );
-
-  // Mirror current focused tab selection for persistence + AIView boot-time layout flash avoidance.
-  const lastPersistedTabRef = React.useRef<TabType | null>(null);
-  React.useEffect(() => {
-    if (lastPersistedTabRef.current === focusedActiveTab) return;
-    lastPersistedTabRef.current = focusedActiveTab;
-    updatePersistedState(RIGHT_SIDEBAR_TAB_KEY, focusedActiveTab, "costs");
-  }, [focusedActiveTab]);
 
   // Keyboard shortcuts for tab switching (auto-expands if collapsed)
   React.useEffect(() => {
