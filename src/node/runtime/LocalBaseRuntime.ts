@@ -67,12 +67,18 @@ export abstract class LocalBaseRuntime implements Runtime {
     const spawnCommand = bashPath;
     const spawnArgs = ["-c", command];
 
+    const defaultPath = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
+    const effectivePath =
+      (options.env?.PATH && options.env.PATH.length > 0 ? options.env.PATH : process.env.PATH) ??
+      defaultPath;
+
     const childProcess = spawn(spawnCommand, spawnArgs, {
       cwd,
       env: {
         ...process.env,
         ...(options.env ?? {}),
         ...NON_INTERACTIVE_ENV_VARS,
+        PATH: effectivePath,
       },
       stdio: ["pipe", "pipe", "pipe"],
       // CRITICAL: Spawn as detached process group leader to enable cleanup of background processes.

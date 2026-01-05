@@ -49,18 +49,29 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
   const [branchesLoaded, setBranchesLoaded] = useState(false);
   const [hasBranches, setHasBranches] = useState(true); // Assume git repo until proven otherwise
 
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
   // Load branches to determine if this is a git repository
   const loadBranches = useCallback(async () => {
-    if (!api) return;
+    if (!api || !isMountedRef.current) return;
     setBranchesLoaded(false);
     try {
       const result = await api.projects.listBranches({ projectPath });
+      if (!isMountedRef.current) return;
       setHasBranches(result.branches.length > 0);
     } catch (err) {
       console.error("Failed to load branches:", err);
+      if (!isMountedRef.current) return;
       setHasBranches(true); // On error, don't show banner
     } finally {
-      setBranchesLoaded(true);
+      if (isMountedRef.current) {
+        setBranchesLoaded(true);
+      }
     }
   }, [api, projectPath]);
 
