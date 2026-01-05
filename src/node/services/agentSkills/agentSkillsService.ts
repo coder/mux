@@ -20,6 +20,7 @@ import type {
 import { log } from "@/node/services/log";
 import { validateFileSize } from "@/node/services/tools/fileCommon";
 import { AgentSkillParseError, parseSkillMarkdown } from "./parseSkillMarkdown";
+import { getBuiltInSkillByName, getBuiltInSkillDescriptors } from "./builtInSkillDefinitions";
 
 const GLOBAL_SKILLS_ROOT = "~/.mux/skills";
 
@@ -203,6 +204,13 @@ export async function discoverAgentSkills(
     }
   }
 
+  // Add built-in skills (lowest precedence - only if not overridden by project/global)
+  for (const builtIn of getBuiltInSkillDescriptors()) {
+    if (!byName.has(builtIn.name)) {
+      byName.set(builtIn.name, builtIn);
+    }
+  }
+
   return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -292,6 +300,17 @@ export async function readAgentSkill(
     } catch {
       continue;
     }
+  }
+
+  // Check built-in skills as fallback
+  const builtIn = getBuiltInSkillByName(name);
+  if (builtIn) {
+    return {
+      package: builtIn,
+      // Built-in skills don't have a real skillDir on disk.
+      // agent_skill_read_file handles built-in skills specially; this is a sentinel value.
+      skillDir: `<built-in:${name}>`,
+    };
   }
 
   throw new Error(`Agent skill not found: ${name}`);

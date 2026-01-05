@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const AgentSkillScopeSchema = z.enum(["project", "global"]);
+export const AgentSkillScopeSchema = z.enum(["project", "global", "built-in"]);
 
 /**
  * Skill name per agentskills.io
