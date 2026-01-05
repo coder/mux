@@ -34,7 +34,6 @@ import { injectFileAtMentions } from "./fileAtMentions";
 import {
   transformModelMessages,
   validateAnthropicCompliance,
-  getAnthropicThinkingDisableReason,
   addInterruptedSentinel,
   filterEmptyAssistantMessages,
   injectModeTransition,
@@ -398,12 +397,6 @@ export class AIService extends EventEmitter {
   private mockModeEnabled: boolean;
   private mockAiStreamPlayer?: MockAiStreamPlayer;
   private readonly backgroundProcessManager?: BackgroundProcessManager;
-
-  /**
-   * Tracks workspaces where Anthropic thinking had to be disabled due to missing signed
-   * thinking blocks in history. Used to avoid spamming logs on every request.
-   */
-  private readonly anthropicThinkingDisableReasonsByWorkspace = new Map<string, string>();
   private taskService?: TaskService;
 
   constructor(
@@ -1048,7 +1041,7 @@ export class AIService extends EventEmitter {
 
       // Mode (plan|exec|compact) is derived from the selected agent definition.
       const effectiveMuxProviderOptions: MuxProviderOptions = muxProviderOptions ?? {};
-      let effectiveThinkingLevel: ThinkingLevel = thinkingLevel ?? "off";
+      const effectiveThinkingLevel: ThinkingLevel = thinkingLevel ?? "off";
 
       // For xAI models, swap between reasoning and non-reasoning variants based on thinking level
       // Similar to how OpenAI handles reasoning vs non-reasoning models
@@ -1354,52 +1347,12 @@ export class AIService extends EventEmitter {
       log.debug_obj(`${workspaceId}/2_model_messages.json`, modelMessages);
 
       // Apply ModelMessage transforms based on provider requirements
-      let transformedMessages = transformModelMessages(modelMessages, providerName, {
+      const transformedMessages = transformModelMessages(modelMessages, providerName, {
         anthropicThinkingEnabled: providerName === "anthropic" && effectiveThinkingLevel !== "off",
       });
 
       // Apply cache control for Anthropic models AFTER transformation
-      let finalMessages = applyCacheControl(transformedMessages, modelString);
-
-      // Self-healing: If Anthropic thinking is enabled but we cannot replay signed thinking
-      // blocks for tool calls, disable thinking for this request.
-      if (providerName === "anthropic" && effectiveThinkingLevel !== "off") {
-        const disableReason = getAnthropicThinkingDisableReason(finalMessages);
-        const previouslyDisabledReason =
-          this.anthropicThinkingDisableReasonsByWorkspace.get(workspaceId);
-
-        if (disableReason) {
-          if (!previouslyDisabledReason) {
-            log.warn(
-              "Disabling Anthropic thinking for this request (missing signed thinking blocks)",
-              {
-                workspaceId,
-                reason: disableReason,
-              }
-            );
-          } else {
-            // Avoid spamming logs - this can happen on every request for legacy workspaces.
-            log.debug(
-              "Disabling Anthropic thinking for this request (missing signed thinking blocks)",
-              {
-                workspaceId,
-                reason: disableReason,
-              }
-            );
-          }
-
-          this.anthropicThinkingDisableReasonsByWorkspace.set(workspaceId, disableReason);
-
-          effectiveThinkingLevel = "off";
-          transformedMessages = transformModelMessages(modelMessages, providerName, {
-            anthropicThinkingEnabled: false,
-          });
-          finalMessages = applyCacheControl(transformedMessages, modelString);
-        } else if (previouslyDisabledReason) {
-          // History may have been compacted/cleared; allow thinking again.
-          this.anthropicThinkingDisableReasonsByWorkspace.delete(workspaceId);
-        }
-      }
+      const finalMessages = applyCacheControl(transformedMessages, modelString);
 
       log.debug_obj(`${workspaceId}/3_final_messages.json`, finalMessages);
 
