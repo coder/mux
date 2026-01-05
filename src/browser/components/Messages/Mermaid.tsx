@@ -168,11 +168,8 @@ export const Mermaid: React.FC<{ chart: string }> = ({ chart }) => {
       } catch (err) {
         if (cancelled) return;
 
-        // Clean up any DOM elements mermaid might have created with our ID
-        const errorElement = document.getElementById(id);
-        if (errorElement) {
-          errorElement.remove();
-        }
+        // Don't remove elements by ID - with stable IDs, we'd remove the last valid render
+        // Mermaid error artifacts are cleaned up by subsequent successful renders
 
         setError(err instanceof Error ? err.message : "Failed to render diagram");
         // Don't clear SVG - keep showing last valid render during errors
