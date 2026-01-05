@@ -12,7 +12,7 @@ export async function waitForChatMessagesLoaded(canvasElement: HTMLElement): Pro
   await waitFor(
     () => {
       const messageWindow = canvasElement.querySelector('[data-testid="message-window"]');
-      if (!messageWindow || messageWindow.getAttribute("data-loaded") !== "true") {
+      if (messageWindow?.getAttribute("data-loaded") !== "true") {
         throw new Error("Messages not loaded yet");
       }
     },

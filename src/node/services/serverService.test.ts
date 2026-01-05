@@ -103,7 +103,9 @@ describe("ServerService.startServer", () => {
     // Verify that an error was thrown
     expect(thrownError).not.toBeNull();
     expect(thrownError).toBeInstanceOf(Error);
-    expect((thrownError as Error).message).toMatch(/EACCES|permission denied|ENOTDIR|not a directory/i);
+    expect((thrownError as Error).message).toMatch(
+      /EACCES|permission denied|ENOTDIR|not a directory/i
+    );
 
     // Verify the server is NOT left running
     expect(service.isServerRunning()).toBe(false);
