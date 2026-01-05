@@ -15,21 +15,17 @@ Download pre-built binaries from [the releases page](https://github.com/coder/mu
 
 ### Development Builds
 
-Download pre-built binaries of `main` from [GitHub Actions](https://github.com/coder/mux/actions/workflows/build.yml):
+Download pre-built binaries of `main` from [GitHub Actions](https://github.com/coder/mux/actions/workflows/pr.yml?query=event:push+branch:main):
 
 - **macOS**: Signed and notarized DMG
-  - `macos-dmg-x64` (Intel Macs)
-  - `macos-dmg-arm64` (Apple Silicon)
-- **Linux**: AppImage (portable, works on most distros)
-
-<Info>
-  Windows builds are only available from [releases](https://github.com/coder/mux/releases), not from
-  development builds.
-</Info>
+  - `build-macos-x64` (Intel Macs)
+  - `build-macos-arm64` (Apple Silicon)
+- **Linux**: `build-linux` AppImage (portable, works on most distros)
+- **Windows**: `build-windows` installer exe
 
 To download:
 
-1. Go to the [Build workflow](https://github.com/coder/mux/actions/workflows/build.yml?query=event:merge_group)
+1. Go to the [PR workflow (main branch)](https://github.com/coder/mux/actions/workflows/pr.yml?query=event:push+branch:main)
 2. Click on the latest successful run
 3. Scroll down to "Artifacts" section
 4. Download the appropriate artifact for your platform

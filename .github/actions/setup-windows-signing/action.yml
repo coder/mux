@@ -1,0 +1,58 @@
+name: "Setup Windows Code Signing"
+description: "Configure EV code signing for Windows builds using GCP KMS"
+
+inputs:
+  ev_signing_cert:
+    description: "EV signing certificate (PEM format)"
+    required: false
+  gcp_workload_id_provider:
+    description: "GCP Workload Identity Provider"
+    required: false
+  gcp_service_account:
+    description: "GCP Service Account"
+    required: false
+
+outputs:
+  gcloud_access_token:
+    description: "GCP access token for signing"
+    value: ${{ steps.gcloud_auth.outputs.access_token }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Java
+      uses: actions/setup-java@3a4f6e1af504cf6a31855fa899c6aa5355ba6c12 # v4.7.0
+      with:
+        distribution: "zulu"
+        java-version: "11.0"
+
+    - name: Authenticate to Google Cloud
+      id: gcloud_auth
+      if: inputs.gcp_workload_id_provider != ''
+      uses: google-github-actions/auth@71f986410dfbc7added4569d411d040a91dc6935 # v2.1.8
+      with:
+        workload_identity_provider: ${{ inputs.gcp_workload_id_provider }}
+        service_account: ${{ inputs.gcp_service_account }}
+        token_format: "access_token"
+
+    - name: Setup code signing
+      shell: pwsh
+      run: |
+        if (-not $env:EV_SIGNING_CERT) {
+          Write-Host "⚠️ No Windows code signing certificate provided - building unsigned"
+          exit 0
+        }
+
+        # Save EV certificate to temp file
+        $certPath = Join-Path $env:TEMP "ev_cert.pem"
+        Set-Content -Path $certPath -Value $env:EV_SIGNING_CERT
+        Add-Content -Path $env:GITHUB_ENV -Value "EV_CERTIFICATE_PATH=$certPath"
+
+        # Download jsign
+        $jsignPath = Join-Path $env:TEMP "jsign-6.0.jar"
+        Invoke-WebRequest -Uri "https://github.com/ebourg/jsign/releases/download/6.0/jsign-6.0.jar" -OutFile $jsignPath
+        Add-Content -Path $env:GITHUB_ENV -Value "JSIGN_PATH=$jsignPath"
+
+        Write-Host "✅ Windows EV code signing configured"
+      env:
+        EV_SIGNING_CERT: ${{ inputs.ev_signing_cert }}

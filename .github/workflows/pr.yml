@@ -1,6 +1,8 @@
 name: PR
 
 on:
+  push:
+    branches: [main]
   pull_request:
     branches: ["**"]
   merge_group:
@@ -14,6 +16,11 @@ on:
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
+
+# Permissions for GCP workload identity authentication (Windows code signing on main)
+permissions:
+  contents: read
+  id-token: write
 
 jobs:
   # Detect what files changed to determine which jobs/tests to run
@@ -241,7 +248,8 @@ jobs:
 
   smoke-docker:
     name: Smoke / Docker
-    if: github.event_name == 'merge_group'
+    # Only run on merge queue and main pushes (not every PR)
+    if: github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
@@ -299,6 +307,15 @@ jobs:
         with:
           fetch-depth: 0
       - uses: ./.github/actions/setup-mux
+      - name: Setup code signing
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: ./scripts/setup-macos-signing.sh
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          AC_APIKEY_P8_BASE64: ${{ secrets.AC_APIKEY_P8_BASE64 }}
+          AC_APIKEY_ID: ${{ secrets.AC_APIKEY_ID }}
+          AC_APIKEY_ISSUER_ID: ${{ secrets.AC_APIKEY_ISSUER_ID }}
       - run: make dist-mac
       - uses: actions/upload-artifact@v4
         with:
@@ -316,8 +333,8 @@ jobs:
   build-windows:
     name: Build / Windows
     needs: [changes]
-    # Windows builds are slow - only run in merge queue, not on every PR push
-    if: ${{ github.event_name == 'merge_group' && (needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true') }}
+    # Windows builds are slow - only run in merge queue and main pushes, not on every PR push
+    if: ${{ (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true') }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -338,7 +355,22 @@ jobs:
           bun --version
           magick --version | head -1
       - run: bun run build
-      - run: make dist-win
+      - name: Setup code signing
+        id: signing
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: ./.github/actions/setup-windows-signing
+        with:
+          ev_signing_cert: ${{ secrets.EV_SIGNING_CERT }}
+          gcp_workload_id_provider: ${{ vars.GCP_WORKLOAD_ID_PROVIDER }}
+          gcp_service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+      - name: Package for Windows
+        run: make dist-win
+        env:
+          # EV signing environment variables (used by custom sign script if configured)
+          EV_KEYSTORE: ${{ vars.EV_KEYSTORE }}
+          EV_KEY: ${{ vars.EV_KEY }}
+          EV_TSA_URL: ${{ vars.EV_TSA_URL }}
+          GCLOUD_ACCESS_TOKEN: ${{ steps.signing.outputs.gcloud_access_token }}
       - uses: actions/upload-artifact@v4
         with:
           name: build-windows
