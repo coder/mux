@@ -7,7 +7,7 @@
  */
 
 import React, { useState, useCallback, useRef, useMemo } from "react";
-import { MessageSquare, X, Pencil, Check } from "lucide-react";
+import { MessageSquare, X, Pencil, Check, Trash2 } from "lucide-react";
 import { DiffRenderer } from "./DiffRenderer";
 import { Button } from "../ui/button";
 import { matchesKeybind, formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
@@ -21,8 +21,16 @@ interface ReviewBlockCoreProps {
   filePath: string;
   lineRange: string;
   code: string;
+  diff?: string;
+  oldStart?: number;
+  newStart?: number;
   comment: string;
-  onRemove?: () => void;
+  /** Detach from chat (sets status back to pending) */
+  onDetach?: () => void;
+  /** Mark as complete (checked) */
+  onComplete?: () => void;
+  /** Permanently delete the review */
+  onDelete?: () => void;
   onEditComment?: (newComment: string) => void;
 }
 
@@ -33,21 +41,26 @@ const ReviewBlockCore: React.FC<ReviewBlockCoreProps> = ({
   filePath,
   lineRange,
   code,
+  diff,
+  oldStart,
+  newStart,
   comment,
-  onRemove,
+  onDetach,
+  onComplete,
+  onDelete,
   onEditComment,
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(comment);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Format code for diff display - add context markers if needed
-  const diffContent = useMemo(() => {
-    if (!code) return "";
-    const lines = code.split("\n");
-    const hasDiffMarkers = lines.some((l) => /^[+-\s]/.test(l));
-    if (hasDiffMarkers) return code;
-    return lines.map((l) => ` ${l}`).join("\n");
+  // Check if code has embedded line numbers (from review selection)
+  // Format: "12 14 + content" or " 1  2   content"
+  const hasEmbeddedLineNumbers = useMemo(() => {
+    if (!code) return false;
+    const firstLine = code.split("\n")[0] ?? "";
+    // Match: optional digits, space, optional digits, space, then +/-/space
+    return /^\s*\d*\s+\d*\s+[+-\s]/.test(firstLine);
   }, [code]);
 
   const handleStartEdit = useCallback(() => {
@@ -83,35 +96,76 @@ const ReviewBlockCore: React.FC<ReviewBlockCoreProps> = ({
 
   return (
     <div className="min-w-0 overflow-hidden rounded border border-[var(--color-review-accent)]/30 bg-[var(--color-review-accent)]/5">
-      {/* Header */}
-      <div className="flex items-center gap-1.5 border-b border-[var(--color-review-accent)]/20 bg-[var(--color-review-accent)]/10 px-2 py-1 text-xs">
+      {/* Header - actions left of file path (consistent with ReviewsBanner), trash on right */}
+      <div className="flex items-center gap-1 border-b border-[var(--color-review-accent)]/20 bg-[var(--color-review-accent)]/10 px-2 py-1 text-xs">
+        {/* Safe actions on left: complete and detach */}
+        {onComplete && (
+          <button
+            type="button"
+            onClick={onComplete}
+            className="text-muted hover:text-success flex shrink-0 items-center justify-center rounded p-0.5 transition-colors"
+            title="Mark as done"
+          >
+            <Check className="size-3" />
+          </button>
+        )}
+        {onDetach && (
+          <button
+            type="button"
+            onClick={onDetach}
+            className="text-muted hover:text-secondary flex shrink-0 items-center justify-center rounded p-0.5 transition-colors"
+            title="Detach from message"
+          >
+            <X className="size-3" />
+          </button>
+        )}
         <MessageSquare className="size-3 shrink-0 text-[var(--color-review-accent)]" />
         <span className="text-primary min-w-0 flex-1 truncate font-mono">
           {filePath}:{lineRange}
         </span>
-        {onRemove && (
+        {/* Destructive action on right */}
+        {onDelete && (
           <button
             type="button"
-            onClick={onRemove}
-            className="text-muted hover:text-error -mr-0.5 flex shrink-0 items-center justify-center rounded p-0.5 transition-colors"
-            title="Remove from message"
+            onClick={onDelete}
+            className="text-muted hover:text-error flex shrink-0 items-center justify-center rounded p-0.5 transition-colors"
+            title="Delete review"
           >
-            <X className="size-3" />
+            <Trash2 className="size-3" />
           </button>
         )}
       </div>
 
       {/* Code snippet - horizontal scroll for long lines, vertical scroll limited to max-h-64 */}
-      {code && (
+      {(diff ?? code) && (
         <div className="max-h-64 overflow-auto border-b border-[var(--color-review-accent)]/20 text-[11px]">
-          <DiffRenderer
-            content={diffContent}
-            showLineNumbers={false}
-            fontSize="11px"
-            filePath={filePath}
-            maxHeight="none"
-            className="min-w-fit rounded-none"
-          />
+          {diff ? (
+            <DiffRenderer
+              content={diff}
+              showLineNumbers={true}
+              oldStart={oldStart ?? 1}
+              newStart={newStart ?? 1}
+              fontSize="11px"
+              filePath={filePath}
+              maxHeight="none"
+              className="min-w-fit rounded-none"
+            />
+          ) : hasEmbeddedLineNumbers ? (
+            // Legacy: code with embedded line numbers - render as plain monospace
+            <pre className="font-monospace bg-code-bg p-1.5 text-[11px] leading-[1.4] whitespace-pre">
+              {code}
+            </pre>
+          ) : (
+            // Standard diff format (without reliable start numbers) - highlight but omit gutters
+            <DiffRenderer
+              content={code}
+              showLineNumbers={false}
+              fontSize="11px"
+              filePath={filePath}
+              maxHeight="none"
+              className="min-w-fit rounded-none"
+            />
+          )}
         </div>
       )}
 
@@ -183,8 +237,12 @@ const ReviewBlockCore: React.FC<ReviewBlockCoreProps> = ({
 interface ReviewBlockFromDataProps {
   /** Structured review data (no parsing needed) */
   data: ReviewNoteDataForDisplay;
-  /** Optional callback to remove the review */
-  onRemove?: () => void;
+  /** Detach from chat (sets status back to pending) */
+  onDetach?: () => void;
+  /** Mark as complete (checked) */
+  onComplete?: () => void;
+  /** Permanently delete the review */
+  onDelete?: () => void;
   /** Optional callback to edit the comment */
   onEditComment?: (newComment: string) => void;
 }
@@ -195,7 +253,9 @@ interface ReviewBlockFromDataProps {
  */
 export const ReviewBlockFromData: React.FC<ReviewBlockFromDataProps> = ({
   data,
-  onRemove,
+  onDetach,
+  onComplete,
+  onDelete,
   onEditComment,
 }) => {
   return (
@@ -203,8 +263,13 @@ export const ReviewBlockFromData: React.FC<ReviewBlockFromDataProps> = ({
       filePath={data.filePath}
       lineRange={data.lineRange}
       code={data.selectedCode}
+      diff={data.selectedDiff}
+      oldStart={data.oldStart}
+      newStart={data.newStart}
       comment={data.userNote}
-      onRemove={onRemove}
+      onDetach={onDetach}
+      onComplete={onComplete}
+      onDelete={onDelete}
       onEditComment={onEditComment}
     />
   );

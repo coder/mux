@@ -6,6 +6,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { View } from "react-native";
 import { ThemeProvider, useTheme } from "../src/theme";
+import { LiveBashOutputProvider } from "../src/contexts/LiveBashOutputContext";
 import { WorkspaceChatProvider } from "../src/contexts/WorkspaceChatContext";
 import { AppConfigProvider } from "../src/contexts/AppConfigContext";
 import { ORPCProvider } from "../src/orpc/react";
@@ -77,7 +78,9 @@ export default function RootLayout(): JSX.Element {
           <AppConfigProvider>
             <ORPCProvider>
               <WorkspaceChatProvider>
-                <AppFrame />
+                <LiveBashOutputProvider>
+                  <AppFrame />
+                </LiveBashOutputProvider>
               </WorkspaceChatProvider>
             </ORPCProvider>
           </AppConfigProvider>

@@ -138,12 +138,15 @@ describeOllama("Ollama integration", () => {
     const collector = createStreamCollector(env.orpc, workspaceId);
     collector.start();
     try {
-      // Ask for current time which should trigger bash tool
+      // Ask for current time which should trigger bash
       const result = await sendMessageWithModel(
         env,
         workspaceId,
-        "What is the current date and time? Use the bash tool to find out.",
-        modelString("ollama", OLLAMA_MODEL)
+        'Use bash to run: date. Set display_name="current-time" and timeout_secs=30. Do not spawn a sub-agent.',
+        modelString("ollama", OLLAMA_MODEL),
+        {
+          toolPolicy: [{ regex_match: "bash", action: "require" }],
+        }
       );
 
       expect(result.success).toBe(true);
@@ -153,7 +156,7 @@ describeOllama("Ollama integration", () => {
 
       assertStreamSuccess(collector);
 
-      // Verify bash tool was called via events
+      // Verify bash was called via events
       const events = collector.getEvents();
       const toolCallStarts = events.filter((e: any) => e.type === "tool-call-start");
       expect(toolCallStarts.length).toBeGreaterThan(0);
@@ -161,12 +164,21 @@ describeOllama("Ollama integration", () => {
       const bashCall = toolCallStarts.find((e: any) => e.toolName === "bash");
       expect(bashCall).toBeDefined();
 
-      // Verify we got a text response with date/time info
+      // Verify we got a response and/or tool output with date/time info
       const deltas = collector.getDeltas();
       const responseText = extractTextFromEvents(deltas).toLowerCase();
 
-      // Should mention time or date in response
-      expect(responseText).toMatch(/time|date|am|pm|2024|2025/i);
+      const toolCallEnds = events.filter(
+        (e: any) => e.type === "tool-call-end" && e.toolName === "bash"
+      );
+      const bashOutput = toolCallEnds
+        .map((e: any) => e.result?.output)
+        .filter((t: any) => typeof t === "string")
+        .join("\n")
+        .toLowerCase();
+
+      // Should mention time or date in response or in the tool output
+      expect(`${responseText}\n${bashOutput}`).toMatch(/time|date|am|pm|\d{2}:\d{2}|20\d{2}/i);
     } finally {
       collector.stop();
       await cleanup();

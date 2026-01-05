@@ -36,13 +36,14 @@ import {
 } from "@/common/orpc/types";
 import { defaultModel } from "@/common/utils/ai/models";
 import { ensureProvidersConfig } from "@/common/utils/providers/ensureProvidersConfig";
-import { modeToToolPolicy } from "@/common/utils/ui/modeUtils";
+
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { parseRuntimeModeAndHost, RUNTIME_MODE } from "@/common/types/runtime";
 import assert from "@/common/utils/assert";
 import parseDuration from "parse-duration";
 import { log, type LogLevel } from "@/node/services/log";
+import { getParseOptions } from "./argv";
 
 type CLIMode = "plan" | "exec";
 
@@ -194,6 +195,7 @@ program
   .option("--json", "output NDJSON for programmatic consumption")
   .option("-q, --quiet", "only output final result")
   .option("--workspace-id <id>", "explicit workspace ID (auto-generated if not provided)")
+  .option("--workspace <id>", "continue an existing workspace (loads history, skips init)")
   .option("--config-root <path>", "mux config directory")
   .option("--mcp <server>", "MCP server as name=command (can be repeated)", collectMcpServers, [])
   .option("--no-mcp-config", "ignore .mux/mcp.jsonc, use only --mcp servers")
@@ -212,7 +214,7 @@ Examples:
 `
   );
 
-program.parse(process.argv);
+program.parse(process.argv, getParseOptions());
 
 interface CLIOptions {
   dir: string;
@@ -226,6 +228,7 @@ interface CLIOptions {
   json?: boolean;
   quiet?: boolean;
   workspaceId?: string;
+  workspace?: string;
   configRoot?: string;
   mcp: MCPServerEntry[];
   mcpConfig: boolean;
@@ -249,10 +252,6 @@ async function main(): Promise<void> {
   }
   // Default is already "warn" for CLI mode (set in log.ts)
 
-  // Resolve directory
-  const projectDir = path.resolve(opts.dir);
-  await ensureDirectory(projectDir);
-
   // Get message from arg or stdin
   const stdinMessage = await gatherMessageFromStdin();
   const message = messageArg?.trim() ?? stdinMessage.trim();
@@ -265,7 +264,35 @@ async function main(): Promise<void> {
 
   // Setup config
   const config = new Config(opts.configRoot);
-  const workspaceId = opts.workspaceId ?? generateWorkspaceId();
+
+  // Determine if continuing an existing workspace
+  const continueWorkspace = opts.workspace;
+  const workspaceId = continueWorkspace ?? opts.workspaceId ?? generateWorkspaceId();
+
+  // Resolve directory - for continuing workspace, try to get from metadata
+  let projectDir: string;
+  if (continueWorkspace) {
+    const metadataPath = path.join(config.sessionsDir, continueWorkspace, "metadata.json");
+    try {
+      const metadataContent = await fs.readFile(metadataPath, "utf-8");
+      const metadata = JSON.parse(metadataContent) as { projectPath?: string };
+      if (metadata.projectPath) {
+        projectDir = metadata.projectPath;
+        log.info(`Continuing workspace ${continueWorkspace}, using project path: ${projectDir}`);
+      } else {
+        projectDir = path.resolve(opts.dir);
+        log.warn(`No projectPath in metadata, using --dir: ${projectDir}`);
+      }
+    } catch {
+      // Metadata doesn't exist or is invalid, fall back to --dir
+      projectDir = path.resolve(opts.dir);
+      log.warn(`Could not read metadata for ${continueWorkspace}, using --dir: ${projectDir}`);
+    }
+  } else {
+    projectDir = path.resolve(opts.dir);
+    await ensureDirectory(projectDir);
+  }
+
   const model: string = opts.model;
   const runtimeConfig = parseRuntimeConfig(opts.runtime, config.srcDir);
   const thinkingLevel = parseThinkingLevel(opts.thinking);
@@ -332,17 +359,23 @@ async function main(): Promise<void> {
     backgroundProcessManager,
   });
 
-  await session.ensureMetadata({
-    workspacePath: projectDir,
-    projectName: path.basename(projectDir),
-    runtimeConfig,
-  });
+  // For continuing workspace, metadata should already exist
+  // For new workspace, create it
+  if (!continueWorkspace) {
+    await session.ensureMetadata({
+      workspacePath: projectDir,
+      projectName: path.basename(projectDir),
+      runtimeConfig,
+    });
+  } else {
+    log.info(`Continuing workspace ${workspaceId} - using existing metadata`);
+  }
 
   const buildSendOptions = (cliMode: CLIMode): SendMessageOptions => ({
     model,
     thinkingLevel,
     mode: cliMode,
-    toolPolicy: modeToToolPolicy(cliMode),
+    // toolPolicy is computed by backend from agent definitions (resolveToolPolicyForAgent)
     // Plan mode instructions are handled by the backend (has access to plan file path)
   });
 

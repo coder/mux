@@ -5,7 +5,6 @@ import type { MuxProviderOptions } from "@/common/types/providerOptions";
 interface ProviderOptionsContextType {
   options: MuxProviderOptions;
   setAnthropicOptions: (options: MuxProviderOptions["anthropic"]) => void;
-  setOpenAIOptions: (options: MuxProviderOptions["openai"]) => void;
   setGoogleOptions: (options: MuxProviderOptions["google"]) => void;
 }
 
@@ -18,13 +17,6 @@ export function ProviderOptionsProvider({ children }: { children: React.ReactNod
     use1MContext: false,
   });
 
-  const [openaiOptions, setOpenAIOptions] = usePersistedState<MuxProviderOptions["openai"]>(
-    "provider_options_openai",
-    {
-      disableAutoTruncation: false,
-    }
-  );
-
   const [googleOptions, setGoogleOptions] = usePersistedState<MuxProviderOptions["google"]>(
     "provider_options_google",
     {}
@@ -33,11 +25,9 @@ export function ProviderOptionsProvider({ children }: { children: React.ReactNod
   const value = {
     options: {
       anthropic: anthropicOptions,
-      openai: openaiOptions,
       google: googleOptions,
     },
     setAnthropicOptions,
-    setOpenAIOptions,
     setGoogleOptions,
   };
 

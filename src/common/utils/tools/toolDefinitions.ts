@@ -6,6 +6,7 @@
  */
 
 import { z } from "zod";
+import { AgentIdSchema, AgentSkillPackageSchema, SkillNameSchema } from "@/common/orpc/schemas";
 import {
   BASH_HARD_MAX_LINES,
   BASH_MAX_LINE_BYTES,
@@ -17,6 +18,365 @@ import { TOOL_EDIT_WARNING } from "@/common/types/tools";
 
 import { zodToJsonSchema } from "zod-to-json-schema";
 
+// -----------------------------------------------------------------------------
+// ask_user_question (plan-mode interactive questions)
+// -----------------------------------------------------------------------------
+
+export const AskUserQuestionOptionSchema = z
+  .object({
+    label: z.string().min(1),
+    description: z.string().min(1),
+  })
+  .strict();
+
+export const AskUserQuestionQuestionSchema = z
+  .object({
+    question: z.string().min(1),
+    header: z.string().min(1).max(32).describe("Short label shown in the UI (keep it concise)"),
+    options: z.array(AskUserQuestionOptionSchema).min(2).max(4),
+    multiSelect: z.boolean(),
+  })
+  .strict()
+  .superRefine((question, ctx) => {
+    const labels = question.options.map((o) => o.label);
+    const labelSet = new Set(labels);
+    if (labelSet.size !== labels.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Option labels must be unique within a question",
+        path: ["options"],
+      });
+    }
+
+    // Claude Code provides "Other" automatically; do not include it explicitly.
+    if (labels.some((label) => label.trim().toLowerCase() === "other")) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Do not include an 'Other' option; it is provided automatically",
+        path: ["options"],
+      });
+    }
+  });
+
+export const AskUserQuestionToolArgsSchema = z
+  .object({
+    questions: z.array(AskUserQuestionQuestionSchema).min(1).max(4),
+    // Optional prefilled answers (Claude Code supports this, though Mux typically won't use it)
+    answers: z.record(z.string(), z.string()).optional(),
+  })
+  .strict()
+  .superRefine((args, ctx) => {
+    const questionTexts = args.questions.map((q) => q.question);
+    const questionTextSet = new Set(questionTexts);
+    if (questionTextSet.size !== questionTexts.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Question text must be unique across questions",
+        path: ["questions"],
+      });
+    }
+  });
+
+export const AskUserQuestionToolResultSchema = z
+  .object({
+    questions: z.array(AskUserQuestionQuestionSchema),
+    answers: z.record(z.string(), z.string()),
+  })
+  .strict();
+
+// -----------------------------------------------------------------------------
+// task (sub-workspaces as subagents)
+// -----------------------------------------------------------------------------
+
+const SubagentTypeSchema = z.preprocess(
+  (value) => (typeof value === "string" ? value.trim().toLowerCase() : value),
+  AgentIdSchema
+);
+
+const TaskAgentIdSchema = z.preprocess(
+  (value) => (typeof value === "string" ? value.trim().toLowerCase() : value),
+  AgentIdSchema
+);
+
+const TaskToolAgentArgsSchema = z
+  .object({
+    // Prefer agentId. subagent_type is a deprecated alias for backwards compatibility.
+    agentId: TaskAgentIdSchema.optional(),
+    subagent_type: SubagentTypeSchema.optional(),
+    prompt: z.string().min(1),
+    title: z.string().min(1),
+    run_in_background: z.boolean().default(false),
+  })
+  .strict()
+  .superRefine((args, ctx) => {
+    const hasAgentId = typeof args.agentId === "string" && args.agentId.length > 0;
+    const hasSubagentType = typeof args.subagent_type === "string" && args.subagent_type.length > 0;
+
+    if (!hasAgentId && !hasSubagentType) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Provide agentId (preferred) or subagent_type",
+        path: ["agentId"],
+      });
+      return;
+    }
+
+    if (hasAgentId && hasSubagentType) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Provide only one of agentId or subagent_type (not both)",
+        path: ["agentId"],
+      });
+      return;
+    }
+  });
+
+export const TaskToolArgsSchema = TaskToolAgentArgsSchema;
+
+export const TaskToolQueuedResultSchema = z
+  .object({
+    status: z.enum(["queued", "running"]),
+    taskId: z.string(),
+  })
+  .strict();
+
+export const TaskToolCompletedResultSchema = z
+  .object({
+    status: z.literal("completed"),
+    taskId: z.string().optional(),
+    reportMarkdown: z.string(),
+    title: z.string().optional(),
+    agentId: z.string().optional(),
+    agentType: z.string().optional(),
+  })
+  .strict();
+
+export const TaskToolResultSchema = z.discriminatedUnion("status", [
+  TaskToolQueuedResultSchema,
+  TaskToolCompletedResultSchema,
+]);
+
+// -----------------------------------------------------------------------------
+// task_await (await one or more sub-agent tasks)
+// -----------------------------------------------------------------------------
+
+export const TaskAwaitToolArgsSchema = z
+  .object({
+    task_ids: z
+      .array(z.string().min(1))
+      .optional()
+      .describe(
+        "List of task IDs to await. When omitted, waits for all active descendant tasks of the current workspace."
+      ),
+    filter: z
+      .string()
+      .optional()
+      .describe(
+        "Optional regex to filter bash task output lines. By default, only matching lines are returned. " +
+          "When filter_exclude is true, matching lines are excluded instead. " +
+          "Non-matching lines are discarded and cannot be retrieved later."
+      ),
+    filter_exclude: z
+      .boolean()
+      .optional()
+      .describe(
+        "When true, lines matching 'filter' are excluded instead of kept. " +
+          "Requires 'filter' to be set."
+      ),
+    timeout_secs: z
+      .number()
+      .min(0)
+      .optional()
+      .default(600)
+      .describe(
+        "Maximum time to wait in seconds for each task. " +
+          "For bash tasks, this waits for NEW output (or process exit). " +
+          "If exceeded, the result returns status=queued|running|awaiting_report (task is still active). " +
+          "Defaults to 600 seconds (10 minutes) if not specified. " +
+          "Set to 0 for a non-blocking status check."
+      ),
+  })
+  .strict()
+  .superRefine((args, ctx) => {
+    if (args.filter_exclude && !args.filter) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "filter_exclude requires filter to be set",
+        path: ["filter_exclude"],
+      });
+    }
+  });
+
+export const TaskAwaitToolCompletedResultSchema = z
+  .object({
+    status: z.literal("completed"),
+    taskId: z.string(),
+    reportMarkdown: z.string(),
+    title: z.string().optional(),
+    output: z.string().optional(),
+    elapsed_ms: z.number().optional(),
+    exitCode: z.number().optional(),
+    note: z.string().optional(),
+  })
+  .strict();
+
+export const TaskAwaitToolActiveResultSchema = z
+  .object({
+    status: z.enum(["queued", "running", "awaiting_report"]),
+    taskId: z.string(),
+    output: z.string().optional(),
+    elapsed_ms: z.number().optional(),
+    note: z.string().optional(),
+  })
+  .strict();
+
+export const TaskAwaitToolNotFoundResultSchema = z
+  .object({
+    status: z.literal("not_found"),
+    taskId: z.string(),
+  })
+  .strict();
+
+export const TaskAwaitToolInvalidScopeResultSchema = z
+  .object({
+    status: z.literal("invalid_scope"),
+    taskId: z.string(),
+  })
+  .strict();
+
+export const TaskAwaitToolErrorResultSchema = z
+  .object({
+    status: z.literal("error"),
+    taskId: z.string(),
+    error: z.string(),
+  })
+  .strict();
+
+export const TaskAwaitToolResultSchema = z
+  .object({
+    results: z.array(
+      z.discriminatedUnion("status", [
+        TaskAwaitToolCompletedResultSchema,
+        TaskAwaitToolActiveResultSchema,
+        TaskAwaitToolNotFoundResultSchema,
+        TaskAwaitToolInvalidScopeResultSchema,
+        TaskAwaitToolErrorResultSchema,
+      ])
+    ),
+  })
+  .strict();
+
+// -----------------------------------------------------------------------------
+// task_terminate (terminate one or more sub-agent tasks)
+// -----------------------------------------------------------------------------
+
+export const TaskTerminateToolArgsSchema = z
+  .object({
+    task_ids: z
+      .array(z.string().min(1))
+      .min(1)
+      .describe(
+        "List of task IDs to terminate. Each must be a descendant sub-agent task of the current workspace."
+      ),
+  })
+  .strict();
+
+export const TaskTerminateToolTerminatedResultSchema = z
+  .object({
+    status: z.literal("terminated"),
+    taskId: z.string(),
+    terminatedTaskIds: z
+      .array(z.string())
+      .describe("All terminated task IDs (includes descendants)"),
+  })
+  .strict();
+
+export const TaskTerminateToolNotFoundResultSchema = z
+  .object({
+    status: z.literal("not_found"),
+    taskId: z.string(),
+  })
+  .strict();
+
+export const TaskTerminateToolInvalidScopeResultSchema = z
+  .object({
+    status: z.literal("invalid_scope"),
+    taskId: z.string(),
+  })
+  .strict();
+
+export const TaskTerminateToolErrorResultSchema = z
+  .object({
+    status: z.literal("error"),
+    taskId: z.string(),
+    error: z.string(),
+  })
+  .strict();
+
+export const TaskTerminateToolResultSchema = z
+  .object({
+    results: z.array(
+      z.discriminatedUnion("status", [
+        TaskTerminateToolTerminatedResultSchema,
+        TaskTerminateToolNotFoundResultSchema,
+        TaskTerminateToolInvalidScopeResultSchema,
+        TaskTerminateToolErrorResultSchema,
+      ])
+    ),
+  })
+  .strict();
+
+// -----------------------------------------------------------------------------
+// task_list (list descendant sub-agent tasks)
+// -----------------------------------------------------------------------------
+
+const TaskListStatusSchema = z.enum(["queued", "running", "awaiting_report", "reported"]);
+const TaskListThinkingLevelSchema = z.enum(["off", "low", "medium", "high", "xhigh"]);
+
+export const TaskListToolArgsSchema = z
+  .object({
+    statuses: z
+      .array(TaskListStatusSchema)
+      .optional()
+      .describe(
+        "Task statuses to include. Defaults to active tasks: queued, running, awaiting_report."
+      ),
+  })
+  .strict();
+
+export const TaskListToolTaskSchema = z
+  .object({
+    taskId: z.string(),
+    status: TaskListStatusSchema,
+    parentWorkspaceId: z.string(),
+    agentType: z.string().optional(),
+    workspaceName: z.string().optional(),
+    title: z.string().optional(),
+    createdAt: z.string().optional(),
+    modelString: z.string().optional(),
+    thinkingLevel: TaskListThinkingLevelSchema.optional(),
+    depth: z.number().int().min(0),
+  })
+  .strict();
+
+export const TaskListToolResultSchema = z
+  .object({
+    tasks: z.array(TaskListToolTaskSchema),
+  })
+  .strict();
+
+// -----------------------------------------------------------------------------
+// agent_report (explicit subagent -> parent report)
+// -----------------------------------------------------------------------------
+
+export const AgentReportToolArgsSchema = z
+  .object({
+    reportMarkdown: z.string().min(1),
+    title: z.string().optional(),
+  })
+  .strict();
+
+export const AgentReportToolResultSchema = z.object({ success: z.literal(true) }).strict();
 const FILE_EDIT_FILE_PATH = z
   .string()
   .describe("Path to the file to edit (absolute or relative to the current workspace)");
@@ -60,12 +420,13 @@ export const TOOL_DEFINITIONS = {
             "Use for processes running >5s (dev servers, builds, file watchers). " +
             "Do NOT use for quick commands (<5s), interactive processes (no stdin support), " +
             "or processes requiring real-time output (use foreground with larger timeout instead). " +
-            "Returns immediately with process_id. " +
-            "Read output with bash_output (returns only new output since last check). " +
-            "Terminate with bash_background_terminate using the process_id. " +
+            "Returns immediately with a taskId (bash:<processId>) and backgroundProcessId. " +
+            "Read output with task_await (returns only new output since last check). " +
+            "Terminate with task_terminate using the taskId. " +
+            "List active tasks with task_list. " +
             "Process persists until timeout_secs expires, terminated, or workspace is removed." +
             "\\n\\nFor long-running tasks like builds or compilations, prefer background mode to continue productive work in parallel. " +
-            "Check back periodically with bash_output rather than blocking on completion."
+            "Check back periodically with task_await rather than blocking on completion."
         ),
       display_name: z
         .string()
@@ -94,6 +455,46 @@ export const TOOL_DEFINITIONS = {
         .describe("Number of lines to return from offset (optional, returns all if not specified)"),
     }),
   },
+  agent_skill_read: {
+    description:
+      "Load an Agent Skill's SKILL.md (YAML frontmatter + markdown body) by name. " +
+      "Skills are discovered from <projectRoot>/.mux/skills/<name>/SKILL.md and ~/.mux/skills/<name>/SKILL.md.",
+    schema: z
+      .object({
+        name: SkillNameSchema.describe("Skill name (directory name under the skills root)"),
+      })
+      .strict(),
+  },
+  agent_skill_read_file: {
+    description:
+      "Read a file within an Agent Skill directory. " +
+      "filePath must be relative to the skill directory (no absolute paths, no ~, no .. traversal). " +
+      "Supports offset/limit like file_read.",
+    schema: z
+      .object({
+        name: SkillNameSchema.describe("Skill name (directory name under the skills root)"),
+        filePath: z
+          .string()
+          .min(1)
+          .describe("Path to the file within the skill directory (relative)"),
+        offset: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe("1-based starting line number (optional, defaults to 1)"),
+        limit: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe(
+            "Number of lines to return from offset (optional, returns all if not specified)"
+          ),
+      })
+      .strict(),
+  },
+
   file_edit_replace_string: {
     description:
       "⚠️ CRITICAL: Always check tool results - edits WILL fail if old_string is not found or unique. Do not proceed with dependent operations (commits, pushes, builds) until confirming success.\n\n" +
@@ -160,12 +561,64 @@ export const TOOL_DEFINITIONS = {
         path: ["before"],
       }),
   },
+  ask_user_question: {
+    description:
+      "Ask 1–4 multiple-choice questions (with optional multi-select) and wait for the user's answers. " +
+      "This tool is intended for plan mode and MUST be used when you need user clarification to complete the plan. " +
+      "Do not output a list of open questions; ask them via this tool instead. " +
+      "Each question must include 2–4 options; an 'Other' choice is provided automatically.",
+    schema: AskUserQuestionToolArgsSchema,
+  },
   propose_plan: {
     description:
       "Signal that your plan is complete and ready for user approval. " +
       "This tool reads the plan from the plan file you wrote. " +
-      "You must write your plan to the plan file before calling this tool.",
+      "You must write your plan to the plan file before calling this tool. " +
+      "After calling this tool, do not paste the plan contents or mention the plan file path; the UI already shows the full plan.",
     schema: z.object({}),
+  },
+  task: {
+    description:
+      "Spawn a sub-agent task (child workspace). " +
+      "\n\nProvide subagent_type, prompt, title, run_in_background. " +
+      "\n\nIf run_in_background is false, waits for the sub-agent to finish and returns a completed reportMarkdown. " +
+      "If run_in_background is true, returns a queued/running taskId; use task_await to wait for completion, task_list to rediscover active tasks, and task_terminate to stop it. " +
+      "Use the bash tool to run shell commands.",
+    schema: TaskToolArgsSchema,
+  },
+  task_await: {
+    description:
+      "Wait for one or more tasks to produce output. " +
+      "Agent tasks return reports when completed. " +
+      "Bash tasks return incremental output while running and a final reportMarkdown when they exit. " +
+      "For bash tasks, you may optionally pass filter/filter_exclude to include/exclude output lines by regex. " +
+      "WARNING: when using filter, non-matching lines are permanently discarded. " +
+      "Use this tool to WAIT; do not poll task_list in a loop to wait for task completion (that is misuse and wastes tool calls). " +
+      "This is similar to Promise.allSettled(): you always get per-task results. " +
+      "Possible statuses: completed, queued, running, awaiting_report, not_found, invalid_scope, error.",
+    schema: TaskAwaitToolArgsSchema,
+  },
+  task_terminate: {
+    description:
+      "Terminate one or more tasks immediately (sub-agent tasks or background bash tasks). " +
+      "For sub-agent tasks, this stops their AI streams and deletes their workspaces (best-effort). " +
+      "No report will be delivered; any in-progress work is discarded. " +
+      "If the task has descendant sub-agent tasks, they are terminated too.",
+    schema: TaskTerminateToolArgsSchema,
+  },
+  task_list: {
+    description:
+      "List descendant tasks for the current workspace, including status + metadata. " +
+      "This includes sub-agent tasks and background bash tasks. " +
+      "Use this after compaction or interruptions to rediscover which tasks are still active. " +
+      "This is a discovery tool, NOT a waiting mechanism: if you need to wait for tasks to finish, call task_await (optionally omit task_ids to await all active descendant tasks).",
+    schema: TaskListToolArgsSchema,
+  },
+  agent_report: {
+    description:
+      "Report the final result of a sub-agent task back to the parent workspace. " +
+      "Call this exactly once when you have a final answer (after any spawned sub-tasks complete).",
+    schema: AgentReportToolArgsSchema,
   },
   todo_write: {
     description:
@@ -239,6 +692,7 @@ export const TOOL_DEFINITIONS = {
   },
   bash_output: {
     description:
+      'DEPRECATED: use task_await instead (pass bash-prefixed taskId like "bash:<processId>"). ' +
       "Retrieve output from a running or completed background bash process. " +
       "Returns only NEW output since the last check (incremental). " +
       "Returns stdout and stderr output along with process status. " +
@@ -279,6 +733,7 @@ export const TOOL_DEFINITIONS = {
   },
   bash_background_list: {
     description:
+      "DEPRECATED: use task_list instead. " +
       "List all background processes started with bash(run_in_background=true). " +
       "Returns process_id, status, script for each process. " +
       "Use to find process_id for termination or check output with bash_output.",
@@ -286,6 +741,7 @@ export const TOOL_DEFINITIONS = {
   },
   bash_background_terminate: {
     description:
+      "DEPRECATED: use task_terminate instead. " +
       "Terminate a background process started with bash(run_in_background=true). " +
       "Use process_id from the original bash response or from bash_background_list. " +
       "Sends SIGTERM, waits briefly, then SIGKILL if needed. " +
@@ -304,7 +760,279 @@ export const TOOL_DEFINITIONS = {
       url: z.string().url().describe("The URL to fetch (http or https)"),
     }),
   },
+  code_execution: {
+    description:
+      "Execute JavaScript code in a sandboxed environment with access to Mux tools. " +
+      "Available for multi-tool workflows when PTC experiment is enabled.",
+    schema: z.object({
+      code: z.string().min(1).describe("JavaScript code to execute in the PTC sandbox"),
+    }),
+  },
+  // #region NOTIFY_DOCS
+  notify: {
+    description:
+      "Send a system notification to the user. Use this to alert the user about important events that require their attention, such as long-running task completion, errors requiring intervention, or questions. " +
+      "Notifications appear as OS-native notifications (macOS Notification Center, Windows Toast, Linux). " +
+      "Infer whether to send notifications from user instructions. If no instructions provided, reserve notifications for major wins or blocking issues. Do not use for routine status updates (use status_set instead).",
+    schema: z
+      .object({
+        title: z
+          .string()
+          .min(1)
+          .max(64)
+          .describe("Short notification title (max 64 chars). Should be concise and actionable."),
+        message: z
+          .string()
+          .max(200)
+          .optional()
+          .describe(
+            "Optional notification body with more details (max 200 chars). " +
+              "Keep it brief - users may only see a preview."
+          ),
+      })
+      .strict(),
+  },
+  // #endregion NOTIFY_DOCS
 } as const;
+
+// -----------------------------------------------------------------------------
+// Result Schemas for Bridgeable Tools (PTC Type Generation)
+// -----------------------------------------------------------------------------
+// These Zod schemas define the result types for tools exposed in the PTC sandbox.
+// They serve as single source of truth for both:
+// 1. TypeScript types in tools.ts (via z.infer<>)
+// 2. Runtime type generation for PTC (via Zod → JSON Schema → TypeScript string)
+
+/**
+ * Truncation info returned when output exceeds limits.
+ */
+const TruncatedInfoSchema = z.object({
+  reason: z.string(),
+  totalLines: z.number(),
+});
+
+/**
+ * Bash tool result - success, background spawn, or failure.
+ */
+export const BashToolResultSchema = z.union([
+  // Foreground success
+  z.object({
+    success: z.literal(true),
+    output: z.string(),
+    exitCode: z.literal(0),
+    wall_duration_ms: z.number(),
+    note: z.string().optional(),
+    truncated: TruncatedInfoSchema.optional(),
+  }),
+  // Background spawn success
+  z.object({
+    success: z.literal(true),
+    output: z.string(),
+    exitCode: z.literal(0),
+    wall_duration_ms: z.number(),
+    taskId: z.string(),
+    backgroundProcessId: z.string(),
+  }),
+  // Failure
+  z.object({
+    success: z.literal(false),
+    output: z.string().optional(),
+    exitCode: z.number(),
+    error: z.string(),
+    wall_duration_ms: z.number(),
+    note: z.string().optional(),
+    truncated: TruncatedInfoSchema.optional(),
+  }),
+]);
+
+/**
+ * Bash output tool result - process status and incremental output.
+ */
+export const BashOutputToolResultSchema = z.union([
+  z.object({
+    success: z.literal(true),
+    status: z.enum(["running", "exited", "killed", "failed", "interrupted"]),
+    output: z.string(),
+    exitCode: z.number().optional(),
+    note: z.string().optional(),
+    elapsed_ms: z.number(),
+  }),
+  z.object({
+    success: z.literal(false),
+    error: z.string(),
+  }),
+]);
+
+/**
+ * Bash background list tool result - all background processes.
+ */
+export const BashBackgroundListResultSchema = z.union([
+  z.object({
+    success: z.literal(true),
+    processes: z.array(
+      z.object({
+        process_id: z.string(),
+        status: z.enum(["running", "exited", "killed", "failed"]),
+        script: z.string(),
+        uptime_ms: z.number(),
+        exitCode: z.number().optional(),
+        display_name: z.string().optional(),
+      })
+    ),
+  }),
+  z.object({
+    success: z.literal(false),
+    error: z.string(),
+  }),
+]);
+
+/**
+ * Bash background terminate tool result.
+ */
+export const BashBackgroundTerminateResultSchema = z.union([
+  z.object({
+    success: z.literal(true),
+    message: z.string(),
+    display_name: z.string().optional(),
+  }),
+  z.object({
+    success: z.literal(false),
+    error: z.string(),
+  }),
+]);
+
+/**
+ * File read tool result - content or error.
+ */
+export const FileReadToolResultSchema = z.union([
+  z.object({
+    success: z.literal(true),
+    file_size: z.number(),
+    modifiedTime: z.string(),
+    lines_read: z.number(),
+    content: z.string(),
+    warning: z.string().optional(),
+  }),
+  z.object({
+    success: z.literal(false),
+    error: z.string(),
+  }),
+]);
+
+/**
+ * Agent Skill read tool result - full SKILL.md package or error.
+ */
+export const AgentSkillReadToolResultSchema = z.union([
+  z.object({
+    success: z.literal(true),
+    skill: AgentSkillPackageSchema,
+  }),
+  z.object({
+    success: z.literal(false),
+    error: z.string(),
+  }),
+]);
+
+/**
+ * Agent Skill read_file tool result.
+ * Uses the same shape/limits as file_read.
+ */
+export const AgentSkillReadFileToolResultSchema = FileReadToolResultSchema;
+
+/**
+ * File edit insert tool result - diff or error.
+ */
+export const FileEditInsertToolResultSchema = z.union([
+  z.object({
+    success: z.literal(true),
+    diff: z.string(),
+    warning: z.string().optional(),
+  }),
+  z.object({
+    success: z.literal(false),
+    error: z.string(),
+    note: z.string().optional(),
+  }),
+]);
+
+/**
+ * File edit replace string tool result - diff with edit count or error.
+ */
+export const FileEditReplaceStringToolResultSchema = z.union([
+  z.object({
+    success: z.literal(true),
+    diff: z.string(),
+    edits_applied: z.number(),
+    warning: z.string().optional(),
+  }),
+  z.object({
+    success: z.literal(false),
+    error: z.string(),
+    note: z.string().optional(),
+  }),
+]);
+
+/**
+ * Web fetch tool result - parsed content or error.
+ */
+export const WebFetchToolResultSchema = z.union([
+  z.object({
+    success: z.literal(true),
+    title: z.string(),
+    content: z.string(),
+    url: z.string(),
+    byline: z.string().optional(),
+    length: z.number(),
+  }),
+  z.object({
+    success: z.literal(false),
+    error: z.string(),
+    content: z.string().optional(),
+  }),
+]);
+
+/**
+ * Names of tools that are bridgeable to PTC sandbox.
+ * If adding a new tool here, you must also add its result schema below.
+ */
+export type BridgeableToolName =
+  | "bash"
+  | "bash_output"
+  | "bash_background_list"
+  | "bash_background_terminate"
+  | "file_read"
+  | "agent_skill_read"
+  | "agent_skill_read_file"
+  | "file_edit_insert"
+  | "file_edit_replace_string"
+  | "web_fetch"
+  | "task"
+  | "task_await"
+  | "task_list"
+  | "task_terminate";
+
+/**
+ * Lookup map for result schemas by tool name.
+ * Used by PTC type generator to get result types for bridgeable tools.
+ *
+ * Type-level enforcement ensures all BridgeableToolName entries have schemas.
+ */
+export const RESULT_SCHEMAS: Record<BridgeableToolName, z.ZodType> = {
+  bash: BashToolResultSchema,
+  bash_output: BashOutputToolResultSchema,
+  bash_background_list: BashBackgroundListResultSchema,
+  bash_background_terminate: BashBackgroundTerminateResultSchema,
+  file_read: FileReadToolResultSchema,
+  agent_skill_read: AgentSkillReadToolResultSchema,
+  agent_skill_read_file: AgentSkillReadFileToolResultSchema,
+  file_edit_insert: FileEditInsertToolResultSchema,
+  file_edit_replace_string: FileEditReplaceStringToolResultSchema,
+  web_fetch: WebFetchToolResultSchema,
+  task: TaskToolResultSchema,
+  task_await: TaskAwaitToolResultSchema,
+  task_list: TaskListToolResultSchema,
+  task_terminate: TaskTerminateToolResultSchema,
+};
 
 /**
  * Get tool definition schemas for token counting
@@ -329,25 +1057,38 @@ export function getToolSchemas(): Record<string, ToolSchema> {
 /**
  * Get which tools are available for a given model
  * @param modelString The model string (e.g., "anthropic:claude-opus-4-1")
+ * @param _mode Deprecated - tool availability is now controlled by agent tool policy
  * @returns Array of tool names available for the model
  */
-export function getAvailableTools(modelString: string): string[] {
+export function getAvailableTools(
+  modelString: string,
+  _mode?: "plan" | "exec",
+  options?: { enableAgentReport?: boolean }
+): string[] {
   const [provider] = modelString.split(":");
+  const enableAgentReport = options?.enableAgentReport ?? true;
 
   // Base tools available for all models
+  // Note: Tool availability is controlled by agent tool policy (allowlist), not mode checks here.
   const baseTools = [
-    "bash",
-    "bash_output",
-    "bash_background_list",
-    "bash_background_terminate",
     "file_read",
+    "agent_skill_read",
+    "agent_skill_read_file",
     "file_edit_replace_string",
     // "file_edit_replace_lines", // DISABLED: causes models to break repo state
     "file_edit_insert",
+    "ask_user_question",
     "propose_plan",
+    "bash",
+    "task",
+    "task_await",
+    "task_terminate",
+    "task_list",
+    ...(enableAgentReport ? ["agent_report"] : []),
     "todo_write",
     "todo_read",
     "status_set",
+    "notify",
     "web_fetch",
   ];
 

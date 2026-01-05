@@ -9,7 +9,15 @@ description: Agent instructions for AI assistants working on the mux codebase
 
 - `mux`: Electron + React desktop app for parallel agent workflows; UX must be fast, responsive, predictable.
 - Minor breaking changes are expected, but critical flows must allow upgrade↔downgrade without friction; skip migrations when breakage is tightly scoped.
-- Public work (issues/PRs/commits) must use 🤖 in the title and include "_Generated with `mux`_" in the body when applicable.
+- Public work (issues/PRs/commits) must use 🤖 in the title and include this footer in the body:
+
+  ```md
+  ---
+  _Generated with `mux` • Model: `<modelString>` • Thinking: `<thinkingLevel>`_
+  <!-- mux-attribution: model=<modelString> thinking=<thinkingLevel> -->
+  ```
+
+  Always check `$MUX_MODEL_STRING` and `$MUX_THINKING_LEVEL` via bash before creating PRs—include them in the footer if set.
 
 ## PR + Release Workflow
 
@@ -21,18 +29,29 @@ gh pr view <number> --json mergeable,mergeStateStatus | jq '.'
 ./scripts/wait_pr_checks.sh <pr_number>
 ```
 
+- When posting multi-line comments with `gh` (e.g., `@codex review`), **do not** rely on `\n` escapes inside quoted `--body` strings (they will be sent as literal text). Prefer `--body-file -` with a heredoc to preserve real newlines:
+
+```bash
+gh pr comment <pr_number> --body-file - <<'EOF'
+@codex review
+
+<message>
+EOF
+```
+- If Codex left review comments and you addressed them, push your fixes, resolve the PR comment, and then comment `@codex review` to re-request review. After that, re-run `./scripts/wait_pr_checks.sh <pr_number>` and `./scripts/check_codex_comments.sh <pr_number>`.
 - Generally run `wait_pr_checks` after submitting a PR to ensure CI passes.
 - Status decoding: `mergeable=MERGEABLE` clean; `CONFLICTING` needs resolution. `mergeStateStatus=CLEAN` ready, `BLOCKED` waiting for CI, `BEHIND` rebase, `DIRTY` conflicts.
 - If behind: `git fetch origin && git rebase origin/main && git push --force-with-lease`.
 - Never enable auto-merge or merge at all unless the user explicitly says "merge it".
 - Do not enable auto-squash or auto-merge on Pull Requests unless explicit permission is given.
 - PR descriptions: include only information a busy reviewer cannot infer; focus on implementation nuances or validation steps.
-- Title prefixes: `perf|refactor|fix|feat|ci|bench`, e.g., `🤖 fix: handle workspace rename edge cases`.
-- Use `ci:` for testing-only changes (test helpers, flaky test fixes, CI config).
+- Title prefixes: `perf|refactor|fix|feat|ci|tests|bench`, e.g., `🤖 fix: handle workspace rename edge cases`.
+- Use `tests:` for test-only changes (test helpers, flaky test fixes, storybook). Use `ci:` for CI config changes.
 
 ## Repo Reference
 
 - Core files: `src/main.ts`, `src/preload.ts`, `src/App.tsx`, `src/config.ts`.
+- Up-to-date model names: see `src/common/knownModels.ts` for current provider model IDs.
 - Persistent data: `~/.mux/config.json`, `~/.mux/src/<project>/<branch>` (worktrees), `~/.mux/sessions/<workspace>/chat.jsonl`.
 
 ## Documentation Rules
@@ -47,6 +66,7 @@ gh pr view <number> --json mergeable,mergeStateStatus | jq '.'
 
 - Core UX: projects sidebar (left panel), workspace management (local git worktrees or SSH clones), config stored in `~/.mux/config.json`.
 - Fetch bulk data in one IPC call—no O(n) frontend→backend loops.
+- **React Compiler enabled** — auto-memoization handles components/hooks; do not add manual `React.memo()`, `useMemo`, or `useCallback` for memoization purposes. Focus instead on fixing unstable object references that the compiler cannot optimize (e.g., `new Set()` in state setters, inline object literals as props).
 
 ## Tooling & Commands
 
@@ -58,7 +78,13 @@ gh pr view <number> --json mergeable,mergeStateStatus | jq '.'
 ## Refactoring & Runtime Etiquette
 
 - Use `git mv` to retain history when moving files.
-- Never kill the running mux process; rely on `make test` / `make typecheck` for validation.
+- Never kill the running mux process; rely on `make typecheck` + targeted `bun test path/to/file.test.ts` for validation (run `make test` only when necessary; it can be slow).
+
+## Self-Healing & Crash Resilience
+
+- Prefer **self-healing** behavior: if corrupted or invalid data exists in persisted state (e.g., `chat.jsonl`), the system should sanitize or filter it at load/request time rather than failing permanently.
+- Never let a single malformed line in history brick a workspace—apply defensive filtering in request-building paths so the user can continue working.
+- When streaming crashes, any incomplete state committed to disk should either be repairable on next load or excluded from provider requests to avoid API validation errors.
 
 ## Testing Doctrine
 
@@ -74,6 +100,7 @@ Avoid mock-heavy tests that verify implementation details rather than behavior. 
 - **Only** add full-app stories (`App.*.stories.tsx`). Do not add isolated component stories, even for small UI changes (they are not used/accepted in this repo).
 - Use play functions with `@storybook/test` utilities (`within`, `userEvent`, `waitFor`) to interact with the UI and set up the desired visual state. Do not add props to production components solely for storybook convenience.
 - Keep story data deterministic: avoid `Math.random()`, `Date.now()`, or other non-deterministic values in story setup. Pass explicit values when ordering or timing matters for visual stability.
+- **Scroll stabilization:** After async operations that change element sizes (Shiki highlighting, Mermaid rendering, tool expansion), wait for `useAutoScroll`'s ResizeObserver RAF to complete. Use double-RAF: `await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))`.
 
 ### TDD Expectations
 
@@ -87,6 +114,14 @@ Avoid mock-heavy tests that verify implementation details rather than behavior. 
 - Run unit suites with `bun test path/to/file.test.ts`.
 - Skip tautological tests (simple mappings, identical copies of implementation); focus on invariants and boundary failures.
 - Keep utils pure or parameterize external effects for easier testing.
+
+### UI Tests (`tests/ui`)
+
+- Tests in `tests/ui` must render the **full app** via `AppLoader` and drive interactions from the **user's perspective** (clicking, typing, navigating).
+- Use `renderReviewPanel()` helper or similar patterns that render `<AppLoader client={apiClient} />`.
+- Never test isolated components or utility functions here—those belong as unit tests beside implementation (`*.test.ts`).
+- **Never call backend APIs directly** (e.g., `env.orpc.workspace.remove()`) to trigger actions that you're testing—always simulate the user action (click the delete button, etc.). Calling the API bypasses frontend logic like navigation, state updates, and error handling, which is often where bugs hide. Backend API calls are fine for setup/teardown or to avoid expensive operations.
+- These tests require `TEST_INTEGRATION=1` and real API keys; use `shouldRunIntegrationTests()` guard.
 
 ### Integration Testing
 
@@ -104,7 +139,7 @@ Avoid mock-heavy tests that verify implementation details rather than behavior. 
 
 ## Styling
 
-- Colors defined in `src/styles/colors.tsx`; fonts in `src/styles/fonts.tsx`. Reference them via CSS variables (e.g., `var(--color-plan-mode)`), never hardcode values.
+- Colors defined in `src/browser/styles/globals.css` (`:root @theme` block). Reference via CSS variables (e.g., `var(--color-plan-mode)`), never hardcode hex values.
 
 ## TypeScript Discipline
 
@@ -119,8 +154,9 @@ Avoid mock-heavy tests that verify implementation details rather than behavior. 
 
 ## Component State & Storage
 
+- Prefer **self-contained components** over utility functions + hook proliferation. A component that takes `workspaceId` and computes everything internally is better than one that requires 10 props drilled from parent hooks.
 - Parent components own localStorage interactions; children announce intent only.
-- Use `usePersistedState`/`readPersistedState`/`updatePersistedState` helpers—never call `localStorage` directly.
+- **Never call `localStorage` directly** — always use `usePersistedState`/`readPersistedState`/`updatePersistedState` helpers. This includes inside `useCallback`, event handlers, and non-React functions. The helpers handle JSON parsing, error recovery, and cross-component sync.
 - When a component needs to read persisted state it doesn't own (to avoid layout flash), use `readPersistedState` in `useState` initializer: `useState(() => readPersistedState(key, default))`.
 - When multiple components need the same persisted value, use `usePersistedState` with identical keys and `{ listener: true }` for automatic cross-component sync.
 - Avoid destructuring props in function signatures; access via `props.field` to keep rename-friendly code.
@@ -161,18 +197,7 @@ Avoid mock-heavy tests that verify implementation details rather than behavior. 
 
 - Prefer fixes that simplify existing code; such simplifications often do not need new tests.
 - When adding complexity, add or extend tests. If coverage requires new infrastructure, propose the harness and then add the tests there.
-
-## Mode: Exec
-
-- Treat as a standing order: keep running checks and addressing failures until they pass or a blocker outside your control arises.
-- **Before pushing to a PR**, run `make static-check` locally and ensure all checks pass. Fix issues with `make fmt` or manual edits. Never push until local checks are green.
-- Reproduce remote static-check failures locally with `make static-check`; fix formatting with `make fmt` before rerunning CI.
-- When CI fails, reproduce locally with the smallest relevant command; log approximate runtimes to optimize future loops.
-
-## Mode: Plan
-
-- When Plan Mode is requested, assume the user wants the actual completed plan; do not merely describe how you would devise one.
-- Attach a net LoC estimate (product code only) to each recommended approach.
+- When asked to reduce LoC, focus on simplifying production logic—not stripping comments, docs, or tests.
 
 ## Tool: status_set
 

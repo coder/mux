@@ -17,48 +17,21 @@ import {
   createStatusTool,
   createStaticChatHandler,
   createStreamingChatHandler,
-  createGitStatusOutput,
   type GitStatusFixture,
 } from "./mockFactory";
-import { selectWorkspace, setWorkspaceInput, setWorkspaceModel } from "./storyHelpers";
-import { createMockORPCClient } from "../../../.storybook/mocks/orpc";
-import type { WorkspaceChatMessage } from "@/common/orpc/types";
-
+import {
+  createGitStatusExecutor,
+  createOnChatAdapter,
+  type ChatHandler,
+  selectWorkspace,
+  setWorkspaceInput,
+  setWorkspaceModel,
+} from "./storyHelpers";
+import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 export default {
   ...appMeta,
   title: "App/Demo",
 };
-
-type ChatHandler = (callback: (event: WorkspaceChatMessage) => void) => () => void;
-
-/** Adapts callback-based chat handlers to ORPC onChat format */
-function createOnChatAdapter(chatHandlers: Map<string, ChatHandler>) {
-  return (workspaceId: string, emit: (msg: WorkspaceChatMessage) => void) => {
-    const handler = chatHandlers.get(workspaceId);
-    if (handler) {
-      return handler(emit);
-    }
-    queueMicrotask(() => emit({ type: "caught-up" }));
-    return undefined;
-  };
-}
-
-/** Creates an executeBash function that returns git status output for workspaces */
-function createGitStatusExecutor(gitStatus: Map<string, GitStatusFixture>) {
-  return (workspaceId: string, script: string) => {
-    if (script.includes("git status") || script.includes("git show-branch")) {
-      const status = gitStatus.get(workspaceId) ?? {};
-      const output = createGitStatusOutput(status);
-      return Promise.resolve({ success: true as const, output, exitCode: 0, wall_duration_ms: 50 });
-    }
-    return Promise.resolve({
-      success: true as const,
-      output: "",
-      exitCode: 0,
-      wall_duration_ms: 0,
-    });
-  };
-}
 
 /**
  * Comprehensive story showing all sidebar indicators and chat features.
@@ -225,8 +198,8 @@ export const Comprehensive: AppStory = {
               streamText: "I'll help you refactor the database connection to use pooling.",
               pendingTool: {
                 toolCallId: "call-s1",
-                toolName: "read_file",
-                args: { target_file: "src/db/connection.ts" },
+                toolName: "file_read",
+                args: { filePath: "src/db/connection.ts" },
               },
             }),
           ],

@@ -13,12 +13,35 @@ import {
 } from "./shared/ToolPrimitives";
 import { useToolExpansion, getStatusDisplay, type ToolStatus } from "./shared/toolUtils";
 import { JsonHighlight } from "./shared/HighlightedCode";
+import { ToolResultImages, extractImagesFromToolResult } from "./shared/ToolResultImages";
 
 interface GenericToolCallProps {
   toolName: string;
   args?: unknown;
   result?: unknown;
   status?: ToolStatus;
+}
+
+/**
+ * Filter out image data from result for JSON display (to avoid showing huge base64 strings).
+ * Replaces media content with a placeholder indicator.
+ */
+function filterResultForDisplay(result: unknown): unknown {
+  if (typeof result !== "object" || result === null) return result;
+
+  const contentResult = result as { type?: string; value?: unknown[] };
+  if (contentResult.type !== "content" || !Array.isArray(contentResult.value)) return result;
+
+  // Replace media entries with placeholder
+  const filteredValue = contentResult.value.map((item) => {
+    if (typeof item === "object" && item !== null && (item as { type?: string }).type === "media") {
+      const mediaItem = item as { mediaType?: string };
+      return { type: "media", mediaType: mediaItem.mediaType, data: "[image data]" };
+    }
+    return item;
+  });
+
+  return { ...contentResult, value: filteredValue };
 }
 
 export const GenericToolCall: React.FC<GenericToolCallProps> = ({
@@ -30,14 +53,22 @@ export const GenericToolCall: React.FC<GenericToolCallProps> = ({
   const { expanded, toggleExpanded } = useToolExpansion();
 
   const hasDetails = args !== undefined || result !== undefined;
+  const images = extractImagesFromToolResult(result);
+  const hasImages = images.length > 0;
+
+  // Auto-expand if there are images to show
+  const shouldShowDetails = expanded || hasImages;
 
   return (
-    <ToolContainer expanded={expanded}>
+    <ToolContainer expanded={shouldShowDetails}>
       <ToolHeader onClick={() => hasDetails && toggleExpanded()}>
-        {hasDetails && <ExpandIcon expanded={expanded}>▶</ExpandIcon>}
+        {hasDetails && <ExpandIcon expanded={shouldShowDetails}>▶</ExpandIcon>}
         <ToolName>{toolName}</ToolName>
         <StatusIndicator status={status}>{getStatusDisplay(status)}</StatusIndicator>
       </ToolHeader>
+
+      {/* Always show images if present */}
+      {hasImages && <ToolResultImages result={result} />}
 
       {expanded && hasDetails && (
         <ToolDetails>
@@ -54,7 +85,7 @@ export const GenericToolCall: React.FC<GenericToolCallProps> = ({
             <DetailSection>
               <DetailLabel>Result</DetailLabel>
               <DetailContent>
-                <JsonHighlight value={result} />
+                <JsonHighlight value={filterResultForDisplay(result)} />
               </DetailContent>
             </DetailSection>
           )}

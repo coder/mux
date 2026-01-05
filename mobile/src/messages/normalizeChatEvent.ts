@@ -33,6 +33,7 @@ export const DISPLAYABLE_MESSAGE_TYPES: ReadonlySet<DisplayedMessage["type"]> = 
   "stream-error",
   "history-hidden",
   "workspace-init",
+  "plan-display",
 ]);
 
 const DEBUG_TAG = "[ChatEventExpander]";
@@ -149,7 +150,9 @@ function transformMuxToDisplayed(message: MuxMessage): DisplayedMessage[] {
           isStreaming: false,
           isPartial: message.metadata?.partial ?? false,
           isLastPartOfMessage: isLastPart,
-          isCompacted: message.metadata?.compacted ?? false,
+          // Support both new enum ("user"|"idle") and legacy boolean (true)
+          isCompacted: !!message.metadata?.compacted,
+          isIdleCompacted: message.metadata?.compacted === "idle",
           model: message.metadata?.model,
           timestamp: part.timestamp ?? baseTimestamp,
         });
@@ -225,6 +228,7 @@ export function createChatEventExpander(): ChatEventExpander {
         lines: [...initState.lines],
         exitCode: initState.exitCode,
         timestamp: initState.timestamp,
+        durationMs: initState.durationMs,
       },
     ];
   };
@@ -395,8 +399,17 @@ export function createChatEventExpander(): ChatEventExpander {
           return [];
         },
 
+        // UI-only incremental output from the bash tool.
+        // This is rendered inside the bash tool card (and should not spam the timeline).
+        "bash-output": () => [],
+
+        // Rolled-up session usage from deleted child workspaces (desktop-only for now).
+        "session-usage-delta": () => [],
         // Usage delta: mobile app doesn't display usage, silently ignore
         "usage-delta": () => [],
+
+        // Idle compaction signal: desktop auto-triggers; mobile currently ignores.
+        "idle-compaction-needed": () => [],
 
         // Pass-through events: return unchanged
         "caught-up": () => [payload as WorkspaceChatEvent],

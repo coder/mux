@@ -1,0 +1,93 @@
+---
+title: Plan Mode
+description: Review and collaborate on plans before execution
+---
+
+Plan mode lets you review and refine the agent's approach before any code changes happen. Instead of diving straight into implementation, the agent writes a plan to a file, proposes it for your review, and waits for approval.
+
+## How It Works
+
+1. **Toggle to Plan Mode**: Press `Cmd+Shift+M` (Mac) or `Ctrl+Shift+M` (Windows/Linux), or use the mode switcher in the UI.
+
+2. **Agent Writes Plan**: In plan mode, all file edit tools (`file_edit_*`) are restricted to only modify the plan file. The agent can still read any file in the workspace to gather context.
+
+3. **Propose for Review**: When ready, the agent calls `propose_plan` to present the plan in the chat UI with rendered markdown.
+
+4. **Edit Externally**: Click the **Edit** button on the latest plan to open it in your preferred editor (nvim, VS Code, etc.). Your changes are automatically detected.
+
+5. **Iterate or Execute**: Provide feedback in chat, or switch to Exec mode (`Cmd+Shift+M`) to implement the plan.
+
+## External Edit Detection
+
+When you edit the plan file externally and send a message, mux automatically detects the changes and informs the agent with a diff. This uses a timestamp-based polling approach:
+
+1. **State Tracking**: When `propose_plan` runs, it records the plan file's content and modification time.
+2. **Change Detection**: Before each LLM query, mux checks if the file's mtime has changed.
+3. **Diff Injection**: If modified, mux computes a diff and injects it into the context so the agent sees exactly what changed.
+
+This means you can make edits in your preferred editor, return to mux, send a message, and the agent will incorporate your changes.
+
+## Plan File Location
+
+Plans are stored in a dedicated directory under your Mux home:
+
+```
+~/.mux/plans/<project>/<workspace-name>.md
+```
+
+Notes:
+
+- `<workspace-name>` includes the random suffix (e.g. `feature-x7k2`), so it’s globally unique with high probability.
+
+## ask_user_question (Plan Mode Only)
+
+In plan mode, the agent may call `ask_user_question` to ask up to 4 structured multiple-choice questions when it needs clarification before finalizing a plan.
+
+What you’ll see:
+
+- An inline “tool call card” in the chat with a small form (single-select or multi-select).
+- An always-available **Other** option for free-form answers.
+
+How to respond:
+
+- **Recommended:** answer in the form and click **Submit answers**.
+- **Optional:** you can also just type a normal chat message. This will **cancel** the pending `ask_user_question` tool call and your message will be sent as a regular chat message.
+
+Availability:
+
+- `ask_user_question` is only registered for the agent in **Plan Mode**.
+- In Exec Mode, the agent cannot call `ask_user_question`.
+
+## UI Features
+
+The `propose_plan` tool call in chat includes:
+
+- **Rendered Markdown**: View the plan with proper formatting.
+- **Edit Button**: Opens the plan file in your external editor (latest plan only).
+- **Copy Button**: Copy plan content to clipboard.
+- **Show Text/Markdown Toggle**: Switch between rendered and raw views.
+- **Start Here**: Replace chat history with this plan as context (useful for long sessions).
+
+## Customizing Plan Mode Behavior
+
+Use [scoped instructions](/agents/instruction-files) to customize how the agent behaves in plan mode:
+
+```markdown
+## Mode: Plan
+
+When planning:
+
+- Focus on goals and trade-offs
+- Propose alternatives with pros/cons
+- Attach LoC estimates to each approach
+```
+
+## CLI Usage
+
+Plan mode is also available via the CLI:
+
+```bash
+mux run --mode plan "Design a caching strategy for the API"
+```
+
+See [CLI documentation](/guides/cli) for more options.

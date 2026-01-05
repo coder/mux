@@ -10,6 +10,7 @@ import React, {
 import { cn } from "@/common/lib/utils";
 import { MessageRenderer } from "./Messages/MessageRenderer";
 import { InterruptedBarrier } from "./Messages/ChatBarrier/InterruptedBarrier";
+import { EditCutoffBarrier } from "./Messages/ChatBarrier/EditCutoffBarrier";
 import { StreamingBarrier } from "./Messages/ChatBarrier/StreamingBarrier";
 import { RetryBarrier } from "./Messages/ChatBarrier/RetryBarrier";
 import { PinnedTodoList } from "./PinnedTodoList";
@@ -17,6 +18,8 @@ import {
   getAutoRetryKey,
   VIM_ENABLED_KEY,
   RIGHT_SIDEBAR_TAB_KEY,
+  RIGHT_SIDEBAR_COSTS_WIDTH_KEY,
+  RIGHT_SIDEBAR_REVIEW_WIDTH_KEY,
 } from "@/common/constants/storage";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { ChatInput, type ChatInputAPI } from "./ChatInput/index";
@@ -26,10 +29,12 @@ import {
   shouldShowInterruptedBarrier,
   mergeConsecutiveStreamErrors,
   computeBashOutputGroupInfo,
+  getEditableUserMessageText,
 } from "@/browser/utils/messages/messageUtils";
 import { BashOutputCollapsedIndicator } from "./tools/BashOutputCollapsedIndicator";
 import { hasInterruptedStream } from "@/browser/utils/messages/retryEligibility";
 import { ThinkingProvider } from "@/browser/contexts/ThinkingContext";
+import { WorkspaceModeAISync } from "@/browser/components/WorkspaceModeAISync";
 import { ModeProvider } from "@/browser/contexts/ModeContext";
 import { ProviderOptionsProvider } from "@/browser/contexts/ProviderOptionsContext";
 
@@ -37,15 +42,17 @@ import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useAutoScroll } from "@/browser/hooks/useAutoScroll";
 import { useOpenTerminal } from "@/browser/hooks/useOpenTerminal";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
-import { readPersistedState, usePersistedState } from "@/browser/hooks/usePersistedState";
-import { useThinking } from "@/browser/contexts/ThinkingContext";
+import { usePersistedState } from "@/browser/hooks/usePersistedState";
+
 import {
   useWorkspaceState,
   useWorkspaceAggregator,
   useWorkspaceUsage,
+  useWorkspaceStoreRaw,
 } from "@/browser/stores/WorkspaceStore";
 import { WorkspaceHeader } from "./WorkspaceHeader";
-import { getModelName } from "@/common/utils/ai/models";
+
+import type { ImagePart } from "@/common/orpc/types";
 import type { DisplayedMessage } from "@/common/types/message";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { getRuntimeTypeForTelemetry } from "@/common/telemetry";
@@ -56,22 +63,25 @@ import { ConcurrentLocalWarning } from "./ConcurrentLocalWarning";
 import { BackgroundProcessesBanner } from "./BackgroundProcessesBanner";
 import { useBackgroundBashHandlers } from "@/browser/hooks/useBackgroundBashHandlers";
 import { checkAutoCompaction } from "@/browser/utils/compaction/autoCompactionCheck";
-import { executeCompaction } from "@/browser/utils/chatCommands";
+import { executeCompaction, buildContinueMessage } from "@/browser/utils/chatCommands";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { useAutoCompactionSettings } from "../hooks/useAutoCompactionSettings";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import { useForceCompaction } from "@/browser/hooks/useForceCompaction";
+import { useIdleCompactionHandler } from "@/browser/hooks/useIdleCompactionHandler";
 import { useAPI } from "@/browser/contexts/API";
 import { useReviews } from "@/browser/hooks/useReviews";
 import { ReviewsBanner } from "./ReviewsBanner";
 import type { ReviewNoteData } from "@/common/types/review";
 import { PopoverError } from "./PopoverError";
+import { ConnectionStatusIndicator } from "./ConnectionStatusIndicator";
+import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 
 interface AIViewProps {
   workspaceId: string;
   projectPath: string;
   projectName: string;
-  branch: string;
+  workspaceName: string;
   namedWorkspacePath: string; // User-friendly path for display and terminal
   runtimeConfig?: RuntimeConfig;
   className?: string;
@@ -85,40 +95,55 @@ const AIViewInner: React.FC<AIViewProps> = ({
   workspaceId,
   projectPath,
   projectName,
-  branch,
+  workspaceName,
   namedWorkspacePath,
   runtimeConfig,
   className,
   status,
 }) => {
   const { api } = useAPI();
+  const { workspaceMetadata } = useWorkspaceContext();
   const chatAreaRef = useRef<HTMLDivElement>(null);
 
-  // Track active tab to conditionally enable resize functionality
-  // Initialize from persisted value to avoid layout flash; RightSidebar owns the state
-  // and notifies us of changes via onTabChange callback
-  const [activeTab, setActiveTab] = useState<TabType>(() =>
-    readPersistedState<TabType>(RIGHT_SIDEBAR_TAB_KEY, "costs")
-  );
-
-  const isReviewTabActive = activeTab === "review";
-
-  // Resizable sidebar for Review tab only
-  // Hook encapsulates all drag logic, persistence, and constraints
-  // Returns width to apply to RightSidebar and startResize for handle's onMouseDown
-  const {
-    width: sidebarWidth,
-    isResizing,
-    startResize,
-  } = useResizableSidebar({
-    enabled: isReviewTabActive, // Only active on Review tab
-    defaultWidth: 600, // Initial width or fallback
-    minWidth: 300, // Can't shrink smaller
-    maxWidth: 1200, // Can't grow larger
-    storageKey: "review-sidebar-width", // Persists across sessions
+  // Track which right sidebar tab is selected (listener: true to sync with RightSidebar changes)
+  const [selectedRightTab] = usePersistedState<TabType>(RIGHT_SIDEBAR_TAB_KEY, "costs", {
+    listener: true,
   });
 
+  // Resizable RightSidebar width - separate hooks per tab for independent persistence
+  const costsSidebar = useResizableSidebar({
+    // Costs + Stats share the same resizable width persistence
+    enabled: selectedRightTab === "costs" || selectedRightTab === "stats",
+    defaultWidth: 300,
+    minWidth: 300,
+    maxWidth: 1200,
+    storageKey: RIGHT_SIDEBAR_COSTS_WIDTH_KEY,
+  });
+  const reviewSidebar = useResizableSidebar({
+    enabled: selectedRightTab === "review",
+    defaultWidth: 600,
+    minWidth: 300,
+    maxWidth: 1200,
+    storageKey: RIGHT_SIDEBAR_REVIEW_WIDTH_KEY,
+  });
+
+  // Derive active sidebar props based on selected tab
+  const sidebarWidth = selectedRightTab === "review" ? reviewSidebar.width : costsSidebar.width;
+  const isResizing =
+    selectedRightTab === "review" ? reviewSidebar.isResizing : costsSidebar.isResizing;
+  const startResize =
+    selectedRightTab === "review" ? reviewSidebar.startResize : costsSidebar.startResize;
+
   const workspaceState = useWorkspaceState(workspaceId);
+  const storeRaw = useWorkspaceStoreRaw();
+  const meta = workspaceMetadata.get(workspaceId);
+  const isQueuedAgentTask = Boolean(meta?.parentWorkspaceId) && meta?.taskStatus === "queued";
+  const queuedAgentTaskPrompt =
+    isQueuedAgentTask && typeof meta?.taskPrompt === "string" && meta.taskPrompt.trim().length > 0
+      ? meta.taskPrompt
+      : null;
+  const shouldShowQueuedAgentTaskPrompt =
+    Boolean(queuedAgentTaskPrompt) && (workspaceState?.messages.length ?? 0) === 0;
   const aggregator = useWorkspaceAggregator(workspaceId);
   const workspaceUsage = useWorkspaceUsage(workspaceId);
 
@@ -145,9 +170,9 @@ const AIViewInner: React.FC<AIViewProps> = ({
     pendingModel
   );
 
-  const [editingMessage, setEditingMessage] = useState<{ id: string; content: string } | undefined>(
-    undefined
-  );
+  const [editingMessage, setEditingMessage] = useState<
+    { id: string; content: string; imageParts?: ImagePart[] } | undefined
+  >(undefined);
 
   // Track which bash_output groups are expanded (keyed by first message ID)
   const [expandedBashGroups, setExpandedBashGroups] = useState<Set<string>>(new Set());
@@ -160,7 +185,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
   useEffect(() => {
     workspaceStateRef.current = workspaceState;
   }, [workspaceState]);
-  const { messages, canInterrupt, isCompacting, loading, currentModel } = workspaceState;
+  const { messages, canInterrupt, isCompacting, loading } = workspaceState;
 
   // Apply message transformations:
   // 1. Merge consecutive identical stream errors
@@ -171,16 +196,16 @@ const AIViewInner: React.FC<AIViewProps> = ({
   const transformedMessages = useMemo(() => mergeConsecutiveStreamErrors(messages), [messages]);
   const deferredTransformedMessages = useDeferredValue(transformedMessages);
 
-  // CRITICAL: When message count changes (new message sent/received), show immediately.
-  // Only defer content changes within existing messages (streaming deltas).
-  // This ensures user messages appear instantly while keeping streaming performant.
+  // CRITICAL: Show immediate messages when streaming or when message count changes.
+  // useDeferredValue can defer indefinitely if React keeps getting new work (rapid deltas).
+  // During active streaming (reasoning, text), we MUST show immediate updates or the UI
+  // appears frozen while only the token counter updates (reads aggregator directly).
+  // Only use deferred messages when the stream is idle and no content is changing.
+  const hasActiveStream = transformedMessages.some((m) => "isStreaming" in m && m.isStreaming);
   const deferredMessages =
-    transformedMessages.length !== deferredTransformedMessages.length
+    hasActiveStream || transformedMessages.length !== deferredTransformedMessages.length
       ? transformedMessages
       : deferredTransformedMessages;
-
-  // Get active stream message ID for token counting
-  const activeStreamMessageId = aggregator?.getActiveStreamMessageId();
 
   const autoCompactionResult = useMemo(
     () => checkAutoCompaction(workspaceUsage, pendingModel, use1M, autoCompactionThreshold / 100),
@@ -190,16 +215,28 @@ const AIViewInner: React.FC<AIViewProps> = ({
   // Show warning when: shouldShowWarning flag is true AND not currently compacting
   const shouldShowCompactionWarning = !isCompacting && autoCompactionResult.shouldShowWarning;
 
-  // Handle force compaction callback - memoized to avoid effect re-runs
+  // Handle force compaction callback - memoized to avoid effect re-runs.
+  // We pass a default continueMessage of "Continue" as a resume sentinel so the backend can
+  // auto-send it after compaction. The compaction prompt builder special-cases this sentinel
+  // to avoid injecting it into the summarization request.
   const handleForceCompaction = useCallback(() => {
     if (!api) return;
+
+    // Force compaction queues a message while a stream is active.
+    // Match user-send semantics: background any running foreground bash so we don't block.
+    handleMessageSentBackground();
+
     void executeCompaction({
       api,
       workspaceId,
       sendMessageOptions: pendingSendOptions,
-      continueMessage: { text: "Continue with the current task" },
+      continueMessage: buildContinueMessage({
+        text: "Continue",
+        model: pendingSendOptions.model,
+        agentId: pendingSendOptions.agentId ?? "exec",
+      }),
     });
-  }, [api, workspaceId, pendingSendOptions]);
+  }, [api, workspaceId, pendingSendOptions, handleMessageSentBackground]);
 
   // Force compaction when live usage shows we're about to hit context limit
   useForceCompaction({
@@ -208,6 +245,9 @@ const AIViewInner: React.FC<AIViewProps> = ({
     isCompacting,
     onTrigger: handleForceCompaction,
   });
+
+  // Idle compaction - trigger compaction when backend signals workspace has been idle
+  useIdleCompactionHandler({ api });
 
   // Auto-retry state - minimal setter for keybinds and message sent handler
   // RetryBarrier manages its own state, but we need this for interrupt keybind
@@ -265,13 +305,13 @@ const AIViewInner: React.FC<AIViewProps> = ({
     chatInputAPI.current?.prependText("/compact\n");
   }, []);
 
-  // Thinking level state from context
-  const { thinkingLevel: currentWorkspaceThinking, setThinkingLevel } = useThinking();
-
   // Handlers for editing messages
-  const handleEditUserMessage = useCallback((messageId: string, content: string) => {
-    setEditingMessage({ id: messageId, content });
-  }, []);
+  const handleEditUserMessage = useCallback(
+    (messageId: string, content: string, imageParts?: ImagePart[]) => {
+      setEditingMessage({ id: messageId, content, imageParts });
+    },
+    []
+  );
 
   const handleEditQueuedMessage = useCallback(async () => {
     const queuedMessage = workspaceState?.queuedMessage;
@@ -289,11 +329,13 @@ const AIViewInner: React.FC<AIViewProps> = ({
   // Handler for sending queued message immediately (interrupt + send)
   const handleSendQueuedImmediately = useCallback(async () => {
     if (!workspaceState?.queuedMessage || !workspaceState.canInterrupt) return;
+    // Set "interrupting" state immediately so UI shows "interrupting..." without flash
+    storeRaw.setInterrupting(workspaceId);
     await api?.workspace.interruptStream({
       workspaceId,
       options: { sendQueuedImmediately: true },
     });
-  }, [api, workspaceId, workspaceState?.queuedMessage, workspaceState?.canInterrupt]);
+  }, [api, workspaceId, workspaceState?.queuedMessage, workspaceState?.canInterrupt, storeRaw]);
 
   const handleEditLastUserMessage = useCallback(async () => {
     const current = workspaceStateRef.current;
@@ -322,7 +364,11 @@ const AIViewInner: React.FC<AIViewProps> = ({
       return;
     }
 
-    setEditingMessage({ id: lastUserMessage.historyId, content: lastUserMessage.content });
+    setEditingMessage({
+      id: lastUserMessage.historyId,
+      content: getEditableUserMessageText(lastUserMessage),
+      imageParts: lastUserMessage.imageParts,
+    });
     setAutoScroll(false); // Show jump-to-bottom indicator
 
     // Scroll to the message being edited
@@ -421,11 +467,8 @@ const AIViewInner: React.FC<AIViewProps> = ({
   // Handle keyboard shortcuts (using optional refs that are safe even if not initialized)
   useAIViewKeybinds({
     workspaceId,
-    currentModel: workspaceState?.currentModel ?? null,
     canInterrupt: workspaceState?.canInterrupt ?? false,
     showRetryBarrier,
-    currentWorkspaceThinking,
-    setThinkingLevel,
     setAutoRetry,
     chatInputAPI,
     jumpToBottom,
@@ -513,7 +556,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
     );
   }
 
-  if (!projectName || !branch) {
+  if (!projectName || !workspaceName) {
     return (
       <div
         className={cn(
@@ -547,7 +590,8 @@ const AIViewInner: React.FC<AIViewProps> = ({
         <WorkspaceHeader
           workspaceId={workspaceId}
           projectName={projectName}
-          branch={branch}
+          projectPath={projectPath}
+          workspaceName={workspaceName}
           namedWorkspacePath={namedWorkspacePath}
           runtimeConfig={runtimeConfig}
         />
@@ -565,7 +609,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
             tabIndex={0}
             data-testid="message-window"
             data-loaded={!loading}
-            className="h-full overflow-y-auto p-[15px] leading-[1.5] break-words whitespace-pre-wrap"
+            className="h-full overflow-x-hidden overflow-y-auto p-[15px] leading-[1.5] break-words whitespace-pre-wrap"
           >
             <div
               ref={innerRef}
@@ -575,9 +619,9 @@ const AIViewInner: React.FC<AIViewProps> = ({
                 <div className="text-placeholder flex h-full flex-1 flex-col items-center justify-center text-center [&_h3]:m-0 [&_h3]:mb-2.5 [&_h3]:text-base [&_h3]:font-medium [&_p]:m-0 [&_p]:text-[13px]">
                   <h3>No Messages Yet</h3>
                   <p>Send a message below to begin</p>
-                  <p className="mt-5 text-xs text-[#888]">
+                  <p className="text-muted mt-5 text-xs">
                     💡 Tip: Add a{" "}
-                    <code className="rounded-[3px] bg-[#2d2d30] px-1.5 py-0.5 font-mono text-[11px] text-[#d7ba7d]">
+                    <code className="bg-inline-code-dark-bg text-code-string rounded-[3px] px-1.5 py-0.5 font-mono text-[11px]">
                       .mux/init
                     </code>{" "}
                     hook to your project to run setup commands
@@ -653,11 +697,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
                             }}
                           />
                         )}
-                        {isAtCutoff && (
-                          <div className="edit-cutoff-divider text-edit-mode bg-edit-mode/10 my-5 px-[15px] py-3 text-center text-xs font-medium">
-                            ⚠️ Messages below this line will be removed when you submit the edit
-                          </div>
-                        )}
+                        {isAtCutoff && <EditCutoffBarrier />}
                         {shouldShowInterruptedBarrier(msg) && <InterruptedBarrier />}
                       </React.Fragment>
                     );
@@ -667,28 +707,13 @@ const AIViewInner: React.FC<AIViewProps> = ({
                 </>
               )}
               <PinnedTodoList workspaceId={workspaceId} />
-              {canInterrupt && (
-                <StreamingBarrier
-                  statusText={
-                    isCompacting
-                      ? currentModel
-                        ? `${getModelName(currentModel)} compacting...`
-                        : "compacting..."
-                      : currentModel
-                        ? `${getModelName(currentModel)} streaming...`
-                        : "streaming..."
-                  }
-                  cancelText={`hit ${formatKeybind(vimEnabled ? KEYBINDS.INTERRUPT_STREAM_VIM : KEYBINDS.INTERRUPT_STREAM_NORMAL)} to cancel`}
-                  tokenCount={
-                    activeStreamMessageId
-                      ? aggregator?.getStreamingTokenCount(activeStreamMessageId)
-                      : undefined
-                  }
-                  tps={
-                    activeStreamMessageId
-                      ? aggregator?.getStreamingTPS(activeStreamMessageId)
-                      : undefined
-                  }
+              <StreamingBarrier workspaceId={workspaceId} />
+              {shouldShowQueuedAgentTaskPrompt && (
+                <QueuedMessage
+                  message={{
+                    id: `queued-agent-task-${workspaceId}`,
+                    content: queuedAgentTaskPrompt ?? "",
+                  }}
                 />
               )}
               {workspaceState?.queuedMessage && (
@@ -731,6 +756,13 @@ const AIViewInner: React.FC<AIViewProps> = ({
           onTerminate={handleTerminateBackgroundBash}
         />
         <ReviewsBanner workspaceId={workspaceId} />
+        <ConnectionStatusIndicator />
+        {isQueuedAgentTask && (
+          <div className="border-border-medium bg-background-secondary text-muted mb-2 rounded-md border px-3 py-2 text-xs">
+            This agent task is queued and will start automatically when a parallel slot is
+            available.
+          </div>
+        )}
         <ChatInput
           variant="workspace"
           workspaceId={workspaceId}
@@ -738,7 +770,12 @@ const AIViewInner: React.FC<AIViewProps> = ({
           onMessageSent={handleMessageSent}
           onTruncateHistory={handleClearHistory}
           onProviderConfig={handleProviderConfig}
-          disabled={!projectName || !branch}
+          disabled={!projectName || !workspaceName || isQueuedAgentTask}
+          disabledReason={
+            isQueuedAgentTask
+              ? "Queued — waiting for an available parallel task slot. This will start automatically."
+              : undefined
+          }
           isCompacting={isCompacting}
           editingMessage={editingMessage}
           onCancelEdit={handleCancelEdit}
@@ -746,10 +783,13 @@ const AIViewInner: React.FC<AIViewProps> = ({
           canInterrupt={canInterrupt}
           onReady={handleChatInputReady}
           autoCompactionCheck={autoCompactionResult}
+          hasQueuedCompaction={workspaceState.queuedMessage?.hasCompactionRequest}
           attachedReviews={reviews.attachedReviews}
           onDetachReview={reviews.detachReview}
           onDetachAllReviews={reviews.detachAllAttached}
+          onCheckReview={reviews.checkReview}
           onCheckReviews={handleCheckReviews}
+          onDeleteReview={reviews.removeReview}
           onUpdateReviewNote={reviews.updateReviewNote}
         />
       </div>
@@ -758,13 +798,12 @@ const AIViewInner: React.FC<AIViewProps> = ({
         key={workspaceId}
         workspaceId={workspaceId}
         workspacePath={namedWorkspacePath}
-        chatAreaRef={chatAreaRef}
-        onTabChange={setActiveTab} // Notifies us when tab changes
-        width={isReviewTabActive ? sidebarWidth : undefined} // Custom width only on Review tab
-        onStartResize={isReviewTabActive ? startResize : undefined} // Pass resize handler when Review active
-        isResizing={isResizing} // Pass resizing state
-        onReviewNote={handleReviewNote} // Pass review note handler to append to chat
-        isCreating={status === "creating"} // Workspace still being set up
+        projectPath={projectPath}
+        width={sidebarWidth}
+        onStartResize={startResize}
+        isResizing={isResizing}
+        onReviewNote={handleReviewNote}
+        isCreating={status === "creating"}
       />
 
       <PopoverError
@@ -808,7 +847,8 @@ export const AIView: React.FC<AIViewProps> = (props) => {
   }
 
   return (
-    <ModeProvider workspaceId={props.workspaceId}>
+    <ModeProvider workspaceId={props.workspaceId} projectPath={props.projectPath}>
+      <WorkspaceModeAISync workspaceId={props.workspaceId} />
       <ProviderOptionsProvider>
         <ThinkingProvider workspaceId={props.workspaceId}>
           <AIViewInner {...props} />

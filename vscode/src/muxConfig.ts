@@ -1,41 +1,45 @@
-import * as path from "path";
-import * as os from "os";
 import { Config } from "mux/node/config";
-import type { WorkspaceMetadata } from "mux/common/types/workspace";
+import assert from "node:assert";
+
+import type { FrontendWorkspaceMetadata, WorkspaceActivitySnapshot } from "mux/common/types/workspace";
 import { type ExtensionMetadata, readExtensionMetadata } from "mux/node/utils/extensionMetadata";
-import { getProjectName } from "mux/node/utils/runtime/helpers";
 import { createRuntime } from "mux/node/runtime/runtimeFactory";
+
+import type { ApiClient } from "./api/client";
 
 /**
  * Workspace with extension metadata for display in VS Code extension.
- * Combines workspace metadata from main app with extension-specific data.
  */
-export interface WorkspaceWithContext extends WorkspaceMetadata {
-  projectPath: string;
+
+const DEFAULT_WORKSPACE_LIST_TIMEOUT_MS = 5_000;
+
+async function promiseWithTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  assert(timeoutMs > 0, "timeoutMs must be positive");
+
+  return new Promise<T>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    promise
+      .then(resolve, reject)
+      .finally(() => {
+        clearTimeout(timeout);
+      });
+  });
+}
+export interface WorkspaceWithContext extends FrontendWorkspaceMetadata {
   extensionMetadata?: ExtensionMetadata;
 }
 
-/**
- * Get all workspaces from mux config, enriched with extension metadata.
- * Uses main app's Config class to read workspace metadata, then enriches
- * with extension-specific data (recency, streaming status).
- */
-export async function getAllWorkspaces(): Promise<WorkspaceWithContext[]> {
-  const config = new Config();
-  const workspaces = await config.getAllWorkspaceMetadata();
-  const extensionMeta = readExtensionMetadata();
-
-  console.log(`[mux] Read ${extensionMeta.size} entries from extension metadata`);
-
-  // Enrich with extension metadata
+function enrichAndSort(
+  workspaces: FrontendWorkspaceMetadata[],
+  extensionMeta: Map<string, ExtensionMetadata>
+): WorkspaceWithContext[] {
   const enriched: WorkspaceWithContext[] = workspaces.map((ws) => {
-    const meta = extensionMeta.get(ws.id);
-    if (meta) {
-      console.log(`[mux]   ${ws.id}: recency=${meta.recency}, streaming=${meta.streaming}`);
-    }
     return {
       ...ws,
-      extensionMetadata: meta,
+      extensionMetadata: extensionMeta.get(ws.id),
     };
   });
 
@@ -53,11 +57,59 @@ export async function getAllWorkspaces(): Promise<WorkspaceWithContext[]> {
   return enriched;
 }
 
+export async function getAllWorkspacesFromFiles(options?: {
+  timeoutMs?: number;
+}): Promise<WorkspaceWithContext[]> {
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_WORKSPACE_LIST_TIMEOUT_MS;
+
+  const config = new Config();
+  const workspaces = await promiseWithTimeout(
+    config.getAllWorkspaceMetadata(),
+    timeoutMs,
+    "Read mux workspaces from files"
+  );
+  const extensionMeta = readExtensionMetadata();
+  return enrichAndSort(workspaces, extensionMeta);
+}
+
+export async function getAllWorkspacesFromApi(
+  client: ApiClient,
+  options?: {
+    timeoutMs?: number;
+  }
+): Promise<WorkspaceWithContext[]> {
+  assert(client, "getAllWorkspacesFromApi requires client");
+
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_WORKSPACE_LIST_TIMEOUT_MS;
+
+  const [workspaces, activityById] = await Promise.all([
+    promiseWithTimeout(client.workspace.list(), timeoutMs, "mux API workspace.list"),
+    promiseWithTimeout(
+      client.workspace.activity.list() as Promise<Record<string, WorkspaceActivitySnapshot>>,
+      timeoutMs,
+      "mux API workspace.activity.list"
+    ),
+  ]);
+
+  const extensionMeta = new Map<string, ExtensionMetadata>();
+  for (const [workspaceId, activity] of Object.entries(activityById)) {
+    extensionMeta.set(workspaceId, {
+      recency: activity.recency,
+      streaming: activity.streaming,
+      lastModel: activity.lastModel,
+      lastThinkingLevel: activity.lastThinkingLevel,
+    });
+  }
+
+  return enrichAndSort(workspaces, extensionMeta);
+}
+
 /**
- * Get the workspace path for local or SSH workspaces
- * Uses Runtime to compute path using main app's logic
+ * Get the workspace path for local or SSH workspaces.
+ * Uses Runtime to compute path using main app's logic.
  */
 export function getWorkspacePath(workspace: WorkspaceWithContext): string {
   const runtime = createRuntime(workspace.runtimeConfig, { projectPath: workspace.projectPath });
   return runtime.getWorkspacePath(workspace.projectPath, workspace.name);
 }
+

@@ -260,7 +260,7 @@ export function ProjectsScreen(): JSX.Element {
       // Show confirmation dialog
       Alert.alert(
         "Delete Workspace?",
-        `This will permanently remove "${metadata.name}" from ${metadata.projectName}.\n\nThis action cannot be undone.`,
+        `This will permanently remove "${metadata.name}" from ${metadata.projectName} and delete the local branch "${metadata.name}".\n\nThis action cannot be undone.`,
         [
           { text: "Cancel", style: "cancel" },
           {
@@ -280,7 +280,7 @@ export function ProjectsScreen(): JSX.Element {
                   // Show force delete option
                   Alert.alert(
                     "Workspace Has Changes",
-                    `${errorMsg}\n\nForce delete will discard these changes permanently.`,
+                    `${errorMsg}\n\nForce delete will discard these changes permanently and delete the local branch "${metadata.name}".`,
                     [
                       { text: "Cancel", style: "cancel" },
                       {

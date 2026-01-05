@@ -19,11 +19,13 @@ export {
   trackWorkspaceCreated,
   trackWorkspaceSwitched,
   trackMessageSent,
+  trackStatsTabOpened,
   trackStreamCompleted,
   trackProviderConfigured,
   trackCommandUsed,
   trackVoiceTranscription,
   trackErrorOccurred,
+  trackExperimentOverridden,
 } from "./tracking";
 
 // Utility for converting RuntimeConfig to telemetry-safe runtime type

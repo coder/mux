@@ -3,8 +3,13 @@
  *
  * Shows different sections and states of the Settings modal:
  * - General (theme toggle)
+ * - Agents (task parallelism / nesting)
  * - Providers (API key configuration)
  * - Models (custom model management)
+ * - Modes (per-mode default model / reasoning)
+ * - Experiments
+ *
+ * NOTE: Projects/MCP stories live in App.mcp.stories.tsx
  *
  * Uses play functions to open the settings modal and navigate to sections.
  */
@@ -13,9 +18,11 @@ import type { APIClient } from "@/browser/contexts/API";
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { createWorkspace, groupWorkspacesByProject } from "./mockFactory";
 import { selectWorkspace } from "./storyHelpers";
-import { createMockORPCClient } from "../../../.storybook/mocks/orpc";
-import { within, userEvent } from "@storybook/test";
+import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
+import { within, userEvent, waitFor } from "@storybook/test";
 import { getExperimentKey, EXPERIMENT_IDS } from "@/common/constants/experiments";
+import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
+import type { TaskSettings } from "@/common/types/tasks";
 
 export default {
   ...appMeta,
@@ -30,6 +37,8 @@ export default {
 function setupSettingsStory(options: {
   providersConfig?: Record<string, { apiKeySet: boolean; baseUrl?: string; models?: string[] }>;
   providersList?: string[];
+  agentAiDefaults?: AgentAiDefaults;
+  taskSettings?: Partial<TaskSettings>;
   /** Pre-set experiment states in localStorage before render */
   experiments?: Partial<Record<string, boolean>>;
 }): APIClient {
@@ -49,7 +58,9 @@ function setupSettingsStory(options: {
     projects: groupWorkspacesByProject(workspaces),
     workspaces,
     providersConfig: options.providersConfig ?? {},
+    agentAiDefaults: options.agentAiDefaults,
     providersList: options.providersList ?? ["anthropic", "openai", "xai"],
+    taskSettings: options.taskSettings,
   });
 }
 
@@ -86,6 +97,58 @@ export const General: AppStory = {
   render: () => <AppWithMocks setup={() => setupSettingsStory({})} />,
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     await openSettingsToSection(canvasElement, "general");
+  },
+};
+
+/** Agents settings section - task parallelism and nesting controls */
+export const Tasks: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSettingsStory({
+          taskSettings: { maxParallelAgentTasks: 2, maxTaskNestingDepth: 4 },
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await openSettingsToSection(canvasElement, "agents");
+
+    const body = within(canvasElement.ownerDocument.body);
+    const dialog = await body.findByRole("dialog");
+    const dialogCanvas = within(dialog);
+
+    await dialogCanvas.findByText(/Max Parallel Agent Tasks/i);
+    await dialogCanvas.findByText(/Max Task Nesting Depth/i);
+    await dialogCanvas.findByText(/Agent Defaults/i);
+    await dialogCanvas.findByRole("heading", { name: /UI agents/i });
+    await dialogCanvas.findByRole("heading", { name: /Sub-agents/i });
+    await dialogCanvas.findByRole("heading", { name: /Internal/i });
+
+    await dialogCanvas.findByText(/^Plan$/i);
+    await dialogCanvas.findByText(/^Exec$/i);
+    await dialogCanvas.findByText(/^Explore$/i);
+    await dialogCanvas.findByText(/^Compact$/i);
+
+    const inputs = await dialogCanvas.findAllByRole("spinbutton");
+    if (inputs.length !== 2) {
+      throw new Error(`Expected 2 task settings inputs, got ${inputs.length}`);
+    }
+
+    await waitFor(() => {
+      const maxParallelAgentTasks = (inputs[0] as HTMLInputElement).value;
+      const maxTaskNestingDepth = (inputs[1] as HTMLInputElement).value;
+      if (maxParallelAgentTasks !== "2") {
+        throw new Error(
+          `Expected maxParallelAgentTasks=2, got ${JSON.stringify(maxParallelAgentTasks)}`
+        );
+      }
+      if (maxTaskNestingDepth !== "4") {
+        throw new Error(
+          `Expected maxTaskNestingDepth=4, got ${JSON.stringify(maxTaskNestingDepth)}`
+        );
+      }
+    });
   },
 };
 
@@ -200,3 +263,13 @@ export const ExperimentsToggleOff: AppStory = {
     // Default state is OFF - no clicks needed
   },
 };
+
+/** Keybinds section - shows keyboard shortcuts reference */
+export const Keybinds: AppStory = {
+  render: () => <AppWithMocks setup={() => setupSettingsStory({})} />,
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await openSettingsToSection(canvasElement, "keybinds");
+  },
+};
+
+// NOTE: Projects section stories live in App.projectSettings.stories.tsx

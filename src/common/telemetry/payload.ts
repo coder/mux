@@ -20,6 +20,8 @@
  * code only needs to provide event-specific properties.
  */
 
+import type { AgentMode } from "@/common/types/mode";
+
 /**
  * Base properties included with all telemetry events
  * These are added by the backend, not the frontend
@@ -97,7 +99,7 @@ export interface MessageSentPayload {
   /** Full model identifier (e.g., 'anthropic/claude-3-5-sonnet-20241022') */
   model: string;
   /** UI mode (e.g., 'plan', 'exec', 'edit') */
-  mode: string;
+  mode: AgentMode;
   /** Message length rounded to nearest power of 2 (e.g., 128, 256, 512, 1024) */
   message_length_b2: number;
   /** Runtime type for the workspace */
@@ -106,6 +108,113 @@ export interface MessageSentPayload {
   frontendPlatform: FrontendPlatformInfo;
   /** Extended thinking level */
   thinkingLevel: TelemetryThinkingLevel;
+}
+
+/**
+ * MCP usage events
+ */
+export type TelemetryMCPTransportMode = "none" | "stdio_only" | "http_only" | "sse_only" | "mixed";
+
+export interface MCPContextInjectedPayload {
+  /** Workspace ID (randomly generated, safe to send) */
+  workspaceId: string;
+  /** Full model identifier */
+  model: string;
+  /** UI mode (plan|exec|compact) derived from the selected agent definition */
+  mode: AgentMode;
+  /** Active agent definition id (e.g. "plan", "exec", "explore"). Optional for backwards compatibility. */
+  agentId?: string;
+  /** Runtime type for the workspace */
+  runtimeType: TelemetryRuntimeType;
+
+  /** How many servers are enabled for this workspace message */
+  mcp_server_enabled_count: number;
+  /** How many servers successfully started (client created + tools fetched) */
+  mcp_server_started_count: number;
+  /** How many enabled servers failed to start */
+  mcp_server_failed_count: number;
+
+  /** MCP tools injected into the model request */
+  mcp_tool_count: number;
+  /** Total tools injected into the model request (built-in + MCP) */
+  total_tool_count: number;
+  /** Built-in tool count injected into the model request */
+  builtin_tool_count: number;
+
+  /** Effective transport mix for *started* servers (auto transport is resolved to http/sse) */
+  mcp_transport_mode: TelemetryMCPTransportMode;
+  /** Whether any started server uses HTTP (auto transport resolves to http/sse at runtime) */
+  mcp_has_http: boolean;
+  /** Whether any started server uses legacy SSE */
+  mcp_has_sse: boolean;
+  /** Whether any started server uses stdio */
+  mcp_has_stdio: boolean;
+
+  /** Number of servers that required auto-fallback from HTTP to SSE */
+  mcp_auto_fallback_count: number;
+
+  /** Time spent preparing MCP servers/tools (ms, rounded to nearest power of 2) */
+  mcp_setup_duration_ms_b2: number;
+}
+
+export type TelemetryMCPServerTransport = "stdio" | "http" | "sse" | "auto";
+export type TelemetryMCPTestErrorCategory = "timeout" | "connect" | "http_status" | "unknown";
+
+export interface MCPServerTestedPayload {
+  transport: TelemetryMCPServerTransport;
+  success: boolean;
+  duration_ms_b2: number;
+  /** Error category when success=false (no raw error messages for privacy) */
+  error_category?: TelemetryMCPTestErrorCategory;
+}
+
+export type TelemetryMCPServerConfigAction =
+  | "add"
+  | "edit"
+  | "remove"
+  | "enable"
+  | "disable"
+  | "set_tool_allowlist"
+  | "set_headers";
+
+export interface MCPServerConfigChangedPayload {
+  action: TelemetryMCPServerConfigAction;
+  transport: TelemetryMCPServerTransport;
+  has_headers: boolean;
+  uses_secret_headers: boolean;
+  /** Only set when action=set_tool_allowlist */
+  tool_allowlist_size_b2?: number;
+}
+/**
+ * Stats tab event - tracks when users view timing stats.
+ */
+export interface StatsTabOpenedPayload {
+  viewMode: "session" | "last-request";
+  showModeBreakdown: boolean;
+}
+
+/**
+ * Stream timing computed - emitted by backend timing pipeline.
+ *
+ * All numeric metrics are base-2 rounded or bucketed to preserve privacy.
+ */
+export interface StreamTimingComputedPayload {
+  model: string;
+  mode: AgentMode;
+  duration_b2: number;
+  ttft_ms_b2: number;
+  tool_ms_b2: number;
+  streaming_ms_b2: number;
+  tool_percent_bucket: number;
+  invalid: boolean;
+}
+
+/**
+ * Stream timing invalid - emitted when any computed % would exceed 100%,
+ * durations are negative, or values are NaN.
+ */
+export interface StreamTimingInvalidPayload {
+  reason: string;
 }
 
 /**
@@ -120,6 +229,22 @@ export interface StreamCompletedPayload {
   duration_b2: number;
   /** Output tokens, rounded to nearest power of 2 */
   output_tokens_b2: number;
+}
+
+/**
+ * Compaction completion event - tracks when history compaction finishes
+ */
+export interface CompactionCompletedPayload {
+  /** Model used for compaction */
+  model: string;
+  /** Duration in seconds, rounded to nearest power of 2 */
+  duration_b2: number;
+  /** Input tokens (pre-compaction history size), rounded to nearest power of 2 */
+  input_tokens_b2: number;
+  /** Output tokens (post-compaction summary size), rounded to nearest power of 2 */
+  output_tokens_b2: number;
+  /** Whether this compaction was user-triggered vs idle */
+  compaction_source: "manual" | "idle";
 }
 
 /**
@@ -189,6 +314,19 @@ export interface ErrorOccurredPayload {
 }
 
 /**
+ * Experiment override event - tracks when users manually toggle experiments
+ * This helps measure opt-out rates and understand user preferences
+ */
+export interface ExperimentOverriddenPayload {
+  /** Experiment identifier (e.g., 'post-compaction-context') */
+  experimentId: string;
+  /** The variant PostHog assigned (null if not remote-controlled) */
+  assignedVariant: string | boolean | null;
+  /** What the user chose (true = enabled, false = disabled) */
+  userChoice: boolean;
+}
+
+/**
  * Union type of all telemetry event payloads
  * Frontend sends these; backend adds BaseTelemetryProperties before forwarding to PostHog
  */
@@ -197,8 +335,16 @@ export type TelemetryEventPayload =
   | { event: "workspace_created"; properties: WorkspaceCreatedPayload }
   | { event: "workspace_switched"; properties: WorkspaceSwitchedPayload }
   | { event: "message_sent"; properties: MessageSentPayload }
+  | { event: "mcp_context_injected"; properties: MCPContextInjectedPayload }
+  | { event: "mcp_server_tested"; properties: MCPServerTestedPayload }
+  | { event: "mcp_server_config_changed"; properties: MCPServerConfigChangedPayload }
+  | { event: "stats_tab_opened"; properties: StatsTabOpenedPayload }
+  | { event: "stream_timing_computed"; properties: StreamTimingComputedPayload }
+  | { event: "stream_timing_invalid"; properties: StreamTimingInvalidPayload }
   | { event: "stream_completed"; properties: StreamCompletedPayload }
+  | { event: "compaction_completed"; properties: CompactionCompletedPayload }
   | { event: "provider_configured"; properties: ProviderConfiguredPayload }
   | { event: "command_used"; properties: CommandUsedPayload }
   | { event: "voice_transcription"; properties: VoiceTranscriptionPayload }
-  | { event: "error_occurred"; properties: ErrorOccurredPayload };
+  | { event: "error_occurred"; properties: ErrorOccurredPayload }
+  | { event: "experiment_overridden"; properties: ExperimentOverriddenPayload };

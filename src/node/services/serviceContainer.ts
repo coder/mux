@@ -20,10 +20,27 @@ import { ServerService } from "@/node/services/serverService";
 import { MenuEventService } from "@/node/services/menuEventService";
 import { VoiceService } from "@/node/services/voiceService";
 import { TelemetryService } from "@/node/services/telemetryService";
+import type {
+  ReasoningDeltaEvent,
+  StreamAbortEvent,
+  StreamDeltaEvent,
+  StreamEndEvent,
+  StreamStartEvent,
+  ToolCallDeltaEvent,
+  ToolCallEndEvent,
+  ToolCallStartEvent,
+} from "@/common/types/stream";
+import { FeatureFlagService } from "@/node/services/featureFlagService";
+import { SessionTimingService } from "@/node/services/sessionTimingService";
+import { ExperimentsService } from "@/node/services/experimentsService";
 import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import { MCPConfigService } from "@/node/services/mcpConfigService";
+import { WorkspaceMcpOverridesService } from "@/node/services/workspaceMcpOverridesService";
 import { MCPServerManager } from "@/node/services/mcpServerManager";
 import { SessionUsageService } from "@/node/services/sessionUsageService";
+import { IdleCompactionService } from "@/node/services/idleCompactionService";
+import { TaskService } from "@/node/services/taskService";
+import { getSigningService, type SigningService } from "@/node/services/signingService";
 
 /**
  * ServiceContainer - Central dependency container for all backend services.
@@ -38,6 +55,7 @@ export class ServiceContainer {
   public readonly aiService: AIService;
   public readonly projectService: ProjectService;
   public readonly workspaceService: WorkspaceService;
+  public readonly taskService: TaskService;
   public readonly providerService: ProviderService;
   public readonly terminalService: TerminalService;
   public readonly editorService: EditorService;
@@ -48,13 +66,19 @@ export class ServiceContainer {
   public readonly menuEventService: MenuEventService;
   public readonly voiceService: VoiceService;
   public readonly mcpConfigService: MCPConfigService;
+  public readonly workspaceMcpOverridesService: WorkspaceMcpOverridesService;
   public readonly mcpServerManager: MCPServerManager;
   public readonly telemetryService: TelemetryService;
+  public readonly featureFlagService: FeatureFlagService;
+  public readonly sessionTimingService: SessionTimingService;
+  public readonly experimentsService: ExperimentsService;
   public readonly sessionUsageService: SessionUsageService;
+  public readonly signingService: SigningService;
   private readonly initStateManager: InitStateManager;
   private readonly extensionMetadata: ExtensionMetadataService;
   private readonly ptyService: PTYService;
   private readonly backgroundProcessManager: BackgroundProcessManager;
+  public readonly idleCompactionService: IdleCompactionService;
 
   constructor(config: Config) {
     this.config = config;
@@ -62,6 +86,7 @@ export class ServiceContainer {
     this.partialService = new PartialService(config, this.historyService);
     this.projectService = new ProjectService(config);
     this.initStateManager = new InitStateManager(config);
+    this.workspaceMcpOverridesService = new WorkspaceMcpOverridesService(config);
     this.mcpConfigService = new MCPConfigService();
     this.extensionMetadata = new ExtensionMetadataService(
       path.join(config.rootDir, "extensionMetadata.json")
@@ -77,7 +102,8 @@ export class ServiceContainer {
       this.partialService,
       this.initStateManager,
       this.backgroundProcessManager,
-      this.sessionUsageService
+      this.sessionUsageService,
+      this.workspaceMcpOverridesService
     );
     this.aiService.setMCPServerManager(this.mcpServerManager);
     this.workspaceService = new WorkspaceService(
@@ -87,9 +113,26 @@ export class ServiceContainer {
       this.aiService,
       this.initStateManager,
       this.extensionMetadata,
-      this.backgroundProcessManager
+      this.backgroundProcessManager,
+      this.sessionUsageService
     );
     this.workspaceService.setMCPServerManager(this.mcpServerManager);
+    this.taskService = new TaskService(
+      config,
+      this.historyService,
+      this.partialService,
+      this.aiService,
+      this.workspaceService,
+      this.initStateManager
+    );
+    this.aiService.setTaskService(this.taskService);
+    // Idle compaction service - auto-compacts workspaces after configured idle period
+    this.idleCompactionService = new IdleCompactionService(
+      config,
+      this.historyService,
+      this.extensionMetadata,
+      (workspaceId) => this.workspaceService.emitIdleCompactionNeeded(workspaceId)
+    );
     this.providerService = new ProviderService(config);
     // Terminal services - PTYService is cross-platform
     this.ptyService = new PTYService();
@@ -105,18 +148,67 @@ export class ServiceContainer {
     this.menuEventService = new MenuEventService();
     this.voiceService = new VoiceService(config);
     this.telemetryService = new TelemetryService(config.rootDir);
+    this.aiService.setTelemetryService(this.telemetryService);
+    this.workspaceService.setTelemetryService(this.telemetryService);
+    this.experimentsService = new ExperimentsService({
+      telemetryService: this.telemetryService,
+      muxHome: config.rootDir,
+    });
+    this.featureFlagService = new FeatureFlagService(config, this.telemetryService);
+    this.sessionTimingService = new SessionTimingService(config, this.telemetryService);
+    this.signingService = getSigningService();
+
+    // Backend timing stats (behind feature flag).
+    this.aiService.on("stream-start", (data: StreamStartEvent) =>
+      this.sessionTimingService.handleStreamStart(data)
+    );
+    this.aiService.on("stream-delta", (data: StreamDeltaEvent) =>
+      this.sessionTimingService.handleStreamDelta(data)
+    );
+    this.aiService.on("reasoning-delta", (data: ReasoningDeltaEvent) =>
+      this.sessionTimingService.handleReasoningDelta(data)
+    );
+    this.aiService.on("tool-call-start", (data: ToolCallStartEvent) =>
+      this.sessionTimingService.handleToolCallStart(data)
+    );
+    this.aiService.on("tool-call-delta", (data: ToolCallDeltaEvent) =>
+      this.sessionTimingService.handleToolCallDelta(data)
+    );
+    this.aiService.on("tool-call-end", (data: ToolCallEndEvent) =>
+      this.sessionTimingService.handleToolCallEnd(data)
+    );
+    this.aiService.on("stream-end", (data: StreamEndEvent) =>
+      this.sessionTimingService.handleStreamEnd(data)
+    );
+    this.aiService.on("stream-abort", (data: StreamAbortEvent) =>
+      this.sessionTimingService.handleStreamAbort(data)
+    );
+    this.workspaceService.setExperimentsService(this.experimentsService);
   }
 
   async initialize(): Promise<void> {
     await this.extensionMetadata.initialize();
     // Initialize telemetry service
     await this.telemetryService.initialize();
+
+    // Initialize feature flag state (don't block startup on network).
+    this.featureFlagService
+      .getStatsTabState()
+      .then((state) => this.sessionTimingService.setStatsTabState(state))
+      .catch(() => {
+        // Ignore feature flag failures.
+      });
+    await this.experimentsService.initialize();
+    await this.taskService.initialize();
+    // Start idle compaction checker
+    this.idleCompactionService.start();
   }
 
   /**
    * Shutdown services that need cleanup
    */
   async shutdown(): Promise<void> {
+    this.idleCompactionService.stop();
     await this.telemetryService.shutdown();
   }
 

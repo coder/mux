@@ -69,6 +69,11 @@ export interface ReviewState {
 }
 
 /**
+ * Sort order options for review panel hunks
+ */
+export type ReviewSortOrder = "file-order" | "last-edit";
+
+/**
  * Filter options for review panel
  */
 export interface ReviewFilters {
@@ -80,6 +85,8 @@ export interface ReviewFilters {
   diffBase: string;
   /** Whether to include uncommitted changes (staged + unstaged) in the diff */
   includeUncommitted: boolean;
+  /** Sort order for hunks */
+  sortOrder: ReviewSortOrder;
 }
 
 /**
@@ -112,8 +119,24 @@ export interface ReviewNoteData {
   filePath: string;
   /** Line range (e.g., "42" or "42-45") */
   lineRange: string;
-  /** Selected code lines with line numbers and +/-/space indicators */
+
+  /**
+   * Human-readable selected code included in the message payload.
+   * Historically this included embedded line numbers; keep for backwards compatibility.
+   */
   selectedCode: string;
+
+  /**
+   * Raw diff snippet for UI rendering (lines start with + / - / space).
+   * When present, the UI should prefer this for consistent syntax highlighting.
+   */
+  selectedDiff?: string;
+
+  /** Starting old line number for rendering selectedDiff (if present). */
+  oldStart?: number;
+  /** Starting new line number for rendering selectedDiff (if present). */
+  newStart?: number;
+
   /** User's review comment */
   userNote: string;
 }

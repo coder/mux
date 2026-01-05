@@ -15,7 +15,10 @@ export function sortProjectsByOrder(
 ): Array<[string, ProjectConfig]> {
   const entries = Array.from(projects.entries());
 
-  if (order.length === 0) return entries; // Natural order
+  if (order.length === 0) {
+    // Sort lexically for stable, deterministic order
+    return entries.sort(([a], [b]) => a.localeCompare(b));
+  }
 
   const pos = new Map(order.map((p, i) => [p, i]));
 
@@ -56,13 +59,20 @@ export function reorderProjects(
 /**
  * Normalize an order array against the current set of projects.
  * - Removes paths that no longer exist
- * - Appends new paths to the end (preserving their natural order)
+ * - Prepends new paths to the front (preserving their natural order)
+ *
+ * UX rationale: when a user adds a project, they almost always want to use it next. Putting newly
+ * added projects at the top makes that action feel "recent" even if the user already has a custom
+ * project ordering.
  */
 export function normalizeOrder(order: string[], projects: Map<string, ProjectConfig>): string[] {
   const present = new Set(projects.keys());
   const filtered = order.filter((p) => present.has(p));
-  const missing = Array.from(projects.keys()).filter((p) => !filtered.includes(p));
-  return [...filtered, ...missing];
+  // Sort missing projects lexically for deterministic order (avoids flaky UI in Storybook)
+  const missing = Array.from(projects.keys())
+    .filter((p) => !filtered.includes(p))
+    .sort((a, b) => a.localeCompare(b));
+  return [...missing, ...filtered];
 }
 
 /**

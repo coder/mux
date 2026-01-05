@@ -2,9 +2,40 @@ import React from "react";
 import type { Preview } from "@storybook/react-vite";
 import { ThemeProvider, type ThemeMode } from "../src/browser/contexts/ThemeContext";
 import "../src/browser/styles/globals.css";
-import { TUTORIAL_STATE_KEY, type TutorialState } from "../src/common/constants/storage";
+import {
+  TUTORIAL_STATE_KEY,
+  RIGHT_SIDEBAR_COLLAPSED_KEY,
+  type TutorialState,
+} from "../src/common/constants/storage";
 import { NOW } from "../src/browser/stories/mockFactory";
 
+
+const STORYBOOK_FONTS_READY_TIMEOUT_MS = 2500;
+
+let fontsReadyPromise: Promise<void> | null = null;
+
+function ensureStorybookFontsReady(): Promise<void> {
+  fontsReadyPromise ??= (async () => {
+    if (typeof document === "undefined") {
+      return;
+    }
+
+    const fonts = document.fonts;
+
+    // Trigger load of layout-affecting fonts so Chromatic doesn't snapshot mid font-swap.
+    await Promise.allSettled([
+      fonts.load("400 14px 'Geist'"),
+      fonts.load("600 14px 'Geist'"),
+      fonts.load("400 14px 'Geist Mono'"),
+      fonts.load("600 14px 'Geist Mono'"),
+      fonts.load("400 14px 'Seti'"),
+    ]);
+
+    await fonts.ready;
+  })().catch(() => {});
+
+  return fontsReadyPromise;
+}
 // Mock Date.now() globally for deterministic snapshots
 // Components using Date.now() for elapsed time calculations need stable reference
 Date.now = () => NOW;
@@ -18,6 +49,14 @@ function disableTutorials() {
       completed: { settings: true, creation: true, workspace: true },
     };
     localStorage.setItem(TUTORIAL_STATE_KEY, JSON.stringify(disabledState));
+  }
+}
+
+// Collapse right sidebar by default to ensure deterministic snapshots
+// Stories that need expanded sidebar call expandRightSidebar() in their setup
+function collapseRightSidebar() {
+  if (typeof localStorage !== "undefined") {
+    localStorage.setItem(RIGHT_SIDEBAR_COLLAPSED_KEY, JSON.stringify(true));
   }
 }
 
@@ -36,6 +75,16 @@ const preview: Preview = {
       },
     },
   },
+  loaders: [
+    async () => {
+      const timeout = new Promise<void>((resolve) => {
+        setTimeout(resolve, STORYBOOK_FONTS_READY_TIMEOUT_MS);
+      });
+
+      await Promise.race([ensureStorybookFontsReady(), timeout]);
+      return {};
+    },
+  ],
   initialGlobals: {
     theme: "dark",
   },
@@ -55,6 +104,10 @@ const preview: Preview = {
       if (!context.parameters?.tutorialEnabled) {
         disableTutorials();
       }
+
+      // Collapse right sidebar by default for deterministic snapshots
+      // Stories can expand via expandRightSidebar() in setup after this runs
+      collapseRightSidebar();
 
       return (
         <ThemeProvider forcedTheme={mode}>

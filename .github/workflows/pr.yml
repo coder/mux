@@ -24,6 +24,7 @@ jobs:
       src: ${{ steps.filter.outputs.src }}
       config: ${{ steps.filter.outputs.config }}
       backend: ${{ steps.filter.outputs.backend }}
+      browser: ${{ steps.filter.outputs.browser }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -41,6 +42,9 @@ jobs:
               - 'src/common/**'
               - 'tests/ipc/**'
               - 'tests/runtime/**'
+            browser:
+              - 'src/browser/**'
+              - 'tests/ui/**'
             config:
               - '.github/**'
               - 'jest.config.cjs'
@@ -67,15 +71,25 @@ jobs:
           key: ${{ runner.os }}-shfmt-latest
       - name: Install shfmt
         run: |
+          set -euo pipefail
           if [[ ! -f "$HOME/.local/bin/shfmt" ]] || ! "$HOME/.local/bin/shfmt" --version >/dev/null 2>&1; then
-            curl -sS https://webinstall.dev/shfmt | bash
+            # webinstall.dev can be flaky; retry and force HTTP/1.1 to avoid HTTP/2 stream errors.
+            curl --retry 5 --retry-all-errors --retry-delay 2 -LsSf --http1.1 https://webinstall.dev/shfmt | bash
           fi
+
+          if ! "$HOME/.local/bin/shfmt" --version >/dev/null 2>&1; then
+            echo "Error: shfmt install failed"
+            exit 1
+          fi
+
           echo "$HOME/.local/bin" >> $GITHUB_PATH
       - uses: cachix/install-nix-action@v27
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
-      - run: curl -LsSf https://astral.sh/uv/install.sh | sh
+      - run: |
+          set -euo pipefail
+          curl --retry 5 --retry-all-errors --retry-delay 2 -LsSf https://astral.sh/uv/install.sh | sh
       - run: echo "$HOME/.local/bin" >> $GITHUB_PATH
       - run: make -j static-check
 
@@ -114,16 +128,24 @@ jobs:
             exit 0
           fi
           
-          # Skip integration tests when no backend changes
-          # Integration tests in tests/ are backend-focused (IPC, runtime, etc.)
-          # Browser changes are covered by unit tests, storybook, and E2E
-          if [[ "${{ needs.changes.outputs.backend }}" != "true" ]]; then
-            echo "No backend changes - skipping integration tests (browser changes covered by unit/storybook/e2e)"
+          BACKEND="${{ needs.changes.outputs.backend }}"
+          BROWSER="${{ needs.changes.outputs.browser }}"
+          
+          # Skip if no relevant changes
+          if [[ "$BACKEND" != "true" && "$BROWSER" != "true" ]]; then
+            echo "No backend or browser changes - skipping integration tests"
             exit 0
           fi
           
-          # Backend changed: run ALL integration tests
-          TEST_INTEGRATION=1 bun x jest --coverage --maxWorkers=100% --silent tests/
+          # Backend changed: run ALL integration tests (includes tests/ui)
+          if [[ "$BACKEND" == "true" ]]; then
+            echo "Backend changes detected - running all integration tests"
+            TEST_INTEGRATION=1 bun x jest --coverage --maxWorkers=100% --silent tests/
+          else
+            # Browser-only changes: run tests/ui
+            echo "Browser changes detected - running tests/ui"
+            TEST_INTEGRATION=1 bun x jest --coverage --maxWorkers=100% --silent tests/ui/
+          fi
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -147,7 +169,16 @@ jobs:
       - run: make storybook-build
       - run: |
           bun x http-server storybook-static -p 6006 &
-          sleep 5
+          for i in {1..30}; do
+            if curl -sf http://127.0.0.1:6006 >/dev/null; then
+              echo "Storybook ready"
+              break
+            fi
+            echo "Waiting for Storybook... ($i/30)"
+            sleep 0.5
+          done
+          # Fail the step if Storybook never became reachable.
+          curl -sf http://127.0.0.1:6006 >/dev/null
       - run: make test-storybook
 
   test-e2e:

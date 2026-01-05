@@ -46,6 +46,55 @@ afterAll(() => {
   }
 });
 
+describe("ask_user_question waiting state", () => {
+  it("treats partial ask_user_question as executing (waiting) not interrupted", () => {
+    const aggregator = new StreamingMessageAggregator("2024-01-01T00:00:00.000Z");
+
+    aggregator.loadHistoricalMessages([
+      {
+        id: "assistant-1",
+        role: "assistant" as const,
+        parts: [
+          {
+            type: "dynamic-tool" as const,
+            toolCallId: "call-ask-1",
+            toolName: "ask_user_question",
+            state: "input-available" as const,
+            input: {
+              questions: [
+                {
+                  header: "Approach",
+                  question: "Which approach should we take?",
+                  options: [
+                    { label: "A", description: "Approach A" },
+                    { label: "B", description: "Approach B" },
+                  ],
+                  multiSelect: false,
+                },
+              ],
+            },
+          },
+        ],
+        metadata: {
+          timestamp: 1000,
+          historySequence: 1,
+          partial: true,
+        },
+      },
+    ]);
+
+    const displayed = aggregator.getDisplayedMessages();
+    const toolMsg = displayed.find((m) => m.type === "tool" && m.toolName === "ask_user_question");
+    expect(toolMsg).toBeDefined();
+    if (toolMsg?.type === "tool") {
+      expect(toolMsg.status).toBe("executing");
+      expect(toolMsg.isPartial).toBe(true);
+    }
+
+    expect(aggregator.hasAwaitingUserQuestion()).toBe(true);
+  });
+});
+
 describe("StreamingMessageAggregator - Agent Status", () => {
   it("should start with undefined agent status", () => {
     const aggregator = new StreamingMessageAggregator("2024-01-01T00:00:00.000Z");
@@ -64,6 +113,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       messageId,
       model: "test-model",
       historySequence: 1,
+      startTime: Date.now(),
     });
 
     // Add a status_set tool call
@@ -106,6 +156,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       messageId,
       model: "test-model",
       historySequence: 1,
+      startTime: Date.now(),
     });
 
     // First status_set
@@ -159,7 +210,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
   });
 
   it("should persist agent status after stream ends", () => {
-    const aggregator = new StreamingMessageAggregator("2024-01-01T00:00:00.000Z");
+    const aggregator = new StreamingMessageAggregator("2024-01-01T00:00:00.000Z", "workspace1");
     const messageId = "msg1";
 
     // Start a stream
@@ -169,6 +220,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       messageId,
       model: "test-model",
       historySequence: 1,
+      startTime: Date.now(),
     });
 
     // Set status
@@ -220,6 +272,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       messageId,
       model: "test-model",
       historySequence: 1,
+      startTime: Date.now(),
     });
 
     // Add a status_set tool call
@@ -250,7 +303,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
   });
 
   it("should clear agent status when new user message arrives", () => {
-    const aggregator = new StreamingMessageAggregator("2024-01-01T00:00:00.000Z");
+    const aggregator = new StreamingMessageAggregator("2024-01-01T00:00:00.000Z", "workspace1");
 
     // Start first stream and set status
     aggregator.handleStreamStart({
@@ -259,6 +312,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       messageId: "msg1",
       model: "test-model",
       historySequence: 1,
+      startTime: Date.now(),
     });
 
     aggregator.handleToolCallStart({
@@ -321,6 +375,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       messageId,
       model: "test-model",
       historySequence: 1,
+      startTime: Date.now(),
     });
 
     // Add a status_set tool call with invalid emoji
@@ -370,7 +425,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
   });
 
   it("should show 'completed' status in UI when status_set validation succeeds", () => {
-    const aggregator = new StreamingMessageAggregator("2024-01-01T00:00:00.000Z");
+    const aggregator = new StreamingMessageAggregator("2024-01-01T00:00:00.000Z", "workspace1");
     const messageId = "msg1";
 
     // Start a stream
@@ -380,6 +435,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       messageId,
       model: "test-model",
       historySequence: 1,
+      startTime: Date.now(),
     });
 
     // Add a successful status_set tool call
@@ -623,6 +679,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       messageId,
       model: "test-model",
       historySequence: 1,
+      startTime: Date.now(),
     });
 
     // Status_set with long message (would be truncated by backend)
@@ -668,6 +725,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       messageId,
       model: "test-model",
       historySequence: 1,
+      startTime: Date.now(),
     });
 
     // Add a status_set tool call with URL
@@ -712,6 +770,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       messageId,
       model: "test-model",
       historySequence: 1,
+      startTime: Date.now(),
     });
 
     // First status with URL
@@ -806,6 +865,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       messageId: messageId1,
       model: "test-model",
       historySequence: 1,
+      startTime: Date.now(),
     });
 
     // Set status with URL in first stream
@@ -853,6 +913,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
       messageId: messageId2,
       model: "test-model",
       historySequence: 2,
+      startTime: Date.now(),
     });
 
     // Set new status WITHOUT URL - should use the last URL ever seen

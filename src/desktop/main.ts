@@ -309,6 +309,9 @@ async function loadServices(): Promise<void> {
   // Generate auth token (use env var or random per-session)
   const authToken = process.env.MUX_SERVER_AUTH_TOKEN ?? randomBytes(32).toString("hex");
 
+  // Store auth token so the API server can be restarted via Settings.
+  services.serverService.setApiAuthToken(authToken);
+
   // Single router instance with auth middleware - used for both MessagePort and HTTP/WS
   const orpcRouter = router(authToken);
 
@@ -326,6 +329,7 @@ async function loadServices(): Promise<void> {
     aiService: services.aiService,
     projectService: services.projectService,
     workspaceService: services.workspaceService,
+    taskService: services.taskService,
     providerService: services.providerService,
     terminalService: services.terminalService,
     editorService: services.editorService,
@@ -333,14 +337,34 @@ async function loadServices(): Promise<void> {
     updateService: services.updateService,
     tokenizerService: services.tokenizerService,
     serverService: services.serverService,
+    featureFlagService: services.featureFlagService,
+    sessionTimingService: services.sessionTimingService,
+    workspaceMcpOverridesService: services.workspaceMcpOverridesService,
     mcpConfigService: services.mcpConfigService,
     mcpServerManager: services.mcpServerManager,
     menuEventService: services.menuEventService,
     voiceService: services.voiceService,
     telemetryService: services.telemetryService,
+    experimentsService: services.experimentsService,
     sessionUsageService: services.sessionUsageService,
+    signingService: services.signingService,
   };
 
+  electronIpcMain.handle("mux:get-is-rosetta", async () => {
+    if (process.platform !== "darwin") {
+      return false;
+    }
+
+    try {
+      // Intentionally lazy import to keep startup fast and avoid bundling concerns.
+      // eslint-disable-next-line no-restricted-syntax -- main-process-only builtin
+      const { execSync } = await import("node:child_process");
+      const result = execSync("sysctl -n sysctl.proc_translated", { encoding: "utf8" }).trim();
+      return result === "1";
+    } catch {
+      return false;
+    }
+  });
   electronIpcMain.on("start-orpc-server", (event) => {
     const [serverPort] = event.ports;
     orpcHandler.upgrade(serverPort, {
@@ -362,12 +386,31 @@ async function loadServices(): Promise<void> {
       console.log(`[${timestamp()}] API server already running at ${existing.baseUrl}, skipping`);
     } else {
       try {
-        const port = process.env.MUX_SERVER_PORT ? parseInt(process.env.MUX_SERVER_PORT, 10) : 0;
+        const loadedConfig = config.loadConfigOrDefault();
+        const configuredBindHost =
+          typeof loadedConfig.apiServerBindHost === "string" &&
+          loadedConfig.apiServerBindHost.trim()
+            ? loadedConfig.apiServerBindHost.trim()
+            : undefined;
+        const serveStatic = loadedConfig.apiServerServeWebUi === true;
+        const configuredPort = loadedConfig.apiServerPort;
+
+        const envPortRaw = process.env.MUX_SERVER_PORT
+          ? Number.parseInt(process.env.MUX_SERVER_PORT, 10)
+          : undefined;
+        const envPort =
+          envPortRaw !== undefined && Number.isFinite(envPortRaw) ? envPortRaw : undefined;
+
+        const port = envPort ?? configuredPort ?? 0;
+        const host = configuredBindHost ?? "127.0.0.1";
+
         const serverInfo = await services.serverService.startServer({
           muxHome: config.rootDir,
           context: orpcContext,
           router: orpcRouter,
           authToken,
+          host,
+          serveStatic,
           port,
         });
         console.log(`[${timestamp()}] API server started at ${serverInfo.baseUrl}`);

@@ -6,15 +6,25 @@
  */
 
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import type { WorkspaceChatMessage, ChatMuxMessage, ProvidersConfigMap } from "@/common/orpc/types";
+import type {
+  WorkspaceChatMessage,
+  ChatMuxMessage,
+  ProvidersConfigMap,
+  WorkspaceStatsSnapshot,
+} from "@/common/orpc/types";
 import type { APIClient } from "@/browser/contexts/API";
 import {
   SELECTED_WORKSPACE_KEY,
   EXPANDED_PROJECTS_KEY,
+  RIGHT_SIDEBAR_COLLAPSED_KEY,
   getInputKey,
   getModelKey,
   getReviewsKey,
+  getHunkFirstSeenKey,
+  REVIEW_SORT_ORDER_KEY,
 } from "@/common/constants/storage";
+import type { ReviewSortOrder } from "@/common/types/review";
+import type { HunkFirstSeenState } from "@/browser/hooks/useHunkFirstSeen";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import type { Review, ReviewsState } from "@/common/types/review";
 import { DEFAULT_MODEL } from "@/common/constants/knownModels";
@@ -26,7 +36,7 @@ import {
   createGitStatusOutput,
   type GitStatusFixture,
 } from "./mockFactory";
-import { createMockORPCClient, type MockSessionUsage } from "../../../.storybook/mocks/orpc";
+import { createMockORPCClient, type MockSessionUsage } from "@/browser/stories/mocks/orpc";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // WORKSPACE SELECTION
@@ -45,9 +55,14 @@ export function selectWorkspace(workspace: FrontendWorkspaceMetadata): void {
   );
 }
 
+/** Clear workspace selection from localStorage (for sidebar-focused stories) */
+export function clearWorkspaceSelection(): void {
+  localStorage.removeItem(SELECTED_WORKSPACE_KEY);
+}
+
 /** Set input text for a workspace */
 export function setWorkspaceInput(workspaceId: string, text: string): void {
-  localStorage.setItem(getInputKey(workspaceId), text);
+  localStorage.setItem(getInputKey(workspaceId), JSON.stringify(text));
 }
 
 /** Set model for a workspace */
@@ -60,6 +75,16 @@ export function expandProjects(projectPaths: string[]): void {
   localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify(projectPaths));
 }
 
+/** Collapse the right sidebar (default for most stories) */
+export function collapseRightSidebar(): void {
+  localStorage.setItem(RIGHT_SIDEBAR_COLLAPSED_KEY, JSON.stringify(true));
+}
+
+/** Expand the right sidebar (for stories testing it) */
+export function expandRightSidebar(): void {
+  localStorage.setItem(RIGHT_SIDEBAR_COLLAPSED_KEY, JSON.stringify(false));
+}
+
 /** Set reviews for a workspace */
 export function setReviews(workspaceId: string, reviews: Review[]): void {
   const state: ReviewsState = {
@@ -68,6 +93,17 @@ export function setReviews(workspaceId: string, reviews: Review[]): void {
     lastUpdated: Date.now(),
   };
   updatePersistedState(getReviewsKey(workspaceId), state);
+}
+
+/** Set hunk first-seen timestamps for a workspace (for storybook) */
+export function setHunkFirstSeen(workspaceId: string, firstSeen: Record<string, number>): void {
+  const state: HunkFirstSeenState = { firstSeen };
+  updatePersistedState(getHunkFirstSeenKey(workspaceId), state);
+}
+
+/** Set the review panel sort order (global) */
+export function setReviewSortOrder(order: ReviewSortOrder): void {
+  localStorage.setItem(REVIEW_SORT_ORDER_KEY, JSON.stringify(order));
 }
 
 /** Create a sample review for stories */
@@ -94,17 +130,68 @@ export function createReview(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// GIT STATUS EXECUTOR
+// GIT STATUS/DIFF EXECUTOR
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/** Creates an executeBash function that returns git status output for workspaces */
-function createGitStatusExecutor(gitStatus?: Map<string, GitStatusFixture>) {
+export interface GitDiffFixture {
+  /** The raw unified diff output */
+  diffOutput: string;
+  /** The numstat output (additions, deletions per file) */
+  numstatOutput?: string;
+  /** File contents for read-more feature (path -> full file content as lines) */
+  fileContents?: Map<string, string[]>;
+}
+
+/**
+ * Creates an executeBash function that returns git status and diff output for workspaces.
+ * Handles: git status, git show-branch, git diff, git diff --numstat, git show (for read-more)
+ */
+export function createGitStatusExecutor(
+  gitStatus?: Map<string, GitStatusFixture>,
+  gitDiff?: Map<string, GitDiffFixture>
+) {
   return (workspaceId: string, script: string) => {
     if (script.includes("git status") || script.includes("git show-branch")) {
       const status = gitStatus?.get(workspaceId) ?? {};
       const output = createGitStatusOutput(status);
       return Promise.resolve({ success: true as const, output, exitCode: 0, wall_duration_ms: 50 });
     }
+
+    // Handle git diff --numstat
+    if (script.includes("git diff") && script.includes("--numstat")) {
+      const diff = gitDiff?.get(workspaceId);
+      const output = diff?.numstatOutput ?? "";
+      return Promise.resolve({ success: true as const, output, exitCode: 0, wall_duration_ms: 50 });
+    }
+
+    // Handle git diff (regular diff output)
+    if (script.includes("git diff")) {
+      const diff = gitDiff?.get(workspaceId);
+      const output = diff?.diffOutput ?? "";
+      return Promise.resolve({ success: true as const, output, exitCode: 0, wall_duration_ms: 50 });
+    }
+
+    // Handle git show for read-more feature (e.g., git show "HEAD:file.ts" | sed -n '1,20p')
+    const gitShowMatch = /git show "[^:]+:([^"]+)"/.exec(script);
+    const sedMatch = /sed -n '(\d+),(\d+)p'/.exec(script);
+    if (gitShowMatch && sedMatch) {
+      const filePath = gitShowMatch[1];
+      const startLine = parseInt(sedMatch[1], 10);
+      const endLine = parseInt(sedMatch[2], 10);
+      const diff = gitDiff?.get(workspaceId);
+      const lines = diff?.fileContents?.get(filePath);
+      if (lines) {
+        // sed uses 1-based indexing
+        const output = lines.slice(startLine - 1, endLine).join("\n");
+        return Promise.resolve({
+          success: true as const,
+          output,
+          exitCode: 0,
+          wall_duration_ms: 50,
+        });
+      }
+    }
+
     return Promise.resolve({
       success: true as const,
       output: "",
@@ -118,10 +205,10 @@ function createGitStatusExecutor(gitStatus?: Map<string, GitStatusFixture>) {
 // CHAT HANDLER ADAPTER
 // ═══════════════════════════════════════════════════════════════════════════════
 
-type ChatHandler = (callback: (event: WorkspaceChatMessage) => void) => () => void;
+export type ChatHandler = (callback: (event: WorkspaceChatMessage) => void) => () => void;
 
 /** Adapts callback-based chat handlers to ORPC onChat format */
-function createOnChatAdapter(chatHandlers: Map<string, ChatHandler>) {
+export function createOnChatAdapter(chatHandlers: Map<string, ChatHandler>) {
   return (workspaceId: string, emit: (msg: WorkspaceChatMessage) => void) => {
     const handler = chatHandlers.get(workspaceId);
     if (handler) {
@@ -151,12 +238,26 @@ export interface SimpleChatSetupOptions {
   workspaceId?: string;
   workspaceName?: string;
   projectName?: string;
+  projectPath?: string;
   messages: ChatMuxMessage[];
   gitStatus?: GitStatusFixture;
+  /** Git diff output for Review tab */
+  gitDiff?: GitDiffFixture;
   providersConfig?: ProvidersConfigMap;
   backgroundProcesses?: BackgroundProcessFixture[];
   /** Session usage data for Costs tab */
+  statsTabEnabled?: boolean;
   sessionUsage?: MockSessionUsage;
+  /** Optional custom chat handler for emitting additional events (e.g., queued-message-changed) */
+  onChat?: (workspaceId: string, emit: (msg: WorkspaceChatMessage) => void) => void;
+  /** Idle compaction hours for context meter (null = disabled) */
+  idleCompactionHours?: number | null;
+  /** Override signing capabilities (for testing warning states) */
+  signingCapabilities?: {
+    publicKey: string | null;
+    githubUser: string | null;
+    error: { message: string; hasEncryptedKey: boolean } | null;
+  };
 }
 
 /**
@@ -165,11 +266,14 @@ export interface SimpleChatSetupOptions {
  */
 export function setupSimpleChatStory(opts: SimpleChatSetupOptions): APIClient {
   const workspaceId = opts.workspaceId ?? "ws-chat";
+  const projectName = opts.projectName ?? "my-app";
+  const projectPath = opts.projectPath ?? `/home/user/projects/${projectName}`;
   const workspaces = [
     createWorkspace({
       id: workspaceId,
       name: opts.workspaceName ?? "feature",
-      projectName: opts.projectName ?? "my-app",
+      projectName,
+      projectPath,
     }),
   ];
 
@@ -177,9 +281,13 @@ export function setupSimpleChatStory(opts: SimpleChatSetupOptions): APIClient {
   const gitStatus = opts.gitStatus
     ? new Map<string, GitStatusFixture>([[workspaceId, opts.gitStatus]])
     : undefined;
+  const gitDiff = opts.gitDiff
+    ? new Map<string, GitDiffFixture>([[workspaceId, opts.gitDiff]])
+    : undefined;
 
-  // Set localStorage for workspace selection
+  // Set localStorage for workspace selection and collapse right sidebar by default
   selectWorkspace(workspaces[0]);
+  collapseRightSidebar();
 
   // Set up background processes map
   const bgProcesses = opts.backgroundProcesses
@@ -191,15 +299,34 @@ export function setupSimpleChatStory(opts: SimpleChatSetupOptions): APIClient {
     ? new Map([[workspaceId, opts.sessionUsage]])
     : undefined;
 
+  // Set up idle compaction hours map
+  const idleCompactionHours =
+    opts.idleCompactionHours !== undefined
+      ? new Map([[projectPath, opts.idleCompactionHours]])
+      : undefined;
+
+  // Create onChat handler that combines static messages with custom handler
+  const baseOnChat = createOnChatAdapter(chatHandlers);
+  const onChat = opts.onChat
+    ? (wsId: string, emit: (msg: WorkspaceChatMessage) => void) => {
+        const cleanup = baseOnChat(wsId, emit);
+        opts.onChat!(wsId, emit);
+        return cleanup;
+      }
+    : baseOnChat;
+
   // Return ORPC client
   return createMockORPCClient({
     projects: groupWorkspacesByProject(workspaces),
     workspaces,
-    onChat: createOnChatAdapter(chatHandlers),
-    executeBash: createGitStatusExecutor(gitStatus),
+    onChat,
+    executeBash: createGitStatusExecutor(gitStatus, gitDiff),
     providersConfig: opts.providersConfig,
     backgroundProcesses: bgProcesses,
+    statsTabVariant: opts.statsTabEnabled ? "stats" : "control",
     sessionUsage: sessionUsageMap,
+    idleCompactionHours,
+    signingCapabilities: opts.signingCapabilities,
   });
 }
 
@@ -218,6 +345,7 @@ export interface StreamingChatSetupOptions {
   streamText?: string;
   pendingTool?: { toolCallId: string; toolName: string; args: object };
   gitStatus?: GitStatusFixture;
+  statsTabEnabled?: boolean;
 }
 
 /**
@@ -252,8 +380,43 @@ export function setupStreamingChatStory(opts: StreamingChatSetupOptions): APICli
     ? new Map<string, GitStatusFixture>([[workspaceId, opts.gitStatus]])
     : undefined;
 
-  // Set localStorage for workspace selection
+  // Set localStorage for workspace selection and collapse right sidebar by default
   selectWorkspace(workspaces[0]);
+  collapseRightSidebar();
+
+  const workspaceStatsSnapshots = new Map<string, WorkspaceStatsSnapshot>();
+  if (opts.statsTabEnabled) {
+    workspaceStatsSnapshots.set(workspaceId, {
+      workspaceId,
+      generatedAt: Date.now(),
+      active: {
+        messageId: opts.streamingMessageId,
+        model: "openai:gpt-4o",
+        elapsedMs: 2000,
+        ttftMs: 200,
+        toolExecutionMs: 0,
+        modelTimeMs: 2000,
+        streamingMs: 1800,
+        outputTokens: 100,
+        reasoningTokens: 0,
+        liveTokenCount: 100,
+        liveTPS: 50,
+        invalid: false,
+        anomalies: [],
+      },
+      session: {
+        totalDurationMs: 0,
+        totalToolExecutionMs: 0,
+        totalStreamingMs: 0,
+        totalTtftMs: 0,
+        ttftCount: 0,
+        responseCount: 0,
+        totalOutputTokens: 0,
+        totalReasoningTokens: 0,
+        byModel: {},
+      },
+    });
+  }
 
   // Return ORPC client
   return createMockORPCClient({
@@ -261,6 +424,8 @@ export function setupStreamingChatStory(opts: StreamingChatSetupOptions): APICli
     workspaces,
     onChat: createOnChatAdapter(chatHandlers),
     executeBash: createGitStatusExecutor(gitStatus),
+    workspaceStatsSnapshots,
+    statsTabVariant: opts.statsTabEnabled ? "stats" : "control",
   });
 }
 
@@ -272,6 +437,7 @@ export interface CustomChatSetupOptions {
   workspaceId?: string;
   workspaceName?: string;
   projectName?: string;
+  providersConfig?: ProvidersConfigMap;
   chatHandler: ChatHandler;
 }
 
@@ -292,13 +458,15 @@ export function setupCustomChatStory(opts: CustomChatSetupOptions): APIClient {
 
   const chatHandlers = new Map([[workspaceId, opts.chatHandler]]);
 
-  // Set localStorage for workspace selection
+  // Set localStorage for workspace selection and collapse right sidebar by default
   selectWorkspace(workspaces[0]);
+  collapseRightSidebar();
 
   // Return ORPC client
   return createMockORPCClient({
     projects: groupWorkspacesByProject(workspaces),
     workspaces,
     onChat: createOnChatAdapter(chatHandlers),
+    providersConfig: opts.providersConfig,
   });
 }

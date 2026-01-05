@@ -3,6 +3,7 @@ import React from "react";
 import { COMPACTED_EMOJI } from "@/common/constants/ui";
 import { StartHereModal } from "@/browser/components/StartHereModal";
 import { createMuxMessage } from "@/common/types/message";
+import type { AgentMode } from "@/common/types/mode";
 import { useAPI } from "@/browser/contexts/API";
 
 /**
@@ -18,7 +19,7 @@ export function useStartHere(
   workspaceId: string | undefined,
   content: string,
   isCompacted = false,
-  options?: { deletePlanFile?: boolean }
+  options?: { deletePlanFile?: boolean; sourceMode?: AgentMode }
 ) {
   const { api } = useAPI();
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -47,7 +48,8 @@ export function useStartHere(
         content,
         {
           timestamp: Date.now(),
-          compacted: true,
+          compacted: "user",
+          mode: options?.sourceMode,
         }
       );
 

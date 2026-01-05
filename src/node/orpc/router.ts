@@ -2,13 +2,14 @@ import { os } from "@orpc/server";
 import * as schemas from "@/common/orpc/schemas";
 import type { ORPCContext } from "./context";
 import {
-  getPreferredNameModel,
+  findAvailableModel,
   generateWorkspaceIdentity,
 } from "@/node/services/workspaceTitleGenerator";
 import type {
   UpdateStatus,
   WorkspaceActivitySnapshot,
   WorkspaceChatMessage,
+  WorkspaceStatsSnapshot,
   FrontendWorkspaceMetadataSchemaType,
 } from "@/common/orpc/types";
 import { createAuthMiddleware } from "./authMiddleware";
@@ -16,7 +17,59 @@ import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
 
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { readPlanFile } from "@/node/utils/runtime/helpers";
+import { secretsToRecord } from "@/common/types/secrets";
+import { roundToBase2 } from "@/common/telemetry/utils";
 import { createAsyncEventQueue } from "@/common/utils/asyncEventIterator";
+import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
+import { normalizeModeAiDefaults } from "@/common/types/modeAiDefaults";
+import {
+  DEFAULT_TASK_SETTINGS,
+  normalizeSubagentAiDefaults,
+  normalizeTaskSettings,
+} from "@/common/types/tasks";
+import {
+  discoverAgentDefinitions,
+  readAgentDefinition,
+} from "@/node/services/agentDefinitions/agentDefinitionsService";
+import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/resolveAgentInheritanceChain";
+import { isWorkspaceArchived } from "@/common/utils/archive";
+
+/**
+ * Resolves runtime and discovery path for agent operations.
+ * - When workspaceId is provided: uses workspace's runtime config (SSH, local, worktree)
+ * - When only projectPath is provided: uses local runtime with project path
+ * - When disableWorkspaceAgents is true: still uses workspace runtime but discovers from projectPath
+ */
+async function resolveAgentDiscoveryContext(
+  context: ORPCContext,
+  input: { projectPath?: string; workspaceId?: string; disableWorkspaceAgents?: boolean }
+): Promise<{ runtime: ReturnType<typeof createRuntime>; discoveryPath: string }> {
+  if (!input.projectPath && !input.workspaceId) {
+    throw new Error("Either projectPath or workspaceId must be provided");
+  }
+
+  if (input.workspaceId) {
+    const metadataResult = await context.aiService.getWorkspaceMetadata(input.workspaceId);
+    if (!metadataResult.success) {
+      throw new Error(metadataResult.error);
+    }
+    const metadata = metadataResult.data;
+    const runtime = createRuntime(metadata.runtimeConfig, { projectPath: metadata.projectPath });
+    // When workspace agents disabled, discover from project path instead of worktree
+    // (but still use the workspace's runtime for SSH compatibility)
+    const discoveryPath = input.disableWorkspaceAgents
+      ? metadata.projectPath
+      : runtime.getWorkspacePath(metadata.projectPath, metadata.name);
+    return { runtime, discoveryPath };
+  }
+
+  // No workspace - use local runtime with project path
+  const runtime = createRuntime(
+    { type: "local", srcBaseDir: context.config.srcDir },
+    { projectPath: input.projectPath! }
+  );
+  return { runtime, discoveryPath: input.projectPath! };
+}
 
 export const router = (authToken?: string) => {
   const t = os.$context<ORPCContext>().use(createAuthMiddleware(authToken));
@@ -40,6 +93,30 @@ export const router = (authToken?: string) => {
         .output(schemas.tokenizer.calculateStats.output)
         .handler(async ({ context, input }) => {
           return context.tokenizerService.calculateStats(input.messages, input.model);
+        }),
+    },
+    splashScreens: {
+      getViewedSplashScreens: t
+        .input(schemas.splashScreens.getViewedSplashScreens.input)
+        .output(schemas.splashScreens.getViewedSplashScreens.output)
+        .handler(({ context }) => {
+          const config = context.config.loadConfigOrDefault();
+          return config.viewedSplashScreens ?? [];
+        }),
+      markSplashScreenViewed: t
+        .input(schemas.splashScreens.markSplashScreenViewed.input)
+        .output(schemas.splashScreens.markSplashScreenViewed.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => {
+            const viewed = config.viewedSplashScreens ?? [];
+            if (!viewed.includes(input.splashId)) {
+              viewed.push(input.splashId);
+            }
+            return {
+              ...config,
+              viewedSplashScreens: viewed,
+            };
+          });
         }),
     },
     server: {
@@ -66,6 +143,348 @@ export const router = (authToken?: string) => {
             ...config,
             serverSshHost: input.sshHost ?? undefined,
           }));
+        }),
+      getApiServerStatus: t
+        .input(schemas.server.getApiServerStatus.input)
+        .output(schemas.server.getApiServerStatus.output)
+        .handler(({ context }) => {
+          const config = context.config.loadConfigOrDefault();
+          const configuredBindHost = config.apiServerBindHost ?? null;
+          const configuredServeWebUi = config.apiServerServeWebUi === true;
+          const configuredPort = config.apiServerPort ?? null;
+
+          const info = context.serverService.getServerInfo();
+
+          return {
+            running: info !== null,
+            baseUrl: info?.baseUrl ?? null,
+            bindHost: info?.bindHost ?? null,
+            port: info?.port ?? null,
+            networkBaseUrls: info?.networkBaseUrls ?? [],
+            token: info?.token ?? null,
+            configuredBindHost,
+            configuredPort,
+            configuredServeWebUi,
+          };
+        }),
+      setApiServerSettings: t
+        .input(schemas.server.setApiServerSettings.input)
+        .output(schemas.server.setApiServerSettings.output)
+        .handler(async ({ context, input }) => {
+          const prevConfig = context.config.loadConfigOrDefault();
+          const prevBindHost = prevConfig.apiServerBindHost;
+          const prevServeWebUi = prevConfig.apiServerServeWebUi;
+          const prevPort = prevConfig.apiServerPort;
+          const wasRunning = context.serverService.isServerRunning();
+
+          const bindHost = input.bindHost?.trim() ? input.bindHost.trim() : undefined;
+          const serveWebUi =
+            input.serveWebUi === undefined
+              ? prevServeWebUi
+              : input.serveWebUi === true
+                ? true
+                : undefined;
+          const port = input.port === null || input.port === 0 ? undefined : input.port;
+
+          if (wasRunning) {
+            await context.serverService.stopServer();
+          }
+
+          await context.config.editConfig((config) => {
+            config.apiServerServeWebUi = serveWebUi;
+            config.apiServerBindHost = bindHost;
+            config.apiServerPort = port;
+            return config;
+          });
+
+          if (process.env.MUX_NO_API_SERVER !== "1") {
+            const authToken = context.serverService.getApiAuthToken();
+            if (!authToken) {
+              throw new Error("API server auth token not initialized");
+            }
+
+            const envPort = process.env.MUX_SERVER_PORT
+              ? Number.parseInt(process.env.MUX_SERVER_PORT, 10)
+              : undefined;
+            const portToUse = envPort ?? port ?? 0;
+            const hostToUse = bindHost ?? "127.0.0.1";
+
+            try {
+              await context.serverService.startServer({
+                muxHome: context.config.rootDir,
+                context,
+                authToken,
+                serveStatic: serveWebUi === true,
+                host: hostToUse,
+                port: portToUse,
+              });
+            } catch (error) {
+              await context.config.editConfig((config) => {
+                config.apiServerServeWebUi = prevServeWebUi;
+                config.apiServerBindHost = prevBindHost;
+                config.apiServerPort = prevPort;
+                return config;
+              });
+
+              if (wasRunning) {
+                const portToRestore = envPort ?? prevPort ?? 0;
+                const hostToRestore = prevBindHost ?? "127.0.0.1";
+
+                try {
+                  await context.serverService.startServer({
+                    muxHome: context.config.rootDir,
+                    context,
+                    serveStatic: prevServeWebUi === true,
+                    authToken,
+                    host: hostToRestore,
+                    port: portToRestore,
+                  });
+                } catch {
+                  // Best effort - we'll surface the original error.
+                }
+              }
+
+              throw error;
+            }
+          }
+
+          const nextConfig = context.config.loadConfigOrDefault();
+          const configuredBindHost = nextConfig.apiServerBindHost ?? null;
+          const configuredServeWebUi = nextConfig.apiServerServeWebUi === true;
+          const configuredPort = nextConfig.apiServerPort ?? null;
+
+          const info = context.serverService.getServerInfo();
+
+          return {
+            running: info !== null,
+            baseUrl: info?.baseUrl ?? null,
+            bindHost: info?.bindHost ?? null,
+            port: info?.port ?? null,
+            networkBaseUrls: info?.networkBaseUrls ?? [],
+            token: info?.token ?? null,
+            configuredBindHost,
+            configuredPort,
+            configuredServeWebUi,
+          };
+        }),
+    },
+    features: {
+      getStatsTabState: t
+        .input(schemas.features.getStatsTabState.input)
+        .output(schemas.features.getStatsTabState.output)
+        .handler(async ({ context }) => {
+          const state = await context.featureFlagService.getStatsTabState();
+          context.sessionTimingService.setStatsTabState(state);
+          return state;
+        }),
+      setStatsTabOverride: t
+        .input(schemas.features.setStatsTabOverride.input)
+        .output(schemas.features.setStatsTabOverride.output)
+        .handler(async ({ context, input }) => {
+          const state = await context.featureFlagService.setStatsTabOverride(input.override);
+          context.sessionTimingService.setStatsTabState(state);
+          return state;
+        }),
+    },
+    config: {
+      getConfig: t
+        .input(schemas.config.getConfig.input)
+        .output(schemas.config.getConfig.output)
+        .handler(({ context }) => {
+          const config = context.config.loadConfigOrDefault();
+          return {
+            taskSettings: config.taskSettings ?? DEFAULT_TASK_SETTINGS,
+            agentAiDefaults: config.agentAiDefaults ?? {},
+            // Legacy fields (downgrade compatibility)
+            subagentAiDefaults: config.subagentAiDefaults ?? {},
+            modeAiDefaults: config.modeAiDefaults ?? {},
+          };
+        }),
+      updateModeAiDefaults: t
+        .input(schemas.config.updateModeAiDefaults.input)
+        .output(schemas.config.updateModeAiDefaults.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => {
+            const normalizedDefaults = normalizeModeAiDefaults(input.modeAiDefaults);
+
+            const nextAgentAiDefaults = { ...(config.agentAiDefaults ?? {}) };
+            for (const id of ["plan", "exec", "compact"] as const) {
+              const entry = normalizedDefaults[id];
+              if (entry) {
+                nextAgentAiDefaults[id] = entry;
+              } else {
+                delete nextAgentAiDefaults[id];
+              }
+            }
+
+            return {
+              ...config,
+              agentAiDefaults:
+                Object.keys(nextAgentAiDefaults).length > 0 ? nextAgentAiDefaults : undefined,
+              // Keep legacy field up to date.
+              modeAiDefaults:
+                Object.keys(normalizedDefaults).length > 0 ? normalizedDefaults : undefined,
+            };
+          });
+        }),
+      updateAgentAiDefaults: t
+        .input(schemas.config.updateAgentAiDefaults.input)
+        .output(schemas.config.updateAgentAiDefaults.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => {
+            const normalized = normalizeAgentAiDefaults(input.agentAiDefaults);
+
+            const legacyModeDefaults = normalizeModeAiDefaults({
+              plan: normalized.plan,
+              exec: normalized.exec,
+              compact: normalized.compact,
+            });
+
+            const legacySubagentDefaultsRaw: Record<string, unknown> = {};
+            for (const [agentType, entry] of Object.entries(normalized)) {
+              if (agentType === "plan" || agentType === "exec" || agentType === "compact") {
+                continue;
+              }
+              legacySubagentDefaultsRaw[agentType] = entry;
+            }
+
+            const legacySubagentDefaults = normalizeSubagentAiDefaults(legacySubagentDefaultsRaw);
+
+            return {
+              ...config,
+              agentAiDefaults: Object.keys(normalized).length > 0 ? normalized : undefined,
+              // Legacy fields (downgrade compatibility)
+              modeAiDefaults:
+                Object.keys(legacyModeDefaults).length > 0 ? legacyModeDefaults : undefined,
+              subagentAiDefaults:
+                Object.keys(legacySubagentDefaults).length > 0 ? legacySubagentDefaults : undefined,
+            };
+          });
+        }),
+      saveConfig: t
+        .input(schemas.config.saveConfig.input)
+        .output(schemas.config.saveConfig.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => {
+            const normalizedTaskSettings = normalizeTaskSettings(input.taskSettings);
+            const result = { ...config, taskSettings: normalizedTaskSettings };
+
+            if (input.agentAiDefaults !== undefined) {
+              const normalized = normalizeAgentAiDefaults(input.agentAiDefaults);
+              result.agentAiDefaults = Object.keys(normalized).length > 0 ? normalized : undefined;
+
+              // Legacy fields (downgrade compatibility)
+              const legacyModeDefaults = normalizeModeAiDefaults({
+                plan: normalized.plan,
+                exec: normalized.exec,
+                compact: normalized.compact,
+              });
+              result.modeAiDefaults =
+                Object.keys(legacyModeDefaults).length > 0 ? legacyModeDefaults : undefined;
+
+              if (input.subagentAiDefaults === undefined) {
+                const legacySubagentDefaultsRaw: Record<string, unknown> = {};
+                for (const [agentType, entry] of Object.entries(normalized)) {
+                  if (agentType === "plan" || agentType === "exec" || agentType === "compact") {
+                    continue;
+                  }
+                  legacySubagentDefaultsRaw[agentType] = entry;
+                }
+
+                const legacySubagentDefaults =
+                  normalizeSubagentAiDefaults(legacySubagentDefaultsRaw);
+                result.subagentAiDefaults =
+                  Object.keys(legacySubagentDefaults).length > 0
+                    ? legacySubagentDefaults
+                    : undefined;
+              }
+            }
+
+            if (input.subagentAiDefaults !== undefined) {
+              const normalizedDefaults = normalizeSubagentAiDefaults(input.subagentAiDefaults);
+              result.subagentAiDefaults =
+                Object.keys(normalizedDefaults).length > 0 ? normalizedDefaults : undefined;
+
+              // Downgrade compatibility: keep agentAiDefaults in sync with legacy subagentAiDefaults.
+              // Only mutate keys previously managed by subagentAiDefaults so we don't clobber other
+              // agent defaults (e.g., UI-selectable custom agents).
+              const previousLegacy = config.subagentAiDefaults ?? {};
+              const nextAgentAiDefaults: Record<string, unknown> = {
+                ...(result.agentAiDefaults ?? config.agentAiDefaults ?? {}),
+              };
+
+              for (const legacyAgentType of Object.keys(previousLegacy)) {
+                if (
+                  legacyAgentType === "plan" ||
+                  legacyAgentType === "exec" ||
+                  legacyAgentType === "compact"
+                ) {
+                  continue;
+                }
+                if (!(legacyAgentType in normalizedDefaults)) {
+                  delete nextAgentAiDefaults[legacyAgentType];
+                }
+              }
+
+              for (const [agentType, entry] of Object.entries(normalizedDefaults)) {
+                if (agentType === "plan" || agentType === "exec" || agentType === "compact")
+                  continue;
+                nextAgentAiDefaults[agentType] = entry;
+              }
+
+              const normalizedAgent = normalizeAgentAiDefaults(nextAgentAiDefaults);
+              result.agentAiDefaults =
+                Object.keys(normalizedAgent).length > 0 ? normalizedAgent : undefined;
+            }
+
+            return result;
+          });
+
+          // Re-evaluate task queue in case more slots opened up
+          await context.taskService.maybeStartQueuedTasks();
+        }),
+    },
+    agents: {
+      list: t
+        .input(schemas.agents.list.input)
+        .output(schemas.agents.list.output)
+        .handler(async ({ context, input }) => {
+          const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
+          const descriptors = await discoverAgentDefinitions(runtime, discoveryPath);
+
+          // Compute derived UI fields that depend on inheritance resolution.
+          // This keeps frontend logic simple and ensures scope rules (same-name overrides)
+          // are applied consistently.
+          return Promise.all(
+            descriptors.map(async (descriptor) => {
+              try {
+                const pkg = await readAgentDefinition(runtime, discoveryPath, descriptor.id);
+                const chain = await resolveAgentInheritanceChain({
+                  runtime,
+                  workspacePath: discoveryPath,
+                  agentId: descriptor.id,
+                  agentDefinition: pkg,
+                  workspaceId: input.workspaceId ?? "", // for logging only
+                });
+
+                const resolvedUiColor = chain.find((entry) => entry.uiColor)?.uiColor;
+
+                return {
+                  ...descriptor,
+                  uiColor: descriptor.uiColor ?? resolvedUiColor,
+                };
+              } catch {
+                return descriptor;
+              }
+            })
+          );
+        }),
+      get: t
+        .input(schemas.agents.get.input)
+        .output(schemas.agents.get.output)
+        .handler(async ({ context, input }) => {
+          const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
+          return readAgentDefinition(runtime, discoveryPath, input.agentId);
         }),
     },
     providers: {
@@ -139,6 +558,12 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           return context.projectService.listDirectory(input.path);
         }),
+      createDirectory: t
+        .input(schemas.general.createDirectory.input)
+        .output(schemas.general.createDirectory.output)
+        .handler(async ({ context, input }) => {
+          return context.projectService.createDirectory(input.path);
+        }),
       ping: t
         .input(schemas.general.ping.input)
         .output(schemas.general.ping.output)
@@ -186,11 +611,27 @@ export const router = (authToken?: string) => {
         .handler(async ({ context }) => {
           return context.projectService.pickDirectory();
         }),
+      getFileCompletions: t
+        .input(schemas.projects.getFileCompletions.input)
+        .output(schemas.projects.getFileCompletions.output)
+        .handler(async ({ context, input }) => {
+          return context.projectService.getFileCompletions(
+            input.projectPath,
+            input.query,
+            input.limit
+          );
+        }),
       listBranches: t
         .input(schemas.projects.listBranches.input)
         .output(schemas.projects.listBranches.output)
         .handler(async ({ context, input }) => {
           return context.projectService.listBranches(input.projectPath);
+        }),
+      gitInit: t
+        .input(schemas.projects.gitInit.input)
+        .output(schemas.projects.gitInit.output)
+        .handler(async ({ context, input }) => {
+          return context.projectService.gitInit(input.projectPath);
         }),
       remove: t
         .input(schemas.projects.remove.input)
@@ -220,27 +661,297 @@ export const router = (authToken?: string) => {
         add: t
           .input(schemas.projects.mcp.add.input)
           .output(schemas.projects.mcp.add.output)
-          .handler(({ context, input }) =>
-            context.mcpConfigService.addServer(input.projectPath, input.name, input.command)
-          ),
+          .handler(async ({ context, input }) => {
+            const existing = await context.mcpConfigService.listServers(input.projectPath);
+            const existingServer = existing[input.name];
+
+            const transport = input.transport ?? "stdio";
+            const hasHeaders = Boolean(input.headers && Object.keys(input.headers).length > 0);
+            const usesSecretHeaders = Boolean(
+              input.headers &&
+              Object.values(input.headers).some(
+                (v) => typeof v === "object" && v !== null && "secret" in v
+              )
+            );
+
+            const action = (() => {
+              if (!existingServer) {
+                return "add";
+              }
+
+              if (
+                existingServer.transport !== "stdio" &&
+                transport !== "stdio" &&
+                existingServer.transport === transport &&
+                existingServer.url === input.url &&
+                JSON.stringify(existingServer.headers ?? {}) !== JSON.stringify(input.headers ?? {})
+              ) {
+                return "set_headers";
+              }
+
+              return "edit";
+            })();
+
+            const result = await context.mcpConfigService.addServer(input.projectPath, input.name, {
+              transport,
+              command: input.command,
+              url: input.url,
+              headers: input.headers,
+            });
+
+            if (result.success) {
+              context.telemetryService.capture({
+                event: "mcp_server_config_changed",
+                properties: {
+                  action,
+                  transport,
+                  has_headers: hasHeaders,
+                  uses_secret_headers: usesSecretHeaders,
+                },
+              });
+            }
+
+            return result;
+          }),
         remove: t
           .input(schemas.projects.mcp.remove.input)
           .output(schemas.projects.mcp.remove.output)
-          .handler(({ context, input }) =>
-            context.mcpConfigService.removeServer(input.projectPath, input.name)
-          ),
+          .handler(async ({ context, input }) => {
+            const existing = await context.mcpConfigService.listServers(input.projectPath);
+            const server = existing[input.name];
+
+            const result = await context.mcpConfigService.removeServer(
+              input.projectPath,
+              input.name
+            );
+
+            if (result.success && server) {
+              const hasHeaders =
+                server.transport !== "stdio" &&
+                Boolean(server.headers && Object.keys(server.headers).length > 0);
+              const usesSecretHeaders =
+                server.transport !== "stdio" &&
+                Boolean(
+                  server.headers &&
+                  Object.values(server.headers).some(
+                    (v) => typeof v === "object" && v !== null && "secret" in v
+                  )
+                );
+
+              context.telemetryService.capture({
+                event: "mcp_server_config_changed",
+                properties: {
+                  action: "remove",
+                  transport: server.transport,
+                  has_headers: hasHeaders,
+                  uses_secret_headers: usesSecretHeaders,
+                },
+              });
+            }
+
+            return result;
+          }),
         test: t
           .input(schemas.projects.mcp.test.input)
           .output(schemas.projects.mcp.test.output)
-          .handler(({ context, input }) =>
-            context.mcpServerManager.test(input.projectPath, input.name, input.command)
-          ),
+          .handler(async ({ context, input }) => {
+            const start = Date.now();
+            const secrets = secretsToRecord(context.projectService.getSecrets(input.projectPath));
+
+            const configuredTransport = input.name
+              ? (await context.mcpConfigService.listServers(input.projectPath))[input.name]
+                  ?.transport
+              : undefined;
+
+            const transport =
+              configuredTransport ?? (input.command ? "stdio" : (input.transport ?? "auto"));
+
+            const result = await context.mcpServerManager.test({
+              projectPath: input.projectPath,
+              name: input.name,
+              command: input.command,
+              transport: input.transport,
+              url: input.url,
+              headers: input.headers,
+              projectSecrets: secrets,
+            });
+
+            const durationMs = Date.now() - start;
+
+            const categorizeError = (
+              error: string
+            ): "timeout" | "connect" | "http_status" | "unknown" => {
+              const lower = error.toLowerCase();
+              if (lower.includes("timed out")) {
+                return "timeout";
+              }
+              if (
+                lower.includes("econnrefused") ||
+                lower.includes("econnreset") ||
+                lower.includes("enotfound") ||
+                lower.includes("ehostunreach")
+              ) {
+                return "connect";
+              }
+              if (/\b(400|401|403|404|405|500|502|503)\b/.test(lower)) {
+                return "http_status";
+              }
+              return "unknown";
+            };
+
+            context.telemetryService.capture({
+              event: "mcp_server_tested",
+              properties: {
+                transport,
+                success: result.success,
+                duration_ms_b2: roundToBase2(durationMs),
+                ...(result.success ? {} : { error_category: categorizeError(result.error) }),
+              },
+            });
+
+            return result;
+          }),
         setEnabled: t
           .input(schemas.projects.mcp.setEnabled.input)
           .output(schemas.projects.mcp.setEnabled.output)
+          .handler(async ({ context, input }) => {
+            const existing = await context.mcpConfigService.listServers(input.projectPath);
+            const server = existing[input.name];
+
+            const result = await context.mcpConfigService.setServerEnabled(
+              input.projectPath,
+              input.name,
+              input.enabled
+            );
+
+            if (result.success && server) {
+              const hasHeaders =
+                server.transport !== "stdio" &&
+                Boolean(server.headers && Object.keys(server.headers).length > 0);
+              const usesSecretHeaders =
+                server.transport !== "stdio" &&
+                Boolean(
+                  server.headers &&
+                  Object.values(server.headers).some(
+                    (v) => typeof v === "object" && v !== null && "secret" in v
+                  )
+                );
+
+              context.telemetryService.capture({
+                event: "mcp_server_config_changed",
+                properties: {
+                  action: input.enabled ? "enable" : "disable",
+                  transport: server.transport,
+                  has_headers: hasHeaders,
+                  uses_secret_headers: usesSecretHeaders,
+                },
+              });
+            }
+
+            return result;
+          }),
+        setToolAllowlist: t
+          .input(schemas.projects.mcp.setToolAllowlist.input)
+          .output(schemas.projects.mcp.setToolAllowlist.output)
+          .handler(async ({ context, input }) => {
+            const existing = await context.mcpConfigService.listServers(input.projectPath);
+            const server = existing[input.name];
+
+            const result = await context.mcpConfigService.setToolAllowlist(
+              input.projectPath,
+              input.name,
+              input.toolAllowlist
+            );
+
+            if (result.success && server) {
+              const hasHeaders =
+                server.transport !== "stdio" &&
+                Boolean(server.headers && Object.keys(server.headers).length > 0);
+              const usesSecretHeaders =
+                server.transport !== "stdio" &&
+                Boolean(
+                  server.headers &&
+                  Object.values(server.headers).some(
+                    (v) => typeof v === "object" && v !== null && "secret" in v
+                  )
+                );
+
+              context.telemetryService.capture({
+                event: "mcp_server_config_changed",
+                properties: {
+                  action: "set_tool_allowlist",
+                  transport: server.transport,
+                  has_headers: hasHeaders,
+                  uses_secret_headers: usesSecretHeaders,
+                  tool_allowlist_size_b2: roundToBase2(input.toolAllowlist.length),
+                },
+              });
+            }
+
+            return result;
+          }),
+      },
+      idleCompaction: {
+        get: t
+          .input(schemas.projects.idleCompaction.get.input)
+          .output(schemas.projects.idleCompaction.get.output)
+          .handler(({ context, input }) => ({
+            hours: context.projectService.getIdleCompactionHours(input.projectPath),
+          })),
+        set: t
+          .input(schemas.projects.idleCompaction.set.input)
+          .output(schemas.projects.idleCompaction.set.output)
           .handler(({ context, input }) =>
-            context.mcpConfigService.setServerEnabled(input.projectPath, input.name, input.enabled)
+            context.projectService.setIdleCompactionHours(input.projectPath, input.hours)
           ),
+      },
+      sections: {
+        list: t
+          .input(schemas.projects.sections.list.input)
+          .output(schemas.projects.sections.list.output)
+          .handler(({ context, input }) => context.projectService.listSections(input.projectPath)),
+        create: t
+          .input(schemas.projects.sections.create.input)
+          .output(schemas.projects.sections.create.output)
+          .handler(({ context, input }) =>
+            context.projectService.createSection(input.projectPath, input.name, input.color)
+          ),
+        update: t
+          .input(schemas.projects.sections.update.input)
+          .output(schemas.projects.sections.update.output)
+          .handler(({ context, input }) =>
+            context.projectService.updateSection(input.projectPath, input.sectionId, {
+              name: input.name,
+              color: input.color,
+            })
+          ),
+        remove: t
+          .input(schemas.projects.sections.remove.input)
+          .output(schemas.projects.sections.remove.output)
+          .handler(({ context, input }) =>
+            context.projectService.removeSection(input.projectPath, input.sectionId)
+          ),
+        reorder: t
+          .input(schemas.projects.sections.reorder.input)
+          .output(schemas.projects.sections.reorder.output)
+          .handler(({ context, input }) =>
+            context.projectService.reorderSections(input.projectPath, input.sectionIds)
+          ),
+        assignWorkspace: t
+          .input(schemas.projects.sections.assignWorkspace.input)
+          .output(schemas.projects.sections.assignWorkspace.output)
+          .handler(async ({ context, input }) => {
+            const result = await context.projectService.assignWorkspaceToSection(
+              input.projectPath,
+              input.workspaceId,
+              input.sectionId
+            );
+            if (result.success) {
+              // Emit metadata update so frontend receives the sectionId change
+              await context.workspaceService.refreshAndEmitMetadata(input.workspaceId);
+            }
+            return result;
+          }),
       },
     },
     nameGeneration: {
@@ -248,8 +959,10 @@ export const router = (authToken?: string) => {
         .input(schemas.nameGeneration.generate.input)
         .output(schemas.nameGeneration.generate.output)
         .handler(async ({ context, input }) => {
-          // Prefer small/fast models, fall back to user's configured model
-          const model = (await getPreferredNameModel(context.aiService)) ?? input.fallbackModel;
+          // Try preferred models in order, fall back to user's configured model
+          const model =
+            (await findAvailableModel(context.aiService, input.preferredModels ?? [])) ??
+            input.fallbackModel;
           if (!model) {
             return {
               success: false,
@@ -273,8 +986,16 @@ export const router = (authToken?: string) => {
       list: t
         .input(schemas.workspace.list.input)
         .output(schemas.workspace.list.output)
-        .handler(({ context, input }) => {
-          return context.workspaceService.list(input ?? undefined);
+        .handler(async ({ context, input }) => {
+          const allWorkspaces = await context.workspaceService.list({
+            includePostCompaction: input?.includePostCompaction,
+          });
+          // Filter by archived status (derived from timestamps via shared utility)
+          if (input?.archived) {
+            return allWorkspaces.filter((w) => isWorkspaceArchived(w.archivedAt, w.unarchivedAt));
+          }
+          // Default: return non-archived workspaces
+          return allWorkspaces.filter((w) => !isWorkspaceArchived(w.archivedAt, w.unarchivedAt));
         }),
       create: t
         .input(schemas.workspace.create.input)
@@ -285,7 +1006,8 @@ export const router = (authToken?: string) => {
             input.branchName,
             input.trunkBranch,
             input.title,
-            input.runtimeConfig
+            input.runtimeConfig,
+            input.sectionId
           );
           if (!result.success) {
             return { success: false, error: result.error };
@@ -311,11 +1033,39 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           return context.workspaceService.rename(input.workspaceId, input.newName);
         }),
+      updateModeAISettings: t
+        .input(schemas.workspace.updateModeAISettings.input)
+        .output(schemas.workspace.updateModeAISettings.output)
+        .handler(async ({ context, input }) => {
+          return context.workspaceService.updateModeAISettings(
+            input.workspaceId,
+            input.mode,
+            input.aiSettings
+          );
+        }),
       updateTitle: t
         .input(schemas.workspace.updateTitle.input)
         .output(schemas.workspace.updateTitle.output)
         .handler(async ({ context, input }) => {
           return context.workspaceService.updateTitle(input.workspaceId, input.title);
+        }),
+      updateAISettings: t
+        .input(schemas.workspace.updateAISettings.input)
+        .output(schemas.workspace.updateAISettings.output)
+        .handler(async ({ context, input }) => {
+          return context.workspaceService.updateAISettings(input.workspaceId, input.aiSettings);
+        }),
+      archive: t
+        .input(schemas.workspace.archive.input)
+        .output(schemas.workspace.archive.output)
+        .handler(async ({ context, input }) => {
+          return context.workspaceService.archive(input.workspaceId);
+        }),
+      unarchive: t
+        .input(schemas.workspace.unarchive.input)
+        .output(schemas.workspace.unarchive.output)
+        .handler(async ({ context, input }) => {
+          return context.workspaceService.unarchive(input.workspaceId);
         }),
       fork: t
         .input(schemas.workspace.fork.input)
@@ -349,6 +1099,22 @@ export const router = (authToken?: string) => {
           }
 
           return { success: true, data: {} };
+        }),
+      answerAskUserQuestion: t
+        .input(schemas.workspace.answerAskUserQuestion.input)
+        .output(schemas.workspace.answerAskUserQuestion.output)
+        .handler(async ({ context, input }) => {
+          const result = await context.workspaceService.answerAskUserQuestion(
+            input.workspaceId,
+            input.toolCallId,
+            input.answers
+          );
+
+          if (!result.success) {
+            return { success: false, error: result.error };
+          }
+
+          return { success: true, data: undefined };
         }),
       resumeStream: t
         .input(schemas.workspace.resumeStream.input)
@@ -442,6 +1208,16 @@ export const router = (authToken?: string) => {
             return { success: false, error: result.error };
           }
           return { success: true, data: result.data };
+        }),
+      getFileCompletions: t
+        .input(schemas.workspace.getFileCompletions.input)
+        .output(schemas.workspace.getFileCompletions.output)
+        .handler(async ({ context, input }) => {
+          return context.workspaceService.getFileCompletions(
+            input.workspaceId,
+            input.query,
+            input.limit
+          );
         }),
       onChat: t
         .input(schemas.workspace.onChat.input)
@@ -700,6 +1476,117 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           return context.sessionUsageService.getSessionUsage(input.workspaceId);
         }),
+      getSessionUsageBatch: t
+        .input(schemas.workspace.getSessionUsageBatch.input)
+        .output(schemas.workspace.getSessionUsageBatch.output)
+        .handler(async ({ context, input }) => {
+          return context.sessionUsageService.getSessionUsageBatch(input.workspaceIds);
+        }),
+      stats: {
+        subscribe: t
+          .input(schemas.workspace.stats.subscribe.input)
+          .output(schemas.workspace.stats.subscribe.output)
+          .handler(async function* ({ context, input }) {
+            const workspaceId = input.workspaceId;
+
+            context.sessionTimingService.addSubscriber(workspaceId);
+
+            const queue = createAsyncEventQueue<WorkspaceStatsSnapshot>();
+            let pending = Promise.resolve();
+
+            const enqueueSnapshot = () => {
+              pending = pending.then(async () => {
+                queue.push(await context.sessionTimingService.getSnapshot(workspaceId));
+              });
+            };
+
+            const onChange = (changedWorkspaceId: string) => {
+              if (changedWorkspaceId !== workspaceId) {
+                return;
+              }
+              enqueueSnapshot();
+            };
+
+            context.sessionTimingService.onStatsChange(onChange);
+
+            try {
+              queue.push(await context.sessionTimingService.getSnapshot(workspaceId));
+              yield* queue.iterate();
+            } finally {
+              queue.end();
+              context.sessionTimingService.offStatsChange(onChange);
+              context.sessionTimingService.removeSubscriber(workspaceId);
+            }
+          }),
+        clear: t
+          .input(schemas.workspace.stats.clear.input)
+          .output(schemas.workspace.stats.clear.output)
+          .handler(async ({ context, input }) => {
+            try {
+              await context.sessionTimingService.clearTimingFile(input.workspaceId);
+              return { success: true, data: undefined };
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              return { success: false, error: message };
+            }
+          }),
+      },
+      mcp: {
+        get: t
+          .input(schemas.workspace.mcp.get.input)
+          .output(schemas.workspace.mcp.get.output)
+          .handler(async ({ context, input }) => {
+            try {
+              return await context.workspaceMcpOverridesService.getOverridesForWorkspace(
+                input.workspaceId
+              );
+            } catch {
+              // Defensive: overrides must never brick workspace UI.
+              return {};
+            }
+          }),
+        set: t
+          .input(schemas.workspace.mcp.set.input)
+          .output(schemas.workspace.mcp.set.output)
+          .handler(async ({ context, input }) => {
+            try {
+              await context.workspaceMcpOverridesService.setOverridesForWorkspace(
+                input.workspaceId,
+                input.overrides
+              );
+              return { success: true, data: undefined };
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              return { success: false, error: message };
+            }
+          }),
+      },
+    },
+    tasks: {
+      create: t
+        .input(schemas.tasks.create.input)
+        .output(schemas.tasks.create.output)
+        .handler(({ context, input }) => {
+          const thinkingLevel =
+            input.thinkingLevel === "off" ||
+            input.thinkingLevel === "low" ||
+            input.thinkingLevel === "medium" ||
+            input.thinkingLevel === "high" ||
+            input.thinkingLevel === "xhigh"
+              ? input.thinkingLevel
+              : undefined;
+
+          return context.taskService.create({
+            parentWorkspaceId: input.parentWorkspaceId,
+            kind: input.kind,
+            agentId: input.agentId,
+            agentType: input.agentType,
+            prompt: input.prompt,
+            title: input.title,
+            modelString: input.modelString,
+            thinkingLevel,
+          });
+        }),
     },
     window: {
       setTitle: t
@@ -891,6 +1778,20 @@ export const router = (authToken?: string) => {
           return context.voiceService.transcribe(input.audioBase64);
         }),
     },
+    experiments: {
+      getAll: t
+        .input(schemas.experiments.getAll.input)
+        .output(schemas.experiments.getAll.output)
+        .handler(({ context }) => {
+          return context.experimentsService.getAll();
+        }),
+      reload: t
+        .input(schemas.experiments.reload.input)
+        .output(schemas.experiments.reload.output)
+        .handler(async ({ context }) => {
+          await context.experimentsService.refreshAll();
+        }),
+    },
     debug: {
       triggerStreamError: t
         .input(schemas.debug.triggerStreamError.input)
@@ -908,6 +1809,36 @@ export const router = (authToken?: string) => {
         .output(schemas.telemetry.track.output)
         .handler(({ context, input }) => {
           context.telemetryService.capture(input);
+        }),
+      status: t
+        .input(schemas.telemetry.status.input)
+        .output(schemas.telemetry.status.output)
+        .handler(({ context }) => {
+          return {
+            enabled: context.telemetryService.isEnabled(),
+            explicit: context.telemetryService.isExplicitlyDisabled(),
+          };
+        }),
+    },
+    signing: {
+      capabilities: t
+        .input(schemas.signing.capabilities.input)
+        .output(schemas.signing.capabilities.output)
+        .handler(async ({ context }) => {
+          return context.signingService.getCapabilities();
+        }),
+      getSignCredentials: t
+        .input(schemas.signing.getSignCredentials.input)
+        .output(schemas.signing.getSignCredentials.output)
+        .handler(async ({ context }) => {
+          return context.signingService.getSignCredentials();
+        }),
+      clearIdentityCache: t
+        .input(schemas.signing.clearIdentityCache.input)
+        .output(schemas.signing.clearIdentityCache.output)
+        .handler(({ context }) => {
+          context.signingService.clearIdentityCache();
+          return { success: true };
         }),
     },
   });

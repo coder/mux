@@ -101,8 +101,8 @@ const VerticalSliderTooltip: React.FC<VerticalSliderTooltipProps> = ({
   const style: React.CSSProperties = {
     position: "fixed",
     zIndex: 9999,
-    background: "#2d2d30",
-    color: "#cccccc",
+    background: "var(--color-modal-bg)",
+    color: "var(--color-bright)",
     padding: "6px 10px",
     borderRadius: 4,
     fontSize: 12,

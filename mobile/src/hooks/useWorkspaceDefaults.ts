@@ -49,7 +49,13 @@ async function writeGlobalMode(mode: WorkspaceMode): Promise<void> {
 async function readGlobalReasoning(): Promise<ThinkingLevel> {
   try {
     const value = await SecureStore.getItemAsync(STORAGE_KEY_REASONING);
-    if (value === "off" || value === "low" || value === "medium" || value === "high") {
+    if (
+      value === "off" ||
+      value === "low" ||
+      value === "medium" ||
+      value === "high" ||
+      value === "xhigh"
+    ) {
       return value;
     }
     return DEFAULT_REASONING;

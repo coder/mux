@@ -53,6 +53,92 @@ describe("SessionUsageService", () => {
     }
   });
 
+  describe("rollUpUsageIntoParent", () => {
+    it("should roll up child usage into parent without changing parent's lastRequest", async () => {
+      const projectPath = "/tmp/mux-session-usage-test-project";
+      const model = "claude-sonnet-4-20250514";
+
+      const parentWorkspaceId = "parent-workspace";
+      const childWorkspaceId = "child-workspace";
+
+      await config.addWorkspace(projectPath, {
+        id: parentWorkspaceId,
+        name: "parent-branch",
+        projectName: "test-project",
+        projectPath,
+        runtimeConfig: { type: "local" },
+      });
+      await config.addWorkspace(projectPath, {
+        id: childWorkspaceId,
+        name: "child-branch",
+        projectName: "test-project",
+        projectPath,
+        runtimeConfig: { type: "local" },
+        parentWorkspaceId: parentWorkspaceId,
+      });
+
+      const parentUsage = createUsage(100, 50);
+      await service.recordUsage(parentWorkspaceId, model, parentUsage);
+      const before = await service.getSessionUsage(parentWorkspaceId);
+      expect(before?.lastRequest).toBeDefined();
+
+      const beforeLastRequest = before!.lastRequest!;
+
+      const childUsageByModel = { [model]: createUsage(7, 3) };
+      const rollupResult = await service.rollUpUsageIntoParent(
+        parentWorkspaceId,
+        childWorkspaceId,
+        childUsageByModel
+      );
+      expect(rollupResult.didRollUp).toBe(true);
+
+      const after = await service.getSessionUsage(parentWorkspaceId);
+      expect(after).toBeDefined();
+      expect(after!.byModel[model].input.tokens).toBe(107);
+      expect(after!.byModel[model].output.tokens).toBe(53);
+
+      // lastRequest is preserved
+      expect(after!.lastRequest).toEqual(beforeLastRequest);
+    });
+
+    it("should be idempotent for the same child workspace", async () => {
+      const projectPath = "/tmp/mux-session-usage-test-project";
+      const model = "claude-sonnet-4-20250514";
+
+      const parentWorkspaceId = "parent-workspace";
+      const childWorkspaceId = "child-workspace";
+
+      await config.addWorkspace(projectPath, {
+        id: parentWorkspaceId,
+        name: "parent-branch",
+        projectName: "test-project",
+        projectPath,
+        runtimeConfig: { type: "local" },
+      });
+
+      const childUsageByModel = { [model]: createUsage(10, 5) };
+
+      const first = await service.rollUpUsageIntoParent(
+        parentWorkspaceId,
+        childWorkspaceId,
+        childUsageByModel
+      );
+      expect(first.didRollUp).toBe(true);
+
+      const second = await service.rollUpUsageIntoParent(
+        parentWorkspaceId,
+        childWorkspaceId,
+        childUsageByModel
+      );
+      expect(second.didRollUp).toBe(false);
+
+      const result = await service.getSessionUsage(parentWorkspaceId);
+      expect(result).toBeDefined();
+      expect(result!.byModel[model].input.tokens).toBe(10);
+      expect(result!.byModel[model].output.tokens).toBe(5);
+      expect(result!.rolledUpFrom?.[childWorkspaceId]).toBe(true);
+    });
+  });
   describe("recordUsage", () => {
     it("should accumulate usage for same model (not overwrite)", async () => {
       const workspaceId = "test-workspace";

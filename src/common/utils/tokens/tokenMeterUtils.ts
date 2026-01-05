@@ -2,11 +2,14 @@ import type { ChatUsageDisplay } from "./usageAggregator";
 import { getModelStats } from "./modelStats";
 import { supports1MContext } from "../ai/models";
 
+// NOTE: Provide theme-matching fallbacks so token meters render consistently
+// even if a host environment doesn't define the CSS variables (e.g., an embedded UI).
 export const TOKEN_COMPONENT_COLORS = {
-  cached: "var(--color-token-cached)",
-  input: "var(--color-token-input)",
-  output: "var(--color-token-output)",
-  thinking: "var(--color-thinking-mode)",
+  cached: "var(--color-token-cached, hsl(0 0% 50%))",
+  cacheCreate: "var(--color-token-cache-create, hsl(140 20% 55%))",
+  input: "var(--color-token-input, hsl(120 40% 35%))",
+  output: "var(--color-token-output, hsl(207 100% 40%))",
+  thinking: "var(--color-thinking-mode, hsl(271 76% 53%))",
 } as const;
 
 export interface TokenSegment {
@@ -35,7 +38,7 @@ const SEGMENT_DEFS: SegmentDef[] = [
   {
     type: "cacheCreate",
     key: "cacheCreate",
-    color: TOKEN_COMPONENT_COLORS.cached,
+    color: TOKEN_COMPONENT_COLORS.cacheCreate,
     label: "Cache Create",
   },
   { type: "input", key: "input", color: TOKEN_COMPONENT_COLORS.input, label: "Input" },
@@ -63,6 +66,9 @@ export function calculateTokenMeterData(
   const modelStats = getModelStats(model);
   const maxTokens = use1M && supports1MContext(model) ? 1_000_000 : modelStats?.max_input_tokens;
 
+  // Total tokens used in the request.
+  // For Anthropic prompt caching, cacheCreate tokens are reported separately but still
+  // count toward total input tokens for the request.
   const totalUsed =
     usage.input.tokens +
     usage.cached.tokens +
@@ -99,7 +105,13 @@ export function calculateTokenMeterData(
 }
 
 export function formatTokens(tokens: number): string {
-  return tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : tokens.toLocaleString();
+  if (tokens >= 1_000_000) {
+    return `${(tokens / 1_000_000).toFixed(1)}M`;
+  }
+  if (tokens >= 1_000) {
+    return `${(tokens / 1_000).toFixed(1)}k`;
+  }
+  return tokens.toLocaleString();
 }
 
 export function getSegmentLabel(type: TokenSegment["type"]): string {

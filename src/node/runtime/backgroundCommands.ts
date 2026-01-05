@@ -1,3 +1,6 @@
+import { shellQuote } from "@/common/utils/shell";
+export { shellQuote };
+
 /** Exit code for process killed by SIGKILL (128 + 9) */
 export const EXIT_CODE_SIGKILL = 137;
 
@@ -27,15 +30,6 @@ export function parsePid(output: string): number | null {
  */
 
 /**
- * Shell-escape a string using POSIX-safe single-quote escaping.
- * Handles empty strings and embedded single quotes.
- */
-export function shellQuote(value: string): string {
-  if (value.length === 0) return "''";
-  return "'" + value.replace(/'/g, "'\"'\"'") + "'";
-}
-
-/**
  * Options for building the wrapper script that runs inside bash.
  */
 export interface WrapperScriptOptions {
@@ -56,9 +50,16 @@ export interface WrapperScriptOptions {
 export function buildWrapperScript(options: WrapperScriptOptions): string {
   const parts: string[] = [];
 
-  // Set up trap first to capture exit code
-  // Use double quotes for the trap command to allow nested single-quoted paths
-  parts.push(`trap "echo \\$? > ${shellQuote(options.exitCodePath)}" EXIT`);
+  // Set up trap first to capture exit code.
+  //
+  // IMPORTANT: Do NOT inline shellQuote(exitCodePath) inside a double-quoted trap string.
+  // If the path contains a single quote (e.g. processId derived from script contains quotes),
+  // shellQuote() will emit the POSIX escape pattern '\''"'"'\'', which contains double quotes
+  // and will break the surrounding double quotes.
+  //
+  // Instead, assign the (quoted) path to a variable and reference it from the trap.
+  parts.push(`__MUX_EXIT_CODE_PATH=${shellQuote(options.exitCodePath)}`);
+  parts.push(`trap 'echo $? > "$__MUX_EXIT_CODE_PATH"' EXIT`);
 
   // Change to working directory
   parts.push(`cd ${shellQuote(options.cwd)}`);
@@ -86,8 +87,6 @@ export interface SpawnCommandOptions {
   outputPath: string;
   /** Path to bash executable (defaults to "bash") */
   bashPath?: string;
-  /** Optional niceness value for process priority */
-  niceness?: number;
   /** Function to quote paths for shell (default: shellQuote). Use expandTildeForSSH for SSH. */
   quotePath?: (path: string) => string;
 }
@@ -105,11 +104,10 @@ export interface SpawnCommandOptions {
  */
 export function buildSpawnCommand(options: SpawnCommandOptions): string {
   const bash = options.bashPath ?? "bash";
-  const nicePrefix = options.niceness !== undefined ? `nice -n ${options.niceness} ` : "";
   const quotePath = options.quotePath ?? shellQuote;
 
   return (
-    `(set -m; ${nicePrefix}nohup ${shellQuote(bash)} -c ${shellQuote(options.wrapperScript)} ` +
+    `(set -m; nohup ${shellQuote(bash)} -c ${shellQuote(options.wrapperScript)} ` +
     `> ${quotePath(options.outputPath)} 2>&1 ` +
     `< /dev/null & echo $!)`
   );

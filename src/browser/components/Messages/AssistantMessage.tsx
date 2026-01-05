@@ -1,9 +1,11 @@
-import { COMPACTED_EMOJI } from "@/common/constants/ui";
+import { COMPACTED_EMOJI, IDLE_COMPACTED_EMOJI } from "@/common/constants/ui";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { useStartHere } from "@/browser/hooks/useStartHere";
 import type { DisplayedMessage } from "@/common/types/message";
 import { copyToClipboard } from "@/browser/utils/clipboard";
 import { Clipboard, ClipboardCheck, FileText, ListStart } from "lucide-react";
+import { ShareMessagePopover } from "@/browser/components/ShareMessagePopover";
+import { useOptionalWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import React, { useState } from "react";
 import { CompactingMessageContent } from "./CompactingMessageContent";
 import { CompactionBackground } from "./CompactionBackground";
@@ -29,6 +31,12 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
   clipboardWriteText = copyToClipboard,
 }) => {
   const [showRaw, setShowRaw] = useState(false);
+  const workspaceContext = useOptionalWorkspaceContext();
+
+  // Get workspace name from context for share filename
+  const workspaceName = workspaceId
+    ? workspaceContext?.workspaceMetadata.get(workspaceId)?.name
+    : undefined;
 
   const content = message.content;
   const isStreaming = message.isStreaming;
@@ -37,11 +45,16 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
 
   // Use Start Here hook for final assistant messages
   const {
-    openModal,
-    buttonLabel,
+    openModal: openStartHereModal,
+    buttonLabel: startHereLabel,
     disabled: startHereDisabled,
-    modal,
-  } = useStartHere(workspaceId, content, isCompacted);
+    modal: startHereModal,
+  } = useStartHere(workspaceId, content, isCompacted, {
+    sourceMode:
+      message.mode === "exec" || message.mode === "plan" || message.mode === "compact"
+        ? message.mode
+        : undefined,
+  });
 
   // Copy to clipboard with feedback
   const { copied, copyToClipboard } = useCopyToClipboard(clipboardWriteText);
@@ -60,11 +73,22 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
 
   if (!isStreaming) {
     buttons.push({
-      label: buttonLabel,
-      onClick: openModal,
+      label: startHereLabel,
+      onClick: openStartHereModal,
       disabled: startHereDisabled,
       tooltip: "Replace all chat history with this message",
       icon: <ListStart />,
+    });
+    buttons.push({
+      label: "Share",
+      component: (
+        <ShareMessagePopover
+          content={content}
+          model={message.model}
+          disabled={!content}
+          workspaceName={workspaceName}
+        />
+      ),
     });
     buttons.push({
       label: showRaw ? "Show Markdown" : "Show Text",
@@ -109,13 +133,16 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
   const renderLabel = () => {
     const modelName = message.model;
     const isCompacted = message.isCompacted;
+    const isIdleCompacted = message.isIdleCompacted;
 
     return (
       <div className="flex items-center gap-2">
         {modelName && <ModelDisplay modelString={modelName} />}
         {isCompacted && (
           <span className="text-plan-mode bg-plan-mode/10 rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
-            {COMPACTED_EMOJI} compacted
+            {isIdleCompacted
+              ? `${IDLE_COMPACTED_EMOJI} idle-compacted`
+              : `${COMPACTED_EMOJI} compacted`}
           </span>
         )}
       </div>
@@ -135,7 +162,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
         {renderContent()}
       </MessageWindow>
 
-      {modal}
+      {startHereModal}
     </>
   );
 };

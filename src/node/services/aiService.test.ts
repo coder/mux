@@ -7,12 +7,14 @@ import {
   AIService,
   normalizeAnthropicBaseURL,
   buildAnthropicHeaders,
+  buildAppAttributionHeaders,
   ANTHROPIC_1M_CONTEXT_HEADER,
 } from "./aiService";
 import { HistoryService } from "./historyService";
 import { PartialService } from "./partialService";
 import { InitStateManager } from "./initStateManager";
 import { Config } from "@/node/config";
+import { MUX_APP_ATTRIBUTION_TITLE, MUX_APP_ATTRIBUTION_URL } from "@/constants/appAttribution";
 
 describe("AIService", () => {
   let service: AIService;
@@ -115,5 +117,48 @@ describe("buildAnthropicHeaders", () => {
     const existing = { "anthropic-beta": "other-beta" };
     const result = buildAnthropicHeaders(existing, true);
     expect(result).toEqual({ "anthropic-beta": ANTHROPIC_1M_CONTEXT_HEADER });
+  });
+});
+
+describe("buildAppAttributionHeaders", () => {
+  it("adds both headers when no headers exist", () => {
+    expect(buildAppAttributionHeaders(undefined)).toEqual({
+      "HTTP-Referer": MUX_APP_ATTRIBUTION_URL,
+      "X-Title": MUX_APP_ATTRIBUTION_TITLE,
+    });
+  });
+
+  it("adds only the missing header when one is present", () => {
+    const existing = { "HTTP-Referer": "https://example.com" };
+    const result = buildAppAttributionHeaders(existing);
+    expect(result).toEqual({
+      "HTTP-Referer": "https://example.com",
+      "X-Title": MUX_APP_ATTRIBUTION_TITLE,
+    });
+  });
+
+  it("does not overwrite existing values (case-insensitive)", () => {
+    const existing = { "http-referer": "https://example.com", "X-TITLE": "My App" };
+    const result = buildAppAttributionHeaders(existing);
+    expect(result).toEqual(existing);
+  });
+
+  it("preserves unrelated headers", () => {
+    const existing = { "x-custom": "value" };
+    const result = buildAppAttributionHeaders(existing);
+    expect(result).toEqual({
+      "x-custom": "value",
+      "HTTP-Referer": MUX_APP_ATTRIBUTION_URL,
+      "X-Title": MUX_APP_ATTRIBUTION_TITLE,
+    });
+  });
+
+  it("does not mutate the input object", () => {
+    const existing = { "x-custom": "value" };
+    const existingSnapshot = { ...existing };
+
+    buildAppAttributionHeaders(existing);
+
+    expect(existing).toEqual(existingSnapshot);
   });
 });

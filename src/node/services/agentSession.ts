@@ -3,12 +3,14 @@ import { EventEmitter } from "events";
 import * as path from "path";
 import { stat, readFile } from "fs/promises";
 import { PlatformPaths } from "@/common/utils/paths";
+import { log } from "@/node/services/log";
 import { createMuxMessage } from "@/common/types/message";
 import type { Config } from "@/node/config";
 import type { AIService } from "@/node/services/aiService";
 import type { HistoryService } from "@/node/services/historyService";
 import type { PartialService } from "@/node/services/partialService";
 import type { InitStateManager } from "@/node/services/initStateManager";
+
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
@@ -22,16 +24,23 @@ import type { SendMessageError } from "@/common/types/errors";
 import { createUnknownSendMessageError } from "@/node/services/utils/sendMessageError";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
-import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
-import type { MuxFrontendMetadata, ContinueMessage } from "@/common/types/message";
+import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
+import type {
+  ContinueMessage,
+  MuxFrontendMetadata,
+  MuxImagePart,
+  MuxMessage,
+} from "@/common/types/message";
 import { prepareUserMessageForSend } from "@/common/types/message";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { MessageQueue } from "./messageQueue";
 import type { StreamEndEvent } from "@/common/types/stream";
 import { CompactionHandler } from "./compactionHandler";
+import type { TelemetryService } from "./telemetryService";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
 import { computeDiff } from "@/node/utils/diff";
 import { AttachmentService } from "./attachmentService";
+import type { TodoItem } from "@/common/types/tools";
 import type { PostCompactionAttachment, PostCompactionExclusions } from "@/common/types/attachment";
 import { TURNS_BETWEEN_ATTACHMENTS } from "@/common/constants/attachments";
 import { extractEditedFileDiffs } from "@/common/utils/messages/extractEditedFiles";
@@ -88,9 +97,12 @@ interface AgentSessionOptions {
   partialService: PartialService;
   aiService: AIService;
   initStateManager: InitStateManager;
+  telemetryService?: TelemetryService;
   backgroundProcessManager: BackgroundProcessManager;
-  /** Called after compaction completes to trigger metadata refresh */
+  /** Called when compaction completes (e.g., to clear idle compaction pending state) */
   onCompactionComplete?: () => void;
+  /** Called when post-compaction context state may have changed (plan/file edits) */
+  onPostCompactionStateChange?: () => void;
 }
 
 export class AgentSession {
@@ -102,6 +114,7 @@ export class AgentSession {
   private readonly initStateManager: InitStateManager;
   private readonly backgroundProcessManager: BackgroundProcessManager;
   private readonly onCompactionComplete?: () => void;
+  private readonly onPostCompactionStateChange?: () => void;
   private readonly emitter = new EventEmitter();
   private readonly aiListeners: Array<{ event: string; handler: (...args: unknown[]) => void }> =
     [];
@@ -128,6 +141,11 @@ export class AgentSession {
    * Used to enable the cooldown-based attachment injection.
    */
   private compactionOccurred = false;
+  /**
+   * Cache the last-known experiment state so we don't spam metadata refresh
+   * when post-compaction context is disabled.
+   */
+  private postCompactionContextEnabled = false;
 
   constructor(options: AgentSessionOptions) {
     assert(options, "AgentSession requires options");
@@ -138,8 +156,10 @@ export class AgentSession {
       partialService,
       aiService,
       initStateManager,
+      telemetryService,
       backgroundProcessManager,
       onCompactionComplete,
+      onPostCompactionStateChange,
     } = options;
 
     assert(typeof workspaceId === "string", "workspaceId must be a string");
@@ -154,12 +174,15 @@ export class AgentSession {
     this.initStateManager = initStateManager;
     this.backgroundProcessManager = backgroundProcessManager;
     this.onCompactionComplete = onCompactionComplete;
+    this.onPostCompactionStateChange = onPostCompactionStateChange;
 
     this.compactionHandler = new CompactionHandler({
       workspaceId: this.workspaceId,
       historyService: this.historyService,
+      telemetryService,
       partialService: this.partialService,
       emitter: this.emitter,
+      onCompactionComplete,
     });
 
     this.attachAiListeners();
@@ -231,37 +254,57 @@ export class AgentSession {
   private async emitHistoricalEvents(
     listener: (event: AgentSessionChatEvent) => void
   ): Promise<void> {
-    // Load chat history (persisted messages from chat.jsonl)
-    const historyResult = await this.historyService.getHistory(this.workspaceId);
-    if (historyResult.success) {
-      for (const message of historyResult.data) {
-        // Add type: "message" for discriminated union (messages from chat.jsonl don't have it)
-        listener({ workspaceId: this.workspaceId, message: { ...message, type: "message" } });
+    // try/catch/finally guarantees caught-up is always sent, even if replay fails.
+    // Without caught-up, the frontend stays in "Loading workspace..." forever.
+    try {
+      // Read partial BEFORE iterating history so we can skip the corresponding
+      // placeholder message (which has empty parts). The partial has the real content.
+      const streamInfo = this.aiService.getStreamInfo(this.workspaceId);
+      const partial = await this.partialService.readPartial(this.workspaceId);
+      const partialHistorySequence = partial?.metadata?.historySequence;
+
+      // Load chat history (persisted messages from chat.jsonl)
+      const historyResult = await this.historyService.getHistory(this.workspaceId);
+      if (historyResult.success) {
+        for (const message of historyResult.data) {
+          // Skip the placeholder message if we have a partial with the same historySequence.
+          // The placeholder has empty parts; the partial has the actual content.
+          // Without this, both get loaded and the empty placeholder may be shown as "last message".
+          if (
+            partialHistorySequence !== undefined &&
+            message.metadata?.historySequence === partialHistorySequence
+          ) {
+            continue;
+          }
+          // Add type: "message" for discriminated union (messages from chat.jsonl don't have it)
+          listener({ workspaceId: this.workspaceId, message: { ...message, type: "message" } });
+        }
       }
+
+      if (streamInfo) {
+        await this.aiService.replayStream(this.workspaceId);
+      } else if (partial) {
+        // Add type: "message" for discriminated union (partials from disk don't have it)
+        listener({ workspaceId: this.workspaceId, message: { ...partial, type: "message" } });
+      }
+
+      // Replay init state BEFORE caught-up (treat as historical data)
+      // This ensures init events are buffered correctly by the frontend,
+      // preserving their natural timing characteristics from the hook execution.
+      await this.initStateManager.replayInit(this.workspaceId);
+    } catch (error) {
+      log.error("Failed to replay history for workspace", {
+        workspaceId: this.workspaceId,
+        error,
+      });
+    } finally {
+      // Send caught-up after ALL historical data (including init events)
+      // This signals frontend that replay is complete and future events are real-time
+      listener({
+        workspaceId: this.workspaceId,
+        message: { type: "caught-up" },
+      });
     }
-
-    // Check for interrupted streams (active streaming state)
-    const streamInfo = this.aiService.getStreamInfo(this.workspaceId);
-    const partial = await this.partialService.readPartial(this.workspaceId);
-
-    if (streamInfo) {
-      await this.aiService.replayStream(this.workspaceId);
-    } else if (partial) {
-      // Add type: "message" for discriminated union (partials from disk don't have it)
-      listener({ workspaceId: this.workspaceId, message: { ...partial, type: "message" } });
-    }
-
-    // Replay init state BEFORE caught-up (treat as historical data)
-    // This ensures init events are buffered correctly by the frontend,
-    // preserving their natural timing characteristics from the hook execution.
-    await this.initStateManager.replayInit(this.workspaceId);
-
-    // Send caught-up after ALL historical data (including init events)
-    // This signals frontend that replay is complete and future events are real-time
-    listener({
-      workspaceId: this.workspaceId,
-      message: { type: "caught-up" },
-    });
   }
 
   async ensureMetadata(args: {
@@ -355,7 +398,27 @@ export class AgentSession {
     const trimmedMessage = message.trim();
     const imageParts = options?.imageParts;
 
-    if (trimmedMessage.length === 0 && (!imageParts || imageParts.length === 0)) {
+    // Edits are implemented as truncate+replace. If the frontend forgets to re-send
+    // imageParts, we should preserve the original message's attachments.
+    let preservedEditImageParts: MuxImagePart[] | undefined;
+    if (options?.editMessageId && (!imageParts || imageParts.length === 0)) {
+      const historyResult = await this.historyService.getHistory(this.workspaceId);
+      if (historyResult.success) {
+        const targetMessage: MuxMessage | undefined = historyResult.data.find(
+          (msg) => msg.id === options.editMessageId
+        );
+        const fileParts = targetMessage?.parts.filter(
+          (part): part is MuxImagePart => part.type === "file"
+        );
+        if (fileParts && fileParts.length > 0) {
+          preservedEditImageParts = fileParts;
+        }
+      }
+    }
+
+    const hasImages = (imageParts?.length ?? 0) > 0 || (preservedEditImageParts?.length ?? 0) > 0;
+
+    if (trimmedMessage.length === 0 && !hasImages) {
       return Err(
         createUnknownSendMessageError(
           "Empty message not allowed. Use interruptStream() to interrupt active streams."
@@ -378,33 +441,49 @@ export class AgentSession {
         options.editMessageId
       );
       if (!truncateResult.success) {
-        return Err(createUnknownSendMessageError(truncateResult.error));
+        const isMissingEditTarget =
+          truncateResult.error.includes("Message with ID") &&
+          truncateResult.error.includes("not found in history");
+        if (isMissingEditTarget) {
+          // This can happen if the frontend is briefly out-of-sync with persisted history
+          // (e.g., compaction/truncation completed and removed the message while the UI still
+          // shows it as editable). Treat as a no-op truncation so the user can recover.
+          log.warn("editMessageId not found in history; proceeding without truncation", {
+            workspaceId: this.workspaceId,
+            editMessageId: options.editMessageId,
+            error: truncateResult.error,
+          });
+        } else {
+          return Err(createUnknownSendMessageError(truncateResult.error));
+        }
       }
     }
 
     const messageId = `user-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
     const additionalParts =
-      imageParts && imageParts.length > 0
-        ? imageParts.map((img, index) => {
-            assert(
-              typeof img.url === "string",
-              `image part [${index}] must include url string content (got ${typeof img.url}): ${JSON.stringify(img).slice(0, 200)}`
-            );
-            assert(
-              img.url.startsWith("data:"),
-              `image part [${index}] url must be a data URL (got: ${img.url.slice(0, 50)}...)`
-            );
-            assert(
-              typeof img.mediaType === "string" && img.mediaType.trim().length > 0,
-              `image part [${index}] must include a mediaType (got ${typeof img.mediaType}): ${JSON.stringify(img).slice(0, 200)}`
-            );
-            return {
-              type: "file" as const,
-              url: img.url,
-              mediaType: img.mediaType,
-            };
-          })
-        : undefined;
+      preservedEditImageParts && preservedEditImageParts.length > 0
+        ? preservedEditImageParts
+        : imageParts && imageParts.length > 0
+          ? imageParts.map((img, index) => {
+              assert(
+                typeof img.url === "string",
+                `image part [${index}] must include url string content (got ${typeof img.url}): ${JSON.stringify(img).slice(0, 200)}`
+              );
+              assert(
+                img.url.startsWith("data:"),
+                `image part [${index}] url must be a data URL (got: ${img.url.slice(0, 50)}...)`
+              );
+              assert(
+                typeof img.mediaType === "string" && img.mediaType.trim().length > 0,
+                `image part [${index}] must include a mediaType (got ${typeof img.mediaType}): ${JSON.stringify(img).slice(0, 200)}`
+              );
+              return {
+                type: "file" as const,
+                url: img.url,
+                mediaType: img.mediaType,
+              };
+            })
+          : undefined;
 
     // toolPolicy is properly typed via Zod schema inference
     const typedToolPolicy = options?.toolPolicy;
@@ -443,6 +522,12 @@ export class AgentSession {
       return Err(createUnknownSendMessageError(appendResult.error));
     }
 
+    // Workspace may be tearing down while we await filesystem IO.
+    // If so, skip event emission + streaming to avoid races with dispose().
+    if (this.disposed) {
+      return Ok(undefined);
+    }
+
     // Add type: "message" for discriminated union (createMuxMessage doesn't add it)
     this.emitChatEvent({ ...userMessage, type: "message" });
 
@@ -450,6 +535,10 @@ export class AgentSession {
     // They won't be included in the summary, so continuing with orphaned processes would be confusing
     if (isCompactionRequestMetadata(typedMuxMetadata)) {
       await this.backgroundProcessManager.cleanup(this.workspaceId);
+
+      if (this.disposed) {
+        return Ok(undefined);
+      }
     }
 
     // If this is a compaction request with a continue message, queue it for auto-send after compaction
@@ -463,14 +552,26 @@ export class AgentSession {
       // Process the continue message content (handles reviews -> text formatting + metadata)
       const { finalText, metadata } = prepareUserMessageForSend(continueMessage);
 
+      // Legacy compatibility: older clients stored `continueMessage.mode` (exec/plan) and compaction
+      // requests run with agentId="compact". Avoid falling back to the compact agent for the
+      // post-compaction follow-up.
+      const legacyMode = (continueMessage as { mode?: unknown }).mode;
+      const legacyAgentId = legacyMode === "plan" || legacyMode === "exec" ? legacyMode : undefined;
+
+      const fallbackAgentId =
+        continueMessage.agentId ??
+        legacyAgentId ??
+        (options.agentId && options.agentId !== "compact" ? options.agentId : undefined) ??
+        "exec";
       // Build options for the queued message (strip compaction-specific fields)
+      // agentId determines tool policy via resolveToolPolicyForAgent in aiService
       const sanitizedOptions: Omit<
         SendMessageOptions,
         "muxMetadata" | "mode" | "editMessageId" | "imageParts" | "maxOutputTokens"
       > & { imageParts?: typeof continueMessage.imageParts; muxMetadata?: typeof metadata } = {
         model: continueMessage.model ?? options.model,
+        agentId: fallbackAgentId,
         thinkingLevel: options.thinkingLevel,
-        toolPolicy: options.toolPolicy,
         additionalSystemInstructions: options.additionalSystemInstructions,
         providerOptions: options.providerOptions,
         experiments: options.experiments,
@@ -489,6 +590,10 @@ export class AgentSession {
 
       this.messageQueue.add(finalText, sanitizedOptions);
       this.emitQueuedMessageChanged();
+    }
+
+    if (this.disposed) {
+      return Ok(undefined);
     }
 
     return this.streamWithHistory(options.model, options);
@@ -540,14 +645,29 @@ export class AgentSession {
     modelString: string,
     options?: SendMessageOptions
   ): Promise<Result<void, SendMessageError>> {
+    if (this.disposed) {
+      return Ok(undefined);
+    }
+
     const commitResult = await this.partialService.commitToHistory(this.workspaceId);
     if (!commitResult.success) {
       return Err(createUnknownSendMessageError(commitResult.error));
     }
 
     const historyResult = await this.historyService.getHistory(this.workspaceId);
+    // Cache whether post-compaction context is enabled for this session.
+    // Used to decide whether tool-call-end should trigger metadata refresh.
+    this.postCompactionContextEnabled = Boolean(options?.experiments?.postCompactionContext);
+
     if (!historyResult.success) {
       return Err(createUnknownSendMessageError(historyResult.error));
+    }
+    if (historyResult.data.length === 0) {
+      return Err(
+        createUnknownSendMessageError(
+          "Cannot resume stream: workspace history is empty. Send a new message instead."
+        )
+      );
     }
 
     // Check for external file edits (timestamp-based polling)
@@ -578,9 +698,12 @@ export class AgentSession {
       options?.maxOutputTokens,
       options?.providerOptions,
       options?.mode,
+      options?.agentId,
       recordFileState,
       changedFileAttachments.length > 0 ? changedFileAttachments : undefined,
-      postCompactionAttachments
+      postCompactionAttachments,
+      options?.experiments,
+      options?.disableWorkspaceAgents
     );
   }
 
@@ -608,9 +731,22 @@ export class AgentSession {
     forward("stream-start", (payload) => this.emitChatEvent(payload));
     forward("stream-delta", (payload) => this.emitChatEvent(payload));
     forward("tool-call-start", (payload) => this.emitChatEvent(payload));
+    forward("bash-output", (payload) => this.emitChatEvent(payload));
     forward("tool-call-delta", (payload) => this.emitChatEvent(payload));
     forward("tool-call-end", (payload) => {
       this.emitChatEvent(payload);
+
+      // If post-compaction context is enabled, certain tools can change what should
+      // be displayed/injected (plan writes, tracked file diffs). Trigger a metadata
+      // refresh so the right sidebar updates without requiring an experiment toggle.
+      if (
+        this.postCompactionContextEnabled &&
+        payload.type === "tool-call-end" &&
+        (payload.toolName === "propose_plan" || payload.toolName.startsWith("file_edit_"))
+      ) {
+        this.onPostCompactionStateChange?.();
+      }
+
       // Tool call completed: auto-send queued messages
       this.sendQueuedMessages();
     });
@@ -690,7 +826,12 @@ export class AgentSession {
 
   // Public method to emit chat events (used by init hooks and other workspace events)
   emitChatEvent(message: WorkspaceChatMessage): void {
-    this.assertNotDisposed("emitChatEvent");
+    // NOTE: Workspace teardown does not await in-flight async work (sendMessage(), stopStream(), etc).
+    // Those code paths can still try to emit events after dispose; drop them rather than crashing.
+    if (this.disposed) {
+      return;
+    }
+
     this.emitter.emit("chat-event", {
       workspaceId: this.workspaceId,
       message,
@@ -740,6 +881,8 @@ export class AgentSession {
       queuedMessages: this.messageQueue.getMessages(),
       displayText: this.messageQueue.getDisplayText(),
       imageParts: this.messageQueue.getImageParts(),
+      reviews: this.messageQueue.getReviews(),
+      hasCompactionRequest: this.messageQueue.hasCompactionRequest(),
     });
   }
 
@@ -748,6 +891,13 @@ export class AgentSession {
    * Called when tool execution completes, stream ends, or user clicks send immediately.
    */
   sendQueuedMessages(): void {
+    // sendQueuedMessages can race with teardown (e.g. workspace.remove) because we
+    // trigger it off stream/tool events and disposal does not await stopStream().
+    // If the session is already disposed, do nothing.
+    if (this.disposed) {
+      return;
+    }
+
     // Clear the queued message flag (even if queue is empty, to handle race conditions)
     this.backgroundProcessManager.setMessageQueued(this.workspaceId, false);
 
@@ -807,22 +957,33 @@ export class AgentSession {
       // Clear file state cache since history context is gone
       this.readFileState.clear();
 
+      // Load exclusions and persistent TODO state (local workspace session data)
+      const excludedItems = await this.loadExcludedItems();
+      const todoAttachment = await this.loadTodoListAttachment(excludedItems);
+
       // Get runtime for reading plan file
       const metadataResult = await this.aiService.getWorkspaceMetadata(this.workspaceId);
       if (!metadataResult.success) {
-        // Can't get metadata, skip plan reference but still include file diffs
-        return [
-          AttachmentService.generateEditedFilesAttachment(pendingDiffs) ?? [],
-        ].flat() as PostCompactionAttachment[];
+        // Can't get metadata, skip plan reference but still include other attachments
+        const attachments: PostCompactionAttachment[] = [];
+
+        if (todoAttachment) {
+          attachments.push(todoAttachment);
+        }
+
+        const editedFilesRef = AttachmentService.generateEditedFilesAttachment(pendingDiffs);
+        if (editedFilesRef) {
+          attachments.push(editedFilesRef);
+        }
+
+        return attachments;
       }
       const runtime = createRuntime(
         metadataResult.data.runtimeConfig ?? { type: "local", srcBaseDir: this.config.srcDir },
         { projectPath: metadataResult.data.projectPath }
       );
 
-      // Load exclusions and use cached diffs extracted before history was cleared
-      const excludedItems = await this.loadExcludedItems();
-      return AttachmentService.generatePostCompactionAttachments(
+      const attachments = await AttachmentService.generatePostCompactionAttachments(
         metadataResult.data.name,
         metadataResult.data.projectName,
         this.workspaceId,
@@ -830,6 +991,15 @@ export class AgentSession {
         runtime,
         excludedItems
       );
+
+      if (todoAttachment) {
+        // Insert TODO after plan (if present), otherwise first.
+        const planIndex = attachments.findIndex((att) => att.type === "plan_file_reference");
+        const insertIndex = planIndex === -1 ? 0 : planIndex + 1;
+        attachments.splice(insertIndex, 0, todoAttachment);
+      }
+
+      return attachments;
     }
 
     // Increment turn counter
@@ -854,22 +1024,33 @@ export class AgentSession {
     }
     const fileDiffs = extractEditedFileDiffs(historyResult.data);
 
+    // Load exclusions and persistent TODO state (local workspace session data)
+    const excludedItems = await this.loadExcludedItems();
+    const todoAttachment = await this.loadTodoListAttachment(excludedItems);
+
     // Get runtime for reading plan file
     const metadataResult = await this.aiService.getWorkspaceMetadata(this.workspaceId);
     if (!metadataResult.success) {
-      // Can't get metadata, skip plan reference but still include file diffs
+      // Can't get metadata, skip plan reference but still include other attachments
+      const attachments: PostCompactionAttachment[] = [];
+
+      if (todoAttachment) {
+        attachments.push(todoAttachment);
+      }
+
       const editedFilesRef = AttachmentService.generateEditedFilesAttachment(fileDiffs);
-      return editedFilesRef ? [editedFilesRef] : [];
+      if (editedFilesRef) {
+        attachments.push(editedFilesRef);
+      }
+
+      return attachments;
     }
     const runtime = createRuntime(
       metadataResult.data.runtimeConfig ?? { type: "local", srcBaseDir: this.config.srcDir },
       { projectPath: metadataResult.data.projectPath }
     );
 
-    // Load exclusions
-    const excludedItems = await this.loadExcludedItems();
-
-    return AttachmentService.generatePostCompactionAttachments(
+    const attachments = await AttachmentService.generatePostCompactionAttachments(
       metadataResult.data.name,
       metadataResult.data.projectName,
       this.workspaceId,
@@ -877,6 +1058,15 @@ export class AgentSession {
       runtime,
       excludedItems
     );
+
+    if (todoAttachment) {
+      // Insert TODO after plan (if present), otherwise first.
+      const planIndex = attachments.findIndex((att) => att.type === "plan_file_reference");
+      const insertIndex = planIndex === -1 ? 0 : planIndex + 1;
+      attachments.splice(insertIndex, 0, todoAttachment);
+    }
+
+    return attachments;
   }
 
   /**
@@ -894,6 +1084,54 @@ export class AgentSession {
       return new Set(exclusions.excludedItems);
     } catch {
       return new Set();
+    }
+  }
+
+  private coerceTodoItems(value: unknown): TodoItem[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    const result: TodoItem[] = [];
+    for (const item of value) {
+      if (!item || typeof item !== "object") continue;
+
+      const content = (item as { content?: unknown }).content;
+      const status = (item as { status?: unknown }).status;
+
+      if (typeof content !== "string") continue;
+      if (status !== "pending" && status !== "in_progress" && status !== "completed") continue;
+
+      result.push({ content, status });
+    }
+
+    return result;
+  }
+
+  private async loadTodoListAttachment(
+    excludedItems: Set<string>
+  ): Promise<PostCompactionAttachment | null> {
+    if (excludedItems.has("todo")) {
+      return null;
+    }
+
+    const todoPath = path.join(this.config.getSessionDir(this.workspaceId), "todos.json");
+
+    try {
+      const data = await readFile(todoPath, "utf-8");
+      const parsed: unknown = JSON.parse(data);
+      const todos = this.coerceTodoItems(parsed);
+      if (todos.length === 0) {
+        return null;
+      }
+
+      return {
+        type: "todo_list",
+        todos,
+      };
+    } catch {
+      // File missing or unreadable
+      return null;
     }
   }
 

@@ -53,13 +53,15 @@
     --color-exec-mode-hover: hsl(268.56 94.04% 67%);
     --color-exec-mode-light: hsl(268.56 94.04% 78%);
 
-    --color-edit-mode: hsl(120 50% 35%);
-    --color-edit-mode-hover: hsl(120 50% 47%);
-    --color-edit-mode-light: hsl(120 50% 62%);
+    /* Edit mode: amber/gold for editing warnings and barriers */
+    --color-edit-mode: hsl(38 80% 45%);
+    --color-edit-mode-hover: hsl(38 80% 55%);
+    --color-edit-mode-light: hsl(38 80% 65%);
 
     --color-read: hsl(210 70% 40%);
-    --color-editing-mode: hsl(30 100% 50%);
-    --color-editing-mode-alpha: hsla(30 100% 50% / 0.1);
+    /* Editing state: subtle amber border when editing a message */
+    --color-editing-mode: hsl(38 70% 50%);
+    --color-editing-mode-alpha: hsla(38 70% 50% / 0.08);
     --color-pending: hsl(30 100% 70%);
 
     --color-debug-mode: hsl(214 100% 64%);
@@ -129,6 +131,19 @@
     --color-token-input: hsl(120 40% 35%);
     --color-token-output: hsl(207 100% 40%);
     --color-token-cached: hsl(0 0% 50%);
+    --color-token-cache-create: hsl(140 20% 55%);
+
+    /* Task/subagent surfaces - teal/cyan theme for parallel work */
+    --color-task-mode: hsl(175 60% 42%);
+    --color-task-mode-light: hsl(175 60% 55%);
+    --surface-task-gradient: linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--color-task-mode), transparent 92%) 0%,
+      color-mix(in srgb, var(--color-task-mode), transparent 95%) 100%
+    );
+    --surface-task-border: color-mix(in srgb, var(--color-task-mode), transparent 70%);
+    --surface-task-border-strong: color-mix(in srgb, var(--color-task-mode), transparent 55%);
+    --surface-task-divider: color-mix(in srgb, var(--color-task-mode), transparent 80%);
 
     /* Plan surfaces */
     --surface-plan-gradient: linear-gradient(
@@ -191,6 +206,7 @@
     --color-subtle: hsl(0 0% 60%); /* #999 - subtle */
     --color-dim: hsl(0 0% 42%); /* #666 - dimmed */
     --color-light: hsl(0 0% 83%); /* #d4d4d4 - light */
+    --color-text-lighter: hsl(0 0% 87%); /* #dddddd - lighter text */
     --color-lighter: hsl(0 0% 90%); /* #e5e5e5 - lighter */
     --color-bright: hsl(0 0% 80%); /* #cccccc - bright */
     --color-subdued: hsl(0 0% 60%); /* #9a9a9a - subdued */
@@ -215,6 +231,7 @@
     --color-separator: #262626; /* neutral-800 - dividers/separators */
     --color-separator-light: hsl(0 0% 27%); /* #464647 - lighter separator */
     --color-modal-bg: hsl(0 0% 18%); /* #2d2d30 - modal backgrounds */
+    --color-inline-code-dark-bg: hsl(0 0% 18%); /* #2d2d30 - always dark, for inline code that should stay dark in all themes */
 
     --color-accent: hsl(207 100% 40%); /* #007acc - VS Code blue */
     --color-accent-hover: hsl(207 100% 45%); /* #1177bb - accent hover */
@@ -237,6 +254,21 @@
     /* Code syntax highlighting */
     --color-code-type: hsl(197 71% 73%); /* #9cdcfe - type annotations */
     --color-code-keyword: hsl(210 59% 63%); /* #6496ff - keywords */
+    --color-code-string: hsl(40 53% 67%); /* #d7ba7d - string literals */
+    --color-syntax-error: hsl(355 65% 65%); /* #e06c75 - One Dark error red */
+
+    /* Terminal */
+    --color-terminal-bg: hsl(0 0% 12%); /* #1e1e1e */
+    --color-terminal-fg: hsl(0 0% 83%); /* #d4d4d4 */
+
+    /* Info (blue accent for in-progress states) */
+    --color-info: hsl(207 90% 54%); /* #2196f3 */
+
+    /* Init message surfaces */
+    --color-init-bg: hsl(210 33% 17%); /* #1e2a3a */
+    --color-init-border: hsl(210 27% 25%); /* #2f3f52 */
+    --color-init-error-bg: hsl(0 33% 17%); /* #3a1e1e */
+    --color-init-error-border: hsl(0 28% 30%); /* #653737 */
 
     /* Toast and notification backgrounds */
     --color-toast-success-bg: hsl(207 100% 37% / 0.13); /* #0e639c with 20% opacity */
@@ -300,13 +332,6 @@
   --color-exec-mode-hover: hsl(268.56 94.04% 67%);
   --color-exec-mode-light: hsl(268.56 94.04% 78%);
 
-  --color-edit-mode: hsl(120 50% 35%);
-  --color-edit-mode-hover: hsl(120 50% 45%);
-  --color-edit-mode-light: hsl(120 50% 60%);
-
-  --color-read: hsl(210 70% 40%);
-  --color-editing-mode: hsl(30 100% 50%);
-  --color-editing-mode-alpha: hsla(30 100% 50% / 0.08);
   --color-pending: hsl(30 100% 64%);
 
   --color-debug-mode: hsl(214 100% 56%);
@@ -371,6 +396,7 @@
   --color-token-input: hsl(125 45% 36%);
   --color-token-output: hsl(207 90% 40%);
   --color-token-cached: hsl(210 16% 50%);
+  --color-token-cache-create: hsl(140 18% 52%);
 
   --surface-plan-gradient: linear-gradient(
     135deg,
@@ -508,6 +534,19 @@
   /* Theme override hook: redeclare tokens inside this block to swap palettes */
 }
 
+/* Solarized themes share the same semantic/mode colors (only surfaces differ). */
+:root[data-theme="solarized-light"],
+:root[data-theme="solarized-dark"] {
+  --color-edit-mode: hsl(38 80% 40%); /* amber */
+  --color-edit-mode-hover: hsl(38 80% 50%);
+  --color-edit-mode-light: hsl(38 80% 60%);
+
+  --color-read: hsl(205 69% 49%);
+  --color-editing-mode: hsl(38 70% 45%); /* amber */
+  --color-editing-mode-alpha: hsla(38 70% 45% / 0.1);
+}
+
+
 /* Solarized Light Theme */
 :root[data-theme="solarized-light"] {
   color-scheme: light;
@@ -532,13 +571,6 @@
   --color-exec-mode-hover: hsl(237 43% 70%);
   --color-exec-mode-light: hsl(237 43% 78%);
 
-  --color-edit-mode: hsl(68 100% 30%); /* green */
-  --color-edit-mode-hover: hsl(68 100% 40%);
-  --color-edit-mode-light: hsl(68 100% 52%);
-
-  --color-read: hsl(205 69% 49%);
-  --color-editing-mode: hsl(45 100% 35%); /* yellow */
-  --color-editing-mode-alpha: hsla(45 100% 35% / 0.1);
   --color-pending: hsl(18 89% 44%); /* orange */
 
   --color-debug-mode: hsl(205 69% 49%);
@@ -604,6 +636,7 @@
   --color-token-input: #859900;
   --color-token-output: #268bd2;
   --color-token-cached: #839496;
+  --color-token-cache-create: #6b9b7a;
 
   --surface-plan-gradient: linear-gradient(135deg, color-mix(in srgb, var(--color-plan-mode), transparent 94%) 0%, color-mix(in srgb, var(--color-plan-mode), transparent 97%) 100%);
   --surface-plan-border: color-mix(in srgb, var(--color-plan-mode), transparent 78%);
@@ -747,13 +780,6 @@
   --color-exec-mode-hover: hsl(237 43% 70%);
   --color-exec-mode-light: hsl(237 43% 78%);
 
-  --color-edit-mode: hsl(68 100% 30%); /* green */
-  --color-edit-mode-hover: hsl(68 100% 40%);
-  --color-edit-mode-light: hsl(68 100% 52%);
-
-  --color-read: hsl(205 69% 49%);
-  --color-editing-mode: hsl(45 100% 35%); /* yellow */
-  --color-editing-mode-alpha: hsla(45 100% 35% / 0.1);
   --color-pending: hsl(18 89% 44%); /* orange */
 
   --color-debug-mode: hsl(205 69% 49%);
@@ -825,6 +851,7 @@
   --color-token-input: #859900;
   --color-token-output: #268bd2;
   --color-token-cached: #586e75;
+  --color-token-cache-create: #5a8a6a;
 
   --surface-plan-gradient: linear-gradient(135deg, color-mix(in srgb, var(--color-plan-mode), transparent 92%) 0%, color-mix(in srgb, var(--color-plan-mode), transparent 95%) 100%);
   --surface-plan-border: color-mix(in srgb, var(--color-plan-mode), transparent 70%);
@@ -1185,6 +1212,15 @@ body,
   border-style: dashed;
   border-color: var(--border-warning-dashed);
 }
+
+@utility task-surface {
+  background: var(--surface-task-gradient);
+  border: 1px solid var(--surface-task-border);
+}
+
+@utility task-divider {
+  border-color: var(--surface-task-divider);
+}
 code {
   font-family: var(--font-monospace);
 }
@@ -1422,6 +1458,8 @@ code {
   border-radius: 4px;
   overflow-x: auto;
   margin: 1em 0;
+  width: fit-content;
+  max-width: 100%;
 }
 
 .markdown-content pre code {
@@ -1464,7 +1502,8 @@ code {
 
 .markdown-content table {
   border-collapse: collapse;
-  width: 100%;
+  width: fit-content;
+  max-width: 100%;
   margin: 1em 0;
 }
 
@@ -1577,6 +1616,9 @@ span.search-highlight {
 .code-block-wrapper {
   position: relative;
   margin: 0.75em 0;
+  width: fit-content;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 /* Code block with line numbers - each line is a grid row */
@@ -1585,7 +1627,7 @@ span.search-highlight {
   grid-template-columns: auto 1fr;
   background: var(--color-code-bg);
   border-radius: 4px;
-  padding: 6px 0;
+  padding: 6px 40px 6px 0; /* Right padding for copy button */
   font-family: var(--font-monospace);
   font-size: 12px;
   line-height: 1.6;
@@ -1610,13 +1652,13 @@ span.search-highlight {
   padding: 0;
 }
 
-/* Reusable copy button styles */
+/* Reusable copy button styles - reuses line-number colors for theme consistency */
 .copy-button {
   padding: 6px 8px;
-  background: rgba(0, 0, 0, 0.6);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--color-line-number-bg);
+  border: 1px solid var(--color-line-number-border);
   border-radius: 4px;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--color-line-number-text);
   cursor: pointer;
   transition:
     color 0.2s,
@@ -1629,9 +1671,9 @@ span.search-highlight {
 }
 
 .copy-button:hover {
-  background: rgba(0, 0, 0, 0.8);
-  color: rgba(255, 255, 255, 0.9);
-  border-color: rgba(255, 255, 255, 0.2);
+  background: var(--color-code-bg);
+  color: var(--color-foreground);
+  border-color: var(--color-foreground);
 }
 
 .copy-icon {
@@ -1641,7 +1683,7 @@ span.search-highlight {
 
 .copy-feedback {
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--color-foreground);
 }
 
 /* Code block specific positioning */
@@ -1655,6 +1697,19 @@ span.search-highlight {
 
 .code-block-wrapper:hover .code-copy-button {
   opacity: 1;
+}
+
+/* Single-line code block: inline copy button at top-right */
+.code-block-single-line .code-copy-button {
+  top: 50%;
+  bottom: auto;
+  transform: translateY(-50%);
+  padding: 2px 4px;
+}
+
+.code-block-single-line .code-copy-button .copy-icon {
+  width: 12px;
+  height: 12px;
 }
 
 /* Markdown code blocks (fallback for non-highlighted blocks) */
@@ -1861,3 +1916,25 @@ input[type="checkbox"] {
       0 0 12px var(--color-accent);
   }
 }
+
+/* Section color picker - react-colorful sizing */
+.section-color-picker .react-colorful {
+  width: 150px;
+  height: 120px;
+}
+
+.section-color-picker .react-colorful__saturation {
+  border-radius: 4px 4px 0 0;
+}
+
+.section-color-picker .react-colorful__hue {
+  height: 12px;
+  border-radius: 0 0 4px 4px;
+}
+
+.section-color-picker .react-colorful__saturation-pointer,
+.section-color-picker .react-colorful__hue-pointer {
+  width: 14px;
+  height: 14px;
+}
+

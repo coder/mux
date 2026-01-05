@@ -13,11 +13,17 @@ import {
   createTerminalTool,
   createStatusTool,
   createGenericTool,
+  createPendingTool,
+  createProposePlanTool,
+  createWebSearchTool,
 } from "./mockFactory";
+
+import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getModelKey } from "@/common/constants/storage";
-import { setupSimpleChatStory, setupStreamingChatStory } from "./storyHelpers";
+import { setupSimpleChatStory, setupStreamingChatStory, setWorkspaceInput } from "./storyHelpers";
 import { within, userEvent, waitFor } from "@storybook/test";
+import { warmHashCache, setShareData } from "@/browser/utils/sharedUrlCache";
 
 export default {
   ...appMeta,
@@ -37,25 +43,30 @@ export const Conversation: AppStory = {
             }),
             createAssistantMessage(
               "msg-2",
-              "I'll help you add authentication. Let me check the current implementation.",
+              "I'll help you add authentication. Let me search for best practices first.",
               {
                 historySequence: 2,
-                timestamp: STABLE_TIMESTAMP - 290000,
-                toolCalls: [
-                  createFileReadTool(
-                    "call-1",
-                    "src/api/users.ts",
-                    "export function getUser(req, res) {\n  const user = db.users.find(req.params.id);\n  res.json(user);\n}"
-                  ),
-                ],
+                timestamp: STABLE_TIMESTAMP - 295000,
+                toolCalls: [createWebSearchTool("call-0", "JWT authentication best practices", 5)],
               }
             ),
-            createUserMessage("msg-3", "Yes, add JWT token validation", {
+            createAssistantMessage("msg-3", "Great, let me check the current implementation.", {
               historySequence: 3,
+              timestamp: STABLE_TIMESTAMP - 290000,
+              toolCalls: [
+                createFileReadTool(
+                  "call-1",
+                  "src/api/users.ts",
+                  "export function getUser(req, res) {\n  const user = db.users.find(req.params.id);\n  res.json(user);\n}"
+                ),
+              ],
+            }),
+            createUserMessage("msg-4", "Yes, add JWT token validation", {
+              historySequence: 4,
               timestamp: STABLE_TIMESTAMP - 280000,
             }),
-            createAssistantMessage("msg-4", "I'll add JWT validation. Here's the update:", {
-              historySequence: 4,
+            createAssistantMessage("msg-5", "I'll add JWT validation. Here's the update:", {
+              historySequence: 5,
               timestamp: STABLE_TIMESTAMP - 270000,
               toolCalls: [
                 createFileEditTool(
@@ -260,10 +271,215 @@ export const Streaming: AppStory = {
           streamText: "I'll help you refactor the database connection to use connection pooling.",
           pendingTool: {
             toolCallId: "call-1",
-            toolName: "read_file",
-            args: { target_file: "src/db/connection.ts" },
+            toolName: "file_read",
+            args: { filePath: "src/db/connection.ts" },
           },
           gitStatus: { dirty: 1 },
+        })
+      }
+    />
+  ),
+};
+
+/** Streaming/working state with ask_user_question pending */
+export const AskUserQuestionPending: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          messages: [
+            createUserMessage("msg-1", "Please implement the feature", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 3000,
+            }),
+            createAssistantMessage("msg-2", "I have a few clarifying questions.", {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP - 2000,
+              toolCalls: [
+                createPendingTool("call-ask-1", "ask_user_question", {
+                  questions: [
+                    {
+                      question: "Which approach should we take?",
+                      header: "Approach",
+                      options: [
+                        { label: "A", description: "Approach A" },
+                        { label: "B", description: "Approach B" },
+                      ],
+                      multiSelect: false,
+                    },
+                    {
+                      question: "Which platforms do we need to support?",
+                      header: "Platforms",
+                      options: [
+                        { label: "macOS", description: "Apple macOS" },
+                        { label: "Windows", description: "Microsoft Windows" },
+                        { label: "Linux", description: "Linux desktops" },
+                      ],
+                      multiSelect: true,
+                    },
+                  ],
+                }),
+              ],
+            }),
+          ],
+          gitStatus: { dirty: 1 },
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    const canvas = within(storyRoot);
+
+    // Wait for the tool card to appear (header is rendered even when collapsed).
+    const toolTitle = await canvas.findByText(/ask_user_question/, {}, { timeout: 8000 });
+
+    // Ensure tool is expanded (question text is inside ToolDetails).
+    if (!canvas.queryByText("Summary")) {
+      await userEvent.click(toolTitle);
+    }
+
+    const getSectionButton = (prefix: string): HTMLElement => {
+      const buttons = canvas.getAllByRole("button");
+      const btn = buttons.find(
+        (el) => el.tagName === "BUTTON" && (el.textContent ?? "").startsWith(prefix)
+      );
+      if (!btn) throw new Error(`${prefix} section button not found`);
+      return btn;
+    };
+
+    // Ensure we're on the first question.
+    await userEvent.click(getSectionButton("Approach"));
+
+    // Wait for the first question to render.
+    try {
+      await canvas.findByText("Which approach should we take?", {}, { timeout: 8000 });
+    } catch {
+      const toolContainerText =
+        toolTitle.closest("div")?.parentElement?.textContent?.slice(0, 500) ?? "<missing>";
+      throw new Error(
+        `AskUserQuestionPending: question UI not found. Tool container: ${toolContainerText}`
+      );
+    }
+
+    // Selecting a single-select option should auto-advance.
+    await userEvent.click(canvas.getByText("Approach A"));
+    await canvas.findByText("Which platforms do we need to support?", {}, { timeout: 2000 });
+
+    // Regression: you must be able to jump back to a previous section after answering it.
+    await userEvent.click(getSectionButton("Approach"));
+
+    await canvas.findByText("Which approach should we take?", {}, { timeout: 2000 });
+
+    // Give React a tick to run any pending effects; we should still be on question 1.
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    if (canvas.queryByText("Which platforms do we need to support?")) {
+      throw new Error("Unexpected auto-advance when navigating back to a previous question");
+    }
+
+    // Changing the answer should still auto-advance.
+    await userEvent.click(canvas.getByText("Approach B"));
+    await canvas.findByText("Which platforms do we need to support?", {}, { timeout: 2000 });
+  },
+};
+
+/** Completed ask_user_question tool call */
+export const AskUserQuestionCompleted: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          messages: [
+            createUserMessage("msg-1", "Please implement the feature", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 60000,
+            }),
+            createAssistantMessage("msg-2", "I asked some questions.", {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP - 55000,
+              toolCalls: [
+                createGenericTool(
+                  "call-ask-1",
+                  "ask_user_question",
+                  {
+                    questions: [
+                      {
+                        question: "Which approach should we take?",
+                        header: "Approach",
+                        options: [
+                          { label: "A", description: "Approach A" },
+                          { label: "B", description: "Approach B" },
+                        ],
+                        multiSelect: false,
+                      },
+                    ],
+                  },
+                  {
+                    questions: [
+                      {
+                        question: "Which approach should we take?",
+                        header: "Approach",
+                        options: [
+                          { label: "A", description: "Approach A" },
+                          { label: "B", description: "Approach B" },
+                        ],
+                        multiSelect: false,
+                      },
+                    ],
+                    answers: {
+                      "Which approach should we take?": "A",
+                    },
+                  }
+                ),
+              ],
+            }),
+          ],
+        })
+      }
+    />
+  ),
+};
+
+/**
+ * Test "Other" option with auto-resizing textarea.
+ * Shows the textarea expanded with multi-line content to demonstrate auto-resize.
+ */
+export const AskUserQuestionOther: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          messages: [
+            createUserMessage("msg-1", "How should I set this up?", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 3000,
+            }),
+            createAssistantMessage("msg-2", "Let me ask a few questions.", {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP - 2000,
+              toolCalls: [
+                createPendingTool("call-ask-1", "ask_user_question", {
+                  questions: [
+                    {
+                      question: "Describe your use case in detail",
+                      header: "Use Case",
+                      options: [
+                        { label: "Web app", description: "A web application" },
+                        { label: "CLI tool", description: "A command-line tool" },
+                      ],
+                      multiSelect: false,
+                    },
+                  ],
+                  // Pre-fill with "Other" selected to show the textarea
+                  answers: {
+                    "Describe your use case in detail":
+                      "I'm building a complex application.\nIt needs web, CLI, and API support.\nThe architecture should be modular.",
+                  },
+                }),
+              ],
+            }),
+          ],
+          gitStatus: { dirty: 0 },
         })
       }
     />
@@ -318,21 +534,6 @@ export const GenericTool: AppStory = {
         story: "Generic tool call with JSON syntax highlighting and 100+ lines.",
       },
     },
-  },
-  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-    const canvas = within(canvasElement);
-
-    // Wait for workspace metadata to load and main content to render
-    await waitFor(
-      async () => {
-        const toolHeader = canvas.getByText("fetch_data");
-        await userEvent.click(toolHeader);
-      },
-      { timeout: 5000 }
-    );
-    // Wait for any auto-focus timers (ChatInput has 100ms delay), then blur
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    (document.activeElement as HTMLElement)?.blur();
   },
 };
 
@@ -467,7 +668,8 @@ export const ModeHelpTooltip: AppStory = {
     />
   ),
   play: async ({ canvasElement }) => {
-    const canvas = within(canvasElement);
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    const canvas = within(storyRoot);
 
     // Wait for app to fully load - the chat input with mode selector should be present
     await canvas.findAllByText("Exec", {}, { timeout: 10000 });
@@ -567,6 +769,665 @@ export const ModelSelectorPrettyWithGateway: AppStory = {
       description: {
         story:
           "Verifies the bottom-left model selector stays pretty (e.g. GPT-4o) even when mux-gateway routing is enabled.",
+      },
+    },
+  },
+};
+
+/**
+ * Editing message state - shows the edit cutoff barrier and amber-styled input.
+ * Demonstrates the UI when a user clicks "Edit" on a previous message.
+ */
+export const EditingMessage: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const workspaceId = "ws-editing";
+
+        // Ensure a deterministic starting state (Chromatic/Storybook can preserve localStorage
+        // across story runs in the same session).
+        setWorkspaceInput(workspaceId, "");
+
+        return setupSimpleChatStory({
+          workspaceId,
+          messages: [
+            createUserMessage("msg-1", "Add authentication to the user API endpoint", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 300000,
+            }),
+            createAssistantMessage(
+              "msg-2",
+              "I'll help you add authentication. Let me check the current implementation and add JWT validation.",
+              {
+                historySequence: 2,
+                timestamp: STABLE_TIMESTAMP - 290000,
+                toolCalls: [
+                  createFileReadTool(
+                    "call-1",
+                    "src/api/users.ts",
+                    "export function getUser(req, res) {\n  const user = db.users.find(req.params.id);\n  res.json(user);\n}"
+                  ),
+                ],
+              }
+            ),
+            createUserMessage("msg-3", "Actually, can you use a different approach?", {
+              historySequence: 3,
+              timestamp: STABLE_TIMESTAMP - 280000,
+            }),
+            createAssistantMessage(
+              "msg-4",
+              "Of course! I can use a different authentication approach. What would you prefer?",
+              {
+                historySequence: 4,
+                timestamp: STABLE_TIMESTAMP - 270000,
+              }
+            ),
+          ],
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    const canvas = within(storyRoot);
+
+    // Wait for user message actions to render (Edit buttons only appear on user messages)
+    const editButtons = await canvas.findAllByLabelText("Edit", {}, { timeout: 10000 });
+    if (editButtons.length === 0) throw new Error("No edit buttons found");
+
+    // Click edit on the first user message
+    await userEvent.click(editButtons[0]);
+
+    // Wait for the editing state to be applied
+    await waitFor(
+      () => {
+        const textarea = canvas.getByLabelText("Edit your last message");
+        if (!textarea.className.includes("border-editing-mode")) {
+          throw new Error("Textarea not in editing state");
+        }
+      },
+      { timeout: 2000 }
+    );
+
+    // Verify the edit cutoff barrier appears
+    await canvas.findByText(
+      "Messages below will be removed when you submit",
+      {},
+      { timeout: 2000 }
+    );
+  },
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Shows the editing message state with the amber-styled input border and edit cutoff barrier indicating messages that will be removed.",
+      },
+    },
+  },
+};
+
+/**
+ * Diff padding colors - verifies that the top/bottom padding of diff blocks
+ * matches the first/last line type (addition=green, deletion=red, context=default).
+ *
+ * This story shows three diffs:
+ * 1. Diff starting with addition (green top padding)
+ * 2. Diff ending with deletion (red bottom padding)
+ * 3. Diff with context lines at both ends (default padding)
+ */
+export const DiffPaddingColors: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-diff-padding",
+          messages: [
+            createUserMessage("msg-1", "Show me different diff edge cases", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 100000,
+            }),
+            createAssistantMessage(
+              "msg-2",
+              "Here are diffs with different first/last line types:",
+              {
+                historySequence: 2,
+                timestamp: STABLE_TIMESTAMP - 90000,
+                toolCalls: [
+                  // Diff starting with addition - top padding should be green
+                  createFileEditTool(
+                    "call-1",
+                    "src/addition-first.ts",
+                    [
+                      "--- src/addition-first.ts",
+                      "+++ src/addition-first.ts",
+                      "@@ -1,3 +1,5 @@",
+                      "+import { newModule } from './new';",
+                      "+import { anotherNew } from './another';",
+                      " export function existing() {",
+                      "   return 'unchanged';",
+                      " }",
+                    ].join("\n")
+                  ),
+                  // Diff ending with deletion - bottom padding should be red
+                  createFileEditTool(
+                    "call-2",
+                    "src/deletion-last.ts",
+                    [
+                      "--- src/deletion-last.ts",
+                      "+++ src/deletion-last.ts",
+                      "@@ -1,6 +1,3 @@",
+                      " export function keep() {",
+                      "   return 'still here';",
+                      " }",
+                      "-export function remove() {",
+                      "-  return 'goodbye';",
+                      "-}",
+                    ].join("\n")
+                  ),
+                  // Diff with context at both ends - default padding
+                  createFileEditTool(
+                    "call-3",
+                    "src/context-both.ts",
+                    [
+                      "--- src/context-both.ts",
+                      "+++ src/context-both.ts",
+                      "@@ -1,4 +1,4 @@",
+                      " function before() {",
+                      "+  console.log('added');",
+                      "-  console.log('removed');",
+                      " }",
+                    ].join("\n")
+                  ),
+                ],
+              }
+            ),
+          ],
+        })
+      }
+    />
+  ),
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Verifies diff container padding colors match first/last line types. " +
+          "The first diff should have green top padding (starts with +), " +
+          "the second should have red bottom padding (ends with -), " +
+          "and the third should have default padding (context at both ends).",
+      },
+    },
+  },
+};
+
+/**
+ * Story to verify diff padding alignment with high line numbers.
+ * The ch unit misalignment bug is more visible with 3-digit line numbers.
+ * The colored padding strip should align perfectly with the gutter edge.
+ */
+export const DiffPaddingAlignment: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-diff-alignment",
+          messages: [
+            createUserMessage("msg-1", "Show me a diff with high line numbers", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 100000,
+            }),
+            createAssistantMessage(
+              "msg-2",
+              "Here's a diff ending with deletions at high line numbers:",
+              {
+                historySequence: 2,
+                timestamp: STABLE_TIMESTAMP - 90000,
+                toolCalls: [
+                  // Diff with 3-digit line numbers ending in deletions
+                  // Replicates the alignment issue from code review diffs
+                  createFileEditTool(
+                    "call-1",
+                    "src/ppo/train/config.rs",
+                    [
+                      "--- src/ppo/train/config.rs",
+                      "+++ src/ppo/train/config.rs",
+                      "@@ -374,7 +374,3 @@",
+                      "             adj = LR_INCREASE_ADJ;",
+                      "         }",
+                      " ",
+                      "-            // Slow down learning rate when we're too stale.",
+                      "-            if last_metrics.stop_reason == metrics::StopReason::TooStale {",
+                      "-                adj = LR_DECREASE_ADJ;",
+                      "-            }",
+                    ].join("\n")
+                  ),
+                ],
+              }
+            ),
+          ],
+        })
+      }
+    />
+  ),
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Verifies diff padding alignment with 3-digit line numbers. " +
+          "The bottom red padding strip should align exactly with the gutter/content boundary. " +
+          "Before the fix, the padding strip used ch units without font-monospace, " +
+          "causing misalignment that scaled with line number width.",
+      },
+    },
+  },
+};
+
+/**
+ * Story to verify diff horizontal scrolling with long lines.
+ * When code lines exceed container width, the diff should scroll horizontally
+ * rather than overflow outside its container. The background colors for
+ * additions/deletions should span the full scrollable width.
+ */
+export const DiffHorizontalScroll: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-diff-scroll",
+          messages: [
+            createUserMessage("msg-1", "Show me a diff with very long lines", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 100000,
+            }),
+            createAssistantMessage(
+              "msg-2",
+              "Here's a diff with lines that require horizontal scrolling:",
+              {
+                historySequence: 2,
+                timestamp: STABLE_TIMESTAMP - 90000,
+                toolCalls: [
+                  createFileEditTool(
+                    "call-1",
+                    "src/config/longLines.ts",
+                    [
+                      "--- src/config/longLines.ts",
+                      "+++ src/config/longLines.ts",
+                      "@@ -1,4 +1,4 @@",
+                      " // Short context line",
+                      "-export const VERY_LONG_CONFIG_OPTION_NAME_THAT_EXCEEDS_NORMAL_WIDTH = { description: 'This is an extremely long configuration value that should definitely cause horizontal scrolling in the diff viewer component', defaultValue: false };",
+                      "+export const VERY_LONG_CONFIG_OPTION_NAME_THAT_EXCEEDS_NORMAL_WIDTH = { description: 'This is an extremely long configuration value that should definitely cause horizontal scrolling in the diff viewer component', defaultValue: true, enabled: true };",
+                      " // Another short line",
+                      " export const SHORT = 1;",
+                    ].join("\n")
+                  ),
+                ],
+              }
+            ),
+          ],
+        })
+      }
+    />
+  ),
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Verifies diff container scrolls horizontally for long lines. " +
+          "The diff should NOT overflow outside its container. " +
+          "Background colors (red for deletions, green for additions) should " +
+          "extend to the full scrollable width when scrolling right.",
+      },
+    },
+  },
+};
+
+/**
+ * Story showing the InitMessage component in success state.
+ * Tests the workspace init hook display with completed status.
+ */
+export const InitHookSuccess: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-init-success",
+          messages: [
+            createUserMessage("msg-1", "Start working on the project", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 100000,
+            }),
+          ],
+          onChat: (_wsId, emit) => {
+            // Emit init events to show completed init hook
+            setTimeout(() => {
+              emit({
+                type: "init-start",
+                hookPath: "/home/user/projects/my-app/.mux/init.sh",
+                timestamp: STABLE_TIMESTAMP - 110000,
+              } as WorkspaceChatMessage);
+              emit({
+                type: "init-output",
+                line: "Installing dependencies...",
+                timestamp: STABLE_TIMESTAMP - 109000,
+              } as WorkspaceChatMessage);
+              emit({
+                type: "init-output",
+                line: "Setting up environment variables...",
+                timestamp: STABLE_TIMESTAMP - 108000,
+              } as WorkspaceChatMessage);
+              emit({
+                type: "init-output",
+                line: "Starting development server...",
+                timestamp: STABLE_TIMESTAMP - 107000,
+              } as WorkspaceChatMessage);
+              emit({
+                type: "init-end",
+                exitCode: 0,
+                timestamp: STABLE_TIMESTAMP - 106000,
+              } as WorkspaceChatMessage);
+            }, 100);
+          },
+        })
+      }
+    />
+  ),
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Shows the InitMessage component after a successful init hook execution. " +
+          "The message displays with a green checkmark, hook path, and output lines.",
+      },
+    },
+  },
+};
+
+/**
+ * Story showing the InitMessage component in error state.
+ * Tests the workspace init hook display with failed status.
+ */
+export const InitHookError: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-init-error",
+          messages: [
+            createUserMessage("msg-1", "Start working on the project", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 100000,
+            }),
+          ],
+          onChat: (_wsId, emit) => {
+            // Emit init events to show failed init hook
+            setTimeout(() => {
+              emit({
+                type: "init-start",
+                hookPath: "/home/user/projects/my-app/.mux/init.sh",
+                timestamp: STABLE_TIMESTAMP - 110000,
+              } as WorkspaceChatMessage);
+              emit({
+                type: "init-output",
+                line: "Installing dependencies...",
+                timestamp: STABLE_TIMESTAMP - 109000,
+              } as WorkspaceChatMessage);
+              emit({
+                type: "init-output",
+                line: "Failed to install package 'missing-dep'",
+                timestamp: STABLE_TIMESTAMP - 108000,
+                isError: true,
+              } as WorkspaceChatMessage);
+              emit({
+                type: "init-output",
+                line: "npm ERR! code E404",
+                timestamp: STABLE_TIMESTAMP - 107500,
+                isError: true,
+              } as WorkspaceChatMessage);
+              emit({
+                type: "init-end",
+                exitCode: 1,
+                timestamp: STABLE_TIMESTAMP - 107000,
+              } as WorkspaceChatMessage);
+            }, 100);
+          },
+        })
+      }
+    />
+  ),
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Shows the InitMessage component after a failed init hook execution. " +
+          "The message displays with a red alert icon, error styling, and error output.",
+      },
+    },
+  },
+};
+
+/**
+ * Context meter with high usage and idle compaction enabled.
+ * Shows the context usage indicator badge in the chat input area with the
+ * hourglass badge indicating idle compaction is configured.
+ */
+export const ContextMeterWithIdleCompaction: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-context-meter",
+          workspaceName: "feature/auth",
+          projectName: "my-app",
+          idleCompactionHours: 4,
+          messages: [
+            createUserMessage("msg-1", "Help me refactor the authentication module", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 300000,
+            }),
+            createAssistantMessage(
+              "msg-2",
+              "I'll help you refactor the authentication module. Let me first review the current implementation.",
+              {
+                historySequence: 2,
+                timestamp: STABLE_TIMESTAMP - 290000,
+                // High context usage to show the meter prominently (65% of 200k = 130k tokens)
+                contextUsage: { inputTokens: 130000, outputTokens: 2000 },
+                toolCalls: [
+                  createFileReadTool(
+                    "call-1",
+                    "src/auth/index.ts",
+                    'export { login, logout, verifyToken } from "./handlers";'
+                  ),
+                ],
+              }
+            ),
+          ],
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    // Wait for the context meter to appear (it shows token usage)
+    await waitFor(
+      () => {
+        // Look for the context meter button which shows token counts
+        canvas.getByRole("button", { name: /context/i });
+      },
+      { timeout: 5000 }
+    );
+  },
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Shows the Context Meter with high usage (~65%) and idle compaction enabled (4h). " +
+          "The meter displays an hourglass badge indicating idle compaction is configured.",
+      },
+    },
+  },
+};
+
+/**
+ * Story showing a propose_plan tool call with Plan UI.
+ * Tests the plan card rendering with icon action buttons at the bottom.
+ */
+export const ProposePlan: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-plan",
+          messages: [
+            createUserMessage("msg-1", "Help me refactor the authentication module", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 300000,
+            }),
+            createAssistantMessage(
+              "msg-2",
+              "I'll create a plan for refactoring the authentication module.",
+              {
+                historySequence: 2,
+                timestamp: STABLE_TIMESTAMP - 290000,
+                toolCalls: [
+                  createProposePlanTool(
+                    "call-plan-1",
+                    `# Authentication Module Refactor
+
+## Overview
+
+Refactor the authentication system to improve security and maintainability.
+
+## Tasks
+
+1. **Extract JWT utilities** - Move token generation and validation to dedicated module
+2. **Add refresh token support** - Implement secure refresh token rotation
+3. **Improve password hashing** - Upgrade to Argon2id with proper salt rounds
+4. **Add rate limiting** - Implement per-IP and per-user rate limits
+5. **Session management** - Add Redis-backed session store
+
+## Implementation Order
+
+\`\`\`mermaid
+graph TD
+    A[Extract JWT utils] --> B[Add refresh tokens]
+    B --> C[Improve hashing]
+    C --> D[Add rate limiting]
+    D --> E[Session management]
+\`\`\`
+
+## Success Criteria
+
+- All existing tests pass
+- New tests for refresh token flow
+- Security audit passes
+- Performance benchmarks maintained`
+                  ),
+                ],
+              }
+            ),
+          ],
+        })
+      }
+    />
+  ),
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Shows the ProposePlanToolCall component with a completed plan. " +
+          "The plan card displays with the title in the header and icon action buttons " +
+          "(Copy, Start Here, Show Text) at the bottom, matching the AssistantMessage aesthetic.",
+      },
+    },
+  },
+};
+
+// Message content used in SigningBadgePassphraseWarning story
+const SIGNING_WARNING_MESSAGE_CONTENT = "Hello! How can I help you today?";
+
+/**
+ * Story showing the signing badge in warning state when key requires passphrase.
+ * The signing badge displays yellow when a compatible key exists but is passphrase-protected.
+ */
+export const SigningBadgePassphraseWarning: AppStory = {
+  // Use loaders to pre-warm hash cache before component mounts (fixes race condition)
+  loaders: [
+    async () => {
+      // Warm the hash cache to ensure consistent hashing
+      await warmHashCache(SIGNING_WARNING_MESSAGE_CONTENT);
+      // Now set share data with the warmed hash
+      setShareData(SIGNING_WARNING_MESSAGE_CONTENT, {
+        url: "https://mux.md/story-test#fake-key",
+        id: "story-share-id",
+        mutateKey: "story-mutate-key",
+        expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000, // 7 days
+        signed: false,
+      });
+      return {};
+    },
+  ],
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-signing-warning",
+          messages: [
+            createUserMessage("msg-1", "Hello", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 300000,
+            }),
+            createAssistantMessage("msg-2", SIGNING_WARNING_MESSAGE_CONTENT, {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP - 290000,
+            }),
+          ],
+          signingCapabilities: {
+            publicKey: null,
+            githubUser: null,
+            error: {
+              message:
+                "Signing key requires a passphrase. Create an unencrypted key at ~/.mux/message_signing_key or use ssh-add.",
+              hasEncryptedKey: true,
+            },
+          },
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    const canvas = within(storyRoot);
+
+    // Wait for the assistant message to appear
+    await canvas.findByText(SIGNING_WARNING_MESSAGE_CONTENT, {}, { timeout: 5000 });
+
+    // Wait for React to finish any pending updates after rendering
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+    // Find and click the Share button (should show "Already shared" due to loader)
+    const shareButton = await canvas.findByLabelText("Already shared", {}, { timeout: 3000 });
+
+    // Wait a bit for button to be fully interactive
+    await new Promise((r) => setTimeout(r, 100));
+    await userEvent.click(shareButton);
+
+    // Wait for the popover to open (renders in a portal, so search document)
+    await waitFor(
+      () => {
+        const popover = document.querySelector('[role="dialog"]');
+        if (!popover) throw new Error("Share popover not found");
+      },
+      { timeout: 5000 }
+    );
+
+    // Allow the signing badge to render with its warning state
+    await new Promise((r) => setTimeout(r, 200));
+  },
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Shows the signing badge in warning state (yellow) when a signing key exists but is passphrase-protected.",
       },
     },
   },

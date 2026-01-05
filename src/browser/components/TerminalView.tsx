@@ -81,13 +81,18 @@ export function TerminalView({ workspaceId, sessionId, visible }: TerminalViewPr
         // Initialize ghostty-web WASM module (idempotent, safe to call multiple times)
         await init();
 
+        // Resolve CSS variables for xterm.js (canvas rendering doesn't support CSS vars)
+        const styles = getComputedStyle(document.documentElement);
+        const terminalBg = styles.getPropertyValue("--color-terminal-bg").trim() || "#1e1e1e";
+        const terminalFg = styles.getPropertyValue("--color-terminal-fg").trim() || "#d4d4d4";
+
         terminal = new Terminal({
           fontSize: 14,
           fontFamily: "JetBrains Mono, Menlo, Monaco, monospace",
           cursorBlink: true,
           theme: {
-            background: "#1e1e1e",
-            foreground: "#d4d4d4",
+            background: terminalBg,
+            foreground: terminalFg,
           },
         });
 
@@ -231,7 +236,7 @@ export function TerminalView({ workspaceId, sessionId, visible }: TerminalViewPr
       style={{
         width: "100%",
         height: "100%",
-        backgroundColor: "#1e1e1e",
+        backgroundColor: "var(--color-terminal-bg)",
       }}
     >
       {errorMessage && (

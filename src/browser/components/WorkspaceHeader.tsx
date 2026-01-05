@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Pencil } from "lucide-react";
+import { Pencil, Server } from "lucide-react";
 import { GitStatusIndicator } from "./GitStatusIndicator";
 import { RuntimeBadge } from "./RuntimeBadge";
+import { BranchSelector } from "./BranchSelector";
+import { WorkspaceMCPModal } from "./WorkspaceMCPModal";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
@@ -15,7 +17,8 @@ import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
 interface WorkspaceHeaderProps {
   workspaceId: string;
   projectName: string;
-  branch: string;
+  projectPath: string;
+  workspaceName: string;
   namedWorkspacePath: string;
   runtimeConfig?: RuntimeConfig;
 }
@@ -23,7 +26,8 @@ interface WorkspaceHeaderProps {
 export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   workspaceId,
   projectName,
-  branch,
+  projectPath,
+  workspaceName,
   namedWorkspacePath,
   runtimeConfig,
 }) => {
@@ -33,6 +37,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   const { canInterrupt } = useWorkspaceSidebarState(workspaceId);
   const { startSequence: startTutorial, isSequenceCompleted } = useTutorial();
   const [editorError, setEditorError] = useState<string | null>(null);
+  const [mcpModalOpen, setMcpModalOpen] = useState(false);
 
   const handleOpenTerminal = useCallback(() => {
     openTerminal(workspaceId, runtimeConfig);
@@ -63,21 +68,27 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   }, [startTutorial, isSequenceCompleted]);
 
   return (
-    <div className="bg-sidebar border-border-light flex h-8 items-center justify-between border-b px-[15px] [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:flex-wrap [@media(max-width:768px)]:gap-2 [@media(max-width:768px)]:py-2 [@media(max-width:768px)]:pl-[60px]">
-      <div className="text-foreground flex min-w-0 items-center gap-2 overflow-hidden font-semibold">
-        <RuntimeBadge runtimeConfig={runtimeConfig} isWorking={canInterrupt} />
-        <GitStatusIndicator
-          gitStatus={gitStatus}
-          workspaceId={workspaceId}
-          tooltipPosition="bottom"
+    <div
+      data-testid="workspace-header"
+      className="bg-sidebar border-border-light flex h-8 items-center justify-between border-b px-[15px] [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:flex-wrap [@media(max-width:768px)]:gap-2 [@media(max-width:768px)]:py-2 [@media(max-width:768px)]:pl-[60px]"
+    >
+      <div className="text-foreground flex min-w-0 items-center gap-2.5 overflow-hidden font-semibold">
+        <RuntimeBadge
+          runtimeConfig={runtimeConfig}
           isWorking={canInterrupt}
+          workspacePath={namedWorkspacePath}
         />
-        <span className="min-w-0 truncate font-mono text-xs">
-          {projectName} / {branch}
-        </span>
-        <span className="text-muted min-w-0 truncate font-mono text-[11px] font-normal">
-          {namedWorkspacePath}
-        </span>
+        <span className="min-w-0 truncate font-mono text-xs">{projectName}</span>
+        <div className="flex items-center gap-1">
+          <BranchSelector workspaceId={workspaceId} workspaceName={workspaceName} />
+          <GitStatusIndicator
+            gitStatus={gitStatus}
+            workspaceId={workspaceId}
+            projectPath={projectPath}
+            tooltipPosition="bottom"
+            isWorking={canInterrupt}
+          />
+        </div>
       </div>
       <div className="flex items-center">
         {editorError && <span className="text-danger-soft mr-2 text-xs">{editorError}</span>}
@@ -86,8 +97,24 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => void handleOpenInEditor()}
+              onClick={() => setMcpModalOpen(true)}
               className="text-muted hover:text-foreground h-6 w-6 shrink-0"
+              data-testid="workspace-mcp-button"
+            >
+              <Server className="h-4 w-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" align="center">
+            Configure MCP servers for this workspace
+          </TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => void handleOpenInEditor()}
+              className="text-muted hover:text-foreground ml-1 h-6 w-6 shrink-0"
             >
               <Pencil className="h-4 w-4" />
             </Button>
@@ -115,6 +142,12 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
           </TooltipContent>
         </Tooltip>
       </div>
+      <WorkspaceMCPModal
+        workspaceId={workspaceId}
+        projectPath={projectPath}
+        open={mcpModalOpen}
+        onOpenChange={setMcpModalOpen}
+      />
     </div>
   );
 };

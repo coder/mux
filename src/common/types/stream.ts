@@ -15,6 +15,7 @@ import type {
   ToolCallDeltaEventSchema,
   ToolCallEndEventSchema,
   ToolCallStartEventSchema,
+  BashOutputEventSchema,
   UsageDeltaEventSchema,
 } from "../orpc/schemas";
 
@@ -31,6 +32,7 @@ export type StreamAbortEvent = z.infer<typeof StreamAbortEventSchema>;
 
 export type ErrorEvent = z.infer<typeof ErrorEventSchema>;
 
+export type BashOutputEvent = z.infer<typeof BashOutputEventSchema>;
 export type ToolCallStartEvent = z.infer<typeof ToolCallStartEventSchema>;
 export type ToolCallDeltaEvent = z.infer<typeof ToolCallDeltaEventSchema>;
 export type ToolCallEndEvent = z.infer<typeof ToolCallEndEventSchema>;
@@ -53,6 +55,7 @@ export type AIServiceEvent =
   | ToolCallStartEvent
   | ToolCallDeltaEvent
   | ToolCallEndEvent
+  | BashOutputEvent
   | ReasoningDeltaEvent
   | ReasoningEndEvent
   | UsageDeltaEvent;

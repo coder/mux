@@ -1,0 +1,53 @@
+---
+title: Workspaces
+description: Isolated development environments for parallel agent work
+---
+
+Workspaces let you run multiple agent sessions in parallel.
+
+Each workspace has its own chat history and, depending on runtime, its own working directory and Git checkout state.
+
+## Runtimes
+
+Runtimes decide where a workspace runs and how isolated its filesystem is:
+
+- **[Local](/runtime/local)**: Runs directly in your project directory. No filesystem isolation.
+- **[Worktree](/runtime/worktree)**: Creates a local [git worktree](https://git-scm.com/docs/git-worktree) for per-workspace isolation while still sharing `.git`.
+- **[SSH](/runtime/ssh)**: Runs on a remote host over SSH (useful for security isolation and heavy parallelism).
+
+## Key concepts
+
+- **Branch flexibility**: A workspace can switch branches, use detached HEAD, or create new branches as needed.
+- **Commit visibility**: Local + worktree runtimes share the same Git repository. Commits made in one workspace are immediately visible to your other worktrees and your main checkout.
+- **Parallel execution**: Multiple workspaces can work on different tasks concurrently.
+
+## Reviewing changes
+
+A few common workflows (from "agent edits only" → "agent owns the PR"):
+
+- **Agent edits only**: Open the workspace directory and stage/commit yourself (`git add -p`).
+- **Agent commits**: Review locally from your main checkout (for example `git show <workspace-branch>`), then push when you’re satisfied.
+- **Agent commits + pushes**: Ask the agent to open a PR and review in GitHub/GitLab.
+  - Also see: [Agentic Git Identity](/config/agentic-git-identity)
+  - This requires granting the workspace git push credentials; prefer a dedicated identity/token.
+
+## Reviewing functionality (UI, behavior)
+
+Some changes (especially UI ones) are faster to review by running the workspace locally.
+
+1. Ask the agent to commit when it’s ready for review.
+2. If the workspace is a **worktree**, check out the branch in a detached HEAD state from your main checkout:
+
+   ```bash
+   git checkout --detach <workspace-branch>
+   ```
+
+<Note>
+  Detached HEAD is useful here because a branch can only be checked out by one worktree at a time.
+</Note>
+
+If you want faster iteration between commits, open the workspace directory and run a dev server (for example `bun dev`) there directly.
+
+---
+
+See the runtime pages for setup and trade-offs.

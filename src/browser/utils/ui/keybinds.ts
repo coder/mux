@@ -190,8 +190,11 @@ export function formatKeybind(keybind: Keybind): string {
  * We also like vim keybinds.
  */
 export const KEYBINDS = {
-  /** Toggle between Plan and Exec modes */
-  TOGGLE_MODE: { key: "M", ctrl: true, shift: true },
+  /** Open agent picker (focuses search) */
+  TOGGLE_MODE: { key: "A", ctrl: true, shift: true },
+
+  /** Cycle to next agent without opening picker */
+  CYCLE_AGENT: { key: ".", ctrl: true },
 
   /** Send message / Submit form */
   SEND_MESSAGE: { key: "Enter" },
@@ -269,7 +272,13 @@ export const KEYBINDS = {
 
   /** Switch to Review tab in right sidebar */
   // macOS: Cmd+2, Win/Linux: Ctrl+2
+  // NOTE: Both Ctrl and Cmd work for switching tabs on Mac (macOS has no standard Cmd+number behavior)
+  // This differs from other keybinds where we distinguish Ctrl (literal) from Cmd (meta)
   REVIEW_TAB: { key: "2", ctrl: true, description: "Review tab" },
+
+  /** Switch to Stats tab in right sidebar */
+  // macOS: Cmd+3, Win/Linux: Ctrl+3
+  STATS_TAB: { key: "3", ctrl: true, description: "Stats tab" },
 
   /** Refresh diff in Code Review panel */
   // macOS: Cmd+R, Win/Linux: Ctrl+R
@@ -320,4 +329,26 @@ export function createEditKeyHandler(options: {
       options.onCancel();
     }
   };
+}
+
+/**
+ * Format a numbered quick-select keybind (Cmd/Ctrl+1 through Cmd/Ctrl+9).
+ * Returns empty string for indices outside 0-8 range.
+ * @param index Zero-based index (0 = Cmd/Ctrl+1, 8 = Cmd/Ctrl+9)
+ */
+export function formatNumberedKeybind(index: number): string {
+  if (index < 0 || index > 8) return "";
+  const num = index + 1;
+  return isMac() ? `\u2318${num}` : `Ctrl+${num}`;
+}
+
+/**
+ * Check if a keyboard event matches a numbered quick-select keybind (Cmd/Ctrl+1-9).
+ * @returns The zero-based index (0-8) if matched, or -1 if not matched
+ */
+export function matchNumberedKeybind(event: KeyboardEvent): number {
+  const modKey = isMac() ? event.metaKey : event.ctrlKey;
+  if (!modKey) return -1;
+  if (event.key < "1" || event.key > "9") return -1;
+  return parseInt(event.key, 10) - 1;
 }

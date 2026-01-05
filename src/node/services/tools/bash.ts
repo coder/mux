@@ -12,10 +12,14 @@ import {
 } from "@/common/constants/toolLimits";
 import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
 
+import type { BashOutputEvent } from "@/common/types/stream";
 import type { BashToolResult } from "@/common/types/tools";
+import { resolveBashDisplayName } from "@/common/utils/tools/bashDisplayName";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
+import { toBashTaskId } from "./taskId";
 import { migrateToBackground } from "@/node/services/backgroundProcessExecutor";
+import { getToolEnvPath } from "@/node/services/hooks";
 
 /**
  * Validates bash script input for common issues
@@ -211,6 +215,27 @@ function formatResult(
 }
 
 /**
+ * Shell-escape a string for safe use in bash commands (single-quote wrapping).
+ */
+function shellEscape(str: string): string {
+  return `'${str.replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * Build script prelude that sources .mux/tool_env if present.
+ * Returns empty string if no tool_env path is provided.
+ */
+function buildToolEnvPrelude(toolEnvPath: string | null): string {
+  if (!toolEnvPath) return "";
+  // Source the tool_env file; fail with clear error if sourcing fails
+  return `if ! source ${shellEscape(toolEnvPath)} 2>&1; then
+  echo "mux: failed to source ${toolEnvPath}" >&2
+  exit 1
+fi
+`;
+}
+
+/**
  * Bash execution tool factory for AI assistant
  * Creates a bash tool that can execute commands with a configurable timeout
  * @param config Required configuration including working directory
@@ -235,8 +260,16 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
       { abortSignal, toolCallId }
     ): Promise<BashToolResult> => {
       // Validate script input
+
+      // Treat display_name as untrusted input: it ends up in filesystem paths.
+      const safeDisplayName = resolveBashDisplayName(script, display_name);
       const validationError = validateScript(script, config);
       if (validationError) return validationError;
+
+      // Look up .mux/tool_env to source before script (for direnv, nvm, venv, etc.)
+      const toolEnvPath = config.runtime ? await getToolEnvPath(config.runtime, config.cwd) : null;
+      const toolEnvPrelude = buildToolEnvPrelude(toolEnvPath);
+      const scriptWithEnv = toolEnvPrelude + script;
 
       // Handle explicit background execution (run_in_background=true)
       if (run_in_background) {
@@ -254,12 +287,12 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
         const spawnResult = await config.backgroundProcessManager.spawn(
           config.runtime,
           config.workspaceId,
-          script,
+          scriptWithEnv,
           {
             cwd: config.cwd,
-            env: config.secrets,
-            niceness: config.niceness,
-            displayName: display_name,
+            // Match foreground bash behavior: muxEnv is present and secrets override it.
+            env: { ...(config.muxEnv ?? {}), ...(config.secrets ?? {}) },
+            displayName: safeDisplayName,
             isForeground: false, // Explicit background
             timeoutSecs: timeout_secs, // Auto-terminate after this duration
           }
@@ -279,6 +312,7 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
           output: `Background process started with ID: ${spawnResult.processId}`,
           exitCode: 0,
           wall_duration_ms: Math.round(performance.now() - startTime),
+          taskId: toBashTaskId(spawnResult.processId),
           backgroundProcessId: spawnResult.processId,
         };
       }
@@ -314,7 +348,7 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
               config.workspaceId,
               toolCallId,
               script,
-              display_name,
+              safeDisplayName,
               () => {
                 backgrounded = true;
                 // Resolve the background promise to unblock the wait
@@ -325,12 +359,11 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
 
       // Execute using runtime interface (works for both local and SSH)
       const scriptWithClosedStdin = `exec </dev/null
-${script}`;
+${scriptWithEnv}`;
       const execStream = await config.runtime.exec(scriptWithClosedStdin, {
         cwd: config.cwd,
         env: { ...config.muxEnv, ...config.secrets },
         timeout: effectiveTimeout,
-        niceness: config.niceness,
         abortSignal: wrappedAbortController.signal,
       });
 
@@ -390,9 +423,93 @@ ${script}`;
         triggerFileTruncation
       );
 
+      // UI-only incremental output streaming over workspace.onChat (not sent to the model).
+      // We flush chunked text rather than per-line to keep overhead low.
+      let liveOutputStopped = false;
+      let liveStdoutBuffer = "";
+      let liveStderrBuffer = "";
+      let liveOutputTimer: ReturnType<typeof setInterval> | null = null;
+
+      const LIVE_FLUSH_INTERVAL_MS = 75;
+      const MAX_LIVE_EVENT_CHARS = 32_768;
+
+      const emitBashOutput = (isError: boolean, text: string): void => {
+        if (!config.emitChatEvent || !config.workspaceId || !toolCallId) return;
+        if (liveOutputStopped) return;
+        if (text.length === 0) return;
+
+        config.emitChatEvent({
+          type: "bash-output",
+          workspaceId: config.workspaceId,
+          toolCallId,
+          text,
+          isError,
+          timestamp: Date.now(),
+        } satisfies BashOutputEvent);
+      };
+
+      const flushLiveOutput = (): void => {
+        if (liveOutputStopped) return;
+
+        const flush = (isError: boolean, buffer: string): void => {
+          if (buffer.length === 0) return;
+          for (let i = 0; i < buffer.length; i += MAX_LIVE_EVENT_CHARS) {
+            emitBashOutput(isError, buffer.slice(i, i + MAX_LIVE_EVENT_CHARS));
+          }
+        };
+
+        if (liveStdoutBuffer.length > 0) {
+          const buf = liveStdoutBuffer;
+          liveStdoutBuffer = "";
+          flush(false, buf);
+        }
+
+        if (liveStderrBuffer.length > 0) {
+          const buf = liveStderrBuffer;
+          liveStderrBuffer = "";
+          flush(true, buf);
+        }
+      };
+
+      const stopLiveOutput = (flush: boolean): void => {
+        if (liveOutputStopped) return;
+        if (flush) flushLiveOutput();
+
+        liveOutputStopped = true;
+
+        if (liveOutputTimer) {
+          clearInterval(liveOutputTimer);
+          liveOutputTimer = null;
+        }
+
+        liveStdoutBuffer = "";
+        liveStderrBuffer = "";
+      };
+
+      if (config.emitChatEvent && config.workspaceId && toolCallId) {
+        liveOutputTimer = setInterval(flushLiveOutput, LIVE_FLUSH_INTERVAL_MS);
+      }
+
+      const appendLiveOutput = (isError: boolean, text: string): void => {
+        if (!config.emitChatEvent || !config.workspaceId || !toolCallId) return;
+        if (liveOutputStopped) return;
+        if (text.length === 0) return;
+
+        if (isError) {
+          liveStderrBuffer += text;
+          if (liveStderrBuffer.length >= MAX_LIVE_EVENT_CHARS) flushLiveOutput();
+        } else {
+          liveStdoutBuffer += text;
+          if (liveStdoutBuffer.length >= MAX_LIVE_EVENT_CHARS) flushLiveOutput();
+        }
+      };
+
       // Consume a ReadableStream<Uint8Array> and emit lines to lineHandler.
       // Uses TextDecoder streaming to preserve multibyte boundaries.
-      const consumeStream = async (stream: ReadableStream<Uint8Array>): Promise<void> => {
+      const consumeStream = async (
+        stream: ReadableStream<Uint8Array>,
+        isError: boolean
+      ): Promise<void> => {
         const reader = stream.getReader();
         const decoder = new TextDecoder("utf-8");
         let carry = "";
@@ -419,7 +536,9 @@ ${script}`;
             if (done) break;
             // Decode chunk (streaming keeps partial code points)
             const text = decoder.decode(value, { stream: true });
+            appendLiveOutput(isError, text);
             carry += text;
+
             // Split into lines; support both \n and \r\n
             let start = 0;
             while (true) {
@@ -439,6 +558,23 @@ ${script}`;
                 break;
               }
             }
+
+            // Defensive: if output never emits newlines, carry can grow without bound.
+            // If the incomplete line already violates hard limits, stop early.
+            if (carry.length > 0 && !truncationState.fileTruncated) {
+              const carryBytes = Buffer.byteLength(carry, "utf-8");
+              const bytesAfterCarry = totalBytesRef.current + carryBytes + 1; // +1 for newline
+              if (carryBytes > maxLineBytes || bytesAfterCarry > maxFileBytes) {
+                // Delegate to lineHandler to keep truncation reasons consistent.
+                lineHandler(carry);
+                if (truncationState.fileTruncated) {
+                  await reader.cancel().catch(() => {
+                    /* ignore */ return;
+                  });
+                  break;
+                }
+              }
+            }
             if (truncationState.fileTruncated) break;
           }
         } finally {
@@ -448,7 +584,10 @@ ${script}`;
           // Flush decoder for any trailing bytes and emit the last line (if any)
           try {
             const tail = decoder.decode();
-            if (tail) carry += tail;
+            if (tail) {
+              appendLiveOutput(isError, tail);
+              carry += tail;
+            }
             if (carry.length > 0 && !truncationState.fileTruncated) {
               lineHandler(carry);
             }
@@ -459,8 +598,8 @@ ${script}`;
       };
 
       // Start consuming stdout and stderr concurrently (using UI branches)
-      const consumeStdout = consumeStream(stdoutForUI);
-      const consumeStderr = consumeStream(stderrForUI);
+      const consumeStdout = consumeStream(stdoutForUI, false);
+      const consumeStderr = consumeStream(stderrForUI, true);
 
       // Create a promise that resolves when user clicks "Background"
       const backgroundPromise = new Promise<void>((resolve) => {
@@ -469,27 +608,45 @@ ${script}`;
 
       // Wait for process exit and stream consumption concurrently
       // Also race with the background promise to detect early return request
+      const foregroundCompletion = Promise.all([execStream.exitCode, consumeStdout, consumeStderr]);
+
       let exitCode: number;
       try {
         const result = await Promise.race([
-          Promise.all([execStream.exitCode, consumeStdout, consumeStderr]),
+          foregroundCompletion,
           backgroundPromise.then(() => "backgrounded" as const),
         ]);
 
         // Check if we were backgrounded
         if (result === "backgrounded" || backgrounded) {
+          // Detach from abort signal as early as possible - process should continue running
+          // even when the stream ends and fires abort.
+          abortDetached = true;
+
           // Unregister foreground process
           fgRegistration?.unregister();
 
-          // Detach from abort signal - process should continue running
-          // even when the stream ends and fires abort
-          abortDetached = true;
+          // Stop UI-only output streaming before migrating to background.
+          stopLiveOutput(true);
+
+          // Stop consuming UI stream branches - further output should be handled by bash_output.
+          stdoutForUI.cancel().catch(() => {
+            /* ignore */ return;
+          });
+          stderrForUI.cancel().catch(() => {
+            /* ignore */ return;
+          });
+
+          // Avoid unhandled promise rejections if the cancelled UI readers cause
+          // the foreground consumption promise to reject after we return.
+          void foregroundCompletion.catch(() => undefined);
 
           const wall_duration_ms = Math.round(performance.now() - startTime);
 
           // Migrate to background tracking if manager is available
           if (config.backgroundProcessManager && config.workspaceId) {
-            const processId = display_name;
+            const processId =
+              config.backgroundProcessManager.generateUniqueProcessId(safeDisplayName);
 
             // Create a synthetic ExecStream for the migration streams
             // The UI streams are still being consumed, migration streams continue to files
@@ -520,7 +677,8 @@ ${script}`;
                 processId,
                 config.workspaceId,
                 script,
-                migrateResult.outputDir
+                migrateResult.outputDir,
+                safeDisplayName
               );
 
               return {
@@ -528,6 +686,7 @@ ${script}`;
                 output: `Process sent to background with ID: ${processId}\n\nOutput so far (${lines.length} lines):\n${lines.slice(-20).join("\n")}${lines.length > 20 ? "\n...(showing last 20 lines)" : ""}`,
                 exitCode: 0,
                 wall_duration_ms,
+                taskId: toBashTaskId(processId),
                 backgroundProcessId: processId,
               };
             }
@@ -564,6 +723,8 @@ ${script}`;
           exitCode: -1,
           wall_duration_ms: Math.round(performance.now() - startTime),
         };
+      } finally {
+        stopLiveOutput(true);
       }
 
       // Unregister foreground process on normal completion

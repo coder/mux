@@ -190,6 +190,29 @@ describe("applyToolPolicy", () => {
       expect(result.file_edit_insert).toBeUndefined();
       expect(result.web_search).toBeUndefined();
     });
+
+    test("preset policy cannot be overridden by caller", () => {
+      const callerPolicy: ToolPolicy = [{ regex_match: "file_edit_.*", action: "enable" }];
+      const presetPolicy: ToolPolicy = [{ regex_match: "file_edit_.*", action: "disable" }];
+
+      const merged: ToolPolicy = [...callerPolicy, ...presetPolicy];
+      const result = applyToolPolicy(mockTools, merged);
+
+      expect(result.file_edit_replace_string).toBeUndefined();
+      expect(result.file_edit_replace_lines).toBeUndefined();
+      expect(result.file_edit_insert).toBeUndefined();
+    });
+
+    test("preset policy cannot be overridden by caller require", () => {
+      const callerPolicy: ToolPolicy = [{ regex_match: "bash", action: "require" }];
+      const presetPolicy: ToolPolicy = [{ regex_match: ".*", action: "disable" }];
+
+      const merged: ToolPolicy = [...callerPolicy, ...presetPolicy];
+      const result = applyToolPolicy(mockTools, merged);
+
+      expect(result.bash).toBeUndefined();
+      expect(Object.keys(result)).toHaveLength(0);
+    });
   });
 
   describe("edge cases", () => {

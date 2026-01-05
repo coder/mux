@@ -1,5 +1,6 @@
 import type { Runtime, BackgroundHandle } from "@/node/runtime/Runtime";
 import { spawnProcess } from "./backgroundProcessExecutor";
+import assert from "@/common/utils/assert";
 import { getErrorMessage } from "@/common/utils/errors";
 import { log } from "./log";
 import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
@@ -107,6 +108,9 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
 
   constructor(bgOutputDir: string) {
     super();
+    // Background bash status can have many concurrent subscribers (e.g. multiple workspaces).
+    // Raise the default listener cap to avoid noisy MaxListenersExceededWarning.
+    this.setMaxListeners(50);
     this.bgOutputDir = bgOutputDir;
   }
 
@@ -142,6 +146,30 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
   }
 
   /**
+   * Generate a unique background process ID.
+   *
+   * Background process IDs are used as tool-visible identifiers (e.g. task_await with bash: IDs),
+   * so they must be globally unique across all running processes.
+   *
+   * If the base ID is already in use, we append " (1)", " (2)", etc.
+   */
+  generateUniqueProcessId(baseId: string): string {
+    assert(
+      typeof baseId === "string" && baseId.length > 0,
+      "BackgroundProcessManager.generateUniqueProcessId requires a non-empty baseId"
+    );
+
+    let processId = baseId;
+    let suffix = 1;
+    while (this.processes.has(processId)) {
+      processId = `${baseId} (${suffix})`;
+      suffix++;
+    }
+
+    return processId;
+  }
+
+  /**
    * Spawn a new process with background-style infrastructure.
    *
    * All processes are spawned with nohup/setsid and file-based output,
@@ -159,7 +187,6 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
     config: {
       cwd: string;
       env?: Record<string, string>;
-      niceness?: number;
       /** Human-readable name for the process - used to generate the process ID */
       displayName: string;
       /** If true, process is foreground (being waited on). Default: false (background) */
@@ -173,13 +200,7 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
   > {
     log.debug(`BackgroundProcessManager.spawn() called for workspace ${workspaceId}`);
 
-    // Generate unique processId, appending (1), (2), etc. on collision
-    let processId = config.displayName;
-    let suffix = 1;
-    while (this.processes.has(processId)) {
-      processId = `${config.displayName} (${suffix})`;
-      suffix++;
-    }
+    const processId = this.generateUniqueProcessId(config.displayName);
 
     // Spawn via executor with background infrastructure
     // spawnProcess uses runtime.tempDir() internally for output directory
@@ -188,7 +209,6 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
       workspaceId,
       processId,
       env: config.env,
-      niceness: config.niceness,
     });
 
     if (!result.success) {
@@ -451,6 +471,7 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
    * @param timeout Seconds to wait for output if none available (default 0 = non-blocking)
    * @param abortSignal Optional signal to abort waiting early (e.g., when stream is cancelled)
    * @param workspaceId Optional workspace ID to check for queued messages (return early to process them)
+   * @param noteToolName Optional tool name to use in polling guidance notes
    */
   async getOutput(
     processId: string,
@@ -458,7 +479,8 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
     filterExclude?: boolean,
     timeout?: number,
     abortSignal?: AbortSignal,
-    workspaceId?: string
+    workspaceId?: string,
+    noteToolName?: string
   ): Promise<
     | {
         success: true;
@@ -548,21 +570,41 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
       // Last element is incomplete if content doesn't end with newline
       const hasTrailingNewline = rawWithBuffer.endsWith("\n");
       const completeLines = hasTrailingNewline ? allLines.slice(0, -1) : allLines.slice(0, -1);
-      const incompleteLine = hasTrailingNewline ? "" : allLines[allLines.length - 1];
 
-      // When using filter_exclude, check if we have meaningful (non-excluded) output
-      // Only consider complete lines for filtering - fragments can't match patterns
+      // When using filter_exclude, check if we have meaningful (non-excluded) output.
+      // We only consider complete lines as "meaningful" here; fragments are buffered for the next read.
       const filteredOutput = applyFilter(completeLines);
       const hasMeaningfulOutput = filterExclude
         ? filteredOutput.trim().length > 0
-        : completeLines.length > 0 || incompleteLine.length > 0;
+        : completeLines.length > 0;
 
       // Return immediately if:
       // 1. We have meaningful output (after filtering if filter_exclude is set)
-      // 2. Process is no longer running (exited/killed/failed) - flush buffer
-      // 3. Timeout elapsed
-      // 4. Abort signal received (user sent a new message)
-      if (hasMeaningfulOutput || currentStatus !== "running") {
+      // 2. Timeout elapsed
+      // 3. Abort signal received (user sent a new message)
+      if (hasMeaningfulOutput) {
+        break;
+      }
+
+      // If the process is no longer running (exited/killed/failed), do one last read
+      // to avoid dropping output that arrives between our readOutput() call and
+      // the status refresh.
+      if (currentStatus !== "running") {
+        while (true) {
+          const finalRead = await proc.handle.readOutput(proc.outputBytesRead);
+          if (finalRead.content.length === 0) {
+            break;
+          }
+
+          // Defensive: avoid infinite loops if a handle returns inconsistent offsets.
+          if (finalRead.newOffset <= proc.outputBytesRead) {
+            break;
+          }
+
+          accumulatedRaw += finalRead.content;
+          proc.outputBytesRead = finalRead.newOffset;
+        }
+
         break;
       }
 
@@ -586,6 +628,38 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
     }
 
     // Final line processing with buffer from previous call
+
+    // If the process exited, do a final drain of output.
+    //
+    // Rationale: stdout/stderr writes can land just after we observe that the process
+    // has exited. Without a final drain, we can return "exited" with empty output
+    // even though output becomes available moments later.
+    if (currentStatus !== "running") {
+      const offsetBeforeDrain = proc.outputBytesRead;
+
+      while (true) {
+        const extra = await proc.handle.readOutput(proc.outputBytesRead);
+        if (extra.content.length === 0) {
+          break;
+        }
+        accumulatedRaw += extra.content;
+        proc.outputBytesRead = extra.newOffset;
+      }
+
+      // If we didn't observe any new output, wait one poll interval and try once more.
+      if (proc.outputBytesRead === offsetBeforeDrain) {
+        await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+
+        while (true) {
+          const extra = await proc.handle.readOutput(proc.outputBytesRead);
+          if (extra.content.length === 0) {
+            break;
+          }
+          accumulatedRaw += extra.content;
+          proc.outputBytesRead = extra.newOffset;
+        }
+      }
+    }
     const rawWithBuffer = previousBuffer + accumulatedRaw;
     const allLines = rawWithBuffer.split("\n");
     const hasTrailingNewline = rawWithBuffer.endsWith("\n");
@@ -616,10 +690,12 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
     const shouldSuggestBetterPattern =
       callCount >= 3 && filterExclude && currentStatus === "running";
 
+    const pollingToolName = noteToolName ?? "bash_output";
+
     let note: string | undefined;
     if (shouldSuggestFilterExclude) {
       note =
-        "STOP POLLING. You've called bash_output 3+ times on this process. " +
+        `STOP POLLING. You've called ${pollingToolName} 3+ times on this process. ` +
         "This wastes tokens and clutters the conversation. " +
         "Instead, make ONE call with: filter='⏳|progress|waiting|\\\\\\.\\\\\\.\\\\\\.', " +
         "filter_exclude=true, timeout_secs=120. This blocks until meaningful output arrives.";

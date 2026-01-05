@@ -1,13 +1,15 @@
 import React from "react";
-import { Settings, Key, Cpu, X, Briefcase, FlaskConical } from "lucide-react";
+import { Settings, Key, Cpu, X, Briefcase, FlaskConical, Bot, Keyboard } from "lucide-react";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { Dialog, DialogContent, DialogTitle, VisuallyHidden } from "@/browser/components/ui/dialog";
 import { GeneralSection } from "./sections/GeneralSection";
+import { TasksSection } from "./sections/TasksSection";
 import { ProvidersSection } from "./sections/ProvidersSection";
 import { ModelsSection } from "./sections/ModelsSection";
 import { Button } from "@/browser/components/ui/button";
 import { ProjectSettingsSection } from "./sections/ProjectSettingsSection";
 import { ExperimentsSection } from "./sections/ExperimentsSection";
+import { KeybindsSection } from "./sections/KeybindsSection";
 import type { SettingsSection } from "./types";
 
 const SECTIONS: SettingsSection[] = [
@@ -16,6 +18,12 @@ const SECTIONS: SettingsSection[] = [
     label: "General",
     icon: <Settings className="h-4 w-4" />,
     component: GeneralSection,
+  },
+  {
+    id: "tasks",
+    label: "Agents",
+    icon: <Bot className="h-4 w-4" />,
+    component: TasksSection,
   },
   {
     id: "providers",
@@ -40,6 +48,12 @@ const SECTIONS: SettingsSection[] = [
     label: "Experiments",
     icon: <FlaskConical className="h-4 w-4" />,
     component: ExperimentsSection,
+  },
+  {
+    id: "keybinds",
+    label: "Keybinds",
+    icon: <Keyboard className="h-4 w-4" />,
+    component: KeybindsSection,
   },
 ];
 

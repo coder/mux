@@ -1,6 +1,7 @@
 import { describe, it, expect } from "bun:test";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import { createBashTool } from "./bash";
+import type { BashOutputEvent } from "@/common/types/stream";
 import type { BashToolArgs, BashToolResult } from "@/common/types/tools";
 import { BASH_MAX_TOTAL_BYTES } from "@/common/constants/toolLimits";
 import * as fs from "fs";
@@ -19,9 +20,9 @@ const mockToolCallOptions: ToolCallOptions = {
 // Helper to create bash tool with test configuration
 // Returns both tool and disposable temp directory
 // Use with: using testEnv = createTestBashTool();
-function createTestBashTool(options?: { niceness?: number }) {
+function createTestBashTool() {
   const tempDir = new TestTempDir("test-bash");
-  const config = createTestToolConfig(process.cwd(), { niceness: options?.niceness });
+  const config = createTestToolConfig(process.cwd());
   config.runtimeTempDir = tempDir.path; // Override runtimeTempDir to use test's disposable temp dir
   const tool = createBashTool(config);
 
@@ -51,6 +52,49 @@ describe("bash tool", () => {
       expect(result.output).toBe("hello");
       expect(result.exitCode).toBe(0);
     }
+  });
+
+  it("should emit bash-output events when emitChatEvent is provided", async () => {
+    const tempDir = new TestTempDir("test-bash-live-output");
+    const events: BashOutputEvent[] = [];
+
+    const config = createTestToolConfig(process.cwd());
+    config.runtimeTempDir = tempDir.path;
+    config.emitChatEvent = (event) => {
+      if (event.type === "bash-output") {
+        events.push(event);
+      }
+    };
+
+    const tool = createBashTool(config);
+
+    const args: BashToolArgs = {
+      script: "echo out && echo err 1>&2",
+      timeout_secs: 5,
+      run_in_background: false,
+      display_name: "test",
+    };
+
+    const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
+    expect(result.success).toBe(true);
+
+    expect(events.length).toBeGreaterThan(0);
+    expect(events.every((e) => e.workspaceId === config.workspaceId)).toBe(true);
+    expect(events.every((e) => e.toolCallId === mockToolCallOptions.toolCallId)).toBe(true);
+
+    const stdoutText = events
+      .filter((e) => !e.isError)
+      .map((e) => e.text)
+      .join("");
+    const stderrText = events
+      .filter((e) => e.isError)
+      .map((e) => e.text)
+      .join("");
+
+    expect(stdoutText).toContain("out");
+    expect(stderrText).toContain("err");
+
+    tempDir[Symbol.dispose]();
   });
 
   it("should handle multi-line output", async () => {
@@ -735,7 +779,7 @@ describe("bash tool", () => {
     // Extremely minimal case - just enough to trigger rebase --continue
     const script = `
       T=$(mktemp -d) && cd "$T"
-      git init && git config user.email "t@t" && git config user.name "T"
+      git init && git config user.email "t@t" && git config user.name "T" && git config commit.gpgsign false
       echo a > f && git add f && git commit -m a
       git checkout -b b && echo b > f && git commit -am b
       git checkout main && echo c > f && git commit -am c
@@ -1045,96 +1089,7 @@ describe("bash tool", () => {
   // before reaching the execute function, so these cases are handled at the schema level
 });
 
-describe("niceness parameter", () => {
-  it("should execute complex multi-line scripts with niceness", async () => {
-    using testEnv = createTestBashTool({ niceness: 19 });
-    const tool = testEnv.tool;
-
-    // Complex script with conditionals, similar to GIT_STATUS_SCRIPT
-    const args: BashToolArgs = {
-      script: `
-# Test complex script with conditionals
-VALUE=$(echo "test")
-
-if [ -z "$VALUE" ]; then
-  echo "ERROR: Value is empty"
-  exit 1
-fi
-
-# Another conditional check
-RESULT=$(echo "success")
-if [ $? -ne 0 ]; then
-  echo "ERROR: Command failed"
-  exit 2
-fi
-
-echo "---OUTPUT---"
-echo "$VALUE"
-echo "$RESULT"
-`,
-      timeout_secs: 5,
-      run_in_background: false,
-      display_name: "test",
-    };
-
-    const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
-
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.output).toContain("---OUTPUT---");
-      expect(result.output).toContain("test");
-      expect(result.output).toContain("success");
-      expect(result.exitCode).toBe(0);
-    }
-  });
-
-  it("should handle exit codes correctly with niceness", async () => {
-    using testEnv = createTestBashTool({ niceness: 19 });
-    const tool = testEnv.tool;
-
-    // Script that should exit with code 2
-    const args: BashToolArgs = {
-      script: `
-RESULT=$(false)
-if [ $? -ne 0 ]; then
-  echo "Command failed as expected"
-  exit 2
-fi
-`,
-      timeout_secs: 5,
-      run_in_background: false,
-      display_name: "test",
-    };
-
-    const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
-
-    expect(result.success).toBe(false);
-    expect(result.exitCode).toBe(2);
-    // Error message includes stderr output
-    if (!result.success) {
-      expect(result.error).toMatch(/Command failed as expected|Command exited with code 2/);
-    }
-  });
-
-  it("should execute simple commands with niceness", async () => {
-    using testEnv = createTestBashTool({ niceness: 10 });
-    const tool = testEnv.tool;
-    const args: BashToolArgs = {
-      script: "echo hello",
-      timeout_secs: 5,
-      run_in_background: false,
-      display_name: "test",
-    };
-
-    const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
-
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.output).toBe("hello");
-      expect(result.exitCode).toBe(0);
-    }
-  });
-
+describe("zombie process cleanup", () => {
   it("should not create zombie processes when spawning background tasks", async () => {
     using testEnv = createTestBashTool();
     const tool = testEnv.tool;
@@ -1430,13 +1385,36 @@ describe("SSH runtime redundant cd detection", () => {
     }
   });
 
-  it("should allow cd to different directory", async () => {
+  it("should not treat cd to a different directory as redundant", () => {
+    // Only testing normalization here - SSH execution would hang (no real host).
     const remoteCwd = "/remote/workspace/project/branch";
-    using testEnv = createTestBashToolWithSSH(remoteCwd);
-    const tool = testEnv.tool;
+
+    const sshRuntime = createRuntime({
+      type: "ssh" as const,
+      host: "test-host",
+      srcBaseDir: "/remote/base",
+    });
+
+    const normalizedTarget = sshRuntime.normalizePath("/tmp", remoteCwd);
+    const normalizedCwd = sshRuntime.normalizePath(".", remoteCwd);
+
+    expect(normalizedTarget).not.toBe(normalizedCwd);
+  });
+});
+
+describe("bash tool - tool_env", () => {
+  it("should source .mux/tool_env before running script", async () => {
+    using tempDir = new TestTempDir("test-bash-tool-env");
+    const muxDir = `${tempDir.path}/.mux`;
+    fs.mkdirSync(muxDir, { recursive: true });
+    fs.writeFileSync(`${muxDir}/tool_env`, "export MUX_TEST_VAR=from_tool_env");
+
+    const config = createTestToolConfig(tempDir.path);
+    config.runtimeTempDir = tempDir.path;
+    const tool = createBashTool(config);
 
     const args: BashToolArgs = {
-      script: "cd /tmp && echo test",
+      script: "echo $MUX_TEST_VAR",
       timeout_secs: 5,
       run_in_background: false,
       display_name: "test",
@@ -1444,15 +1422,56 @@ describe("SSH runtime redundant cd detection", () => {
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
 
-    // Should not be blocked (cd to a different directory is allowed)
-    // Note: Test runs locally so actual cd might fail, but we check it's not rejected
-    expect(result.exitCode).not.toBe(-1); // Not a rejection (-1)
-    if (!result.success) {
-      // If it failed, it should not be due to redundant cd detection
-      expect(result.error).not.toContain("Redundant cd");
-    }
+    expect(result.success).toBe(true);
+    expect(result.output).toBe("from_tool_env");
+  });
+
+  it("should fail with clear error if tool_env sourcing fails", async () => {
+    using tempDir = new TestTempDir("test-bash-tool-env-fail");
+    const muxDir = `${tempDir.path}/.mux`;
+    fs.mkdirSync(muxDir, { recursive: true });
+    // Fail `source` without terminating the parent shell.
+    fs.writeFileSync(`${muxDir}/tool_env`, "return 1");
+
+    const config = createTestToolConfig(tempDir.path);
+    config.runtimeTempDir = tempDir.path;
+    const tool = createBashTool(config);
+
+    const args: BashToolArgs = {
+      script: "echo should_not_run",
+      timeout_secs: 5,
+      run_in_background: false,
+      display_name: "test",
+    };
+
+    const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
+
+    expect(result.success).toBe(false);
+    expect(result.exitCode).toBe(1);
+    expect(result.output).toContain("failed to source");
+  });
+
+  it("should run script normally when no tool_env exists", async () => {
+    using tempDir = new TestTempDir("test-bash-no-tool-env");
+
+    const config = createTestToolConfig(tempDir.path);
+    config.runtimeTempDir = tempDir.path;
+    const tool = createBashTool(config);
+
+    const args: BashToolArgs = {
+      script: "echo normal_execution",
+      timeout_secs: 5,
+      run_in_background: false,
+      display_name: "test",
+    };
+
+    const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
+
+    expect(result.success).toBe(true);
+    expect(result.output).toBe("normal_execution");
   });
 });
+
 describe("bash tool - background execution", () => {
   it("should reject background mode when manager not available", async () => {
     using testEnv = createTestBashTool();
@@ -1519,12 +1538,55 @@ describe("bash tool - background execution", () => {
     expect(result.success).toBe(true);
     if (result.success && "backgroundProcessId" in result) {
       expect(result.backgroundProcessId).toBeDefined();
+
       // Process ID is now the display name directly
       expect(result.backgroundProcessId).toBe("test");
     } else {
       throw new Error("Expected background process ID in result");
     }
 
+    tempDir[Symbol.dispose]();
+  });
+
+  it("should inject muxEnv environment variables in background mode", async () => {
+    const manager = new BackgroundProcessManager("/tmp/mux-test-bg");
+
+    const tempDir = new TestTempDir("test-bash-bg-mux-env");
+    const config = createTestToolConfig(tempDir.path);
+    config.backgroundProcessManager = manager;
+    config.muxEnv = {
+      MUX_MODEL_STRING: "openai:gpt-5.2",
+      MUX_THINKING_LEVEL: "medium",
+    };
+
+    const tool = createBashTool(config);
+    const args: BashToolArgs = {
+      script: 'echo "MODEL:$MUX_MODEL_STRING THINKING:$MUX_THINKING_LEVEL"',
+      timeout_secs: 5,
+      run_in_background: true,
+      display_name: "test-mux-env-bg",
+    };
+
+    const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
+
+    expect(result.success).toBe(true);
+    if (result.success && "backgroundProcessId" in result) {
+      const outputResult = await manager.getOutput(
+        result.backgroundProcessId,
+        undefined,
+        undefined,
+        2
+      );
+      expect(outputResult.success).toBe(true);
+      if (outputResult.success) {
+        expect(outputResult.output).toContain("MODEL:openai:gpt-5.2");
+        expect(outputResult.output).toContain("THINKING:medium");
+      }
+    } else {
+      throw new Error("Expected background process ID in result");
+    }
+
+    await manager.terminateAll();
     tempDir[Symbol.dispose]();
   });
 });

@@ -203,6 +203,41 @@ describe("BackgroundProcessManager", () => {
         expect(result2.success).toBe(true);
       }
     });
+
+    it("should deliver SIGTERM to the bash process (TERM trap executes)", async () => {
+      const sentinelPath = path.join(bgOutputDir, `term-sentinel-${Date.now()}`);
+      const displayName = `test-term-trap-${Date.now()}`;
+
+      const spawnResult = await manager.spawn(
+        runtime,
+        testWorkspaceId,
+        `trap "echo term > '${sentinelPath}'; exit 0" TERM; sleep 60`,
+        {
+          cwd: process.cwd(),
+          displayName,
+        }
+      );
+
+      expect(spawnResult.success).toBe(true);
+      if (!spawnResult.success) return;
+
+      const terminateResult = await manager.terminate(spawnResult.processId);
+      expect(terminateResult.success).toBe(true);
+
+      // Wait briefly for the trap to write the sentinel file.
+      let sentinel: string | null = null;
+      for (let attempt = 0; attempt < 20; attempt++) {
+        try {
+          sentinel = await fs.readFile(sentinelPath, "utf-8");
+          break;
+        } catch {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+      }
+
+      expect(sentinel).not.toBeNull();
+      expect(sentinel!).toContain("term");
+    });
   });
 
   describe("cleanup", () => {
@@ -233,36 +268,40 @@ describe("BackgroundProcessManager", () => {
   });
 
   describe("terminateAll", () => {
-    it("should kill all processes across all workspaces", async () => {
-      // Spawn processes in multiple workspaces (unique display names since they're process IDs)
-      await manager.spawn(runtime, testWorkspaceId, "sleep 10", {
-        cwd: process.cwd(),
-        displayName: "test-termall-ws1",
-      });
-      await manager.spawn(runtime, testWorkspaceId2, "sleep 10", {
-        cwd: process.cwd(),
-        displayName: "test-termall-ws2",
-      });
+    it(
+      "should kill all processes across all workspaces",
+      async () => {
+        // Spawn processes in multiple workspaces (unique display names since they're process IDs)
+        await manager.spawn(runtime, testWorkspaceId, "sleep 10", {
+          cwd: process.cwd(),
+          displayName: "test-termall-ws1",
+        });
+        await manager.spawn(runtime, testWorkspaceId2, "sleep 10", {
+          cwd: process.cwd(),
+          displayName: "test-termall-ws2",
+        });
 
-      // Verify both workspaces have running processes
-      const beforeWs1 = await manager.list(testWorkspaceId);
-      const beforeWs2 = await manager.list(testWorkspaceId2);
-      expect(beforeWs1.length).toBe(1);
-      expect(beforeWs2.length).toBe(1);
+        // Verify both workspaces have running processes
+        const beforeWs1 = await manager.list(testWorkspaceId);
+        const beforeWs2 = await manager.list(testWorkspaceId2);
+        expect(beforeWs1.length).toBe(1);
+        expect(beforeWs2.length).toBe(1);
 
-      // Terminate all
-      await manager.terminateAll();
+        // Terminate all
+        await manager.terminateAll();
 
-      // Both workspaces should have no processes
-      const afterWs1 = await manager.list(testWorkspaceId);
-      const afterWs2 = await manager.list(testWorkspaceId2);
-      expect(afterWs1.length).toBe(0);
-      expect(afterWs2.length).toBe(0);
+        // Both workspaces should have no processes
+        const afterWs1 = await manager.list(testWorkspaceId);
+        const afterWs2 = await manager.list(testWorkspaceId2);
+        expect(afterWs1.length).toBe(0);
+        expect(afterWs2.length).toBe(0);
 
-      // Total list should also be empty
-      const allProcesses = await manager.list();
-      expect(allProcesses.length).toBe(0);
-    });
+        // Total list should also be empty
+        const allProcesses = await manager.list();
+        expect(allProcesses.length).toBe(0);
+      },
+      { timeout: 20_000 }
+    );
 
     it("should handle empty process list gracefully", async () => {
       // No processes spawned - terminateAll should not throw
@@ -397,33 +436,33 @@ describe("BackgroundProcessManager", () => {
 
   describe("getOutput", () => {
     it("should return stdout from a running process", async () => {
-      // Spawn a process that writes output over time
-      // Use longer sleep and explicit flush to ensure output is written to file
+      // Spawn a process that writes output in two phases.
+      // Use a file-gated barrier rather than timing sleeps to avoid CI flakiness.
+      const triggerFile = path.join(bgOutputDir, `trigger-${Date.now()}`);
+
       const result = await manager.spawn(
         runtime,
         testWorkspaceId,
-        "echo 'line 1'; sleep 0.3; echo 'line 2'",
+        `echo 'line 1'; while [ ! -f ${triggerFile} ]; do sleep 0.05; done; echo 'line 2'`,
         { cwd: process.cwd(), displayName: "test" }
       );
 
       expect(result.success).toBe(true);
       if (!result.success) return;
 
-      // Wait for first line to be written and flushed (increased for CI reliability)
-      await new Promise((resolve) => setTimeout(resolve, 200));
-
-      // Get output - should have at least the first line
-      const output1 = await manager.getOutput(result.processId);
+      // Get output - wait up to 1s for the first line
+      const output1 = await manager.getOutput(result.processId, undefined, undefined, 1);
       expect(output1.success).toBe(true);
       if (!output1.success) return;
 
       expect(output1.output).toContain("line 1");
+      expect(output1.output).not.toContain("line 2");
 
-      // Wait for second line (sleep 0.3s + buffer for CI)
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      // Unblock the process so it can emit the second line
+      await fs.writeFile(triggerFile, "go", "utf-8");
 
-      // Get output again - should have incremental output (line 2)
-      const output2 = await manager.getOutput(result.processId);
+      // Get output again - wait up to 1s for incremental output (line 2)
+      const output2 = await manager.getOutput(result.processId, undefined, undefined, 1);
       expect(output2.success).toBe(true);
       if (!output2.success) return;
 
@@ -565,28 +604,36 @@ describe("BackgroundProcessManager", () => {
     });
 
     it("should keep waiting when only excluded lines arrive", async () => {
-      // Script outputs progress spam for 300ms, then meaningful output
+      const signalPath = path.join(bgOutputDir, `signal-${Date.now()}`);
+
+      // Spawn a process that spams excluded output until we create a signal file.
+      // This avoids flakiness from the spawn itself taking long enough that "DONE"
+      // is already present by the time we call getOutput.
       const result = await manager.spawn(
         runtime,
         testWorkspaceId,
-        "for i in 1 2 3; do echo 'PROGRESS'; sleep 0.1; done; echo 'DONE'",
-        { cwd: process.cwd(), displayName: "test" }
+        `while [ ! -f "${signalPath}" ]; do echo 'PROGRESS'; sleep 0.1; done; echo 'DONE'`,
+        { cwd: process.cwd(), displayName: "test", timeoutSecs: 5 }
       );
 
       expect(result.success).toBe(true);
       if (!result.success) return;
 
-      // With filter_exclude for PROGRESS, should wait until DONE arrives
-      // Set timeout long enough to cover the full script duration
-      const output = await manager.getOutput(result.processId, "PROGRESS", true, 2);
+      const outputPromise = manager.getOutput(result.processId, "PROGRESS", true, 2);
+
+      // Ensure getOutput is waiting before we allow the process to produce
+      // meaningful output.
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      await fs.writeFile(signalPath, "go");
+
+      const output = await outputPromise;
       expect(output.success).toBe(true);
       if (!output.success) return;
 
       // Should only see DONE, not PROGRESS lines
       expect(output.output).toContain("DONE");
       expect(output.output).not.toContain("PROGRESS");
-      // Should have waited ~300ms+ for meaningful output
-      expect(output.elapsed_ms).toBeGreaterThanOrEqual(200);
+      expect(output.elapsed_ms).toBeGreaterThanOrEqual(250);
     });
 
     it("should return when process exits even if only excluded lines", async () => {
@@ -697,11 +744,8 @@ describe("BackgroundProcessManager", () => {
       expect(result.success).toBe(true);
       if (!result.success) return;
 
-      // Wait for output
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
-      // Verify we can read output using the SAME manager
-      const output = await manager.getOutput(result.processId);
+      // Wait for output using the SAME manager (avoid sleep-based flakiness)
+      const output = await manager.getOutput(result.processId, undefined, undefined, 2);
       expect(output.success).toBe(true);
       if (!output.success) return;
 

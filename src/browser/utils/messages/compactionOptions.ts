@@ -5,9 +5,14 @@
  * Used by both ChatInput (initial send) and useResumeManager (resume after interruption).
  */
 
+import { readPersistedState } from "@/browser/hooks/usePersistedState";
+import { toGatewayModel } from "@/browser/hooks/useGatewayModels";
+import { MODE_AI_DEFAULTS_KEY } from "@/common/constants/storage";
 import type { SendMessageOptions } from "@/common/orpc/types";
 import type { CompactionRequestData } from "@/common/types/message";
-import { toGatewayModel } from "@/browser/hooks/useGatewayModels";
+import type { ModeAiDefaults } from "@/common/types/modeAiDefaults";
+import { coerceThinkingLevel } from "@/common/types/thinking";
+import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 
 /**
  * Apply compaction-specific option overrides to base options.
@@ -24,17 +29,24 @@ export function applyCompactionOverrides(
   baseOptions: SendMessageOptions,
   compactData: CompactionRequestData
 ): SendMessageOptions {
-  // Use custom model if specified, otherwise use workspace default
-  // Apply gateway transformation - compactData.model is raw, baseOptions.model is already transformed
+  // Apply gateway transformation - compactData.model is raw, baseOptions.model is already transformed.
   const compactionModel = compactData.model ? toGatewayModel(compactData.model) : baseOptions.model;
+
+  const modeAiDefaults = readPersistedState<ModeAiDefaults>(MODE_AI_DEFAULTS_KEY, {});
+  const preferredThinking = modeAiDefaults.compact?.thinkingLevel;
+
+  const requestedThinking =
+    coerceThinkingLevel(preferredThinking ?? baseOptions.thinkingLevel) ?? "off";
+  const thinkingLevel = enforceThinkingPolicy(compactionModel, requestedThinking);
 
   return {
     ...baseOptions,
+    agentId: "compact",
     model: compactionModel,
-    // Keep workspace default thinking level - all models support thinking now that tools are disabled
-    thinkingLevel: baseOptions.thinkingLevel,
+    thinkingLevel,
     maxOutputTokens: compactData.maxOutputTokens,
     mode: "compact" as const,
-    toolPolicy: [], // Disable all tools during compaction
+    // Disable all tools during compaction - regex .* matches all tool names
+    toolPolicy: [{ regex_match: ".*", action: "disable" }],
   };
 }

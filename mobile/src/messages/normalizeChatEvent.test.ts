@@ -29,7 +29,7 @@ describe("createChatEventExpander", () => {
     expect(outputEvents).toHaveLength(1);
     expect(outputEvents[0]).toMatchObject({
       type: "workspace-init",
-      lines: ["Installing dependencies"],
+      lines: [{ line: "Installing dependencies", isError: false }],
     });
 
     const endEvents = expander.expand({
@@ -138,7 +138,10 @@ describe("createChatEventExpander", () => {
       },
     };
 
-    const userEvents = expander.expand(userMuxMessage as unknown as WorkspaceChatEvent);
+    const userEvents = expander.expand({
+      type: "message",
+      ...userMuxMessage,
+    } as unknown as WorkspaceChatEvent);
     expect(userEvents).toHaveLength(1);
     expect(userEvents[0]).toMatchObject({
       type: "user",
@@ -146,7 +149,10 @@ describe("createChatEventExpander", () => {
       historySequence: 3,
     });
 
-    const assistantEvents = expander.expand(assistantMuxMessage as unknown as WorkspaceChatEvent);
+    const assistantEvents = expander.expand({
+      type: "message",
+      ...assistantMuxMessage,
+    } as unknown as WorkspaceChatEvent);
     expect(assistantEvents).toHaveLength(1);
     expect(assistantEvents[0]).toMatchObject({
       type: "assistant",

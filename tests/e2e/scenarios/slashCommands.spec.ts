@@ -2,11 +2,11 @@ import fs from "fs/promises";
 import path from "path";
 import { parse } from "jsonc-parser";
 import { electronTest as test, electronExpect as expect } from "../electronTest";
-import { TOOL_FLOW_PROMPTS } from "@/node/services/mock/scenarios/toolFlows";
 import {
-  COMPACT_SUMMARY_TEXT,
-  SLASH_COMMAND_PROMPTS,
-} from "@/node/services/mock/scenarios/slashCommands";
+  MOCK_COMPACTION_SUMMARY_PREFIX,
+  MOCK_SLASH_COMMAND_PROMPTS,
+  MOCK_TOOL_FLOW_PROMPTS,
+} from "../mockAiPrompts";
 
 test.skip(
   ({ browserName }) => browserName !== "chromium",
@@ -18,12 +18,12 @@ test.describe("slash command flows", () => {
     await ui.projects.openFirstWorkspace();
 
     await ui.chat.captureStreamTimeline(async () => {
-      await ui.chat.sendMessage(TOOL_FLOW_PROMPTS.FILE_READ);
+      await ui.chat.sendMessage(MOCK_TOOL_FLOW_PROMPTS.FILE_READ);
     });
     await ui.chat.expectTranscriptContains("Mock README content");
 
     await ui.chat.captureStreamTimeline(async () => {
-      await ui.chat.sendMessage(TOOL_FLOW_PROMPTS.LIST_DIRECTORY);
+      await ui.chat.sendMessage(MOCK_TOOL_FLOW_PROMPTS.LIST_DIRECTORY);
     });
     await ui.chat.expectTranscriptContains("Directory listing:");
 
@@ -41,11 +41,11 @@ test.describe("slash command flows", () => {
 
     // Build a conversation with five distinct turns
     const prompts = [
-      TOOL_FLOW_PROMPTS.FILE_READ,
-      TOOL_FLOW_PROMPTS.LIST_DIRECTORY,
-      TOOL_FLOW_PROMPTS.CREATE_TEST_FILE,
-      TOOL_FLOW_PROMPTS.READ_TEST_FILE,
-      TOOL_FLOW_PROMPTS.RECALL_TEST_FILE,
+      MOCK_TOOL_FLOW_PROMPTS.FILE_READ,
+      MOCK_TOOL_FLOW_PROMPTS.LIST_DIRECTORY,
+      MOCK_TOOL_FLOW_PROMPTS.CREATE_TEST_FILE,
+      MOCK_TOOL_FLOW_PROMPTS.READ_TEST_FILE,
+      MOCK_TOOL_FLOW_PROMPTS.RECALL_TEST_FILE,
     ];
 
     for (const prompt of prompts) {
@@ -68,10 +68,10 @@ test.describe("slash command flows", () => {
     await ui.projects.openFirstWorkspace();
 
     const setupPrompts = [
-      TOOL_FLOW_PROMPTS.FILE_READ,
-      TOOL_FLOW_PROMPTS.LIST_DIRECTORY,
-      TOOL_FLOW_PROMPTS.CREATE_TEST_FILE,
-      TOOL_FLOW_PROMPTS.READ_TEST_FILE,
+      MOCK_TOOL_FLOW_PROMPTS.FILE_READ,
+      MOCK_TOOL_FLOW_PROMPTS.LIST_DIRECTORY,
+      MOCK_TOOL_FLOW_PROMPTS.CREATE_TEST_FILE,
+      MOCK_TOOL_FLOW_PROMPTS.READ_TEST_FILE,
     ];
 
     for (const prompt of setupPrompts) {
@@ -92,8 +92,8 @@ test.describe("slash command flows", () => {
     // Compaction now uses direct text streaming instead of a tool call
     // Verify the summary text appears in the transcript
     const transcript = page.getByRole("log", { name: "Conversation transcript" });
-    await ui.chat.expectTranscriptContains(COMPACT_SUMMARY_TEXT);
-    await expect(transcript).toContainText(COMPACT_SUMMARY_TEXT);
+    await ui.chat.expectTranscriptContains(MOCK_COMPACTION_SUMMARY_PREFIX);
+    await expect(transcript).toContainText(MOCK_COMPACTION_SUMMARY_PREFIX);
     // Note: The old "📦 compacted" label was removed - compaction now shows only summary text
     await expect(transcript).not.toContainText("Mock README content");
     await expect(transcript).not.toContainText("Directory listing:");
@@ -112,7 +112,7 @@ test.describe("slash command flows", () => {
     await expect(modeToggles.getByText("Sonnet 4.5", { exact: true })).toBeVisible();
 
     const timeline = await ui.chat.captureStreamTimeline(async () => {
-      await ui.chat.sendMessage(SLASH_COMMAND_PROMPTS.MODEL_STATUS);
+      await ui.chat.sendMessage(MOCK_SLASH_COMMAND_PROMPTS.MODEL_STATUS);
     });
 
     const streamStart = timeline.events.find((event) => event.type === "stream-start");

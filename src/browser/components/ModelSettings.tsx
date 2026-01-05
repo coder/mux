@@ -8,7 +8,7 @@ interface ModelSettingsProps {
 }
 
 export const ModelSettings: React.FC<ModelSettingsProps> = (props) => {
-  const { options, setAnthropicOptions, setOpenAIOptions } = useProviderOptions();
+  const { options, setAnthropicOptions } = useProviderOptions();
 
   const renderOption = (
     id: string,
@@ -47,19 +47,6 @@ export const ModelSettings: React.FC<ModelSettingsProps> = (props) => {
       (checked) => setAnthropicOptions({ ...options.anthropic, use1MContext: checked }),
       "Enable 1M token context window (beta feature for Claude Sonnet 4/4.5)"
     );
-  }
-
-  const provider = props.model.split(":")[0];
-  if (provider === "openai") {
-    if (import.meta.env.DEV) {
-      return renderOption(
-        "openai-trunc",
-        "No Trunc",
-        options.openai?.disableAutoTruncation ?? false,
-        (checked) => setOpenAIOptions({ ...options.openai, disableAutoTruncation: checked }),
-        "Disable Auto-Truncation (Only visible in Dev mode)"
-      );
-    }
   }
 
   return null;

@@ -5,7 +5,17 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { Button } from "./ui/button";
 
 export const WorkspaceStatusIndicator = memo<{ workspaceId: string }>(({ workspaceId }) => {
-  const { agentStatus } = useWorkspaceSidebarState(workspaceId);
+  const { agentStatus, awaitingUserQuestion } = useWorkspaceSidebarState(workspaceId);
+
+  // Show prompt when ask_user_question is pending - make it prominent
+  if (awaitingUserQuestion) {
+    return (
+      <div className="bg-plan-mode-alpha text-plan-mode-light flex min-w-0 items-center gap-1.5 rounded px-1.5 py-0.5 text-xs">
+        <span className="-mt-0.5 shrink-0 text-[10px]">❓</span>
+        <span className="min-w-0 truncate font-medium">Mux has a few questions</span>
+      </div>
+    );
+  }
 
   if (!agentStatus) {
     return null;

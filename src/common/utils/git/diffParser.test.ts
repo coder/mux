@@ -21,6 +21,8 @@ describe("git diff parser (real repository)", () => {
     // Initialize git repo
     execSync("git init", { cwd: testRepoPath });
     execSync('git config user.email "test@example.com"', { cwd: testRepoPath });
+    // Disable commit signing (some developer machines enforce signing via global config)
+    execSync("git config commit.gpgsign false", { cwd: testRepoPath });
     execSync('git config user.name "Test User"', { cwd: testRepoPath });
 
     // Create initial commit with a file

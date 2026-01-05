@@ -6,7 +6,19 @@ import writeFileAtomic from "write-file-atomic";
 import { log } from "@/node/services/log";
 import type { WorkspaceMetadata, FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { Secret, SecretsConfig } from "@/common/types/secrets";
-import type { Workspace, ProjectConfig, ProjectsConfig } from "@/common/types/project";
+import type {
+  Workspace,
+  ProjectConfig,
+  ProjectsConfig,
+  FeatureFlagOverride,
+} from "@/common/types/project";
+import {
+  DEFAULT_TASK_SETTINGS,
+  normalizeSubagentAiDefaults,
+  normalizeTaskSettings,
+} from "@/common/types/tasks";
+import { normalizeModeAiDefaults } from "@/common/types/modeAiDefaults";
+import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility";
 import { getMuxHome } from "@/common/constants/paths";
@@ -24,6 +36,50 @@ export interface ProviderConfig {
   [key: string]: unknown;
 }
 
+function parseOptionalNonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function parseOptionalEnvBoolean(value: unknown): boolean | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return undefined;
+  }
+
+  if (normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on") {
+    return true;
+  }
+
+  if (normalized === "0" || normalized === "false" || normalized === "no" || normalized === "off") {
+    return false;
+  }
+
+  return undefined;
+}
+function parseOptionalBoolean(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function parseOptionalPort(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value)) {
+    return undefined;
+  }
+
+  if (value < 0 || value > 65535) {
+    return undefined;
+  }
+
+  return value;
+}
 export type ProvidersConfig = Record<string, ProviderConfig>;
 
 /**
@@ -53,7 +109,21 @@ export class Config {
     try {
       if (fs.existsSync(this.configFile)) {
         const data = fs.readFileSync(this.configFile, "utf-8");
-        const parsed = JSON.parse(data) as { projects?: unknown; serverSshHost?: string };
+        const parsed = JSON.parse(data) as {
+          projects?: unknown;
+          apiServerBindHost?: unknown;
+          apiServerPort?: unknown;
+          apiServerServeWebUi?: unknown;
+          mdnsAdvertisementEnabled?: unknown;
+          mdnsServiceName?: unknown;
+          serverSshHost?: string;
+          viewedSplashScreens?: string[];
+          featureFlagOverrides?: Record<string, "default" | "on" | "off">;
+          taskSettings?: unknown;
+          agentAiDefaults?: unknown;
+          subagentAiDefaults?: unknown;
+          modeAiDefaults?: unknown;
+        };
 
         // Config is stored as array of [path, config] pairs
         if (parsed.projects && Array.isArray(parsed.projects)) {
@@ -64,9 +134,36 @@ export class Config {
             return [stripTrailingSlashes(projectPath), projectConfig] as [string, ProjectConfig];
           });
           const projectsMap = new Map<string, ProjectConfig>(normalizedPairs);
+
+          const taskSettings = normalizeTaskSettings(parsed.taskSettings);
+          const legacySubagentAiDefaults = normalizeSubagentAiDefaults(parsed.subagentAiDefaults);
+          const legacyModeAiDefaults = normalizeModeAiDefaults(parsed.modeAiDefaults);
+
+          const agentAiDefaults =
+            parsed.agentAiDefaults !== undefined
+              ? normalizeAgentAiDefaults(parsed.agentAiDefaults)
+              : normalizeAgentAiDefaults({
+                  ...legacySubagentAiDefaults,
+                  ...(legacyModeAiDefaults as Record<string, unknown>),
+                });
+
           return {
             projects: projectsMap,
+            apiServerBindHost: parseOptionalNonEmptyString(parsed.apiServerBindHost),
+            apiServerServeWebUi: parseOptionalBoolean(parsed.apiServerServeWebUi)
+              ? true
+              : undefined,
+            apiServerPort: parseOptionalPort(parsed.apiServerPort),
+            mdnsAdvertisementEnabled: parseOptionalBoolean(parsed.mdnsAdvertisementEnabled),
+            mdnsServiceName: parseOptionalNonEmptyString(parsed.mdnsServiceName),
             serverSshHost: parsed.serverSshHost,
+            viewedSplashScreens: parsed.viewedSplashScreens,
+            taskSettings,
+            agentAiDefaults,
+            // Legacy fields are still parsed and returned for downgrade compatibility.
+            subagentAiDefaults: legacySubagentAiDefaults,
+            modeAiDefaults: legacyModeAiDefaults,
+            featureFlagOverrides: parsed.featureFlagOverrides,
           };
         }
       }
@@ -77,6 +174,10 @@ export class Config {
     // Return default config
     return {
       projects: new Map(),
+      taskSettings: DEFAULT_TASK_SETTINGS,
+      agentAiDefaults: {},
+      subagentAiDefaults: {},
+      modeAiDefaults: {},
     };
   }
 
@@ -86,11 +187,90 @@ export class Config {
         fs.mkdirSync(this.rootDir, { recursive: true });
       }
 
-      const data: { projects: Array<[string, ProjectConfig]>; serverSshHost?: string } = {
+      const data: {
+        projects: Array<[string, ProjectConfig]>;
+        apiServerBindHost?: string;
+        apiServerPort?: number;
+        apiServerServeWebUi?: boolean;
+        mdnsAdvertisementEnabled?: boolean;
+        mdnsServiceName?: string;
+        serverSshHost?: string;
+        viewedSplashScreens?: string[];
+        featureFlagOverrides?: ProjectsConfig["featureFlagOverrides"];
+        taskSettings?: ProjectsConfig["taskSettings"];
+        agentAiDefaults?: ProjectsConfig["agentAiDefaults"];
+        subagentAiDefaults?: ProjectsConfig["subagentAiDefaults"];
+        modeAiDefaults?: ProjectsConfig["modeAiDefaults"];
+      } = {
         projects: Array.from(config.projects.entries()),
+        taskSettings: config.taskSettings ?? DEFAULT_TASK_SETTINGS,
       };
+      const apiServerBindHost = parseOptionalNonEmptyString(config.apiServerBindHost);
+      if (apiServerBindHost) {
+        data.apiServerBindHost = apiServerBindHost;
+      }
+
+      const apiServerServeWebUi = parseOptionalBoolean(config.apiServerServeWebUi);
+      if (apiServerServeWebUi) {
+        data.apiServerServeWebUi = true;
+      }
+
+      const apiServerPort = parseOptionalPort(config.apiServerPort);
+      if (apiServerPort !== undefined) {
+        data.apiServerPort = apiServerPort;
+      }
+
+      const mdnsAdvertisementEnabled = parseOptionalBoolean(config.mdnsAdvertisementEnabled);
+      if (mdnsAdvertisementEnabled !== undefined) {
+        data.mdnsAdvertisementEnabled = mdnsAdvertisementEnabled;
+      }
+
+      const mdnsServiceName = parseOptionalNonEmptyString(config.mdnsServiceName);
+      if (mdnsServiceName) {
+        data.mdnsServiceName = mdnsServiceName;
+      }
+
       if (config.serverSshHost) {
         data.serverSshHost = config.serverSshHost;
+      }
+      if (config.featureFlagOverrides) {
+        data.featureFlagOverrides = config.featureFlagOverrides;
+      }
+      if (config.viewedSplashScreens) {
+        data.viewedSplashScreens = config.viewedSplashScreens;
+      }
+      if (config.agentAiDefaults && Object.keys(config.agentAiDefaults).length > 0) {
+        data.agentAiDefaults = config.agentAiDefaults;
+
+        // Downgrade compatibility: also write legacy modeAiDefaults + subagentAiDefaults.
+        // Older clients ignore unknown keys, so this is safe.
+        const legacyMode: Record<string, unknown> = {};
+        for (const id of ["plan", "exec", "compact"] as const) {
+          const entry = config.agentAiDefaults[id];
+          if (entry) {
+            legacyMode[id] = entry;
+          }
+        }
+        if (Object.keys(legacyMode).length > 0) {
+          data.modeAiDefaults = legacyMode as ProjectsConfig["modeAiDefaults"];
+        }
+
+        const legacySubagent: Record<string, unknown> = {};
+        for (const [id, entry] of Object.entries(config.agentAiDefaults)) {
+          if (id === "plan" || id === "exec" || id === "compact") continue;
+          legacySubagent[id] = entry;
+        }
+        if (Object.keys(legacySubagent).length > 0) {
+          data.subagentAiDefaults = legacySubagent as ProjectsConfig["subagentAiDefaults"];
+        }
+      } else {
+        // Legacy only.
+        if (config.modeAiDefaults && Object.keys(config.modeAiDefaults).length > 0) {
+          data.modeAiDefaults = config.modeAiDefaults;
+        }
+        if (config.subagentAiDefaults && Object.keys(config.subagentAiDefaults).length > 0) {
+          data.subagentAiDefaults = config.subagentAiDefaults;
+        }
       }
 
       await writeFileAtomic(this.configFile, JSON.stringify(data, null, 2), "utf-8");
@@ -107,6 +287,60 @@ export class Config {
     const config = this.loadConfigOrDefault();
     const newConfig = fn(config);
     await this.saveConfig(newConfig);
+  }
+
+  /**
+   * Cross-client feature flag overrides (shared via ~/.mux/config.json).
+   */
+  getFeatureFlagOverride(flagKey: string): FeatureFlagOverride {
+    const config = this.loadConfigOrDefault();
+    const override = config.featureFlagOverrides?.[flagKey];
+    if (override === "on" || override === "off" || override === "default") {
+      return override;
+    }
+    return "default";
+  }
+
+  async setFeatureFlagOverride(flagKey: string, override: FeatureFlagOverride): Promise<void> {
+    await this.editConfig((config) => {
+      const next = { ...(config.featureFlagOverrides ?? {}) };
+      if (override === "default") {
+        delete next[flagKey];
+      } else {
+        next[flagKey] = override;
+      }
+
+      config.featureFlagOverrides = Object.keys(next).length > 0 ? next : undefined;
+      return config;
+    });
+  }
+
+  /**
+   * mDNS advertisement enablement.
+   *
+   * - true: attempt to advertise (will warn if the API server is loopback-only)
+   * - false: never advertise
+   * - undefined: "auto" (advertise only when the API server is LAN-reachable)
+   */
+  getMdnsAdvertisementEnabled(): boolean | undefined {
+    const envOverride = parseOptionalEnvBoolean(process.env.MUX_MDNS_ADVERTISE);
+    if (envOverride !== undefined) {
+      return envOverride;
+    }
+
+    const config = this.loadConfigOrDefault();
+    return config.mdnsAdvertisementEnabled;
+  }
+
+  /** Optional DNS-SD service instance name override. */
+  getMdnsServiceName(): string | undefined {
+    const envName = parseOptionalNonEmptyString(process.env.MUX_MDNS_SERVICE_NAME);
+    if (envName) {
+      return envName;
+    }
+
+    const config = this.loadConfigOrDefault();
+    return config.mdnsServiceName;
   }
 
   /**
@@ -289,6 +523,19 @@ export class Config {
               createdAt: workspace.createdAt ?? new Date().toISOString(),
               // GUARANTEE: All workspaces must have runtimeConfig (apply default if missing)
               runtimeConfig: workspace.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG,
+              aiSettings: workspace.aiSettings,
+              aiSettingsByMode: workspace.aiSettingsByMode,
+              parentWorkspaceId: workspace.parentWorkspaceId,
+              agentType: workspace.agentType,
+              taskStatus: workspace.taskStatus,
+              reportedAt: workspace.reportedAt,
+              taskModelString: workspace.taskModelString,
+              taskThinkingLevel: workspace.taskThinkingLevel,
+              taskPrompt: workspace.taskPrompt,
+              taskTrunkBranch: workspace.taskTrunkBranch,
+              archivedAt: workspace.archivedAt,
+              unarchivedAt: workspace.unarchivedAt,
+              sectionId: workspace.sectionId,
             };
 
             // Migrate missing createdAt to config for next load
@@ -328,6 +575,24 @@ export class Config {
             // GUARANTEE: All workspaces must have runtimeConfig
             metadata.runtimeConfig ??= DEFAULT_RUNTIME_CONFIG;
 
+            // Preserve any config-only fields that may not exist in legacy metadata.json
+            metadata.aiSettingsByMode ??= workspace.aiSettingsByMode;
+            metadata.aiSettings ??= workspace.aiSettings;
+
+            // Preserve tree/task metadata when present in config (metadata.json won't have it)
+            metadata.parentWorkspaceId ??= workspace.parentWorkspaceId;
+            metadata.agentType ??= workspace.agentType;
+            metadata.taskStatus ??= workspace.taskStatus;
+            metadata.reportedAt ??= workspace.reportedAt;
+            metadata.taskModelString ??= workspace.taskModelString;
+            metadata.taskThinkingLevel ??= workspace.taskThinkingLevel;
+            metadata.taskPrompt ??= workspace.taskPrompt;
+            metadata.taskTrunkBranch ??= workspace.taskTrunkBranch;
+            // Preserve archived timestamps from config
+            metadata.archivedAt ??= workspace.archivedAt;
+            metadata.unarchivedAt ??= workspace.unarchivedAt;
+            // Preserve section assignment from config
+            metadata.sectionId ??= workspace.sectionId;
             // Migrate to config for next load
             workspace.id = metadata.id;
             workspace.name = metadata.name;
@@ -351,6 +616,19 @@ export class Config {
               createdAt: new Date().toISOString(),
               // GUARANTEE: All workspaces must have runtimeConfig
               runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+              aiSettings: workspace.aiSettings,
+              aiSettingsByMode: workspace.aiSettingsByMode,
+              parentWorkspaceId: workspace.parentWorkspaceId,
+              agentType: workspace.agentType,
+              taskStatus: workspace.taskStatus,
+              reportedAt: workspace.reportedAt,
+              taskModelString: workspace.taskModelString,
+              taskThinkingLevel: workspace.taskThinkingLevel,
+              taskPrompt: workspace.taskPrompt,
+              taskTrunkBranch: workspace.taskTrunkBranch,
+              archivedAt: workspace.archivedAt,
+              unarchivedAt: workspace.unarchivedAt,
+              sectionId: workspace.sectionId,
             };
 
             // Save to config for next load
@@ -375,6 +653,17 @@ export class Config {
             createdAt: new Date().toISOString(),
             // GUARANTEE: All workspaces must have runtimeConfig (even in error cases)
             runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+            aiSettings: workspace.aiSettings,
+            aiSettingsByMode: workspace.aiSettingsByMode,
+            parentWorkspaceId: workspace.parentWorkspaceId,
+            agentType: workspace.agentType,
+            taskStatus: workspace.taskStatus,
+            reportedAt: workspace.reportedAt,
+            taskModelString: workspace.taskModelString,
+            taskThinkingLevel: workspace.taskThinkingLevel,
+            taskPrompt: workspace.taskPrompt,
+            taskTrunkBranch: workspace.taskTrunkBranch,
+            sectionId: workspace.sectionId,
           };
           workspaceMetadata.push(this.addPathsToMetadata(metadata, workspace.path, projectPath));
         }

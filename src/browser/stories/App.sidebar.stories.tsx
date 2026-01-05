@@ -15,32 +15,28 @@ import {
   createGitStatusOutput,
   type GitStatusFixture,
 } from "./mockFactory";
-import { expandProjects } from "./storyHelpers";
+import {
+  clearWorkspaceSelection,
+  createOnChatAdapter,
+  type ChatHandler,
+  expandProjects,
+} from "./storyHelpers";
 import { GIT_STATUS_INDICATOR_MODE_KEY } from "@/common/constants/storage";
 import { within, userEvent, waitFor } from "@storybook/test";
 
-import { createMockORPCClient } from "../../../.storybook/mocks/orpc";
-
-import type { WorkspaceChatMessage } from "@/common/orpc/types";
+import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 
 export default {
   ...appMeta,
   title: "App/Sidebar",
+  decorators: [
+    (Story: () => JSX.Element) => {
+      // Sidebar stories are about list organization; keep the main panel unselected.
+      clearWorkspaceSelection();
+      return <Story />;
+    },
+  ],
 };
-
-type ChatHandler = (callback: (event: WorkspaceChatMessage) => void) => () => void;
-
-/** Adapts callback-based chat handlers to ORPC onChat format */
-function createOnChatAdapter(chatHandlers: Map<string, ChatHandler>) {
-  return (workspaceId: string, emit: (msg: WorkspaceChatMessage) => void) => {
-    const handler = chatHandlers.get(workspaceId);
-    if (handler) {
-      return handler(emit);
-    }
-    queueMicrotask(() => emit({ type: "caught-up" }));
-    return undefined;
-  };
-}
 
 /**
  * Creates an executeBash function that returns deterministic git outputs for Storybook.
@@ -375,8 +371,9 @@ export const GitStatusVariations: AppStory = {
     // Hover to open tooltip
     await userEvent.hover(plus);
 
+    // HoverCard content is portaled with data-state="open" when visible
     const getVisibleTooltip = () =>
-      document.body.querySelector<HTMLElement>(".bg-modal-bg.opacity-100.visible");
+      document.body.querySelector<HTMLElement>('.bg-modal-bg[data-state="open"]');
 
     // Wait for tooltip (portaled) and toggle to commits mode
     await waitFor(

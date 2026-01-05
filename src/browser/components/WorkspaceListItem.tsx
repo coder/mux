@@ -3,12 +3,16 @@ import { cn } from "@/common/lib/utils";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import { useDrag } from "react-dnd";
+import { getEmptyImage } from "react-dnd-html5-backend";
 import { GitStatusIndicator } from "./GitStatusIndicator";
 import { RuntimeBadge } from "./RuntimeBadge";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
 import { Shimmer } from "./ai-elements/shimmer";
+import { ArchiveIcon } from "./icons/ArchiveIcon";
+import { WORKSPACE_DRAG_TYPE, type WorkspaceDragItem } from "./WorkspaceSectionDropZone";
 
 export interface WorkspaceSelection {
   projectPath: string;
@@ -22,12 +26,15 @@ export interface WorkspaceListItemProps {
   projectPath: string;
   projectName: string;
   isSelected: boolean;
-  isDeleting?: boolean;
+  isArchiving?: boolean;
+  depth?: number;
+  /** Section ID this workspace belongs to (for drag-drop targeting) */
+  sectionId?: string;
   /** @deprecated No longer used since status dot was removed, kept for API compatibility */
   lastReadTimestamp?: number;
   // Event handlers
   onSelectWorkspace: (selection: WorkspaceSelection) => void;
-  onRemoveWorkspace: (workspaceId: string, button: HTMLElement) => Promise<void>;
+  onArchiveWorkspace: (workspaceId: string, button: HTMLElement) => Promise<void>;
   /** @deprecated No longer used since status dot was removed, kept for API compatibility */
   onToggleUnread?: (workspaceId: string) => void;
 }
@@ -37,16 +44,18 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
   projectPath,
   projectName,
   isSelected,
-  isDeleting,
+  isArchiving,
+  depth,
+  sectionId,
   lastReadTimestamp: _lastReadTimestamp,
   onSelectWorkspace,
-  onRemoveWorkspace,
+  onArchiveWorkspace,
   onToggleUnread: _onToggleUnread,
 }) => {
   // Destructure metadata for convenience
   const { id: workspaceId, namedWorkspacePath, status } = metadata;
   const isCreating = status === "creating";
-  const isDisabled = isCreating || isDeleting;
+  const isDisabled = isCreating || isArchiving;
   const gitStatus = useGitStatus(workspaceId);
 
   // Get title edit context (renamed from rename context since we now edit titles, not names)
@@ -99,19 +108,51 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
     }
   };
 
-  const { canInterrupt } = useWorkspaceSidebarState(workspaceId);
+  const { canInterrupt, awaitingUserQuestion } = useWorkspaceSidebarState(workspaceId);
+  const isWorking = canInterrupt && !awaitingUserQuestion;
+  const safeDepth = typeof depth === "number" && Number.isFinite(depth) ? Math.max(0, depth) : 0;
+  const paddingLeft = 9 + Math.min(32, safeDepth) * 12;
+
+  // Drag handle for moving workspace between sections
+  const [{ isDragging }, drag, dragPreview] = useDrag(
+    () => ({
+      type: WORKSPACE_DRAG_TYPE,
+      item: (): WorkspaceDragItem & { displayTitle?: string; runtimeConfig?: unknown } => ({
+        type: WORKSPACE_DRAG_TYPE,
+        workspaceId,
+        projectPath,
+        currentSectionId: sectionId,
+        // Extra fields for custom drag layer preview
+        displayTitle,
+        runtimeConfig: metadata.runtimeConfig,
+      }),
+      collect: (monitor) => ({
+        isDragging: monitor.isDragging(),
+      }),
+      canDrag: !isDisabled,
+    }),
+    [workspaceId, projectPath, sectionId, isDisabled, displayTitle, metadata.runtimeConfig]
+  );
+
+  // Hide native drag preview; we render a custom preview via WorkspaceDragLayer
+  useEffect(() => {
+    dragPreview(getEmptyImage(), { captureDraggingState: true });
+  }, [dragPreview]);
 
   return (
     <React.Fragment>
       <div
+        ref={drag}
         className={cn(
-          "py-1.5 pl-[9px] pr-2 border-l-[3px] border-transparent transition-all duration-150 text-[13px] relative flex gap-2",
+          "py-1.5 pr-2 border-l-[3px] border-transparent transition-all duration-150 text-[13px] relative flex gap-2",
+          isDragging && "opacity-50",
           isDisabled
             ? "cursor-default opacity-70"
             : "cursor-pointer hover:bg-hover [&:hover_button]:opacity-100",
           isSelected && !isDisabled && "bg-hover border-l-blue-400",
-          isDeleting && "pointer-events-none"
+          isArchiving && "pointer-events-none"
         )}
+        style={{ paddingLeft }}
         onClick={() => {
           if (isDisabled) return;
           onSelectWorkspace({
@@ -139,35 +180,38 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
         aria-label={
           isCreating
             ? `Creating workspace ${displayTitle}`
-            : isDeleting
-              ? `Deleting workspace ${displayTitle}`
+            : isArchiving
+              ? `Archiving workspace ${displayTitle}`
               : `Select workspace ${displayTitle}`
         }
         aria-disabled={isDisabled}
         data-workspace-path={namedWorkspacePath}
         data-workspace-id={workspaceId}
+        data-section-id={sectionId ?? ""}
+        data-git-status={gitStatus ? JSON.stringify(gitStatus) : undefined}
       >
+        {/* Archive button - vertically centered against entire item */}
+        {!isCreating && !isEditing && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                className="text-muted hover:text-foreground inline-flex shrink-0 cursor-pointer items-center self-center border-none bg-transparent p-0 opacity-0 transition-colors duration-200"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void onArchiveWorkspace(workspaceId, e.currentTarget);
+                }}
+                aria-label={`Archive workspace ${displayTitle}`}
+                data-workspace-id={workspaceId}
+              >
+                <ArchiveIcon className="h-3 w-3" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent align="start">Archive workspace</TooltipContent>
+          </Tooltip>
+        )}
         <div className="flex min-w-0 flex-1 flex-col gap-1">
-          <div className="grid min-w-0 grid-cols-[auto_auto_1fr_auto] items-center gap-1.5">
-            {!isCreating && !isEditing && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    className="text-muted hover:text-foreground inline-flex cursor-pointer items-center border-none bg-transparent p-0 text-base leading-none opacity-0 transition-colors duration-200"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void onRemoveWorkspace(workspaceId, e.currentTarget);
-                    }}
-                    aria-label={`Remove workspace ${displayTitle}`}
-                    data-workspace-id={workspaceId}
-                  >
-                    ×
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent align="start">Remove workspace</TooltipContent>
-              </Tooltip>
-            )}
-            <RuntimeBadge runtimeConfig={metadata.runtimeConfig} isWorking={canInterrupt} />
+          <div className="grid min-w-0 grid-cols-[auto_1fr_auto] items-center gap-1.5">
+            <RuntimeBadge runtimeConfig={metadata.runtimeConfig} isWorking={isWorking} />
             {isEditing ? (
               <input
                 className="bg-input-bg text-input-text border-input-border font-inherit focus:border-input-border-focus col-span-2 min-w-0 flex-1 rounded-sm border px-1 text-left text-[13px] outline-none"
@@ -181,7 +225,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
                 data-workspace-id={workspaceId}
               />
             ) : (
-              <Tooltip>
+              <Tooltip disableHoverableContent>
                 <TooltipTrigger asChild>
                   <span
                     className={cn(
@@ -195,7 +239,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
                     }}
                     title={isDisabled ? undefined : "Double-click to edit title"}
                   >
-                    {canInterrupt || isCreating ? (
+                    {isWorking || isCreating ? (
                       <Shimmer className="w-full truncate" colorClass="var(--color-foreground)">
                         {displayTitle}
                       </Shimmer>
@@ -212,17 +256,18 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
               <GitStatusIndicator
                 gitStatus={gitStatus}
                 workspaceId={workspaceId}
+                projectPath={projectPath}
                 tooltipPosition="right"
-                isWorking={canInterrupt}
+                isWorking={isWorking}
               />
             )}
           </div>
           {!isCreating && (
-            <div className="ml-[18px] min-w-0">
-              {isDeleting ? (
+            <div className="min-w-0">
+              {isArchiving ? (
                 <div className="text-muted flex min-w-0 items-center gap-1.5 text-xs">
-                  <span className="-mt-0.5 shrink-0 text-[10px]">🗑️</span>
-                  <span className="min-w-0 truncate">Deleting...</span>
+                  <span className="-mt-0.5 shrink-0 text-[10px]">📦</span>
+                  <span className="min-w-0 truncate">Archiving...</span>
                 </div>
               ) : (
                 <WorkspaceStatusIndicator workspaceId={workspaceId} />

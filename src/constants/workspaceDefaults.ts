@@ -1,4 +1,16 @@
 /**
+ * Storage key helpers for persisted settings.
+ */
+export const STORAGE_KEYS = {
+  /** Per-project default diff base for code review. Pass projectPath. */
+  reviewDefaultBase: (projectPath: string) => `review-default-base:${projectPath}`,
+  /** Per-workspace diff base override. Pass workspaceId. */
+  reviewDiffBase: (workspaceId: string) => `review-diff-base:${workspaceId}`,
+} as const;
+
+Object.freeze(STORAGE_KEYS);
+
+/**
  * Global default values for all workspace settings.
  *
  * These defaults are IMMUTABLE and serve as the fallback when:
@@ -46,6 +58,9 @@ export const WORKSPACE_DEFAULTS = {
 
   /** Default input text for new workspaces (empty) */
   input: "" as string,
+
+  /** Default diff base for code review (compare against origin/main) */
+  reviewBase: "origin/main" as string,
 };
 
 // Freeze the object at runtime to prevent accidental mutation

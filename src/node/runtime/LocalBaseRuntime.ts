@@ -63,15 +63,9 @@ export abstract class LocalBaseRuntime implements Runtime {
       );
     }
 
-    // If niceness is specified on Unix/Linux, spawn nice directly to avoid escaping issues
-    // Windows doesn't have nice command, so just spawn bash directly
-    const isWindows = process.platform === "win32";
     const bashPath = getBashPath();
-    const spawnCommand = options.niceness !== undefined && !isWindows ? "nice" : bashPath;
-    const spawnArgs =
-      options.niceness !== undefined && !isWindows
-        ? ["-n", options.niceness.toString(), bashPath, "-c", command]
-        : ["-c", command];
+    const spawnCommand = bashPath;
+    const spawnArgs = ["-c", command];
 
     const childProcess = spawn(spawnCommand, spawnArgs, {
       cwd,

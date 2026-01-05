@@ -8,6 +8,7 @@
 
 import { trackEvent } from "./client";
 import { roundToBase2 } from "./utils";
+import type { AgentMode } from "@/common/types/mode";
 import type {
   TelemetryRuntimeType,
   TelemetryThinkingLevel,
@@ -67,7 +68,7 @@ export function trackWorkspaceSwitched(fromWorkspaceId: string, toWorkspaceId: s
 export function trackMessageSent(
   workspaceId: string,
   model: string,
-  mode: string,
+  mode: AgentMode,
   messageLength: number,
   runtimeType: TelemetryRuntimeType,
   thinkingLevel: TelemetryThinkingLevel
@@ -83,6 +84,19 @@ export function trackMessageSent(
       frontendPlatform: getFrontendPlatform(),
       thinkingLevel,
     },
+  });
+}
+
+/**
+ * Track stats tab opening.
+ */
+export function trackStatsTabOpened(
+  viewMode: "session" | "last-request",
+  showModeBreakdown: boolean
+): void {
+  trackEvent({
+    event: "stats_tab_opened",
+    properties: { viewMode, showModeBreakdown },
   });
 }
 
@@ -160,5 +174,22 @@ export function trackErrorOccurred(
   trackEvent({
     event: "error_occurred",
     properties: { errorType, context },
+  });
+}
+
+/**
+ * Track experiment override - when a user manually toggles an experiment
+ * @param experimentId - The experiment identifier
+ * @param assignedVariant - What PostHog assigned (null if not remote-controlled)
+ * @param userChoice - What the user chose (true = enabled, false = disabled)
+ */
+export function trackExperimentOverridden(
+  experimentId: string,
+  assignedVariant: string | boolean | null,
+  userChoice: boolean
+): void {
+  trackEvent({
+    event: "experiment_overridden",
+    properties: { experimentId, assignedVariant, userChoice },
   });
 }

@@ -28,6 +28,20 @@ describe("ServerLockfile", () => {
     expect(data!.startedAt).toBeDefined();
   });
 
+  test("acquire persists optional network metadata", async () => {
+    await lockfile.acquire("http://localhost:12345", "test-token", {
+      bindHost: "0.0.0.0",
+      port: 12345,
+      networkBaseUrls: ["http://192.168.1.10:12345"],
+    });
+
+    const data = await lockfile.read();
+    expect(data).not.toBeNull();
+    expect(data!.bindHost).toBe("0.0.0.0");
+    expect(data!.port).toBe(12345);
+    expect(data!.networkBaseUrls).toEqual(["http://192.168.1.10:12345"]);
+  });
+
   test("read returns null for non-existent lockfile", async () => {
     const data = await lockfile.read();
     expect(data).toBeNull();

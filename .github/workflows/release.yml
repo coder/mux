@@ -231,6 +231,46 @@ jobs:
             release/*.exe.blockmap
           if-no-files-found: error
 
+  notify-slack-failure:
+    name: Notify Slack on Failure
+    runs-on: ubuntu-latest
+    needs: [build-macos, build-linux, build-windows, build-vscode-extension]
+    if: failure()
+    steps:
+      - name: Send failure notification to Slack
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
+          WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "SLACK_WEBHOOK_URL secret is not set; skipping Slack notification."
+            exit 0
+          fi
+
+          # Build JSON payload with proper escaping via jq
+          jq -n \
+            --arg text "🚨 Release build failed for \`$RELEASE_TAG\`" \
+            --arg workflow_url "$WORKFLOW_URL" \
+            '{
+              text: $text,
+              blocks: [
+                {
+                  type: "section",
+                  text: {
+                    type: "mrkdwn",
+                    text: ("🚨 *Release build failed*\n\nTag: `" + $ARGS.named.tag + "`\n<" + $workflow_url + "|View workflow run>")
+                  }
+                }
+              ]
+            }' --arg tag "$RELEASE_TAG" > payload.json
+
+          # Send to Slack
+          curl -X POST \
+            -H "Content-Type: application/json" \
+            -d @payload.json \
+            "$SLACK_WEBHOOK_URL"
+
   notify-discord:
     name: Notify Discord
     runs-on: ubuntu-latest

@@ -2,9 +2,72 @@ import React, { useState, useEffect, useRef, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/common/lib/utils";
 import type { SlashSuggestion } from "@/browser/utils/slashCommands/types";
+import { FileIcon } from "@/browser/components/FileIcon";
 
-// Export the keys that CommandSuggestions handles
+// Keys for navigating slash command suggestions.
+//
+// IMPORTANT: Do NOT treat Enter as a suggestion key here. Enter should submit the slash command
+// ("send message"). Autocomplete selection should be via Tab.
 export const COMMAND_SUGGESTION_KEYS = ["Tab", "ArrowUp", "ArrowDown", "Escape"];
+
+// Keys for navigating file path (@mention) suggestions.
+//
+// Enter accepts the selected file path (then a subsequent Enter sends the message).
+export const FILE_SUGGESTION_KEYS = ["Tab", "Enter", "ArrowUp", "ArrowDown", "Escape"];
+
+/**
+ * Highlight matching portions of text based on a query.
+ * Performs case-insensitive substring matching and highlights all occurrences.
+ */
+function HighlightedText({
+  text,
+  query,
+  className,
+}: {
+  text: string;
+  query?: string;
+  className?: string;
+}) {
+  if (!query || query.length === 0) {
+    return <span className={className}>{text}</span>;
+  }
+
+  const parts: React.ReactNode[] = [];
+  const lowerText = text.toLowerCase();
+  const lowerQuery = query.toLowerCase();
+  let lastIndex = 0;
+  let matchIndex = lowerText.indexOf(lowerQuery);
+
+  while (matchIndex !== -1) {
+    // Add non-matching prefix
+    if (matchIndex > lastIndex) {
+      parts.push(
+        <span key={`text-${lastIndex}`} className="opacity-60">
+          {text.slice(lastIndex, matchIndex)}
+        </span>
+      );
+    }
+    // Add highlighted match
+    parts.push(
+      <span key={`match-${matchIndex}`} className="text-light">
+        {text.slice(matchIndex, matchIndex + query.length)}
+      </span>
+    );
+    lastIndex = matchIndex + query.length;
+    matchIndex = lowerText.indexOf(lowerQuery, lastIndex);
+  }
+
+  // Add remaining non-matching suffix
+  if (lastIndex < text.length) {
+    parts.push(
+      <span key={`text-${lastIndex}`} className="opacity-60">
+        {text.slice(lastIndex)}
+      </span>
+    );
+  }
+
+  return <span className={className}>{parts}</span>;
+}
 
 // Props interface
 interface CommandSuggestionsProps {
@@ -16,6 +79,10 @@ interface CommandSuggestionsProps {
   listId?: string;
   /** Reference to the input element for portal positioning */
   anchorRef?: React.RefObject<HTMLElement | null>;
+  /** Query string to highlight in suggestions (for file path autocomplete) */
+  highlightQuery?: string;
+  /** Whether suggestions are file paths (enables file icons) */
+  isFileSuggestion?: boolean;
 }
 
 // Main component
@@ -27,6 +94,8 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
   ariaLabel = "Command suggestions",
   listId,
   anchorRef,
+  highlightQuery,
+  isFileSuggestion = false,
 }) => {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [position, setPosition] = useState<{ top: number; left: number; width: number } | null>(
@@ -34,14 +103,44 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
   );
   const menuRef = useRef<HTMLDivElement>(null);
   const selectedRef = useRef<HTMLDivElement>(null);
+  const previousSuggestionsRef = useRef<SlashSuggestion[]>(suggestions);
+  const wasVisibleRef = useRef(isVisible);
 
-  // Reset selection whenever suggestions change
-  useEffect(() => {
-    setSelectedIndex(0);
-  }, [suggestions]);
+  // Keep selection stable while suggestions update (e.g. user keeps typing).
+  // We reset selection only when the menu becomes visible.
+  useLayoutEffect(() => {
+    const wasVisible = wasVisibleRef.current;
+    wasVisibleRef.current = isVisible;
+
+    const prevSuggestions = previousSuggestionsRef.current;
+    previousSuggestionsRef.current = suggestions;
+
+    if (!isVisible || suggestions.length === 0) {
+      setSelectedIndex(0);
+      return;
+    }
+
+    // Menu just opened: default to the first suggestion.
+    if (!wasVisible) {
+      setSelectedIndex(0);
+      return;
+    }
+
+    // Preserve the previously-selected suggestion if it still exists; otherwise clamp.
+    setSelectedIndex((prevIndex) => {
+      const prevSelected = prevSuggestions[prevIndex];
+      if (prevSelected) {
+        const nextIndex = suggestions.findIndex((s) => s.id === prevSelected.id);
+        if (nextIndex !== -1) {
+          return nextIndex;
+        }
+      }
+      return Math.min(prevIndex, suggestions.length - 1);
+    });
+  }, [isVisible, suggestions]);
 
   // Scroll selected item into view
-  useEffect(() => {
+  useLayoutEffect(() => {
     selectedRef.current?.scrollIntoView({ block: "nearest" });
   }, [selectedIndex]);
 
@@ -97,6 +196,14 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
             onSelectSuggestion(suggestions[selectedIndex]);
           }
           break;
+        case "Enter":
+          // For slash commands, Enter should submit the command (send message), not autocomplete.
+          if (!isFileSuggestion) break;
+          if (!e.shiftKey && suggestions.length > 0) {
+            e.preventDefault();
+            onSelectSuggestion(suggestions[selectedIndex]);
+          }
+          break;
         case "Escape":
           e.preventDefault();
           onDismiss();
@@ -106,7 +213,7 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isVisible, suggestions, selectedIndex, onSelectSuggestion, onDismiss]);
+  }, [isVisible, suggestions, selectedIndex, onSelectSuggestion, onDismiss, isFileSuggestion]);
 
   // Click outside handler
   useEffect(() => {
@@ -166,18 +273,24 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
           role="option"
           aria-selected={index === selectedIndex}
           className={cn(
-            "px-2.5 py-1.5 cursor-pointer transition-colors duration-150 flex items-center justify-between gap-3 hover:bg-accent-darker",
-            index === selectedIndex ? "bg-accent-darker" : "bg-transparent"
+            "cursor-pointer flex items-center gap-2 px-2.5 py-1.5 hover:bg-hover",
+            index === selectedIndex ? "bg-hover" : "bg-transparent"
           )}
         >
-          <div className="text-accent font-monospace shrink-0 text-xs">{suggestion.display}</div>
-          <div className="text-medium truncate text-right text-[11px]">
+          {isFileSuggestion && (
+            <FileIcon filePath={suggestion.display} className="shrink-0 text-sm" />
+          )}
+          <div className="font-monospace text-foreground min-w-0 flex-1 truncate text-xs">
+            <HighlightedText text={suggestion.display} query={highlightQuery} />
+          </div>
+          <div className="text-secondary shrink-0 text-right text-[11px]">
             {suggestion.description}
           </div>
         </div>
       ))}
       <div className="border-border-light bg-dark text-placeholder [&_span]:text-medium shrink-0 border-t px-2.5 py-1 text-center text-[10px] [&_span]:font-medium">
-        <span>Tab</span> to complete • <span>↑↓</span> to navigate • <span>Esc</span> to dismiss
+        <span>Enter</span> or <span>Tab</span> to complete • <span>↑↓</span> to navigate •{" "}
+        <span>Esc</span> to dismiss
       </div>
     </div>
   );

@@ -1,5 +1,17 @@
 name: Publish to NPM
 
+# Uses NPM Trusted Publishing with OIDC - no secrets required!
+#
+# SETUP (one-time, on npmjs.com):
+#   1. Go to https://www.npmjs.com/package/mux/access
+#   2. Under "Trusted Publisher", click "GitHub Actions"
+#   3. Configure:
+#      - Owner: coder
+#      - Repository: mux
+#      - Workflow filename: publish-npm.yml
+#      - Environment: (leave blank)
+#   4. Click "Set up connection"
+
 on:
   push:
     branches:
@@ -8,14 +20,13 @@ on:
       - "v*"
   workflow_dispatch:
 
-permissions:
-  contents: read
-  id-token: write # Required for OIDC trusted publishing
-
 jobs:
   publish:
     name: Publish to NPM
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # Required for OIDC trusted publishing
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -24,12 +35,12 @@ jobs:
 
       - uses: ./.github/actions/setup-mux
 
-      # Sets up .npmrc with the auth token
+      # Setup Node.js 24+ for npm v11+ required by OIDC trusted publishing.
+      # Node 22 ships with npm 10.x which does NOT support OIDC.
       - uses: actions/setup-node@v4
         with:
+          node-version: "24"
           registry-url: "https://registry.npmjs.org"
-
-      - run: sudo npm i -g npm@latest
 
       - name: Generate unique version from git
         id: version
@@ -120,17 +131,7 @@ jobs:
         if: steps.check-exists.outputs.exists == 'false'
         run: npm publish --tag ${{ steps.version.outputs.tag }}
 
-      - name: Update dist-tag (version already exists)
-        if: steps.check-exists.outputs.exists == 'true' && github.ref_type == 'tag'
+      - name: Skip (version already exists)
+        if: steps.check-exists.outputs.exists == 'true'
         run: |
-          PACKAGE_NAME=$(node -p "require('./package.json').name")
-          VERSION="${{ steps.version.outputs.version }}"
-          TAG="${{ steps.version.outputs.tag }}"
-
-          echo "Version ${VERSION} already published, updating dist-tag to ${TAG}"
-          npm dist-tag add "${PACKAGE_NAME}@${VERSION}" "${TAG}"
-
-      - name: Skip (pre-release already exists)
-        if: steps.check-exists.outputs.exists == 'true' && github.ref_type != 'tag'
-        run: |
-          echo "⏭️ Pre-release version already exists, skipping"
+          echo "Version ${{ steps.version.outputs.version }} already exists on npm; skipping publish."

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import * as fs from "fs/promises";
 import * as path from "path";
 import * as os from "os";
+import { execSync } from "child_process";
 import { Config } from "@/node/config";
 import { ProjectService } from "./projectService";
 
@@ -149,6 +150,77 @@ describe("ProjectService", () => {
       if (!result.success) throw new Error("Expected success");
 
       expect(result.data.path).toBe(os.homedir());
+    });
+  });
+
+  describe("gitInit", () => {
+    it("initializes git repo in non-git directory with initial commit", async () => {
+      const testDir = path.join(tempDir, "new-project");
+      await fs.mkdir(testDir);
+
+      const result = await service.gitInit(testDir);
+
+      expect(result.success).toBe(true);
+
+      // Verify .git directory was created
+      const gitDir = path.join(testDir, ".git");
+      const stat = await fs.stat(gitDir);
+      expect(stat.isDirectory()).toBe(true);
+
+      // Verify a branch exists (main) after the initial commit
+      const branchResult = await service.listBranches(testDir);
+      expect(branchResult.branches).toContain("main");
+      expect(branchResult.recommendedTrunk).toBe("main");
+    });
+
+    it("succeeds for unborn git repo (git init but no commits)", async () => {
+      const testDir = path.join(tempDir, "unborn-git");
+      await fs.mkdir(testDir);
+
+      // Create an unborn repo (git init without commits)
+      execSync("git init -b main", { cwd: testDir, stdio: "ignore" });
+
+      const result = await service.gitInit(testDir);
+
+      expect(result.success).toBe(true);
+
+      // Verify branch exists after the commit
+      const branchResult = await service.listBranches(testDir);
+      expect(branchResult.branches).toContain("main");
+    });
+
+    it("returns error for git repo with existing commits", async () => {
+      const testDir = path.join(tempDir, "existing-git");
+      await fs.mkdir(testDir);
+
+      // Create a repo with a commit
+      execSync("git init -b main", { cwd: testDir, stdio: "ignore" });
+      execSync('git -c user.name="test" -c user.email="test@test" commit --allow-empty -m "test"', {
+        cwd: testDir,
+        stdio: "ignore",
+      });
+
+      const result = await service.gitInit(testDir);
+
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error("Expected failure");
+      expect(result.error).toContain("already a git repository");
+    });
+
+    it("returns error for empty project path", async () => {
+      const result = await service.gitInit("");
+
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error("Expected failure");
+      expect(result.error).toContain("required");
+    });
+
+    it("returns error for non-existent directory", async () => {
+      const result = await service.gitInit("/non-existent-path-12345");
+
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error("Expected failure");
+      expect(result.error).toContain("does not exist");
     });
   });
 });

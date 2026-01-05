@@ -7,11 +7,14 @@ import type { AutoCompactionCheckResult } from "./autoCompactionCheck";
 export function shouldTriggerAutoCompaction(
   autoCompactionCheck: AutoCompactionCheckResult | undefined,
   isCompacting: boolean,
-  isEditing: boolean
+  isEditing: boolean,
+  hasQueuedCompaction?: boolean
 ): boolean {
   if (!autoCompactionCheck) return false;
   if (isCompacting) return false;
   if (isEditing) return false;
+  // Don't trigger auto-compaction if there's already a /compact queued
+  if (hasQueuedCompaction) return false;
 
   return autoCompactionCheck.usagePercentage >= autoCompactionCheck.thresholdPercentage;
 }

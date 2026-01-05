@@ -131,16 +131,16 @@ const TreeNodeContent: React.FC<{
     <>
       <div
         className={cn(
-          "py-1 px-2 cursor-pointer select-none flex items-center gap-2 rounded my-0.5",
+          "cursor-pointer select-none flex items-center gap-1.5 rounded py-0.5 px-1.5",
           isSelected ? "bg-code-keyword-overlay" : "bg-transparent hover:bg-white/5"
         )}
-        style={{ paddingLeft: `${depth * 16 + 8}px` }}
+        style={{ paddingLeft: `${depth * 12 + 4}px` }}
         onClick={handleClick}
       >
         {node.isDirectory ? (
           <>
             <span
-              className="inline-flex h-4 w-4 shrink-0 items-center justify-center transition-transform duration-200"
+              className="text-muted inline-flex h-3 w-3 shrink-0 items-center justify-center text-[8px] transition-transform duration-200"
               style={{ transform: isOpen ? "rotate(90deg)" : "rotate(0deg)" }}
               data-toggle
               onClick={handleToggleClick}
@@ -162,7 +162,7 @@ const TreeNodeContent: React.FC<{
               (node.totalStats.additions > 0 || node.totalStats.deletions > 0) && (
                 <span
                   className="flex gap-2 text-[11px] opacity-70"
-                  style={{ color: isOpen ? "#666" : "inherit" }}
+                  style={{ color: isOpen ? "var(--color-dim)" : "inherit" }}
                 >
                   {node.totalStats.additions > 0 &&
                     (isOpen ? (
@@ -254,20 +254,25 @@ export const FileTree: React.FC<FileTreeExternalProps> = ({
     { listener: true }
   );
 
+  // Extract display name for filter indicator
+  const filterDisplayName = selectedPath ? (selectedPath.split("/").pop() ?? selectedPath) : null;
+
   return (
     <>
-      <div className="border-border-light text-foreground font-primary flex items-center gap-2 border-b px-3 py-2 text-xs font-medium">
-        <span>Files Changed</span>
+      <div className="border-border-light text-muted font-primary flex items-center gap-2 border-b px-2 py-1 text-[11px]">
+        <span>Files</span>
         {selectedPath && (
           <button
-            className="text-muted font-primary hover:text-foreground ml-auto cursor-pointer rounded-[3px] border-none bg-transparent px-2 py-0.5 text-[11px] transition-all duration-200 hover:bg-white/5"
+            className="bg-code-keyword-overlay text-foreground hover:bg-code-keyword-overlay/80 ml-auto flex cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 text-[10px] transition-colors"
             onClick={() => onSelectFile(null)}
+            title={`Filtering: ${selectedPath}\nClick to clear`}
           >
-            Clear filter
+            <span className="max-w-[120px] truncate">{filterDisplayName}</span>
+            <span className="text-muted">✕</span>
           </button>
         )}
       </div>
-      <div className="font-monospace min-h-0 flex-1 overflow-y-auto p-3 text-xs">
+      <div className="font-monospace min-h-0 flex-1 overflow-y-auto px-1 py-1 text-[11px]">
         {isLoading && !root ? (
           <div className="text-muted py-5 text-center">Loading file tree...</div>
         ) : root ? (

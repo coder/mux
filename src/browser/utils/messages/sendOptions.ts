@@ -1,12 +1,16 @@
-import { getModelKey, getThinkingLevelKey, getModeKey } from "@/common/constants/storage";
-import { modeToToolPolicy } from "@/common/utils/ui/modeUtils";
-import { readPersistedState } from "@/browser/hooks/usePersistedState";
+import {
+  getAgentIdKey,
+  getModelKey,
+  getThinkingLevelByModelKey,
+  getThinkingLevelKey,
+  getDisableWorkspaceAgentsKey,
+} from "@/common/constants/storage";
+import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import { toGatewayModel, migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
 import type { SendMessageOptions } from "@/common/orpc/types";
-import type { UIMode } from "@/common/types/mode";
 import type { ThinkingLevel } from "@/common/types/thinking";
-import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
+import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { isExperimentEnabled } from "@/browser/hooks/useExperiments";
@@ -20,14 +24,10 @@ function getProviderOptions(): MuxProviderOptions {
     "provider_options_anthropic",
     { use1MContext: false }
   );
-  const openai = readPersistedState<MuxProviderOptions["openai"]>("provider_options_openai", {
-    disableAutoTruncation: false,
-  });
   const google = readPersistedState<MuxProviderOptions["google"]>("provider_options_google", {});
 
   return {
     anthropic,
-    openai,
     google,
   };
 }
@@ -47,14 +47,28 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
   // Transform to gateway format if gateway is enabled for this model
   const model = toGatewayModel(baseModel);
 
-  // Read thinking level (workspace-specific)
-  const thinkingLevel = readPersistedState<ThinkingLevel>(
-    getThinkingLevelKey(workspaceId),
-    WORKSPACE_DEFAULTS.thinkingLevel
-  );
+  // Read thinking level (workspace-scoped).
+  // Migration: if the workspace-scoped value is missing, fall back to legacy per-model storage
+  // once, then persist into the workspace-scoped key.
+  const scopedKey = getThinkingLevelKey(workspaceId);
+  const existingScoped = readPersistedState<ThinkingLevel | undefined>(scopedKey, undefined);
+  const thinkingLevel =
+    existingScoped ??
+    readPersistedState<ThinkingLevel>(
+      getThinkingLevelByModelKey(baseModel),
+      WORKSPACE_DEFAULTS.thinkingLevel
+    );
+  if (existingScoped === undefined) {
+    // Best-effort: avoid losing a user's existing per-model preference.
+    updatePersistedState<ThinkingLevel>(scopedKey, thinkingLevel);
+  }
 
-  // Read mode (workspace-specific)
-  const mode = readPersistedState<UIMode>(getModeKey(workspaceId), WORKSPACE_DEFAULTS.mode);
+  // Read selected agent id (workspace-specific)
+  const agentId = readPersistedState<string>(getAgentIdKey(workspaceId), WORKSPACE_DEFAULTS.mode);
+
+  // Derive mode from agentId (plan agent → plan mode, everything else → exec mode)
+  // Used by backend for AI settings persistence and compaction detection
+  const mode = agentId === "plan" ? "plan" : "exec";
 
   // Get provider options
   const providerOptions = getProviderOptions();
@@ -62,16 +76,28 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
   // Plan mode instructions are now handled by the backend (has access to plan file path)
 
   // Enforce thinking policy (gpt-5-pro → high only)
-  const effectiveThinkingLevel = enforceThinkingPolicy(model, thinkingLevel);
+  const effectiveThinkingLevel = enforceThinkingPolicy(baseModel, thinkingLevel);
+
+  // Read disableWorkspaceAgents toggle (workspace-scoped)
+  const disableWorkspaceAgents = readPersistedState<boolean>(
+    getDisableWorkspaceAgentsKey(workspaceId),
+    false
+  );
 
   return {
     model,
-    mode: mode === "exec" || mode === "plan" ? mode : "exec", // Only pass exec/plan to backend
+    agentId,
+    mode,
     thinkingLevel: effectiveThinkingLevel,
-    toolPolicy: modeToToolPolicy(mode),
+    // toolPolicy is computed by backend from agent definitions (resolveToolPolicyForAgent)
     providerOptions,
+    disableWorkspaceAgents: disableWorkspaceAgents || undefined, // Only include if true
     experiments: {
       postCompactionContext: isExperimentEnabled(EXPERIMENT_IDS.POST_COMPACTION_CONTEXT),
+      programmaticToolCalling: isExperimentEnabled(EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING),
+      programmaticToolCallingExclusive: isExperimentEnabled(
+        EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING_EXCLUSIVE
+      ),
     },
   };
 }

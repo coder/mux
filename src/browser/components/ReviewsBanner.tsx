@@ -137,17 +137,20 @@ const ReviewItem: React.FC<ReviewItemProps> = ({
     [handleSaveEdit, handleCancelEdit]
   );
 
-  // Format code for diff display - add diff markers if not present
+  // Prefer selectedDiff (raw diff) when available so reviewers see syntax highlighting consistently.
   const diffContent = useMemo(() => {
+    if (review.data.selectedDiff) {
+      return review.data.selectedDiff;
+    }
+
+    // Legacy: selectedCode may be plain code or diff-ish text.
     const lines = review.data.selectedCode.split("\n");
-    // Check if lines already have diff markers
     const hasDiffMarkers = lines.some((l) => /^[+-\s]/.test(l));
     if (hasDiffMarkers) {
       return review.data.selectedCode;
     }
-    // Add context markers
     return lines.map((l) => ` ${l}`).join("\n");
-  }, [review.data.selectedCode]);
+  }, [review.data.selectedCode, review.data.selectedDiff]);
 
   const age = formatRelativeTime(review.createdAt);
 
@@ -245,7 +248,13 @@ const ReviewItem: React.FC<ReviewItemProps> = ({
         <div className="border-border-light border-t">
           {/* Code diff */}
           <div className="max-h-32 overflow-auto text-[11px]">
-            <DiffRenderer content={diffContent} showLineNumbers={false} fontSize="11px" />
+            <DiffRenderer
+              content={diffContent}
+              showLineNumbers={Boolean(review.data.selectedDiff)}
+              oldStart={review.data.oldStart ?? 1}
+              newStart={review.data.newStart ?? 1}
+              fontSize="11px"
+            />
           </div>
 
           {/* Comment section */}
@@ -326,7 +335,10 @@ const ReviewsBannerInner: React.FC<ReviewsBannerInnerProps> = ({ workspaceId }) 
   // "attached" reviews are shown in ChatInput, so we only show "pending" and "checked" here
   const { pendingList, completedList } = useMemo(() => {
     const pending = reviewsHook.reviews.filter((r) => r.status === "pending");
-    const completed = reviewsHook.reviews.filter((r) => r.status === "checked");
+    // Sort completed reviews recent-first (by when they were checked, falling back to creation time)
+    const completed = reviewsHook.reviews
+      .filter((r) => r.status === "checked")
+      .sort((a, b) => (b.statusChangedAt ?? b.createdAt) - (a.statusChangedAt ?? a.createdAt));
     return { pendingList: pending, completedList: completed };
   }, [reviewsHook.reviews]);
 
@@ -407,9 +419,7 @@ const ReviewsBannerInner: React.FC<ReviewsBannerInnerProps> = ({ workspaceId }) 
           {pendingList.length > 0 && (
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
-                <div className="text-muted text-[10px] font-medium tracking-wide uppercase">
-                  Pending ({pendingList.length})
-                </div>
+                <div className="text-muted text-[10px]">Pending ({pendingList.length})</div>
                 {pendingList.length > 1 && (
                   <button
                     type="button"
@@ -439,9 +449,7 @@ const ReviewsBannerInner: React.FC<ReviewsBannerInnerProps> = ({ workspaceId }) 
           {completedList.length > 0 && (
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
-                <div className="text-muted text-[10px] font-medium tracking-wide uppercase">
-                  Completed ({completedList.length})
-                </div>
+                <div className="text-muted text-[10px]">Completed ({completedList.length})</div>
                 {completedList.length > 0 && (
                   <button
                     type="button"

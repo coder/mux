@@ -23,21 +23,29 @@ export interface ChatInputWorkspaceVariant {
   onProviderConfig?: (provider: string, keyPath: string[], value: string) => Promise<void>;
   onModelChange?: (model: string) => void;
   isCompacting?: boolean;
-  editingMessage?: { id: string; content: string };
+  editingMessage?: { id: string; content: string; imageParts?: ImagePart[] };
   onCancelEdit?: () => void;
   onEditLastUserMessage?: () => void;
   canInterrupt?: boolean;
   disabled?: boolean;
+  /** Optional explanation displayed when input is disabled */
+  disabledReason?: string;
   onReady?: (api: ChatInputAPI) => void;
   autoCompactionCheck?: AutoCompactionCheckResult; // Computed in parent (AIView) to avoid duplicate calculation
+  /** True if there's already a compaction request queued (prevents double-compaction) */
+  hasQueuedCompaction?: boolean;
   /** Reviews currently attached to chat (from useReviews hook) */
   attachedReviews?: Review[];
   /** Detach a review from chat input (sets status to pending) */
   onDetachReview?: (reviewId: string) => void;
   /** Detach all attached reviews from chat input */
   onDetachAllReviews?: () => void;
-  /** Mark reviews as checked after sending */
+  /** Mark a single review as checked (completed) */
+  onCheckReview?: (reviewId: string) => void;
+  /** Mark multiple reviews as checked after sending */
   onCheckReviews?: (reviewIds: string[]) => void;
+  /** Permanently delete a review */
+  onDeleteReview?: (reviewId: string) => void;
   /** Update a review's comment/note */
   onUpdateReviewNote?: (reviewId: string, newNote: string) => void;
 }
@@ -47,6 +55,8 @@ export interface ChatInputCreationVariant {
   variant: "creation";
   projectPath: string;
   projectName: string;
+  /** Section ID to pre-select (from sidebar section "+" button) */
+  pendingSectionId?: string | null;
   onWorkspaceCreated: (metadata: FrontendWorkspaceMetadata) => void;
   onProviderConfig?: (provider: string, keyPath: string[], value: string) => Promise<void>;
   onModelChange?: (model: string) => void;

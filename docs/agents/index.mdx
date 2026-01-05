@@ -1,0 +1,383 @@
+---
+title: Agents
+description: Define custom agents (modes + subagents) with Markdown files
+---
+
+## Overview
+
+mux uses **agents** to control the model's:
+
+- **System prompt** (what the assistant "is")
+- **Tool access policy** (which tools it can call)
+
+This unifies two older concepts:
+
+- **UI modes** (Plan/Exec/Compact)
+- **Subagents** (the presets used by the `task` tool)
+
+An **Agent Definition** is a Markdown file:
+
+- The **YAML frontmatter** defines metadata + policy.
+- The **Markdown body** becomes the agent's system prompt (layered with mux's base prelude).
+
+## Quick Start
+
+**Switch agents:** Press `Cmd+Shift+M` (Mac) or `Ctrl+Shift+M` (Windows/Linux), or use the agent selector in the chat input.
+
+**Create a custom agent:** Add a markdown file with YAML frontmatter to `.mux/agents/` in your project:
+
+```md
+---
+name: Review
+description: Terse reviewer-style feedback
+base: exec
+tools:
+  # Remove editing tools from exec base (this is a read-only reviewer)
+  remove:
+    - file_edit_.*
+    - task
+    - task_.*
+---
+
+You are a code reviewer.
+
+- Focus on correctness, risks, and test coverage.
+- Prefer short, actionable comments.
+```
+
+## Discovery + Precedence
+
+mux discovers agent definitions from (non-recursive):
+
+| Location             | Scope   | Priority |
+| -------------------- | ------- | -------- |
+| `.mux/agents/*.md`   | Project | Highest  |
+| `~/.mux/agents/*.md` | Global  | Medium   |
+| Built-in             | System  | Lowest   |
+
+Higher-priority definitions override lower-priority ones with the same **agent id**.
+
+### Agent IDs
+
+The **agent id** is derived from the filename:
+
+- `review.md` → `agentId = "review"`
+
+Agent ids are lowercase and should be simple (letters/numbers with `-`/`_`).
+
+## File Format
+
+### Frontmatter Schema
+
+```yaml
+---
+# Required
+name: My Agent # Display name in UI
+
+# Optional
+description: What this agent does # Shown in tooltips
+base: exec # Inherit from another agent (exec, plan, or custom agent id)
+
+# UI settings
+ui:
+  hidden: false # Set true to hide from agent selector
+  disabled: false # Set true to completely disable (useful to hide built-ins)
+  color: "#6b5bff" # UI accent color (inherited from base if not set)
+
+# Prompt behavior
+prompt:
+  append: true # Append body to base agent's body (default); set false to replace
+
+# Subagent configuration
+subagent:
+  runnable: false # Allow spawning via task({ agentId: ... })
+
+# AI defaults (override user settings)
+ai:
+  model: sonnet # Or full ID like "anthropic:claude-sonnet-4-5"
+  thinkingLevel: medium
+
+# Tool configuration (regex patterns, processed in order during inheritance)
+tools:
+  add: # Patterns to add/enable
+    - file_read
+    - file_edit_.*
+    - bash
+  remove: # Patterns to remove/disable (applied after add)
+    - task_.*
+---
+```
+
+### Markdown Body (Instructions)
+
+The markdown body after the frontmatter becomes the agent's system prompt, layered with mux's base prelude.
+
+**Inheritance behavior:** By default, when an agent has a `base`, the child's body is **appended** to the base agent's body. Set `prompt.append: false` to **replace** the base body entirely—useful when you want to completely override the base agent's instructions while keeping its tool policies or AI defaults.
+
+## Disabling Built-in Agents
+
+To hide a built-in agent, create a file with the same name and `ui.disabled: true`:
+
+```md
+---
+name: Plan
+ui:
+  disabled: true
+---
+```
+
+This completely removes the agent from discovery. To override (replace) a built-in instead, omit `disabled` and provide your own configuration.
+
+## Extending Built-in Agents
+
+You can extend a built-in agent by creating a file with the **same name** and using `base` to inherit from it:
+
+```md
+---
+name: Exec
+base: exec
+---
+
+Additional project-specific instructions that append to built-in exec.
+```
+
+This works because when resolving `base: exec`, mux skips the current scope (project) and looks for `exec` in lower-priority scopes (global, then built-in). Your project-local `exec.md` extends the built-in exec, not itself.
+
+**Common pattern:** Add repo-specific guidance (CI commands, test patterns) without duplicating the built-in instructions.
+
+## Tool Policy Semantics
+
+Tools are controlled via an explicit **whitelist**. The `tools` array lists patterns (exact names or regex) that the agent can use. If `tools` is omitted or empty, no tools are available.
+
+**Inheritance:** Use `base` to inherit behavior from another agent:
+
+- `base: plan` — Plan-mode behaviors (enables `ask_user_question`, `propose_plan`)
+- `base: exec` — Exec-mode behaviors (standard coding workflow)
+- `base: <custom-agent-id>` — Inherit from any custom agent
+
+Inheritance is multi-level: if `my-agent` has `base: plan`, agents inheriting from `my-agent` also get plan-like behavior.
+
+**Hard denies in subagents:** Even if an agent definition allows them, mux blocks these tools in child workspaces:
+
+- `task`, `task_await`, `task_list`, `task_terminate` (no recursive spawning)
+- `propose_plan`, `ask_user_question` (UI-only tools)
+
+## Using Agents
+
+### Main Agent
+
+Use the agent selector in the chat input to switch agents.
+
+Keyboard: `Cmd+Shift+M` (mac) / `Ctrl+Shift+M` (win/linux) cycles between agents.
+
+### Subagents (task tool)
+
+Spawn a subagent workspace with:
+
+```ts
+task({
+  agentId: "explore",
+  title: "Find the callsites",
+  prompt: "Locate where X is computed and report back",
+});
+```
+
+Only agents with `subagent.runnable: true` can be used this way.
+
+## Examples
+
+### Security Audit Agent
+
+```md
+---
+name: Security Audit
+description: Security-focused code review
+base: exec
+tools:
+  # Remove editing/task tools - this is read-only analysis
+  remove:
+    - file_edit_.*
+    - task
+    - task_.*
+---
+
+You are a security auditor. Analyze the codebase for:
+
+- Authentication/authorization issues
+- Injection vulnerabilities
+- Data exposure risks
+- Insecure dependencies
+
+Provide a structured report with severity levels. Do not make changes.
+```
+
+### Documentation Agent
+
+```md
+---
+name: Docs
+description: Focus on documentation tasks
+base: exec
+tools:
+  # Remove task delegation - keep it simple for doc tasks
+  remove:
+    - task
+    - task_.*
+---
+
+You are in Documentation mode. Focus on improving documentation:
+README files, code comments, API docs, and guides. Avoid
+refactoring code unless it's purely for documentation purposes.
+```
+
+## Built-in Agents
+
+{/* BEGIN BUILTIN_AGENTS */}
+
+### Exec
+
+**Implement changes in the repository**
+
+<Accordion title="View exec.md">
+
+```md
+---
+name: Exec
+description: Implement changes in the repository
+ui:
+  color: var(--color-exec-mode)
+subagent:
+  runnable: true
+  append_prompt: |
+    If you are running as a sub-agent in a child workspace:
+
+    - When you have a final answer, call agent_report exactly once.
+    - Do not call task/task_await/task_list/task_terminate (subagent recursion is disabled).
+    - Do not call propose_plan.
+tools:
+  add:
+    # Allow all tools by default (includes MCP tools which have dynamic names)
+    # Use tools.remove in child agents to restrict specific tools
+    - .*
+  remove:
+    # Exec mode doesn't use planning tools
+    - propose_plan
+    - ask_user_question
+---
+
+You are in Exec mode.
+
+- Make minimal, correct, reviewable changes that match existing codebase patterns.
+- Prefer targeted commands and checks (typecheck/tests) when feasible.
+- Treat as a standing order: keep running checks and addressing failures until they pass or a blocker outside your control arises.
+```
+
+</Accordion>
+
+### Plan
+
+**Create a plan before coding**
+
+<Accordion title="View plan.md">
+
+```md
+---
+name: Plan
+description: Create a plan before coding
+ui:
+  color: var(--color-plan-mode)
+subagent:
+  runnable: false
+tools:
+  add:
+    # Allow all tools by default (includes MCP tools which have dynamic names)
+    # Use tools.remove in child agents to restrict specific tools
+    - .*
+  # Note: file_edit_* tools ARE available but restricted to plan file only at runtime
+  # Note: task tools ARE enabled - Plan delegates to Explore sub-agents
+---
+
+You are in Plan Mode.
+
+- Every response MUST produce or update a plan—no exceptions.
+- Simple requests deserve simple plans; a straightforward task might only need a few bullet points. Match plan complexity to the problem.
+- Keep the plan scannable; put long rationale in `<details>/<summary>` blocks.
+- When Plan Mode is requested, assume the user wants the actual completed plan; do not merely describe how you would devise one.
+
+Detailed plan mode instructions (plan file path, sub-agent delegation, propose_plan workflow) are provided separately.
+```
+
+</Accordion>
+
+### Compact (internal)
+
+**History compaction (internal)**
+
+<Accordion title="View compact.md">
+
+```md
+---
+name: Compact
+description: History compaction (internal)
+ui:
+  hidden: true
+subagent:
+  runnable: false
+---
+
+You are running a compaction/summarization pass. Do not call tools.
+```
+
+</Accordion>
+
+### Explore (internal)
+
+**Read-only repository exploration**
+
+<Accordion title="View explore.md">
+
+```md
+---
+name: Explore
+description: Read-only repository exploration
+base: exec
+ui:
+  hidden: true
+subagent:
+  runnable: true
+  append_prompt: |
+    You are an Explore sub-agent running inside a child workspace.
+
+    - Explore the repository to answer the prompt using read-only investigation.
+    - Return concise, actionable findings (paths, symbols, callsites, and facts).
+    - When you have a final answer, call agent_report exactly once.
+    - Do not call agent_report until you have completed the assigned task.
+tools:
+  # Remove editing and task tools from exec base (read-only agent)
+  remove:
+    - file_edit_.*
+    - task
+    - task_.*
+    - agent_skill_read
+    - agent_skill_read_file
+---
+
+You are in Explore mode (read-only).
+
+=== CRITICAL: READ-ONLY MODE - NO FILE MODIFICATIONS ===
+
+- You MUST NOT create, edit, delete, move, or copy files.
+- You MUST NOT create temporary files anywhere (including /tmp).
+- You MUST NOT use redirect operators (>, >>, |) or heredocs to write to files.
+- You MUST NOT run commands that change system state (rm, mv, cp, mkdir, touch, git add/commit, installs, etc.).
+- Use bash only for read-only operations (rg, ls, cat, git diff/show/log, etc.).
+```
+
+</Accordion>
+
+{/* END BUILTIN_AGENTS */}
+
+## Related Docs
+
+- Scoped instructions in `AGENTS.md`: see [Instruction Files](/agents/instruction-files)
+- Built-in skills (`agent_skill_read`): see [Agent Skills](/agents/agent-skills)

@@ -1,19 +1,19 @@
 import { useThinkingLevel } from "./useThinkingLevel";
 import { useMode } from "@/browser/contexts/ModeContext";
+import { useAgent } from "@/browser/contexts/AgentContext";
 import { usePersistedState } from "./usePersistedState";
 import { getDefaultModel } from "./useModelsFromSettings";
 import { migrateGatewayModel, useGateway, isProviderSupported } from "./useGatewayModels";
-import { modeToToolPolicy } from "@/common/utils/ui/modeUtils";
 import { getModelKey } from "@/common/constants/storage";
 import type { SendMessageOptions } from "@/common/orpc/types";
 import type { UIMode } from "@/common/types/mode";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
-import { enforceThinkingPolicy } from "@/browser/utils/thinking/policy";
+import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { useProviderOptions } from "./useProviderOptions";
 import type { GatewayState } from "./useGatewayModels";
-import { useExperimentValue } from "./useExperiments";
+import { useExperimentOverrideValue } from "./useExperiments";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 
 /**
@@ -34,6 +34,12 @@ function applyGatewayTransform(modelId: string, gateway: GatewayState): string {
   return `mux-gateway:${provider}/${model}`;
 }
 
+interface ExperimentValues {
+  postCompactionContext: boolean | undefined;
+  programmaticToolCalling: boolean | undefined;
+  programmaticToolCallingExclusive: boolean | undefined;
+}
+
 /**
  * Construct SendMessageOptions from raw values
  * Shared logic for both hook and non-hook versions
@@ -42,12 +48,13 @@ function applyGatewayTransform(modelId: string, gateway: GatewayState): string {
  */
 function constructSendMessageOptions(
   mode: UIMode,
+  agentId: string,
   thinkingLevel: ThinkingLevel,
   preferredModel: string | null | undefined,
   providerOptions: MuxProviderOptions,
   fallbackModel: string,
   gateway: GatewayState,
-  postCompactionContext: boolean
+  experimentValues: ExperimentValues
 ): SendMessageOptions {
   // Ensure model is always a valid string (defensive against corrupted localStorage)
   const rawModel =
@@ -65,11 +72,14 @@ function constructSendMessageOptions(
   return {
     thinkingLevel: uiThinking,
     model,
+    agentId,
     mode: mode === "exec" || mode === "plan" ? mode : "exec", // Only pass exec/plan to backend
-    toolPolicy: modeToToolPolicy(mode),
+    // toolPolicy is computed by backend from agent definitions (resolveToolPolicyForAgent)
     providerOptions,
     experiments: {
-      postCompactionContext,
+      postCompactionContext: experimentValues.postCompactionContext,
+      programmaticToolCalling: experimentValues.programmaticToolCalling,
+      programmaticToolCallingExclusive: experimentValues.programmaticToolCallingExclusive,
     },
   };
 }
@@ -99,6 +109,7 @@ export interface SendMessageOptionsWithBase extends SendMessageOptions {
 export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWithBase {
   const [thinkingLevel] = useThinkingLevel();
   const [mode] = useMode();
+  const { agentId, disableWorkspaceAgents } = useAgent();
   const { options: providerOptions } = useProviderOptions();
   const defaultModel = getDefaultModel();
   const [preferredModel] = usePersistedState<string>(
@@ -110,8 +121,15 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
   // Subscribe to gateway state so we re-render when user toggles gateway
   const gateway = useGateway();
 
-  // Subscribe to experiment state so toggles apply immediately
-  const postCompactionContext = useExperimentValue(EXPERIMENT_IDS.POST_COMPACTION_CONTEXT);
+  // Subscribe to local override state so toggles apply immediately.
+  // If undefined, the backend will apply the PostHog assignment.
+  const postCompactionContext = useExperimentOverrideValue(EXPERIMENT_IDS.POST_COMPACTION_CONTEXT);
+  const programmaticToolCalling = useExperimentOverrideValue(
+    EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING
+  );
+  const programmaticToolCallingExclusive = useExperimentOverrideValue(
+    EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING_EXCLUSIVE
+  );
 
   // Compute base model (canonical format) for UI components
   const rawModel =
@@ -120,15 +138,20 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
 
   const options = constructSendMessageOptions(
     mode,
+    agentId,
     thinkingLevel,
     preferredModel,
     providerOptions,
     defaultModel,
     gateway,
-    postCompactionContext
+    { postCompactionContext, programmaticToolCalling, programmaticToolCallingExclusive }
   );
 
-  return { ...options, baseModel };
+  return {
+    ...options,
+    baseModel,
+    disableWorkspaceAgents: disableWorkspaceAgents || undefined, // Only include if true
+  };
 }
 
 /**

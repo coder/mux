@@ -163,12 +163,14 @@ describeIntegration("sendMessage context handling tests", () => {
 
           try {
             // Ask to read the file using bash
-            // Default toolPolicy (undefined) allows all tools
             const result = await sendMessageWithModel(
               env,
               workspaceId,
-              `Read the contents of the file at ${testFilePath} using the bash tool with cat.`,
-              modelString("anthropic", KNOWN_MODELS.HAIKU.providerModelId)
+              `Use bash to run: cat ${testFilePath}. Set display_name="read-file" and timeout_secs=30. Do not spawn a sub-agent.`,
+              modelString("anthropic", KNOWN_MODELS.HAIKU.providerModelId),
+              {
+                toolPolicy: [{ regex_match: "bash", action: "require" }],
+              }
             );
 
             expect(result.success).toBe(true);
@@ -182,8 +184,12 @@ describeIntegration("sendMessage context handling tests", () => {
               (e) => "type" in e && (e as { type: string }).type === "tool-call-start"
             );
 
-            // Should have at least one tool call
-            expect(toolCallStarts.length).toBeGreaterThan(0);
+            // Should have at least one bash tool call
+            const bashCall = toolCallStarts.find((e) => {
+              if (!("toolName" in e) || e.toolName !== "bash") return false;
+              return true;
+            });
+            expect(bashCall).toBeDefined();
           } finally {
             // Cleanup test file
             try {

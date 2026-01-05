@@ -17,6 +17,11 @@ import {
   createBashBackgroundTerminateTool,
 } from "./mockFactory";
 import { setupSimpleChatStory } from "./storyHelpers";
+import {
+  blurActiveElement,
+  waitForChatInputAutofocusDone,
+  waitForChatMessagesLoaded,
+} from "./storyPlayHelpers.js";
 import { userEvent, waitFor } from "@storybook/test";
 
 /**
@@ -24,16 +29,8 @@ import { userEvent, waitFor } from "@storybook/test";
  * Waits for messages to load, then clicks on the ▶ expand icons to expand tool details.
  */
 async function expandAllBashTools(canvasElement: HTMLElement) {
-  // Wait for messages to finish loading (non-racy: uses actual loading state)
-  await waitFor(
-    () => {
-      const messageWindow = canvasElement.querySelector('[data-testid="message-window"]');
-      if (!messageWindow || messageWindow.getAttribute("data-loaded") !== "true") {
-        throw new Error("Messages not loaded yet");
-      }
-    },
-    { timeout: 5000 }
-  );
+  // Wait for messages to finish loading
+  await waitForChatMessagesLoaded(canvasElement);
 
   // Now find and expand all tool icons (scoped to the message window so we don't click unrelated ▶)
   const messageWindow = canvasElement.querySelector('[data-testid="message-window"]');
@@ -63,8 +60,12 @@ async function expandAllBashTools(canvasElement: HTMLElement) {
     }
   }
 
-  // Avoid leaving focus on a tool header (some components auto-focus inputs on timers)
-  (document.activeElement as HTMLElement | null)?.blur?.();
+  // One RAF to let any pending coalesced scroll complete after tool expansion
+  await new Promise((r) => requestAnimationFrame(r));
+
+  // Avoid leaving focus on a tool header.
+  await waitForChatInputAutofocusDone(canvasElement);
+  blurActiveElement();
 }
 
 export default {

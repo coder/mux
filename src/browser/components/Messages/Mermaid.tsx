@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactNode } from "react";
-import React, { useContext, useEffect, useRef, useState } from "react";
+import React, { useContext, useEffect, useId, useRef, useState } from "react";
 import mermaid from "mermaid";
 import { StreamingContext } from "./StreamingContext";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
@@ -112,6 +112,18 @@ export const Mermaid: React.FC<{ chart: string }> = ({ chart }) => {
   const [error, setError] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [svg, setSvg] = useState<string>("");
+  const lastValidSvgRef = useRef<string>("");
+  const stableId = useId();
+
+  // Debounce chart changes to avoid flickering during streaming
+  const [debouncedChart, setDebouncedChart] = useState(chart);
+  useEffect(() => {
+    // Clear stale errors when chart changes - avoids error flash at end of stream
+    setError(null);
+    const timer = setTimeout(() => setDebouncedChart(chart), 350);
+    return () => clearTimeout(timer);
+  }, [chart]);
+
   const [diagramMaxHeight, setDiagramMaxHeight] = usePersistedState(
     "mermaid-diagram-max-height",
     MIN_HEIGHT,
@@ -134,49 +146,42 @@ export const Mermaid: React.FC<{ chart: string }> = ({ chart }) => {
   };
 
   useEffect(() => {
-    let id: string | undefined;
+    // Use stable ID to avoid ELK layout recalculating from scratch each render
+    const id = `mermaid-${stableId.replace(/:/g, "")}`;
+    let cancelled = false;
 
     const renderDiagram = async () => {
-      id = `mermaid-${Math.random().toString(36).substr(2, 9)}`;
       try {
-        setError(null);
-
         // Parse first to validate syntax without rendering
-        await mermaid.parse(chart);
+        await mermaid.parse(debouncedChart);
 
         // If parse succeeds, render the diagram
-        const { svg: renderedSvg } = await mermaid.render(id, chart);
+        const { svg: renderedSvg } = await mermaid.render(id, debouncedChart);
+        if (cancelled) return;
+
+        lastValidSvgRef.current = renderedSvg;
         setSvg(renderedSvg);
+        setError(null);
         if (containerRef.current) {
           containerRef.current.innerHTML = renderedSvg;
         }
       } catch (err) {
-        // Clean up any DOM elements mermaid might have created with our ID
-        const errorElement = document.getElementById(id);
-        if (errorElement) {
-          errorElement.remove();
-        }
+        if (cancelled) return;
+
+        // Don't remove elements by ID - with stable IDs, we'd remove the last valid render
+        // Mermaid error artifacts are cleaned up by subsequent successful renders
 
         setError(err instanceof Error ? err.message : "Failed to render diagram");
-        setSvg(""); // Clear any previous SVG
-        if (containerRef.current) {
-          containerRef.current.innerHTML = ""; // Clear the container
-        }
+        // Don't clear SVG - keep showing last valid render during errors
       }
     };
 
     void renderDiagram();
 
-    // Cleanup on unmount or when chart changes
     return () => {
-      if (id) {
-        const element = document.getElementById(id);
-        if (element) {
-          element.remove();
-        }
-      }
+      cancelled = true;
     };
-  }, [chart]);
+  }, [debouncedChart, stableId]);
 
   // Update modal container when opened
   useEffect(() => {
@@ -185,9 +190,12 @@ export const Mermaid: React.FC<{ chart: string }> = ({ chart }) => {
     }
   }, [isModalOpen, svg]);
 
-  // During streaming, show placeholder instead of error
+  // During streaming errors, show last valid SVG if available, otherwise placeholder
   if (error) {
-    if (isStreaming) {
+    if (isStreaming && lastValidSvgRef.current) {
+      // Keep showing last valid render while streaming
+      // Fall through to render the container with lastValidSvgRef content
+    } else if (isStreaming) {
       return (
         <div
           style={{
@@ -200,14 +208,20 @@ export const Mermaid: React.FC<{ chart: string }> = ({ chart }) => {
           Rendering diagram...
         </div>
       );
+    } else {
+      // Not streaming - show actual error
+      return (
+        <pre
+          style={{
+            color: "var(--color-syntax-error)",
+            background: "hsl(from var(--color-syntax-error) h s l / 0.1)",
+            padding: "12px",
+          }}
+        >
+          Mermaid Error: {error}
+        </pre>
+      );
     }
-
-    // Not streaming - show actual error
-    return (
-      <pre style={{ color: "#e06c75", background: "rgba(224, 108, 117, 0.1)", padding: "12px" }}>
-        Mermaid Error: {error}
-      </pre>
-    );
   }
 
   return (

@@ -1,7 +1,7 @@
 /**
  * Voice input via OpenAI transcription (gpt-4o-transcribe).
  *
- * State machine: idle → recording → transcribing → idle
+ * State machine: idle → requesting → recording → transcribing → idle
  *
  * Hidden on touch devices where native keyboard dictation is available.
  */
@@ -11,7 +11,7 @@ import { matchesKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import type { APIClient } from "@/browser/contexts/API";
 import { trackVoiceTranscription } from "@/common/telemetry";
 
-export type VoiceInputState = "idle" | "recording" | "transcribing";
+export type VoiceInputState = "idle" | "requesting" | "recording" | "transcribing";
 
 export interface UseVoiceInputOptions {
   onTranscript: (text: string) => void;
@@ -56,8 +56,12 @@ export interface UseVoiceInputResult {
  * We hide our voice UI on these devices to avoid redundancy with system dictation.
  */
 function hasTouchDictation(): boolean {
-  if (typeof window === "undefined") return false;
-  const hasTouch = "ontouchstart" in window || navigator.maxTouchPoints > 0;
+  if (typeof window === "undefined" || typeof navigator === "undefined") return false;
+
+  const maxTouchPoints =
+    typeof navigator.maxTouchPoints === "number" ? navigator.maxTouchPoints : 0;
+  const hasTouch = "ontouchstart" in window || maxTouchPoints > 0;
+
   // Touch-only check: most touch devices have native dictation.
   // We don't check screen size because iPads are large but still have dictation.
   return hasTouch;
@@ -66,7 +70,9 @@ function hasTouchDictation(): boolean {
 const HAS_TOUCH_DICTATION = hasTouchDictation();
 const HAS_MEDIA_RECORDER = typeof window !== "undefined" && typeof MediaRecorder !== "undefined";
 const HAS_GET_USER_MEDIA =
-  typeof window !== "undefined" && typeof navigator.mediaDevices?.getUserMedia === "function";
+  typeof window !== "undefined" &&
+  typeof navigator !== "undefined" &&
+  typeof navigator.mediaDevices?.getUserMedia === "function";
 
 // =============================================================================
 // Global Key State Tracking
@@ -79,7 +85,7 @@ const HAS_GET_USER_MEDIA =
  */
 let isSpaceCurrentlyHeld = false;
 
-if (typeof window !== "undefined") {
+if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
   window.addEventListener(
     "keydown",
     (e) => {
@@ -212,6 +218,9 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
 
     if (!canStart) return;
 
+    // Show loading state immediately while requesting mic access
+    setState("requesting");
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
@@ -263,6 +272,7 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
           ? "Microphone access denied. Please allow microphone access and try again."
           : `Failed to start recording: ${msg}`
       );
+      setState("idle");
     }
   }, [state, transcribe, releaseStream]);
 
@@ -335,6 +345,7 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
         stop({ send: true });
       } else if (e.key === "Escape") {
         e.preventDefault();
+        e.stopPropagation(); // Prevent global stream interrupt handler
         cancel();
       } else if (matchesKeybind(e, KEYBINDS.TOGGLE_VOICE_INPUT)) {
         e.preventDefault();

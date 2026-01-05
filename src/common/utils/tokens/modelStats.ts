@@ -12,8 +12,8 @@ export interface ModelStats {
 }
 
 interface RawModelData {
-  max_input_tokens?: number | string;
-  max_output_tokens?: number | string;
+  max_input_tokens?: number | string | null;
+  max_output_tokens?: number | string | null;
   input_cost_per_token?: number;
   output_cost_per_token?: number;
   cache_creation_input_token_cost?: number;
@@ -96,17 +96,17 @@ export function getModelStats(modelString: string): ModelStats | null {
   const normalized = normalizeGatewayModel(modelString);
   const lookupKeys = generateLookupKeys(normalized);
 
-  // Try each lookup pattern in main models.json
+  // Check models-extra.ts first (overrides for models with incorrect upstream data)
   for (const key of lookupKeys) {
-    const data = (modelsData as Record<string, RawModelData>)[key];
+    const data = (modelsExtra as Record<string, RawModelData>)[key];
     if (data && isValidModelData(data)) {
       return extractModelStats(data);
     }
   }
 
-  // Fall back to models-extra.ts
+  // Fall back to main models.json
   for (const key of lookupKeys) {
-    const data = (modelsExtra as Record<string, RawModelData>)[key];
+    const data = (modelsData as Record<string, RawModelData>)[key];
     if (data && isValidModelData(data)) {
       return extractModelStats(data);
     }

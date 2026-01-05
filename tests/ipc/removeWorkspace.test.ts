@@ -172,6 +172,13 @@ describeIntegration("Workspace deletion integration tests", () => {
             }
             expect(deleteResult.success).toBe(true);
 
+            // Local worktree runtime should also delete the local branch.
+            if (type === "local") {
+              using branchProc = execAsync(`git -C "${tempGitRepo}" branch --list "${branchName}"`);
+              const { stdout } = await branchProc.result;
+              expect(stdout.trim()).toBe("");
+            }
+
             // Verify workspace is no longer in config
             const config = env.config.loadConfigOrDefault();
             const project = config.projects.get(tempGitRepo);

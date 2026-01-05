@@ -1,0 +1,123 @@
+---
+name: mux-docs
+description: Index + offline snapshot of mux documentation (progressive disclosure).
+---
+
+# mux docs
+
+This built-in skill helps the agent answer questions about **mux** (Coding Agent Multiplexer) without dumping the entire docs into context.
+
+## How to use
+
+### Prefer: read the bundled docs snapshot (recommended)
+
+This skill bundles an **offline snapshot of the mux docs** under `references/docs/`.
+
+Why prefer the bundled snapshot?
+
+1. The docs tree below is guaranteed to match what’s embedded.
+2. It’s more likely to match *your installed mux version* (the live site may be ahead).
+
+To read a specific page:
+
+```ts
+agent_skill_read_file({
+  name: "mux-docs",
+  filePath: "references/docs/config/models.mdx",
+});
+```
+
+### Fallback: fetch the live docs (for newer features)
+
+If the bundled docs don’t mention something (or you suspect the docs site has newer info), use `web_fetch`:
+
+```ts
+web_fetch({ url: "https://mux.coder.com/config/models" });
+web_fetch({ url: "https://mux.coder.com/agents" });
+```
+
+#### Docs tree (auto-generated)
+
+Use this index to find a page's:
+
+- **Docs route** (for `web_fetch`)
+- **Embedded file path** (for `agent_skill_read_file`)
+
+<!-- BEGIN DOCS_TREE -->
+- **Documentation**
+  - **Getting Started**
+    - Introduction (`/`) → `references/docs/index.mdx` — mux - Coding Agent Multiplexer for AI-assisted development
+    - Install (`/install`) → `references/docs/install.mdx` — Download and install mux for macOS, Linux, and Windows
+    - Why Parallelize? (`/getting-started/why-parallelize`) → `references/docs/getting-started/why-parallelize.mdx` — Use cases for running multiple AI agents in parallel
+    - Mux Codes (`/getting-started/mux-codes`) → `references/docs/getting-started/mux-codes.mdx` — Redeem free LLM token credits for evaluating Mux
+  - **Workspaces**
+    - Workspaces (`/workspaces`) → `references/docs/workspaces/index.mdx` — Isolated development environments for parallel agent work
+    - Forking Workspaces (`/workspaces/fork`) → `references/docs/workspaces/fork.mdx` — Clone workspaces with conversation history to explore alternatives
+    - **Runtimes**
+      - Runtimes (`/runtime`) → `references/docs/runtime/index.mdx` — Configure where and how mux executes agent workspaces
+      - Local Runtime (`/runtime/local`) → `references/docs/runtime/local.mdx` — Run agents directly in your project directory
+      - Worktree Runtime (`/runtime/worktree`) → `references/docs/runtime/worktree.mdx` — Isolated git worktree environments for parallel agent work
+      - SSH Runtime (`/runtime/ssh`) → `references/docs/runtime/ssh.mdx` — Run agents on remote hosts over SSH for security and performance
+    - **Hooks**
+      - Init Hooks (`/hooks/init`) → `references/docs/hooks/init.mdx` — Run setup commands automatically when creating new workspaces
+      - Tool Hooks (`/hooks/tools`) → `references/docs/hooks/tools.mdx` — Block dangerous commands, lint after edits, and set up your environment
+  - **Agents**
+    - Agents (`/agents`) → `references/docs/agents/index.mdx` — Define custom agents (modes + subagents) with Markdown files
+    - Instruction Files (`/agents/instruction-files`) → `references/docs/agents/instruction-files.mdx` — Configure agent behavior with AGENTS.md files
+    - Agent Skills (`/agents/agent-skills`) → `references/docs/agents/agent-skills.mdx` — Share reusable workflows and references with skills
+    - Plan Mode (`/agents/plan-mode`) → `references/docs/agents/plan-mode.mdx` — Review and collaborate on plans before execution
+    - System Prompt (`/agents/system-prompt`) → `references/docs/agents/system-prompt.mdx` — How mux constructs the system prompt for AI models
+  - **Configuration**
+    - Models (`/config/models`) → `references/docs/config/models.mdx` — Configure AI providers including Anthropic, OpenAI, Google, xAI, DeepSeek, and more
+    - MCP Servers (`/config/mcp-servers`) → `references/docs/config/mcp-servers.mdx` — Extend agent capabilities with Model Context Protocol servers
+    - Project Secrets (`/config/project-secrets`) → `references/docs/config/project-secrets.mdx` — Manage environment variables and API keys for your projects
+    - Agentic Git Identity (`/config/agentic-git-identity`) → `references/docs/config/agentic-git-identity.mdx` — Configure a separate Git identity for AI-generated commits
+    - Keyboard Shortcuts (`/config/keybinds`) → `references/docs/config/keybinds.mdx` — Complete keyboard shortcut reference for mux
+    - Notifications (`/config/notifications`) → `references/docs/config/notifications.mdx` — Configure how agents notify you about important events
+  - **Guides**
+    - Command Line Interface (`/guides/cli`) → `references/docs/guides/cli.mdx` — Run one-off agent tasks from the command line with mux run
+    - Context Management (`/guides/context-management`) → `references/docs/guides/context-management.mdx` — Commands for managing conversation history and token usage
+    - Message Sharing (`/guides/sharing`) → `references/docs/guides/sharing.mdx` — Share encrypted messages with cryptographic signatures via mux.md
+    - Prompting Tips (`/guides/prompting-tips`) → `references/docs/guides/prompting-tips.mdx` — Tips and tricks for getting the most out of your AI agents
+    - Vim Mode (`/guides/vim-mode`) → `references/docs/guides/vim-mode.mdx` — Vim-style editing in the mux chat input
+  - **Integrations**
+    - VS Code Extension (`/integrations/vscode-extension`) → `references/docs/integrations/vscode-extension.mdx` — Pair mux workspaces with VS Code and Cursor editors
+  - **Reference**
+    - Telemetry (`/reference/telemetry`) → `references/docs/reference/telemetry.mdx` — What mux collects, what it doesn’t, and how to disable it
+    - Storybook (`/reference/storybook`) → `references/docs/reference/storybook.mdx` — Develop and test mux UI states in isolation
+    - Terminal Benchmarking (`/reference/benchmarking`) → `references/docs/reference/benchmarking.mdx` — Run Terminal-Bench benchmarks with the mux adapter
+    - AGENTS.md (`/AGENTS`) → `references/docs/AGENTS.md` — Agent instructions for AI assistants working on the mux codebase
+<!-- END DOCS_TREE -->
+
+1. Read the docs navigation (source of truth for which pages exist):
+
+```ts
+agent_skill_read_file({ name: "mux-docs", filePath: "references/docs/docs.json" });
+```
+
+2. Read a specific page by path (mirrors `docs/` in the mux repo):
+
+- `/agents` → `references/docs/agents/index.mdx`
+- `/config/models` → `references/docs/config/models.mdx`
+- `/runtime` → `references/docs/runtime/index.mdx`
+
+```ts
+agent_skill_read_file({
+  name: "mux-docs",
+  filePath: "references/docs/config/models.mdx",
+});
+```
+
+Notes:
+
+- Many pages are `.mdx`; some are `.../index.mdx`.
+- Images are not embedded; you may see `/img/...` references.
+
+## When to use
+
+Use this skill when the user asks how mux works (workspaces, runtimes, agents, models, hooks, keybinds, etc.).
+
+## Links
+
+- **GitHub**: https://github.com/coder/mux
+- **Documentation**: https://mux.coder.com

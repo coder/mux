@@ -4,6 +4,7 @@ import {
   createStreamCollector,
   assertStreamSuccess,
   resolveOrpcClient,
+  modelString,
 } from "./helpers";
 import { HistoryService } from "../../src/node/services/historyService";
 import { createMuxMessage } from "../../src/common/types/message";
@@ -220,7 +221,11 @@ describeIntegration("truncateHistory", () => {
         void sendMessageWithModel(
           env,
           workspaceId,
-          "Run this bash command: for i in {1..60}; do sleep 0.5; done && echo done"
+          'Use bash to run: for i in {1..60}; do sleep 0.5; done && echo done. Set display_name="truncate-stream" and timeout_secs=120. Do not spawn a sub-agent.',
+          modelString("anthropic", "claude-sonnet-4-5"),
+          {
+            toolPolicy: [{ regex_match: "bash", action: "require" }],
+          }
         );
 
         // Wait for stream to start

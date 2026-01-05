@@ -10,6 +10,56 @@ import type { ToolConfiguration } from "@/common/utils/tools/tools";
  */
 export const MAX_FILE_SIZE = 1024 * 1024; // 1MB
 
+export interface PlanModeValidationError {
+  success: false;
+  error: string;
+}
+
+/**
+ * Validate file path for plan mode restrictions.
+ * Returns an error if:
+ * - Editing plan file outside plan mode (read-only)
+ * - Editing non-plan file in plan mode
+ * - Path is outside cwd (for non-plan files)
+ *
+ * Returns null if validation passes.
+ */
+export async function validatePlanModeAccess(
+  filePath: string,
+  config: ToolConfiguration
+): Promise<PlanModeValidationError | null> {
+  // Plan file is always read-only outside plan mode.
+  // This is especially important for SSH runtimes, where cwd validation is intentionally skipped.
+  if ((await isPlanFilePath(filePath, config)) && config.mode !== "plan") {
+    return {
+      success: false,
+      error: `Plan file is read-only outside plan mode: ${filePath}`,
+    };
+  }
+
+  // Plan mode restriction: only allow editing the plan file
+  if (config.mode === "plan" && config.planFilePath) {
+    if (!(await isPlanFilePath(filePath, config))) {
+      return {
+        success: false,
+        error: `In plan mode, only the plan file can be edited. Use path: ${config.planFilePath} (attempted: ${filePath})`,
+      };
+    }
+    // Skip cwd validation for plan file - it may be outside workspace
+  } else {
+    // Standard cwd validation for non-plan-mode edits
+    const pathValidation = validatePathInCwd(filePath, config.cwd, config.runtime);
+    if (pathValidation) {
+      return {
+        success: false,
+        error: pathValidation.error,
+      };
+    }
+  }
+
+  return null;
+}
+
 /**
  * Compute a 6-character hexadecimal lease from file content.
  * The lease changes when file content is modified.

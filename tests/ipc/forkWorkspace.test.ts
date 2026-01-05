@@ -11,6 +11,7 @@ import {
   sendMessageWithModel,
   createStreamCollector,
   assertStreamSuccess,
+  configureTestRetries,
   modelString,
   resolveOrpcClient,
 } from "./helpers";
@@ -25,6 +26,9 @@ const describeIntegration = shouldRunIntegrationTests() ? describe : describe.sk
 if (shouldRunIntegrationTests()) {
   validateApiKeys(["ANTHROPIC_API_KEY"]);
 }
+
+// Retry flaky tests in CI (API latency / rate limiting)
+configureTestRetries(3);
 
 describeIntegration("Workspace fork", () => {
   test.concurrent(
@@ -94,6 +98,7 @@ describeIntegration("Workspace fork", () => {
         // User expects: forked workspace is functional - can send messages to it
         const collector = createStreamCollector(env.orpc, forkedWorkspaceId);
         collector.start();
+        await collector.waitForSubscription();
         const sendResult = await sendMessageWithModel(
           env,
           forkedWorkspaceId,
@@ -149,6 +154,7 @@ describeIntegration("Workspace fork", () => {
         // Send a message that requires the historical context
         const collector = createStreamCollector(env.orpc, forkedWorkspaceId);
         collector.start();
+        await collector.waitForSubscription();
         const sendResult = await sendMessageWithModel(
           env,
           forkedWorkspaceId,
@@ -202,6 +208,10 @@ describeIntegration("Workspace fork", () => {
         const forkedCollector = createStreamCollector(env.orpc, forkedWorkspaceId);
         sourceCollector.start();
         forkedCollector.start();
+        await Promise.all([
+          sourceCollector.waitForSubscription(),
+          forkedCollector.waitForSubscription(),
+        ]);
 
         // Send different messages to both concurrently
         const [sourceResult, forkedResult] = await Promise.all([
@@ -251,6 +261,7 @@ describeIntegration("Workspace fork", () => {
         // Start collector before starting stream
         const sourceCollector = createStreamCollector(env.orpc, sourceWorkspaceId);
         sourceCollector.start();
+        await sourceCollector.waitForSubscription();
 
         // Start a stream in the source workspace (don't await)
         void sendMessageWithModel(
@@ -284,6 +295,9 @@ describeIntegration("Workspace fork", () => {
         // Send a message to the forked workspace
         const forkedCollector = createStreamCollector(env.orpc, forkedWorkspaceId);
         forkedCollector.start();
+        // Wait for subscription before sending to avoid race condition where stream-end
+        // is emitted before collector is ready to receive it
+        await forkedCollector.waitForSubscription();
         const forkedSendResult = await sendMessageWithModel(
           env,
           forkedWorkspaceId,

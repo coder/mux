@@ -9,6 +9,7 @@ import { sanitizeToolInputs } from "@/browser/utils/messages/sanitizeToolInput";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
+import { AgentIdSchema } from "@/common/orpc/schemas";
 import {
   PROVIDER_REGISTRY,
   PROVIDER_DEFINITIONS,
@@ -29,6 +30,7 @@ import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import type { FileState, EditedFileAttachment } from "@/node/services/agentSession";
 import { log } from "./log";
+import { injectFileAtMentions } from "./fileAtMentions";
 import {
   transformModelMessages,
   validateAnthropicCompliance,
@@ -45,9 +47,15 @@ import type { PartialService } from "./partialService";
 import type { SessionUsageService } from "./sessionUsageService";
 import { buildSystemMessage, readToolInstructions } from "./systemMessage";
 import { getTokenizerForModel } from "@/node/utils/main/tokenizer";
-import type { MCPServerManager } from "@/node/services/mcpServerManager";
+import type { TelemetryService } from "@/node/services/telemetryService";
+import { getRuntimeTypeForTelemetry, roundToBase2 } from "@/common/telemetry/utils";
+import type { WorkspaceMCPOverrides } from "@/common/types/mcp";
+import type { MCPServerManager, MCPWorkspaceStats } from "@/node/services/mcpServerManager";
+import { WorkspaceMcpOverridesService } from "./workspaceMcpOverridesService";
+import type { TaskService } from "@/node/services/taskService";
 import { buildProviderOptions } from "@/common/utils/ai/providerOptions";
 import type { ThinkingLevel } from "@/common/types/thinking";
+import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
 import type {
   StreamAbortEvent,
   StreamDeltaEvent,
@@ -55,12 +63,27 @@ import type {
   StreamStartEvent,
 } from "@/common/types/stream";
 import { applyToolPolicy, type ToolPolicy } from "@/common/utils/tools/toolPolicy";
-import { MockScenarioPlayer } from "./mock/mockScenarioPlayer";
+// PTC types only - modules lazy-loaded to avoid loading typescript/prettier at startup
+import type {
+  PTCEventWithParent,
+  createCodeExecutionTool as CreateCodeExecutionToolFn,
+} from "@/node/services/tools/code_execution";
+import type { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
+import type { ToolBridge } from "@/node/services/ptc/toolBridge";
+import { MockAiStreamPlayer } from "./mock/mockAiStreamPlayer";
 import { EnvHttpProxyAgent, type Dispatcher } from "undici";
 import { getPlanFilePath } from "@/common/utils/planStorage";
-import { getPlanModeInstruction } from "@/common/utils/ui/modeUtils";
-import type { UIMode } from "@/common/types/mode";
+import { getPlanFileHint, getPlanModeInstruction } from "@/common/utils/ui/modeUtils";
+import type { AgentMode } from "@/common/types/mode";
+import { MUX_APP_ATTRIBUTION_TITLE, MUX_APP_ATTRIBUTION_URL } from "@/constants/appAttribution";
 import { readPlanFile } from "@/node/utils/runtime/helpers";
+import {
+  readAgentDefinition,
+  resolveAgentBody,
+} from "@/node/services/agentDefinitions/agentDefinitionsService";
+import { resolveToolPolicyForAgent } from "@/node/services/agentDefinitions/resolveToolPolicy";
+import { isPlanLikeInResolvedChain } from "@/common/utils/agentTools";
+import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/resolveAgentInheritanceChain";
 
 // Export a standalone version of getToolsForModel for use in backend
 
@@ -106,6 +129,40 @@ type FetchWithBunExtensions = typeof fetch & {
 
 const globalFetchWithExtras = fetch as FetchWithBunExtensions;
 const defaultFetchWithExtras = defaultFetchWithUnlimitedTimeout as FetchWithBunExtensions;
+
+// Lazy-loaded PTC modules (only loaded when experiment is enabled)
+// This avoids loading typescript/prettier at startup which causes issues:
+// - Integration tests fail without --experimental-vm-modules (prettier uses dynamic imports)
+// - Smoke tests fail if typescript isn't in production bundle
+// Dynamic imports are justified: PTC pulls in ~10MB of dependencies that would slow startup.
+interface PTCModules {
+  createCodeExecutionTool: typeof CreateCodeExecutionToolFn;
+  QuickJSRuntimeFactory: typeof QuickJSRuntimeFactory;
+  ToolBridge: typeof ToolBridge;
+  runtimeFactory: QuickJSRuntimeFactory | null;
+}
+let ptcModules: PTCModules | null = null;
+
+async function getPTCModules(): Promise<PTCModules> {
+  if (ptcModules) return ptcModules;
+
+  /* eslint-disable no-restricted-syntax -- Dynamic imports required here to avoid loading
+     ~10MB of typescript/prettier/quickjs at startup (causes CI failures) */
+  const [codeExecution, quickjs, toolBridge] = await Promise.all([
+    import("@/node/services/tools/code_execution"),
+    import("@/node/services/ptc/quickjsRuntime"),
+    import("@/node/services/ptc/toolBridge"),
+  ]);
+  /* eslint-enable no-restricted-syntax */
+
+  ptcModules = {
+    createCodeExecutionTool: codeExecution.createCodeExecutionTool,
+    QuickJSRuntimeFactory: quickjs.QuickJSRuntimeFactory,
+    ToolBridge: toolBridge.ToolBridge,
+    runtimeFactory: null,
+  };
+  return ptcModules;
+}
 
 if (typeof globalFetchWithExtras.preconnect === "function") {
   defaultFetchWithExtras.preconnect = globalFetchWithExtras.preconnect.bind(globalFetchWithExtras);
@@ -239,6 +296,35 @@ export function buildAnthropicHeaders(
 }
 
 /**
+ * Build app attribution headers used by OpenRouter (and other compatible platforms).
+ *
+ * Attribution docs:
+ * - OpenRouter: https://openrouter.ai/docs/app-attribution
+ * - Vercel AI Gateway: https://vercel.com/docs/ai-gateway/app-attribution
+ *
+ * Exported for testing.
+ */
+export function buildAppAttributionHeaders(
+  existingHeaders: Record<string, string> | undefined
+): Record<string, string> {
+  // Clone to avoid mutating caller-provided objects.
+  const headers: Record<string, string> = existingHeaders ? { ...existingHeaders } : {};
+
+  // Header names are case-insensitive. Preserve user-provided values by never overwriting.
+  const existingLowercaseKeys = new Set(Object.keys(headers).map((key) => key.toLowerCase()));
+
+  if (!existingLowercaseKeys.has("http-referer")) {
+    headers["HTTP-Referer"] = MUX_APP_ATTRIBUTION_URL;
+  }
+
+  if (!existingLowercaseKeys.has("x-title")) {
+    headers["X-Title"] = MUX_APP_ATTRIBUTION_TITLE;
+  }
+
+  return headers;
+}
+
+/**
  * Preload AI SDK provider modules to avoid race conditions in concurrent test environments.
  * This function loads @ai-sdk/anthropic, @ai-sdk/openai, and ollama-ai-provider-v2 eagerly
  * so that subsequent dynamic imports in createModel() hit the module cache instead of racing.
@@ -269,16 +355,49 @@ function parseModelString(modelString: string): [string, string] {
   return [providerName, modelId];
 }
 
+function getTaskDepthFromConfig(
+  config: ReturnType<Config["loadConfigOrDefault"]>,
+  workspaceId: string
+): number {
+  const parentById = new Map<string, string | undefined>();
+  for (const project of config.projects.values()) {
+    for (const workspace of project.workspaces) {
+      if (!workspace.id) continue;
+      parentById.set(workspace.id, workspace.parentWorkspaceId);
+    }
+  }
+
+  let depth = 0;
+  let current = workspaceId;
+  for (let i = 0; i < 32; i++) {
+    const parent = parentById.get(current);
+    if (!parent) break;
+    depth += 1;
+    current = parent;
+  }
+
+  if (depth >= 32) {
+    throw new Error(
+      `getTaskDepthFromConfig: possible parentWorkspaceId cycle starting at ${workspaceId}`
+    );
+  }
+
+  return depth;
+}
+
 export class AIService extends EventEmitter {
   private readonly streamManager: StreamManager;
   private readonly historyService: HistoryService;
   private readonly partialService: PartialService;
   private readonly config: Config;
+  private readonly workspaceMcpOverridesService: WorkspaceMcpOverridesService;
   private mcpServerManager?: MCPServerManager;
+  private telemetryService?: TelemetryService;
   private readonly initStateManager: InitStateManager;
-  private readonly mockModeEnabled: boolean;
-  private readonly mockScenarioPlayer?: MockScenarioPlayer;
+  private mockModeEnabled: boolean;
+  private mockAiStreamPlayer?: MockAiStreamPlayer;
   private readonly backgroundProcessManager?: BackgroundProcessManager;
+  private taskService?: TaskService;
 
   constructor(
     config: Config,
@@ -286,12 +405,15 @@ export class AIService extends EventEmitter {
     partialService: PartialService,
     initStateManager: InitStateManager,
     backgroundProcessManager?: BackgroundProcessManager,
-    sessionUsageService?: SessionUsageService
+    sessionUsageService?: SessionUsageService,
+    workspaceMcpOverridesService?: WorkspaceMcpOverridesService
   ) {
     super();
     // Increase max listeners to accommodate multiple concurrent workspace listeners
     // Each workspace subscribes to stream events, and we expect >10 concurrent workspaces
     this.setMaxListeners(50);
+    this.workspaceMcpOverridesService =
+      workspaceMcpOverridesService ?? new WorkspaceMcpOverridesService(config);
     this.config = config;
     this.historyService = historyService;
     this.partialService = partialService;
@@ -300,18 +422,23 @@ export class AIService extends EventEmitter {
     this.streamManager = new StreamManager(historyService, partialService, sessionUsageService);
     void this.ensureSessionsDir();
     this.setupStreamEventForwarding();
-    this.mockModeEnabled = process.env.MUX_MOCK_AI === "1";
-    if (this.mockModeEnabled) {
+    this.mockModeEnabled = false;
+
+    if (process.env.MUX_MOCK_AI === "1") {
       log.info("AIService running in MUX_MOCK_AI mode");
-      this.mockScenarioPlayer = new MockScenarioPlayer({
-        aiService: this,
-        historyService,
-      });
+      this.enableMockMode();
     }
   }
 
+  setTelemetryService(service: TelemetryService): void {
+    this.telemetryService = service;
+  }
   setMCPServerManager(manager: MCPServerManager): void {
     this.mcpServerManager = manager;
+  }
+
+  setTaskService(taskService: TaskService): void {
+    this.taskService = taskService;
   }
 
   /**
@@ -364,6 +491,15 @@ export class AIService extends EventEmitter {
 
   isMockModeEnabled(): boolean {
     return this.mockModeEnabled;
+  }
+
+  enableMockMode(): void {
+    this.mockModeEnabled = true;
+
+    this.mockAiStreamPlayer ??= new MockAiStreamPlayer({
+      aiService: this,
+      historyService: this.historyService,
+    });
   }
 
   async getWorkspaceMetadata(workspaceId: string): Promise<Result<WorkspaceMetadata>> {
@@ -434,6 +570,13 @@ export class AIService extends EventEmitter {
       providerConfig = baseUrl
         ? { ...configWithoutBaseUrl, baseURL: baseUrl }
         : configWithoutBaseUrl;
+
+      // Inject app attribution headers (used by OpenRouter and other compatible platforms).
+      // We never overwrite user-provided values (case-insensitive header matching).
+      providerConfig = {
+        ...providerConfig,
+        headers: buildAppAttributionHeaders(providerConfig.headers),
+      };
 
       // Handle Anthropic provider
       if (providerName === "anthropic") {
@@ -512,12 +655,8 @@ export class AIService extends EventEmitter {
 
         const baseFetch = getProviderFetch(providerConfig);
 
-        // Wrap fetch to force truncation: "auto" for OpenAI Responses API calls.
-        // This is a temporary override until @ai-sdk/openai supports passing
-        // truncation via providerOptions. Safe because it only targets the
-        // OpenAI Responses endpoint and leaves other providers untouched.
-        // Can be disabled via muxProviderOptions for testing purposes.
-        const disableAutoTruncation = muxProviderOptions?.openai?.disableAutoTruncation ?? false;
+        // Wrap fetch to force truncation: "disabled" for OpenAI Responses API calls.
+        // This guarantees OpenAI never truncates server-side (mux handles context).
         const fetchWithOpenAITruncation = Object.assign(
           async (
             input: Parameters<typeof fetch>[0],
@@ -544,12 +683,7 @@ export class AIService extends EventEmitter {
               const isOpenAIResponses = /\/v1\/responses(\?|$)/.test(urlString);
 
               const body = init?.body;
-              if (
-                !disableAutoTruncation &&
-                isOpenAIResponses &&
-                method === "POST" &&
-                typeof body === "string"
-              ) {
+              if (isOpenAIResponses && method === "POST" && typeof body === "string") {
                 // Clone headers to avoid mutating caller-provided objects
                 const headers = new Headers(init?.headers);
                 // Remove content-length if present, since body will change
@@ -557,10 +691,7 @@ export class AIService extends EventEmitter {
 
                 try {
                   const json = JSON.parse(body) as Record<string, unknown>;
-                  // Only set if not already present
-                  if (json.truncation === undefined) {
-                    json.truncation = "auto";
-                  }
+                  json.truncation = "disabled";
                   const newBody = JSON.stringify(json);
                   const newInit: RequestInit = { ...init, headers, body: newBody };
                   return baseFetch(input, newInit);
@@ -872,6 +1003,7 @@ export class AIService extends EventEmitter {
    * @param recordFileState Optional callback to record file state for external edit detection
    * @param changedFileAttachments Optional attachments for files that were edited externally
    * @param postCompactionAttachments Optional attachments to inject after compaction
+   * @param disableWorkspaceAgents When true, read agent definitions from project path instead of workspace worktree
    * @returns Promise that resolves when streaming completes or fails
    */
   async streamMessage(
@@ -884,14 +1016,17 @@ export class AIService extends EventEmitter {
     additionalSystemInstructions?: string,
     maxOutputTokens?: number,
     muxProviderOptions?: MuxProviderOptions,
-    mode?: string,
+    mode?: AgentMode,
+    agentId?: string,
     recordFileState?: (filePath: string, state: FileState) => void,
     changedFileAttachments?: EditedFileAttachment[],
-    postCompactionAttachments?: PostCompactionAttachment[] | null
+    postCompactionAttachments?: PostCompactionAttachment[] | null,
+    experiments?: { programmaticToolCalling?: boolean; programmaticToolCallingExclusive?: boolean },
+    disableWorkspaceAgents?: boolean
   ): Promise<Result<void, SendMessageError>> {
     try {
-      if (this.mockModeEnabled && this.mockScenarioPlayer) {
-        return await this.mockScenarioPlayer.play(messages, workspaceId);
+      if (this.mockModeEnabled && this.mockAiStreamPlayer) {
+        return await this.mockAiStreamPlayer.play(messages, workspaceId, { model: modelString });
       }
 
       // DEBUG: Log streamMessage call
@@ -904,16 +1039,18 @@ export class AIService extends EventEmitter {
       // This is idempotent - won't double-commit if already in chat.jsonl
       await this.partialService.commitToHistory(workspaceId);
 
+      // Mode (plan|exec|compact) is derived from the selected agent definition.
       const effectiveMuxProviderOptions: MuxProviderOptions = muxProviderOptions ?? {};
+      const effectiveThinkingLevel: ThinkingLevel = thinkingLevel ?? "off";
 
-      // For xAI models, swap between reasoning and non-reasoning variants based on thinkingLevel
+      // For xAI models, swap between reasoning and non-reasoning variants based on thinking level
       // Similar to how OpenAI handles reasoning vs non-reasoning models
       let effectiveModelString = modelString;
       const [providerName, modelId] = parseModelString(modelString);
       if (providerName === "xai" && modelId === "grok-4-1-fast") {
         // xAI Grok only supports full reasoning (no medium/low)
         // Map to appropriate variant based on thinking level
-        if (thinkingLevel && thinkingLevel !== "off") {
+        if (effectiveThinkingLevel !== "off") {
           effectiveModelString = "xai:grok-4-1-fast-reasoning";
         } else {
           effectiveModelString = "xai:grok-4-1-fast-non-reasoning";
@@ -921,7 +1058,7 @@ export class AIService extends EventEmitter {
         log.debug("Mapping xAI Grok model to variant", {
           original: modelString,
           effective: effectiveModelString,
-          thinkingLevel,
+          thinkingLevel: effectiveThinkingLevel,
         });
       }
 
@@ -936,28 +1073,15 @@ export class AIService extends EventEmitter {
 
       // Use the provider name already extracted above (providerName variable)
 
-      // Get tool names early for mode transition sentinel (stub config, no workspace context needed)
-      const earlyRuntime = createRuntime({ type: "local", srcBaseDir: process.cwd() });
-      const earlyAllTools = await getToolsForModel(
-        modelString,
-        {
-          cwd: process.cwd(),
-          runtime: earlyRuntime,
-          runtimeTempDir: os.tmpdir(),
-          secrets: {},
-        },
-        "", // Empty workspace ID for early stub config
-        this.initStateManager,
-        undefined,
-        undefined
-      );
-      const earlyTools = applyToolPolicy(earlyAllTools, toolPolicy);
-      const toolNamesForSentinel = Object.keys(earlyTools);
+      // Tool names are needed for the mode transition sentinel injection.
+      // Compute them once we know the effective agent + tool policy.
+      let toolNamesForSentinel: string[] = [];
 
       // Filter out assistant messages with only reasoning (no text/tools)
       // EXCEPTION: When extended thinking is enabled, preserve reasoning-only messages
       // to comply with Extended Thinking API requirements
-      const preserveReasoningOnly = Boolean(thinkingLevel);
+      const preserveReasoningOnly =
+        providerName === "anthropic" && effectiveThinkingLevel !== "off";
       const filteredMessages = filterEmptyAssistantMessages(messages, preserveReasoningOnly);
       log.debug(`Filtered ${messages.length - filteredMessages.length} empty assistant messages`);
       log.debug_obj(`${workspaceId}/1a_filtered_messages.json`, filteredMessages);
@@ -1000,9 +1124,110 @@ export class AIService extends EventEmitter {
         ? metadata.projectPath
         : runtime.getWorkspacePath(metadata.projectPath, metadata.name);
 
+      // Resolve the active agent definition.
+      //
+      // Precedence:
+      // - Child workspaces (tasks) use their persisted agentId/agentType.
+      // - Main workspaces use the requested agentId (frontend), falling back to legacy mode.
+      const requestedAgentIdRaw =
+        (metadata.parentWorkspaceId ? (metadata.agentId ?? metadata.agentType) : undefined) ??
+        (typeof agentId === "string" ? agentId : undefined) ??
+        (typeof mode === "string" ? mode : undefined) ??
+        "exec";
+      const requestedAgentIdNormalized = requestedAgentIdRaw.trim().toLowerCase();
+      const parsedAgentId = AgentIdSchema.safeParse(requestedAgentIdNormalized);
+      const effectiveAgentId = parsedAgentId.success ? parsedAgentId.data : ("exec" as const);
+
+      // When disableWorkspaceAgents is true, skip workspace-specific agents entirely.
+      // Use project path so only built-in/global agents are available. This allows "unbricking"
+      // when iterating on agent files - a broken agent in the worktree won't affect message sending.
+      const agentDiscoveryPath = disableWorkspaceAgents ? metadata.projectPath : workspacePath;
+
+      let agentDefinition;
+      try {
+        agentDefinition = await readAgentDefinition(runtime, agentDiscoveryPath, effectiveAgentId);
+      } catch (error) {
+        log.warn("Failed to load agent definition; falling back to exec", {
+          workspaceId,
+          effectiveAgentId,
+          agentDiscoveryPath,
+          disableWorkspaceAgents,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        agentDefinition = await readAgentDefinition(runtime, agentDiscoveryPath, "exec");
+      }
+
+      // Determine if agent is plan-like by checking if propose_plan is in its resolved tools
+      // (including inherited tools from base agents).
+      const agentsForInheritance = await resolveAgentInheritanceChain({
+        runtime,
+        workspacePath: agentDiscoveryPath,
+        agentId: effectiveAgentId,
+        agentDefinition,
+        workspaceId,
+      });
+
+      const agentIsPlanLike = isPlanLikeInResolvedChain(agentsForInheritance);
+      const effectiveMode: AgentMode = agentIsPlanLike ? "plan" : "exec";
+
+      const cfg = this.config.loadConfigOrDefault();
+      const taskSettings = cfg.taskSettings ?? DEFAULT_TASK_SETTINGS;
+      const taskDepth = getTaskDepthFromConfig(cfg, workspaceId);
+      const shouldDisableTaskToolsForDepth = taskDepth >= taskSettings.maxTaskNestingDepth;
+
+      const isSubagentWorkspace = Boolean(metadata.parentWorkspaceId);
+
+      // NOTE: Caller-supplied policy is applied AFTER agent tool policy so callers can
+      // further restrict the tool set (e.g., disable all tools for testing).
+      // Agent policy establishes baseline (deny-all + enable whitelist + runtime restrictions).
+      // Caller policy then narrows further if needed.
+      const agentToolPolicy = resolveToolPolicyForAgent({
+        agents: agentsForInheritance,
+        isSubagent: isSubagentWorkspace,
+        disableTaskToolsForDepth: shouldDisableTaskToolsForDepth,
+      });
+      const effectiveToolPolicy: ToolPolicy | undefined =
+        toolPolicy || agentToolPolicy.length > 0
+          ? [...agentToolPolicy, ...(toolPolicy ?? [])]
+          : undefined;
+
+      // Compute tool names for mode transition sentinel.
+      const earlyRuntime = createRuntime({ type: "local", srcBaseDir: process.cwd() });
+      const earlyAllTools = await getToolsForModel(
+        modelString,
+        {
+          cwd: process.cwd(),
+          runtime: earlyRuntime,
+          runtimeTempDir: os.tmpdir(),
+          secrets: {},
+          mode: effectiveMode,
+        },
+        "", // Empty workspace ID for early stub config
+        this.initStateManager,
+        undefined,
+        undefined
+      );
+      const earlyTools = applyToolPolicy(earlyAllTools, effectiveToolPolicy);
+      toolNamesForSentinel = Object.keys(earlyTools);
+
+      // Fetch workspace MCP overrides (for filtering servers and tools)
+      // NOTE: Stored in <workspace>/.mux/mcp.local.jsonc (not ~/.mux/config.json).
+      let mcpOverrides: WorkspaceMCPOverrides | undefined;
+      try {
+        mcpOverrides =
+          await this.workspaceMcpOverridesService.getOverridesForWorkspace(workspaceId);
+      } catch (error) {
+        log.warn("[MCP] Failed to load workspace MCP overrides; continuing without overrides", {
+          workspaceId,
+          error,
+        });
+        mcpOverrides = undefined;
+      }
+
       // Fetch MCP server config for system prompt (before building message)
+      // Pass overrides to filter out disabled servers
       const mcpServers = this.mcpServerManager
-        ? await this.mcpServerManager.listServers(metadata.projectPath)
+        ? await this.mcpServerManager.listServers(metadata.projectPath, mcpOverrides)
         : undefined;
 
       // Construct plan mode instruction if in plan mode
@@ -1018,17 +1243,36 @@ export class AIService extends EventEmitter {
         workspaceId
       );
 
-      if (mode === "plan") {
+      if (effectiveMode === "plan") {
         const planModeInstruction = getPlanModeInstruction(planFilePath, planResult.exists);
         effectiveAdditionalInstructions = additionalSystemInstructions
           ? `${planModeInstruction}\n\n${additionalSystemInstructions}`
           : planModeInstruction;
+      } else if (mode && planResult.exists && planResult.content.trim()) {
+        // Users often use "Replace all chat history" after plan mode. In exec (or other non-plan)
+        // modes, the model can lose the plan file location because plan path injection only
+        // happens in plan mode.
+        const planFileHint = getPlanFileHint(planFilePath, planResult.exists);
+        if (planFileHint) {
+          effectiveAdditionalInstructions = effectiveAdditionalInstructions
+            ? `${planFileHint}\n\n${effectiveAdditionalInstructions}`
+            : planFileHint;
+        }
+      }
+
+      if (shouldDisableTaskToolsForDepth) {
+        const nestingInstruction =
+          `Task delegation is disabled in this workspace (taskDepth=${taskDepth}, ` +
+          `maxTaskNestingDepth=${taskSettings.maxTaskNestingDepth}). Do not call task/task_await/task_list/task_terminate.`;
+        effectiveAdditionalInstructions = effectiveAdditionalInstructions
+          ? `${effectiveAdditionalInstructions}\n\n${nestingInstruction}`
+          : nestingInstruction;
       }
 
       // Read plan content for mode transition (plan → exec)
       // Only read if switching to exec mode and last assistant was in plan mode
       let planContentForTransition: string | undefined;
-      if (mode === "exec") {
+      if (effectiveMode === "exec") {
         const lastAssistantMessage = [...filteredMessages]
           .reverse()
           .find((m) => m.role === "assistant");
@@ -1040,9 +1284,10 @@ export class AIService extends EventEmitter {
       // Now inject mode transition context with plan content (runtime is now available)
       const messagesWithModeContext = injectModeTransition(
         messagesWithSentinel,
-        mode,
+        effectiveMode,
         toolNamesForSentinel,
-        planContentForTransition
+        planContentForTransition,
+        planContentForTransition ? planFilePath : undefined
       );
 
       // Inject file change notifications as user messages (preserves system message cache)
@@ -1057,9 +1302,17 @@ export class AIService extends EventEmitter {
         postCompactionAttachments
       );
 
+      // Expand @file mentions (e.g. @src/foo.ts#L1-20) into an in-memory synthetic user message.
+      // This keeps chat history clean while giving the model immediate file context.
+      const messagesWithFileAtMentions = await injectFileAtMentions(messagesWithPostCompaction, {
+        runtime,
+        workspacePath,
+        abortSignal,
+      });
+
       // Apply centralized tool-output redaction BEFORE converting to provider ModelMessages
       // This keeps the persisted/UI history intact while trimming heavy fields for the request
-      const redactedForProvider = applyToolOutputRedaction(messagesWithPostCompaction);
+      const redactedForProvider = applyToolOutputRedaction(messagesWithFileAtMentions);
       log.debug_obj(`${workspaceId}/2a_redacted_messages.json`, redactedForProvider);
 
       // Sanitize tool inputs to ensure they are valid objects (not strings or arrays)
@@ -1071,18 +1324,36 @@ export class AIService extends EventEmitter {
       // Convert MuxMessage to ModelMessage format using Vercel AI SDK utility
       // Type assertion needed because MuxMessage has custom tool parts for interrupted tools
       // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument
-      const modelMessages = convertToModelMessages(sanitizedMessages as any, {
+      const rawModelMessages = convertToModelMessages(sanitizedMessages as any, {
         // Drop unfinished tool calls (input-streaming/input-available) so downstream
         // transforms only see tool calls that actually produced outputs.
         ignoreIncompleteToolCalls: true,
       });
+
+      // Self-healing: Filter out any empty ModelMessages that could brick the request.
+      // The SDK's ignoreIncompleteToolCalls can drop all parts from a message, leaving
+      // an assistant with empty content array. The API rejects these with "all messages
+      // must have non-empty content except for the optional final assistant message".
+      const modelMessages = rawModelMessages.filter((msg) => {
+        if (msg.role !== "assistant") return true;
+        if (typeof msg.content === "string") return msg.content.length > 0;
+        return Array.isArray(msg.content) && msg.content.length > 0;
+      });
+      if (modelMessages.length < rawModelMessages.length) {
+        log.debug(
+          `Self-healing: Filtered ${rawModelMessages.length - modelMessages.length} empty ModelMessage(s)`
+        );
+      }
       log.debug_obj(`${workspaceId}/2_model_messages.json`, modelMessages);
 
       // Apply ModelMessage transforms based on provider requirements
-      const transformedMessages = transformModelMessages(modelMessages, providerName);
+      const transformedMessages = transformModelMessages(modelMessages, providerName, {
+        anthropicThinkingEnabled: providerName === "anthropic" && effectiveThinkingLevel !== "off",
+      });
 
       // Apply cache control for Anthropic models AFTER transformation
       const finalMessages = applyCacheControl(transformedMessages, modelString);
+
       log.debug_obj(`${workspaceId}/3_final_messages.json`, finalMessages);
 
       // Validate the messages meet Anthropic requirements (Anthropic only)
@@ -1096,15 +1367,25 @@ export class AIService extends EventEmitter {
         }
       }
 
+      // Construct effective agent system prompt
+      // 1. Resolve the body with inheritance (prompt.append merges with base)
+      // 2. If running as subagent, append subagent.append_prompt
+      // Note: Use agentDefinition.id (may have fallen back to exec) instead of effectiveAgentId
+      const resolvedBody = await resolveAgentBody(runtime, agentDiscoveryPath, agentDefinition.id);
+      const agentSystemPrompt =
+        isSubagentWorkspace && agentDefinition.frontmatter.subagent?.append_prompt
+          ? `${resolvedBody}\n\n${agentDefinition.frontmatter.subagent.append_prompt}`
+          : resolvedBody;
+
       // Build system message from workspace metadata
       const systemMessage = await buildSystemMessage(
         metadata,
         runtime,
         workspacePath,
-        mode,
         effectiveAdditionalInstructions,
         modelString,
-        mcpServers
+        mcpServers,
+        { agentSystemPrompt }
       );
 
       // Count system message tokens for cost tracking
@@ -1116,28 +1397,41 @@ export class AIService extends EventEmitter {
 
       // Generate stream token and create temp directory for tools
       const streamToken = this.streamManager.generateStreamToken();
+
       let mcpTools: Record<string, Tool> | undefined;
+      let mcpStats: MCPWorkspaceStats | undefined;
+      let mcpSetupDurationMs = 0;
+
       if (this.mcpServerManager) {
+        const start = Date.now();
         try {
-          mcpTools = await this.mcpServerManager.getToolsForWorkspace({
+          const result = await this.mcpServerManager.getToolsForWorkspace({
             workspaceId,
             projectPath: metadata.projectPath,
             runtime,
             workspacePath,
+            overrides: mcpOverrides,
+            projectSecrets: secretsToRecord(projectSecrets),
           });
+
+          mcpTools = result.tools;
+          mcpStats = result.stats;
         } catch (error) {
           log.error("Failed to start MCP servers", { workspaceId, error });
+        } finally {
+          mcpSetupDurationMs = Date.now() - start;
         }
       }
 
       const runtimeTempDir = await this.streamManager.createTempDirForStream(streamToken, runtime);
 
-      // Extract tool-specific instructions from AGENTS.md files
+      // Extract tool-specific instructions from AGENTS.md files and agent definition
       const toolInstructions = await readToolInstructions(
         metadata,
         runtime,
         workspacePath,
-        modelString
+        modelString,
+        agentSystemPrompt
       );
 
       // Get model-specific tools with workspace path (correct for local or remote)
@@ -1150,18 +1444,35 @@ export class AIService extends EventEmitter {
           muxEnv: getMuxEnv(
             metadata.projectPath,
             getRuntimeType(metadata.runtimeConfig),
-            metadata.name
+            metadata.name,
+            {
+              modelString,
+              thinkingLevel: thinkingLevel ?? "off",
+            }
           ),
           runtimeTempDir,
           backgroundProcessManager: this.backgroundProcessManager,
           // Plan/exec mode configuration for plan file access.
           // - read: plan file is readable in all modes (useful context)
           // - write: enforced by file_edit_* tools (plan file is read-only outside plan mode)
-          mode: mode as UIMode | undefined,
+          mode: effectiveMode,
+          emitChatEvent: (event) => {
+            // Defensive: tools should only emit events for the workspace they belong to.
+            if ("workspaceId" in event && event.workspaceId !== workspaceId) {
+              return;
+            }
+            this.emit(event.type, event as never);
+          },
+          workspaceSessionDir: this.config.getSessionDir(workspaceId),
           planFilePath,
           workspaceId,
+          // Only child workspaces (tasks) can report to a parent.
+          enableAgentReport: Boolean(metadata.parentWorkspaceId),
           // External edit detection callback
           recordFileState,
+          taskService: this.taskService,
+          // PTC experiments for inheritance to subagents
+          experiments,
         },
         workspaceId,
         this.initStateManager,
@@ -1169,14 +1480,113 @@ export class AIService extends EventEmitter {
         mcpTools
       );
 
-      // Apply tool policy to filter tools (if policy provided)
-      const tools = applyToolPolicy(allTools, toolPolicy);
+      // NOTE: effectiveToolPolicy is derived from the selected agent definition (plus hard-denies).
+
+      // Apply tool policy FIRST - this must happen before PTC to ensure sandbox
+      // respects allow/deny filters. The policy-filtered tools are passed to
+      // ToolBridge so the mux.* API only exposes policy-allowed tools.
+      const policyFilteredTools = applyToolPolicy(allTools, effectiveToolPolicy);
+
+      // Handle PTC experiments - add or replace tools with code_execution
+      let toolsForModel = policyFilteredTools;
+      if (experiments?.programmaticToolCalling || experiments?.programmaticToolCallingExclusive) {
+        try {
+          // Lazy-load PTC modules only when experiments are enabled
+          const ptc = await getPTCModules();
+
+          // Create emit callback that forwards nested events to stream
+          // Only forward tool-call-start/end events, not console events
+          const emitNestedEvent = (event: PTCEventWithParent): void => {
+            if (event.type === "tool-call-start" || event.type === "tool-call-end") {
+              this.streamManager.emitNestedToolEvent(workspaceId, assistantMessageId, event);
+            }
+            // Console events are not streamed (appear in final result only)
+          };
+
+          // ToolBridge uses policy-filtered tools - sandbox only exposes allowed tools
+          const toolBridge = new ptc.ToolBridge(policyFilteredTools);
+
+          // Singleton runtime factory (WASM module is expensive to load)
+          ptc.runtimeFactory ??= new ptc.QuickJSRuntimeFactory();
+
+          const codeExecutionTool = await ptc.createCodeExecutionTool(
+            ptc.runtimeFactory,
+            toolBridge,
+            emitNestedEvent
+          );
+
+          if (experiments?.programmaticToolCallingExclusive) {
+            // Exclusive mode: code_execution is mandatory — it's the only way to use bridged
+            // tools. The experiment flag is the opt-in; policy cannot disable it here since
+            // that would leave no way to access tools. nonBridgeable is already policy-filtered.
+            const nonBridgeable = toolBridge.getNonBridgeableTools();
+            toolsForModel = { ...nonBridgeable, code_execution: codeExecutionTool };
+          } else {
+            // Supplement mode: add code_execution, then apply policy to determine final set.
+            // This correctly handles all policy combinations (require, enable, disable).
+            toolsForModel = applyToolPolicy(
+              { ...policyFilteredTools, code_execution: codeExecutionTool },
+              effectiveToolPolicy
+            );
+          }
+        } catch (error) {
+          // Fall back to policy-filtered tools if PTC creation fails
+          log.error("Failed to create code_execution tool, falling back to base tools", { error });
+        }
+      }
+
+      const tools = toolsForModel;
+
+      const effectiveMcpStats: MCPWorkspaceStats =
+        mcpStats ??
+        ({
+          enabledServerCount: 0,
+          startedServerCount: 0,
+          failedServerCount: 0,
+          autoFallbackCount: 0,
+          hasStdio: false,
+          hasHttp: false,
+          hasSse: false,
+          transportMode: "none",
+        } satisfies MCPWorkspaceStats);
+
+      const mcpToolNames = new Set(Object.keys(mcpTools ?? {}));
+      const toolNames = Object.keys(tools);
+      const mcpToolCount = toolNames.filter((name) => mcpToolNames.has(name)).length;
+      const totalToolCount = toolNames.length;
+      const builtinToolCount = Math.max(0, totalToolCount - mcpToolCount);
+
+      this.telemetryService?.capture({
+        event: "mcp_context_injected",
+        properties: {
+          workspaceId,
+          model: modelString,
+          mode: effectiveMode,
+          agentId: effectiveAgentId,
+          runtimeType: getRuntimeTypeForTelemetry(metadata.runtimeConfig),
+
+          mcp_server_enabled_count: effectiveMcpStats.enabledServerCount,
+          mcp_server_started_count: effectiveMcpStats.startedServerCount,
+          mcp_server_failed_count: effectiveMcpStats.failedServerCount,
+
+          mcp_tool_count: mcpToolCount,
+          total_tool_count: totalToolCount,
+          builtin_tool_count: builtinToolCount,
+
+          mcp_transport_mode: effectiveMcpStats.transportMode,
+          mcp_has_http: effectiveMcpStats.hasHttp,
+          mcp_has_sse: effectiveMcpStats.hasSse,
+          mcp_has_stdio: effectiveMcpStats.hasStdio,
+          mcp_auto_fallback_count: effectiveMcpStats.autoFallbackCount,
+          mcp_setup_duration_ms_b2: roundToBase2(mcpSetupDurationMs),
+        },
+      });
 
       log.info("AIService.streamMessage: tool configuration", {
         workspaceId,
         model: modelString,
         toolNames: Object.keys(tools),
-        hasToolPolicy: Boolean(toolPolicy),
+        hasToolPolicy: Boolean(effectiveToolPolicy),
       });
 
       // Create assistant message placeholder with historySequence from backend
@@ -1185,7 +1595,7 @@ export class AIService extends EventEmitter {
         timestamp: Date.now(),
         model: modelString,
         systemMessageTokens,
-        mode, // Track the mode for this assistant response
+        mode: effectiveMode, // Track the base mode for this assistant response
       });
 
       // Append to history to get historySequence assigned
@@ -1231,6 +1641,8 @@ export class AIService extends EventEmitter {
           messageId: assistantMessageId,
           model: modelString,
           historySequence,
+          startTime: Date.now(),
+          mode: effectiveMode,
         };
         this.emit("stream-start", streamStartEvent);
 
@@ -1250,7 +1662,7 @@ export class AIService extends EventEmitter {
           timestamp: Date.now(),
           model: modelString,
           systemMessageTokens,
-          toolPolicy,
+          toolPolicy: effectiveToolPolicy,
         });
 
         const parts: StreamEndEvent["parts"] = [
@@ -1266,6 +1678,8 @@ export class AIService extends EventEmitter {
           messageId: assistantMessageId,
           model: modelString,
           historySequence,
+          startTime: Date.now(),
+          mode: effectiveMode,
         };
         this.emit("stream-start", streamStartEvent);
 
@@ -1319,12 +1733,14 @@ export class AIService extends EventEmitter {
       // Build provider options based on thinking level and message history
       // Pass filtered messages so OpenAI can extract previousResponseId for persistence
       // Also pass callback to filter out lost responseIds (OpenAI invalidated them)
+      // Pass workspaceId to derive stable promptCacheKey for OpenAI caching
       const providerOptions = buildProviderOptions(
         modelString,
-        thinkingLevel ?? "off",
+        effectiveThinkingLevel,
         filteredMessages,
         (id) => this.streamManager.isResponseIdLost(id),
-        effectiveMuxProviderOptions
+        effectiveMuxProviderOptions,
+        workspaceId
       );
 
       // Debug dump: Log the complete LLM request when MUX_DEBUG_LLM_REQUEST is set
@@ -1345,10 +1761,11 @@ export class AIService extends EventEmitter {
             ])
           ),
           providerOptions,
-          thinkingLevel,
+          thinkingLevel: effectiveThinkingLevel,
           maxOutputTokens,
-          mode,
-          toolPolicy,
+          mode: effectiveMode,
+          agentId: effectiveAgentId,
+          toolPolicy: effectiveToolPolicy,
         };
         log.info(
           `[MUX_DEBUG_LLM_REQUEST] Full LLM request:\n${JSON.stringify(llmRequest, null, 2)}`
@@ -1364,16 +1781,17 @@ export class AIService extends EventEmitter {
         historySequence,
         systemMessage,
         runtime,
+        assistantMessageId, // Shared messageId ensures nested tool events match stream events
         abortSignal,
         tools,
         {
           systemMessageTokens,
           timestamp: Date.now(),
-          mode, // Pass mode so it persists in final history entry
+          mode: effectiveMode, // Pass base mode so it persists in final history entry
         },
         providerOptions,
         maxOutputTokens,
-        toolPolicy,
+        effectiveToolPolicy,
         streamToken // Pass the pre-generated stream token
       );
 
@@ -1397,8 +1815,8 @@ export class AIService extends EventEmitter {
     workspaceId: string,
     options?: { soft?: boolean; abandonPartial?: boolean }
   ): Promise<Result<void>> {
-    if (this.mockModeEnabled && this.mockScenarioPlayer) {
-      this.mockScenarioPlayer.stop(workspaceId);
+    if (this.mockModeEnabled && this.mockAiStreamPlayer) {
+      this.mockAiStreamPlayer.stop(workspaceId);
       return Ok(undefined);
     }
     return this.streamManager.stopStream(workspaceId, options);
@@ -1408,8 +1826,8 @@ export class AIService extends EventEmitter {
    * Check if a workspace is currently streaming
    */
   isStreaming(workspaceId: string): boolean {
-    if (this.mockModeEnabled && this.mockScenarioPlayer) {
-      return this.mockScenarioPlayer.isStreaming(workspaceId);
+    if (this.mockModeEnabled && this.mockAiStreamPlayer) {
+      return this.mockAiStreamPlayer.isStreaming(workspaceId);
     }
     return this.streamManager.isStreaming(workspaceId);
   }
@@ -1418,8 +1836,8 @@ export class AIService extends EventEmitter {
    * Get the current stream state for a workspace
    */
   getStreamState(workspaceId: string): string {
-    if (this.mockModeEnabled && this.mockScenarioPlayer) {
-      return this.mockScenarioPlayer.isStreaming(workspaceId) ? "streaming" : "idle";
+    if (this.mockModeEnabled && this.mockAiStreamPlayer) {
+      return this.mockAiStreamPlayer.isStreaming(workspaceId) ? "streaming" : "idle";
     }
     return this.streamManager.getStreamState(workspaceId);
   }
@@ -1429,7 +1847,7 @@ export class AIService extends EventEmitter {
    * Used to re-establish streaming context on frontend reconnection
    */
   getStreamInfo(workspaceId: string): ReturnType<typeof this.streamManager.getStreamInfo> {
-    if (this.mockModeEnabled && this.mockScenarioPlayer) {
+    if (this.mockModeEnabled && this.mockAiStreamPlayer) {
       return undefined;
     }
     return this.streamManager.getStreamInfo(workspaceId);
@@ -1440,8 +1858,8 @@ export class AIService extends EventEmitter {
    * Emits the same events that would be emitted during live streaming
    */
   async replayStream(workspaceId: string): Promise<void> {
-    if (this.mockModeEnabled && this.mockScenarioPlayer) {
-      await this.mockScenarioPlayer.replayStream(workspaceId);
+    if (this.mockModeEnabled && this.mockAiStreamPlayer) {
+      await this.mockAiStreamPlayer.replayStream(workspaceId);
       return;
     }
     await this.streamManager.replayStream(workspaceId);

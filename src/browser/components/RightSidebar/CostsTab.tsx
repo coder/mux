@@ -1,40 +1,28 @@
 import React from "react";
 import { useWorkspaceUsage, useWorkspaceConsumers } from "@/browser/stores/WorkspaceStore";
 import { getModelStats } from "@/common/utils/tokens/modelStats";
-import { sumUsageHistory, type ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
+import {
+  sumUsageHistory,
+  formatCostWithDollar,
+  type ChatUsageDisplay,
+} from "@/common/utils/tokens/usageAggregator";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { ToggleGroup, type ToggleOption } from "../ToggleGroup";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { supports1MContext } from "@/common/utils/ai/models";
-import { TOKEN_COMPONENT_COLORS } from "@/common/utils/tokens/tokenMeterUtils";
+import {
+  TOKEN_COMPONENT_COLORS,
+  calculateTokenMeterData,
+  formatTokens,
+} from "@/common/utils/tokens/tokenMeterUtils";
 import { ConsumerBreakdown } from "./ConsumerBreakdown";
-import { HorizontalThresholdSlider } from "./ThresholdSlider";
+import { ContextUsageBar } from "./ContextUsageBar";
 import { useAutoCompactionSettings } from "@/browser/hooks/useAutoCompactionSettings";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { PostCompactionSection } from "./PostCompactionSection";
 import { usePostCompactionState } from "@/browser/hooks/usePostCompactionState";
 import { useExperimentValue } from "@/browser/contexts/ExperimentsContext";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
-
-// Format token display - show k for thousands with 1 decimal
-const formatTokens = (tokens: number) =>
-  tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : tokens.toLocaleString();
-
-// Format cost display - show "??" if undefined, "<$0.01" for very small values, otherwise fixed precision
-const formatCost = (cost: number | undefined): string => {
-  if (cost === undefined) return "??";
-  if (cost === 0) return "0.00";
-  if (cost >= 0.01) return cost.toFixed(2);
-  // For values < 0.01, show as "<$0.01" (without $ prefix when used)
-  return "<0.01";
-};
-
-// Format cost with dollar sign
-const formatCostWithDollar = (cost: number | undefined): string => {
-  if (cost === undefined) return "??";
-  if (cost > 0 && cost < 0.01) return "~$0.00";
-  return `$${formatCost(cost)}`;
-};
 
 /**
  * Calculate cost with elevated pricing for 1M context (200k-1M tokens)
@@ -123,153 +111,22 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
         <div data-testid="context-usage-section" className="mt-2 mb-5">
           <div data-testid="context-usage-list" className="flex flex-col gap-3">
             {(() => {
-              // Context usage: live when streaming, else last historical
-              // Uses lastContextUsage (last step) for accurate context window size
               const contextUsage = usage.liveUsage ?? usage.lastContextUsage;
               const model = contextUsage?.model ?? "unknown";
 
-              // Get max tokens for the model from the model stats database
-              const modelStats = getModelStats(model);
-              const baseMaxTokens = modelStats?.max_input_tokens;
-              // Check if 1M context is active and supported
-              const is1MActive = use1M && supports1MContext(model);
-              const maxTokens = is1MActive ? 1_000_000 : baseMaxTokens;
-
-              // Total tokens includes cache creation (they're input tokens sent for caching)
-              const totalUsed = contextUsage
-                ? contextUsage.input.tokens +
-                  contextUsage.cached.tokens +
-                  contextUsage.cacheCreate.tokens +
-                  contextUsage.output.tokens +
-                  contextUsage.reasoning.tokens
-                : 0;
-
-              // Calculate percentages based on max tokens (actual context window usage)
-              let inputPercentage: number;
-              let outputPercentage: number;
-              let cachedPercentage: number;
-              let cacheCreatePercentage: number;
-              let reasoningPercentage: number;
-              let showWarning = false;
-              let totalPercentage: number;
-
-              if (maxTokens && contextUsage) {
-                // We know the model's max tokens - show actual context window usage
-                inputPercentage = (contextUsage.input.tokens / maxTokens) * 100;
-                outputPercentage = (contextUsage.output.tokens / maxTokens) * 100;
-                cachedPercentage = (contextUsage.cached.tokens / maxTokens) * 100;
-                cacheCreatePercentage = (contextUsage.cacheCreate.tokens / maxTokens) * 100;
-                reasoningPercentage = (contextUsage.reasoning.tokens / maxTokens) * 100;
-                totalPercentage = (totalUsed / maxTokens) * 100;
-              } else if (contextUsage) {
-                // Unknown model - scale to total tokens used
-                inputPercentage = totalUsed > 0 ? (contextUsage.input.tokens / totalUsed) * 100 : 0;
-                outputPercentage =
-                  totalUsed > 0 ? (contextUsage.output.tokens / totalUsed) * 100 : 0;
-                cachedPercentage =
-                  totalUsed > 0 ? (contextUsage.cached.tokens / totalUsed) * 100 : 0;
-                cacheCreatePercentage =
-                  totalUsed > 0 ? (contextUsage.cacheCreate.tokens / totalUsed) * 100 : 0;
-                reasoningPercentage =
-                  totalUsed > 0 ? (contextUsage.reasoning.tokens / totalUsed) * 100 : 0;
-                totalPercentage = 100;
-                showWarning = true;
-              } else {
-                inputPercentage = 0;
-                outputPercentage = 0;
-                cachedPercentage = 0;
-                cacheCreatePercentage = 0;
-                reasoningPercentage = 0;
-                totalPercentage = 0;
-              }
-
-              const totalDisplay = formatTokens(totalUsed);
-              const maxDisplay = maxTokens ? ` / ${formatTokens(maxTokens)}` : "";
+              const contextUsageData = contextUsage
+                ? calculateTokenMeterData(contextUsage, model, use1M, false)
+                : { segments: [], totalTokens: 0, totalPercentage: 0 };
 
               return (
-                <>
-                  <div data-testid="context-usage" className="relative flex flex-col gap-1">
-                    <div className="flex items-baseline justify-between">
-                      <span className="text-foreground inline-flex items-baseline gap-1 font-medium">
-                        Context Usage
-                      </span>
-                      <span className="text-muted text-xs">
-                        {totalDisplay}
-                        {maxDisplay}
-                        {` (${totalPercentage.toFixed(1)}%)`}
-                      </span>
-                    </div>
-                    <div className="relative w-full py-2">
-                      {/* Bar container - relative for slider positioning, overflow-hidden for rounded corners */}
-                      <div className="bg-border-light relative h-1.5 w-full overflow-hidden rounded-[3px]">
-                        {/* Segments container - flex layout for stacked percentages */}
-                        <div className="flex h-full w-full">
-                          {cachedPercentage > 0 && (
-                            <div
-                              key="cached"
-                              className="h-full transition-[width] duration-300"
-                              style={{
-                                width: `${cachedPercentage}%`,
-                                background: TOKEN_COMPONENT_COLORS.cached,
-                              }}
-                            />
-                          )}
-                          {cacheCreatePercentage > 0 && (
-                            <div
-                              key="cacheCreate"
-                              className="h-full transition-[width] duration-300"
-                              style={{
-                                width: `${cacheCreatePercentage}%`,
-                                background: TOKEN_COMPONENT_COLORS.cached,
-                              }}
-                            />
-                          )}
-                          <div
-                            key="input"
-                            className="h-full transition-[width] duration-300"
-                            style={{
-                              width: `${inputPercentage}%`,
-                              background: TOKEN_COMPONENT_COLORS.input,
-                            }}
-                          />
-                          <div
-                            key="output"
-                            className="h-full transition-[width] duration-300"
-                            style={{
-                              width: `${outputPercentage}%`,
-                              background: TOKEN_COMPONENT_COLORS.output,
-                            }}
-                          />
-                          {reasoningPercentage > 0 && (
-                            <div
-                              key="reasoning"
-                              className="h-full transition-[width] duration-300"
-                              style={{
-                                width: `${reasoningPercentage}%`,
-                                background: TOKEN_COMPONENT_COLORS.thinking,
-                              }}
-                            />
-                          )}
-                        </div>
-                      </div>
-                      {/* Threshold slider overlay - positioned relative to outer container */}
-                      {maxTokens && (
-                        <HorizontalThresholdSlider
-                          key="slider"
-                          config={{
-                            threshold: autoCompactThreshold,
-                            setThreshold: setAutoCompactThreshold,
-                          }}
-                        />
-                      )}
-                    </div>
-                  </div>
-                  {showWarning && (
-                    <div className="text-subtle mt-2 text-[11px] italic">
-                      Unknown model limits - showing relative usage only
-                    </div>
-                  )}
-                </>
+                <ContextUsageBar
+                  testId="context-usage"
+                  data={contextUsageData}
+                  autoCompaction={{
+                    threshold: autoCompactThreshold,
+                    setThreshold: setAutoCompactThreshold,
+                  }}
+                />
               );
             })()}
           </div>
@@ -367,7 +224,7 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
                       name: "Cache Create",
                       tokens: displayUsage.cacheCreate.tokens,
                       cost: displayUsage.cacheCreate.cost_usd,
-                      color: TOKEN_COMPONENT_COLORS.cached,
+                      color: TOKEN_COMPONENT_COLORS.cacheCreate,
                       show: displayUsage.cacheCreate.tokens > 0,
                     },
                     {
@@ -443,7 +300,7 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
                               className="h-full transition-[width] duration-300"
                               style={{
                                 width: `${cacheCreateCostPercentage}%`,
-                                background: TOKEN_COMPONENT_COLORS.cached,
+                                background: TOKEN_COMPONENT_COLORS.cacheCreate,
                               }}
                             />
                           )}

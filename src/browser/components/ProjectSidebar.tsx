@@ -15,13 +15,21 @@ import { matchesKeybind, formatKeybind, KEYBINDS } from "@/browser/utils/ui/keyb
 import { PlatformPaths } from "@/common/utils/paths";
 import {
   partitionWorkspacesByAge,
+  partitionWorkspacesBySection,
   formatDaysThreshold,
   AGE_THRESHOLDS_DAYS,
+  computeWorkspaceDepthMap,
+  findNextNonEmptyTier,
+  getTierKey,
+  getSectionExpandedKey,
+  getSectionTierKey,
+  sortSectionsByLinkedList,
 } from "@/browser/utils/ui/workspaceFiltering";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
+import { SidebarCollapseButton } from "./ui/SidebarCollapseButton";
 import SecretsModal from "./SecretsModal";
 import type { Secret } from "@/common/types/secrets";
-import { ForceDeleteModal } from "./ForceDeleteModal";
+
 import { WorkspaceListItem, type WorkspaceSelection } from "./WorkspaceListItem";
 import { RenameProvider } from "@/browser/contexts/WorkspaceRenameContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
@@ -29,6 +37,13 @@ import { ChevronRight, KeyRound } from "lucide-react";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { usePopoverError } from "@/browser/hooks/usePopoverError";
 import { PopoverError } from "./PopoverError";
+import { SectionHeader } from "./SectionHeader";
+import { AddSectionButton } from "./AddSectionButton";
+import { WorkspaceSectionDropZone } from "./WorkspaceSectionDropZone";
+import { WorkspaceDragLayer } from "./WorkspaceDragLayer";
+import { SectionDragLayer } from "./SectionDragLayer";
+import { DraggableSection } from "./DraggableSection";
+import type { SectionConfig } from "@/common/types/project";
 
 // Re-export WorkspaceSelection for backwards compatibility
 export type { WorkspaceSelection } from "./WorkspaceListItem";
@@ -36,6 +51,23 @@ export type { WorkspaceSelection } from "./WorkspaceListItem";
 // Draggable project item moved to module scope to avoid remounting on every parent render.
 // Defining components inside another component causes a new function identity each render,
 // which forces React to unmount/remount the subtree. That led to hover flicker and high CPU.
+
+const PROJECT_ITEM_BASE_CLASS =
+  "py-2 px-3 flex items-center border-l-transparent bg-sidebar transition-colors duration-150";
+
+function getProjectItemClassName(opts: {
+  isDragging: boolean;
+  isOver: boolean;
+  selected: boolean;
+}): string {
+  return cn(
+    PROJECT_ITEM_BASE_CLASS,
+    opts.isDragging ? "cursor-grabbing opacity-35 [&_*]:!cursor-grabbing" : "cursor-grab",
+    opts.isOver && "bg-accent/[0.08]",
+    opts.selected && "bg-hover border-l-accent",
+    "hover:[&_button]:opacity-100 hover:[&_[data-drag-handle]]:opacity-100"
+  );
+}
 type DraggableProjectItemProps = React.PropsWithChildren<{
   projectPath: string;
   onReorder: (draggedPath: string, targetPath: string) => void;
@@ -60,7 +92,7 @@ const DraggableProjectItemBase: React.FC<DraggableProjectItemProps> = ({
   const [{ isDragging }, drag, dragPreview] = useDrag(
     () => ({
       type: "PROJECT",
-      item: { projectPath },
+      item: { type: "PROJECT" as const, projectPath },
       collect: (monitor) => ({ isDragging: monitor.isDragging() }),
     }),
     [projectPath]
@@ -87,13 +119,11 @@ const DraggableProjectItemBase: React.FC<DraggableProjectItemProps> = ({
   return (
     <div
       ref={(node) => drag(drop(node))}
-      className={cn(
-        "py-2 px-3 flex items-center border-l-transparent transition-all duration-150 bg-sidebar",
-        isDragging ? "cursor-grabbing opacity-40 [&_*]:!cursor-grabbing" : "cursor-grab",
-        isOver && "bg-accent/[0.08]",
-        selected && "bg-hover border-l-accent",
-        "hover:[&_button]:opacity-100 hover:[&_[data-drag-handle]]:opacity-100"
-      )}
+      className={getProjectItemClassName({
+        isDragging,
+        isOver,
+        selected: !!selected,
+      })}
       {...rest}
     >
       {children}
@@ -110,7 +140,16 @@ const DraggableProjectItem = React.memo(
 );
 
 // Custom drag layer to show a semi-transparent preview and enforce grabbing cursor
-type DragItem = { projectPath: string } | null;
+interface ProjectDragItem {
+  type: "PROJECT";
+  projectPath: string;
+}
+interface SectionDragItemLocal {
+  type: "SECTION_REORDER";
+  sectionId: string;
+  projectPath: string;
+}
+type DragItem = ProjectDragItem | SectionDragItemLocal | null;
 
 const ProjectDragLayer: React.FC = () => {
   const dragState = useDragLayer<{
@@ -138,21 +177,21 @@ const ProjectDragLayer: React.FC = () => {
     };
   }, [isDragging]);
 
-  if (!isDragging || !currentOffset || !item?.projectPath) return null;
+  // Only render for PROJECT type drags (not section reorder)
+  if (!isDragging || !currentOffset || !item?.projectPath || item.type !== "PROJECT") return null;
 
   const abbrevPath = PlatformPaths.abbreviate(item.projectPath);
-  const { dirPath, basename } = PlatformPaths.splitAbbreviated(abbrevPath);
+  const { basename } = PlatformPaths.splitAbbreviated(abbrevPath);
 
   return (
     <div className="pointer-events-none fixed inset-0 z-[9999] cursor-grabbing">
       <div style={{ transform: `translate(${currentOffset.x + 10}px, ${currentOffset.y + 10}px)` }}>
-        <div className="bg-hover/95 text-foreground border-l-accent flex w-fit max-w-72 min-w-44 items-center rounded border-l-[3px] px-3 py-1.5 shadow-[0_6px_24px_rgba(0,0,0,0.4)]">
-          <span className="text-muted mr-2 text-xs">▶</span>
-          <div className="min-w-0 flex-1">
-            <div className="text-muted-dark font-monospace truncate text-sm leading-tight">
-              <span>{dirPath}</span>
-              <span className="text-foreground font-medium">{basename}</span>
-            </div>
+        <div className={cn(PROJECT_ITEM_BASE_CLASS, "w-fit max-w-64 rounded-sm shadow-lg")}>
+          <span className="text-secondary mr-2 flex h-5 w-5 shrink-0 items-center justify-center">
+            <ChevronRight size={12} />
+          </span>
+          <div className="flex min-w-0 flex-1 items-center pr-2">
+            <span className="text-foreground truncate text-sm font-medium">{basename}</span>
           </div>
         </div>
       </div>
@@ -181,9 +220,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const {
     selectedWorkspace,
     setSelectedWorkspace: onSelectWorkspace,
-    removeWorkspace: onRemoveWorkspace,
+    archiveWorkspace: onArchiveWorkspace,
     renameWorkspace: onRenameWorkspace,
     beginWorkspaceCreation: onAddWorkspace,
+    refreshWorkspaceMetadata,
   } = useWorkspaceContext();
 
   // Get project state and operations from context
@@ -193,6 +233,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     removeProject: onRemoveProject,
     getSecrets: onGetSecrets,
     updateSecrets: onUpdateSecrets,
+    createSection,
+    updateSection,
+    removeSection,
+    reorderSections,
+    assignWorkspaceToSection,
   } = useProjectContext();
 
   // Mobile breakpoint for auto-closing sidebar
@@ -211,8 +256,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
   // Wrapper to close sidebar on mobile after adding workspace
   const handleAddWorkspace = useCallback(
-    (projectPath: string) => {
-      onAddWorkspace(projectPath);
+    (projectPath: string, sectionId?: string) => {
+      onAddWorkspace(projectPath, sectionId);
       if (window.innerWidth <= MOBILE_BREAKPOINT && !collapsed) {
         onToggleCollapsed();
       }
@@ -233,24 +278,25 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   );
 
   // Track which projects have old workspaces expanded (per-project, per-tier)
-  // Key format: `${projectPath}:${tierIndex}` where tierIndex is 0, 1, 2 for 1/7/30 days
+  // Key format: getTierKey(projectPath, tierIndex) where tierIndex is 0, 1, 2 for 1/7/30 days
   const [expandedOldWorkspaces, setExpandedOldWorkspaces] = usePersistedState<
     Record<string, boolean>
   >("expandedOldWorkspaces", {});
-  const [deletingWorkspaceIds, setDeletingWorkspaceIds] = useState<Set<string>>(new Set());
-  const workspaceRemoveError = usePopoverError();
+
+  // Track which sections are expanded
+  const [expandedSections, setExpandedSections] = usePersistedState<Record<string, boolean>>(
+    "expandedSections",
+    {}
+  );
+
+  const [archivingWorkspaceIds, setArchivingWorkspaceIds] = useState<Set<string>>(new Set());
+  const workspaceArchiveError = usePopoverError();
   const projectRemoveError = usePopoverError();
   const [secretsModalState, setSecretsModalState] = useState<{
     isOpen: boolean;
     projectPath: string;
     projectName: string;
     secrets: Secret[];
-  } | null>(null);
-  const [forceDeleteModal, setForceDeleteModal] = useState<{
-    isOpen: boolean;
-    workspaceId: string;
-    error: string;
-    anchor: { top: number; left: number } | null;
   } | null>(null);
 
   const getProjectName = (path: string) => {
@@ -276,48 +322,49 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     [setExpandedProjectsArray]
   );
 
-  const toggleOldWorkspaces = (projectPath: string, tierIndex: number) => {
-    const key = `${projectPath}:${tierIndex}`;
-    setExpandedOldWorkspaces((prev) => ({
+  const toggleSection = (projectPath: string, sectionId: string) => {
+    const key = getSectionExpandedKey(projectPath, sectionId);
+    setExpandedSections((prev) => ({
       ...prev,
       [key]: !prev[key],
     }));
   };
 
-  const handleRemoveWorkspace = useCallback(
+  const handleCreateSection = async (projectPath: string, name: string) => {
+    const result = await createSection(projectPath, name);
+    if (result.success) {
+      // Auto-expand the new section
+      const key = getSectionExpandedKey(projectPath, result.data.id);
+      setExpandedSections((prev) => ({ ...prev, [key]: true }));
+    }
+  };
+
+  const handleArchiveWorkspace = useCallback(
     async (workspaceId: string, buttonElement: HTMLElement) => {
-      // Mark workspace as being deleted for UI feedback
-      setDeletingWorkspaceIds((prev) => new Set(prev).add(workspaceId));
+      // Mark workspace as being archived for UI feedback
+      setArchivingWorkspaceIds((prev) => new Set(prev).add(workspaceId));
 
       try {
-        const result = await onRemoveWorkspace(workspaceId);
+        const result = await onArchiveWorkspace(workspaceId);
         if (!result.success) {
-          const error = result.error ?? "Failed to remove workspace";
+          const error = result.error ?? "Failed to archive workspace";
           const rect = buttonElement.getBoundingClientRect();
           const anchor = {
             top: rect.top + window.scrollY,
-            left: rect.right + 10, // 10px to the right of button
+            left: rect.right + 10,
           };
-
-          // Show force delete modal on any error to handle all cases
-          // (uncommitted changes, submodules, etc.)
-          setForceDeleteModal({
-            isOpen: true,
-            workspaceId,
-            error,
-            anchor,
-          });
+          workspaceArchiveError.showError(workspaceId, error, anchor);
         }
       } finally {
-        // Clear deleting state (workspace removed or error shown)
-        setDeletingWorkspaceIds((prev) => {
+        // Clear archiving state
+        setArchivingWorkspaceIds((prev) => {
           const next = new Set(prev);
           next.delete(workspaceId);
           return next;
         });
       }
     },
-    [onRemoveWorkspace]
+    [onArchiveWorkspace, workspaceArchiveError]
   );
 
   const handleOpenSecrets = async (projectPath: string) => {
@@ -328,33 +375,6 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       projectName: getProjectName(projectPath),
       secrets,
     });
-  };
-
-  const handleForceDelete = async (workspaceId: string) => {
-    const modalState = forceDeleteModal;
-    // Close modal immediately to show that action is in progress
-    setForceDeleteModal(null);
-
-    // Mark workspace as being deleted for UI feedback
-    setDeletingWorkspaceIds((prev) => new Set(prev).add(workspaceId));
-
-    try {
-      // Use the same state update logic as regular removal
-      const result = await onRemoveWorkspace(workspaceId, { force: true });
-      if (!result.success) {
-        const errorMessage = result.error ?? "Failed to remove workspace";
-        console.error("Force delete failed:", result.error);
-
-        workspaceRemoveError.showError(workspaceId, errorMessage, modalState?.anchor ?? undefined);
-      }
-    } finally {
-      // Clear deleting state
-      setDeletingWorkspaceIds((prev) => {
-        const next = new Set(prev);
-        next.delete(workspaceId);
-        return next;
-      });
-    }
   };
 
   const handleSaveSecrets = async (secrets: Secret[]) => {
@@ -431,6 +451,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     <RenameProvider onRenameWorkspace={onRenameWorkspace}>
       <DndProvider backend={HTML5Backend}>
         <ProjectDragLayer />
+        <WorkspaceDragLayer />
+        <SectionDragLayer />
         <div
           className="font-primary bg-sidebar border-border-light flex flex-1 flex-col overflow-hidden border-r"
           role="navigation"
@@ -443,10 +465,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                 <button
                   onClick={onAddProject}
                   aria-label="Add project"
-                  className="text-secondary hover:bg-hover hover:border-border-light flex cursor-pointer items-center gap-1 rounded border border-transparent bg-transparent px-1.5 py-0.5 text-sm transition-all duration-200"
+                  className="text-secondary hover:bg-hover hover:border-border-light flex h-6 w-6 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent text-lg leading-none transition-all duration-200"
                 >
-                  <span className="text-base leading-none">+</span>
-                  <span>New Project</span>
+                  +
                 </button>
               </div>
               <div className="flex-1 overflow-y-auto">
@@ -578,9 +599,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             }}
                             aria-label={`New chat in ${projectName}`}
                             data-project-path={projectPath}
-                            className="text-secondary hover:bg-hover hover:border-border-light shrink-0 cursor-pointer rounded border border-transparent bg-transparent px-1.5 py-0.5 text-[11px] transition-all duration-200"
+                            className="text-secondary hover:bg-hover hover:border-border-light flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent text-sm leading-none transition-all duration-200"
                           >
-                            + New Chat
+                            +
                           </button>
                         </DraggableProjectItem>
 
@@ -592,100 +613,271 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             className="pt-1"
                           >
                             {(() => {
+                              // Archived workspaces are excluded from workspaceMetadata so won't appear here
                               const allWorkspaces =
                                 sortedWorkspacesByProject.get(projectPath) ?? [];
-                              const { recent, buckets } = partitionWorkspacesByAge(
-                                allWorkspaces,
-                                workspaceRecency
-                              );
+                              const sections = sortSectionsByLinkedList(config.sections ?? []);
+                              const depthByWorkspaceId = computeWorkspaceDepthMap(allWorkspaces);
 
-                              const renderWorkspace = (metadata: FrontendWorkspaceMetadata) => (
+                              const renderWorkspace = (
+                                metadata: FrontendWorkspaceMetadata,
+                                sectionId?: string
+                              ) => (
                                 <WorkspaceListItem
                                   key={metadata.id}
                                   metadata={metadata}
                                   projectPath={projectPath}
                                   projectName={projectName}
                                   isSelected={selectedWorkspace?.workspaceId === metadata.id}
-                                  isDeleting={deletingWorkspaceIds.has(metadata.id)}
+                                  isArchiving={archivingWorkspaceIds.has(metadata.id)}
                                   lastReadTimestamp={lastReadTimestamps[metadata.id] ?? 0}
                                   onSelectWorkspace={handleSelectWorkspace}
-                                  onRemoveWorkspace={handleRemoveWorkspace}
+                                  onArchiveWorkspace={handleArchiveWorkspace}
                                   onToggleUnread={_onToggleUnread}
+                                  depth={depthByWorkspaceId[metadata.id] ?? 0}
+                                  sectionId={sectionId}
                                 />
                               );
 
-                              // Find the next tier with workspaces (skip empty tiers)
-                              const findNextNonEmptyTier = (startIndex: number): number => {
-                                for (let i = startIndex; i < buckets.length; i++) {
-                                  if (buckets[i].length > 0) return i;
-                                }
-                                return -1;
-                              };
+                              // Render age tiers for a list of workspaces
+                              const renderAgeTiers = (
+                                workspaces: FrontendWorkspaceMetadata[],
+                                tierKeyPrefix: string,
+                                sectionId?: string
+                              ): React.ReactNode => {
+                                const { recent, buckets } = partitionWorkspacesByAge(
+                                  workspaces,
+                                  workspaceRecency
+                                );
 
-                              // Render a tier and all subsequent tiers recursively
-                              // Each tier only shows if the previous tier is expanded
-                              // Empty tiers are skipped automatically
-                              const renderTier = (tierIndex: number): React.ReactNode => {
-                                const bucket = buckets[tierIndex];
-                                // Sum remaining workspaces from this tier onward
-                                const remainingCount = buckets
-                                  .slice(tierIndex)
-                                  .reduce((sum, b) => sum + b.length, 0);
+                                const renderTier = (tierIndex: number): React.ReactNode => {
+                                  const bucket = buckets[tierIndex];
+                                  const remainingCount = buckets
+                                    .slice(tierIndex)
+                                    .reduce((sum, b) => sum + b.length, 0);
 
-                                if (remainingCount === 0) return null;
+                                  if (remainingCount === 0) return null;
 
-                                const key = `${projectPath}:${tierIndex}`;
-                                const isExpanded = expandedOldWorkspaces[key] ?? false;
-                                const thresholdDays = AGE_THRESHOLDS_DAYS[tierIndex];
-                                const thresholdLabel = formatDaysThreshold(thresholdDays);
+                                  const tierKey = `${tierKeyPrefix}:${tierIndex}`;
+                                  const isTierExpanded = expandedOldWorkspaces[tierKey] ?? false;
+                                  const thresholdDays = AGE_THRESHOLDS_DAYS[tierIndex];
+                                  const thresholdLabel = formatDaysThreshold(thresholdDays);
+                                  const displayCount = isTierExpanded
+                                    ? bucket.length
+                                    : remainingCount;
+
+                                  return (
+                                    <React.Fragment key={tierKey}>
+                                      <button
+                                        onClick={() => {
+                                          setExpandedOldWorkspaces((prev) => ({
+                                            ...prev,
+                                            [tierKey]: !prev[tierKey],
+                                          }));
+                                        }}
+                                        aria-label={
+                                          isTierExpanded
+                                            ? `Collapse workspaces older than ${thresholdLabel}`
+                                            : `Expand workspaces older than ${thresholdLabel}`
+                                        }
+                                        aria-expanded={isTierExpanded}
+                                        className="text-muted border-hover hover:text-label [&:hover_.arrow]:text-label flex w-full cursor-pointer items-center justify-between border-t border-none bg-transparent px-3 py-2 pl-[22px] text-xs font-medium transition-all duration-150 hover:bg-white/[0.03]"
+                                      >
+                                        <div className="flex items-center gap-1.5">
+                                          <span>Older than {thresholdLabel}</span>
+                                          <span className="text-dim font-normal">
+                                            ({displayCount})
+                                          </span>
+                                        </div>
+                                        <span
+                                          className="arrow text-dim text-[11px] transition-transform duration-200 ease-in-out"
+                                          style={{
+                                            transform: isTierExpanded
+                                              ? "rotate(90deg)"
+                                              : "rotate(0deg)",
+                                          }}
+                                        >
+                                          <ChevronRight size={12} />
+                                        </span>
+                                      </button>
+                                      {isTierExpanded && (
+                                        <>
+                                          {bucket.map((ws) => renderWorkspace(ws, sectionId))}
+                                          {(() => {
+                                            const nextTier = findNextNonEmptyTier(
+                                              buckets,
+                                              tierIndex + 1
+                                            );
+                                            return nextTier !== -1 ? renderTier(nextTier) : null;
+                                          })()}
+                                        </>
+                                      )}
+                                    </React.Fragment>
+                                  );
+                                };
+
+                                const firstTier = findNextNonEmptyTier(buckets, 0);
 
                                 return (
                                   <>
-                                    <button
-                                      onClick={() => toggleOldWorkspaces(projectPath, tierIndex)}
-                                      aria-label={
-                                        isExpanded
-                                          ? `Collapse workspaces older than ${thresholdLabel}`
-                                          : `Expand workspaces older than ${thresholdLabel}`
-                                      }
-                                      aria-expanded={isExpanded}
-                                      className="text-muted border-hover hover:text-label [&:hover_.arrow]:text-label flex w-full cursor-pointer items-center justify-between border-t border-none bg-transparent px-3 py-2 pl-[22px] text-xs font-medium transition-all duration-150 hover:bg-white/[0.03]"
-                                    >
-                                      <div className="flex items-center gap-1.5">
-                                        <span>Older than {thresholdLabel}</span>
-                                        <span className="text-dim font-normal">
-                                          ({remainingCount})
-                                        </span>
-                                      </div>
-                                      <span
-                                        className="arrow text-dim text-[11px] transition-transform duration-200 ease-in-out"
-                                        style={{
-                                          transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
-                                        }}
-                                      >
-                                        <ChevronRight size={12} />
-                                      </span>
-                                    </button>
-                                    {isExpanded && (
-                                      <>
-                                        {bucket.map(renderWorkspace)}
-                                        {(() => {
-                                          const nextTier = findNextNonEmptyTier(tierIndex + 1);
-                                          return nextTier !== -1 ? renderTier(nextTier) : null;
-                                        })()}
-                                      </>
-                                    )}
+                                    {recent.map((ws) => renderWorkspace(ws, sectionId))}
+                                    {firstTier !== -1 && renderTier(firstTier)}
                                   </>
                                 );
                               };
 
-                              // Find first non-empty tier to start rendering
-                              const firstTier = findNextNonEmptyTier(0);
+                              // Partition workspaces by section
+                              const { unsectioned, bySectionId } = partitionWorkspacesBySection(
+                                allWorkspaces,
+                                sections
+                              );
+
+                              // Handle workspace drop into section
+                              const handleWorkspaceSectionDrop = (
+                                workspaceId: string,
+                                targetSectionId: string | null
+                              ) => {
+                                void (async () => {
+                                  const result = await assignWorkspaceToSection(
+                                    projectPath,
+                                    workspaceId,
+                                    targetSectionId
+                                  );
+                                  if (result.success) {
+                                    // Refresh workspace metadata so UI shows updated sectionId
+                                    await refreshWorkspaceMetadata();
+                                  }
+                                })();
+                              };
+
+                              // Handle section reorder (drag section onto another section)
+                              const handleSectionReorder = (
+                                draggedSectionId: string,
+                                targetSectionId: string
+                              ) => {
+                                void (async () => {
+                                  // Compute new order: move dragged section to position of target
+                                  const currentOrder = sections.map((s) => s.id);
+                                  const draggedIndex = currentOrder.indexOf(draggedSectionId);
+                                  const targetIndex = currentOrder.indexOf(targetSectionId);
+
+                                  if (draggedIndex === -1 || targetIndex === -1) return;
+
+                                  // Remove dragged from current position
+                                  const newOrder = [...currentOrder];
+                                  newOrder.splice(draggedIndex, 1);
+                                  // Insert at target position
+                                  newOrder.splice(targetIndex, 0, draggedSectionId);
+
+                                  await reorderSections(projectPath, newOrder);
+                                })();
+                              };
+
+                              // Render section with its workspaces
+                              const renderSection = (section: SectionConfig) => {
+                                const sectionWorkspaces = bySectionId.get(section.id) ?? [];
+                                const sectionExpandedKey = getSectionExpandedKey(
+                                  projectPath,
+                                  section.id
+                                );
+                                const isSectionExpanded =
+                                  expandedSections[sectionExpandedKey] ?? true;
+
+                                return (
+                                  <DraggableSection
+                                    key={section.id}
+                                    sectionId={section.id}
+                                    sectionName={section.name}
+                                    projectPath={projectPath}
+                                    onReorder={handleSectionReorder}
+                                  >
+                                    <WorkspaceSectionDropZone
+                                      projectPath={projectPath}
+                                      sectionId={section.id}
+                                      onDrop={handleWorkspaceSectionDrop}
+                                    >
+                                      <SectionHeader
+                                        section={section}
+                                        isExpanded={isSectionExpanded}
+                                        workspaceCount={sectionWorkspaces.length}
+                                        onToggleExpand={() =>
+                                          toggleSection(projectPath, section.id)
+                                        }
+                                        onAddWorkspace={() => {
+                                          // Create workspace in this section
+                                          handleAddWorkspace(projectPath, section.id);
+                                        }}
+                                        onRename={(name) => {
+                                          void updateSection(projectPath, section.id, { name });
+                                        }}
+                                        onChangeColor={(color) => {
+                                          void updateSection(projectPath, section.id, { color });
+                                        }}
+                                        onDelete={() => {
+                                          void removeSection(projectPath, section.id);
+                                        }}
+                                      />
+                                      {isSectionExpanded && (
+                                        <div className="pb-1">
+                                          {sectionWorkspaces.length > 0 ? (
+                                            renderAgeTiers(
+                                              sectionWorkspaces,
+                                              getSectionTierKey(projectPath, section.id, 0).replace(
+                                                ":tier:0",
+                                                ":tier"
+                                              ),
+                                              section.id
+                                            )
+                                          ) : (
+                                            <div className="text-muted px-3 py-2 text-center text-xs italic">
+                                              No workspaces in this section
+                                            </div>
+                                          )}
+                                        </div>
+                                      )}
+                                    </WorkspaceSectionDropZone>
+                                  </DraggableSection>
+                                );
+                              };
 
                               return (
                                 <>
-                                  {recent.map(renderWorkspace)}
-                                  {firstTier !== -1 && renderTier(firstTier)}
+                                  {/* Unsectioned workspaces first - always show drop zone when sections exist */}
+                                  {sections.length > 0 ? (
+                                    <WorkspaceSectionDropZone
+                                      projectPath={projectPath}
+                                      sectionId={null}
+                                      onDrop={handleWorkspaceSectionDrop}
+                                      testId="unsectioned-drop-zone"
+                                    >
+                                      {unsectioned.length > 0 ? (
+                                        renderAgeTiers(
+                                          unsectioned,
+                                          getTierKey(projectPath, 0).replace(":0", "")
+                                        )
+                                      ) : (
+                                        <div className="text-muted px-3 py-2 text-center text-xs italic">
+                                          No unsectioned workspaces
+                                        </div>
+                                      )}
+                                    </WorkspaceSectionDropZone>
+                                  ) : (
+                                    unsectioned.length > 0 &&
+                                    renderAgeTiers(
+                                      unsectioned,
+                                      getTierKey(projectPath, 0).replace(":0", "")
+                                    )
+                                  )}
+
+                                  {/* Sections */}
+                                  {sections.map(renderSection)}
+
+                                  {/* Add Section button */}
+                                  <AddSectionButton
+                                    onCreateSection={(name) => {
+                                      void handleCreateSection(projectPath, name);
+                                    }}
+                                  />
                                 </>
                               );
                             })()}
@@ -698,21 +890,12 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
               </div>
             </>
           )}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={onToggleCollapsed}
-                aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-                className="text-muted border-dark hover:bg-hover hover:text-foreground mt-auto flex h-9 w-full cursor-pointer items-center justify-center border-t border-none bg-transparent p-0 text-sm transition-all duration-200"
-              >
-                {collapsed ? "»" : "«"}
-              </button>
-            </TooltipTrigger>
-            <TooltipContent align="center">
-              {collapsed ? "Expand sidebar" : "Collapse sidebar"} (
-              {formatKeybind(KEYBINDS.TOGGLE_SIDEBAR)})
-            </TooltipContent>
-          </Tooltip>
+          <SidebarCollapseButton
+            collapsed={collapsed}
+            onToggle={onToggleCollapsed}
+            side="left"
+            shortcut={formatKeybind(KEYBINDS.TOGGLE_SIDEBAR)}
+          />
           {secretsModalState && (
             <SecretsModal
               isOpen={secretsModalState.isOpen}
@@ -723,19 +906,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
               onSave={handleSaveSecrets}
             />
           )}
-          {forceDeleteModal && (
-            <ForceDeleteModal
-              isOpen={forceDeleteModal.isOpen}
-              workspaceId={forceDeleteModal.workspaceId}
-              error={forceDeleteModal.error}
-              onClose={() => setForceDeleteModal(null)}
-              onForceDelete={handleForceDelete}
-            />
-          )}
           <PopoverError
-            error={workspaceRemoveError.error}
-            prefix="Failed to remove workspace"
-            onDismiss={workspaceRemoveError.clearError}
+            error={workspaceArchiveError.error}
+            prefix="Failed to archive workspace"
+            onDismiss={workspaceArchiveError.clearError}
           />
           <PopoverError
             error={projectRemoveError.error}

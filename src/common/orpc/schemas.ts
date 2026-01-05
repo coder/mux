@@ -8,15 +8,27 @@ export { ResultSchema } from "./schemas/result";
 export { RuntimeConfigSchema, RuntimeModeSchema } from "./schemas/runtime";
 
 // Project schemas
-export { ProjectConfigSchema, WorkspaceConfigSchema } from "./schemas/project";
+export { ProjectConfigSchema, SectionConfigSchema, WorkspaceConfigSchema } from "./schemas/project";
 
 // Workspace schemas
+export { WorkspaceAISettingsSchema } from "./schemas/workspaceAiSettings";
 export {
   FrontendWorkspaceMetadataSchema,
   GitStatusSchema,
   WorkspaceActivitySnapshotSchema,
   WorkspaceMetadataSchema,
 } from "./schemas/workspace";
+
+// Workspace stats schemas
+export {
+  ActiveStreamStatsSchema,
+  CompletedStreamStatsSchema,
+  ModelTimingStatsSchema,
+  SessionTimingFileSchema,
+  SessionTimingStatsSchema,
+  TimingAnomalySchema,
+  WorkspaceStatsSnapshotSchema,
+} from "./schemas/workspaceStats";
 
 // Chat stats schemas
 export {
@@ -27,7 +39,25 @@ export {
   TokenConsumerSchema,
 } from "./schemas/chatStats";
 
+// Agent Skill schemas
+export {
+  AgentSkillDescriptorSchema,
+  AgentSkillFrontmatterSchema,
+  AgentSkillPackageSchema,
+  AgentSkillScopeSchema,
+  SkillNameSchema,
+} from "./schemas/agentSkill";
+
 // Error schemas
+// Agent Definition schemas
+export {
+  AgentDefinitionDescriptorSchema,
+  AgentDefinitionFrontmatterSchema,
+  AgentDefinitionPackageSchema,
+  AgentDefinitionScopeSchema,
+  AgentIdSchema,
+} from "./schemas/agentDefinition";
+
 export { SendMessageErrorSchema, StreamErrorTypeSchema } from "./schemas/errors";
 
 // Tool schemas
@@ -92,6 +122,7 @@ export {
   ToolCallDeltaEventSchema,
   ToolCallEndEventSchema,
   ToolCallStartEventSchema,
+  BashOutputEventSchema,
   UpdateStatusSchema,
   UsageDeltaEventSchema,
   WorkspaceChatMessageSchema,
@@ -100,18 +131,29 @@ export {
 
 // API router schemas
 export {
+  ApiServerStatusSchema,
   AWSCredentialStatusSchema,
+  config,
   debug,
+  features,
   general,
   menu,
+  agents,
   nameGeneration,
   projects,
   ProviderConfigInfoSchema,
   providers,
   ProvidersConfigMapSchema,
   server,
+  splashScreens,
+  tasks,
+  experiments,
+  ExperimentValueSchema,
   telemetry,
   TelemetryEventSchema,
+  signing,
+  type SigningCapabilities,
+  type SignCredentials,
   terminal,
   tokenizer,
   update,

@@ -31,6 +31,7 @@ import type { ThinkingLevel, WorkspaceMode } from "../types/settings";
 import { FloatingTodoCard } from "../components/FloatingTodoCard";
 import type { TodoItem } from "../components/TodoItemView";
 import type { DisplayedMessage, WorkspaceChatEvent } from "../types";
+import { useLiveBashOutputStore } from "../contexts/LiveBashOutputContext";
 import { useWorkspaceChat } from "../contexts/WorkspaceChatContext";
 import { applyChatEvent, TimelineEntry } from "./chatTimelineReducer";
 import type { SlashSuggestion } from "@/browser/utils/slashCommands/types";
@@ -41,6 +42,8 @@ import { SlashCommandSuggestions } from "../components/SlashCommandSuggestions";
 import { executeSlashCommand } from "../utils/slashCommandRunner";
 import { createCompactedMessage } from "../utils/messageHelpers";
 import type { RuntimeConfig, RuntimeMode } from "@/common/types/runtime";
+import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
+import { isThinkingLevel } from "@/common/types/thinking";
 import { RUNTIME_MODE, parseRuntimeModeAndHost, buildRuntimeString } from "@/common/types/runtime";
 import { loadRuntimePreference, saveRuntimePreference } from "../utils/workspacePreferences";
 import { FullscreenComposerModal } from "../components/FullscreenComposerModal";
@@ -52,6 +55,7 @@ import {
   assertKnownModelId,
   formatModelSummary,
   getModelDisplayName,
+  isKnownModelId,
   sanitizeModelSequence,
 } from "../utils/modelCatalog";
 
@@ -178,6 +182,7 @@ function WorkspaceScreenInner({
   const theme = useTheme();
   const spacing = theme.spacing;
   const insets = useSafeAreaInsets();
+  const liveBashOutputStore = useLiveBashOutputStore();
   const { getExpander } = useWorkspaceChat();
   const client = useORPC();
   const {
@@ -194,6 +199,10 @@ function WorkspaceScreenInner({
   const { recentModels, addRecentModel } = useModelHistory();
   const [isRunSettingsVisible, setRunSettingsVisible] = useState(false);
   const selectedModelEntry = useMemo(() => assertKnownModelId(model), [model]);
+  const effectiveThinkingLevel = useMemo(
+    () => enforceThinkingPolicy(model, thinkingLevel),
+    [model, thinkingLevel]
+  );
   const supportsExtendedContext = selectedModelEntry.provider === "anthropic";
   const modelPickerRecents = useMemo(
     () => sanitizeModelSequence([model, ...recentModels]),
@@ -203,16 +212,25 @@ function WorkspaceScreenInner({
     () => ({
       model,
       mode,
-      thinkingLevel,
+      thinkingLevel: effectiveThinkingLevel,
       providerOptions: {
         anthropic: {
           use1MContext,
         },
       },
     }),
-    [model, mode, thinkingLevel, use1MContext]
+    [model, mode, effectiveThinkingLevel, use1MContext]
   );
   const [input, setInput] = useState("");
+
+  // Keep persisted thinking level compatible with the selected model.
+  // This avoids invalid combinations when switching models (or when loading legacy settings).
+  useEffect(() => {
+    if (effectiveThinkingLevel === thinkingLevel) {
+      return;
+    }
+    void setThinkingLevel(effectiveThinkingLevel);
+  }, [effectiveThinkingLevel, thinkingLevel, setThinkingLevel]);
   const [suppressCommandSuggestions, setSuppressCommandSuggestions] = useState(false);
   const setInputWithSuggestionGuard = useCallback((next: string) => {
     setInput(next);
@@ -460,6 +478,39 @@ function WorkspaceScreenInner({
 
   const metadata = metadataQuery.data ?? null;
 
+  // Seed per-workspace settings from backend metadata (desktop parity).
+  // This keeps model + thinking consistent across devices.
+  useEffect(() => {
+    if (!workspaceId || !metadata?.aiSettings) {
+      return;
+    }
+
+    const ai = metadata.aiSettings as { model?: unknown; thinkingLevel?: unknown };
+    const nextModel = typeof ai.model === "string" && isKnownModelId(ai.model) ? ai.model : null;
+    const nextThinking = isThinkingLevel(ai.thinkingLevel) ? ai.thinkingLevel : null;
+
+    const modelForThinking = nextModel ?? model;
+    const effectiveThinking = nextThinking
+      ? enforceThinkingPolicy(modelForThinking, nextThinking)
+      : null;
+
+    if (nextModel && nextModel !== model) {
+      void setModel(nextModel);
+    }
+
+    if (effectiveThinking && effectiveThinking !== thinkingLevel) {
+      void setThinkingLevel(effectiveThinking);
+    }
+  }, [
+    workspaceId,
+    metadata?.aiSettings?.model,
+    metadata?.aiSettings?.thinkingLevel,
+    model,
+    thinkingLevel,
+    setModel,
+    setThinkingLevel,
+  ]);
+
   useEffect(() => {
     // Skip SSE subscription in creation mode (no workspace yet)
     if (isCreationMode) return;
@@ -476,6 +527,46 @@ function WorkspaceScreenInner({
     const handlePayload = (payload: WorkspaceChatEvent) => {
       // Track streaming state and tokens (60s trailing window like desktop)
       if (payload && typeof payload === "object" && "type" in payload) {
+        if (payload.type === "bash-output") {
+          const bashOutput = payload as { toolCallId?: unknown; text?: unknown; isError?: unknown };
+          if (
+            typeof bashOutput.toolCallId === "string" &&
+            typeof bashOutput.text === "string" &&
+            typeof bashOutput.isError === "boolean"
+          ) {
+            liveBashOutputStore.appendChunk(bashOutput.toolCallId, {
+              text: bashOutput.text,
+              isError: bashOutput.isError,
+            });
+          } else if (__DEV__) {
+            console.warn("[WorkspaceScreen] Ignoring malformed bash-output event", payload);
+          }
+
+          return;
+        }
+
+        // Keep bash live output in sync with tool lifecycle (desktop parity).
+        // - Clear on tool-call-start (new invocation)
+        // - Clear on tool-call-end only once the real tool result has output.
+        //   If output is missing (e.g. tmpfile overflow), keep the tail buffer so the UI still shows something.
+        if (payload.type === "tool-call-start") {
+          const toolEvent = payload as { toolName?: unknown; toolCallId?: unknown };
+          if (toolEvent.toolName === "bash" && typeof toolEvent.toolCallId === "string") {
+            liveBashOutputStore.clear(toolEvent.toolCallId);
+          }
+        } else if (payload.type === "tool-call-end") {
+          const toolEvent = payload as {
+            toolName?: unknown;
+            toolCallId?: unknown;
+            result?: unknown;
+          };
+          if (toolEvent.toolName === "bash" && typeof toolEvent.toolCallId === "string") {
+            const output = (toolEvent.result as { output?: unknown } | undefined)?.output;
+            if (typeof output === "string") {
+              liveBashOutputStore.clear(toolEvent.toolCallId);
+            }
+          }
+        }
         if (payload.type === "caught-up") {
           hasCaughtUpRef.current = true;
 
@@ -620,7 +711,7 @@ function WorkspaceScreenInner({
       controller.abort();
       wsRef.current = null;
     };
-  }, [client, workspaceId, isCreationMode, recordStreamUsage, getExpander]);
+  }, [client, workspaceId, isCreationMode, recordStreamUsage, getExpander, liveBashOutputStore]);
 
   // Reset timeline, todos, and editing state when workspace changes
   useEffect(() => {
@@ -649,16 +740,34 @@ function WorkspaceScreenInner({
       if (modelId === model) {
         return;
       }
+
+      const nextThinkingLevel = enforceThinkingPolicy(modelId, thinkingLevel);
+
       try {
         await setModel(modelId);
         addRecentModel(modelId);
+
+        if (nextThinkingLevel !== thinkingLevel) {
+          await setThinkingLevel(nextThinkingLevel);
+        }
+
+        if (workspaceId) {
+          client.workspace
+            .updateAISettings({
+              workspaceId,
+              aiSettings: { model: modelId, thinkingLevel: nextThinkingLevel },
+            })
+            .catch(() => {
+              // Best-effort only.
+            });
+        }
       } catch (error) {
         if (process.env.NODE_ENV !== "production") {
           console.error("Failed to update model", error);
         }
       }
     },
-    [model, setModel, addRecentModel]
+    [addRecentModel, client, model, setModel, setThinkingLevel, thinkingLevel, workspaceId]
   );
 
   const handleSelectMode = useCallback(
@@ -673,12 +782,24 @@ function WorkspaceScreenInner({
 
   const handleSelectThinkingLevel = useCallback(
     (level: ThinkingLevel) => {
-      if (level === thinkingLevel) {
+      const effective = enforceThinkingPolicy(model, level);
+      if (effective === thinkingLevel) {
         return;
       }
-      void setThinkingLevel(level);
+
+      void setThinkingLevel(effective).then(() => {
+        if (!workspaceId) {
+          return;
+        }
+
+        client.workspace
+          .updateAISettings({ workspaceId, aiSettings: { model, thinkingLevel: effective } })
+          .catch(() => {
+            // Best-effort only.
+          });
+      });
     },
-    [thinkingLevel, setThinkingLevel]
+    [client, model, thinkingLevel, setThinkingLevel, workspaceId]
   );
 
   const handleToggle1MContext = useCallback(() => {
@@ -737,49 +858,82 @@ function WorkspaceScreenInner({
     setSuppressCommandSuggestions(true);
 
     if (isCreationMode) {
+      if (!creationContext) {
+        showErrorToast("New workspace", "Missing creation context");
+        setInputWithSuggestionGuard(originalContent);
+        setIsSending(false);
+        return false;
+      }
+
       const runtimeConfig: RuntimeConfig | undefined =
         runtimeMode === RUNTIME_MODE.SSH
           ? { type: "ssh" as const, host: sshHost, srcBaseDir: "~/mux" }
           : undefined;
 
-      const result = await client.workspace.sendMessage({
-        workspaceId: null,
+      const identity = await client.nameGeneration.generate({
         message: trimmed,
-        options: {
-          ...sendMessageOptions,
-          projectPath: creationContext!.projectPath,
-          trunkBranch,
-          runtimeConfig,
-        },
+        fallbackModel: sendMessageOptions.model,
       });
 
-      if (!result.success) {
-        const err = result.error;
+      if (!identity.success) {
+        const err = identity.error;
         const errorMsg =
           typeof err === "string"
             ? err
             : err?.type === "unknown"
               ? err.raw
               : (err?.type ?? "Unknown error");
-        console.error("[createWorkspace] Failed:", errorMsg);
-        setTimeline((current) =>
-          applyChatEvent(current, { type: "error", error: errorMsg } as WorkspaceChatEvent)
-        );
+        console.error("[createWorkspace] Name generation failed:", errorMsg);
+        showErrorToast("New workspace", errorMsg);
         setInputWithSuggestionGuard(originalContent);
         setIsSending(false);
         return false;
       }
 
-      if (result.data.metadata) {
-        if (runtimeMode !== RUNTIME_MODE.LOCAL) {
-          const runtimeString = buildRuntimeString(runtimeMode, sshHost);
-          if (runtimeString) {
-            await saveRuntimePreference(creationContext!.projectPath, runtimeString);
-          }
-        }
+      const createResult = await client.workspace.create({
+        projectPath: creationContext.projectPath,
+        branchName: identity.data.name,
+        trunkBranch,
+        title: identity.data.title,
+        runtimeConfig,
+      });
 
-        router.replace(`/workspace/${result.data.metadata.id}`);
+      if (!createResult.success) {
+        console.error("[createWorkspace] Failed:", createResult.error);
+        showErrorToast("New workspace", createResult.error ?? "Failed to create workspace");
+        setInputWithSuggestionGuard(originalContent);
+        setIsSending(false);
+        return false;
       }
+
+      if (runtimeMode !== RUNTIME_MODE.LOCAL) {
+        const runtimeString = buildRuntimeString(runtimeMode, sshHost);
+        if (runtimeString) {
+          await saveRuntimePreference(creationContext.projectPath, runtimeString);
+        }
+      }
+
+      const createdWorkspaceId = createResult.metadata.id;
+
+      const sendResult = await client.workspace.sendMessage({
+        workspaceId: createdWorkspaceId,
+        message: trimmed,
+        options: sendMessageOptions,
+      });
+
+      if (!sendResult.success) {
+        const err = sendResult.error;
+        const errorMsg =
+          typeof err === "string"
+            ? err
+            : err?.type === "unknown"
+              ? err.raw
+              : (err?.type ?? "Unknown error");
+        console.error("[createWorkspace] Initial message failed:", errorMsg);
+        showErrorToast("Message", errorMsg);
+      }
+
+      router.replace(`/workspace/${createdWorkspaceId}`);
 
       setIsSending(false);
       return true;

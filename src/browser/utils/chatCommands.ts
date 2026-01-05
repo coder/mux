@@ -9,11 +9,13 @@
 import type { RouterClient } from "@orpc/server";
 import type { AppRouter } from "@/node/orpc/router";
 import type { SendMessageOptions, ImagePart } from "@/common/orpc/types";
-import type {
-  MuxFrontendMetadata,
-  CompactionRequestData,
-  ContinueMessage,
+import {
+  type MuxFrontendMetadata,
+  type CompactionRequestData,
+  type ContinueMessage,
+  buildContinueMessage,
 } from "@/common/types/message";
+import type { ReviewNoteData } from "@/common/types/review";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { RUNTIME_MODE, SSH_RUNTIME_PREFIX } from "@/common/types/runtime";
@@ -21,6 +23,7 @@ import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { WORKSPACE_ONLY_COMMANDS } from "@/constants/slashCommands";
 import type { Toast } from "@/browser/components/ChatInputToast";
 import type { ParsedCommand } from "@/browser/utils/slashCommands/types";
+import { formatCompactionCommandLine } from "@/browser/utils/compaction/format";
 import { applyCompactionOverrides } from "@/browser/utils/messages/compactionOptions";
 import {
   resolveCompactionModel,
@@ -596,6 +599,9 @@ export function formatNewCommand(
 // Compaction
 // ============================================================================
 
+// Re-export buildContinueMessage from common/types for backward compatibility
+export { buildContinueMessage } from "@/common/types/message";
+
 export interface CompactionOptions {
   api?: RouterClient<AppRouter>;
   workspaceId: string;
@@ -604,6 +610,8 @@ export interface CompactionOptions {
   model?: string;
   sendMessageOptions: SendMessageOptions;
   editMessageId?: string;
+  /** Source of compaction request (e.g., "idle-compaction" for auto-triggered) */
+  source?: "idle-compaction";
 }
 
 export interface CompactionResult {
@@ -627,37 +635,37 @@ export function prepareCompactionMessage(options: CompactionOptions): {
   // Build compaction message with optional continue context
   let messageText = buildCompactionPrompt(targetWords);
 
-  if (options.continueMessage) {
-    messageText += `\n\nThe user wants to continue with: ${options.continueMessage.text}`;
+  // continueMessage is a follow-up user message that will be auto-sent after compaction.
+  // For forced compaction (no explicit follow-up), we inject a short resume sentinel ("Continue").
+  // Keep that sentinel out of the *compaction prompt* (summarization request), otherwise the model can
+  // misread it as a competing instruction. We still keep it in metadata so the backend resumes.
+  // Only treat it as the default resume when there's no other queued content (images/reviews).
+  const cm = options.continueMessage;
+  const isDefaultResume =
+    cm?.text?.trim() === "Continue" && !cm?.imageParts?.length && !cm?.reviews?.length;
+
+  if (cm && !isDefaultResume) {
+    messageText += `\n\nThe user wants to continue with: ${cm.text}`;
   }
 
   // Handle model preference (sticky globally)
   const effectiveModel = resolveCompactionModel(options.model);
 
-  // Create compaction metadata (will be stored in user message)
-  // Only include continueMessage if there's text, images, or reviews to queue after compaction
-  const hasText = options.continueMessage?.text;
-  const hasImages =
-    options.continueMessage?.imageParts && options.continueMessage.imageParts.length > 0;
-  const hasReviews = options.continueMessage?.reviews && options.continueMessage.reviews.length > 0;
+  // continueMessage is already built by caller via buildContinueMessage() - just pass it through
   const compactData: CompactionRequestData = {
     model: effectiveModel,
     maxOutputTokens: options.maxOutputTokens,
-    continueMessage:
-      hasText || hasImages || hasReviews
-        ? {
-            text: options.continueMessage?.text ?? "",
-            imageParts: options.continueMessage?.imageParts,
-            model: options.continueMessage?.model ?? options.sendMessageOptions.model,
-            reviews: options.continueMessage?.reviews,
-          }
-        : undefined,
+    continueMessage: cm,
   };
 
   const metadata: MuxFrontendMetadata = {
     type: "compaction-request",
-    rawCommand: formatCompactionCommand(options),
+    rawCommand: formatCompactionCommandLine(options),
     parsed: compactData,
+    ...(options.source === "idle-compaction" && {
+      source: options.source,
+      displayStatus: { emoji: "💤", message: "Compacting idle workspace..." },
+    }),
   };
 
   // Apply compaction overrides
@@ -699,23 +707,6 @@ export async function executeCompaction(
   return { success: true };
 }
 
-/**
- * Format compaction command string for display
- */
-function formatCompactionCommand(options: CompactionOptions): string {
-  let cmd = "/compact";
-  if (options.maxOutputTokens) {
-    cmd += ` -t ${options.maxOutputTokens}`;
-  }
-  if (options.model) {
-    cmd += ` -m ${options.model}`;
-  }
-  if (options.continueMessage) {
-    cmd += `\n${options.continueMessage.text}`;
-  }
-  return cmd;
-}
-
 // ============================================================================
 // Command Handler Types
 // ============================================================================
@@ -725,6 +716,8 @@ export interface CommandHandlerContext {
   workspaceId: string;
   sendMessageOptions: SendMessageOptions;
   imageParts?: ImagePart[];
+  /** Reviews attached to the message (from code review panel) */
+  reviews?: ReviewNoteData[];
   editMessageId?: string;
   setInput: (value: string) => void;
   setImageAttachments: (images: ImageAttachment[]) => void;
@@ -872,14 +865,13 @@ export async function handleCompactCommand(
       api,
       workspaceId,
       maxOutputTokens: parsed.maxOutputTokens,
-      continueMessage:
-        parsed.continueMessage || (context.imageParts && context.imageParts.length > 0)
-          ? {
-              text: parsed.continueMessage ?? "",
-              imageParts: context.imageParts,
-              model: sendMessageOptions.model,
-            }
-          : undefined,
+      continueMessage: buildContinueMessage({
+        text: parsed.continueMessage,
+        imageParts: context.imageParts,
+        reviews: context.reviews,
+        model: sendMessageOptions.model,
+        agentId: sendMessageOptions.agentId ?? "exec",
+      }),
       model: parsed.model,
       sendMessageOptions,
       editMessageId,

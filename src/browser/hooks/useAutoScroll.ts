@@ -26,6 +26,8 @@ export function useAutoScroll() {
   const autoScrollRef = useRef<boolean>(true);
   // Track the ResizeObserver so we can disconnect it when the element unmounts
   const observerRef = useRef<ResizeObserver | null>(null);
+  // Track pending RAF to coalesce rapid resize events
+  const rafIdRef = useRef<number | null>(null);
 
   // Sync ref with state to ensure callbacks always have latest value
   autoScrollRef.current = autoScroll;
@@ -34,7 +36,11 @@ export function useAutoScroll() {
   // ResizeObserver fires when the content size changes (Shiki highlighting, Mermaid, images, etc.),
   // allowing us to scroll to bottom even when async content renders after the initial mount.
   const innerRef = useCallback((element: HTMLDivElement | null) => {
-    // Cleanup previous observer if any
+    // Cleanup previous observer and pending RAF
+    if (rafIdRef.current !== null) {
+      cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = null;
+    }
     if (observerRef.current) {
       observerRef.current.disconnect();
       observerRef.current = null;
@@ -43,10 +49,18 @@ export function useAutoScroll() {
     if (!element) return;
 
     const observer = new ResizeObserver(() => {
-      // Only auto-scroll if enabled - user may have scrolled up
-      if (autoScrollRef.current && contentRef.current) {
-        contentRef.current.scrollTop = contentRef.current.scrollHeight;
-      }
+      // Skip if auto-scroll is disabled (user scrolled up)
+      if (!autoScrollRef.current || !contentRef.current) return;
+
+      // Coalesce all resize events in a frame into one scroll operation.
+      // Without this, rapid resize events (Shiki highlighting, etc.) cause
+      // multiple scrolls per frame with slightly different scrollHeight values.
+      rafIdRef.current ??= requestAnimationFrame(() => {
+        rafIdRef.current = null;
+        if (autoScrollRef.current && contentRef.current) {
+          contentRef.current.scrollTop = contentRef.current.scrollHeight;
+        }
+      });
     });
 
     observer.observe(element);

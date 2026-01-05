@@ -15,8 +15,17 @@ declare global {
       chrome?: string;
       electron?: string;
     };
+    // Allow maintainers to opt into telemetry while running the dev server.
+    enableTelemetryInDev?: boolean;
     // E2E test mode flag - used to adjust UI behavior (e.g., longer toast durations)
     isE2E?: boolean;
+    // True if running under Rosetta 2 translation on Apple Silicon (storybook/tests may set this)
+    isRosetta?: boolean;
+    // Async getter (used in Electron) for environments where preload cannot use Node builtins
+    getIsRosetta?: () => Promise<boolean>;
+    // Register a callback for notification clicks (navigates to workspace)
+    // Returns an unsubscribe function.
+    onNotificationClicked?: (callback: (data: { workspaceId: string }) => void) => () => void;
     // Optional ORPC-backed API surfaces populated in tests/storybook mocks
     tokenizer?: unknown;
     providers?: unknown;

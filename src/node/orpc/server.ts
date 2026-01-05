@@ -12,7 +12,7 @@ import * as path from "path";
 import { WebSocketServer } from "ws";
 import { RPCHandler } from "@orpc/server/node";
 import { RPCHandler as ORPCWebSocketServerHandler } from "@orpc/server/ws";
-import { onError } from "@orpc/server";
+import { ORPCError, onError } from "@orpc/server";
 import { OpenAPIGenerator } from "@orpc/openapi";
 import { OpenAPIHandler } from "@orpc/openapi/node";
 import { ZodToJsonSchemaConverter } from "@orpc/zod/zod4";
@@ -66,6 +66,23 @@ export interface OrpcServer {
 
 // --- Server Factory ---
 
+function formatHostForUrl(host: string): string {
+  const trimmed = host.trim();
+
+  // IPv6 URLs must be bracketed: http://[::1]:1234
+  if (trimmed.includes(":")) {
+    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+      return trimmed;
+    }
+
+    // If the host contains a zone index (e.g. fe80::1%en0), percent must be encoded.
+    const escaped = trimmed.replaceAll("%", "%25");
+    return `[${escaped}]`;
+  }
+
+  return trimmed;
+}
+
 /**
  * Create an oRPC server with HTTP and WebSocket endpoints.
  *
@@ -82,7 +99,16 @@ export async function createOrpcServer({
   serveStatic = false,
   // From dist/node/orpc/, go up 2 levels to reach dist/ where index.html lives
   staticDir = path.join(__dirname, "../.."),
-  onOrpcError = (error) => log.error("ORPC Error:", error),
+  onOrpcError = (error) => {
+    // Auth failures are expected in browser mode while the user enters the token.
+    // Avoid spamming error logs with stack traces on every unauthenticated request.
+    if (error instanceof ORPCError && error.code === "UNAUTHORIZED") {
+      log.debug("ORPC unauthorized request");
+      return;
+    }
+
+    log.error("ORPC Error:", error);
+  },
   router: existingRouter,
 }: OrpcServerOptions): Promise<OrpcServer> {
   // Express app setup
@@ -197,14 +223,15 @@ export async function createOrpcServer({
     next();
   });
 
-  // SPA fallback (optional, only for non-orpc routes)
+  // SPA fallback (optional, only for non-API routes)
   if (serveStatic) {
     app.use((req, res, next) => {
-      if (!req.path.startsWith("/orpc")) {
-        res.sendFile(path.join(staticDir, "index.html"));
-      } else {
-        next();
+      // Don't swallow API/ORPC routes with index.html.
+      if (req.path.startsWith("/orpc") || req.path.startsWith("/api")) {
+        return next();
       }
+
+      res.sendFile(path.join(staticDir, "index.html"));
     });
   }
 
@@ -235,16 +262,17 @@ export async function createOrpcServer({
 
   // Wildcard addresses (0.0.0.0, ::) are not routable - convert to loopback for lockfile
   const connectableHost = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
+  const connectableHostForUrl = formatHostForUrl(connectableHost);
 
   return {
     httpServer,
     wsServer,
     app,
     port: actualPort,
-    baseUrl: `http://${connectableHost}:${actualPort}`,
-    wsUrl: `ws://${connectableHost}:${actualPort}/orpc/ws`,
-    specUrl: `http://${connectableHost}:${actualPort}/api/spec.json`,
-    docsUrl: `http://${connectableHost}:${actualPort}/api/docs`,
+    baseUrl: `http://${connectableHostForUrl}:${actualPort}`,
+    wsUrl: `ws://${connectableHostForUrl}:${actualPort}/orpc/ws`,
+    specUrl: `http://${connectableHostForUrl}:${actualPort}/api/spec.json`,
+    docsUrl: `http://${connectableHostForUrl}:${actualPort}/api/docs`,
     close: async () => {
       // Close WebSocket server first
       wsServer.close();

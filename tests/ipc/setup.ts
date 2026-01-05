@@ -73,6 +73,7 @@ export async function createTestEnvironment(): Promise<TestEnvironment> {
     aiService: services.aiService,
     projectService: services.projectService,
     workspaceService: services.workspaceService,
+    taskService: services.taskService,
     providerService: services.providerService,
     terminalService: services.terminalService,
     editorService: services.editorService,
@@ -80,12 +81,17 @@ export async function createTestEnvironment(): Promise<TestEnvironment> {
     updateService: services.updateService,
     tokenizerService: services.tokenizerService,
     serverService: services.serverService,
+    featureFlagService: services.featureFlagService,
+    workspaceMcpOverridesService: services.workspaceMcpOverridesService,
+    sessionTimingService: services.sessionTimingService,
     mcpConfigService: services.mcpConfigService,
     mcpServerManager: services.mcpServerManager,
     menuEventService: services.menuEventService,
     voiceService: services.voiceService,
+    experimentsService: services.experimentsService,
     telemetryService: services.telemetryService,
     sessionUsageService: services.sessionUsageService,
+    signingService: services.signingService,
   };
   const orpc = createOrpcTestClient(orpcContext);
 
@@ -102,6 +108,14 @@ export async function createTestEnvironment(): Promise<TestEnvironment> {
  * Cleanup test environment (remove temporary directory) with retry logic
  */
 export async function cleanupTestEnvironment(env: TestEnvironment): Promise<void> {
+  // Best-effort: dispose services to prevent leaked intervals/background processes.
+  try {
+    await env.services.dispose();
+    await env.services.shutdown();
+  } catch (error) {
+    console.warn("Failed to dispose test services:", error);
+  }
+
   const maxRetries = 3;
   let lastError: unknown;
 
@@ -199,29 +213,48 @@ export async function setupWorkspace(
   const createResult = await createWorkspace(env, tempGitRepo, branchName);
 
   if (!createResult.success) {
+    await cleanupTestEnvironment(env);
     await cleanupTempGitRepo(tempGitRepo);
     throw new Error(`Workspace creation failed: ${createResult.error}`);
   }
 
   if (!createResult.metadata.id) {
+    await cleanupTestEnvironment(env);
     await cleanupTempGitRepo(tempGitRepo);
     throw new Error("Workspace ID not returned from creation");
   }
 
   if (!createResult.metadata.namedWorkspacePath) {
+    await cleanupTestEnvironment(env);
     await cleanupTempGitRepo(tempGitRepo);
     throw new Error("Workspace path not returned from creation");
   }
 
+  const workspaceId = createResult.metadata.id;
+  const workspacePath = createResult.metadata.namedWorkspacePath;
+
   const cleanup = async () => {
+    // Best-effort: remove workspace to stop MCP servers and clean up worktrees/sessions.
+    try {
+      const removeResult = await env.orpc.workspace.remove({
+        workspaceId,
+        options: { force: true },
+      });
+      if (!removeResult.success) {
+        console.warn("Failed to remove workspace during cleanup:", removeResult.error);
+      }
+    } catch (error) {
+      console.warn("Failed to remove workspace during cleanup:", error);
+    }
+
     await cleanupTestEnvironment(env);
     await cleanupTempGitRepo(tempGitRepo);
   };
 
   return {
     env,
-    workspaceId: createResult.metadata.id,
-    workspacePath: createResult.metadata.namedWorkspacePath,
+    workspaceId,
+    workspacePath,
     branchName,
     tempGitRepo,
     cleanup,
@@ -262,21 +295,27 @@ export async function setupWorkspaceWithoutProvider(branchPrefix?: string): Prom
   if (!createResult.success) {
     // Restore env vars before throwing
     Object.assign(process.env, savedEnvVars);
+    await cleanupTestEnvironment(env);
     await cleanupTempGitRepo(tempGitRepo);
     throw new Error(`Workspace creation failed: ${createResult.error}`);
   }
 
   if (!createResult.metadata.id) {
     Object.assign(process.env, savedEnvVars);
+    await cleanupTestEnvironment(env);
     await cleanupTempGitRepo(tempGitRepo);
     throw new Error("Workspace ID not returned from creation");
   }
 
   if (!createResult.metadata.namedWorkspacePath) {
     Object.assign(process.env, savedEnvVars);
+    await cleanupTestEnvironment(env);
     await cleanupTempGitRepo(tempGitRepo);
     throw new Error("Workspace path not returned from creation");
   }
+
+  const workspaceId = createResult.metadata.id;
+  const workspacePath = createResult.metadata.namedWorkspacePath;
 
   const cleanup = async () => {
     // Restore env vars
@@ -285,14 +324,28 @@ export async function setupWorkspaceWithoutProvider(branchPrefix?: string): Prom
         process.env[key] = value;
       }
     }
+
+    // Best-effort: remove workspace to stop MCP servers and clean up worktrees/sessions.
+    try {
+      const removeResult = await env.orpc.workspace.remove({
+        workspaceId,
+        options: { force: true },
+      });
+      if (!removeResult.success) {
+        console.warn("Failed to remove workspace during cleanup:", removeResult.error);
+      }
+    } catch (error) {
+      console.warn("Failed to remove workspace during cleanup:", error);
+    }
+
     await cleanupTestEnvironment(env);
     await cleanupTempGitRepo(tempGitRepo);
   };
 
   return {
     env,
-    workspaceId: createResult.metadata.id,
-    workspacePath: createResult.metadata.namedWorkspacePath,
+    workspaceId,
+    workspacePath,
     branchName,
     tempGitRepo,
     cleanup,

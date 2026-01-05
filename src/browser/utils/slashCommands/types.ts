@@ -35,7 +35,9 @@ export type ParsedCommand =
   | { type: "mcp-open" }
   | { type: "plan-show" }
   | { type: "plan-open" }
+  | { type: "init" }
   | { type: "unknown-command"; command: string; subcommand?: string }
+  | { type: "idle-compaction"; hours: number | null }
   | null;
 
 export interface SuggestionsHandlerArgs {

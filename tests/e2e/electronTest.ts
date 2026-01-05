@@ -73,6 +73,71 @@ function shouldSkipBuild(): boolean {
   return process.env.MUX_E2E_SKIP_BUILD === "1";
 }
 
+export function parseEnvVarFromPsCommand(command: string, name: string): string | undefined {
+  if (!name) {
+    throw new Error("Expected env var name");
+  }
+  if (!command) {
+    return undefined;
+  }
+
+  // `ps eww -o command=` appends the environment as space-delimited `KEY=value` pairs.
+  // Values can contain spaces, so we have to parse until the next ` KEY=` boundary.
+  const needle = `${name}=`;
+  for (
+    let index = command.indexOf(needle);
+    index !== -1;
+    index = command.indexOf(needle, index + needle.length)
+  ) {
+    if (index !== 0 && !/\s/.test(command[index - 1] ?? "")) {
+      continue;
+    }
+
+    const valueStart = index + needle.length;
+    const remainder = command.slice(valueStart);
+    const boundaryIndex = remainder.search(/\s+[A-Za-z_][A-Za-z0-9_]*=/);
+    const valueEnd = boundaryIndex === -1 ? command.length : valueStart + boundaryIndex;
+    return command.slice(valueStart, valueEnd);
+  }
+
+  return undefined;
+}
+
+function readEnvVarFromProcess(pid: number, name: string): string | undefined {
+  if (!Number.isFinite(pid) || pid <= 0) {
+    throw new Error(`Expected a positive pid, got ${pid}`);
+  }
+  if (!name) {
+    throw new Error("Expected env var name");
+  }
+
+  if (process.platform === "linux") {
+    try {
+      const buf = fs.readFileSync(`/proc/${pid}/environ`);
+      const entries = buf.toString("utf8").split("\u0000");
+      const prefix = `${name}=`;
+      const match = entries.find((entry) => entry.startsWith(prefix));
+      return match ? match.slice(prefix.length) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  if (process.platform === "darwin") {
+    const result = spawnSync("ps", ["eww", "-p", String(pid), "-o", "command="], {
+      encoding: "utf-8",
+    });
+    if (result.status !== 0) {
+      return undefined;
+    }
+
+    const command = result.stdout.trim();
+    return parseEnvVarFromPsCommand(command, name);
+  }
+
+  return undefined;
+}
+
 function buildTarget(target: string): void {
   if (shouldSkipBuild()) {
     return;
@@ -89,28 +154,47 @@ function buildTarget(target: string): void {
 
 export const electronTest = base.extend<ElectronFixtures>({
   workspace: async ({}, use, testInfo) => {
-    const envRoot = process.env.MUX_ROOT ?? "";
+    const originalMuxRoot = process.env.MUX_ROOT;
+    const envRoot = originalMuxRoot ?? "";
     const baseRoot = envRoot || defaultTestRoot;
     const uniqueTestId = testInfo.testId || testInfo.title || `test-${Date.now()}`;
-    const testRoot = envRoot ? baseRoot : path.join(baseRoot, sanitizeForPath(uniqueTestId));
+
+    // Always isolate each test run under its own root directory.
+    //
+    // Even when MUX_ROOT is set (often for debugging), Playwright runs tests in parallel.
+    // A shared root would cause cross-test interference when we reset the filesystem.
+    const testRoot = path.join(baseRoot, sanitizeForPath(uniqueTestId));
 
     const shouldCleanup = !envRoot;
 
-    await fsPromises.mkdir(path.dirname(testRoot), { recursive: true });
-    await fsPromises.rm(testRoot, { recursive: true, force: true });
-    await fsPromises.mkdir(testRoot, { recursive: true });
+    // Ensure the Electron process sees our per-test MUX_ROOT even if Playwright's electron.launch({ env }) is ignored.
+    //
+    // This is especially important when running Playwright under Bun.
+    process.env.MUX_ROOT = testRoot;
 
-    const demoProject = prepareDemoProject(testRoot);
-    const userDataDir = path.join(testRoot, "user-data");
-    await fsPromises.rm(userDataDir, { recursive: true, force: true });
-
-    await use({
-      configRoot: testRoot,
-      demoProject,
-    });
-
-    if (shouldCleanup) {
+    try {
+      await fsPromises.mkdir(path.dirname(testRoot), { recursive: true });
       await fsPromises.rm(testRoot, { recursive: true, force: true });
+      await fsPromises.mkdir(testRoot, { recursive: true });
+
+      const demoProject = prepareDemoProject(testRoot);
+      const userDataDir = path.join(testRoot, "user-data");
+      await fsPromises.rm(userDataDir, { recursive: true, force: true });
+
+      await use({
+        configRoot: testRoot,
+        demoProject,
+      });
+
+      if (shouldCleanup) {
+        await fsPromises.rm(testRoot, { recursive: true, force: true });
+      }
+    } finally {
+      if (originalMuxRoot === undefined) {
+        delete process.env.MUX_ROOT;
+      } else {
+        process.env.MUX_ROOT = originalMuxRoot;
+      }
     }
   },
   app: async ({ workspace }, use, testInfo) => {
@@ -218,6 +302,18 @@ export const electronTest = base.extend<ElectronFixtures>({
           size: { width: 1280, height: 720 },
         },
       });
+
+      // Sanity check: ensure we are not accidentally reading/writing the developer's real ~/.mux state.
+      const pid = electronApp.process().pid;
+      if (!pid) {
+        throw new Error("Electron launch returned no pid");
+      }
+      const electronMuxRoot = readEnvVarFromProcess(pid, "MUX_ROOT");
+      if (electronMuxRoot !== configRoot) {
+        throw new Error(
+          `E2E harness bug: Electron process MUX_ROOT mismatch. Expected ${configRoot}, got ${electronMuxRoot ?? "<unset>"}`
+        );
+      }
 
       try {
         await use(electronApp);

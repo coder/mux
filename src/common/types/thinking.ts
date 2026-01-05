@@ -13,6 +13,20 @@ export type ThinkingLevel = "off" | "low" | "medium" | "high" | "xhigh";
  */
 export type ThinkingLevelOn = Exclude<ThinkingLevel, "off">;
 
+export function isThinkingLevel(value: unknown): value is ThinkingLevel {
+  return (
+    value === "off" ||
+    value === "low" ||
+    value === "medium" ||
+    value === "high" ||
+    value === "xhigh"
+  );
+}
+
+export function coerceThinkingLevel(value: unknown): ThinkingLevel | undefined {
+  return isThinkingLevel(value) ? value : undefined;
+}
+
 /**
  * Anthropic thinking token budget mapping
  *

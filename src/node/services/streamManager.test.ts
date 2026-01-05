@@ -90,6 +90,7 @@ describe("StreamManager - Concurrent Stream Prevention", () => {
         1,
         "You are a helpful assistant",
         runtime,
+        "test-msg-1",
         undefined,
         {}
       );
@@ -108,6 +109,7 @@ describe("StreamManager - Concurrent Stream Prevention", () => {
         2,
         "You are a helpful assistant",
         runtime,
+        "test-msg-2",
         undefined,
         {}
       );
@@ -280,6 +282,7 @@ describe("StreamManager - Concurrent Stream Prevention", () => {
         1,
         "system",
         runtime,
+        "test-msg-1",
         undefined,
         {}
       ),
@@ -291,6 +294,7 @@ describe("StreamManager - Concurrent Stream Prevention", () => {
         2,
         "system",
         runtime,
+        "test-msg-2",
         undefined,
         {}
       ),
@@ -302,6 +306,7 @@ describe("StreamManager - Concurrent Stream Prevention", () => {
         3,
         "system",
         runtime,
+        "test-msg-3",
         undefined,
         {}
       ),
@@ -511,8 +516,97 @@ describe("StreamManager - previousResponseId recovery", () => {
   });
 });
 
-// Note: Anthropic cache control tests are in cacheStrategy.test.ts
-// Those tests verify the cache control structure without requiring
+describe("StreamManager - replayStream", () => {
+  test("replayStream snapshots parts so reconnect doesn't block until stream ends", async () => {
+    const mockHistoryService = createMockHistoryService();
+    const mockPartialService = createMockPartialService();
+    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+
+    // Suppress error events from bubbling up as uncaught exceptions during tests
+    streamManager.on("error", () => undefined);
+
+    const workspaceId = "ws-replay-snapshot";
+
+    const deltas: string[] = [];
+    streamManager.on("stream-delta", (event: { delta: string }) => {
+      deltas.push(event.delta);
+    });
+
+    // Inject an active stream into the private workspaceStreams map.
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const workspaceStreamsValue = Reflect.get(streamManager, "workspaceStreams");
+    if (!(workspaceStreamsValue instanceof Map)) {
+      throw new Error("StreamManager.workspaceStreams is not a Map");
+    }
+    const workspaceStreams = workspaceStreamsValue as Map<string, unknown>;
+
+    const streamInfo = {
+      state: "streaming",
+      messageId: "msg-1",
+      model: "claude-sonnet-4",
+      historySequence: 1,
+      startTime: 123,
+      initialMetadata: {},
+      parts: [{ type: "text", text: "a", timestamp: 10 }],
+    };
+
+    workspaceStreams.set(workspaceId, streamInfo);
+
+    // Patch the private tokenTracker to (a) avoid worker setup and (b) mutate parts during replay.
+    const tokenTracker = Reflect.get(streamManager, "tokenTracker") as {
+      setModel: (model: string) => Promise<void>;
+      countTokens: (text: string) => Promise<number>;
+    };
+
+    tokenTracker.setModel = () => Promise.resolve();
+
+    let pushed = false;
+    tokenTracker.countTokens = async () => {
+      if (!pushed) {
+        pushed = true;
+        // While replay is mid-await, simulate the running stream appending more parts.
+        (streamInfo.parts as Array<{ type: string; text?: string; timestamp?: number }>).push({
+          type: "text",
+          text: "b",
+          timestamp: 20,
+        });
+      }
+      // Force an await boundary so the mutation happens during replay.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      return 1;
+    };
+
+    await streamManager.replayStream(workspaceId);
+
+    // If replayStream iterates the live array, it would also emit "b".
+    expect(deltas).toEqual(["a"]);
+  });
+});
+
+describe("StreamManager - ask_user_question Partial Persistence", () => {
+  // Note: The ask_user_question tool blocks waiting for user input.
+  // If the app restarts during that wait, the partial must be persisted.
+  // The fix (flush partial immediately for ask_user_question) is verified
+  // by the code path in processStreamWithCleanup's tool-call handler:
+  //
+  //   if (part.toolName === "ask_user_question") {
+  //     await this.flushPartialWrite(workspaceId, streamInfo);
+  //   }
+  //
+  // Full integration test would require mocking the entire streaming pipeline.
+  // Instead, we verify the StreamManager has the expected method signature.
+
+  test("flushPartialWrite is a callable method", () => {
+    const mockHistoryService = createMockHistoryService();
+    const mockPartialService = createMockPartialService();
+    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+
+    // Verify the private method exists and is callable
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const flushMethod = Reflect.get(streamManager, "flushPartialWrite");
+    expect(typeof flushMethod).toBe("function");
+  });
+});
 
 // Note: Comprehensive Anthropic cache control tests are in cacheStrategy.test.ts
 // Those unit tests cover all cache control functionality without requiring

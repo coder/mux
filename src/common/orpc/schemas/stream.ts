@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AgentModeSchema } from "../../types/mode";
 import { ChatUsageDisplaySchema } from "./chatStats";
 import { StreamErrorTypeSchema } from "./errors";
 import {
@@ -13,6 +14,11 @@ import { MuxProviderOptionsSchema } from "./providerOptions";
 // Chat Events
 export const CaughtUpMessageSchema = z.object({
   type: z.literal("caught-up"),
+});
+
+/** Sent when a workspace becomes eligible for idle compaction while connected */
+export const IdleCompactionNeededEventSchema = z.object({
+  type: z.literal("idle-compaction-needed"),
 });
 
 export const StreamErrorMessageSchema = z.object({
@@ -34,6 +40,12 @@ export const StreamStartEventSchema = z.object({
   model: z.string(),
   historySequence: z.number().meta({
     description: "Backend assigns global message ordering",
+  }),
+  startTime: z.number().meta({
+    description: "Backend timestamp when stream started (Date.now())",
+  }),
+  mode: AgentModeSchema.optional().catch(undefined).meta({
+    description: "Agent mode for this stream",
   }),
 });
 
@@ -144,6 +156,7 @@ export const ToolCallStartEventSchema = z.object({
   args: z.unknown(),
   tokens: z.number().meta({ description: "Token count for tool input" }),
   timestamp: z.number().meta({ description: "When tool call started (Date.now())" }),
+  parentToolCallId: z.string().optional().meta({ description: "Set for nested PTC calls" }),
 });
 
 export const ToolCallDeltaEventSchema = z.object({
@@ -157,6 +170,20 @@ export const ToolCallDeltaEventSchema = z.object({
   timestamp: z.number().meta({ description: "When delta was received (Date.now())" }),
 });
 
+/**
+ * UI-only incremental output from the bash tool.
+ *
+ * This is intentionally NOT part of the tool result returned to the model.
+ * It is streamed over workspace.onChat so users can "peek" while the tool is running.
+ */
+export const BashOutputEventSchema = z.object({
+  type: z.literal("bash-output"),
+  workspaceId: z.string(),
+  toolCallId: z.string(),
+  text: z.string(),
+  isError: z.boolean().meta({ description: "True if this chunk is from stderr" }),
+  timestamp: z.number().meta({ description: "When output was flushed (Date.now())" }),
+});
 export const ToolCallEndEventSchema = z.object({
   type: z.literal("tool-call-end"),
   workspaceId: z.string(),
@@ -165,6 +192,7 @@ export const ToolCallEndEventSchema = z.object({
   toolName: z.string(),
   result: z.unknown(),
   timestamp: z.number().meta({ description: "When tool call completed (Date.now())" }),
+  parentToolCallId: z.string().optional().meta({ description: "Set for nested PTC calls" }),
 });
 
 export const ReasoningDeltaEventSchema = z.object({
@@ -174,6 +202,10 @@ export const ReasoningDeltaEventSchema = z.object({
   delta: z.string(),
   tokens: z.number().meta({ description: "Token count for this delta" }),
   timestamp: z.number().meta({ description: "When delta was received (Date.now())" }),
+  signature: z
+    .string()
+    .optional()
+    .meta({ description: "Anthropic thinking block signature for replay" }),
 });
 
 export const ReasoningEndEventSchema = z.object({
@@ -190,6 +222,17 @@ export const ErrorEventSchema = z.object({
   errorType: StreamErrorTypeSchema.optional(),
 });
 
+/**
+ * Emitted when a child workspace is deleted and its accumulated session usage has been
+ * rolled up into the parent workspace.
+ */
+export const SessionUsageDeltaEventSchema = z.object({
+  type: z.literal("session-usage-delta"),
+  workspaceId: z.string().meta({ description: "Parent workspace ID" }),
+  sourceWorkspaceId: z.string().meta({ description: "Deleted child workspace ID" }),
+  byModelDelta: z.record(z.string(), ChatUsageDisplaySchema),
+  timestamp: z.number(),
+});
 export const UsageDeltaEventSchema = z.object({
   type: z.literal("usage-delta"),
   workspaceId: z.string(),
@@ -222,6 +265,8 @@ export const InitEndEventSchema = z.object({
   type: z.literal("init-end"),
   exitCode: z.number(),
   timestamp: z.number(),
+  /** Number of lines dropped from middle when output exceeded limit (omitted if 0) */
+  truncatedLines: z.number().optional(),
 });
 
 // Composite schema for backwards compatibility
@@ -238,12 +283,26 @@ export const ChatMuxMessageSchema = MuxMessageSchema.extend({
   type: z.literal("message"),
 });
 
+// Review data schema for queued message display
+export const ReviewNoteDataSchema = z.object({
+  filePath: z.string(),
+  lineRange: z.string(),
+  selectedCode: z.string(),
+  selectedDiff: z.string().optional(),
+  oldStart: z.number().optional(),
+  newStart: z.number().optional(),
+  userNote: z.string(),
+});
+
 export const QueuedMessageChangedEventSchema = z.object({
   type: z.literal("queued-message-changed"),
   workspaceId: z.string(),
   queuedMessages: z.array(z.string()),
   displayText: z.string(),
   imageParts: z.array(ImagePartSchema).optional(),
+  reviews: z.array(ReviewNoteDataSchema).optional(),
+  /** True when the queued message is a compaction request (/compact) */
+  hasCompactionRequest: z.boolean().optional(),
 });
 
 export const RestoreToInputEventSchema = z.object({
@@ -269,6 +328,7 @@ export const WorkspaceChatMessageSchema = z.discriminatedUnion("type", [
   ToolCallStartEventSchema,
   ToolCallDeltaEventSchema,
   ToolCallEndEventSchema,
+  BashOutputEventSchema,
   // Reasoning events
   ReasoningDeltaEventSchema,
   ReasoningEndEventSchema,
@@ -276,8 +336,11 @@ export const WorkspaceChatMessageSchema = z.discriminatedUnion("type", [
   ErrorEventSchema,
   // Usage and queue events
   UsageDeltaEventSchema,
+  SessionUsageDeltaEventSchema,
   QueuedMessageChangedEventSchema,
   RestoreToInputEventSchema,
+  // Idle compaction notification
+  IdleCompactionNeededEventSchema,
   // Init events
   ...WorkspaceInitEventSchema.def.options,
   // Chat messages with type discriminator
@@ -313,6 +376,8 @@ export const ToolPolicySchema = z.array(ToolPolicyFilterSchema).meta({
 // Experiments schema for feature gating
 export const ExperimentsSchema = z.object({
   postCompactionContext: z.boolean().optional(),
+  programmaticToolCalling: z.boolean().optional(),
+  programmaticToolCallingExclusive: z.boolean().optional(),
 });
 
 // SendMessage options
@@ -323,10 +388,17 @@ export const SendMessageOptionsSchema = z.object({
   toolPolicy: ToolPolicySchema.optional(),
   additionalSystemInstructions: z.string().optional(),
   maxOutputTokens: z.number().optional(),
+  agentId: z.string().optional().catch(undefined),
   providerOptions: MuxProviderOptionsSchema.optional(),
-  mode: z.string().optional(),
+  mode: AgentModeSchema.optional().catch(undefined),
   muxMetadata: z.any().optional(), // Black box
   experiments: ExperimentsSchema.optional(),
+  /**
+   * When true, workspace-specific agent definitions are disabled.
+   * Only built-in and global agents are loaded. Useful for "unbricking" when
+   * iterating on agent files - a broken agent in the worktree won't affect message sending.
+   */
+  disableWorkspaceAgents: z.boolean().optional(),
 });
 
 // Re-export ChatUsageDisplaySchema for convenience

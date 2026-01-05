@@ -1,5 +1,6 @@
 /**
  * HunkViewer - Displays a single diff hunk with syntax highlighting
+ * Includes read-more feature to expand context above/below the hunk.
  */
 
 import React, { useState, useMemo } from "react";
@@ -13,7 +14,10 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "../../ui/tooltip";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { getReviewExpandStateKey } from "@/common/constants/storage";
 import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
+import { formatRelativeTime } from "@/browser/utils/ui/dateTime";
 import { cn } from "@/common/lib/utils";
+import { ContextCollapseIndicator } from "./ContextCollapseIndicator";
+import { useReadMore } from "./useReadMore";
 
 interface HunkViewerProps {
   hunk: DiffHunk;
@@ -21,11 +25,19 @@ interface HunkViewerProps {
   workspaceId: string;
   isSelected?: boolean;
   isRead?: boolean;
+  /** Timestamp when this hunk content was first seen (for "Last edit at" display) */
+  firstSeenAt: number;
   onClick?: (e: React.MouseEvent<HTMLElement>) => void;
   onToggleRead?: (e: React.MouseEvent<HTMLElement>) => void;
   onRegisterToggleExpand?: (hunkId: string, toggleFn: () => void) => void;
   onReviewNote?: (data: ReviewNoteData) => void;
   searchConfig?: SearchHighlightConfig;
+  /** Callback when review note composition state changes (receives hunkId for stable reference) */
+  onComposingChange?: (hunkId: string, isComposing: boolean) => void;
+  /** Diff base for determining which git ref to read from */
+  diffBase: string;
+  /** Whether uncommitted changes are included in the diff */
+  includeUncommitted: boolean;
 }
 
 export const HunkViewer = React.memo<HunkViewerProps>(
@@ -35,11 +47,15 @@ export const HunkViewer = React.memo<HunkViewerProps>(
     workspaceId,
     isSelected,
     isRead = false,
+    firstSeenAt,
     onClick,
     onToggleRead,
     onRegisterToggleExpand,
     onReviewNote,
     searchConfig,
+    onComposingChange,
+    diffBase,
+    includeUncommitted,
   }) => {
     // Ref for the hunk container to track visibility
     const hunkRef = React.useRef<HTMLDivElement>(null);
@@ -148,6 +164,21 @@ export const HunkViewer = React.memo<HunkViewerProps>(
       }
     }, [hasManualState, manualExpandState]);
 
+    // Read-more context expansion
+    const {
+      upContent,
+      downContent,
+      upLoading,
+      downLoading,
+      atBOF,
+      atEOF,
+      readMore,
+      handleExpandUp,
+      handleExpandDown,
+      handleCollapseUp,
+      handleCollapseDown,
+    } = useReadMore({ hunk, hunkId, workspaceId, diffBase, includeUncommitted });
+
     const handleToggleExpand = React.useCallback(
       (e?: React.MouseEvent) => {
         e?.stopPropagation();
@@ -174,6 +205,15 @@ export const HunkViewer = React.memo<HunkViewerProps>(
       onToggleRead?.(e);
     };
 
+    // Wrap onComposingChange to include hunkId - creates stable reference per-hunk
+    // This allows parent to pass a single stable callback instead of inline arrow functions
+    const handleComposingChange = React.useCallback(
+      (isComposing: boolean) => {
+        onComposingChange?.(hunkId, isComposing);
+      },
+      [hunkId, onComposingChange]
+    );
+
     // Detect pure rename: if renamed and content hasn't changed (zero additions and deletions)
     const isPureRename =
       hunk.changeType === "renamed" && hunk.oldPath && additions === 0 && deletions === 0;
@@ -192,54 +232,47 @@ export const HunkViewer = React.memo<HunkViewerProps>(
         tabIndex={0}
         data-hunk-id={hunkId}
       >
-        <div className="bg-separator border-border-light font-monospace flex items-center justify-between gap-2 border-b px-3 py-2 text-xs">
-          {isRead && (
+        <div className="border-border-light font-monospace flex items-center gap-1.5 border-b px-2 py-1 text-[11px]">
+          {onToggleRead && (
             <Tooltip>
               <TooltipTrigger asChild>
-                <span
-                  className="text-read mr-1 inline-flex items-center text-sm"
-                  aria-label="Marked as read"
+                <button
+                  className={cn(
+                    "text-muted hover:text-read flex cursor-pointer items-center bg-transparent border-none p-0 text-[11px] transition-colors duration-150",
+                    isRead && "text-read"
+                  )}
+                  data-hunk-id={hunkId}
+                  onClick={handleToggleRead}
+                  aria-label={`Mark as read (${formatKeybind(KEYBINDS.TOGGLE_HUNK_READ)})`}
                 >
-                  ✓
-                </span>
+                  {isRead ? "✓" : "○"}
+                </button>
               </TooltipTrigger>
-              <TooltipContent align="center" side="top">
-                Marked as read
+              <TooltipContent align="start" side="top">
+                Mark as read ({formatKeybind(KEYBINDS.TOGGLE_HUNK_READ)}) · Mark file (
+                {formatKeybind(KEYBINDS.MARK_FILE_READ)})
               </TooltipContent>
             </Tooltip>
           )}
           <div
-            className="text-foreground min-w-0 truncate font-medium"
+            className="text-foreground min-w-0 truncate"
             dangerouslySetInnerHTML={{ __html: highlightedFilePath }}
           />
-          <div className="flex shrink-0 items-center gap-2 text-[11px] whitespace-nowrap">
+          <div className="text-muted ml-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap">
             {!isPureRename && (
-              <span className="flex gap-2 text-[11px]">
+              <>
                 {additions > 0 && <span className="text-success-light">+{additions}</span>}
-                {deletions > 0 && <span className="text-warning-light">-{deletions}</span>}
-              </span>
+                {deletions > 0 && <span className="text-warning-light">−{deletions}</span>}
+              </>
             )}
-            <span className="text-muted">
-              ({lineCount} {lineCount === 1 ? "line" : "lines"})
-            </span>
-            {onToggleRead && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    className="border-border-light text-muted hover:border-read hover:text-read flex cursor-pointer items-center gap-1 rounded-[3px] border bg-transparent px-1.5 py-0.5 text-[11px] transition-all duration-200 hover:bg-white/5 active:scale-95"
-                    data-hunk-id={hunkId}
-                    onClick={handleToggleRead}
-                    aria-label={`Mark as read (${formatKeybind(KEYBINDS.TOGGLE_HUNK_READ)})`}
-                  >
-                    {isRead ? "○" : "◉"}
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent align="end" side="top">
-                  Mark as read ({formatKeybind(KEYBINDS.TOGGLE_HUNK_READ)}) · Mark file (
-                  {formatKeybind(KEYBINDS.MARK_FILE_READ)})
-                </TooltipContent>
-              </Tooltip>
-            )}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="text-dim cursor-default">{formatRelativeTime(firstSeenAt)}</span>
+              </TooltipTrigger>
+              <TooltipContent align="center" side="top">
+                First seen: {new Date(firstSeenAt).toLocaleString()}
+              </TooltipContent>
+            </Tooltip>
           </div>
         </div>
 
@@ -248,25 +281,124 @@ export const HunkViewer = React.memo<HunkViewerProps>(
             Renamed from <code>{hunk.oldPath}</code>
           </div>
         ) : isExpanded ? (
-          <SelectableDiffRenderer
-            content={hunk.content}
-            filePath={hunk.filePath}
-            oldStart={hunk.oldStart}
-            newStart={hunk.newStart}
-            fontSize="11px"
-            maxHeight="none"
-            className="rounded-none border-0"
-            onReviewNote={onReviewNote}
-            onLineClick={() => {
-              // Create synthetic event with data-hunk-id for parent handler
-              const syntheticEvent = {
-                currentTarget: { dataset: { hunkId } },
-              } as unknown as React.MouseEvent<HTMLElement>;
-              onClick?.(syntheticEvent);
-            }}
-            searchConfig={searchConfig}
-            enableHighlighting={isVisible}
-          />
+          <div className="font-monospace bg-code-bg overflow-x-auto text-[11px] leading-[1.4]">
+            {/* Expand up control - only show if not at BOF and not loading */}
+            {!atBOF && !upLoading && (
+              <div className="text-muted flex h-[18px] items-center justify-center text-[10px]">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={handleExpandUp}
+                      className="text-link hover:text-link-hover cursor-pointer px-1"
+                      aria-label="Show more context above"
+                    >
+                      ▲
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">Show more context above</TooltipContent>
+                </Tooltip>
+              </div>
+            )}
+            {upLoading && (
+              <div className="text-muted flex h-[18px] items-center justify-center text-[10px]">
+                <span>Loading...</span>
+              </div>
+            )}
+
+            {/* Expanded content above */}
+            {upContent && (
+              <>
+                <SelectableDiffRenderer
+                  content={upContent}
+                  filePath={hunk.filePath}
+                  oldStart={Math.max(1, hunk.oldStart - readMore.up)}
+                  newStart={Math.max(1, hunk.newStart - readMore.up)}
+                  fontSize="11px"
+                  maxHeight="none"
+                  className="rounded-none border-0 [&>div]:overflow-x-visible"
+                  enableHighlighting={isVisible}
+                />
+                {/* Collapse indicator between expanded context and main hunk */}
+                <ContextCollapseIndicator
+                  lineCount={readMore.up}
+                  onCollapse={handleCollapseUp}
+                  position="above"
+                />
+              </>
+            )}
+
+            {/* Original hunk content */}
+            <SelectableDiffRenderer
+              content={hunk.content}
+              filePath={hunk.filePath}
+              oldStart={hunk.oldStart}
+              newStart={hunk.newStart}
+              fontSize="11px"
+              maxHeight="none"
+              className="rounded-none border-0 [&>div]:overflow-x-visible"
+              onReviewNote={onReviewNote}
+              onLineClick={() => {
+                const syntheticEvent = {
+                  currentTarget: { dataset: { hunkId } },
+                } as unknown as React.MouseEvent<HTMLElement>;
+                onClick?.(syntheticEvent);
+              }}
+              searchConfig={searchConfig}
+              enableHighlighting={isVisible}
+              onComposingChange={handleComposingChange}
+            />
+
+            {/* Expanded content below */}
+            {downContent && (
+              <>
+                {/* Collapse indicator between main hunk and expanded context */}
+                <ContextCollapseIndicator
+                  lineCount={readMore.down}
+                  onCollapse={handleCollapseDown}
+                  position="below"
+                />
+                <SelectableDiffRenderer
+                  content={downContent}
+                  filePath={hunk.filePath}
+                  oldStart={hunk.oldStart + hunk.oldLines}
+                  newStart={hunk.newStart + hunk.newLines}
+                  fontSize="11px"
+                  maxHeight="none"
+                  className="rounded-none border-0 [&>div]:overflow-x-visible"
+                  enableHighlighting={isVisible}
+                />
+              </>
+            )}
+
+            {/* Expand down control - only show if not at EOF and not loading */}
+            {!atEOF && !downLoading && (
+              <div className="text-muted flex h-[18px] items-center justify-center text-[10px]">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={handleExpandDown}
+                      className="text-link hover:text-link-hover cursor-pointer px-1"
+                      aria-label="Show more context below"
+                    >
+                      ▼
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">Show more context below</TooltipContent>
+                </Tooltip>
+              </div>
+            )}
+            {downLoading && (
+              <div className="text-muted flex h-[18px] items-center justify-center text-[10px]">
+                <span>Loading...</span>
+              </div>
+            )}
+            {/* EOF indicator - show when at EOF with expanded content */}
+            {atEOF && downContent && !downLoading && (
+              <div className="text-dim flex h-[18px] items-center justify-center text-[10px]">
+                — end of file —
+              </div>
+            )}
+          </div>
         ) : (
           <div
             className="text-muted hover:text-foreground cursor-pointer px-3 py-2 text-center text-[11px] italic"

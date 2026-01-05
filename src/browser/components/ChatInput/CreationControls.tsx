@@ -7,6 +7,8 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { SSHIcon, WorktreeIcon, LocalIcon } from "../icons/RuntimeIcons";
 import { DocsLink } from "../DocsLink";
 import type { WorkspaceNameState } from "@/browser/hooks/useWorkspaceName";
+import type { SectionConfig } from "@/common/types/project";
+import { resolveSectionColor } from "@/common/constants/ui";
 
 interface CreationControlsProps {
   branches: string[];
@@ -25,6 +27,14 @@ interface CreationControlsProps {
   projectName: string;
   /** Workspace name/title generation state and actions */
   nameState: WorkspaceNameState;
+  /** Whether this is a non-git repository (for disabling worktree/SSH) */
+  isNonGitRepo: boolean;
+  /** Available sections for this project */
+  sections?: SectionConfig[];
+  /** Currently selected section ID */
+  selectedSectionId?: string | null;
+  /** Callback when section selection changes */
+  onSectionChange?: (sectionId: string | null) => void;
 }
 
 /** Runtime type button group with icons and colors */
@@ -71,7 +81,7 @@ const RUNTIME_OPTIONS: Array<{
   },
   {
     value: RUNTIME_MODE.SSH,
-    label: "Remote",
+    label: "SSH",
     description: "Clone on SSH host",
     docsPath: "/runtime/ssh",
     Icon: SSHIcon,
@@ -81,6 +91,65 @@ const RUNTIME_OPTIONS: Array<{
       "bg-transparent text-muted border-transparent hover:border-[var(--color-runtime-ssh)]/40",
   },
 ];
+
+/** Aesthetic section picker with color accent */
+interface SectionPickerProps {
+  sections: SectionConfig[];
+  selectedSectionId: string | null;
+  onSectionChange: (sectionId: string | null) => void;
+  disabled?: boolean;
+}
+
+function SectionPicker(props: SectionPickerProps) {
+  const { sections, selectedSectionId, onSectionChange, disabled } = props;
+
+  const selectedSection = selectedSectionId
+    ? sections.find((s) => s.id === selectedSectionId)
+    : null;
+  const sectionColor = resolveSectionColor(selectedSection?.color);
+
+  return (
+    <div
+      className="inline-flex w-fit items-center gap-2.5 rounded-md border px-3 py-1.5 transition-colors"
+      style={{
+        borderColor: selectedSection ? sectionColor : "var(--color-border-medium)",
+        borderLeftWidth: selectedSection ? "3px" : "1px",
+        backgroundColor: selectedSection ? `${sectionColor}08` : "transparent",
+      }}
+      data-testid="section-selector"
+      data-selected-section={selectedSectionId ?? ""}
+    >
+      {/* Color indicator dot */}
+      <div
+        className="size-2.5 shrink-0 rounded-full transition-colors"
+        style={{
+          backgroundColor: selectedSection ? sectionColor : "var(--color-muted)",
+          opacity: selectedSection ? 1 : 0.4,
+        }}
+      />
+      <label htmlFor="workspace-section" className="text-muted-foreground shrink-0 text-xs">
+        Section
+      </label>
+      <select
+        id="workspace-section"
+        value={selectedSectionId ?? ""}
+        onChange={(e) => onSectionChange(e.target.value || null)}
+        disabled={disabled}
+        className={cn(
+          "bg-transparent text-sm font-medium focus:outline-none cursor-pointer disabled:cursor-not-allowed disabled:opacity-50",
+          selectedSection ? "text-foreground" : "text-muted"
+        )}
+      >
+        <option value="">None</option>
+        {sections.map((section) => (
+          <option key={section.id} value={section.id}>
+            {section.name}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
 
 function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
   const disabledModes = props.disabledModes ?? [];
@@ -147,11 +216,7 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
  * Displays project name as header, workspace name with magic wand, and runtime/branch selectors.
  */
 export function CreationControls(props: CreationControlsProps) {
-  const { nameState } = props;
-
-  // Non-git directories (empty branches after loading completes) can only use local runtime
-  // Don't check until branches have loaded to avoid prematurely switching runtime
-  const isNonGitRepo = props.branchesLoaded && props.branches.length === 0;
+  const { nameState, isNonGitRepo } = props;
 
   // Local runtime doesn't need a trunk branch selector (uses project dir as-is)
   const showTrunkBranchSelector =
@@ -159,7 +224,7 @@ export function CreationControls(props: CreationControlsProps) {
 
   const { runtimeMode, onRuntimeModeChange } = props;
 
-  // Force local runtime for non-git directories (only after branches loaded)
+  // Force local runtime for non-git directories
   useEffect(() => {
     if (isNonGitRepo && runtimeMode !== RUNTIME_MODE.LOCAL) {
       onRuntimeModeChange(RUNTIME_MODE.LOCAL);
@@ -187,8 +252,8 @@ export function CreationControls(props: CreationControlsProps) {
 
   return (
     <div className="mb-3 flex flex-col gap-4">
-      {/* Project name / workspace name header row */}
-      <div className="flex items-center" data-component="WorkspaceNameGroup">
+      {/* Project name / workspace name header row - wraps on narrow viewports */}
+      <div className="flex flex-wrap items-center gap-y-2" data-component="WorkspaceNameGroup">
         <h2 className="text-foreground shrink-0 text-lg font-semibold">{props.projectName}</h2>
         <span className="text-muted-foreground mx-2 text-lg">/</span>
 
@@ -256,6 +321,19 @@ export function CreationControls(props: CreationControlsProps) {
 
         {/* Error display */}
         {nameState.error && <span className="text-xs text-red-500">{nameState.error}</span>}
+
+        {/* Section selector - right-aligned, same row as workspace name */}
+        {props.sections && props.sections.length > 0 && props.onSectionChange && (
+          <>
+            <div className="flex-1" />
+            <SectionPicker
+              sections={props.sections}
+              selectedSectionId={props.selectedSectionId ?? null}
+              onSectionChange={props.onSectionChange}
+              disabled={props.disabled}
+            />
+          </>
+        )}
       </div>
 
       {/* Runtime type - button group */}

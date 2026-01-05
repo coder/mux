@@ -86,8 +86,6 @@ export interface SpawnOptions {
   processId: string;
   /** Environment variables to inject */
   env?: Record<string, string>;
-  /** Process niceness level (-20 to 19, lower = higher priority) */
-  niceness?: number;
 }
 
 /**
@@ -166,7 +164,6 @@ export async function spawnProcess(
   const spawnCommand = buildSpawnCommand({
     wrapperScript,
     outputPath,
-    niceness: options.niceness,
     quotePath,
   });
 

@@ -86,7 +86,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
   <span
     className={cn(
       "text-[10px] ml-auto opacity-80 whitespace-nowrap shrink-0",
-      "[&_.status-text]:inline [@container(max-width:500px)]:&:has(.status-text):after:content-['']  [@container(max-width:500px)]:&_.status-text]:hidden",
+      "[&_.status-text]:inline [@container(max-width:350px)]:[&_.status-text]:hidden",
       getStatusColor(status),
       className
     )}
@@ -118,18 +118,20 @@ export const DetailLabel: React.FC<React.HTMLAttributes<HTMLDivElement>> = ({
   />
 );
 
-export const DetailContent: React.FC<React.HTMLAttributes<HTMLPreElement>> = ({
-  className,
-  ...props
-}) => (
-  <pre
-    className={cn(
-      "m-0 bg-code-bg rounded-sm text-[11px] leading-relaxed whitespace-pre-wrap break-words max-h-[200px] overflow-y-auto",
-      className
-    )}
-    {...props}
-  />
+export const DetailContent = React.forwardRef<HTMLPreElement, React.HTMLAttributes<HTMLPreElement>>(
+  ({ className, ...props }, ref) => (
+    <pre
+      ref={ref}
+      className={cn(
+        "m-0 bg-code-bg rounded-sm text-[11px] leading-relaxed whitespace-pre-wrap break-words max-h-[200px] overflow-y-auto",
+        className
+      )}
+      {...props}
+    />
+  )
 );
+
+DetailContent.displayName = "DetailContent";
 
 export const LoadingDots: React.FC<React.HTMLAttributes<HTMLSpanElement>> = ({
   className,
@@ -137,8 +139,7 @@ export const LoadingDots: React.FC<React.HTMLAttributes<HTMLSpanElement>> = ({
 }) => (
   <span
     className={cn(
-      "after:content-['...'] after:animate-[dots_1.5s_infinite]",
-      "[&]:after:[@keyframes_dots]{0%,20%{content:'.'};40%{content:'..'};60%,100%{content:'...'}}",
+      "after:inline-block after:w-[3ch] after:text-left after:content-[''] after:animate-[ellipsis_1.2s_steps(4,end)_infinite]",
       className
     )}
     {...props}

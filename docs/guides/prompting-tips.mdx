@@ -1,0 +1,57 @@
+---
+title: Prompting Tips
+description: Tips and tricks for getting the most out of your AI agents
+---
+
+## Persist lessons
+
+When you notice agents making the same class of mistake repeatedly, ask them to persist the fix:
+
+- **Global guidance**: update `AGENTS.md` (keep it short and general)
+- **Local guidance**: add a comment near the relevant code when the lesson is scoped to one area
+
+Two patterns that help:
+
+- Put a size constraint on the change (for example: “change at most two sentences”).
+- Ask for the general rule, not a one-off exception.
+
+Codebases often have “watering hole” files that are touched in a wide range of changes (for example, API boundaries). If a lesson only matters in one spot, it’s usually better as a local comment than as global policy.
+
+## Define the loop
+
+Agents thrive on TDD and explicit “done means green” loops.
+
+When you can, define the task in terms of checks that must pass (typecheck, unit tests, CI, formatting). In this repo, `scripts/wait_pr_checks.sh` is a good example of an explicit end condition.
+
+## Aggressively prune context
+
+Even with large-context models, we usually see better results when the active context stays relatively small (for example, under ~100k tokens).
+
+A simple pattern is to compact and immediately continue:
+
+```text
+/compact
+<what you want next>
+```
+
+mux will run compaction and then automatically send your follow-up message.
+
+## Keep code clean
+
+Prompts that often lead to better long-term code:
+
+**Elevate the fix to design level:**
+
+- “We keep seeing this class of bug in component X. Fix this at a design level.”
+- “There’s bug X. Provide a fix that solves the whole class of bugs.”
+
+**Before compaction (end of a long session):**
+
+- “How can the code/architecture be improved to make similar changes easier?”
+- “What notes in `AGENTS.md` would make this change easier for future assistants?”
+
+**After compaction (fresh context):**
+
+- “DRY your work.”
+- “Strive for net LoC reduction.”
+- “Review in depth; simplify.”

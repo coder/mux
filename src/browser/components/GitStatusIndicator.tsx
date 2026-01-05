@@ -1,13 +1,16 @@
-import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useCallback, useRef } from "react";
 import type { GitStatus } from "@/common/types/workspace";
 import { GIT_STATUS_INDICATOR_MODE_KEY } from "@/common/constants/storage";
+import { STORAGE_KEYS, WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { invalidateGitStatus, useGitStatusRefreshing } from "@/browser/stores/GitStatusStore";
 import { GitStatusIndicatorView, type GitStatusIndicatorMode } from "./GitStatusIndicatorView";
 import { useGitBranchDetails } from "./hooks/useGitBranchDetails";
 
 interface GitStatusIndicatorProps {
   gitStatus: GitStatus | null;
   workspaceId: string;
+  projectPath: string;
   tooltipPosition?: "right" | "bottom";
   /** When true, shows blue pulsing styling to indicate agent is working */
   isWorking?: boolean;
@@ -15,28 +18,76 @@ interface GitStatusIndicatorProps {
 
 /**
  * Container component for git status indicator.
- * Manages tooltip visibility, positioning, and data fetching.
+ * Manages hover card visibility and data fetching.
  * Delegates rendering to GitStatusIndicatorView.
  */
 export const GitStatusIndicator: React.FC<GitStatusIndicatorProps> = ({
   gitStatus,
   workspaceId,
+  projectPath,
   tooltipPosition = "right",
   isWorking = false,
 }) => {
-  const [showTooltip, setShowTooltip] = useState(false);
-  const [tooltipCoords, setTooltipCoords] = useState<{ top: number; left: number }>({
-    top: 0,
-    left: 0,
-  });
-  const hideTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const containerRef = useRef<HTMLSpanElement | null>(null);
+  const [isOpen, setIsOpen] = useState(false);
+  const [isPopoverOpen, setIsPopoverOpen] = useState(false);
+  const pendingHoverCardCloseRef = useRef(false);
   const trimmedWorkspaceId = workspaceId.trim();
+  const isRefreshing = useGitStatusRefreshing(trimmedWorkspaceId);
 
   const [mode, setMode] = usePersistedState<GitStatusIndicatorMode>(
     GIT_STATUS_INDICATOR_MODE_KEY,
     "line-delta",
     { listener: true }
+  );
+
+  // Per-project default base (fallback for new workspaces)
+  const [projectDefaultBase] = usePersistedState<string>(
+    STORAGE_KEYS.reviewDefaultBase(projectPath),
+    WORKSPACE_DEFAULTS.reviewBase,
+    { listener: true }
+  );
+
+  // Per-workspace base ref (shared with review panel, syncs via listener)
+  const [baseRef, setBaseRef] = usePersistedState<string>(
+    STORAGE_KEYS.reviewDiffBase(trimmedWorkspaceId),
+    projectDefaultBase,
+    { listener: true }
+  );
+
+  const handleBaseChange = useCallback(
+    (value: string) => {
+      setBaseRef(value);
+      invalidateGitStatus(trimmedWorkspaceId);
+    },
+    [setBaseRef, trimmedWorkspaceId]
+  );
+
+  // Prevent HoverCard from closing while the base selector popover is open.
+  // If Radix requests a close while the popover is open, defer the close until
+  // the popover closes (otherwise the hovercard can get "stuck" open).
+  const handleHoverCardOpenChange = useCallback(
+    (open: boolean) => {
+      if (!open && isPopoverOpen) {
+        pendingHoverCardCloseRef.current = true;
+        return;
+      }
+
+      pendingHoverCardCloseRef.current = false;
+      setIsOpen(open);
+    },
+    [isPopoverOpen]
+  );
+
+  const handlePopoverOpenChange = useCallback(
+    (open: boolean) => {
+      setIsPopoverOpen(open);
+
+      if (!open && pendingHoverCardCloseRef.current) {
+        pendingHoverCardCloseRef.current = false;
+        setIsOpen(false);
+      }
+    },
+    [setIsPopoverOpen]
   );
 
   const handleModeChange = useCallback(
@@ -51,74 +102,12 @@ export const GitStatusIndicator: React.FC<GitStatusIndicatorProps> = ({
     "GitStatusIndicator requires workspaceId to be a non-empty string."
   );
 
-  // Fetch branch details only when tooltip should be shown
+  // Fetch branch details only when hover card is open
   const { branchHeaders, commits, dirtyFiles, isLoading, errorMessage } = useGitBranchDetails(
     trimmedWorkspaceId,
     gitStatus,
-    showTooltip
+    isOpen
   );
-
-  const handleMouseEnter = () => {
-    // Cancel any pending hide timeout
-    if (hideTimeoutRef.current) {
-      clearTimeout(hideTimeoutRef.current);
-      hideTimeoutRef.current = null;
-    }
-
-    setShowTooltip(true);
-
-    // Calculate tooltip position based on indicator position
-    if (containerRef.current) {
-      const rect = containerRef.current.getBoundingClientRect();
-
-      if (tooltipPosition === "right") {
-        // Position to the right of the indicator
-        setTooltipCoords({
-          top: rect.top + rect.height / 2,
-          left: rect.right + 8,
-        });
-      } else {
-        // Position below the indicator
-        setTooltipCoords({
-          top: rect.bottom + 8,
-          left: rect.left,
-        });
-      }
-    }
-  };
-
-  const handleMouseLeave = () => {
-    // Delay hiding to give user time to move cursor to tooltip
-    hideTimeoutRef.current = setTimeout(() => {
-      setShowTooltip(false);
-    }, 300);
-  };
-
-  const handleTooltipMouseEnter = () => {
-    // Cancel hide timeout when hovering tooltip
-    if (hideTimeoutRef.current) {
-      clearTimeout(hideTimeoutRef.current);
-      hideTimeoutRef.current = null;
-    }
-  };
-
-  const handleTooltipMouseLeave = () => {
-    // Hide immediately when leaving tooltip
-    setShowTooltip(false);
-  };
-
-  const handleContainerRef = (el: HTMLSpanElement | null) => {
-    containerRef.current = el;
-  };
-
-  // Cleanup timeout on unmount
-  useEffect(() => {
-    return () => {
-      if (hideTimeoutRef.current) {
-        clearTimeout(hideTimeoutRef.current);
-      }
-    };
-  }, []);
 
   return (
     <GitStatusIndicatorView
@@ -130,15 +119,14 @@ export const GitStatusIndicator: React.FC<GitStatusIndicatorProps> = ({
       dirtyFiles={dirtyFiles}
       isLoading={isLoading}
       errorMessage={errorMessage}
-      showTooltip={showTooltip}
-      tooltipCoords={tooltipCoords}
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
-      onTooltipMouseEnter={handleTooltipMouseEnter}
+      isOpen={isOpen}
+      onOpenChange={handleHoverCardOpenChange}
       onModeChange={handleModeChange}
-      onTooltipMouseLeave={handleTooltipMouseLeave}
-      onContainerRef={handleContainerRef}
+      baseRef={baseRef}
+      onBaseChange={handleBaseChange}
+      onPopoverOpenChange={handlePopoverOpenChange}
       isWorking={isWorking}
+      isRefreshing={isRefreshing}
     />
   );
 };

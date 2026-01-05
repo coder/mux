@@ -14,10 +14,6 @@ export const MuxProviderOptionsSchema = z.object({
         description:
           "OpenAI service tier: priority (low-latency), flex (50% cheaper, higher latency), auto/default (standard)",
       }),
-      disableAutoTruncation: z
-        .boolean()
-        .optional()
-        .meta({ description: "Disable automatic context truncation (useful for testing)" }),
       forceContextLimitError: z.boolean().optional().meta({
         description: "Force context limit error (used in integration tests to simulate overflow)",
       }),

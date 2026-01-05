@@ -190,8 +190,47 @@ export async function movePlanFile(
 
   try {
     await runtime.stat(oldPath);
-    await execBuffered(runtime, `mv "${oldPath}" "${newPath}"`, { cwd: "/tmp", timeout: 5 });
+    // Resolve tildes to absolute paths - bash doesn't expand ~ inside quotes
+    const resolvedOldPath = await runtime.resolvePath(oldPath);
+    const resolvedNewPath = await runtime.resolvePath(newPath);
+    await execBuffered(runtime, `mv "${resolvedOldPath}" "${resolvedNewPath}"`, {
+      cwd: "/tmp",
+      timeout: 5,
+    });
   } catch {
     // No plan file to move, that's fine
+  }
+}
+
+/**
+ * Copy a plan file from one workspace to another (e.g., during fork).
+ * Checks both new path format and legacy path format for the source.
+ * Silently succeeds if source file doesn't exist at either location.
+ */
+export async function copyPlanFile(
+  runtime: Runtime,
+  sourceWorkspaceName: string,
+  sourceWorkspaceId: string,
+  targetWorkspaceName: string,
+  projectName: string
+): Promise<void> {
+  const sourcePath = getPlanFilePath(sourceWorkspaceName, projectName);
+  const legacySourcePath = getLegacyPlanFilePath(sourceWorkspaceId);
+  const targetPath = getPlanFilePath(targetWorkspaceName, projectName);
+
+  // Prefer the new layout, but fall back to the legacy layout.
+  //
+  // Note: we intentionally use runtime file I/O instead of `cp` because:
+  // 1) bash doesn't expand ~ inside quotes
+  // 2) the target per-project plan directory may not exist yet
+  // 3) runtime.writeFile() already handles directory creation + tilde expansion
+  for (const candidatePath of [sourcePath, legacySourcePath]) {
+    try {
+      const content = await readFileString(runtime, candidatePath);
+      await writeFileString(runtime, targetPath, content);
+      return;
+    } catch {
+      // Try next candidate
+    }
   }
 }

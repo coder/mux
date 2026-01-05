@@ -1,7 +1,6 @@
 import { describe, it, expect } from "bun:test";
-import { getPreferredNameModel } from "./workspaceTitleGenerator";
+import { findAvailableModel } from "./workspaceTitleGenerator";
 import type { AIService } from "./aiService";
-import { getKnownModel } from "@/common/constants/knownModels";
 import type { LanguageModel } from "ai";
 import type { Result } from "@/common/types/result";
 import type { SendMessageError } from "@/common/types/errors";
@@ -13,7 +12,6 @@ function createMockAIService(availableModels: string[]): AIService {
   const service: Partial<AIService> = {
     createModel: (modelString: string): Promise<CreateModelResult> => {
       if (availableModels.includes(modelString)) {
-        // Return a minimal success result - data is not used by getPreferredNameModel
         const result: CreateModelResult = { success: true, data: null as never };
         return Promise.resolve(result);
       }
@@ -28,23 +26,36 @@ function createMockAIService(availableModels: string[]): AIService {
 }
 
 describe("workspaceTitleGenerator", () => {
-  const HAIKU_ID = getKnownModel("HAIKU").id;
-  const GPT_MINI_ID = getKnownModel("GPT_MINI").id;
+  describe("findAvailableModel", () => {
+    it("returns null when no models available", async () => {
+      const aiService = createMockAIService([]);
+      expect(await findAvailableModel(aiService, ["model-a", "model-b"])).toBeNull();
+    });
 
-  it("getPreferredNameModel returns null when no models available", async () => {
-    const aiService = createMockAIService([]);
-    expect(await getPreferredNameModel(aiService)).toBeNull();
-  });
+    it("returns null for empty models list", async () => {
+      const aiService = createMockAIService(["any-model"]);
+      expect(await findAvailableModel(aiService, [])).toBeNull();
+    });
 
-  it("getPreferredNameModel prefers Haiku when available", async () => {
-    const aiService = createMockAIService([HAIKU_ID, GPT_MINI_ID]);
-    const model = await getPreferredNameModel(aiService);
-    expect(model).toBe(HAIKU_ID);
-  });
+    it("returns first available model", async () => {
+      const aiService = createMockAIService(["model-b", "model-c"]);
+      const model = await findAvailableModel(aiService, ["model-a", "model-b", "model-c"]);
+      expect(model).toBe("model-b");
+    });
 
-  it("getPreferredNameModel falls back to GPT Mini when Haiku unavailable", async () => {
-    const aiService = createMockAIService([GPT_MINI_ID]);
-    const model = await getPreferredNameModel(aiService);
-    expect(model).toBe(GPT_MINI_ID);
+    it("tries models in order", async () => {
+      const aiService = createMockAIService(["model-a", "model-b"]);
+      const model = await findAvailableModel(aiService, ["model-a", "model-b"]);
+      expect(model).toBe("model-a");
+    });
+
+    it("works with gateway-format models", async () => {
+      const aiService = createMockAIService(["mux-gateway:anthropic/claude-haiku-4-5"]);
+      const model = await findAvailableModel(aiService, [
+        "anthropic:claude-haiku-4-5", // direct - unavailable
+        "mux-gateway:anthropic/claude-haiku-4-5", // gateway - available
+      ]);
+      expect(model).toBe("mux-gateway:anthropic/claude-haiku-4-5");
+    });
   });
 });

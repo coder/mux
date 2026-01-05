@@ -1,7 +1,7 @@
 import path from "path";
 import fs from "fs/promises";
 import { electronTest as test, electronExpect as expect } from "../electronTest";
-import { TOOL_FLOW_PROMPTS } from "@/node/services/mock/scenarios/toolFlows";
+import { MOCK_TOOL_FLOW_PROMPTS } from "../mockAiPrompts";
 
 test.skip(
   ({ browserName }) => browserName !== "chromium",
@@ -20,7 +20,7 @@ test.describe("tool and reasoning flows", () => {
     await fs.writeFile(readmePath, `${readmeContent}\n`, "utf-8");
 
     const timeline = await ui.chat.captureStreamTimeline(async () => {
-      await ui.chat.sendMessage(TOOL_FLOW_PROMPTS.FILE_READ);
+      await ui.chat.sendMessage(MOCK_TOOL_FLOW_PROMPTS.FILE_READ);
     });
 
     const types = timeline.events.map((event) => event.type);
@@ -58,7 +58,7 @@ test.describe("tool and reasoning flows", () => {
     await ui.projects.openFirstWorkspace();
 
     const timeline = await ui.chat.captureStreamTimeline(async () => {
-      await ui.chat.sendMessage(TOOL_FLOW_PROMPTS.LIST_DIRECTORY);
+      await ui.chat.sendMessage(MOCK_TOOL_FLOW_PROMPTS.LIST_DIRECTORY);
     });
 
     const types = timeline.events.map((event) => event.type);
@@ -98,7 +98,7 @@ test.describe("tool and reasoning flows", () => {
     await ui.projects.openFirstWorkspace();
 
     const firstTimeline = await ui.chat.captureStreamTimeline(async () => {
-      await ui.chat.sendMessage(TOOL_FLOW_PROMPTS.CREATE_TEST_FILE);
+      await ui.chat.sendMessage(MOCK_TOOL_FLOW_PROMPTS.CREATE_TEST_FILE);
     });
     if (firstTimeline.events.length === 0) {
       throw new Error("First turn produced no events");
@@ -107,7 +107,7 @@ test.describe("tool and reasoning flows", () => {
     await ui.chat.expectTranscriptContains("Created test.txt");
 
     const secondTimeline = await ui.chat.captureStreamTimeline(async () => {
-      await ui.chat.sendMessage(TOOL_FLOW_PROMPTS.READ_TEST_FILE);
+      await ui.chat.sendMessage(MOCK_TOOL_FLOW_PROMPTS.READ_TEST_FILE);
     });
     if (secondTimeline.events.length === 0) {
       throw new Error("Second turn produced no events");
@@ -116,7 +116,7 @@ test.describe("tool and reasoning flows", () => {
     await ui.chat.expectTranscriptContains("1\thello");
 
     const finalTimeline = await ui.chat.captureStreamTimeline(async () => {
-      await ui.chat.sendMessage(TOOL_FLOW_PROMPTS.RECALL_TEST_FILE);
+      await ui.chat.sendMessage(MOCK_TOOL_FLOW_PROMPTS.RECALL_TEST_FILE);
     });
     if (finalTimeline.events.length === 0) {
       throw new Error("Recall turn produced no events");
@@ -127,11 +127,47 @@ test.describe("tool and reasoning flows", () => {
     await ui.chat.expectTranscriptContains("contains the line 'hello'");
   });
 
+  test("tool call flow - user notification", async ({ ui }) => {
+    await ui.projects.openFirstWorkspace();
+
+    const timeline = await ui.chat.captureStreamTimeline(async () => {
+      await ui.chat.sendMessage(MOCK_TOOL_FLOW_PROMPTS.USER_NOTIFY);
+    });
+
+    const types = timeline.events.map((event) => event.type);
+    const toolStartIndex = types.indexOf("tool-call-start");
+    const toolEndIndex = types.indexOf("tool-call-end");
+    expect(toolStartIndex).toBeGreaterThanOrEqual(0);
+    expect(toolEndIndex).toBeGreaterThan(toolStartIndex);
+
+    const toolStartEvent = timeline.events[toolStartIndex];
+    if (!toolStartEvent) {
+      throw new Error("Timeline missing tool-call-start event for notify flow");
+    }
+    expect(toolStartEvent.toolName).toBe("notify");
+    expect(toolStartEvent.args).toMatchObject({
+      title: "Task Complete",
+      message: "Your requested task has been completed successfully.",
+    });
+
+    const toolEndEvent = timeline.events[toolEndIndex];
+    if (!toolEndEvent) {
+      throw new Error("Timeline missing tool-call-end event for notify flow");
+    }
+    expect(toolEndEvent.toolName).toBe("notify");
+    expect(toolEndEvent.result).toMatchObject({
+      success: true,
+      title: "Task Complete",
+    });
+
+    await ui.chat.expectTranscriptContains("sent you a notification");
+  });
+
   test("reasoning model flow emits thinking events", async ({ ui, page }) => {
     await ui.projects.openFirstWorkspace();
 
     const timeline = await ui.chat.captureStreamTimeline(async () => {
-      await ui.chat.sendMessage(TOOL_FLOW_PROMPTS.REASONING_QUICKSORT);
+      await ui.chat.sendMessage(MOCK_TOOL_FLOW_PROMPTS.REASONING_QUICKSORT);
     });
 
     const reasoningEvents = timeline.events.filter((event) => event.type === "reasoning-delta");

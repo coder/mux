@@ -1,5 +1,7 @@
 import { readFileSync, existsSync } from "fs";
+
 import { getMuxExtensionMetadataPath } from "@/common/constants/paths";
+import { isThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
 import { log } from "@/node/services/log";
 
 /**
@@ -10,6 +12,7 @@ export interface ExtensionMetadata {
   recency: number;
   streaming: boolean;
   lastModel: string | null;
+  lastThinkingLevel: ThinkingLevel | null;
 }
 
 /**
@@ -52,7 +55,13 @@ export function readExtensionMetadata(): Map<string, ExtensionMetadata> {
 
     const map = new Map<string, ExtensionMetadata>();
     for (const [workspaceId, metadata] of Object.entries(data.workspaces || {})) {
-      map.set(workspaceId, metadata);
+      const rawThinkingLevel = (metadata as { lastThinkingLevel?: unknown }).lastThinkingLevel;
+      map.set(workspaceId, {
+        recency: metadata.recency,
+        streaming: metadata.streaming,
+        lastModel: metadata.lastModel ?? null,
+        lastThinkingLevel: isThinkingLevel(rawThinkingLevel) ? rawThinkingLevel : null,
+      });
     }
 
     return map;

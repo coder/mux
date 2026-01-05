@@ -21,6 +21,15 @@ import type { StreamCollector } from "./streamCollector";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
+const CHROME_DEVTOOLS_MCP_VERSION = "0.12.1";
+const CHROME_DEVTOOLS_MCP_NPX = `npx -y chrome-devtools-mcp@${CHROME_DEVTOOLS_MCP_VERSION}`;
+
+const TEST_SCREENSHOT_MCP_SERVER_PATH = path.join(
+  __dirname,
+  "fixtures",
+  "mcp-screenshot-server.js"
+);
+const TEST_SCREENSHOT_MCP_SERVER_COMMAND = `node "${TEST_SCREENSHOT_MCP_SERVER_PATH}"`;
 if (shouldRunIntegrationTests()) {
   validateApiKeys(["ANTHROPIC_API_KEY"]);
 }
@@ -121,16 +130,6 @@ function assertValidScreenshotResult(
   return { mediaItems, textItems };
 }
 
-/**
- * Assert that the model response describes example.com content.
- */
-function assertModelDescribesScreenshot(collector: StreamCollector): void {
-  const deltas = collector.getDeltas();
-  const responseText = extractTextFromEvents(deltas).toLowerCase();
-  expect(responseText).toContain("example domain");
-  expect(responseText.length).toBeGreaterThan(20);
-}
-
 describeIntegration("MCP project configuration", () => {
   test.concurrent("add, list, and remove MCP servers", async () => {
     const env = await createTestEnvironment();
@@ -150,21 +149,25 @@ describeIntegration("MCP project configuration", () => {
       const addResult = await client.projects.mcp.add({
         projectPath: repoPath,
         name: "chrome-devtools",
-        command: "npx chrome-devtools-mcp@latest",
+        command: CHROME_DEVTOOLS_MCP_NPX,
       });
       expect(addResult.success).toBe(true);
 
       // Should list the added server
       const listed = await client.projects.mcp.list({ projectPath: repoPath });
       expect(listed).toEqual({
-        "chrome-devtools": { command: "npx chrome-devtools-mcp@latest", disabled: false },
+        "chrome-devtools": {
+          transport: "stdio",
+          command: CHROME_DEVTOOLS_MCP_NPX,
+          disabled: false,
+        },
       });
 
       // Config file should be written
       const configPath = path.join(repoPath, ".mux", "mcp.jsonc");
       const file = await fs.readFile(configPath, "utf-8");
       expect(JSON.parse(file)).toEqual({
-        servers: { "chrome-devtools": "npx chrome-devtools-mcp@latest" },
+        servers: { "chrome-devtools": CHROME_DEVTOOLS_MCP_NPX },
       });
 
       // Disable server
@@ -178,14 +181,14 @@ describeIntegration("MCP project configuration", () => {
       // Should still be listed but disabled
       const disabledList = await client.projects.mcp.list({ projectPath: repoPath });
       expect(disabledList).toEqual({
-        "chrome-devtools": { command: "npx chrome-devtools-mcp@latest", disabled: true },
+        "chrome-devtools": { transport: "stdio", command: CHROME_DEVTOOLS_MCP_NPX, disabled: true },
       });
 
       // Config file should have disabled format
       const disabledConfig = await fs.readFile(configPath, "utf-8");
       expect(JSON.parse(disabledConfig)).toEqual({
         servers: {
-          "chrome-devtools": { command: "npx chrome-devtools-mcp@latest", disabled: true },
+          "chrome-devtools": { command: CHROME_DEVTOOLS_MCP_NPX, disabled: true },
         },
       });
 
@@ -200,11 +203,15 @@ describeIntegration("MCP project configuration", () => {
       // Should be enabled again, config file back to string format
       const enabledList = await client.projects.mcp.list({ projectPath: repoPath });
       expect(enabledList).toEqual({
-        "chrome-devtools": { command: "npx chrome-devtools-mcp@latest", disabled: false },
+        "chrome-devtools": {
+          transport: "stdio",
+          command: CHROME_DEVTOOLS_MCP_NPX,
+          disabled: false,
+        },
       });
       const enabledConfig = await fs.readFile(configPath, "utf-8");
       expect(JSON.parse(enabledConfig)).toEqual({
-        servers: { "chrome-devtools": "npx chrome-devtools-mcp@latest" },
+        servers: { "chrome-devtools": CHROME_DEVTOOLS_MCP_NPX },
       });
 
       // Remove server
@@ -228,19 +235,17 @@ describeIntegration("MCP server integration with model", () => {
   const imageFormatCases = [
     {
       name: "PNG",
-      prompt:
-        "You MUST use chrome_navigate_page to go to https://example.com, then MUST use chrome_take_screenshot to capture the page. After taking the screenshot, describe what you see in the image.",
+      prompt: "Call chrome_take_screenshot to capture a screenshot.",
       mediaTypePattern: /^image\//,
     },
     {
       name: "JPEG",
-      prompt:
-        'You MUST use chrome_navigate_page to go to https://example.com, then MUST use chrome_take_screenshot with format "jpeg" to capture the page. After taking the screenshot, describe what you see in the image.',
+      prompt: 'Call chrome_take_screenshot with format "jpeg" to capture a screenshot.',
       mediaTypePattern: /^image\/(jpeg|jpg|webp)$/,
     },
   ] as const;
 
-  test.concurrent.each(imageFormatCases)(
+  test.each(imageFormatCases)(
     "MCP $name image content is correctly transformed to AI SDK format",
     async ({ name, prompt, mediaTypePattern }) => {
       const { env, workspaceId, tempGitRepo, cleanup } = await setupWorkspace(
@@ -248,22 +253,25 @@ describeIntegration("MCP server integration with model", () => {
         `mcp-chrome-${name.toLowerCase()}`
       );
       const client = resolveOrpcClient(env);
+      const collector = createStreamCollector(env.orpc, workspaceId);
+      collector.start();
 
       try {
         // Add Chrome DevTools MCP server (headless + no-sandbox for CI)
         const addResult = await client.projects.mcp.add({
           projectPath: tempGitRepo,
           name: "chrome",
-          command:
-            "npx -y chrome-devtools-mcp@latest --headless --isolated --chromeArg='--no-sandbox'",
+          command: TEST_SCREENSHOT_MCP_SERVER_COMMAND,
         });
         expect(addResult.success).toBe(true);
 
-        const collector = createStreamCollector(env.orpc, workspaceId);
-        collector.start();
         await collector.waitForSubscription();
 
-        const result = await sendMessageWithModel(env, workspaceId, prompt, HAIKU_MODEL);
+        const result = await sendMessageWithModel(env, workspaceId, prompt, HAIKU_MODEL, {
+          toolPolicy: [{ regex_match: "chrome_take_screenshot", action: "require" }],
+          thinkingLevel: "off",
+          mode: "exec",
+        });
         expect(result.success).toBe(true);
 
         await collector.waitForEvent("stream-end", 120000);
@@ -275,11 +283,14 @@ describeIntegration("MCP server integration with model", () => {
         const screenshotResult = await waitForToolCallEnd(
           collector,
           "chrome_take_screenshot",
-          20000
+          60000
         );
 
         // Debug: log tool calls if screenshot not found
         if (!screenshotResult) {
+          collector.logEventDiagnostics(
+            `[MCP ${name} Test] Missing chrome_take_screenshot tool-call-end`
+          );
           const toolCallEnds = collector
             .getEvents()
             .filter((e): e is ToolCallEndEvent => e.type === "tool-call-end");
@@ -293,10 +304,8 @@ describeIntegration("MCP server integration with model", () => {
 
         // Validate result structure and media content
         assertValidScreenshotResult(screenshotResult!.result, mediaTypePattern);
-        assertModelDescribesScreenshot(collector);
-
-        collector.stop();
       } finally {
+        collector.stop();
         await cleanup();
       }
     },

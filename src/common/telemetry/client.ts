@@ -45,6 +45,21 @@ function isTestEnvironment(): boolean {
 }
 
 /**
+ * Check if we're running under the Vite dev server.
+ *
+ * We avoid import.meta.env here because this module is shared across the
+ * renderer and the main-process builds (tsconfig.main uses module=CommonJS).
+ */
+function isViteDevEnvironment(): boolean {
+  if (typeof document === "undefined") {
+    return false;
+  }
+
+  // Vite injects /@vite/client in dev for HMR.
+  return document.querySelector('script[src^="/@vite/client"]') !== null;
+}
+
+/**
  * Initialize telemetry (no-op, kept for API compatibility)
  */
 export function initTelemetry(): void {
@@ -58,12 +73,23 @@ export function initTelemetry(): void {
  * The backend decides whether to actually send to PostHog.
  */
 export function trackEvent(payload: TelemetryEventPayload): void {
-  if (isTestEnvironment()) {
+  // Telemetry is a no-op in tests/CI/E2E, and also in SSR-ish test contexts
+  // where `window` isn't available.
+  //
+  // Under the Vite dev server we also require explicit opt-in from the preload
+  // script (window.api.enableTelemetryInDev) to avoid accidentally emitting data
+  // from local development.
+  if (
+    typeof window === "undefined" ||
+    isTestEnvironment() ||
+    window.api?.isE2E === true ||
+    (isViteDevEnvironment() && window.api?.enableTelemetryInDev !== true)
+  ) {
     return;
   }
 
   const client = window.__ORPC_CLIENT__;
-  if (!client) {
+  if (!client?.telemetry?.track) {
     return;
   }
 

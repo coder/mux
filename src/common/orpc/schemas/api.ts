@@ -1,9 +1,10 @@
 import { eventIterator } from "@orpc/server";
+import { UIModeSchema } from "../../types/mode";
 import { z } from "zod";
 import { ChatStatsSchema, SessionUsageFileSchema } from "./chatStats";
 import { SendMessageErrorSchema } from "./errors";
 import { BranchListResultSchema, ImagePartSchema, MuxMessageSchema } from "./message";
-import { ProjectConfigSchema } from "./project";
+import { ProjectConfigSchema, SectionConfigSchema } from "./project";
 import { ResultSchema } from "./result";
 import { RuntimeConfigSchema } from "./runtime";
 import { SecretSchema } from "./secrets";
@@ -14,18 +15,46 @@ import {
   TerminalSessionSchema,
 } from "./terminal";
 import { BashToolResultSchema, FileTreeNodeSchema } from "./tools";
+import { WorkspaceStatsSnapshotSchema } from "./workspaceStats";
 import { FrontendWorkspaceMetadataSchema, WorkspaceActivitySnapshotSchema } from "./workspace";
+import { WorkspaceAISettingsSchema } from "./workspaceAiSettings";
+import {
+  AgentDefinitionDescriptorSchema,
+  AgentDefinitionPackageSchema,
+  AgentIdSchema,
+} from "./agentDefinition";
 import {
   MCPAddParamsSchema,
   MCPRemoveParamsSchema,
   MCPServerMapSchema,
   MCPSetEnabledParamsSchema,
+  MCPSetToolAllowlistParamsSchema,
   MCPTestParamsSchema,
   MCPTestResultSchema,
+  WorkspaceMCPOverridesSchema,
 } from "./mcp";
 
+// Experiments
+export const ExperimentValueSchema = z.object({
+  value: z.union([z.string(), z.boolean(), z.null()]),
+  source: z.enum(["posthog", "cache", "disabled"]),
+});
+
+export const experiments = {
+  getAll: {
+    input: z.void(),
+    output: z.record(z.string(), ExperimentValueSchema),
+  },
+  reload: {
+    input: z.void(),
+    output: z.void(),
+  },
+};
 // Re-export telemetry schemas
 export { telemetry, TelemetryEventSchema } from "./telemetry";
+
+// Re-export signing schemas
+export { signing, type SigningCapabilities, type SignCredentials } from "./signing";
 
 // --- API Router Schemas ---
 
@@ -135,9 +164,23 @@ export const projects = {
     input: z.void(),
     output: z.array(z.tuple([z.string(), ProjectConfigSchema])),
   },
+  getFileCompletions: {
+    input: z
+      .object({
+        projectPath: z.string(),
+        query: z.string(),
+        limit: z.number().int().positive().max(50).optional(),
+      })
+      .strict(),
+    output: z.object({ paths: z.array(z.string()) }),
+  },
   listBranches: {
     input: z.object({ projectPath: z.string() }),
     output: BranchListResultSchema,
+  },
+  gitInit: {
+    input: z.object({ projectPath: z.string() }),
+    output: ResultSchema(z.void(), z.string()),
   },
   mcp: {
     list: {
@@ -160,6 +203,10 @@ export const projects = {
       input: MCPSetEnabledParamsSchema,
       output: ResultSchema(z.void(), z.string()),
     },
+    setToolAllowlist: {
+      input: MCPSetToolAllowlistParamsSchema,
+      output: ResultSchema(z.void(), z.string()),
+    },
   },
   secrets: {
     get: {
@@ -174,6 +221,64 @@ export const projects = {
       output: ResultSchema(z.void(), z.string()),
     },
   },
+  idleCompaction: {
+    get: {
+      input: z.object({ projectPath: z.string() }),
+      output: z.object({ hours: z.number().nullable() }),
+    },
+    set: {
+      input: z.object({
+        projectPath: z.string(),
+        hours: z.number().min(1).nullable(),
+      }),
+      output: ResultSchema(z.void(), z.string()),
+    },
+  },
+  sections: {
+    list: {
+      input: z.object({ projectPath: z.string() }),
+      output: z.array(SectionConfigSchema),
+    },
+    create: {
+      input: z.object({
+        projectPath: z.string(),
+        name: z.string().min(1),
+        color: z.string().optional(),
+      }),
+      output: ResultSchema(SectionConfigSchema, z.string()),
+    },
+    update: {
+      input: z.object({
+        projectPath: z.string(),
+        sectionId: z.string(),
+        name: z.string().min(1).optional(),
+        color: z.string().optional(),
+      }),
+      output: ResultSchema(z.void(), z.string()),
+    },
+    remove: {
+      input: z.object({
+        projectPath: z.string(),
+        sectionId: z.string(),
+      }),
+      output: ResultSchema(z.void(), z.string()),
+    },
+    reorder: {
+      input: z.object({
+        projectPath: z.string(),
+        sectionIds: z.array(z.string()),
+      }),
+      output: ResultSchema(z.void(), z.string()),
+    },
+    assignWorkspace: {
+      input: z.object({
+        projectPath: z.string(),
+        workspaceId: z.string(),
+        sectionId: z.string().nullable(),
+      }),
+      output: ResultSchema(z.void(), z.string()),
+    },
+  },
 };
 
 // Workspace
@@ -182,6 +287,8 @@ export const workspace = {
     input: z
       .object({
         includePostCompaction: z.boolean().optional(),
+        /** When true, only return archived workspaces. Default returns only non-archived. */
+        archived: z.boolean().optional(),
       })
       .optional(),
     output: z.array(FrontendWorkspaceMetadataSchema),
@@ -195,6 +302,8 @@ export const workspace = {
       /** Human-readable title (e.g., "Fix plan mode over SSH") - optional for backwards compat */
       title: z.string().optional(),
       runtimeConfig: RuntimeConfigSchema.optional(),
+      /** Section ID to assign the new workspace to (optional) */
+      sectionId: z.string().optional(),
     }),
     output: z.discriminatedUnion("success", [
       z.object({ success: z.literal(true), metadata: FrontendWorkspaceMetadataSchema }),
@@ -214,6 +323,29 @@ export const workspace = {
   },
   updateTitle: {
     input: z.object({ workspaceId: z.string(), title: z.string() }),
+    output: ResultSchema(z.void(), z.string()),
+  },
+  updateModeAISettings: {
+    input: z.object({
+      workspaceId: z.string(),
+      mode: UIModeSchema,
+      aiSettings: WorkspaceAISettingsSchema,
+    }),
+    output: ResultSchema(z.void(), z.string()),
+  },
+  updateAISettings: {
+    input: z.object({
+      workspaceId: z.string(),
+      aiSettings: WorkspaceAISettingsSchema,
+    }),
+    output: ResultSchema(z.void(), z.string()),
+  },
+  archive: {
+    input: z.object({ workspaceId: z.string() }),
+    output: ResultSchema(z.void(), z.string()),
+  },
+  unarchive: {
+    input: z.object({ workspaceId: z.string() }),
     output: ResultSchema(z.void(), z.string()),
   },
   fork: {
@@ -236,6 +368,16 @@ export const workspace = {
       }).optional(),
     }),
     output: ResultSchema(z.object({}), SendMessageErrorSchema),
+  },
+  answerAskUserQuestion: {
+    input: z
+      .object({
+        workspaceId: z.string(),
+        toolCallId: z.string(),
+        answers: z.record(z.string(), z.string()),
+      })
+      .strict(),
+    output: ResultSchema(z.void(), z.string()),
   },
   resumeStream: {
     input: z.object({
@@ -292,11 +434,20 @@ export const workspace = {
       options: z
         .object({
           timeout_secs: z.number().optional(),
-          niceness: z.number().optional(),
         })
         .optional(),
     }),
     output: ResultSchema(BashToolResultSchema, z.string()),
+  },
+  getFileCompletions: {
+    input: z
+      .object({
+        workspaceId: z.string(),
+        query: z.string(),
+        limit: z.number().int().positive().max(50).optional(),
+      })
+      .strict(),
+    output: z.object({ paths: z.array(z.string()) }),
   },
   // Subscriptions
   onChat: {
@@ -394,20 +545,126 @@ export const workspace = {
     }),
     output: ResultSchema(z.void(), z.string()),
   },
+  stats: {
+    subscribe: {
+      input: z.object({ workspaceId: z.string() }),
+      output: eventIterator(WorkspaceStatsSnapshotSchema),
+    },
+    clear: {
+      input: z.object({ workspaceId: z.string() }),
+      output: ResultSchema(z.void(), z.string()),
+    },
+  },
   getSessionUsage: {
     input: z.object({ workspaceId: z.string() }),
     output: SessionUsageFileSchema.optional(),
   },
+  /** Batch fetch session usage for multiple workspaces (for archived workspaces cost display) */
+  getSessionUsageBatch: {
+    input: z.object({ workspaceIds: z.array(z.string()) }),
+    output: z.record(z.string(), SessionUsageFileSchema.optional()),
+  },
+  /** Per-workspace MCP configuration (overrides project-level mcp.jsonc) */
+  mcp: {
+    get: {
+      input: z.object({ workspaceId: z.string() }),
+      output: WorkspaceMCPOverridesSchema,
+    },
+    set: {
+      input: z.object({
+        workspaceId: z.string(),
+        overrides: WorkspaceMCPOverridesSchema,
+      }),
+      output: ResultSchema(z.void(), z.string()),
+    },
+  },
 };
 
 export type WorkspaceSendMessageOutput = z.infer<typeof workspace.sendMessage.output>;
+
+// Tasks (agent sub-workspaces)
+export const tasks = {
+  create: {
+    input: z
+      .object({
+        parentWorkspaceId: z.string(),
+        kind: z.literal("agent"),
+        agentId: AgentIdSchema.optional(),
+        /** @deprecated Legacy alias for agentId (kept for downgrade compatibility). */
+        agentType: z.string().min(1).optional(),
+        prompt: z.string(),
+        title: z.string().min(1),
+        modelString: z.string().optional(),
+        thinkingLevel: z.string().optional(),
+      })
+      .superRefine((value, ctx) => {
+        const hasAgentId = typeof value.agentId === "string" && value.agentId.trim().length > 0;
+        const hasAgentType =
+          typeof value.agentType === "string" && value.agentType.trim().length > 0;
+
+        if (hasAgentId === hasAgentType) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "tasks.create: exactly one of agentId or agentType is required",
+            path: ["agentId"],
+          });
+        }
+      }),
+    output: ResultSchema(
+      z.object({
+        taskId: z.string(),
+        kind: z.literal("agent"),
+        status: z.enum(["queued", "running"]),
+      }),
+      z.string()
+    ),
+  },
+};
+
+// Agent definitions (unifies UI modes + subagents)
+// Agents can be discovered from either the PROJECT path or the WORKSPACE path.
+// - Project path: <projectPath>/.mux/agents - shared across all workspaces
+// - Workspace path: <worktree>/.mux/agents - workspace-specific (useful for iterating)
+// Default is workspace path when workspaceId is provided.
+// Use disableWorkspaceAgents in SendMessageOptions to skip workspace agents during message sending.
+
+// At least one of projectPath or workspaceId must be provided for agent discovery.
+// Agent discovery input supports:
+// - workspaceId only: resolve projectPath from workspace metadata, discover from worktree
+// - projectPath only: discover from project path (project page, no workspace yet)
+// - both: discover from worktree using workspaceId
+// - disableWorkspaceAgents: when true with workspaceId, use workspace's runtime but discover
+//   from projectPath instead of worktree (useful for SSH workspaces when iterating on agents)
+const AgentDiscoveryInputSchema = z
+  .object({
+    projectPath: z.string().optional(),
+    workspaceId: z.string().optional(),
+    /** When true, skip workspace worktree and discover from projectPath (but still use workspace runtime) */
+    disableWorkspaceAgents: z.boolean().optional(),
+  })
+  .refine((data) => Boolean(data.projectPath ?? data.workspaceId), {
+    message: "Either projectPath or workspaceId must be provided",
+  });
+
+export const agents = {
+  list: {
+    input: AgentDiscoveryInputSchema,
+    output: z.array(AgentDefinitionDescriptorSchema),
+  },
+  get: {
+    input: AgentDiscoveryInputSchema.and(z.object({ agentId: AgentIdSchema })),
+    output: AgentDefinitionPackageSchema,
+  },
+};
 
 // Name generation for new workspaces (decoupled from workspace creation)
 export const nameGeneration = {
   generate: {
     input: z.object({
       message: z.string(),
-      /** Model to use if preferred small models (Haiku, GPT-Mini) aren't available */
+      /** Models to try in order (frontend converts to gateway format if needed) */
+      preferredModels: z.array(z.string()).optional(),
+      /** Model to use if preferred models aren't available */
       fallbackModel: z.string().optional(),
     }),
     output: ResultSchema(
@@ -477,6 +734,26 @@ export const terminal = {
 };
 
 // Server
+
+export const ApiServerStatusSchema = z.object({
+  running: z.boolean(),
+  /** Base URL that is always connectable from the local machine (loopback for wildcard binds). */
+  baseUrl: z.string().nullable(),
+  /** The host/interface the server is actually bound to. */
+  bindHost: z.string().nullable(),
+  /** The port the server is listening on. */
+  port: z.number().int().min(0).max(65535).nullable(),
+  /** Additional base URLs that may be reachable from other devices (LAN/VPN). */
+  networkBaseUrls: z.array(z.url()),
+  /** Auth token required for HTTP/WS API access. */
+  token: z.string().nullable(),
+  /** Configured bind host from ~/.mux/config.json (if set). */
+  configuredBindHost: z.string().nullable(),
+  /** Configured port from ~/.mux/config.json (if set). */
+  configuredPort: z.number().int().min(0).max(65535).nullable(),
+  /** Whether the API server should serve the mux web UI at /. */
+  configuredServeWebUi: z.boolean(),
+});
 export const server = {
   getLaunchProject: {
     input: z.void(),
@@ -488,6 +765,97 @@ export const server = {
   },
   setSshHost: {
     input: z.object({ sshHost: z.string().nullable() }),
+    output: z.void(),
+  },
+  getApiServerStatus: {
+    input: z.void(),
+    output: ApiServerStatusSchema,
+  },
+  setApiServerSettings: {
+    input: z.object({
+      bindHost: z.string().nullable(),
+      port: z.number().int().min(0).max(65535).nullable(),
+      serveWebUi: z.boolean().nullable().optional(),
+    }),
+    output: ApiServerStatusSchema,
+  },
+};
+
+// Config (global settings)
+const SubagentAiDefaultsEntrySchema = z
+  .object({
+    modelString: z.string().min(1).optional(),
+    thinkingLevel: z.enum(["off", "low", "medium", "high", "xhigh"]).optional(),
+  })
+  .strict();
+
+const ModeAiDefaultsEntrySchema = z
+  .object({
+    modelString: z.string().min(1).optional(),
+    thinkingLevel: z.enum(["off", "low", "medium", "high", "xhigh"]).optional(),
+  })
+  .strict();
+
+const ModeAiDefaultsSchema = z
+  .object({
+    plan: ModeAiDefaultsEntrySchema.optional(),
+    exec: ModeAiDefaultsEntrySchema.optional(),
+    compact: ModeAiDefaultsEntrySchema.optional(),
+  })
+  .strict();
+const AgentAiDefaultsSchema = z.record(z.string().min(1), SubagentAiDefaultsEntrySchema);
+const SubagentAiDefaultsSchema = z.record(z.string().min(1), SubagentAiDefaultsEntrySchema);
+
+export const config = {
+  getConfig: {
+    input: z.void(),
+    output: z.object({
+      taskSettings: z.object({
+        maxParallelAgentTasks: z.number().int(),
+        maxTaskNestingDepth: z.number().int(),
+      }),
+      agentAiDefaults: AgentAiDefaultsSchema,
+      // Legacy fields (downgrade compatibility)
+      subagentAiDefaults: SubagentAiDefaultsSchema,
+      modeAiDefaults: ModeAiDefaultsSchema,
+    }),
+  },
+  saveConfig: {
+    input: z.object({
+      taskSettings: z.object({
+        maxParallelAgentTasks: z.number().int(),
+        maxTaskNestingDepth: z.number().int(),
+      }),
+      agentAiDefaults: AgentAiDefaultsSchema.optional(),
+      // Legacy field (downgrade compatibility)
+      subagentAiDefaults: SubagentAiDefaultsSchema.optional(),
+    }),
+    output: z.void(),
+  },
+  updateAgentAiDefaults: {
+    input: z.object({
+      agentAiDefaults: AgentAiDefaultsSchema,
+    }),
+    output: z.void(),
+  },
+  updateModeAiDefaults: {
+    input: z.object({
+      modeAiDefaults: ModeAiDefaultsSchema,
+    }),
+    output: z.void(),
+  },
+};
+
+// Splash screens
+export const splashScreens = {
+  getViewedSplashScreens: {
+    input: z.void(),
+    output: z.array(z.string()),
+  },
+  markSplashScreenViewed: {
+    input: z.object({
+      splashId: z.string(),
+    }),
     output: z.void(),
   },
 };
@@ -519,11 +887,39 @@ const EditorConfigSchema = z.object({
   customCommand: z.string().optional(),
 });
 
+const StatsTabVariantSchema = z.enum(["control", "stats"]);
+const StatsTabOverrideSchema = z.enum(["default", "on", "off"]);
+const StatsTabStateSchema = z.object({
+  enabled: z.boolean(),
+  variant: StatsTabVariantSchema,
+  override: StatsTabOverrideSchema,
+});
+
+// Feature gates (PostHog-backed)
+export const features = {
+  getStatsTabState: {
+    input: z.void(),
+    output: StatsTabStateSchema,
+  },
+  setStatsTabOverride: {
+    input: z.object({ override: StatsTabOverrideSchema }),
+    output: StatsTabStateSchema,
+  },
+};
+
 // General
 export const general = {
   listDirectory: {
     input: z.object({ path: z.string() }),
     output: ResultSchema(FileTreeNodeSchema),
+  },
+  /**
+   * Create a directory at the specified path.
+   * Creates parent directories recursively if they don't exist (like mkdir -p).
+   */
+  createDirectory: {
+    input: z.object({ path: z.string() }),
+    output: ResultSchema(z.object({ normalizedPath: z.string() }), z.string()),
   },
   ping: {
     input: z.string(),

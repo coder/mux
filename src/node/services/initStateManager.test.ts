@@ -5,6 +5,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { Config } from "@/node/config";
 import { InitStateManager } from "./initStateManager";
 import type { WorkspaceInitEvent } from "@/common/orpc/types";
+import { INIT_HOOK_MAX_LINES } from "@/common/constants/toolLimits";
 
 describe("InitStateManager", () => {
   let tempDir: string;
@@ -266,6 +267,129 @@ describe("InitStateManager", () => {
       const workspaceId = "nonexistent-workspace";
       // Should not throw
       await manager.deleteInitStatus(workspaceId);
+    });
+  });
+
+  describe("truncation", () => {
+    it("should truncate lines when exceeding INIT_HOOK_MAX_LINES", () => {
+      const workspaceId = "test-workspace";
+      manager.startInit(workspaceId, "/path/to/hook");
+
+      // Add more lines than the limit
+      const totalLines = INIT_HOOK_MAX_LINES + 100;
+      for (let i = 0; i < totalLines; i++) {
+        manager.appendOutput(workspaceId, `Line ${i}`, false);
+      }
+
+      const state = manager.getInitState(workspaceId);
+      expect(state?.lines.length).toBe(INIT_HOOK_MAX_LINES);
+      expect(state?.truncatedLines).toBe(100);
+
+      // Should have the most recent lines (tail)
+      const lastLine = state?.lines[INIT_HOOK_MAX_LINES - 1];
+      expect(lastLine?.line).toBe(`Line ${totalLines - 1}`);
+
+      // First line should be from when truncation started
+      const firstLine = state?.lines[0];
+      expect(firstLine?.line).toBe(`Line 100`);
+    });
+
+    it("should include truncatedLines in init-end event", async () => {
+      const workspaceId = "test-workspace";
+      const events: Array<WorkspaceInitEvent & { workspaceId: string }> = [];
+
+      manager.on("init-end", (event: WorkspaceInitEvent & { workspaceId: string }) =>
+        events.push(event)
+      );
+
+      manager.startInit(workspaceId, "/path/to/hook");
+
+      // Add more lines than the limit
+      for (let i = 0; i < INIT_HOOK_MAX_LINES + 50; i++) {
+        manager.appendOutput(workspaceId, `Line ${i}`, false);
+      }
+
+      await manager.endInit(workspaceId, 0);
+
+      expect(events).toHaveLength(1);
+      expect((events[0] as { truncatedLines?: number }).truncatedLines).toBe(50);
+    });
+
+    it("should persist truncatedLines to disk", async () => {
+      const workspaceId = "test-workspace";
+      manager.startInit(workspaceId, "/path/to/hook");
+
+      // Add more lines than the limit
+      for (let i = 0; i < INIT_HOOK_MAX_LINES + 25; i++) {
+        manager.appendOutput(workspaceId, `Line ${i}`, false);
+      }
+
+      await manager.endInit(workspaceId, 0);
+
+      const diskState = await manager.readInitStatus(workspaceId);
+      expect(diskState?.truncatedLines).toBe(25);
+      expect(diskState?.lines.length).toBe(INIT_HOOK_MAX_LINES);
+    });
+
+    it("should not set truncatedLines when under limit", () => {
+      const workspaceId = "test-workspace";
+      manager.startInit(workspaceId, "/path/to/hook");
+
+      // Add fewer lines than the limit
+      for (let i = 0; i < 10; i++) {
+        manager.appendOutput(workspaceId, `Line ${i}`, false);
+      }
+
+      const state = manager.getInitState(workspaceId);
+      expect(state?.lines.length).toBe(10);
+      expect(state?.truncatedLines).toBeUndefined();
+    });
+
+    it("should truncate old persisted data on replay (backwards compat)", async () => {
+      const workspaceId = "test-workspace";
+      const events: Array<WorkspaceInitEvent & { workspaceId: string }> = [];
+
+      // Manually write a large init-status.json to simulate old data
+      const sessionsDir = path.join(tempDir, "sessions", workspaceId);
+      await fs.mkdir(sessionsDir, { recursive: true });
+
+      const oldLineCount = INIT_HOOK_MAX_LINES + 200;
+      const oldStatus = {
+        status: "success",
+        hookPath: "/path/to/hook",
+        startTime: Date.now() - 1000,
+        lines: Array.from({ length: oldLineCount }, (_, i) => ({
+          line: `Old line ${i}`,
+          isError: false,
+          timestamp: Date.now() - 1000 + i,
+        })),
+        exitCode: 0,
+        endTime: Date.now(),
+        // No truncatedLines field - old format
+      };
+      await fs.writeFile(path.join(sessionsDir, "init-status.json"), JSON.stringify(oldStatus));
+
+      // Subscribe to events
+      manager.on("init-output", (event: WorkspaceInitEvent & { workspaceId: string }) =>
+        events.push(event)
+      );
+      manager.on("init-end", (event: WorkspaceInitEvent & { workspaceId: string }) =>
+        events.push(event)
+      );
+
+      // Replay from disk
+      await manager.replayInit(workspaceId);
+
+      // Should only emit MAX_LINES output events (truncated)
+      const outputEvents = events.filter((e) => e.type === "init-output");
+      expect(outputEvents.length).toBe(INIT_HOOK_MAX_LINES);
+
+      // init-end should include truncatedLines count
+      const endEvent = events.find((e) => e.type === "init-end");
+      expect((endEvent as { truncatedLines?: number }).truncatedLines).toBe(200);
+
+      // First replayed line should be from the tail (old line 200)
+      expect((outputEvents[0] as { line: string }).line).toBe("Old line 200");
     });
   });
 });

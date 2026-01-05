@@ -71,13 +71,21 @@ export async function executeSlashCommand(
       return true;
     case "new":
       return handleNew(ctx, parsed);
-    case "unknown-command":
-      return false;
-    case "telemetry-set":
-    case "telemetry-help":
+    case "truncate":
+      return handleTruncate(ctx, parsed.percentage);
+    case "idle-compaction":
+      return handleIdleCompaction(ctx, parsed.hours);
+    case "plan-show":
+    case "plan-open":
+    case "mcp-add":
+    case "mcp-edit":
+    case "mcp-remove":
+    case "mcp-open":
     case "vim-toggle":
       ctx.showInfo("Not supported", "This command is only available on the desktop app.");
       return true;
+    case "unknown-command":
+      return false;
     default:
       return false;
   }
@@ -110,6 +118,35 @@ async function handleTruncate(
     return true;
   } catch (error) {
     ctx.showError("History", getErrorMessage(error));
+    return true;
+  }
+}
+
+async function handleIdleCompaction(
+  ctx: SlashCommandRunnerContext,
+  hours: number | null
+): Promise<boolean> {
+  const projectPath = ctx.metadata?.projectPath;
+  if (!projectPath) {
+    ctx.showError("Idle compaction", "Current workspace project path unknown");
+    return true;
+  }
+
+  try {
+    const result = await ctx.client.projects.idleCompaction.set({ projectPath, hours });
+    if (!result.success) {
+      ctx.showError("Idle compaction", result.error ?? "Failed to update idle compaction");
+      return true;
+    }
+
+    ctx.showInfo(
+      "Idle compaction",
+      hours === null ? "Disabled idle compaction" : `Idle compaction set to ${hours}h`
+    );
+
+    return true;
+  } catch (error) {
+    ctx.showError("Idle compaction", getErrorMessage(error));
     return true;
   }
 }

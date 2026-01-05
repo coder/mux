@@ -13,15 +13,22 @@ import type { ServerService } from "@/node/services/serverService";
 import type { MenuEventService } from "@/node/services/menuEventService";
 import type { VoiceService } from "@/node/services/voiceService";
 import type { MCPConfigService } from "@/node/services/mcpConfigService";
+import type { ExperimentsService } from "@/node/services/experimentsService";
+import type { WorkspaceMcpOverridesService } from "@/node/services/workspaceMcpOverridesService";
 import type { MCPServerManager } from "@/node/services/mcpServerManager";
 import type { TelemetryService } from "@/node/services/telemetryService";
+import type { SigningService } from "@/node/services/signingService";
+import type { FeatureFlagService } from "@/node/services/featureFlagService";
+import type { SessionTimingService } from "@/node/services/sessionTimingService";
 import type { SessionUsageService } from "@/node/services/sessionUsageService";
+import type { TaskService } from "@/node/services/taskService";
 
 export interface ORPCContext {
   config: Config;
   aiService: AIService;
   projectService: ProjectService;
   workspaceService: WorkspaceService;
+  taskService: TaskService;
   providerService: ProviderService;
   terminalService: TerminalService;
   editorService: EditorService;
@@ -32,8 +39,13 @@ export interface ORPCContext {
   menuEventService: MenuEventService;
   voiceService: VoiceService;
   mcpConfigService: MCPConfigService;
+  workspaceMcpOverridesService: WorkspaceMcpOverridesService;
   mcpServerManager: MCPServerManager;
+  featureFlagService: FeatureFlagService;
+  sessionTimingService: SessionTimingService;
   telemetryService: TelemetryService;
+  experimentsService: ExperimentsService;
   sessionUsageService: SessionUsageService;
+  signingService: SigningService;
   headers?: IncomingHttpHeaders;
 }

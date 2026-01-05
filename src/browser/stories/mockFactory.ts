@@ -104,6 +104,22 @@ export function createIncompatibleWorkspace(
   };
 }
 
+/** Create an archived workspace (archived = archivedAt set, no unarchivedAt) */
+export function createArchivedWorkspace(
+  opts: Partial<WorkspaceFixture> & {
+    id: string;
+    name: string;
+    projectName: string;
+    archivedAt?: string;
+  }
+): FrontendWorkspaceMetadata {
+  return {
+    ...createWorkspace(opts),
+    archivedAt: opts.archivedAt ?? new Date(NOW - 86400000).toISOString(), // 1 day ago
+    // No unarchivedAt means it's archived (archivedAt > unarchivedAt where unarchivedAt is undefined)
+  };
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // PROJECT FACTORY
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -203,6 +219,10 @@ export function createAssistantMessage(
     model?: string;
     reasoning?: string;
     toolCalls?: MuxPart[];
+    /** Mark as partial/interrupted message (unfinished stream) */
+    partial?: boolean;
+    /** Custom context usage for testing context meter display */
+    contextUsage?: { inputTokens: number; outputTokens: number; totalTokens?: number };
   }
 ): ChatMuxMessage {
   const parts: MuxPart[] = [];
@@ -213,6 +233,12 @@ export function createAssistantMessage(
   if (opts.toolCalls) {
     parts.push(...opts.toolCalls);
   }
+  const contextUsage = opts.contextUsage ?? {
+    inputTokens: 100,
+    outputTokens: 50,
+    totalTokens: 150,
+  };
+  contextUsage.totalTokens ??= contextUsage.inputTokens + contextUsage.outputTokens;
   return {
     type: "message",
     id,
@@ -222,9 +248,10 @@ export function createAssistantMessage(
       historySequence: opts.historySequence,
       timestamp: opts.timestamp ?? STABLE_TIMESTAMP,
       model: opts.model ?? DEFAULT_MODEL,
-      usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
-      contextUsage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+      usage: contextUsage,
+      contextUsage,
       duration: 1000,
+      partial: opts.partial,
     },
   };
 }
@@ -237,9 +264,9 @@ export function createFileReadTool(toolCallId: string, filePath: string, content
   return {
     type: "dynamic-tool",
     toolCallId,
-    toolName: "read_file",
+    toolName: "file_read",
     state: "output-available",
-    input: { target_file: filePath },
+    input: { filePath },
     output: { success: true, content },
   };
 }
@@ -276,6 +303,24 @@ export function createBashTool(
       display_name: displayName,
     },
     output: { success: exitCode === 0, output, exitCode, wall_duration_ms: durationMs },
+  };
+}
+
+export function createWebSearchTool(
+  toolCallId: string,
+  query: string,
+  resultCount = 5,
+  encrypted = true
+): MuxPart {
+  return {
+    type: "dynamic-tool",
+    toolCallId,
+    toolName: "web_search",
+    state: "output-available",
+    input: { query },
+    output: encrypted
+      ? Array.from({ length: resultCount }, () => ({ encryptedContent: "base64data..." }))
+      : [{ title: "Example Result", url: "https://example.com", snippet: "A sample snippet" }],
   };
 }
 
@@ -339,6 +384,74 @@ export function createGenericTool(
   };
 }
 
+/** Create a propose_plan tool call with markdown plan content */
+export function createProposePlanTool(
+  toolCallId: string,
+  planContent: string,
+  planPath = ".mux/plan.md"
+): MuxPart {
+  // Extract title from first heading
+  const titleMatch = /^#\s+(.+)$/m.exec(planContent);
+  const title = titleMatch ? titleMatch[1] : "Plan";
+
+  return {
+    type: "dynamic-tool",
+    toolCallId,
+    toolName: "propose_plan",
+    state: "output-available",
+    input: { title, plan: planContent },
+    output: {
+      success: true,
+      planPath,
+      planContent, // Include for story rendering
+      message: `Plan saved to ${planPath}`,
+    },
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CODE EXECUTION (PTC) TOOL FACTORIES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+import type {
+  CodeExecutionResult,
+  NestedToolCall,
+} from "@/browser/components/tools/shared/codeExecutionTypes";
+
+/** Create a code_execution tool call with nested tools */
+export function createCodeExecutionTool(
+  toolCallId: string,
+  code: string,
+  result: CodeExecutionResult,
+  nestedCalls?: NestedToolCall[]
+): MuxPart & { nestedCalls?: NestedToolCall[] } {
+  return {
+    type: "dynamic-tool",
+    toolCallId,
+    toolName: "code_execution",
+    state: "output-available",
+    input: { code },
+    output: result,
+    nestedCalls,
+  };
+}
+
+/** Create a pending code_execution tool (executing state) */
+export function createPendingCodeExecutionTool(
+  toolCallId: string,
+  code: string,
+  nestedCalls?: NestedToolCall[]
+): MuxPart & { nestedCalls?: NestedToolCall[] } {
+  return {
+    type: "dynamic-tool",
+    toolCallId,
+    toolName: "code_execution",
+    state: "input-available",
+    input: { code },
+    nestedCalls,
+  };
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // BACKGROUND BASH TOOL FACTORIES
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -367,6 +480,7 @@ export function createBackgroundBashTool(
       output: `Background process started with ID: ${processId}`,
       exitCode: 0,
       wall_duration_ms: 50,
+      taskId: `bash:${processId}`,
       backgroundProcessId: processId,
     },
   };
@@ -403,6 +517,7 @@ export function createMigratedBashTool(
       output: `Process sent to background with ID: ${processId}\n\nOutput so far (${outputLines.length} lines):\n${outputSummary}`,
       exitCode: 0,
       wall_duration_ms: 5000,
+      taskId: `bash:${processId}`,
       backgroundProcessId: processId, // This triggers the "backgrounded" status
     },
   };
@@ -605,6 +720,7 @@ export function createStreamingChatHandler(opts: {
         messageId: opts.streamingMessageId,
         model: opts.model,
         historySequence: opts.historySequence,
+        startTime: Date.now(),
       });
 
       // Send text delta if provided
@@ -634,18 +750,218 @@ export function createStreamingChatHandler(opts: {
       }
     }, 50);
 
-    // Keep streaming state alive
-    const intervalId = setInterval(() => {
-      callback({
-        type: "stream-delta",
-        workspaceId: "mock",
-        messageId: opts.streamingMessageId,
-        delta: ".",
-        tokens: 0,
-        timestamp: NOW,
-      });
-    }, 2000);
+    // Keep the streaming state active, but avoid emitting periodic visible deltas.
+    // Those deltas can make visual snapshots flaky (different text length per run).
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
+    return () => {};
+  };
+}
 
-    return () => clearInterval(intervalId);
+// ═══════════════════════════════════════════════════════════════════════════════
+// TASK TOOL FACTORIES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** Create a task tool call (spawn sub-agent) - background/queued */
+export function createTaskTool(
+  toolCallId: string,
+  opts: {
+    subagent_type: "explore" | "exec";
+    prompt: string;
+    title: string;
+    run_in_background?: boolean;
+    taskId: string;
+    status: "queued" | "running";
+  }
+): MuxPart {
+  return {
+    type: "dynamic-tool",
+    toolCallId,
+    toolName: "task",
+    state: "output-available",
+    input: {
+      subagent_type: opts.subagent_type,
+      prompt: opts.prompt,
+      title: opts.title,
+      run_in_background: opts.run_in_background ?? false,
+    },
+    output: {
+      status: opts.status,
+      taskId: opts.taskId,
+    },
+  };
+}
+
+/** Create a completed task tool call with report */
+export function createCompletedTaskTool(
+  toolCallId: string,
+  opts: {
+    subagent_type: "explore" | "exec";
+    prompt: string;
+    title: string;
+    taskId?: string;
+    reportMarkdown: string;
+    reportTitle?: string;
+  }
+): MuxPart {
+  return {
+    type: "dynamic-tool",
+    toolCallId,
+    toolName: "task",
+    state: "output-available",
+    input: {
+      subagent_type: opts.subagent_type,
+      prompt: opts.prompt,
+      title: opts.title,
+      run_in_background: false,
+    },
+    output: {
+      status: "completed",
+      taskId: opts.taskId,
+      reportMarkdown: opts.reportMarkdown,
+      title: opts.reportTitle,
+    },
+  };
+}
+
+/** Create a pending task tool call (executing) */
+export function createPendingTaskTool(
+  toolCallId: string,
+  opts: {
+    subagent_type: "explore" | "exec";
+    prompt: string;
+    title: string;
+    run_in_background?: boolean;
+  }
+): MuxPart {
+  return {
+    type: "dynamic-tool",
+    toolCallId,
+    toolName: "task",
+    state: "input-available",
+    input: {
+      subagent_type: opts.subagent_type,
+      prompt: opts.prompt,
+      title: opts.title,
+      run_in_background: opts.run_in_background ?? false,
+    },
+  };
+}
+
+/** Create a task_await tool call */
+export function createTaskAwaitTool(
+  toolCallId: string,
+  opts: {
+    task_ids?: string[];
+    timeout_secs?: number;
+    results: Array<{
+      taskId: string;
+      status: "completed" | "queued" | "running" | "awaiting_report" | "not_found" | "error";
+      reportMarkdown?: string;
+      title?: string;
+      error?: string;
+    }>;
+  }
+): MuxPart {
+  return {
+    type: "dynamic-tool",
+    toolCallId,
+    toolName: "task_await",
+    state: "output-available",
+    input: {
+      task_ids: opts.task_ids,
+      timeout_secs: opts.timeout_secs,
+    },
+    output: {
+      results: opts.results.map((r) => {
+        if (r.status === "completed") {
+          return {
+            status: "completed" as const,
+            taskId: r.taskId,
+            reportMarkdown: r.reportMarkdown ?? "",
+            title: r.title,
+          };
+        }
+        if (r.status === "error") {
+          return {
+            status: "error" as const,
+            taskId: r.taskId,
+            error: r.error ?? "Unknown error",
+          };
+        }
+        return {
+          status: r.status,
+          taskId: r.taskId,
+        };
+      }),
+    },
+  };
+}
+
+/** Create a task_list tool call */
+export function createTaskListTool(
+  toolCallId: string,
+  opts: {
+    statuses?: Array<"queued" | "running" | "awaiting_report" | "reported">;
+    tasks: Array<{
+      taskId: string;
+      status: "queued" | "running" | "awaiting_report" | "reported";
+      parentWorkspaceId: string;
+      agentType?: string;
+      title?: string;
+      depth: number;
+    }>;
+  }
+): MuxPart {
+  return {
+    type: "dynamic-tool",
+    toolCallId,
+    toolName: "task_list",
+    state: "output-available",
+    input: { statuses: opts.statuses },
+    output: { tasks: opts.tasks },
+  };
+}
+
+/** Create a task_terminate tool call */
+export function createTaskTerminateTool(
+  toolCallId: string,
+  opts: {
+    task_ids: string[];
+    results: Array<{
+      taskId: string;
+      status: "terminated" | "not_found" | "invalid_scope" | "error";
+      terminatedTaskIds?: string[];
+      error?: string;
+    }>;
+  }
+): MuxPart {
+  return {
+    type: "dynamic-tool",
+    toolCallId,
+    toolName: "task_terminate",
+    state: "output-available",
+    input: { task_ids: opts.task_ids },
+    output: {
+      results: opts.results.map((r) => {
+        if (r.status === "terminated") {
+          return {
+            status: "terminated" as const,
+            taskId: r.taskId,
+            terminatedTaskIds: r.terminatedTaskIds ?? [r.taskId],
+          };
+        }
+        if (r.status === "error") {
+          return {
+            status: "error" as const,
+            taskId: r.taskId,
+            error: r.error ?? "Unknown error",
+          };
+        }
+        return {
+          status: r.status,
+          taskId: r.taskId,
+        };
+      }),
+    },
   };
 }

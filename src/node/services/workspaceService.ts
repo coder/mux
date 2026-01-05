@@ -5,6 +5,7 @@ import assert from "@/common/utils/assert";
 import type { Config } from "@/node/config";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
+import { askUserQuestionManager } from "@/node/services/askUserQuestionManager";
 import { log } from "@/node/services/log";
 import { AgentSession } from "@/node/services/agentSession";
 import type { HistoryService } from "@/node/services/historyService";
@@ -12,6 +13,9 @@ import type { PartialService } from "@/node/services/partialService";
 import type { AIService } from "@/node/services/aiService";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import type { ExtensionMetadataService } from "@/node/services/ExtensionMetadataService";
+import type { TelemetryService } from "@/node/services/telemetryService";
+import type { ExperimentsService } from "@/node/services/experimentsService";
+import { EXPERIMENT_IDS, EXPERIMENTS } from "@/common/constants/experiments";
 import type { MCPServerManager } from "@/node/services/mcpServerManager";
 import { createRuntime, IncompatibleRuntimeError } from "@/node/runtime/runtimeFactory";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
@@ -35,23 +39,51 @@ import type {
   FrontendWorkspaceMetadata,
   WorkspaceActivitySnapshot,
 } from "@/common/types/workspace";
+import { isDynamicToolPart } from "@/common/types/toolParts";
+import {
+  AskUserQuestionToolArgsSchema,
+  AskUserQuestionToolResultSchema,
+} from "@/common/utils/tools/toolDefinitions";
+import type { UIMode } from "@/common/types/mode";
 import type { MuxMessage } from "@/common/types/message";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { hasSrcBaseDir, getSrcBaseDir, isSSHRuntime } from "@/common/types/runtime";
-import { defaultModel } from "@/common/utils/ai/models";
+import { defaultModel, isValidModelFormat, normalizeGatewayModel } from "@/common/utils/ai/models";
 import type { StreamEndEvent, StreamAbortEvent } from "@/common/types/stream";
 import type { TerminalService } from "@/node/services/terminalService";
+import type { WorkspaceAISettingsSchema } from "@/common/orpc/schemas";
+import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
+import type { SessionUsageService } from "@/node/services/sessionUsageService";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 
 import { DisposableTempDir } from "@/node/services/tempDir";
 import { createBashTool } from "@/node/services/tools/bash";
-import type { BashToolResult } from "@/common/types/tools";
+import type { AskUserQuestionToolSuccessResult, BashToolResult } from "@/common/types/tools";
 import { secretsToRecord } from "@/common/types/secrets";
 
-import { movePlanFile } from "@/node/utils/runtime/helpers";
+import { execBuffered, movePlanFile, copyPlanFile } from "@/node/utils/runtime/helpers";
+import {
+  buildFileCompletionsIndex,
+  EMPTY_FILE_COMPLETIONS_INDEX,
+  searchFileCompletions,
+  type FileCompletionsIndex,
+} from "@/node/services/fileCompletionsIndex";
+import { taskQueueDebug } from "@/node/services/taskQueueDebug";
 
 /** Maximum number of retry attempts when workspace name collides */
 const MAX_WORKSPACE_NAME_COLLISION_RETRIES = 3;
+
+// Keep short to feel instant, but debounce bursts of file_edit_* tool calls.
+
+// Shared type for workspace-scoped AI settings (model + thinking)
+type WorkspaceAISettings = z.infer<typeof WorkspaceAISettingsSchema>;
+const POST_COMPACTION_METADATA_REFRESH_DEBOUNCE_MS = 100;
+
+interface FileCompletionsCacheEntry {
+  index: FileCompletionsIndex;
+  fetchedAt: number;
+  refreshing?: Promise<void>;
+}
 
 /**
  * Checks if an error indicates a workspace name collision
@@ -90,8 +122,16 @@ export class WorkspaceService extends EventEmitter {
     string,
     { chat: () => void; metadata: () => void }
   >();
+
+  // Debounce post-compaction metadata refreshes (file_edit_* can fire rapidly)
+  private readonly postCompactionRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
   // Tracks workspaces currently being renamed to prevent streaming during rename
   private readonly renamingWorkspaces = new Set<string>();
+
+  // Cache for @file mention autocomplete (git ls-files output).
+  private readonly fileCompletionsCache = new Map<string, FileCompletionsCacheEntry>();
+  // Tracks workspaces currently being removed to prevent new sessions/streams during deletion.
+  private readonly removingWorkspaces = new Set<string>();
 
   constructor(
     private readonly config: Config,
@@ -100,24 +140,38 @@ export class WorkspaceService extends EventEmitter {
     private readonly aiService: AIService,
     private readonly initStateManager: InitStateManager,
     private readonly extensionMetadata: ExtensionMetadataService,
-    private readonly backgroundProcessManager: BackgroundProcessManager
+    private readonly backgroundProcessManager: BackgroundProcessManager,
+    private readonly sessionUsageService?: SessionUsageService
   ) {
     super();
     this.setupMetadataListeners();
   }
 
+  private telemetryService?: TelemetryService;
+  private experimentsService?: ExperimentsService;
   private mcpServerManager?: MCPServerManager;
   // Optional terminal service for cleanup on workspace removal
   private terminalService?: TerminalService;
 
   /**
-   * Set the terminal service for cleanup on workspace removal.
+   * Set the MCP server manager for tool access.
    * Called after construction due to circular dependency.
    */
   setMCPServerManager(manager: MCPServerManager): void {
     this.mcpServerManager = manager;
   }
 
+  setTelemetryService(telemetryService: TelemetryService): void {
+    this.telemetryService = telemetryService;
+  }
+
+  setExperimentsService(experimentsService: ExperimentsService): void {
+    this.experimentsService = experimentsService;
+  }
+
+  /**
+   * Set the terminal service for cleanup on workspace removal.
+   */
   setTerminalService(terminalService: TerminalService): void {
     this.terminalService = terminalService;
   }
@@ -195,7 +249,24 @@ export class WorkspaceService extends EventEmitter {
     model?: string
   ): Promise<void> {
     try {
-      const snapshot = await this.extensionMetadata.setStreaming(workspaceId, streaming, model);
+      let thinkingLevel: WorkspaceAISettings["thinkingLevel"] | undefined;
+      if (model) {
+        const found = this.config.findWorkspace(workspaceId);
+        if (found) {
+          const config = this.config.loadConfigOrDefault();
+          const project = config.projects.get(found.projectPath);
+          const workspace =
+            project?.workspaces.find((w) => w.id === workspaceId) ??
+            project?.workspaces.find((w) => w.path === found.workspacePath);
+          thinkingLevel = workspace?.aiSettings?.thinkingLevel;
+        }
+      }
+      const snapshot = await this.extensionMetadata.setStreaming(
+        workspaceId,
+        streaming,
+        model,
+        thinkingLevel
+      );
       this.emitWorkspaceActivity(workspaceId, snapshot);
     } catch (error) {
       log.error("Failed to update workspace streaming status", { workspaceId, error });
@@ -224,6 +295,45 @@ export class WorkspaceService extends EventEmitter {
     };
   }
 
+  private schedulePostCompactionMetadataRefresh(workspaceId: string): void {
+    assert(typeof workspaceId === "string", "workspaceId must be a string");
+    const trimmed = workspaceId.trim();
+    assert(trimmed.length > 0, "workspaceId must not be empty");
+
+    const existing = this.postCompactionRefreshTimers.get(trimmed);
+    if (existing) {
+      clearTimeout(existing);
+    }
+
+    const timer = setTimeout(() => {
+      this.postCompactionRefreshTimers.delete(trimmed);
+      void this.emitPostCompactionMetadata(trimmed);
+    }, POST_COMPACTION_METADATA_REFRESH_DEBOUNCE_MS);
+
+    this.postCompactionRefreshTimers.set(trimmed, timer);
+  }
+
+  private async emitPostCompactionMetadata(workspaceId: string): Promise<void> {
+    try {
+      const session = this.sessions.get(workspaceId);
+      if (!session) {
+        return;
+      }
+
+      const metadata = await this.getInfo(workspaceId);
+      if (!metadata) {
+        return;
+      }
+
+      const postCompaction = await this.getPostCompactionState(workspaceId);
+      const enrichedMetadata = { ...metadata, postCompaction };
+      session.emitMetadata(enrichedMetadata);
+    } catch (error) {
+      // Workspace runtime unavailable (e.g., SSH unreachable) - skip emitting post-compaction state.
+      log.debug("Failed to emit post-compaction metadata", { workspaceId, error });
+    }
+  }
+
   public getOrCreateSession(workspaceId: string): AgentSession {
     assert(typeof workspaceId === "string", "workspaceId must be a string");
     const trimmed = workspaceId.trim();
@@ -240,19 +350,14 @@ export class WorkspaceService extends EventEmitter {
       historyService: this.historyService,
       partialService: this.partialService,
       aiService: this.aiService,
+      telemetryService: this.telemetryService,
       initStateManager: this.initStateManager,
       backgroundProcessManager: this.backgroundProcessManager,
       onCompactionComplete: () => {
-        // Emit updated metadata with postCompaction state after compaction
-        void (async () => {
-          const metadata = await this.getInfo(trimmed);
-          if (metadata) {
-            const postCompaction = await this.getPostCompactionState(trimmed);
-            const enrichedMetadata = { ...metadata, postCompaction };
-            // Look up session from map (guaranteed to exist by the time callback runs)
-            this.sessions.get(trimmed)?.emitMetadata(enrichedMetadata);
-          }
-        })();
+        this.schedulePostCompactionMetadataRefresh(trimmed);
+      },
+      onPostCompactionStateChange: () => {
+        this.schedulePostCompactionMetadataRefresh(trimmed);
       },
     });
 
@@ -277,20 +382,27 @@ export class WorkspaceService extends EventEmitter {
   }
 
   public disposeSession(workspaceId: string): void {
-    const session = this.sessions.get(workspaceId);
+    const trimmed = workspaceId.trim();
+    const session = this.sessions.get(trimmed);
+    const refreshTimer = this.postCompactionRefreshTimers.get(trimmed);
+    if (refreshTimer) {
+      clearTimeout(refreshTimer);
+      this.postCompactionRefreshTimers.delete(trimmed);
+    }
+
     if (!session) {
       return;
     }
 
-    const subscriptions = this.sessionSubscriptions.get(workspaceId);
+    const subscriptions = this.sessionSubscriptions.get(trimmed);
     if (subscriptions) {
       subscriptions.chat();
       subscriptions.metadata();
-      this.sessionSubscriptions.delete(workspaceId);
+      this.sessionSubscriptions.delete(trimmed);
     }
 
     session.dispose();
-    this.sessions.delete(workspaceId);
+    this.sessions.delete(trimmed);
   }
 
   /**
@@ -415,7 +527,8 @@ export class WorkspaceService extends EventEmitter {
     branchName: string,
     trunkBranch: string | undefined,
     title?: string,
-    runtimeConfig?: RuntimeConfig
+    runtimeConfig?: RuntimeConfig,
+    sectionId?: string
   ): Promise<Result<{ metadata: FrontendWorkspaceMetadata }>> {
     // Validate workspace name
     const validation = validateWorkspaceName(branchName);
@@ -521,6 +634,7 @@ export class WorkspaceService extends EventEmitter {
           title,
           createdAt: metadata.createdAt,
           runtimeConfig: finalRuntimeConfig,
+          sectionId,
         });
         return config;
       });
@@ -556,8 +670,24 @@ export class WorkspaceService extends EventEmitter {
   }
 
   async remove(workspaceId: string, force = false): Promise<Result<void>> {
+    const wasRemoving = this.removingWorkspaces.has(workspaceId);
+    this.removingWorkspaces.add(workspaceId);
+
     // Try to remove from runtime (filesystem)
     try {
+      // Stop any active stream before deleting metadata/config to avoid tool calls racing with removal.
+      try {
+        const stopResult = await this.aiService.stopStream(workspaceId, { abandonPartial: true });
+        if (!stopResult.success) {
+          log.debug("Failed to stop stream during workspace removal", {
+            workspaceId,
+            error: stopResult.error,
+          });
+        }
+      } catch (error: unknown) {
+        log.debug("Failed to stop stream during workspace removal (threw)", { workspaceId, error });
+      }
+
       const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
       if (metadataResult.success) {
         const metadata = metadataResult.data;
@@ -568,7 +698,8 @@ export class WorkspaceService extends EventEmitter {
           { projectPath }
         );
 
-        // Delete workspace from runtime
+        // Delete workspace from runtime first - if this fails with force=false, we abort
+        // and keep workspace in config so user can retry. This prevents orphaned directories.
         const deleteResult = await runtime.deleteWorkspace(
           projectPath,
           metadata.name, // use branch name
@@ -583,6 +714,39 @@ export class WorkspaceService extends EventEmitter {
           log.error(
             `Failed to delete workspace from disk, but force=true. Removing from config. Error: ${deleteResult.error}`
           );
+        }
+
+        // If this workspace is a sub-agent/task, roll its accumulated usage into the parent BEFORE
+        // deleting ~/.mux/sessions/<workspaceId>/session-usage.json.
+        const parentWorkspaceId = metadata.parentWorkspaceId;
+        if (parentWorkspaceId && this.sessionUsageService) {
+          try {
+            const childUsage = await this.sessionUsageService.getSessionUsage(workspaceId);
+            if (childUsage && Object.keys(childUsage.byModel).length > 0) {
+              const rollup = await this.sessionUsageService.rollUpUsageIntoParent(
+                parentWorkspaceId,
+                workspaceId,
+                childUsage.byModel
+              );
+
+              if (rollup.didRollUp) {
+                // Live UI update (best-effort): only emit if the parent session is already active.
+                this.sessions.get(parentWorkspaceId)?.emitChatEvent({
+                  type: "session-usage-delta",
+                  workspaceId: parentWorkspaceId,
+                  sourceWorkspaceId: workspaceId,
+                  byModelDelta: childUsage.byModel,
+                  timestamp: Date.now(),
+                });
+              }
+            }
+          } catch (error: unknown) {
+            log.error("Failed to roll up child session usage into parent", {
+              workspaceId,
+              parentWorkspaceId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
         }
       } else {
         log.error(`Could not find metadata for workspace ${workspaceId}, creating phantom cleanup`);
@@ -616,6 +780,10 @@ export class WorkspaceService extends EventEmitter {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return Err(`Failed to remove workspace: ${message}`);
+    } finally {
+      if (!wasRemoving) {
+        this.removingWorkspaces.delete(workspaceId);
+      }
     }
   }
 
@@ -625,17 +793,43 @@ export class WorkspaceService extends EventEmitter {
     try {
       const metadata = await this.config.getAllWorkspaceMetadata();
 
-      if (!options?.includePostCompaction) {
+      // For list(), treat includePostCompaction as an explicit frontend override when provided.
+      // If it's undefined (e.g., user hasn't overridden), fall back to PostHog assignment.
+      const postCompactionExperiment = EXPERIMENTS[EXPERIMENT_IDS.POST_COMPACTION_CONTEXT];
+      let includePostCompaction: boolean;
+      if (
+        postCompactionExperiment.userOverridable &&
+        options?.includePostCompaction !== undefined
+      ) {
+        // User-overridable: trust frontend value
+        includePostCompaction = options.includePostCompaction;
+      } else if (this.experimentsService?.isRemoteEvaluationEnabled() === true) {
+        // Remote evaluation: use PostHog assignment
+        includePostCompaction = this.experimentsService.isExperimentEnabled(
+          EXPERIMENT_IDS.POST_COMPACTION_CONTEXT
+        );
+      } else {
+        // Fallback to frontend value or false
+        includePostCompaction = options?.includePostCompaction === true;
+      }
+
+      if (!includePostCompaction) {
         return metadata;
       }
 
       // Fetch post-compaction state for all workspaces in parallel
-      // Catch per-workspace errors to avoid failing the entire list if one workspace is unreachable
+      // Use a short timeout per workspace to avoid blocking app startup if SSH is unreachable
+      const POST_COMPACTION_TIMEOUT_MS = 3000;
       return Promise.all(
         metadata.map(async (ws) => {
           try {
-            const postCompaction = await this.getPostCompactionState(ws.id);
-            return { ...ws, postCompaction };
+            const postCompaction = await Promise.race([
+              this.getPostCompactionState(ws.id),
+              new Promise<null>((resolve) =>
+                setTimeout(() => resolve(null), POST_COMPACTION_TIMEOUT_MS)
+              ),
+            ]);
+            return postCompaction ? { ...ws, postCompaction } : ws;
           } catch {
             // Workspace runtime unavailable (e.g., SSH unreachable) - return without post-compaction state
             return ws;
@@ -651,6 +845,17 @@ export class WorkspaceService extends EventEmitter {
   async getInfo(workspaceId: string): Promise<FrontendWorkspaceMetadata | null> {
     const allMetadata = await this.config.getAllWorkspaceMetadata();
     return allMetadata.find((m) => m.id === workspaceId) ?? null;
+  }
+
+  /**
+   * Refresh workspace metadata from config and emit to subscribers.
+   * Useful when external changes (like section assignment) modify workspace config.
+   */
+  async refreshAndEmitMetadata(workspaceId: string): Promise<void> {
+    const metadata = await this.getInfo(workspaceId);
+    if (metadata) {
+      this.emit("metadata", { workspaceId, metadata });
+    }
   }
 
   async rename(workspaceId: string, newName: string): Promise<Result<{ newWorkspaceId: string }>> {
@@ -710,7 +915,9 @@ export class WorkspaceService extends EventEmitter {
       await this.config.editConfig((config) => {
         const projectConfig = config.projects.get(projectPath);
         if (projectConfig) {
-          const workspaceEntry = projectConfig.workspaces.find((w) => w.path === oldPath);
+          const workspaceEntry =
+            projectConfig.workspaces.find((w) => w.id === workspaceId) ??
+            projectConfig.workspaces.find((w) => w.path === oldPath);
           if (workspaceEntry) {
             workspaceEntry.name = newName;
             workspaceEntry.path = newPath;
@@ -760,7 +967,9 @@ export class WorkspaceService extends EventEmitter {
       await this.config.editConfig((config) => {
         const projectConfig = config.projects.get(projectPath);
         if (projectConfig) {
-          const workspaceEntry = projectConfig.workspaces.find((w) => w.path === workspacePath);
+          const workspaceEntry =
+            projectConfig.workspaces.find((w) => w.id === workspaceId) ??
+            projectConfig.workspaces.find((w) => w.path === workspacePath);
           if (workspaceEntry) {
             workspaceEntry.title = title;
           }
@@ -784,6 +993,373 @@ export class WorkspaceService extends EventEmitter {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return Err(`Failed to update workspace title: ${message}`);
+    }
+  }
+
+  /**
+   * Archive a workspace. Archived workspaces are hidden from the main sidebar
+   * but can be viewed on the project page. Safe and reversible.
+   */
+
+  async archive(workspaceId: string): Promise<Result<void>> {
+    try {
+      const workspace = this.config.findWorkspace(workspaceId);
+      if (!workspace) {
+        return Err("Workspace not found");
+      }
+      const { projectPath, workspacePath } = workspace;
+
+      // Archiving removes the workspace from the sidebar; ensure we don't leave a stream running
+      // "headless" with no obvious UI affordance to interrupt it.
+      if (this.aiService.isStreaming(workspaceId)) {
+        const stopResult = await this.interruptStream(workspaceId);
+        if (!stopResult.success) {
+          log.debug("Failed to stop stream during workspace archive", {
+            workspaceId,
+            error: stopResult.error,
+          });
+        }
+      }
+
+      await this.config.editConfig((config) => {
+        const projectConfig = config.projects.get(projectPath);
+        if (projectConfig) {
+          const workspaceEntry =
+            projectConfig.workspaces.find((w) => w.id === workspaceId) ??
+            projectConfig.workspaces.find((w) => w.path === workspacePath);
+          if (workspaceEntry) {
+            // Just set archivedAt - archived state is derived from archivedAt > unarchivedAt
+            workspaceEntry.archivedAt = new Date().toISOString();
+          }
+        }
+        return config;
+      });
+
+      // Emit updated metadata
+      const allMetadata = await this.config.getAllWorkspaceMetadata();
+      const updatedMetadata = allMetadata.find((m) => m.id === workspaceId);
+      if (updatedMetadata) {
+        const session = this.sessions.get(workspaceId);
+        if (session) {
+          session.emitMetadata(updatedMetadata);
+        } else {
+          this.emit("metadata", { workspaceId, metadata: updatedMetadata });
+        }
+      }
+
+      return Ok(undefined);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Err(`Failed to archive workspace: ${message}`);
+    }
+  }
+
+  /**
+   * Unarchive a workspace. Restores it to the main sidebar view.
+   */
+  async unarchive(workspaceId: string): Promise<Result<void>> {
+    try {
+      const workspace = this.config.findWorkspace(workspaceId);
+      if (!workspace) {
+        return Err("Workspace not found");
+      }
+      const { projectPath, workspacePath } = workspace;
+
+      await this.config.editConfig((config) => {
+        const projectConfig = config.projects.get(projectPath);
+        if (projectConfig) {
+          const workspaceEntry =
+            projectConfig.workspaces.find((w) => w.id === workspaceId) ??
+            projectConfig.workspaces.find((w) => w.path === workspacePath);
+          if (workspaceEntry) {
+            // Just set unarchivedAt - archived state is derived from archivedAt > unarchivedAt
+            // This also bumps workspace to top of recency
+            workspaceEntry.unarchivedAt = new Date().toISOString();
+          }
+        }
+        return config;
+      });
+
+      // Emit updated metadata
+      const allMetadata = await this.config.getAllWorkspaceMetadata();
+      const updatedMetadata = allMetadata.find((m) => m.id === workspaceId);
+      if (updatedMetadata) {
+        const session = this.sessions.get(workspaceId);
+        if (session) {
+          session.emitMetadata(updatedMetadata);
+        } else {
+          this.emit("metadata", { workspaceId, metadata: updatedMetadata });
+        }
+      }
+
+      return Ok(undefined);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Err(`Failed to unarchive workspace: ${message}`);
+    }
+  }
+
+  private normalizeWorkspaceAISettings(
+    aiSettings: WorkspaceAISettings
+  ): Result<WorkspaceAISettings, string> {
+    const rawModel = aiSettings.model;
+    const model = normalizeGatewayModel(rawModel).trim();
+    if (!model) {
+      return Err("Model is required");
+    }
+    if (!isValidModelFormat(model)) {
+      return Err(`Invalid model format: ${rawModel}`);
+    }
+
+    const effectiveThinkingLevel = enforceThinkingPolicy(model, aiSettings.thinkingLevel);
+
+    return Ok({
+      model,
+      thinkingLevel: effectiveThinkingLevel,
+    });
+  }
+
+  private extractWorkspaceAISettingsFromSendOptions(
+    options: SendMessageOptions | undefined
+  ): WorkspaceAISettings | null {
+    const rawModel = options?.model;
+    if (typeof rawModel !== "string" || rawModel.trim().length === 0) {
+      return null;
+    }
+
+    const model = normalizeGatewayModel(rawModel).trim();
+    if (!isValidModelFormat(model)) {
+      return null;
+    }
+
+    const requestedThinking = options?.thinkingLevel;
+    // Be defensive: if a (very) old client doesn't send thinkingLevel, don't overwrite
+    // any existing workspace-scoped value.
+    if (requestedThinking === undefined) {
+      return null;
+    }
+
+    const thinkingLevel = enforceThinkingPolicy(model, requestedThinking);
+
+    return { model, thinkingLevel };
+  }
+
+  /**
+   * Best-effort persist AI settings from send/resume options.
+   * Skips compaction requests which use a different model intentionally.
+   */
+  private async maybePersistAISettingsFromOptions(
+    workspaceId: string,
+    options: SendMessageOptions | undefined,
+    context: "send" | "resume"
+  ): Promise<void> {
+    // Skip for compaction - it may use a different model and shouldn't override user preference.
+    const isCompaction = options?.mode === "compact";
+    if (isCompaction) return;
+
+    const extractedSettings = this.extractWorkspaceAISettingsFromSendOptions(options);
+    if (!extractedSettings) return;
+
+    const mode: UIMode = options?.mode === "plan" ? "plan" : "exec";
+
+    // With user-defined agents, the frontend always sends a base plan/exec `mode` to the backend,
+    // even if a custom agent is active. Persisting in that case would overwrite the base
+    // plan/exec defaults (which other agents may inherit), so only persist when agentId matches.
+    const rawAgentId = options?.agentId;
+    const normalizedAgentId =
+      typeof rawAgentId === "string" && rawAgentId.trim().length > 0
+        ? rawAgentId.trim().toLowerCase()
+        : null;
+    if (normalizedAgentId && normalizedAgentId !== mode) {
+      return;
+    }
+
+    const persistResult = await this.persistWorkspaceAISettingsForMode(
+      workspaceId,
+      mode,
+      extractedSettings,
+      {
+        emitMetadata: false,
+      }
+    );
+    if (!persistResult.success) {
+      log.debug(`Failed to persist workspace AI settings from ${context} options`, {
+        workspaceId,
+        error: persistResult.error,
+      });
+    }
+  }
+
+  private async persistWorkspaceAISettingsForMode(
+    workspaceId: string,
+    mode: UIMode,
+    aiSettings: WorkspaceAISettings,
+    options?: { emitMetadata?: boolean }
+  ): Promise<Result<boolean, string>> {
+    const found = this.config.findWorkspace(workspaceId);
+    if (!found) {
+      return Err("Workspace not found");
+    }
+
+    const { projectPath, workspacePath } = found;
+
+    const config = this.config.loadConfigOrDefault();
+    const projectConfig = config.projects.get(projectPath);
+    if (!projectConfig) {
+      return Err(`Project not found: ${projectPath}`);
+    }
+
+    const workspaceEntry = projectConfig.workspaces.find((w) => w.id === workspaceId);
+    const workspaceEntryWithFallback =
+      workspaceEntry ?? projectConfig.workspaces.find((w) => w.path === workspacePath);
+    if (!workspaceEntryWithFallback) {
+      return Err("Workspace not found");
+    }
+
+    const prev = workspaceEntryWithFallback.aiSettingsByMode?.[mode];
+    const changed =
+      prev?.model !== aiSettings.model || prev?.thinkingLevel !== aiSettings.thinkingLevel;
+    if (!changed) {
+      return Ok(false);
+    }
+
+    workspaceEntryWithFallback.aiSettingsByMode = {
+      ...(workspaceEntryWithFallback.aiSettingsByMode ?? {}),
+      [mode]: aiSettings,
+    };
+
+    // Keep the legacy field in sync for older clients (prefer exec).
+    workspaceEntryWithFallback.aiSettings =
+      workspaceEntryWithFallback.aiSettingsByMode.exec ??
+      workspaceEntryWithFallback.aiSettingsByMode.plan ??
+      aiSettings;
+
+    await this.config.saveConfig(config);
+
+    if (options?.emitMetadata !== false) {
+      const allMetadata = await this.config.getAllWorkspaceMetadata();
+      const updatedMetadata = allMetadata.find((m) => m.id === workspaceId) ?? null;
+
+      const session = this.sessions.get(workspaceId);
+      if (session) {
+        session.emitMetadata(updatedMetadata);
+      } else {
+        this.emit("metadata", { workspaceId, metadata: updatedMetadata });
+      }
+    }
+
+    return Ok(true);
+  }
+
+  private async persistWorkspaceAISettings(
+    workspaceId: string,
+    aiSettings: WorkspaceAISettings,
+    options?: { emitMetadata?: boolean }
+  ): Promise<Result<boolean, string>> {
+    const found = this.config.findWorkspace(workspaceId);
+    if (!found) {
+      return Err("Workspace not found");
+    }
+
+    const { projectPath, workspacePath } = found;
+
+    const config = this.config.loadConfigOrDefault();
+    const projectConfig = config.projects.get(projectPath);
+    if (!projectConfig) {
+      return Err(`Project not found: ${projectPath}`);
+    }
+
+    const workspaceEntry = projectConfig.workspaces.find((w) => w.id === workspaceId);
+    const workspaceEntryWithFallback =
+      workspaceEntry ?? projectConfig.workspaces.find((w) => w.path === workspacePath);
+    if (!workspaceEntryWithFallback) {
+      return Err("Workspace not found");
+    }
+
+    const prevLegacy = workspaceEntryWithFallback.aiSettings;
+    const prevByMode = workspaceEntryWithFallback.aiSettingsByMode;
+
+    const changed =
+      prevLegacy?.model !== aiSettings.model ||
+      prevLegacy?.thinkingLevel !== aiSettings.thinkingLevel ||
+      prevByMode?.plan?.model !== aiSettings.model ||
+      prevByMode?.plan?.thinkingLevel !== aiSettings.thinkingLevel ||
+      prevByMode?.exec?.model !== aiSettings.model ||
+      prevByMode?.exec?.thinkingLevel !== aiSettings.thinkingLevel;
+    if (!changed) {
+      return Ok(false);
+    }
+
+    workspaceEntryWithFallback.aiSettings = aiSettings;
+    workspaceEntryWithFallback.aiSettingsByMode = { plan: aiSettings, exec: aiSettings };
+    await this.config.saveConfig(config);
+
+    if (options?.emitMetadata !== false) {
+      const allMetadata = await this.config.getAllWorkspaceMetadata();
+      const updatedMetadata = allMetadata.find((m) => m.id === workspaceId) ?? null;
+
+      const session = this.sessions.get(workspaceId);
+      if (session) {
+        session.emitMetadata(updatedMetadata);
+      } else {
+        this.emit("metadata", { workspaceId, metadata: updatedMetadata });
+      }
+    }
+
+    return Ok(true);
+  }
+
+  async updateAISettings(
+    workspaceId: string,
+    aiSettings: WorkspaceAISettings
+  ): Promise<Result<void, string>> {
+    try {
+      const normalized = this.normalizeWorkspaceAISettings(aiSettings);
+      if (!normalized.success) {
+        return Err(normalized.error);
+      }
+
+      const persistResult = await this.persistWorkspaceAISettings(workspaceId, normalized.data, {
+        emitMetadata: true,
+      });
+      if (!persistResult.success) {
+        return Err(persistResult.error);
+      }
+
+      return Ok(undefined);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Err(`Failed to update workspace AI settings: ${message}`);
+    }
+  }
+
+  async updateModeAISettings(
+    workspaceId: string,
+    mode: UIMode,
+    aiSettings: WorkspaceAISettings
+  ): Promise<Result<void, string>> {
+    try {
+      const normalized = this.normalizeWorkspaceAISettings(aiSettings);
+      if (!normalized.success) {
+        return Err(normalized.error);
+      }
+
+      const persistResult = await this.persistWorkspaceAISettingsForMode(
+        workspaceId,
+        mode,
+        normalized.data,
+        {
+          emitMetadata: true,
+        }
+      );
+      if (!persistResult.success) {
+        return Err(persistResult.error);
+      }
+
+      return Ok(undefined);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Err(`Failed to update workspace AI settings: ${message}`);
     }
   }
 
@@ -858,6 +1434,15 @@ export class WorkspaceService extends EventEmitter {
           }
         }
 
+        const sourceTimingPath = path.join(sourceSessionDir, "session-timing.json");
+        const newTimingPath = path.join(newSessionDir, "session-timing.json");
+        try {
+          await fsPromises.copyFile(sourceTimingPath, newTimingPath);
+        } catch (error) {
+          if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) {
+            throw error;
+          }
+        }
         const sourceUsagePath = path.join(sourceSessionDir, "session-usage.json");
         const newUsagePath = path.join(newSessionDir, "session-usage.json");
         try {
@@ -877,6 +1462,9 @@ export class WorkspaceService extends EventEmitter {
         const message = copyError instanceof Error ? copyError.message : String(copyError);
         return Err(`Failed to copy chat history: ${message}`);
       }
+
+      // Copy plan file if it exists (checks both new and legacy paths)
+      await copyPlanFile(runtime, sourceMetadata.name, sourceWorkspaceId, newName, projectName);
 
       // Compute namedWorkspacePath for frontend metadata
       const namedWorkspacePath = runtime.getWorkspacePath(foundProjectPath, newName);
@@ -908,7 +1496,8 @@ export class WorkspaceService extends EventEmitter {
       | (SendMessageOptions & {
           imageParts?: ImagePart[];
         })
-      | undefined = { model: defaultModel }
+      | undefined = { model: defaultModel },
+    internal?: { allowQueuedAgentTask?: boolean }
   ): Promise<Result<void, SendMessageError>> {
     log.debug("sendMessage handler: Received", {
       workspaceId,
@@ -927,15 +1516,120 @@ export class WorkspaceService extends EventEmitter {
         });
       }
 
-      const session = this.getOrCreateSession(workspaceId);
-      void this.updateRecencyTimestamp(workspaceId);
+      // Block streaming while workspace is being removed to prevent races with config/session deletion.
+      if (this.removingWorkspaces.has(workspaceId)) {
+        log.debug("sendMessage blocked: workspace is being removed", { workspaceId });
+        return Err({
+          type: "unknown",
+          raw: "Workspace is being deleted. Please wait and try again.",
+        });
+      }
 
-      if (this.aiService.isStreaming(workspaceId) && !options?.editMessageId) {
-        session.queueMessage(message, options);
+      // Guard: avoid creating sessions for workspaces that don't exist anymore.
+      if (!this.config.findWorkspace(workspaceId)) {
+        return Err({
+          type: "unknown",
+          raw: "Workspace not found. It may have been deleted.",
+        });
+      }
+
+      // Guard: queued agent tasks must not start streaming via generic sendMessage calls.
+      // They should only be started by TaskService once a parallel slot is available.
+      if (!internal?.allowQueuedAgentTask) {
+        const config = this.config.loadConfigOrDefault();
+        for (const [_projectPath, project] of config.projects) {
+          const ws = project.workspaces.find((w) => w.id === workspaceId);
+          if (!ws) continue;
+          if (ws.parentWorkspaceId && ws.taskStatus === "queued") {
+            taskQueueDebug("WorkspaceService.sendMessage blocked (queued task)", {
+              workspaceId,
+              stack: new Error("sendMessage blocked").stack,
+            });
+            return Err({
+              type: "unknown",
+              raw: "This agent task is queued and cannot start yet. Wait for a slot to free.",
+            });
+          }
+          break;
+        }
+      } else {
+        taskQueueDebug("WorkspaceService.sendMessage allowed (internal dequeue)", {
+          workspaceId,
+          stack: new Error("sendMessage internal").stack,
+        });
+      }
+
+      const session = this.getOrCreateSession(workspaceId);
+
+      // Skip recency update for idle compaction - preserve original "last used" time
+      const muxMeta = options?.muxMetadata as { type?: string; source?: string } | undefined;
+      const isIdleCompaction =
+        muxMeta?.type === "compaction-request" && muxMeta?.source === "idle-compaction";
+      // Use current time for recency - this matches the timestamp used on the message
+      // in agentSession.sendMessage(). Keeps ExtensionMetadata in sync with chat.jsonl.
+      const messageTimestamp = Date.now();
+      if (!isIdleCompaction) {
+        void this.updateRecencyTimestamp(workspaceId, messageTimestamp);
+      }
+
+      // Experiments: resolve flags respecting userOverridable setting.
+      // - If userOverridable && frontend provides a value (explicit override) → use frontend value
+      // - Else if remote evaluation enabled → use PostHog assignment
+      // - Else → use frontend value (dev fallback) or default
+      const postCompactionExperiment = EXPERIMENTS[EXPERIMENT_IDS.POST_COMPACTION_CONTEXT];
+      const frontendValue = options?.experiments?.postCompactionContext;
+
+      let postCompactionContextEnabled: boolean | undefined;
+      if (postCompactionExperiment.userOverridable && frontendValue !== undefined) {
+        // User-overridable: trust frontend value (user's explicit choice)
+        postCompactionContextEnabled = frontendValue;
+      } else if (this.experimentsService?.isRemoteEvaluationEnabled() === true) {
+        // Remote evaluation: use PostHog assignment
+        postCompactionContextEnabled = this.experimentsService.isExperimentEnabled(
+          EXPERIMENT_IDS.POST_COMPACTION_CONTEXT
+        );
+      } else {
+        // Fallback to frontend value (dev mode or telemetry disabled)
+        postCompactionContextEnabled = frontendValue;
+      }
+
+      const resolvedOptions =
+        postCompactionContextEnabled === undefined
+          ? options
+          : {
+              ...(options ?? { model: defaultModel }),
+              experiments: {
+                ...(options?.experiments ?? {}),
+                postCompactionContext: postCompactionContextEnabled,
+              },
+            };
+
+      // Persist last-used model + thinking level for cross-device consistency.
+      await this.maybePersistAISettingsFromOptions(workspaceId, resolvedOptions, "send");
+
+      if (this.aiService.isStreaming(workspaceId) && !resolvedOptions?.editMessageId) {
+        const pendingAskUserQuestion = askUserQuestionManager.getLatestPending(workspaceId);
+        if (pendingAskUserQuestion) {
+          try {
+            askUserQuestionManager.cancel(
+              workspaceId,
+              pendingAskUserQuestion.toolCallId,
+              "User responded in chat; questions canceled"
+            );
+          } catch (error) {
+            log.debug("Failed to cancel pending ask_user_question", {
+              workspaceId,
+              toolCallId: pendingAskUserQuestion.toolCallId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+
+        session.queueMessage(message, resolvedOptions);
         return Ok(undefined);
       }
 
-      const result = await session.sendMessage(message, options);
+      const result = await session.sendMessage(message, resolvedOptions);
       if (!result.success) {
         log.error("sendMessage handler: session returned error", {
           workspaceId,
@@ -966,7 +1660,8 @@ export class WorkspaceService extends EventEmitter {
 
   async resumeStream(
     workspaceId: string,
-    options: SendMessageOptions | undefined = { model: "claude-3-5-sonnet-latest" }
+    options: SendMessageOptions | undefined = { model: "claude-3-5-sonnet-latest" },
+    internal?: { allowQueuedAgentTask?: boolean }
   ): Promise<Result<void, SendMessageError>> {
     try {
       // Block streaming while workspace is being renamed to prevent path conflicts
@@ -978,7 +1673,54 @@ export class WorkspaceService extends EventEmitter {
         });
       }
 
+      // Block streaming while workspace is being removed to prevent races with config/session deletion.
+      if (this.removingWorkspaces.has(workspaceId)) {
+        log.debug("resumeStream blocked: workspace is being removed", { workspaceId });
+        return Err({
+          type: "unknown",
+          raw: "Workspace is being deleted. Please wait and try again.",
+        });
+      }
+
+      // Guard: avoid creating sessions for workspaces that don't exist anymore.
+      if (!this.config.findWorkspace(workspaceId)) {
+        return Err({
+          type: "unknown",
+          raw: "Workspace not found. It may have been deleted.",
+        });
+      }
+
+      // Guard: queued agent tasks must not be resumed by generic UI/API calls.
+      // TaskService is responsible for dequeuing and starting them.
+      if (!internal?.allowQueuedAgentTask) {
+        const config = this.config.loadConfigOrDefault();
+        for (const [_projectPath, project] of config.projects) {
+          const ws = project.workspaces.find((w) => w.id === workspaceId);
+          if (!ws) continue;
+          if (ws.parentWorkspaceId && ws.taskStatus === "queued") {
+            taskQueueDebug("WorkspaceService.resumeStream blocked (queued task)", {
+              workspaceId,
+              stack: new Error("resumeStream blocked").stack,
+            });
+            return Err({
+              type: "unknown",
+              raw: "This agent task is queued and cannot start yet. Wait for a slot to free.",
+            });
+          }
+          break;
+        }
+      } else {
+        taskQueueDebug("WorkspaceService.resumeStream allowed (internal dequeue)", {
+          workspaceId,
+          stack: new Error("resumeStream internal").stack,
+        });
+      }
+
       const session = this.getOrCreateSession(workspaceId);
+
+      // Persist last-used model + thinking level for cross-device consistency.
+      await this.maybePersistAISettingsFromOptions(workspaceId, options, "resume");
+
       const result = await session.resumeStream(options);
       if (!result.success) {
         log.error("resumeStream handler: session returned error", {
@@ -1044,6 +1786,184 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  async answerAskUserQuestion(
+    workspaceId: string,
+    toolCallId: string,
+    answers: Record<string, string>
+  ): Promise<Result<void>> {
+    try {
+      // Fast path: normal in-memory execution (stream still running, tool is awaiting input).
+      askUserQuestionManager.answer(workspaceId, toolCallId, answers);
+      return Ok(undefined);
+    } catch (error) {
+      // Fallback path: app restart (or other process death) means the in-memory
+      // AskUserQuestionManager has no pending entry anymore.
+      //
+      // In that case we persist the tool result into partial.json or chat.jsonl,
+      // then emit a synthetic tool-call-end so the renderer updates immediately.
+      try {
+        // Helper: update a message in-place if it contains this ask_user_question tool call.
+        const tryFinalizeMessage = (
+          msg: MuxMessage
+        ): Result<{ updated: MuxMessage; output: AskUserQuestionToolSuccessResult }> => {
+          let foundToolCall = false;
+          let output: AskUserQuestionToolSuccessResult | null = null;
+          let errorMessage: string | null = null;
+
+          const updatedParts = msg.parts.map((part) => {
+            if (!isDynamicToolPart(part) || part.toolCallId !== toolCallId) {
+              return part;
+            }
+
+            foundToolCall = true;
+
+            if (part.toolName !== "ask_user_question") {
+              errorMessage = `toolCallId=${toolCallId} is toolName=${part.toolName}, expected ask_user_question`;
+              return part;
+            }
+
+            // Already answered - treat as idempotent.
+            if (part.state === "output-available") {
+              const parsedOutput = AskUserQuestionToolResultSchema.safeParse(part.output);
+              if (!parsedOutput.success) {
+                errorMessage = `ask_user_question output validation failed: ${parsedOutput.error.message}`;
+                return part;
+              }
+              output = parsedOutput.data;
+              return part;
+            }
+
+            const parsedArgs = AskUserQuestionToolArgsSchema.safeParse(part.input);
+            if (!parsedArgs.success) {
+              errorMessage = `ask_user_question input validation failed: ${parsedArgs.error.message}`;
+              return part;
+            }
+
+            const nextOutput: AskUserQuestionToolSuccessResult = {
+              questions: parsedArgs.data.questions,
+              answers,
+            };
+            output = nextOutput;
+
+            return {
+              ...part,
+              state: "output-available" as const,
+              output: nextOutput,
+            };
+          });
+
+          if (errorMessage) {
+            return Err(errorMessage);
+          }
+          if (!foundToolCall) {
+            return Err("ask_user_question toolCallId not found in message");
+          }
+          if (!output) {
+            return Err("ask_user_question output missing after update");
+          }
+
+          return Ok({ updated: { ...msg, parts: updatedParts }, output });
+        };
+
+        // 1) Prefer partial.json (most common after restart while waiting)
+        const partial = await this.partialService.readPartial(workspaceId);
+        if (partial) {
+          const finalized = tryFinalizeMessage(partial);
+          if (finalized.success) {
+            const writeResult = await this.partialService.writePartial(
+              workspaceId,
+              finalized.data.updated
+            );
+            if (!writeResult.success) {
+              return Err(writeResult.error);
+            }
+
+            const session = this.getOrCreateSession(workspaceId);
+            session.emitChatEvent({
+              type: "tool-call-end",
+              workspaceId,
+              messageId: finalized.data.updated.id,
+              toolCallId,
+              toolName: "ask_user_question",
+              result: finalized.data.output,
+              timestamp: Date.now(),
+            });
+
+            return Ok(undefined);
+          }
+        }
+
+        // 2) Fall back to chat history (partial may have already been committed)
+        const historyResult = await this.historyService.getHistory(workspaceId);
+        if (!historyResult.success) {
+          return Err(historyResult.error);
+        }
+
+        // Find the newest message containing this tool call.
+        let best: MuxMessage | null = null;
+        let bestSeq = -Infinity;
+        for (const msg of historyResult.data) {
+          const seq = msg.metadata?.historySequence;
+          if (seq === undefined) continue;
+
+          const hasTool = msg.parts.some(
+            (p) => isDynamicToolPart(p) && p.toolCallId === toolCallId
+          );
+          if (hasTool && seq > bestSeq) {
+            best = msg;
+            bestSeq = seq;
+          }
+        }
+
+        if (!best) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          return Err(`Failed to answer ask_user_question: ${errorMessage}`);
+        }
+
+        // Guard against answering stale tool calls.
+        const maxSeq = Math.max(
+          ...historyResult.data
+            .map((m) => m.metadata?.historySequence)
+            .filter((n): n is number => typeof n === "number")
+        );
+        if (bestSeq !== maxSeq) {
+          return Err(
+            `Refusing to answer ask_user_question: tool call is not the latest message (toolSeq=${bestSeq}, latestSeq=${maxSeq})`
+          );
+        }
+
+        const finalized = tryFinalizeMessage(best);
+        if (!finalized.success) {
+          return Err(finalized.error);
+        }
+
+        const updateResult = await this.historyService.updateHistory(
+          workspaceId,
+          finalized.data.updated
+        );
+        if (!updateResult.success) {
+          return Err(updateResult.error);
+        }
+
+        const session = this.getOrCreateSession(workspaceId);
+        session.emitChatEvent({
+          type: "tool-call-end",
+          workspaceId,
+          messageId: finalized.data.updated.id,
+          toolCallId,
+          toolName: "ask_user_question",
+          result: finalized.data.output,
+          timestamp: Date.now(),
+        });
+
+        return Ok(undefined);
+      } catch (innerError) {
+        const errorMessage = innerError instanceof Error ? innerError.message : String(innerError);
+        return Err(errorMessage);
+      }
+    }
+  }
+
   clearQueue(workspaceId: string): Result<void> {
     try {
       const session = this.getOrCreateSession(workspaceId);
@@ -1078,21 +1998,36 @@ export class WorkspaceService extends EventEmitter {
       ? expandTildeForSSH(legacyPlanPath)
       : shellQuote(expandTilde(legacyPlanPath));
 
-    // Delete plan files through runtime (supports both local and SSH)
-    const runtime = createRuntime(metadata.runtimeConfig, {
-      projectPath: metadata.projectPath,
-    });
-
-    try {
-      // Use exec to delete files since runtime doesn't have a deleteFile method
-      // Delete both paths in one command for efficiency
-      await runtime.exec(`rm -f ${quotedPlanPath} ${quotedLegacyPlanPath}`, {
-        cwd: metadata.projectPath,
-        timeout: 10,
+    // SSH runtime: delete via remote shell so $HOME expands on the remote.
+    if (isSSHRuntime(metadata.runtimeConfig)) {
+      const runtime = createRuntime(metadata.runtimeConfig, {
+        projectPath: metadata.projectPath,
       });
-    } catch {
-      // Plan files don't exist or can't be deleted - ignore
+
+      try {
+        // Use exec to delete files since runtime doesn't have a deleteFile method.
+        // Delete both paths in one command for efficiency.
+        const execStream = await runtime.exec(`rm -f ${quotedPlanPath} ${quotedLegacyPlanPath}`, {
+          cwd: metadata.projectPath,
+          timeout: 10,
+        });
+        // Wait for completion so callers can rely on the plan file actually being removed.
+        await execStream.exitCode;
+      } catch {
+        // Plan files don't exist or can't be deleted - ignore
+      }
+
+      return;
     }
+
+    // Local runtimes: delete directly on the local filesystem.
+    const planPathAbs = expandTilde(planPath);
+    const legacyPlanPathAbs = expandTilde(legacyPlanPath);
+
+    await Promise.allSettled([
+      fsPromises.rm(planPathAbs, { force: true }),
+      fsPromises.rm(legacyPlanPathAbs, { force: true }),
+    ]);
   }
 
   async truncateHistory(workspaceId: string, percentage?: number): Promise<Result<void>> {
@@ -1143,7 +2078,8 @@ export class WorkspaceService extends EventEmitter {
     summaryMessage: MuxMessage,
     options?: { deletePlanFile?: boolean }
   ): Promise<Result<void>> {
-    const isCompaction = summaryMessage.metadata?.compacted === true;
+    // Support both new enum ("user"|"idle") and legacy boolean (true)
+    const isCompaction = !!summaryMessage.metadata?.compacted;
     if (!isCompaction && this.aiService.isStreaming(workspaceId)) {
       return Err(
         "Cannot replace history while stream is active. Press Esc to stop the stream first."
@@ -1185,7 +2121,8 @@ export class WorkspaceService extends EventEmitter {
       }
 
       // Optional cleanup: delete plan file when caller explicitly requests it.
-      // Used by propose_plan "Start Here" to prevent stale plans from lingering on disk.
+      // Note: the propose_plan UI keeps the plan file on disk; this flag is reserved for
+      // explicit reset flows and backwards compatibility.
       if (options?.deletePlanFile === true) {
         const metadata = await this.getInfo(workspaceId);
         if (metadata) {
@@ -1220,6 +2157,87 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  async getFileCompletions(
+    workspaceId: string,
+    query: string,
+    limit = 20
+  ): Promise<{ paths: string[] }> {
+    assert(workspaceId, "workspaceId is required");
+    assert(typeof query === "string", "query must be a string");
+
+    const resolvedLimit = Math.min(Math.max(1, Math.trunc(limit)), 50);
+
+    const metadata = await this.getInfo(workspaceId);
+    if (!metadata) {
+      return { paths: [] };
+    }
+
+    const runtimeConfig = metadata.runtimeConfig ?? {
+      type: "local" as const,
+      srcBaseDir: this.config.srcDir,
+    };
+
+    const runtime = createRuntime(runtimeConfig, { projectPath: metadata.projectPath });
+    const isInPlace = metadata.projectPath === metadata.name;
+    const workspacePath = isInPlace
+      ? metadata.projectPath
+      : runtime.getWorkspacePath(metadata.projectPath, metadata.name);
+
+    const now = Date.now();
+    const CACHE_TTL_MS = 10_000;
+
+    let cached = this.fileCompletionsCache.get(workspaceId);
+    if (!cached) {
+      cached = { index: EMPTY_FILE_COMPLETIONS_INDEX, fetchedAt: 0 };
+      this.fileCompletionsCache.set(workspaceId, cached);
+    }
+
+    const cacheEntry = cached;
+
+    const isStale = cacheEntry.fetchedAt === 0 || now - cacheEntry.fetchedAt > CACHE_TTL_MS;
+    if (isStale && !cacheEntry.refreshing) {
+      cacheEntry.refreshing = (async () => {
+        const previousIndex = cacheEntry.index;
+
+        try {
+          const result = await execBuffered(runtime, "git ls-files -co --exclude-standard", {
+            cwd: workspacePath,
+            timeout: 5,
+          });
+
+          if (result.exitCode !== 0) {
+            cacheEntry.index = previousIndex;
+          } else {
+            const files = result.stdout
+              .split("\n")
+              .map((line) => line.trim())
+              // File @mentions are whitespace-delimited, so we exclude spaced paths from autocomplete.
+              .filter((filePath) => Boolean(filePath) && !/\s/.test(filePath));
+            cacheEntry.index = buildFileCompletionsIndex(files);
+          }
+
+          cacheEntry.fetchedAt = Date.now();
+        } catch (error) {
+          log.debug("getFileCompletions: failed to list files", {
+            workspaceId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+
+          // Keep any previously indexed data, but avoid retrying in a tight loop.
+          cacheEntry.index = previousIndex;
+          cacheEntry.fetchedAt = Date.now();
+        }
+      })().finally(() => {
+        cacheEntry.refreshing = undefined;
+      });
+    }
+
+    if (cacheEntry.fetchedAt === 0 && cacheEntry.refreshing) {
+      await cacheEntry.refreshing;
+    }
+
+    return { paths: searchFileCompletions(cacheEntry.index, query, resolvedLimit) };
+  }
   async getFullReplay(workspaceId: string): Promise<WorkspaceChatMessage[]> {
     try {
       const session = this.getOrCreateSession(workspaceId);
@@ -1239,9 +2257,17 @@ export class WorkspaceService extends EventEmitter {
     script: string,
     options?: {
       timeout_secs?: number;
-      niceness?: number;
     }
   ): Promise<Result<BashToolResult>> {
+    // Block bash execution while workspace is being removed to prevent races with directory deletion.
+    // A common case: subagent calls agent_report → frontend's GitStatusStore triggers a git status
+    // refresh → executeBash arrives while remove() is deleting the directory → spawn fails with ENOENT.
+    // removingWorkspaces is set for the entire duration of remove(), covering the window between
+    // disk deletion and metadata invalidation.
+    if (this.removingWorkspaces.has(workspaceId)) {
+      return Err(`Workspace ${workspaceId} is being removed`);
+    }
+
     try {
       // Get workspace metadata
       const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
@@ -1276,7 +2302,6 @@ export class WorkspaceService extends EventEmitter {
         cwd: workspacePath,
         runtime,
         secrets: secretsToRecord(projectSecrets),
-        niceness: options?.niceness,
         runtimeTempDir: tempDir.path,
         overflow_policy: "truncate",
       });
@@ -1380,5 +2405,16 @@ export class WorkspaceService extends EventEmitter {
    */
   offBackgroundBashChange(callback: (workspaceId: string) => void): void {
     this.backgroundProcessManager.off("change", callback);
+  }
+
+  /**
+   * Emit an idle-compaction-needed event to a workspace's stream.
+   * Called by IdleCompactionService when a workspace becomes eligible while connected.
+   */
+  emitIdleCompactionNeeded(workspaceId: string): void {
+    const session = this.sessions.get(workspaceId);
+    if (session) {
+      session.emitChatEvent({ type: "idle-compaction-needed" });
+    }
   }
 }

@@ -5,8 +5,13 @@ import { GlobalWindow } from "happy-dom";
 import type { WorkspaceContext } from "./WorkspaceContext";
 import { WorkspaceProvider, useWorkspaceContext } from "./WorkspaceContext";
 import { ProjectProvider } from "@/browser/contexts/ProjectContext";
+import { RouterProvider } from "@/browser/contexts/RouterContext";
 import { useWorkspaceStoreRaw as getWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
-import { SELECTED_WORKSPACE_KEY } from "@/common/constants/storage";
+import {
+  SELECTED_WORKSPACE_KEY,
+  getModelKey,
+  getThinkingLevelKey,
+} from "@/common/constants/storage";
 import type { RecursivePartial } from "@/browser/testUtils";
 
 import type { APIClient } from "@/browser/contexts/API";
@@ -92,6 +97,181 @@ describe("WorkspaceContext", () => {
     expect(workspaceApi.onMetadata).toHaveBeenCalled();
   });
 
+  test("switches selection to parent when selected child workspace is deleted", async () => {
+    const parentId = "ws-parent";
+    const childId = "ws-child";
+
+    const workspaces: FrontendWorkspaceMetadata[] = [
+      createWorkspaceMetadata({
+        id: parentId,
+        projectPath: "/alpha",
+        projectName: "alpha",
+        name: "main",
+        namedWorkspacePath: "/alpha-main",
+      }),
+      createWorkspaceMetadata({
+        id: childId,
+        projectPath: "/alpha",
+        projectName: "alpha",
+        name: "agent_explore_ws-child",
+        namedWorkspacePath: "/alpha-agent",
+        parentWorkspaceId: parentId,
+      }),
+    ];
+
+    let emitDelete:
+      | ((event: { workspaceId: string; metadata: FrontendWorkspaceMetadata | null }) => void)
+      | null = null;
+
+    const { workspace: workspaceApi } = createMockAPI({
+      workspace: {
+        list: () => Promise.resolve(workspaces),
+        onMetadata: () =>
+          Promise.resolve(
+            (async function* () {
+              const event = await new Promise<{
+                workspaceId: string;
+                metadata: FrontendWorkspaceMetadata | null;
+              }>((resolve) => {
+                emitDelete = resolve;
+              });
+              yield event;
+            })() as unknown as Awaited<ReturnType<APIClient["workspace"]["onMetadata"]>>
+          ),
+      },
+      projects: {
+        list: () => Promise.resolve([]),
+      },
+      localStorage: {
+        [SELECTED_WORKSPACE_KEY]: JSON.stringify({
+          workspaceId: childId,
+          projectPath: "/alpha",
+          projectName: "alpha",
+          namedWorkspacePath: "/alpha-agent",
+        }),
+      },
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().workspaceMetadata.size).toBe(2));
+    await waitFor(() => expect(ctx().selectedWorkspace?.workspaceId).toBe(childId));
+    await waitFor(() => expect(workspaceApi.onMetadata).toHaveBeenCalled());
+    await waitFor(() => expect(emitDelete).toBeTruthy());
+
+    act(() => {
+      emitDelete?.({ workspaceId: childId, metadata: null });
+    });
+
+    await waitFor(() => expect(ctx().selectedWorkspace?.workspaceId).toBe(parentId));
+  });
+
+  test("removes non-selected child workspace from metadata map when deleted", async () => {
+    // Bug regression: when a sub-agent workspace is deleted while not selected,
+    // it was staying in the metadata map due to early return in the handler.
+    const parentId = "ws-parent";
+    const childId = "ws-child";
+
+    const workspaces: FrontendWorkspaceMetadata[] = [
+      createWorkspaceMetadata({
+        id: parentId,
+        projectPath: "/alpha",
+        projectName: "alpha",
+        name: "main",
+        namedWorkspacePath: "/alpha-main",
+      }),
+      createWorkspaceMetadata({
+        id: childId,
+        projectPath: "/alpha",
+        projectName: "alpha",
+        name: "agent_explore_ws-child",
+        namedWorkspacePath: "/alpha-agent",
+        parentWorkspaceId: parentId,
+      }),
+    ];
+
+    let emitDelete:
+      | ((event: { workspaceId: string; metadata: FrontendWorkspaceMetadata | null }) => void)
+      | null = null;
+
+    createMockAPI({
+      workspace: {
+        list: () => Promise.resolve(workspaces),
+        onMetadata: () =>
+          Promise.resolve(
+            (async function* () {
+              const event = await new Promise<{
+                workspaceId: string;
+                metadata: FrontendWorkspaceMetadata | null;
+              }>((resolve) => {
+                emitDelete = resolve;
+              });
+              yield event;
+            })() as unknown as Awaited<ReturnType<APIClient["workspace"]["onMetadata"]>>
+          ),
+      },
+      projects: {
+        list: () => Promise.resolve([]),
+      },
+      // Parent is selected, not the child
+      localStorage: {
+        [SELECTED_WORKSPACE_KEY]: JSON.stringify({
+          workspaceId: parentId,
+          projectPath: "/alpha",
+          projectName: "alpha",
+          namedWorkspacePath: "/alpha-main",
+        }),
+      },
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().workspaceMetadata.size).toBe(2));
+    await waitFor(() => expect(ctx().selectedWorkspace?.workspaceId).toBe(parentId));
+    await waitFor(() => expect(emitDelete).toBeTruthy());
+
+    // Delete the non-selected child workspace
+    act(() => {
+      emitDelete?.({ workspaceId: childId, metadata: null });
+    });
+
+    // Child should be removed from metadata map (this was the bug - it stayed)
+    await waitFor(() => expect(ctx().workspaceMetadata.size).toBe(1));
+    expect(ctx().workspaceMetadata.has(childId)).toBe(false);
+    // Parent should still be selected
+    expect(ctx().selectedWorkspace?.workspaceId).toBe(parentId);
+  });
+
+  test("seeds model + thinking localStorage from backend metadata", async () => {
+    const initialWorkspaces: FrontendWorkspaceMetadata[] = [
+      createWorkspaceMetadata({
+        id: "ws-ai",
+        aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "xhigh" },
+      }),
+    ];
+
+    createMockAPI({
+      workspace: {
+        list: () => Promise.resolve(initialWorkspaces),
+      },
+      localStorage: {
+        // Seed with different values; backend should win.
+        [getModelKey("ws-ai")]: JSON.stringify("anthropic:claude-3.5"),
+        [getThinkingLevelKey("ws-ai")]: JSON.stringify("low"),
+      },
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().workspaceMetadata.size).toBe(1));
+
+    expect(JSON.parse(globalThis.localStorage.getItem(getModelKey("ws-ai"))!)).toBe(
+      "openai:gpt-5.2"
+    );
+    expect(JSON.parse(globalThis.localStorage.getItem(getThinkingLevelKey("ws-ai"))!)).toBe(
+      "xhigh"
+    );
+  });
   test("loads workspace metadata on mount", async () => {
     const initialWorkspaces: FrontendWorkspaceMetadata[] = [
       createWorkspaceMetadata({
@@ -306,6 +486,18 @@ describe("WorkspaceContext", () => {
 
   test("beginWorkspaceCreation clears selection and tracks pending state", async () => {
     createMockAPI({
+      workspace: {
+        list: () =>
+          Promise.resolve([
+            createWorkspaceMetadata({
+              id: "ws-existing",
+              projectPath: "/existing",
+              projectName: "existing",
+              name: "main",
+              namedWorkspacePath: "/existing-main",
+            }),
+          ]),
+      },
       localStorage: {
         selectedWorkspace: JSON.stringify({
           workspaceId: "ws-existing",
@@ -361,6 +553,18 @@ describe("WorkspaceContext", () => {
 
   test("selectedWorkspace restores from localStorage on mount", async () => {
     createMockAPI({
+      workspace: {
+        list: () =>
+          Promise.resolve([
+            createWorkspaceMetadata({
+              id: "ws-restore",
+              projectPath: "/restore",
+              projectName: "restore",
+              name: "main",
+              namedWorkspacePath: "/restore-main",
+            }),
+          ]),
+      },
       localStorage: {
         selectedWorkspace: JSON.stringify({
           workspaceId: "ws-restore",
@@ -376,18 +580,13 @@ describe("WorkspaceContext", () => {
     await waitFor(() => expect(ctx().selectedWorkspace?.workspaceId).toBe("ws-restore"));
   });
 
-  test("launch project takes precedence over localStorage selection", async () => {
+  test("launch project auto-selects workspace when no URL hash", async () => {
+    // With the new router, URL takes precedence. When there's no URL hash,
+    // and localStorage has no saved workspace, the launch project kicks in.
     createMockAPI({
       workspace: {
         list: () =>
           Promise.resolve([
-            createWorkspaceMetadata({
-              id: "ws-existing",
-              projectPath: "/existing",
-              projectName: "existing",
-              name: "main",
-              namedWorkspacePath: "/existing-main",
-            }),
             createWorkspaceMetadata({
               id: "ws-launch",
               projectPath: "/launch-project",
@@ -400,18 +599,10 @@ describe("WorkspaceContext", () => {
       projects: {
         list: () => Promise.resolve([]),
       },
-      localStorage: {
-        selectedWorkspace: JSON.stringify({
-          workspaceId: "ws-existing",
-          projectPath: "/existing",
-          projectName: "existing",
-          namedWorkspacePath: "/existing-main",
-        }),
-      },
       server: {
         getLaunchProject: () => Promise.resolve("/launch-project"),
       },
-      locationHash: "#/launch-project", // Simulate launch project via URL hash
+      // No locationHash, no localStorage - so launch project should kick in
     });
 
     const ctx = await setup();
@@ -472,6 +663,59 @@ describe("WorkspaceContext", () => {
     expect(ctx().selectedWorkspace?.projectPath).toBe("/existing");
   });
 
+  test("launch project does not override pending workspace creation", async () => {
+    // Race condition test: if user starts creating a workspace while
+    // getLaunchProject is in flight, the launch project should not override
+
+    let resolveLaunchProject: (value: string | null) => void;
+    const launchProjectPromise = new Promise<string | null>((resolve) => {
+      resolveLaunchProject = resolve;
+    });
+
+    const initialWorkspaces = [
+      createWorkspaceMetadata({
+        id: "ws-launch",
+        projectPath: "/launch-project",
+        projectName: "launch-project",
+        name: "main",
+        namedWorkspacePath: "/launch-project-main",
+      }),
+    ];
+
+    createMockAPI({
+      workspace: {
+        list: () => Promise.resolve(initialWorkspaces),
+      },
+      server: {
+        getLaunchProject: () => launchProjectPromise,
+      },
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().loading).toBe(false));
+
+    // User starts workspace creation (this sets pendingNewWorkspaceProject)
+    act(() => {
+      ctx().beginWorkspaceCreation("/new-project");
+    });
+
+    // Verify pending state is set
+    expect(ctx().pendingNewWorkspaceProject).toBe("/new-project");
+    expect(ctx().selectedWorkspace).toBeNull();
+
+    // Now the launch project response arrives
+    await act(async () => {
+      resolveLaunchProject!("/launch-project");
+      // Give effect time to process
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    // Should NOT have selected the launch project workspace because creation is pending
+    expect(ctx().selectedWorkspace).toBeNull();
+    expect(ctx().pendingNewWorkspaceProject).toBe("/new-project");
+  });
+
   test("WorkspaceProvider calls ProjectContext.refreshProjects after loading", async () => {
     // Verify that projects.list is called during workspace metadata loading
     const projectsListMock = mock(() => Promise.resolve([]));
@@ -529,13 +773,15 @@ async function setup() {
     return null;
   }
 
-  // WorkspaceProvider needs ProjectProvider to call useProjectContext
+  // WorkspaceProvider needs RouterProvider and ProjectProvider
   render(
-    <ProjectProvider>
-      <WorkspaceProvider>
-        <ContextCapture />
-      </WorkspaceProvider>
-    </ProjectProvider>
+    <RouterProvider>
+      <ProjectProvider>
+        <WorkspaceProvider>
+          <ContextCapture />
+        </WorkspaceProvider>
+      </ProjectProvider>
+    </RouterProvider>
   );
 
   // Inject client immediately to handle race conditions where effects run before store update

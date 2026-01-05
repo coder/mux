@@ -22,7 +22,8 @@ const MAX_DIFF_SIZE_BYTES = 32768; // 32kb
 
 export interface HighlightedLine {
   html: string; // HTML content (already escaped and tokenized)
-  lineNumber: number;
+  oldLineNumber: number | null;
+  newLineNumber: number | null;
   originalIndex: number; // Index in original diff
 }
 
@@ -54,7 +55,8 @@ export async function highlightDiffChunk(
       type: chunk.type,
       lines: chunk.lines.map((line, i) => ({
         html: escapeHtml(line),
-        lineNumber: chunk.lineNumbers[i],
+        oldLineNumber: chunk.oldLineNumbers[i],
+        newLineNumber: chunk.newLineNumbers[i],
         originalIndex: chunk.startIndex + i,
       })),
       usedFallback: false,
@@ -98,7 +100,8 @@ export async function highlightDiffChunk(
       type: chunk.type,
       lines: lines.map((html, i) => ({
         html,
-        lineNumber: chunk.lineNumbers[i],
+        oldLineNumber: chunk.oldLineNumbers[i],
+        newLineNumber: chunk.newLineNumbers[i],
         originalIndex: chunk.startIndex + i,
       })),
       usedFallback: false,
@@ -117,7 +120,8 @@ function createFallbackChunk(chunk: DiffChunk): HighlightedChunk {
     type: chunk.type,
     lines: chunk.lines.map((line, i) => ({
       html: escapeHtml(line),
-      lineNumber: chunk.lineNumbers[i],
+      oldLineNumber: chunk.oldLineNumbers[i],
+      newLineNumber: chunk.newLineNumbers[i],
       originalIndex: chunk.startIndex + i,
     })),
     usedFallback: true,

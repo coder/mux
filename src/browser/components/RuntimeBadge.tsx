@@ -1,16 +1,22 @@
 import React from "react";
+import { Copy, Check } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { isSSHRuntime, isWorktreeRuntime, isLocalProjectRuntime } from "@/common/types/runtime";
 import { extractSshHostname } from "@/browser/utils/ui/runtimeBadge";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { SSHIcon, WorktreeIcon, LocalIcon } from "./icons/RuntimeIcons";
+import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 
 interface RuntimeBadgeProps {
   runtimeConfig?: RuntimeConfig;
   className?: string;
   /** When true, shows blue pulsing styling to indicate agent is working */
   isWorking?: boolean;
+  /** Workspace path to show in tooltip */
+  workspacePath?: string;
+  /** Git branch/workspace name to show in tooltip */
+  branchName?: string;
 }
 
 // Runtime-specific color schemes - each type has consistent colors in idle/working states
@@ -44,7 +50,42 @@ const RUNTIME_STYLES = {
  *
  * When isWorking=true, badges brighten and pulse within their color scheme.
  */
-export function RuntimeBadge({ runtimeConfig, className, isWorking = false }: RuntimeBadgeProps) {
+function PathWithCopy({ path }: { path: string }) {
+  const { copied, copyToClipboard } = useCopyToClipboard();
+
+  return (
+    <div className="mt-1 flex items-center gap-1">
+      <span className="text-muted font-mono text-[10px]">{path}</span>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          void copyToClipboard(path);
+        }}
+        className="text-muted hover:text-foreground"
+        aria-label="Copy path"
+      >
+        {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+      </button>
+    </div>
+  );
+}
+
+function BranchWithLabel({ branchName }: { branchName: string }) {
+  return (
+    <div className="mt-1 flex max-w-80 items-baseline gap-1">
+      <span className="text-muted shrink-0">Branch:</span>
+      <span className="min-w-0 font-mono break-words">{branchName}</span>
+    </div>
+  );
+}
+
+export function RuntimeBadge({
+  runtimeConfig,
+  className,
+  isWorking = false,
+  workspacePath,
+  branchName,
+}: RuntimeBadgeProps) {
   // SSH runtime: show server icon with hostname
   if (isSSHRuntime(runtimeConfig)) {
     const hostname = extractSshHostname(runtimeConfig);
@@ -62,7 +103,11 @@ export function RuntimeBadge({ runtimeConfig, className, isWorking = false }: Ru
             <SSHIcon />
           </span>
         </TooltipTrigger>
-        <TooltipContent align="end">SSH: {hostname ?? runtimeConfig.host}</TooltipContent>
+        <TooltipContent align="end">
+          <div>SSH: {hostname ?? runtimeConfig.host}</div>
+          {branchName && <BranchWithLabel branchName={branchName} />}
+          {workspacePath && <PathWithCopy path={workspacePath} />}
+        </TooltipContent>
       </Tooltip>
     );
   }
@@ -83,7 +128,11 @@ export function RuntimeBadge({ runtimeConfig, className, isWorking = false }: Ru
             <WorktreeIcon />
           </span>
         </TooltipTrigger>
-        <TooltipContent align="end">Worktree: isolated git worktree</TooltipContent>
+        <TooltipContent align="end">
+          <div>Worktree: isolated git worktree</div>
+          {branchName && <BranchWithLabel branchName={branchName} />}
+          {workspacePath && <PathWithCopy path={workspacePath} />}
+        </TooltipContent>
       </Tooltip>
     );
   }
@@ -104,7 +153,11 @@ export function RuntimeBadge({ runtimeConfig, className, isWorking = false }: Ru
             <LocalIcon />
           </span>
         </TooltipTrigger>
-        <TooltipContent align="end">Local: project directory</TooltipContent>
+        <TooltipContent align="end">
+          <div>Local: project directory</div>
+          {branchName && <BranchWithLabel branchName={branchName} />}
+          {workspacePath && <PathWithCopy path={workspacePath} />}
+        </TooltipContent>
       </Tooltip>
     );
   }

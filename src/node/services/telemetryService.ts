@@ -4,11 +4,15 @@
  * Sends telemetry events to PostHog from the main process (Node.js).
  * This avoids ad-blocker issues that affect browser-side telemetry.
  *
- * Telemetry can be disabled by setting the MUX_DISABLE_TELEMETRY=1 env var.
+ * Telemetry is enabled by default, including in development mode.
+ * It is automatically disabled in CI, test environments, and automation contexts
+ * (NODE_ENV=test, CI, MUX_E2E=1, JEST_WORKER_ID, etc.).
+ * Users can manually disable telemetry by setting MUX_DISABLE_TELEMETRY=1.
  *
  * Uses posthog-node which batches events and flushes asynchronously.
  */
 
+import assert from "@/common/utils/assert";
 import { PostHog } from "posthog-node";
 import { randomUUID } from "crypto";
 import * as fs from "fs/promises";
@@ -29,53 +33,85 @@ const TELEMETRY_ID_FILE = "telemetry_id";
  * Covers major CI providers: GitHub Actions, GitLab CI, Jenkins, CircleCI,
  * Travis, Azure Pipelines, Bitbucket, TeamCity, Buildkite, etc.
  */
-function isCIEnvironment(): boolean {
+function isCIEnvironment(env: NodeJS.ProcessEnv): boolean {
   return (
     // Generic CI indicator (set by most CI systems)
-    process.env.CI === "true" ||
-    process.env.CI === "1" ||
+    env.CI === "true" ||
+    env.CI === "1" ||
     // GitHub Actions
-    process.env.GITHUB_ACTIONS === "true" ||
+    env.GITHUB_ACTIONS === "true" ||
     // GitLab CI
-    process.env.GITLAB_CI === "true" ||
+    env.GITLAB_CI === "true" ||
     // Jenkins
-    process.env.JENKINS_URL !== undefined ||
+    env.JENKINS_URL !== undefined ||
     // CircleCI
-    process.env.CIRCLECI === "true" ||
+    env.CIRCLECI === "true" ||
     // Travis CI
-    process.env.TRAVIS === "true" ||
+    env.TRAVIS === "true" ||
     // Azure Pipelines
-    process.env.TF_BUILD === "True" ||
+    env.TF_BUILD === "True" ||
     // Bitbucket Pipelines
-    process.env.BITBUCKET_BUILD_NUMBER !== undefined ||
+    env.BITBUCKET_BUILD_NUMBER !== undefined ||
     // TeamCity
-    process.env.TEAMCITY_VERSION !== undefined ||
+    env.TEAMCITY_VERSION !== undefined ||
     // Buildkite
-    process.env.BUILDKITE === "true" ||
+    env.BUILDKITE === "true" ||
     // AWS CodeBuild
-    process.env.CODEBUILD_BUILD_ID !== undefined ||
+    env.CODEBUILD_BUILD_ID !== undefined ||
     // Drone CI
-    process.env.DRONE === "true" ||
+    env.DRONE === "true" ||
     // AppVeyor
-    process.env.APPVEYOR === "True" ||
+    env.APPVEYOR === "True" ||
     // Vercel / Netlify (build environments)
-    process.env.VERCEL === "1" ||
-    process.env.NETLIFY === "true"
+    env.VERCEL === "1" ||
+    env.NETLIFY === "true"
   );
 }
 
 /**
  * Check if telemetry is disabled via environment variable or automation context
  */
-function isTelemetryDisabled(): boolean {
+function isTelemetryDisabledByEnv(env: NodeJS.ProcessEnv): boolean {
   return (
-    process.env.MUX_DISABLE_TELEMETRY === "1" ||
-    process.env.NODE_ENV === "test" ||
-    process.env.JEST_WORKER_ID !== undefined ||
-    process.env.VITEST !== undefined ||
-    process.env.TEST_INTEGRATION === "1" ||
-    isCIEnvironment()
+    env.MUX_DISABLE_TELEMETRY === "1" ||
+    env.MUX_E2E === "1" ||
+    env.NODE_ENV === "test" ||
+    env.JEST_WORKER_ID !== undefined ||
+    env.VITEST !== undefined ||
+    env.TEST_INTEGRATION === "1" ||
+    isCIEnvironment(env)
   );
+}
+
+export interface TelemetryEnablementContext {
+  env: NodeJS.ProcessEnv;
+  isElectron: boolean;
+  isPackaged: boolean | null;
+}
+
+export function shouldEnableTelemetry(context: TelemetryEnablementContext): boolean {
+  // Telemetry is disabled by explicit env vars, CI, or test environments
+  if (isTelemetryDisabledByEnv(context.env)) {
+    return false;
+  }
+
+  // Otherwise, telemetry is enabled (including dev mode)
+  return true;
+}
+
+async function getElectronIsPackaged(isElectron: boolean): Promise<boolean | null> {
+  if (!isElectron) {
+    return null;
+  }
+
+  try {
+    // eslint-disable-next-line no-restricted-syntax -- Electron is unavailable in `mux server`; avoid top-level import
+    const { app } = await import("electron");
+    return app.isPackaged;
+  } catch {
+    // If we can't determine packaging status, fail closed.
+    return null;
+  }
 }
 
 /**
@@ -95,8 +131,62 @@ function getVersionString(): string {
 export class TelemetryService {
   private client: PostHog | null = null;
   private distinctId: string | null = null;
+  private featureFlagVariants: Record<string, string | boolean> = {};
   private readonly muxHome: string;
 
+  getPostHogClient(): PostHog | null {
+    return this.client;
+  }
+
+  getDistinctId(): string | null {
+    return this.distinctId;
+  }
+
+  /**
+   * Check if telemetry is enabled.
+   * Returns true only after initialize() completes and telemetry was not disabled.
+   */
+  isEnabled(): boolean {
+    return this.client !== null;
+  }
+
+  /**
+   * Check if telemetry was explicitly disabled by the user via MUX_DISABLE_TELEMETRY=1.
+   * This is different from isEnabled() which also returns false in dev mode.
+   * Used to gate features like link sharing that should only be hidden when
+   * the user explicitly opts out of mux services.
+   */
+  isExplicitlyDisabled(): boolean {
+    return process.env.MUX_DISABLE_TELEMETRY === "1";
+  }
+
+  /**
+   * Set the current PostHog feature flag/experiment assignment.
+   *
+   * This is used to attach `$feature/<flagKey>` properties to all telemetry events so
+   * PostHog can break down metrics by experiment variant (required for server-side capture).
+   */
+  setFeatureFlagVariant(flagKey: string, variant: string | boolean | null): void {
+    assert(typeof flagKey === "string", "flagKey must be a string");
+    const trimmed = flagKey.trim();
+    assert(trimmed.length > 0, "flagKey must not be empty");
+
+    const key = `$feature/${trimmed}`;
+
+    if (variant === null) {
+      // Removing the property avoids emitting null values which can pollute breakdowns.
+      // Note: This is safe even if telemetry is disabled.
+      delete this.featureFlagVariants[key];
+      return;
+    }
+
+    assert(
+      typeof variant === "string" || typeof variant === "boolean",
+      "variant must be a string | boolean | null"
+    );
+
+    this.featureFlagVariants[key] = variant;
+  }
   constructor(muxHome?: string) {
     this.muxHome = muxHome ?? getMuxHome();
   }
@@ -106,11 +196,21 @@ export class TelemetryService {
    * Should be called once on app startup.
    */
   async initialize(): Promise<void> {
-    if (isTelemetryDisabled()) {
+    if (this.client) {
       return;
     }
 
-    if (this.client) {
+    const env = process.env;
+
+    // Fast path: avoid Electron imports when telemetry is obviously disabled.
+    if (isTelemetryDisabledByEnv(env)) {
+      return;
+    }
+
+    const isElectron = typeof process.versions.electron === "string";
+    const isPackaged = await getElectronIsPackaged(isElectron);
+
+    if (!shouldEnableTelemetry({ env, isElectron, isPackaged })) {
       return;
     }
 
@@ -119,7 +219,7 @@ export class TelemetryService {
 
     this.client = new PostHog(DEFAULT_POSTHOG_KEY, {
       host: DEFAULT_POSTHOG_HOST,
-      // Disable feature flags since we don't use them
+      // Avoid geo-IP enrichment (we don't need coarse location for mux telemetry)
       disableGeoip: true,
     });
 
@@ -160,13 +260,14 @@ export class TelemetryService {
   /**
    * Get base properties included with all events
    */
-  private getBaseProperties(): BaseTelemetryProperties {
+  private getBaseProperties(): BaseTelemetryProperties & Record<string, string | boolean> {
     return {
       version: getVersionString(),
       backend_platform: process.platform,
       electronVersion: process.versions.electron ?? "unknown",
       nodeVersion: process.versions.node ?? "unknown",
       bunVersion: process.versions.bun ?? "unknown",
+      ...this.featureFlagVariants,
     };
   }
 
@@ -174,8 +275,21 @@ export class TelemetryService {
    * Track a telemetry event.
    * Events are silently ignored when disabled.
    */
+
+  async getFeatureFlag(key: string): Promise<boolean | string | undefined> {
+    if (isTelemetryDisabledByEnv(process.env) || !this.client || !this.distinctId) {
+      return undefined;
+    }
+
+    try {
+      // `getFeatureFlag` will automatically emit $feature_flag_called.
+      return await this.client.getFeatureFlag(key, this.distinctId, { disableGeoip: true });
+    } catch {
+      return undefined;
+    }
+  }
   capture(payload: TelemetryEventPayload): void {
-    if (isTelemetryDisabled() || !this.client || !this.distinctId) {
+    if (isTelemetryDisabledByEnv(process.env) || !this.client || !this.distinctId) {
       return;
     }
 

@@ -1,51 +1,70 @@
 import { useEffect, useCallback, useRef } from "react";
 import "./styles/globals.css";
-import { useWorkspaceContext } from "./contexts/WorkspaceContext";
+import { useWorkspaceContext, toWorkspaceSelection } from "./contexts/WorkspaceContext";
 import { useProjectContext } from "./contexts/ProjectContext";
 import type { WorkspaceSelection } from "./components/ProjectSidebar";
 import { LeftSidebar } from "./components/LeftSidebar";
 import { ProjectCreateModal } from "./components/ProjectCreateModal";
 import { AIView } from "./components/AIView";
 import { ErrorBoundary } from "./components/ErrorBoundary";
-import { usePersistedState, updatePersistedState } from "./hooks/usePersistedState";
+import {
+  usePersistedState,
+  updatePersistedState,
+  readPersistedState,
+} from "./hooks/usePersistedState";
 import { matchesKeybind, KEYBINDS } from "./utils/ui/keybinds";
-import { buildSortedWorkspacesByProject } from "./utils/ui/workspaceFiltering";
+import {
+  buildSortedWorkspacesByProject,
+  getAllVisibleWorkspaces,
+} from "./utils/ui/workspaceFiltering";
 import { useResumeManager } from "./hooks/useResumeManager";
 import { useUnreadTracking } from "./hooks/useUnreadTracking";
 import { useWorkspaceStoreRaw, useWorkspaceRecency } from "./stores/WorkspaceStore";
-import { ChatInput } from "./components/ChatInput/index";
-import type { ChatInputAPI } from "./components/ChatInput/types";
 
 import { useStableReference, compareMaps } from "./hooks/useStableReference";
 import { CommandRegistryProvider, useCommandRegistry } from "./contexts/CommandRegistryContext";
 import { useOpenTerminal } from "./hooks/useOpenTerminal";
 import type { CommandAction } from "./contexts/CommandRegistryContext";
-import { ModeProvider } from "./contexts/ModeContext";
-import { ProviderOptionsProvider } from "./contexts/ProviderOptionsContext";
 import { ThemeProvider, useTheme, type ThemeMode } from "./contexts/ThemeContext";
-import { ThinkingProvider } from "./contexts/ThinkingContext";
 import { CommandPalette } from "./components/CommandPalette";
 import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sources";
 
 import type { ThinkingLevel } from "@/common/types/thinking";
+import type { UIMode } from "@/common/types/mode";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { isWorkspaceForkSwitchEvent } from "./utils/workspaceEvents";
-import { getThinkingLevelKey } from "@/common/constants/storage";
+import {
+  EXPANDED_PROJECTS_KEY,
+  getAgentIdKey,
+  getModelKey,
+  getThinkingLevelByModelKey,
+  getThinkingLevelKey,
+  getWorkspaceAISettingsByModeKey,
+} from "@/common/constants/storage";
+import { sortProjectsByOrder } from "@/common/utils/projectOrdering";
+import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
+import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
+import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import type { BranchListResult } from "@/common/orpc/types";
 import { useTelemetry } from "./hooks/useTelemetry";
 import { getRuntimeTypeForTelemetry } from "@/common/telemetry";
 import { useStartWorkspaceCreation, getFirstProjectPath } from "./hooks/useStartWorkspaceCreation";
 import { useAPI } from "@/browser/contexts/API";
 import { AuthTokenModal } from "@/browser/components/AuthTokenModal";
+import { ProjectPage } from "@/browser/components/ProjectPage";
 
 import { SettingsProvider, useSettings } from "./contexts/SettingsContext";
 import { SettingsModal } from "./components/Settings/SettingsModal";
+import { SplashScreenProvider } from "./components/splashScreens/SplashScreenProvider";
 import { TutorialProvider } from "./contexts/TutorialContext";
 import { TooltipProvider } from "./components/ui/tooltip";
+import { useFeatureFlags } from "./contexts/FeatureFlagsContext";
+import { FeatureFlagsProvider } from "./contexts/FeatureFlagsContext";
 import { ExperimentsProvider } from "./contexts/ExperimentsContext";
 import { getWorkspaceSidebarKey } from "./utils/workspace";
+import { RosettaBanner } from "./components/RosettaBanner";
 
-const THINKING_LEVELS: ThinkingLevel[] = ["off", "low", "medium", "high"];
+const THINKING_LEVELS: ThinkingLevel[] = ["off", "low", "medium", "high", "xhigh"];
 
 function AppInner() {
   // Get workspace state from context
@@ -57,8 +76,8 @@ function AppInner() {
     selectedWorkspace,
     setSelectedWorkspace,
     pendingNewWorkspaceProject,
+    pendingNewWorkspaceSectionId,
     beginWorkspaceCreation,
-    clearPendingWorkspaceCreation,
   } = useWorkspaceContext();
   const { theme, setTheme, toggleTheme } = useTheme();
   const { open: openSettings } = useSettings();
@@ -83,26 +102,16 @@ function AppInner() {
   const isMobile = typeof window !== "undefined" && window.innerWidth <= 768;
   const [sidebarCollapsed, setSidebarCollapsed] = usePersistedState("sidebarCollapsed", isMobile);
   const defaultProjectPath = getFirstProjectPath(projects);
-  const creationChatInputRef = useRef<ChatInputAPI | null>(null);
   const creationProjectPath = !selectedWorkspace
     ? (pendingNewWorkspaceProject ?? (projects.size === 1 ? defaultProjectPath : null))
     : null;
-  const handleCreationChatReady = useCallback((api: ChatInputAPI) => {
-    creationChatInputRef.current = api;
-    api.focus();
-  }, []);
 
   const startWorkspaceCreation = useStartWorkspaceCreation({
     projects,
     beginWorkspaceCreation,
-    setSelectedWorkspace,
   });
 
-  useEffect(() => {
-    if (creationProjectPath) {
-      creationChatInputRef.current?.focus();
-    }
-  }, [creationProjectPath]);
+  // ProjectPage handles its own focus when mounted
 
   const handleToggleSidebar = useCallback(() => {
     setSidebarCollapsed((prev) => !prev);
@@ -113,6 +122,11 @@ function AppInner() {
 
   // Get workspace store for command palette
   const workspaceStore = useWorkspaceStoreRaw();
+
+  const { statsTabState } = useFeatureFlags();
+  useEffect(() => {
+    workspaceStore.setStatsEnabled(Boolean(statsTabState?.enabled));
+  }, [workspaceStore, statsTabState?.enabled]);
 
   // Track telemetry when workspace selection changes
   const prevWorkspaceRef = useRef<WorkspaceSelection | null>(null);
@@ -127,18 +141,18 @@ function AppInner() {
   // Track last-read timestamps for unread indicators
   const { lastReadTimestamps, onToggleUnread } = useUnreadTracking(selectedWorkspace);
 
+  const workspaceMetadataRef = useRef(workspaceMetadata);
+  useEffect(() => {
+    workspaceMetadataRef.current = workspaceMetadata;
+  }, [workspaceMetadata]);
+
   // Auto-resume interrupted streams on app startup and when failures occur
   useResumeManager();
 
-  // Sync selectedWorkspace with URL hash
+  // Update window title based on selected workspace
+  // URL syncing is now handled by RouterContext
   useEffect(() => {
     if (selectedWorkspace) {
-      // Update URL with workspace ID
-      const newHash = `#workspace=${encodeURIComponent(selectedWorkspace.workspaceId)}`;
-      if (window.location.hash !== newHash) {
-        window.history.replaceState(null, "", newHash);
-      }
-
       // Update window title with workspace title (or name for legacy workspaces)
       const metadata = workspaceMetadata.get(selectedWorkspace.workspaceId);
       const workspaceTitle = metadata?.title ?? metadata?.name ?? selectedWorkspace.workspaceId;
@@ -147,38 +161,30 @@ function AppInner() {
       document.title = title;
       void api?.window.setTitle({ title });
     } else {
-      // Clear hash when no workspace selected
-      if (window.location.hash) {
-        window.history.replaceState(null, "", window.location.pathname);
-      }
       // Set document.title locally for browser mode, call backend for Electron
       document.title = "mux";
       void api?.window.setTitle({ title: "mux" });
     }
   }, [selectedWorkspace, workspaceMetadata, api]);
+
   // Validate selected workspace exists and has all required fields
+  // Note: workspace validity is now primarily handled by RouterContext deriving
+  // selectedWorkspace from URL + metadata. This effect handles edge cases like
+  // stale localStorage or missing fields in legacy workspaces.
   useEffect(() => {
     if (selectedWorkspace) {
       const metadata = workspaceMetadata.get(selectedWorkspace.workspaceId);
 
       if (!metadata) {
-        // Workspace was deleted
+        // Workspace was deleted - navigate home (clears selection)
         console.warn(
           `Workspace ${selectedWorkspace.workspaceId} no longer exists, clearing selection`
         );
         setSelectedWorkspace(null);
-        if (window.location.hash) {
-          window.history.replaceState(null, "", window.location.pathname);
-        }
       } else if (!selectedWorkspace.namedWorkspacePath && metadata.namedWorkspacePath) {
         // Old localStorage entry missing namedWorkspacePath - update it once
         console.log(`Updating workspace ${selectedWorkspace.workspaceId} with missing fields`);
-        setSelectedWorkspace({
-          workspaceId: metadata.id,
-          projectPath: metadata.projectPath,
-          projectName: metadata.projectName,
-          namedWorkspacePath: metadata.namedWorkspacePath,
-        });
+        setSelectedWorkspace(toWorkspaceSelection(metadata));
       }
     }
   }, [selectedWorkspace, workspaceMetadata, setSelectedWorkspace]);
@@ -221,37 +227,49 @@ function AppInner() {
 
   const handleNavigateWorkspace = useCallback(
     (direction: "next" | "prev") => {
-      if (!selectedWorkspace) return;
-
-      // Use sorted workspaces to match visual order in sidebar
-      const sortedWorkspaces = sortedWorkspacesByProject.get(selectedWorkspace.projectPath);
-      if (!sortedWorkspaces || sortedWorkspaces.length <= 1) return;
-
-      // Find current workspace index in sorted list
-      const currentIndex = sortedWorkspaces.findIndex(
-        (metadata) => metadata.id === selectedWorkspace.workspaceId
+      // Build list of all visible workspaces across all projects (matching sidebar order)
+      const projectOrder = readPersistedState<string[]>("mux:projectOrder", []);
+      const expandedProjectsArray = readPersistedState<string[]>(EXPANDED_PROJECTS_KEY, []);
+      const expandedProjects = new Set(expandedProjectsArray);
+      const expandedOldWorkspaces = readPersistedState<Record<string, boolean>>(
+        "expandedOldWorkspaces",
+        {}
       );
-      if (currentIndex === -1) return;
 
-      // Calculate next/prev index with wrapping
+      // Get sorted project paths (respecting user's drag order)
+      const sortedProjectPaths = sortProjectsByOrder(projects, projectOrder).map(([p]) => p);
+
+      const visibleWorkspaces = getAllVisibleWorkspaces(
+        sortedProjectPaths,
+        sortedWorkspacesByProject,
+        expandedProjects,
+        workspaceRecency,
+        expandedOldWorkspaces
+      );
+
+      if (visibleWorkspaces.length === 0) return;
+
+      // Find current workspace index (or start from beginning/end if not found)
+      const currentIndex = selectedWorkspace
+        ? visibleWorkspaces.findIndex((m) => m.id === selectedWorkspace.workspaceId)
+        : -1;
+
       let targetIndex: number;
-      if (direction === "next") {
-        targetIndex = (currentIndex + 1) % sortedWorkspaces.length;
+      if (currentIndex === -1) {
+        // Current workspace not visible - go to first/last visible
+        targetIndex = direction === "next" ? 0 : visibleWorkspaces.length - 1;
+      } else if (direction === "next") {
+        targetIndex = (currentIndex + 1) % visibleWorkspaces.length;
       } else {
-        targetIndex = currentIndex === 0 ? sortedWorkspaces.length - 1 : currentIndex - 1;
+        targetIndex = currentIndex === 0 ? visibleWorkspaces.length - 1 : currentIndex - 1;
       }
 
-      const targetMetadata = sortedWorkspaces[targetIndex];
+      const targetMetadata = visibleWorkspaces[targetIndex];
       if (!targetMetadata) return;
 
-      setSelectedWorkspace({
-        projectPath: selectedWorkspace.projectPath,
-        projectName: selectedWorkspace.projectName,
-        namedWorkspacePath: targetMetadata.namedWorkspacePath,
-        workspaceId: targetMetadata.id,
-      });
+      setSelectedWorkspace(toWorkspaceSelection(targetMetadata));
     },
-    [selectedWorkspace, sortedWorkspacesByProject, setSelectedWorkspace]
+    [selectedWorkspace, projects, sortedWorkspacesByProject, workspaceRecency, setSelectedWorkspace]
   );
 
   // Register command sources with registry
@@ -262,50 +280,105 @@ function AppInner() {
     close: closeCommandPalette,
   } = useCommandRegistry();
 
-  const getThinkingLevelForWorkspace = useCallback((workspaceId: string): ThinkingLevel => {
-    if (!workspaceId) {
-      return "off";
-    }
+  /**
+   * Get model for a workspace, returning canonical format.
+   */
+  const getModelForWorkspace = useCallback((workspaceId: string): string => {
+    const defaultModel = getDefaultModel();
+    const rawModel = readPersistedState<string>(getModelKey(workspaceId), defaultModel);
+    return migrateGatewayModel(rawModel || defaultModel);
+  }, []);
 
-    if (typeof window === "undefined" || !window.localStorage) {
-      return "off";
-    }
-
-    try {
-      const key = getThinkingLevelKey(workspaceId);
-      const stored = window.localStorage.getItem(key);
-      if (!stored || stored === "undefined") {
+  const getThinkingLevelForWorkspace = useCallback(
+    (workspaceId: string): ThinkingLevel => {
+      if (!workspaceId) {
         return "off";
       }
-      const parsed = JSON.parse(stored) as ThinkingLevel;
-      return THINKING_LEVELS.includes(parsed) ? parsed : "off";
-    } catch (error) {
-      console.warn("Failed to read thinking level", error);
-      return "off";
-    }
-  }, []);
 
-  const setThinkingLevelFromPalette = useCallback((workspaceId: string, level: ThinkingLevel) => {
-    if (!workspaceId) {
-      return;
-    }
+      const scopedKey = getThinkingLevelKey(workspaceId);
+      const scoped = readPersistedState<ThinkingLevel | undefined>(scopedKey, undefined);
+      if (scoped !== undefined) {
+        return THINKING_LEVELS.includes(scoped) ? scoped : "off";
+      }
 
-    const normalized = THINKING_LEVELS.includes(level) ? level : "off";
-    const key = getThinkingLevelKey(workspaceId);
-
-    // Use the utility function which handles localStorage and event dispatch
-    // ThinkingProvider will pick this up via its listener
-    updatePersistedState(key, normalized);
-
-    // Dispatch toast notification event for UI feedback
-    if (typeof window !== "undefined") {
-      window.dispatchEvent(
-        new CustomEvent(CUSTOM_EVENTS.THINKING_LEVEL_TOAST, {
-          detail: { workspaceId, level: normalized },
-        })
+      // Migration: fall back to legacy per-model thinking and seed the workspace-scoped key.
+      const model = getModelForWorkspace(workspaceId);
+      const legacy = readPersistedState<ThinkingLevel | undefined>(
+        getThinkingLevelByModelKey(model),
+        undefined
       );
-    }
-  }, []);
+      if (legacy !== undefined && THINKING_LEVELS.includes(legacy)) {
+        updatePersistedState(scopedKey, legacy);
+        return legacy;
+      }
+
+      return "off";
+    },
+    [getModelForWorkspace]
+  );
+
+  const setThinkingLevelFromPalette = useCallback(
+    (workspaceId: string, level: ThinkingLevel) => {
+      if (!workspaceId) {
+        return;
+      }
+
+      const normalized = THINKING_LEVELS.includes(level) ? level : "off";
+      const model = getModelForWorkspace(workspaceId);
+      const effective = enforceThinkingPolicy(model, normalized);
+      const key = getThinkingLevelKey(workspaceId);
+
+      // Use the utility function which handles localStorage and event dispatch
+      // ThinkingProvider will pick this up via its listener
+      updatePersistedState(key, effective);
+
+      type WorkspaceAISettingsByModeCache = Partial<
+        Record<string, { model: string; thinkingLevel: ThinkingLevel }>
+      >;
+
+      const agentId = readPersistedState<string>(getAgentIdKey(workspaceId), "exec");
+      // Derive mode from agentId (plan agent → plan mode, everything else → exec mode)
+      const mode: UIMode = agentId === "plan" ? "plan" : "exec";
+
+      updatePersistedState<WorkspaceAISettingsByModeCache>(
+        getWorkspaceAISettingsByModeKey(workspaceId),
+        (prev) => {
+          const record: WorkspaceAISettingsByModeCache =
+            prev && typeof prev === "object" ? prev : {};
+          return {
+            ...record,
+            [agentId]: { model, thinkingLevel: effective },
+          };
+        },
+        {}
+      );
+
+      // Persist to backend so the palette change follows the workspace across devices.
+      // Only persist when the active agent matches the base mode so custom-agent overrides
+      // don't clobber exec/plan defaults that other agents inherit.
+      if (api && agentId === mode) {
+        api.workspace
+          .updateModeAISettings({
+            workspaceId,
+            mode,
+            aiSettings: { model, thinkingLevel: effective },
+          })
+          .catch(() => {
+            // Best-effort only.
+          });
+      }
+
+      // Dispatch toast notification event for UI feedback
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent(CUSTOM_EVENTS.THINKING_LEVEL_TOAST, {
+            detail: { workspaceId, level: effective },
+          })
+        );
+      }
+    },
+    [api, getModelForWorkspace]
+  );
 
   const registerParamsRef = useRef<BuildSourcesParams | null>(null);
 
@@ -398,6 +471,7 @@ function AppInner() {
     onToggleTheme: toggleTheme,
     onSetTheme: setThemePreference,
     onOpenSettings: openSettings,
+    onClearTimingStats: (workspaceId: string) => workspaceStore.clearTimingStats(workspaceId),
     api,
   };
 
@@ -408,6 +482,9 @@ function AppInner() {
 
       // Compute streaming models here (only when command palette opens)
       const allStates = workspaceStore.getAllStates();
+      const selectedWorkspaceState = params.selectedWorkspace
+        ? (allStates.get(params.selectedWorkspace.workspaceId) ?? null)
+        : null;
       const streamingModels = new Map<string, string>();
       for (const [workspaceId, state] of allStates) {
         if (state.canInterrupt && state.currentModel) {
@@ -415,7 +492,11 @@ function AppInner() {
         }
       }
 
-      const factories = buildCoreSources({ ...params, streamingModels });
+      const factories = buildCoreSources({
+        ...params,
+        streamingModels,
+        selectedWorkspaceState,
+      });
       const actions: CommandAction[] = [];
       for (const factory of factories) {
         actions.push(...factory());
@@ -447,12 +528,6 @@ function AppInner() {
       } else if (matchesKeybind(e, KEYBINDS.OPEN_SETTINGS)) {
         e.preventDefault();
         openSettings();
-      } else if (matchesKeybind(e, KEYBINDS.FOCUS_CHAT)) {
-        // Focus creation chat when on new chat page (no workspace selected)
-        if (creationProjectPath && creationChatInputRef.current) {
-          e.preventDefault();
-          creationChatInputRef.current.focus();
-        }
       }
     };
 
@@ -521,12 +596,7 @@ function AppInner() {
       });
 
       // Switch to the new workspace
-      setSelectedWorkspace({
-        workspaceId: workspaceInfo.id,
-        projectPath: workspaceInfo.projectPath,
-        projectName: workspaceInfo.projectName,
-        namedWorkspacePath: workspaceInfo.namedWorkspacePath,
-      });
+      setSelectedWorkspace(toWorkspaceSelection(workspaceInfo));
     };
 
     window.addEventListener(CUSTOM_EVENTS.WORKSPACE_FORK_SWITCH, handleForkSwitch as EventListener);
@@ -536,6 +606,28 @@ function AppInner() {
         handleForkSwitch as EventListener
       );
   }, [projects, setSelectedWorkspace, setWorkspaceMetadata]);
+
+  // Set up navigation callback for notification clicks
+  useEffect(() => {
+    const navigateToWorkspace = (workspaceId: string) => {
+      const metadata = workspaceMetadataRef.current.get(workspaceId);
+      if (metadata) {
+        setSelectedWorkspace(toWorkspaceSelection(metadata));
+      }
+    };
+
+    // Single source of truth: WorkspaceStore owns the navigation callback.
+    // Browser notifications and Electron notification clicks both route through this.
+    workspaceStore.setNavigateToWorkspace(navigateToWorkspace);
+
+    const unsubscribe = window.api?.onNotificationClicked?.((data) => {
+      workspaceStore.navigateToWorkspace(data.workspaceId);
+    });
+
+    return () => {
+      unsubscribe?.();
+    };
+  }, [setSelectedWorkspace, workspaceStore]);
 
   const handleProviderConfig = useCallback(
     async (provider: string, keyPath: string[], value: string) => {
@@ -567,6 +659,7 @@ function AppInner() {
           workspaceRecency={workspaceRecency}
         />
         <div className="mobile-main-content flex min-w-0 flex-1 flex-col overflow-hidden">
+          <RosettaBanner />
           <div className="mobile-layout flex flex-1 overflow-hidden">
             {selectedWorkspace ? (
               (() => {
@@ -596,7 +689,7 @@ function AppInner() {
                       workspaceId={selectedWorkspace.workspaceId}
                       projectPath={selectedWorkspace.projectPath}
                       projectName={selectedWorkspace.projectName}
-                      branch={workspaceName}
+                      workspaceName={workspaceName}
                       namedWorkspacePath={workspacePath}
                       runtimeConfig={currentMetadata.runtimeConfig}
                       incompatibleRuntime={currentMetadata.incompatibleRuntime}
@@ -611,55 +704,42 @@ function AppInner() {
                 const projectName =
                   projectPath.split("/").pop() ?? projectPath.split("\\").pop() ?? "Project";
                 return (
-                  <ModeProvider projectPath={projectPath}>
-                    <ProviderOptionsProvider>
-                      <ThinkingProvider projectPath={projectPath}>
-                        <ChatInput
-                          variant="creation"
-                          projectPath={projectPath}
-                          projectName={projectName}
-                          onProviderConfig={handleProviderConfig}
-                          onReady={handleCreationChatReady}
-                          onWorkspaceCreated={(metadata) => {
-                            // IMPORTANT: Add workspace to store FIRST (synchronous) to ensure
-                            // the store knows about it before React processes the state updates.
-                            // This prevents race conditions where the UI tries to access the
-                            // workspace before the store has created its aggregator.
-                            workspaceStore.addWorkspace(metadata);
+                  <ProjectPage
+                    projectPath={projectPath}
+                    projectName={projectName}
+                    pendingSectionId={pendingNewWorkspaceSectionId}
+                    onProviderConfig={handleProviderConfig}
+                    onWorkspaceCreated={(metadata) => {
+                      // IMPORTANT: Add workspace to store FIRST (synchronous) to ensure
+                      // the store knows about it before React processes the state updates.
+                      // This prevents race conditions where the UI tries to access the
+                      // workspace before the store has created its aggregator.
+                      workspaceStore.addWorkspace(metadata);
 
-                            // Add to workspace metadata map (triggers React state update)
-                            setWorkspaceMetadata((prev) =>
-                              new Map(prev).set(metadata.id, metadata)
-                            );
+                      // Add to workspace metadata map (triggers React state update)
+                      setWorkspaceMetadata((prev) => new Map(prev).set(metadata.id, metadata));
 
-                            // Only switch to new workspace if user hasn't selected another one
-                            // during the creation process (selectedWorkspace was null when creation started)
-                            setSelectedWorkspace((current) => {
-                              if (current !== null) {
-                                // User has already selected another workspace - don't override
-                                return current;
-                              }
-                              return {
-                                workspaceId: metadata.id,
-                                projectPath: metadata.projectPath,
-                                projectName: metadata.projectName,
-                                namedWorkspacePath: metadata.namedWorkspacePath,
-                              };
-                            });
+                      // Only switch to new workspace if user hasn't selected another one
+                      // during the creation process (selectedWorkspace was null when creation started)
+                      setSelectedWorkspace((current) => {
+                        if (current !== null) {
+                          // User has already selected another workspace - don't override
+                          return current;
+                        }
+                        return toWorkspaceSelection(metadata);
+                      });
 
-                            // Track telemetry
-                            telemetry.workspaceCreated(
-                              metadata.id,
-                              getRuntimeTypeForTelemetry(metadata.runtimeConfig)
-                            );
+                      // Track telemetry
+                      telemetry.workspaceCreated(
+                        metadata.id,
+                        getRuntimeTypeForTelemetry(metadata.runtimeConfig)
+                      );
 
-                            // Clear pending state
-                            clearPendingWorkspaceCreation();
-                          }}
-                        />
-                      </ThinkingProvider>
-                    </ProviderOptionsProvider>
-                  </ModeProvider>
+                      // Note: No need to call clearPendingWorkspaceCreation() here.
+                      // Navigating to the workspace URL automatically clears the pending
+                      // state since pendingNewWorkspaceProject is derived from the URL.
+                    }}
+                  />
                 );
               })()
             ) : (
@@ -702,15 +782,19 @@ function App() {
   return (
     <ThemeProvider>
       <ExperimentsProvider>
-        <TooltipProvider delayDuration={200}>
-          <SettingsProvider>
-            <TutorialProvider>
-              <CommandRegistryProvider>
-                <AppInner />
-              </CommandRegistryProvider>
-            </TutorialProvider>
-          </SettingsProvider>
-        </TooltipProvider>
+        <FeatureFlagsProvider>
+          <TooltipProvider delayDuration={200}>
+            <SettingsProvider>
+              <SplashScreenProvider>
+                <TutorialProvider>
+                  <CommandRegistryProvider>
+                    <AppInner />
+                  </CommandRegistryProvider>
+                </TutorialProvider>
+              </SplashScreenProvider>
+            </SettingsProvider>
+          </TooltipProvider>
+        </FeatureFlagsProvider>
       </ExperimentsProvider>
     </ThemeProvider>
   );

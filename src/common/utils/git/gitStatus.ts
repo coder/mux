@@ -4,24 +4,42 @@
  */
 
 /**
- * Bash script to get git status for a workspace.
- * Returns structured output with primary branch, show-branch, and dirty status.
+ * Generate bash script to get git status for a workspace.
+ * Returns structured output with base ref, show-branch, and dirty status.
+ *
+ * @param baseRef - The ref to compare against (e.g., "origin/main").
+ *                  If not provided or not an origin/ ref, auto-detects.
  */
-export const GIT_STATUS_SCRIPT = `
-# Get primary branch - try multiple methods
+export function generateGitStatusScript(baseRef?: string): string {
+  // Extract branch name if it's an origin/ ref, otherwise empty for auto-detect
+  const preferredBranch = baseRef?.startsWith("origin/") ? baseRef.replace(/^origin\//, "") : "";
+
+  return `
+# Determine primary branch to compare against
 PRIMARY_BRANCH=""
+PREFERRED_BRANCH="${preferredBranch}"
 
-# Method 1: symbolic-ref (fastest)
-PRIMARY_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
-
-# Method 2: remote show origin (fallback)
-if [ -z "$PRIMARY_BRANCH" ]; then
-  PRIMARY_BRANCH=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | cut -d' ' -f5)
+# Try preferred branch first if specified
+if [ -n "$PREFERRED_BRANCH" ]; then
+  if git rev-parse --verify "refs/remotes/origin/$PREFERRED_BRANCH" >/dev/null 2>&1; then
+    PRIMARY_BRANCH="$PREFERRED_BRANCH"
+  fi
 fi
 
-# Method 3: check for main or master
+# Fall back to auto-detection
 if [ -z "$PRIMARY_BRANCH" ]; then
-  PRIMARY_BRANCH=$(git branch -r 2>/dev/null | grep -E 'origin/(main|master)$' | head -1 | sed 's@^.*origin/@@')
+  # Method 1: symbolic-ref (fastest)
+  PRIMARY_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+
+  # Method 2: remote show origin (fallback)
+  if [ -z "$PRIMARY_BRANCH" ]; then
+    PRIMARY_BRANCH=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | cut -d' ' -f5)
+  fi
+
+  # Method 3: check for main or master
+  if [ -z "$PRIMARY_BRANCH" ]; then
+    PRIMARY_BRANCH=$(git branch -r 2>/dev/null | grep -E 'origin/(main|master)$' | head -1 | sed 's@^.*origin/@@')
+  fi
 fi
 
 # Exit if we can't determine primary branch
@@ -74,6 +92,12 @@ echo "$DIRTY_COUNT"
 echo "---LINE_DELTA---"
 echo "$OUTGOING_STATS $INCOMING_STATS"
 `;
+}
+
+/**
+ * Bash script to get git status for a workspace (auto-detects primary branch).
+ */
+export const GIT_STATUS_SCRIPT = generateGitStatusScript();
 
 /**
  * Parse the output from GIT_STATUS_SCRIPT.

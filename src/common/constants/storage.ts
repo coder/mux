@@ -58,10 +58,30 @@ export function getMCPTestResultsKey(projectPath: string): string {
 }
 
 /**
- * Helper to create a thinking level storage key for a workspace
- * Format: "thinkingLevel:{workspaceId}"
+ * Get the localStorage key for thinking level preference per scope (workspace/project).
+ * Format: "thinkingLevel:{scopeId}"
  */
-export const getThinkingLevelKey = (workspaceId: string): string => `thinkingLevel:${workspaceId}`;
+export function getThinkingLevelKey(scopeId: string): string {
+  return `thinkingLevel:${scopeId}`;
+}
+
+/**
+ * Get the localStorage key for per-mode workspace AI overrides cache.
+ * Format: "workspaceAiSettingsByMode:{workspaceId}"
+ */
+export function getWorkspaceAISettingsByModeKey(workspaceId: string): string {
+  return `workspaceAiSettingsByMode:${workspaceId}`;
+}
+
+/**
+ * LEGACY: Get the localStorage key for thinking level preference per model (global).
+ * Format: "thinkingLevel:model:{modelName}"
+ *
+ * Kept for one-time migration to per-workspace thinking.
+ */
+export function getThinkingLevelByModelKey(modelName: string): string {
+  return `thinkingLevel:model:${modelName}`;
+}
 
 /**
  * Get the localStorage key for the user's preferred model for a workspace
@@ -75,6 +95,17 @@ export function getModelKey(workspaceId: string): string {
  */
 export function getInputKey(workspaceId: string): string {
   return `input:${workspaceId}`;
+}
+
+/**
+ * Get the localStorage key for the input image attachments for a workspace.
+ * Format: "inputImages:{scopeId}"
+ *
+ * Note: The input key functions accept any string scope ID. For normal workspaces
+ * this is the workspaceId; for creation mode it's a pending scope ID.
+ */
+export function getInputImagesKey(scopeId: string): string {
+  return `inputImages:${scopeId}`;
 }
 
 /**
@@ -93,15 +124,6 @@ export function getRetryStateKey(workspaceId: string): string {
 }
 
 /**
- * Get the localStorage key for the last active thinking level used for a model
- * Stores only active levels ("low" | "medium" | "high"), never "off"
- * Format: "lastThinkingByModel:{modelName}"
- */
-export function getLastThinkingByModelKey(modelName: string): string {
-  return `lastThinkingByModel:${modelName}`;
-}
-
-/**
  * Get storage key for cancelled compaction tracking.
  * Stores compaction-request user message ID to verify freshness across reloads.
  */
@@ -110,13 +132,29 @@ export function getCancelledCompactionKey(workspaceId: string): string {
 }
 
 /**
- * Get the localStorage key for the UI mode for a workspace
- * Format: "mode:{workspaceId}"
+ * Get the localStorage key for the selected agent definition id for a scope.
+ * Format: "agentId:{scopeId}"
  */
-export function getModeKey(workspaceId: string): string {
-  return `mode:${workspaceId}`;
+export function getAgentIdKey(scopeId: string): string {
+  return `agentId:${scopeId}`;
 }
 
+/**
+ * Get the localStorage key for the pinned third agent id for a scope.
+ * Format: "pinnedAgentId:{scopeId}"
+ */
+export function getPinnedAgentIdKey(scopeId: string): string {
+  return `pinnedAgentId:${scopeId}`;
+}
+/**
+ * Get the localStorage key for "disable workspace agents" toggle per scope.
+ * When true, workspace-specific agents are disabled - only built-in and global agents are loaded.
+ * Useful for "unbricking" when iterating on agent files in a workspace worktree.
+ * Format: "disableWorkspaceAgents:{scopeId}"
+ */
+export function getDisableWorkspaceAgentsKey(scopeId: string): string {
+  return `disableWorkspaceAgents:${scopeId}`;
+}
 /**
  * Get the localStorage key for the default runtime for a project
  * Defaults to worktree if not set; can only be changed via the "Default for project" checkbox.
@@ -152,15 +190,42 @@ export function getLastSshHostKey(projectPath: string): string {
 export const PREFERRED_COMPACTION_MODEL_KEY = "preferredCompactionModel";
 
 /**
+ * Get the localStorage key for cached mode AI defaults (global).
+ * Format: "modeAiDefaults"
+ */
+export const MODE_AI_DEFAULTS_KEY = "modeAiDefaults";
+
+/**
+ * Get the localStorage key for cached per-agent AI defaults (global).
+ * Format: "agentAiDefaults"
+ */
+export const AGENT_AI_DEFAULTS_KEY = "agentAiDefaults";
+
+/**
  * Get the localStorage key for vim mode preference (global)
  * Format: "vimEnabled"
  */
 export const VIM_ENABLED_KEY = "vimEnabled";
 
 /**
+ * Preferred expiration for mux.md shares (global)
+ * Stores: "1h" | "24h" | "7d" | "30d" | "never"
+ * Default: "7d"
+ */
+export const SHARE_EXPIRATION_KEY = "shareExpiration";
+
+/**
+ * Whether to sign shared messages by default.
+ * Stores: boolean
+ * Default: true
+ */
+export const SHARE_SIGNING_KEY = "shareSigning";
+
+/**
  * Git status indicator display mode (global)
  * Stores: "line-delta" | "divergence"
  */
+
 export const GIT_STATUS_INDICATOR_MODE_KEY = "gitStatusIndicatorMode";
 
 /**
@@ -208,12 +273,36 @@ export function getReviewStateKey(workspaceId: string): string {
 }
 
 /**
+ * Get the localStorage key for hunk first-seen timestamps per workspace
+ * Tracks when each hunk content address was first observed (for LIFO sorting)
+ * Format: "hunkFirstSeen:{workspaceId}"
+ */
+export function getHunkFirstSeenKey(workspaceId: string): string {
+  return `hunkFirstSeen:${workspaceId}`;
+}
+
+/**
+ * Get the localStorage key for review sort order preference (global)
+ * Format: "review-sort-order"
+ */
+export const REVIEW_SORT_ORDER_KEY = "review-sort-order";
+
+/**
  * Get the localStorage key for hunk expand/collapse state in Review tab
  * Stores user's manual expand/collapse preferences per hunk
  * Format: "reviewExpandState:{workspaceId}"
  */
 export function getReviewExpandStateKey(workspaceId: string): string {
   return `reviewExpandState:${workspaceId}`;
+}
+
+/**
+ * Get the localStorage key for read-more expansion state per hunk.
+ * Tracks how many lines are expanded up/down for each hunk.
+ * Format: "reviewReadMore:{workspaceId}"
+ */
+export function getReviewReadMoreKey(workspaceId: string): string {
+  return `reviewReadMore:${workspaceId}`;
 }
 
 /**
@@ -235,16 +324,38 @@ export function getStatusStateKey(workspaceId: string): string {
 }
 
 /**
+ * Get the localStorage key for session timing stats for a workspace
+ * Stores aggregate timing data: totalDurationMs, totalToolExecutionMs, totalTtftMs, ttftCount, responseCount
+ * Format: "sessionTiming:{workspaceId}"
+ */
+export function getSessionTimingKey(workspaceId: string): string {
+  return `sessionTiming:${workspaceId}`;
+}
+
+/**
  * Right sidebar tab selection (global)
  * Format: "right-sidebar-tab"
  */
 export const RIGHT_SIDEBAR_TAB_KEY = "right-sidebar-tab";
 
 /**
- * Right sidebar collapsed state (global)
+ * Right sidebar collapsed state (global, manual toggle)
  * Format: "right-sidebar:collapsed"
  */
 export const RIGHT_SIDEBAR_COLLAPSED_KEY = "right-sidebar:collapsed";
+
+/**
+ * Right sidebar width for Costs tab (global)
+ * Format: "right-sidebar:width:costs"
+ */
+export const RIGHT_SIDEBAR_COSTS_WIDTH_KEY = "right-sidebar:width:costs";
+
+/**
+ * Right sidebar width for Review tab (global)
+ * Reuses legacy key to preserve existing user preferences
+ * Format: "review-sidebar-width"
+ */
+export const RIGHT_SIDEBAR_REVIEW_WIDTH_KEY = "review-sidebar-width";
 
 /**
  * Get the localStorage key for unified Review search state per workspace
@@ -285,32 +396,47 @@ export function getAutoCompactionThresholdKey(model: string): string {
  * List of workspace-scoped key functions that should be copied on fork and deleted on removal
  */
 const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string> = [
+  getWorkspaceAISettingsByModeKey,
   getModelKey,
   getInputKey,
-  getModeKey,
+  getInputImagesKey,
+  getAgentIdKey,
+  getPinnedAgentIdKey,
   getThinkingLevelKey,
   getAutoRetryKey,
   getRetryStateKey,
   getReviewStateKey,
+  getHunkFirstSeenKey,
   getReviewExpandStateKey,
+  getReviewReadMoreKey,
   getFileTreeExpandStateKey,
   getReviewSearchStateKey,
   getReviewsKey,
   getAutoCompactionEnabledKey,
   getStatusStateKey,
-  // Note: getAutoCompactionThresholdKey is per-model, not per-workspace
+  // Note: auto-compaction threshold is per-model, not per-workspace
 ];
+
+/**
+ * Get the localStorage key for cached plan content for a workspace
+ * Stores: { content: string; path: string } - used for optimistic rendering
+ * Format: "planContent:{workspaceId}"
+ */
+export function getPlanContentKey(workspaceId: string): string {
+  return `planContent:${workspaceId}`;
+}
 
 /**
  * Additional ephemeral keys to delete on workspace removal (not copied on fork)
  */
 const EPHEMERAL_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string> = [
   getCancelledCompactionKey,
+  getPlanContentKey, // Cache only, no need to preserve on fork
 ];
 
 /**
- * Copy all workspace-specific localStorage keys from source to destination workspace
- * This includes: model, input, mode, thinking level, auto-retry, retry state, review expand state, file tree expand state
+ * Copy all workspace-specific localStorage keys from source to destination workspace.
+ * Includes keys listed in PERSISTENT_WORKSPACE_KEY_FUNCTIONS (model, draft input text/images, etc).
  */
 export function copyWorkspaceStorage(sourceWorkspaceId: string, destWorkspaceId: string): void {
   for (const getKey of PERSISTENT_WORKSPACE_KEY_FUNCTIONS) {

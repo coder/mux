@@ -4,16 +4,20 @@
  * ReviewPanel uses SelectableDiffRenderer for interactive line selection.
  */
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { cn } from "@/common/lib/utils";
 import { getLanguageFromPath } from "@/common/utils/git/languageDetector";
+import { useOverflowDetection } from "@/browser/hooks/useOverflowDetection";
+import { MessageSquare } from "lucide-react";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { groupDiffLines } from "@/browser/utils/highlighting/diffChunking";
 import { useTheme, type ThemeMode } from "@/browser/contexts/ThemeContext";
 import {
+  escapeHtml,
   highlightDiffChunk,
   type HighlightedChunk,
 } from "@/browser/utils/highlighting/highlightDiffChunk";
+import { LRUCache } from "lru-cache";
 import {
   highlightSearchMatches,
   type SearchHighlightConfig,
@@ -23,77 +27,244 @@ import type { ReviewNoteData } from "@/common/types/review";
 // Shared type for diff line types
 export type DiffLineType = "add" | "remove" | "context" | "header";
 
-// Helper function for getting diff line background color.
-// Keep backgrounds subtle so the diff reads like a code block, not a highlighter.
-const getDiffLineBackground = (type: DiffLineType): string => {
-  switch (type) {
-    case "add":
-      return "color-mix(in srgb, var(--color-success), transparent 90%)";
-    case "remove":
-      return "color-mix(in srgb, var(--color-danger), transparent 90%)";
-    case "header":
-      return "color-mix(in srgb, var(--color-accent), transparent 92%)";
-    case "context":
-    default:
-      return "transparent";
-  }
+interface DiffLineStyles {
+  tintBase: string | null;
+  codeTintTransparentPct: number;
+  gutterTintTransparentPct: number;
+  contentColor: string;
+}
+
+const tint = (base: string, transparentPct: number): string =>
+  `color-mix(in srgb, ${base}, transparent ${transparentPct}%)`;
+
+const DIFF_LINE_STYLES: Record<DiffLineType, DiffLineStyles> = {
+  add: {
+    tintBase: "var(--color-success)",
+    codeTintTransparentPct: 94,
+    gutterTintTransparentPct: 86,
+    contentColor: "var(--color-text)",
+  },
+  remove: {
+    tintBase: "var(--color-danger)",
+    codeTintTransparentPct: 94,
+    gutterTintTransparentPct: 86,
+    contentColor: "var(--color-text)",
+  },
+  header: {
+    tintBase: "var(--color-accent)",
+    codeTintTransparentPct: 95,
+    gutterTintTransparentPct: 90,
+    contentColor: "var(--color-accent-light)",
+  },
+  context: {
+    tintBase: null,
+    codeTintTransparentPct: 100,
+    gutterTintTransparentPct: 100,
+    contentColor: "var(--color-text-secondary)",
+  },
 };
 
-const getDiffLineBorderColor = (type: DiffLineType): string => {
-  switch (type) {
-    case "add":
-      return "color-mix(in srgb, var(--color-success), transparent 35%)";
-    case "remove":
-      return "color-mix(in srgb, var(--color-danger), transparent 35%)";
-    case "header":
-      return "color-mix(in srgb, var(--color-accent), transparent 45%)";
-    case "context":
-    default:
-      return "transparent";
-  }
+// Helper function for the diff *code* background. This should stay relatively subtle.
+const getDiffLineBackground = (type: DiffLineType): string => {
+  const style = DIFF_LINE_STYLES[type];
+  return style.tintBase ? tint(style.tintBase, style.codeTintTransparentPct) : "transparent";
+};
+
+// Helper function for the diff *gutter* background (line numbers / +/- area).
+// This is intentionally more saturated than the code background for contrast.
+// Context lines have no special background (same as code area).
+const getDiffLineGutterBackground = (type: DiffLineType): string => {
+  const style = DIFF_LINE_STYLES[type];
+  return style.tintBase ? tint(style.tintBase, style.gutterTintTransparentPct) : "transparent";
 };
 
 // Helper function for getting line content color.
 // Only headers/context are tinted; actual code stays the normal foreground color.
-const getLineContentColor = (type: DiffLineType): string => {
+const getLineContentColor = (type: DiffLineType): string => DIFF_LINE_STYLES[type].contentColor;
+
+// Split diff into lines while preserving indices.
+// We only remove the trailing empty line if the input ends with a newline.
+const splitDiffLines = (diff: string): string[] => {
+  const lines = diff.split("\n");
+  if (lines.length > 0 && lines[lines.length - 1] === "") {
+    lines.pop();
+  }
+  return lines;
+};
+
+// Line number color - brighter for changed lines, dimmed for context.
+const getLineNumberColor = (type: DiffLineType): string => {
+  return type === "context"
+    ? "color-mix(in srgb, var(--color-muted) 40%, transparent)"
+    : "var(--color-text)";
+};
+
+// Indicator (+/-/space) character and color
+const getIndicatorChar = (type: DiffLineType): string => {
   switch (type) {
-    case "header":
-      return "var(--color-accent-light)";
-    case "context":
-      return "var(--color-text-secondary)";
     case "add":
+      return "+";
     case "remove":
+      return "−"; // Use proper minus sign for aesthetics
     default:
-      return "var(--color-text)";
+      return " ";
   }
 };
 
-// Used for the +/- marker and line numbers.
-const getContrastColor = (type: DiffLineType): string => {
+const getIndicatorColor = (type: DiffLineType): string => {
   switch (type) {
     case "add":
-      return "var(--color-success-light)";
+      return "var(--color-success)";
     case "remove":
-      return "var(--color-danger-soft)";
-    case "header":
-      return "var(--color-accent-light)";
-    case "context":
+      return "var(--color-danger)";
     default:
-      return "var(--color-text-secondary)";
+      return "transparent";
   }
 };
+
+// Shared line number widths interface
+interface LineNumberWidths {
+  oldWidthCh: number;
+  newWidthCh: number;
+}
+
+/**
+ * Calculate minimum column widths needed to display line numbers.
+ * Works with any iterable of lines that have old/new line number properties.
+ */
+function calculateLineNumberWidths(
+  lines: Iterable<{ oldLineNum: number | null; newLineNum: number | null }>
+): LineNumberWidths {
+  let oldWidthCh = 0;
+  let newWidthCh = 0;
+
+  for (const line of lines) {
+    if (line.oldLineNum !== null) {
+      oldWidthCh = Math.max(oldWidthCh, String(line.oldLineNum).length);
+    }
+    if (line.newLineNum !== null) {
+      newWidthCh = Math.max(newWidthCh, String(line.newLineNum).length);
+    }
+  }
+
+  return {
+    oldWidthCh: Math.max(2, oldWidthCh), // Minimum 2 chars for alignment
+    newWidthCh: Math.max(2, newWidthCh),
+  };
+}
+
+// Shared line gutter component (line numbers) - renders as a CSS Grid cell
+interface DiffLineGutterProps {
+  type: DiffLineType;
+  oldLineNum: number | null;
+  newLineNum: number | null;
+  showLineNumbers: boolean;
+  lineNumberWidths: LineNumberWidths;
+}
+
+const DiffLineGutter: React.FC<DiffLineGutterProps> = ({
+  type,
+  oldLineNum,
+  newLineNum,
+  showLineNumbers,
+  lineNumberWidths,
+}) => (
+  <span
+    className="flex shrink-0 items-center gap-0.5 px-1 tabular-nums select-none"
+    style={{ background: getDiffLineGutterBackground(type) }}
+  >
+    {showLineNumbers && (
+      <>
+        <span
+          className="text-right"
+          style={{
+            width: `${lineNumberWidths.oldWidthCh}ch`,
+            color: getLineNumberColor(type),
+          }}
+        >
+          {oldLineNum ?? ""}
+        </span>
+        <span
+          className="ml-3 text-right"
+          style={{
+            width: `${lineNumberWidths.newWidthCh}ch`,
+            color: getLineNumberColor(type),
+          }}
+        >
+          {newLineNum ?? ""}
+        </span>
+      </>
+    )}
+  </span>
+);
+
+// Shared indicator component (+/- with optional hover replacement) - renders as a CSS Grid cell
+interface DiffIndicatorProps {
+  type: DiffLineType;
+  /** Background color for this cell (matches code background) */
+  background: string;
+  /** Render review button overlay on hover */
+  reviewButton?: React.ReactNode;
+  /** When provided, enables drag-to-select behavior in SelectableDiffRenderer */
+  onMouseDown?: React.MouseEventHandler<HTMLSpanElement>;
+  onMouseEnter?: React.MouseEventHandler<HTMLSpanElement>;
+  isInteractive?: boolean;
+  lineIndex?: number;
+}
+
+const DiffIndicator: React.FC<DiffIndicatorProps> = ({
+  type,
+  background,
+  reviewButton,
+  onMouseDown,
+  onMouseEnter,
+  isInteractive,
+  lineIndex,
+}) => (
+  <span
+    data-diff-indicator={true}
+    data-line-index={lineIndex}
+    className={cn("relative text-center select-none", isInteractive && "cursor-pointer")}
+    style={{ background }}
+    onMouseDown={onMouseDown}
+    onMouseEnter={onMouseEnter}
+  >
+    <span
+      className={cn("transition-opacity", reviewButton && "group-hover:opacity-0")}
+      style={{ color: getIndicatorColor(type) }}
+    >
+      {getIndicatorChar(type)}
+    </span>
+    {reviewButton}
+  </span>
+);
 
 /**
  * Container component for diff rendering - exported for custom diff displays
  * Used by FileEditToolCall for wrapping custom diff content
+ *
+ * Uses CSS Grid for layout alignment:
+ * - Column 1 (gutter): auto-sized to fit line numbers
+ * - Column 2 (indicator): fixed 1rem for +/- symbols
+ * - Column 3 (code): fills remaining space
+ *
+ * This ensures PaddingStrip alignment matches diff lines by construction,
+ * without any JS-side width calculations.
  */
 export const DiffContainer: React.FC<
-  React.PropsWithChildren<{ fontSize?: string; maxHeight?: string; className?: string }>
-> = ({ children, fontSize, maxHeight, className }) => {
+  React.PropsWithChildren<{
+    fontSize?: string;
+    maxHeight?: string;
+    className?: string;
+    /** Type of the first line in the diff (for top padding background) */
+    firstLineType?: DiffLineType;
+    /** Type of the last line in the diff (for bottom padding background) */
+    lastLineType?: DiffLineType;
+  }>
+> = ({ children, fontSize, maxHeight, className, firstLineType, lastLineType }) => {
   const resolvedMaxHeight = maxHeight ?? "400px";
   const [isExpanded, setIsExpanded] = React.useState(false);
   const contentRef = React.useRef<HTMLDivElement>(null);
-  const [isOverflowing, setIsOverflowing] = React.useState(false);
   const clampContent = resolvedMaxHeight !== "none" && !isExpanded;
 
   React.useEffect(() => {
@@ -102,42 +273,38 @@ export const DiffContainer: React.FC<
     }
   }, [maxHeight]);
 
-  React.useEffect(() => {
-    const element = contentRef.current;
-    if (!element) {
-      return;
-    }
-
-    const updateOverflowState = () => {
-      setIsOverflowing(element.scrollHeight > element.clientHeight + 1);
-    };
-
-    updateOverflowState();
-
-    let resizeObserver: ResizeObserver | null = null;
-    if (typeof ResizeObserver !== "undefined") {
-      resizeObserver = new ResizeObserver(updateOverflowState);
-      resizeObserver.observe(element);
-    }
-
-    return () => {
-      resizeObserver?.disconnect();
-    };
-  }, [resolvedMaxHeight, clampContent]);
-
+  // Use RAF-throttled overflow detection to avoid forced reflows during React commit
+  const isOverflowing = useOverflowDetection(contentRef, { enabled: clampContent });
   const showOverflowControls = clampContent && isOverflowing;
+
+  // PaddingStrip uses CSS Grid columns to align with diff lines:
+  // - Gutter cell (col 1): saturated background
+  // - Code cells (cols 2-3): less saturated background
+  // Alignment is guaranteed by CSS Grid - no width calculation needed.
+  const PaddingStrip = ({ lineType }: { lineType?: DiffLineType }) => (
+    <>
+      <div
+        className="h-1.5"
+        style={{ background: lineType ? getDiffLineGutterBackground(lineType) : undefined }}
+      />
+      <div
+        className="col-span-2 h-1.5"
+        style={{ background: lineType ? getDiffLineBackground(lineType) : undefined }}
+      />
+    </>
+  );
 
   return (
     <div
       className={cn(
-        "relative m-0 rounded-sm border border-border-light bg-code-bg py-1.5 [&_*]:text-[inherit]",
+        "relative m-0 overflow-x-auto rounded-sm border border-border-light bg-code-bg [&_*]:text-[inherit]",
         className
       )}
     >
       <div
         ref={contentRef}
         className={cn(
-          "grid overflow-x-auto",
+          "font-monospace grid",
           clampContent ? "overflow-y-hidden" : "overflow-y-visible",
           showOverflowControls && "pb-6"
         )}
@@ -145,10 +312,15 @@ export const DiffContainer: React.FC<
           fontSize: fontSize ?? "12px",
           lineHeight: 1.4,
           maxHeight: clampContent ? resolvedMaxHeight : undefined,
-          gridTemplateColumns: "minmax(min-content, 1fr)",
+          // CSS Grid columns: [gutter] auto | [indicator] 1rem | [code] 1fr
+          gridTemplateColumns: "auto 1rem 1fr",
+          // Ensure grid expands to content width so backgrounds span full width when scrolling
+          minWidth: "max-content",
         }}
       >
+        <PaddingStrip lineType={firstLineType} />
         {children}
+        <PaddingStrip lineType={lastLineType} />
       </div>
 
       {showOverflowControls && (
@@ -188,11 +360,69 @@ interface DiffRendererProps {
 }
 
 /**
- * Hook to pre-process and highlight diff content in chunks
- * Runs once when content/language changes (NOT search - that's applied post-process)
+ * Module-level cache for fully-highlighted diff results.
+ * Key: `${content.length}:${oldStart}:${newStart}:${language}:${themeMode}`
+ * (Using content.length instead of full content as a fast differentiator - collisions are rare
+ * and just cause re-highlighting, not incorrect rendering)
  *
- * CACHING: Once highlighted with real language, result is cached even if enableHighlighting
- * becomes false later. This prevents re-highlighting during scroll when hunks leave viewport.
+ * This allows synchronous cache hits, eliminating the "Processing" flash when
+ * re-rendering the same diff content (e.g., scrolling back to a previously-viewed message).
+ */
+const highlightedDiffCache = new LRUCache<string, HighlightedChunk[]>({
+  max: 10000, // High limit - rely on maxSize for eviction
+  maxSize: 4 * 1024 * 1024, // 4MB total
+  sizeCalculation: (chunks) =>
+    chunks.reduce(
+      (total, chunk) =>
+        total + chunk.lines.reduce((lineTotal, line) => lineTotal + line.html.length * 2, 0),
+      0
+    ),
+});
+
+// Fast string hash (djb2 algorithm) - O(n) but very low constant factor
+function hashString(str: string): number {
+  let hash = 5381;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) + hash) ^ str.charCodeAt(i);
+  }
+  return hash >>> 0; // Convert to unsigned 32-bit
+}
+
+function getDiffCacheKey(
+  content: string,
+  language: string,
+  oldStart: number,
+  newStart: number,
+  themeMode: ThemeMode
+): string {
+  // Use hash of full content to avoid collisions where diffs differ only in the middle
+  // (e.g., deletion vs addition of same line - only the +/- prefix differs)
+  const contentHash = hashString(content);
+  return `${contentHash}:${content.length}:${oldStart}:${newStart}:${language}:${themeMode}`;
+}
+
+/** Synchronous plain-text chunks for instant rendering (no "Processing..." flash) */
+function createPlainTextChunks(
+  content: string,
+  oldStart: number,
+  newStart: number
+): HighlightedChunk[] {
+  const lines = splitDiffLines(content);
+  return groupDiffLines(lines, oldStart, newStart).map((chunk) => ({
+    type: chunk.type,
+    lines: chunk.lines.map((line, i) => ({
+      html: escapeHtml(line),
+      oldLineNumber: chunk.oldLineNumbers[i],
+      newLineNumber: chunk.newLineNumbers[i],
+      originalIndex: chunk.startIndex + i,
+    })),
+    usedFallback: true,
+  }));
+}
+
+/**
+ * Hook to highlight diff content. Returns plain-text immediately, then upgrades
+ * to syntax-highlighted when ready. Never returns null (no loading flash).
  */
 function useHighlightedDiff(
   content: string,
@@ -200,48 +430,52 @@ function useHighlightedDiff(
   oldStart: number,
   newStart: number,
   themeMode: ThemeMode
-): HighlightedChunk[] | null {
-  const [chunks, setChunks] = useState<HighlightedChunk[] | null>(null);
-  // Track if we've already highlighted with real syntax (to prevent downgrading)
-  const hasHighlightedRef = React.useRef(false);
+): HighlightedChunk[] {
+  const cacheKey = getDiffCacheKey(content, language, oldStart, newStart, themeMode);
+  const cachedResult = highlightedDiffCache.get(cacheKey);
+
+  // Sync fallback: plain-text chunks for instant render
+  const plainText = useMemo(
+    () => createPlainTextChunks(content, oldStart, newStart),
+    [content, oldStart, newStart]
+  );
+
+  const [chunks, setChunks] = useState<HighlightedChunk[]>(cachedResult ?? plainText);
+  const hasRealHighlightRef = React.useRef(false);
 
   useEffect(() => {
-    // If already highlighted and trying to switch to plain text, keep the highlighted version
-    if (hasHighlightedRef.current && language === "text") {
-      return; // Keep cached highlighted chunks
+    const cached = highlightedDiffCache.get(cacheKey);
+    if (cached) {
+      setChunks(cached);
+      if (language !== "text") hasRealHighlightRef.current = true;
+      return;
     }
 
+    // Keep syntax-highlighted version when toggling to language="text"
+    if (language === "text" && hasRealHighlightRef.current) return;
+
+    // Show plain-text immediately, then upgrade async
+    setChunks(plainText);
+
     let cancelled = false;
-
-    async function highlight() {
-      // Split into lines
-      const lines = content.split("\n").filter((line) => line.length > 0);
-
-      // Group into chunks
+    void (async () => {
+      const lines = splitDiffLines(content);
       const diffChunks = groupDiffLines(lines, oldStart, newStart);
-
-      // Highlight each chunk (without search decorations - those are applied later)
       const highlighted = await Promise.all(
         diffChunks.map((chunk) => highlightDiffChunk(chunk, language, themeMode))
       );
-
       if (!cancelled) {
+        highlightedDiffCache.set(cacheKey, highlighted);
         setChunks(highlighted);
-        // Mark as highlighted if using real language (not plain text)
-        if (language !== "text") {
-          hasHighlightedRef.current = true;
-        }
+        if (language !== "text") hasRealHighlightRef.current = true;
       }
-    }
-
-    void highlight();
-
+    })();
     return () => {
       cancelled = true;
     };
-  }, [content, language, oldStart, newStart, themeMode]);
+  }, [cacheKey, content, language, oldStart, newStart, themeMode, plainText]);
 
-  return chunks;
+  return cachedResult ?? chunks;
 }
 
 /**
@@ -272,61 +506,55 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
 
   const highlightedChunks = useHighlightedDiff(content, language, oldStart, newStart, theme);
 
-  // Show loading state while highlighting
-  if (!highlightedChunks) {
-    return (
-      <DiffContainer fontSize={fontSize} maxHeight={maxHeight} className={className}>
-        <div style={{ opacity: 0.5, padding: "8px" }}>Processing...</div>
-      </DiffContainer>
+  const lineNumberWidths = React.useMemo(() => {
+    if (!showLineNumbers || !highlightedChunks) {
+      return { oldWidthCh: 2, newWidthCh: 2 };
+    }
+    // Flatten chunks and map HighlightedLine property names to common interface
+    const lines = highlightedChunks.flatMap((chunk) =>
+      chunk.lines.map((line) => ({
+        oldLineNum: line.oldLineNumber,
+        newLineNum: line.newLineNumber,
+      }))
     );
-  }
+    return calculateLineNumberWidths(lines);
+  }, [highlightedChunks, showLineNumbers]);
+
+  // Get first and last line types for padding background colors
+  const firstLineType = highlightedChunks[0]?.type;
+  const lastLineType = highlightedChunks[highlightedChunks.length - 1]?.type;
 
   return (
-    <DiffContainer fontSize={fontSize} maxHeight={maxHeight} className={className}>
+    <DiffContainer
+      fontSize={fontSize}
+      maxHeight={maxHeight}
+      className={className}
+      firstLineType={firstLineType}
+      lastLineType={lastLineType}
+    >
       {highlightedChunks.flatMap((chunk) =>
         chunk.lines.map((line) => {
-          const indicator = chunk.type === "add" ? "+" : chunk.type === "remove" ? "-" : " ";
+          const codeBg = getDiffLineBackground(chunk.type);
+          // Each line renders as 3 CSS Grid cells: gutter | indicator | code
           return (
-            <div
-              key={line.originalIndex}
-              className="block w-full border-l-2 border-transparent"
-              style={{
-                background: getDiffLineBackground(chunk.type),
-                borderLeftColor: getDiffLineBorderColor(chunk.type),
-              }}
-            >
-              <div
-                className="font-monospace flex px-2 whitespace-pre"
-                style={{ color: "var(--color-text)" }}
-              >
-                <span
-                  className="inline-block w-1 shrink-0 text-center"
-                  style={{
-                    color: getContrastColor(chunk.type),
-                    opacity: chunk.type === "add" || chunk.type === "remove" ? 0.9 : 0.6,
-                  }}
-                >
-                  {indicator}
-                </span>
-                {showLineNumbers && (
-                  <span
-                    className="flex min-w-9 shrink-0 items-center justify-end pr-1 select-none"
-                    style={{
-                      color: getContrastColor(chunk.type),
-                      opacity: chunk.type === "add" || chunk.type === "remove" ? 0.9 : 0.6,
-                    }}
-                  >
-                    {line.lineNumber}
-                  </span>
-                )}
-                <span
-                  className="pl-2 [&_span:not(.search-highlight)]:!bg-transparent"
-                  style={{ color: getLineContentColor(chunk.type) }}
-                >
-                  <span dangerouslySetInnerHTML={{ __html: line.html }} />
-                </span>
-              </div>
-            </div>
+            <React.Fragment key={line.originalIndex}>
+              <DiffLineGutter
+                type={chunk.type}
+                oldLineNum={line.oldLineNumber}
+                newLineNum={line.newLineNumber}
+                showLineNumbers={showLineNumbers}
+                lineNumberWidths={lineNumberWidths}
+              />
+              <DiffIndicator type={chunk.type} background={codeBg} />
+              <span
+                className="min-w-0 whitespace-pre [&_span:not(.search-highlight)]:!bg-transparent"
+                style={{
+                  background: codeBg,
+                  color: getLineContentColor(chunk.type),
+                }}
+                dangerouslySetInnerHTML={{ __html: line.html }}
+              />
+            </React.Fragment>
           );
         })
       )}
@@ -346,13 +574,13 @@ interface SelectableDiffRendererProps extends Omit<DiffRendererProps, "filePath"
   searchConfig?: SearchHighlightConfig;
   /** Enable syntax highlighting (default: true). Set to false to skip highlighting for off-screen hunks */
   enableHighlighting?: boolean;
+  /** Callback when review note composition state changes (selection active/inactive) */
+  onComposingChange?: (isComposing: boolean) => void;
 }
 
 interface LineSelection {
   startIndex: number;
   endIndex: number;
-  startLineNum: number;
-  endLineNum: number;
 }
 
 // CSS class for diff line wrapper - used by arbitrary selector in CommentButton
@@ -361,15 +589,22 @@ const SELECTABLE_DIFF_LINE_CLASS = "selectable-diff-line";
 // Separate component to prevent re-rendering diff lines on every keystroke
 interface ReviewNoteInputProps {
   selection: LineSelection;
-  lineData: Array<{ index: number; type: DiffLineType; lineNum: number }>;
-  lines: string[]; // Original diff lines with +/- prefix
+  lineData: Array<{
+    index: number;
+    type: DiffLineType;
+    oldLineNum: number | null;
+    newLineNum: number | null;
+    raw: string; // Original line with +/- prefix
+  }>;
   filePath: string;
+  showLineNumbers: boolean;
+  lineNumberWidths: { oldWidthCh: number; newWidthCh: number };
   onSubmit: (data: ReviewNoteData) => void;
   onCancel: () => void;
 }
 
 const ReviewNoteInput: React.FC<ReviewNoteInputProps> = React.memo(
-  ({ selection, lineData, lines, filePath, onSubmit, onCancel }) => {
+  ({ selection, lineData, filePath, showLineNumbers, lineNumberWidths, onSubmit, onCancel }) => {
     const [noteText, setNoteText] = React.useState("");
     const textareaRef = React.useRef<HTMLTextAreaElement>(null);
 
@@ -390,17 +625,40 @@ const ReviewNoteInput: React.FC<ReviewNoteInputProps> = React.memo(
     const handleSubmit = () => {
       if (!noteText.trim()) return;
 
-      const lineRange =
-        selection.startLineNum === selection.endLineNum
-          ? `${selection.startLineNum}`
-          : `${selection.startLineNum}-${selection.endLineNum}`;
-
       const [start, end] = [selection.startIndex, selection.endIndex].sort((a, b) => a - b);
-      const allLines = lineData.slice(start, end + 1).map((lineInfo) => {
-        const line = lines[lineInfo.index];
-        const indicator = line[0]; // +, -, or space
-        const content = line.slice(1); // Remove the indicator
-        return `${lineInfo.lineNum} ${indicator} ${content}`;
+      const selectedLineData = lineData.slice(start, end + 1);
+
+      const oldLineNumbers = selectedLineData
+        .map((lineInfo) => lineInfo.oldLineNum)
+        .filter((lineNum): lineNum is number => lineNum !== null);
+      const newLineNumbers = selectedLineData
+        .map((lineInfo) => lineInfo.newLineNum)
+        .filter((lineNum): lineNum is number => lineNum !== null);
+
+      const formatRange = (nums: number[]) => {
+        if (nums.length === 0) return null;
+        const min = Math.min(...nums);
+        const max = Math.max(...nums);
+        return min === max ? `${min}` : `${min}-${max}`;
+      };
+
+      const oldRange = formatRange(oldLineNumbers);
+      const newRange = formatRange(newLineNumbers);
+      const lineRange = [oldRange ? `-${oldRange}` : null, newRange ? `+${newRange}` : null]
+        .filter((part): part is string => Boolean(part))
+        .join(" ");
+
+      const oldWidth = Math.max(1, ...oldLineNumbers.map((n) => String(n).length));
+      const newWidth = Math.max(1, ...newLineNumbers.map((n) => String(n).length));
+
+      const allLines = selectedLineData.map((lineInfo) => {
+        const indicator = lineInfo.raw[0] ?? " "; // +, -, or space
+        const content = lineInfo.raw.slice(1); // Remove the indicator
+
+        const oldStr = lineInfo.oldLineNum === null ? "" : String(lineInfo.oldLineNum);
+        const newStr = lineInfo.newLineNum === null ? "" : String(lineInfo.newLineNum);
+
+        return `${oldStr.padStart(oldWidth)} ${newStr.padStart(newWidth)} ${indicator} ${content}`;
       });
 
       // Elide middle lines if more than 20 lines selected (show 10 at start, 10 at end)
@@ -418,44 +676,89 @@ const ReviewNoteInput: React.FC<ReviewNoteInputProps> = React.memo(
         ].join("\n");
       }
 
+      const selectedDiff = selectedLineData.map((lineInfo) => lineInfo.raw).join("\n");
+      const oldStart = oldLineNumbers.length ? Math.min(...oldLineNumbers) : 1;
+      const newStart = newLineNumbers.length ? Math.min(...newLineNumbers) : 1;
+
       // Pass structured data instead of formatted message
       onSubmit({
         filePath,
         lineRange,
         selectedCode,
+        selectedDiff,
+        oldStart,
+        newStart,
         userNote: noteText.trim(),
       });
     };
 
-    return (
-      <div className="m-0 border-t border-[var(--color-review-accent)]/30 bg-[var(--color-review-accent)]/5 px-2 py-1.5">
-        <textarea
-          ref={textareaRef}
-          className="text-primary placeholder:text-muted w-full resize-none overflow-y-hidden rounded border border-[var(--color-review-accent)]/40 bg-[var(--color-review-accent)]/10 px-2 py-1.5 text-xs leading-[1.4] focus:border-[var(--color-review-accent)]/60 focus:outline-none"
-          style={{
-            minHeight: "calc(12px * 1.4 * 3 + 12px)",
-          }}
-          placeholder="Add a review note to chat (Shift-click + button to select range, Enter to submit, Shift+Enter for newline, Esc to cancel)&#10;j, k to iterate through hunks, m to toggle as read"
-          value={noteText}
-          onChange={(e) => setNoteText(e.target.value)}
-          onClick={(e) => e.stopPropagation()}
-          onKeyDown={(e) => {
-            e.stopPropagation();
+    // Determine the predominant line type for background matching
+    const [start, end] = [selection.startIndex, selection.endIndex].sort((a, b) => a - b);
+    const selectedTypes = lineData.slice(start, end + 1).map((l) => l.type);
+    // Use the last selected line's type (where the input appears)
+    const lineType = selectedTypes[selectedTypes.length - 1] ?? "context";
 
-            if (e.key === "Enter") {
-              if (e.shiftKey) {
-                // Shift+Enter: allow newline (default behavior)
-                return;
-              }
-              // Enter: submit
-              e.preventDefault();
-              handleSubmit();
-            } else if (e.key === "Escape") {
-              e.preventDefault();
-              onCancel();
-            }
-          }}
-        />
+    const codeBg = getDiffLineBackground(lineType);
+
+    // Renders as a subgrid row with 3 cells to align with diff lines: gutter | indicator | input
+    return (
+      <div className="col-span-3 grid grid-cols-subgrid">
+        {/* Gutter spacer to align with diff lines */}
+        <span
+          className="flex shrink-0 items-center gap-0.5 px-1 tabular-nums select-none"
+          style={{ background: getDiffLineGutterBackground(lineType) }}
+        >
+          {showLineNumbers && (
+            <>
+              <span style={{ width: `${lineNumberWidths.oldWidthCh}ch` }} />
+              <span className="ml-3" style={{ width: `${lineNumberWidths.newWidthCh}ch` }} />
+            </>
+          )}
+        </span>
+        {/* Indicator spacer */}
+        <span style={{ background: codeBg }} />
+        {/* Input container with accent styling */}
+        <div className="min-w-0 py-1.5 pr-3" style={{ background: codeBg }}>
+          <div
+            className="flex w-full max-w-[560px] overflow-hidden rounded border border-[var(--color-review-accent)]/30 shadow-sm"
+            style={{
+              background: "hsl(from var(--color-review-accent) h s l / 0.08)",
+            }}
+          >
+            {/* Left accent bar */}
+            <div
+              className="w-[3px] shrink-0"
+              style={{ background: "var(--color-review-accent)" }}
+            />
+            <textarea
+              ref={textareaRef}
+              className="text-primary placeholder:text-muted/70 min-w-0 flex-1 resize-none overflow-y-hidden bg-transparent px-2 py-1.5 text-[12px] leading-[1.5] transition-colors focus:outline-none"
+              style={{
+                minHeight: "calc(12px * 1.5 * 2 + 12px)",
+              }}
+              placeholder="Add a review note… (Enter to submit, Shift+Enter for newline, Esc to cancel)"
+              value={noteText}
+              onChange={(e) => setNoteText(e.target.value)}
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+
+                if (e.key === "Enter") {
+                  if (e.shiftKey) {
+                    // Shift+Enter: allow newline (default behavior)
+                    return;
+                  }
+                  // Enter: submit
+                  e.preventDefault();
+                  handleSubmit();
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
+                  onCancel();
+                }
+              }}
+            />
+          </div>
+        </div>
       </div>
     );
   }
@@ -477,9 +780,41 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     onLineClick,
     searchConfig,
     enableHighlighting = true,
+    onComposingChange,
   }) => {
+    const dragAnchorRef = React.useRef<number | null>(null);
+    const [isDragging, setIsDragging] = React.useState(false);
+
+    React.useEffect(() => {
+      const stopDragging = () => {
+        setIsDragging(false);
+        dragAnchorRef.current = null;
+      };
+
+      window.addEventListener("mouseup", stopDragging);
+      window.addEventListener("blur", stopDragging);
+
+      return () => {
+        window.removeEventListener("mouseup", stopDragging);
+        window.removeEventListener("blur", stopDragging);
+      };
+    }, []);
     const { theme } = useTheme();
     const [selection, setSelection] = React.useState<LineSelection | null>(null);
+
+    // Notify parent when composition state changes
+    React.useEffect(() => {
+      onComposingChange?.(selection !== null);
+    }, [selection, onComposingChange]);
+
+    // On unmount, ensure we release the pause if we were composing
+    // (separate effect with empty deps so cleanup only runs on unmount)
+    React.useEffect(() => {
+      return () => {
+        onComposingChange?.(false);
+      };
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally only clean up on unmount
+    }, []);
 
     // Detect language for syntax highlighting (memoized to prevent repeated detection)
     const language = React.useMemo(
@@ -496,16 +831,19 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
       theme
     );
 
-    // Build lineData from highlighted chunks (memoized to prevent repeated parsing)
-    // Note: content field is NOT included - must be extracted from lines array when needed
-    const lineData = React.useMemo(() => {
-      if (!highlightedChunks) return [];
+    // Parse raw lines once for use in lineData
+    const rawLines = React.useMemo(() => splitDiffLines(content), [content]);
 
+    // Build lineData from highlighted chunks (memoized to prevent repeated parsing)
+    // Includes raw content for review note submission
+    const lineData = React.useMemo(() => {
       const data: Array<{
         index: number;
         type: DiffLineType;
-        lineNum: number;
+        oldLineNum: number | null;
+        newLineNum: number | null;
         html: string;
+        raw: string; // Original line with +/- prefix
       }> = [];
 
       highlightedChunks.forEach((chunk) => {
@@ -513,14 +851,16 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
           data.push({
             index: line.originalIndex,
             type: chunk.type,
-            lineNum: line.lineNumber,
+            oldLineNum: line.oldLineNumber,
+            newLineNum: line.newLineNumber,
             html: line.html,
+            raw: rawLines[line.originalIndex] ?? "",
           });
         });
       });
 
       return data;
-    }, [highlightedChunks]);
+    }, [highlightedChunks, rawLines]);
 
     // Memoize highlighted line data to avoid re-parsing HTML on every render
     // Only recalculate when lineData or searchConfig changes
@@ -533,6 +873,40 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
       }));
     }, [lineData, searchConfig]);
 
+    const lineNumberWidths = React.useMemo(
+      () =>
+        showLineNumbers ? calculateLineNumberWidths(lineData) : { oldWidthCh: 2, newWidthCh: 2 },
+      [lineData, showLineNumbers]
+    );
+
+    const startDragSelection = React.useCallback(
+      (lineIndex: number, shiftKey: boolean) => {
+        if (!onReviewNote) {
+          return;
+        }
+
+        // Notify parent that this hunk should become active
+        onLineClick?.();
+
+        const anchor = shiftKey && selection ? selection.startIndex : lineIndex;
+        dragAnchorRef.current = anchor;
+        setIsDragging(true);
+        setSelection({ startIndex: anchor, endIndex: lineIndex });
+      },
+      [onLineClick, onReviewNote, selection]
+    );
+
+    const updateDragSelection = React.useCallback(
+      (lineIndex: number) => {
+        if (!isDragging || dragAnchorRef.current === null) {
+          return;
+        }
+
+        setSelection({ startIndex: dragAnchorRef.current, endIndex: lineIndex });
+      },
+      [isDragging]
+    );
+
     const handleCommentButtonClick = (lineIndex: number, shiftKey: boolean) => {
       // Notify parent that this hunk should become active
       onLineClick?.();
@@ -540,12 +914,9 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
       // Shift-click: extend existing selection
       if (shiftKey && selection) {
         const start = selection.startIndex;
-        const [sortedStart, sortedEnd] = [start, lineIndex].sort((a, b) => a - b);
         setSelection({
           startIndex: start,
           endIndex: lineIndex,
-          startLineNum: lineData[sortedStart].lineNum,
-          endLineNum: lineData[sortedEnd].lineNum,
         });
         return;
       }
@@ -554,8 +925,6 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
       setSelection({
         startIndex: lineIndex,
         endIndex: lineIndex,
-        startLineNum: lineData[lineIndex].lineNum,
-        endLineNum: lineData[lineIndex].lineNum,
       });
     };
 
@@ -575,102 +944,93 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
       return index >= start && index <= end;
     };
 
-    // Show loading state while highlighting
-    if (!highlightedChunks || highlightedLineData.length === 0) {
-      return (
-        <DiffContainer fontSize={fontSize} maxHeight={maxHeight} className={className}>
-          <div style={{ opacity: 0.5, padding: "8px" }}>Processing...</div>
-        </DiffContainer>
-      );
-    }
+    // Get first and last line types for padding background colors
+    const firstLineType = highlightedLineData[0]?.type;
+    const lastLineType = highlightedLineData[highlightedLineData.length - 1]?.type;
 
-    // Extract lines for rendering (done once, outside map)
-    const lines = content.split("\n").filter((line) => line.length > 0);
+    // Selection highlight overlay - applied via box-shadow to avoid affecting grid layout
+    const selectionHighlight =
+      "inset 0 0 0 100vmax hsl(from var(--color-review-accent) h s l / 0.16)";
 
     return (
-      <DiffContainer fontSize={fontSize} maxHeight={maxHeight} className={className}>
+      <DiffContainer
+        fontSize={fontSize}
+        maxHeight={maxHeight}
+        className={className}
+        firstLineType={firstLineType}
+        lastLineType={lastLineType}
+      >
         {highlightedLineData.map((lineInfo, displayIndex) => {
           const isSelected = isLineSelected(displayIndex);
-          const indicator = lineInfo.type === "add" ? "+" : lineInfo.type === "remove" ? "-" : " ";
+          const codeBg = getDiffLineBackground(lineInfo.type);
 
+          // Each line renders as 3 CSS Grid cells: gutter | indicator | code
+          // Use display:contents wrapper for selection state + group hover behavior
           return (
             <React.Fragment key={displayIndex}>
               <div
                 className={cn(
                   SELECTABLE_DIFF_LINE_CLASS,
-                  "block w-full relative cursor-text group border-l-2 border-transparent"
+                  "group relative col-span-3 grid cursor-text grid-cols-subgrid"
                 )}
-                style={{
-                  background: isSelected
-                    ? "hsl(from var(--color-review-accent) h s l / 0.2)"
-                    : getDiffLineBackground(lineInfo.type),
-                  borderLeftColor: getDiffLineBorderColor(lineInfo.type),
-                }}
+                data-selected={isSelected ? "true" : "false"}
               >
-                <span className="absolute top-1/2 left-1 z-[1] -translate-y-1/2">
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        className="bg-review-accent flex h-3.5 w-3.5 shrink-0 cursor-pointer items-center justify-center rounded-sm border-none p-0 font-bold text-white opacity-0 transition-opacity duration-150 group-hover:opacity-70 hover:!opacity-100 active:scale-90"
-                        style={{
-                          background: "var(--color-review-accent)",
-                        }}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleCommentButtonClick(displayIndex, e.shiftKey);
-                        }}
-                        onMouseEnter={(e) => {
-                          const target = e.currentTarget;
-                          target.style.background =
-                            "hsl(from var(--color-review-accent) h s calc(l * 1.2))";
-                        }}
-                        onMouseLeave={(e) => {
-                          const target = e.currentTarget;
-                          target.style.background = "var(--color-review-accent)";
-                        }}
-                        aria-label="Add review comment"
-                      >
-                        +
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom" align="start">
-                      Add review comment
-                      <br />
-                      (Shift-click to select range)
-                    </TooltipContent>
-                  </Tooltip>
-                </span>
-                <div
-                  className="font-monospace flex px-2 whitespace-pre"
-                  style={{ color: "var(--color-text)" }}
-                >
-                  <span
-                    className="inline-block w-1 shrink-0 text-center"
-                    style={{
-                      color: getContrastColor(lineInfo.type),
-                      opacity: lineInfo.type === "add" || lineInfo.type === "remove" ? 0.9 : 0.6,
-                    }}
-                  >
-                    {indicator}
-                  </span>
-                  {showLineNumbers && (
-                    <span
-                      className="flex min-w-9 shrink-0 items-center justify-end pr-1 select-none"
-                      style={{
-                        color: getContrastColor(lineInfo.type),
-                        opacity: lineInfo.type === "add" || lineInfo.type === "remove" ? 0.9 : 0.6,
-                      }}
-                    >
-                      {lineInfo.lineNum}
-                    </span>
-                  )}
-                  <span
-                    className="pl-2 [&_span:not(.search-highlight)]:!bg-transparent"
-                    style={{ color: getLineContentColor(lineInfo.type) }}
-                  >
-                    <span dangerouslySetInnerHTML={{ __html: lineInfo.html }} />
-                  </span>
-                </div>
+                <DiffLineGutter
+                  type={lineInfo.type}
+                  oldLineNum={lineInfo.oldLineNum}
+                  newLineNum={lineInfo.newLineNum}
+                  showLineNumbers={showLineNumbers}
+                  lineNumberWidths={lineNumberWidths}
+                />
+                <DiffIndicator
+                  type={lineInfo.type}
+                  background={codeBg}
+                  lineIndex={displayIndex}
+                  isInteractive={Boolean(onReviewNote)}
+                  onMouseDown={(e) => {
+                    if (!onReviewNote) return;
+                    if (e.button !== 0) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    startDragSelection(displayIndex, e.shiftKey);
+                  }}
+                  onMouseEnter={() => {
+                    if (!onReviewNote) return;
+                    updateDragSelection(displayIndex);
+                  }}
+                  reviewButton={
+                    onReviewNote && (
+                      <Tooltip open={selection || isDragging ? false : undefined}>
+                        <TooltipTrigger asChild>
+                          <button
+                            className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-sm text-[var(--color-review-accent)]/60 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 hover:text-[var(--color-review-accent)] active:scale-90"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleCommentButtonClick(displayIndex, e.shiftKey);
+                            }}
+                            aria-label="Add review comment"
+                          >
+                            <MessageSquare className="size-3" />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" align="start">
+                          Add review comment
+                          <br />
+                          (Shift-click or drag to select range)
+                        </TooltipContent>
+                      </Tooltip>
+                    )
+                  }
+                />
+                <span
+                  className="min-w-0 whitespace-pre [&_span:not(.search-highlight)]:!bg-transparent"
+                  style={{
+                    background: codeBg,
+                    color: getLineContentColor(lineInfo.type),
+                    boxShadow: isSelected ? selectionHighlight : undefined,
+                  }}
+                  dangerouslySetInnerHTML={{ __html: lineInfo.html }}
+                />
               </div>
 
               {/* Show textarea after the last selected line */}
@@ -680,8 +1040,9 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
                   <ReviewNoteInput
                     selection={selection}
                     lineData={lineData}
-                    lines={lines}
                     filePath={filePath}
+                    showLineNumbers={showLineNumbers}
+                    lineNumberWidths={lineNumberWidths}
                     onSubmit={handleSubmitNote}
                     onCancel={handleCancelNote}
                   />

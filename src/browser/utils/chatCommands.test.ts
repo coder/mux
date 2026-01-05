@@ -5,8 +5,11 @@ import {
   prepareCompactionMessage,
   handlePlanShowCommand,
   handlePlanOpenCommand,
+  handleCompactCommand,
+  buildContinueMessage,
 } from "./chatCommands";
 import type { CommandHandlerContext } from "./chatCommands";
+import type { ReviewNoteData } from "@/common/types/review";
 
 // Simple mock for localStorage to satisfy resolveCompactionModel
 beforeEach(() => {
@@ -108,20 +111,111 @@ describe("parseRuntimeString", () => {
   });
 });
 
+describe("buildContinueMessage", () => {
+  test("returns undefined when no content provided", () => {
+    const result = buildContinueMessage({
+      model: "anthropic:claude-3-5-sonnet",
+      agentId: "exec",
+    });
+    expect(result).toBeUndefined();
+  });
+
+  test("returns undefined when text is empty string", () => {
+    const result = buildContinueMessage({
+      text: "",
+      model: "anthropic:claude-3-5-sonnet",
+      agentId: "exec",
+    });
+    expect(result).toBeUndefined();
+  });
+
+  test("returns message when text is provided", () => {
+    const result = buildContinueMessage({
+      text: "Continue with this",
+      model: "anthropic:claude-3-5-sonnet",
+      agentId: "exec",
+    });
+    expect(result).toBeDefined();
+    expect(result?.text).toBe("Continue with this");
+    expect(result?.model).toBe("anthropic:claude-3-5-sonnet");
+    expect(result?.agentId).toBe("exec");
+  });
+
+  test("returns message when only images provided", () => {
+    const result = buildContinueMessage({
+      imageParts: [{ url: "data:image/png;base64,abc", mediaType: "image/png" }],
+      model: "anthropic:claude-3-5-sonnet",
+      agentId: "plan",
+    });
+    expect(result).toBeDefined();
+    expect(result?.text).toBe("");
+    expect(result?.imageParts).toHaveLength(1);
+    expect(result?.agentId).toBe("plan");
+  });
+
+  test("returns message when only reviews provided", () => {
+    const reviews: ReviewNoteData[] = [
+      {
+        filePath: "src/test.ts",
+        lineRange: "10-15",
+        selectedCode: "const x = 1;",
+        userNote: "Fix this",
+      },
+    ];
+    const result = buildContinueMessage({
+      reviews,
+      model: "anthropic:claude-3-5-sonnet",
+      agentId: "exec",
+    });
+    expect(result).toBeDefined();
+    expect(result?.text).toBe("");
+    expect(result?.reviews).toHaveLength(1);
+    expect(result?.reviews?.[0].userNote).toBe("Fix this");
+  });
+
+  test("includes all fields when all provided", () => {
+    const reviews: ReviewNoteData[] = [
+      { filePath: "src/a.ts", lineRange: "1", selectedCode: "x", userNote: "note" },
+    ];
+    const imageParts = [{ url: "data:image/png;base64,abc", mediaType: "image/png" }];
+
+    const result = buildContinueMessage({
+      text: "Check this",
+      imageParts,
+      reviews,
+      model: "anthropic:claude-3-5-sonnet",
+      agentId: "plan",
+    });
+
+    expect(result).toBeDefined();
+    expect(result?.text).toBe("Check this");
+    expect(result?.imageParts).toHaveLength(1);
+    expect(result?.reviews).toHaveLength(1);
+    expect(result?.model).toBe("anthropic:claude-3-5-sonnet");
+    expect(result?.agentId).toBe("plan");
+  });
+});
+
 describe("prepareCompactionMessage", () => {
   const createBaseOptions = (): SendMessageOptions => ({
     model: "anthropic:claude-3-5-sonnet",
     thinkingLevel: "medium",
     toolPolicy: [],
-    mode: "exec",
+    agentId: "exec",
   });
 
-  test("embeds continue message model from base send options", () => {
+  test("passes through continueMessage as-is (caller should use buildContinueMessage)", () => {
     const sendMessageOptions = createBaseOptions();
+    const continueMessage = buildContinueMessage({
+      text: "Keep building",
+      model: sendMessageOptions.model,
+      agentId: "exec",
+    });
+
     const { metadata } = prepareCompactionMessage({
       workspaceId: "ws-1",
       maxOutputTokens: 4096,
-      continueMessage: { text: "Keep building" },
+      continueMessage,
       model: "anthropic:claude-3-5-haiku",
       sendMessageOptions,
     });
@@ -131,7 +225,9 @@ describe("prepareCompactionMessage", () => {
       throw new Error("Expected compaction metadata");
     }
 
+    // Model should be exactly what was passed in continueMessage
     expect(metadata.parsed.continueMessage?.model).toBe(sendMessageOptions.model);
+    expect(metadata.parsed.continueMessage?.agentId).toBe("exec");
   });
 
   test("does not create continueMessage when no text or images provided", () => {
@@ -154,7 +250,11 @@ describe("prepareCompactionMessage", () => {
     const sendMessageOptions = createBaseOptions();
     const { metadata } = prepareCompactionMessage({
       workspaceId: "ws-1",
-      continueMessage: { text: "Continue with this" },
+      continueMessage: buildContinueMessage({
+        text: "Continue with this",
+        model: sendMessageOptions.model,
+        agentId: "exec",
+      }),
       sendMessageOptions,
     });
 
@@ -166,14 +266,75 @@ describe("prepareCompactionMessage", () => {
     expect(metadata.parsed.continueMessage?.text).toBe("Continue with this");
   });
 
+  test("rawCommand excludes multiline continue payload", () => {
+    const sendMessageOptions = createBaseOptions();
+    const { metadata } = prepareCompactionMessage({
+      workspaceId: "ws-1",
+      maxOutputTokens: 2048,
+      model: "anthropic:claude-3-5-haiku",
+      continueMessage: buildContinueMessage({
+        text: "Line 1\nLine 2",
+        model: sendMessageOptions.model,
+        agentId: "exec",
+      }),
+      sendMessageOptions,
+    });
+
+    if (metadata.type !== "compaction-request") {
+      throw new Error("Expected compaction metadata");
+    }
+
+    expect(metadata.rawCommand).toBe("/compact -t 2048 -m anthropic:claude-3-5-haiku");
+    expect(metadata.rawCommand).not.toContain("Line 1");
+    expect(metadata.rawCommand).not.toContain("\n");
+  });
+
+  test("omits default resume text from compaction prompt", () => {
+    const sendMessageOptions = createBaseOptions();
+    const { messageText, metadata } = prepareCompactionMessage({
+      workspaceId: "ws-1",
+      continueMessage: buildContinueMessage({
+        text: "Continue",
+        model: sendMessageOptions.model,
+        agentId: "exec",
+      }),
+      sendMessageOptions,
+    });
+
+    expect(messageText).not.toContain("The user wants to continue with: Continue");
+
+    if (metadata.type !== "compaction-request") {
+      throw new Error("Expected compaction metadata");
+    }
+
+    // Still queued for auto-send after compaction
+    expect(metadata.parsed.continueMessage?.text).toBe("Continue");
+  });
+
+  test("includes non-default continue text in compaction prompt", () => {
+    const sendMessageOptions = createBaseOptions();
+    const { messageText } = prepareCompactionMessage({
+      workspaceId: "ws-1",
+      continueMessage: buildContinueMessage({
+        text: "fix tests",
+        model: sendMessageOptions.model,
+        agentId: "exec",
+      }),
+      sendMessageOptions,
+    });
+
+    expect(messageText).toContain("The user wants to continue with: fix tests");
+  });
+
   test("creates continueMessage when images are provided without text", () => {
     const sendMessageOptions = createBaseOptions();
     const { metadata } = prepareCompactionMessage({
       workspaceId: "ws-1",
-      continueMessage: {
-        text: "",
+      continueMessage: buildContinueMessage({
         imageParts: [{ url: "data:image/png;base64,abc", mediaType: "image/png" }],
-      },
+        model: sendMessageOptions.model,
+        agentId: "exec",
+      }),
       sendMessageOptions,
     });
 
@@ -183,6 +344,94 @@ describe("prepareCompactionMessage", () => {
 
     expect(metadata.parsed.continueMessage).toBeDefined();
     expect(metadata.parsed.continueMessage?.imageParts).toHaveLength(1);
+  });
+
+  test("creates continueMessage when reviews are provided without text", () => {
+    const sendMessageOptions = createBaseOptions();
+    const { metadata } = prepareCompactionMessage({
+      workspaceId: "ws-1",
+      continueMessage: buildContinueMessage({
+        reviews: [
+          {
+            filePath: "src/test.ts",
+            lineRange: "10-15",
+            selectedCode: "const x = 1;",
+            userNote: "Please fix this",
+          },
+        ],
+        model: sendMessageOptions.model,
+        agentId: "exec",
+      }),
+      sendMessageOptions,
+    });
+
+    if (metadata.type !== "compaction-request") {
+      throw new Error("Expected compaction metadata");
+    }
+
+    expect(metadata.parsed.continueMessage).toBeDefined();
+    expect(metadata.parsed.continueMessage?.reviews).toHaveLength(1);
+    expect(metadata.parsed.continueMessage?.reviews?.[0].userNote).toBe("Please fix this");
+  });
+
+  test("creates continueMessage with reviews and text combined", () => {
+    const sendMessageOptions = createBaseOptions();
+    const { metadata } = prepareCompactionMessage({
+      workspaceId: "ws-1",
+      continueMessage: buildContinueMessage({
+        text: "Also check the tests",
+        reviews: [
+          {
+            filePath: "src/test.ts",
+            lineRange: "10-15",
+            selectedCode: "const x = 1;",
+            userNote: "Fix this bug",
+          },
+        ],
+        model: sendMessageOptions.model,
+        agentId: "exec",
+      }),
+      sendMessageOptions,
+    });
+
+    if (metadata.type !== "compaction-request") {
+      throw new Error("Expected compaction metadata");
+    }
+
+    expect(metadata.parsed.continueMessage).toBeDefined();
+    expect(metadata.parsed.continueMessage?.text).toBe("Also check the tests");
+    expect(metadata.parsed.continueMessage?.reviews).toHaveLength(1);
+  });
+
+  test("does not treat 'Continue' as default resume when reviews are present", () => {
+    const sendMessageOptions = createBaseOptions();
+    const { messageText, metadata } = prepareCompactionMessage({
+      workspaceId: "ws-1",
+      continueMessage: buildContinueMessage({
+        text: "Continue",
+        reviews: [
+          {
+            filePath: "src/test.ts",
+            lineRange: "10",
+            selectedCode: "x = 1",
+            userNote: "Check this",
+          },
+        ],
+        model: sendMessageOptions.model,
+        agentId: "exec",
+      }),
+      sendMessageOptions,
+    });
+
+    // When reviews are present, "Continue" should be included in compaction prompt
+    // because there's actual work to continue with (the reviews)
+    expect(messageText).toContain("The user wants to continue with: Continue");
+
+    if (metadata.type !== "compaction-request") {
+      throw new Error("Expected compaction metadata");
+    }
+
+    expect(metadata.parsed.continueMessage?.reviews).toHaveLength(1);
   });
 });
 
@@ -210,7 +459,7 @@ describe("handlePlanShowCommand", () => {
         model: "anthropic:claude-3-5-sonnet",
         thinkingLevel: "off",
         toolPolicy: [],
-        mode: "exec",
+        agentId: "exec",
       },
       setImageAttachments: mock(() => undefined),
       setIsSending: mock(() => undefined),
@@ -279,7 +528,7 @@ describe("handlePlanOpenCommand", () => {
         model: "anthropic:claude-3-5-sonnet",
         thinkingLevel: "off",
         toolPolicy: [],
-        mode: "exec",
+        agentId: "exec",
       },
       setImageAttachments: mock(() => undefined),
       setIsSending: mock(() => undefined),
@@ -344,5 +593,96 @@ describe("handlePlanOpenCommand", () => {
         message: "No editor configured",
       })
     );
+  });
+});
+
+describe("handleCompactCommand", () => {
+  const createMockContext = (
+    sendMessageResult: { success: true } | { success: false; error?: string },
+    options?: { reviews?: ReviewNoteData[] }
+  ): CommandHandlerContext => {
+    const setInput = mock(() => undefined);
+    const setToast = mock(() => undefined);
+    const setImageAttachments = mock(() => undefined);
+    const setIsSending = mock(() => undefined);
+
+    // Track the options passed to sendMessage
+    const sendMessageMock = mock(() => Promise.resolve(sendMessageResult));
+
+    return {
+      workspaceId: "test-workspace-id",
+      setInput,
+      setToast,
+      setImageAttachments,
+      setIsSending,
+      reviews: options?.reviews,
+      api: {
+        workspace: {
+          sendMessage: sendMessageMock,
+        },
+      } as unknown as CommandHandlerContext["api"],
+      sendMessageOptions: {
+        model: "anthropic:claude-3-5-sonnet",
+        thinkingLevel: "off",
+        toolPolicy: [],
+        agentId: "exec",
+      },
+    };
+  };
+
+  test("passes reviews to continueMessage when reviews are attached", async () => {
+    const reviews: ReviewNoteData[] = [
+      {
+        filePath: "src/test.ts",
+        lineRange: "10-15",
+        selectedCode: "const x = 1;",
+        userNote: "Please fix this bug",
+      },
+    ];
+
+    const context = createMockContext({ success: true }, { reviews });
+
+    await handleCompactCommand({ type: "compact" }, context);
+
+    // Verify sendMessage was called with reviews in the metadata
+    const sendMessageMock = context.api.workspace.sendMessage as ReturnType<typeof mock>;
+    expect(sendMessageMock).toHaveBeenCalled();
+
+    const callArgs = sendMessageMock.mock.calls[0][0] as {
+      options?: { muxMetadata?: { parsed?: { continueMessage?: { reviews?: ReviewNoteData[] } } } };
+    };
+    const continueMessage = callArgs?.options?.muxMetadata?.parsed?.continueMessage;
+
+    expect(continueMessage).toBeDefined();
+    expect(continueMessage?.reviews).toHaveLength(1);
+    expect(continueMessage?.reviews?.[0].userNote).toBe("Please fix this bug");
+  });
+
+  test("creates continueMessage with only reviews (no text)", async () => {
+    const reviews: ReviewNoteData[] = [
+      {
+        filePath: "src/test.ts",
+        lineRange: "10",
+        selectedCode: "x = 1",
+        userNote: "Check this",
+      },
+    ];
+
+    const context = createMockContext({ success: true }, { reviews });
+
+    // No continueMessage text, just reviews
+    await handleCompactCommand({ type: "compact" }, context);
+
+    const sendMessageMock = context.api.workspace.sendMessage as ReturnType<typeof mock>;
+    expect(sendMessageMock).toHaveBeenCalled();
+
+    const callArgs = sendMessageMock.mock.calls[0][0] as {
+      options?: { muxMetadata?: { parsed?: { continueMessage?: { reviews?: ReviewNoteData[] } } } };
+    };
+    const continueMessage = callArgs?.options?.muxMetadata?.parsed?.continueMessage;
+
+    // Should have continueMessage even without text, because reviews are present
+    expect(continueMessage).toBeDefined();
+    expect(continueMessage?.reviews).toHaveLength(1);
   });
 });

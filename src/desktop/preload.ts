@@ -32,4 +32,17 @@ contextBridge.exposeInMainWorld("api", {
     electron: process.versions.electron,
   },
   isE2E: process.env.MUX_E2E === "1",
+  enableTelemetryInDev: process.env.MUX_ENABLE_TELEMETRY_IN_DEV === "1",
+  // NOTE: This is intentionally async so the preload script does not rely on Node builtins
+  // like `child_process` (which can break in hardened/sandboxed environments).
+  getIsRosetta: () => ipcRenderer.invoke("mux:get-is-rosetta"),
+  // Register a callback for notification clicks (navigates to workspace)
+  // Returns an unsubscribe function.
+  onNotificationClicked: (callback: (data: { workspaceId: string }) => void) => {
+    const listener = (_event: unknown, data: { workspaceId: string }) => callback(data);
+    ipcRenderer.on("mux:notification-clicked", listener);
+    return () => {
+      ipcRenderer.off("mux:notification-clicked", listener);
+    };
+  },
 });

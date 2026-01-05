@@ -8,6 +8,7 @@ import {
   createDisplayUsage,
   extractSyncMetadata,
   extractToolOutputData,
+  getConsumerInfoForToolCall,
   isEncryptedWebSearch,
   mergeResults,
   type TokenCountJob,
@@ -326,6 +327,26 @@ describe("extractSyncMetadata", () => {
     const result = extractSyncMetadata(messages, "anthropic:claude-opus-4-1");
     expect(result.systemMessageTokens).toBe(0);
     expect(result.usageHistory.length).toBe(0);
+  });
+});
+
+describe("getConsumerInfoForToolCall", () => {
+  test("labels task tool calls as task", () => {
+    expect(
+      getConsumerInfoForToolCall("task", { subagent_type: "exec", prompt: "hi", title: "t" })
+    ).toEqual({
+      consumer: "task",
+      toolNameForDefinition: "task",
+    });
+  });
+
+  test("defaults to tool name for other tools", () => {
+    expect(
+      getConsumerInfoForToolCall("file_edit_insert", { file_path: "x", content: "y" })
+    ).toEqual({
+      consumer: "file_edit_insert",
+      toolNameForDefinition: "file_edit_insert",
+    });
   });
 });
 

@@ -215,4 +215,49 @@ describe("file_edit_insert plan mode enforcement", () => {
     expect(result.success).toBe(true);
     expect(await fs.readFile(testFilePath, "utf-8")).toBe("// header\nconst x = 1;");
   });
+
+  it("blocks creating .mux/plan.md (wrong path) when real plan file is elsewhere", async () => {
+    // This test simulates the bug where an agent tries to create ".mux/plan.md"
+    // in the workspace instead of using the actual plan file at ~/.mux/plans/project/workspace.md
+    const workspaceCwd = path.join(testDir, "workspace");
+    const wrongPlanPath = path.join(workspaceCwd, ".mux", "plan.md");
+    const realPlanPath = path.join(testDir, "plans", "project", "workspace.md");
+
+    // Create workspace directory (simulate a real project workspace)
+    await fs.mkdir(workspaceCwd, { recursive: true });
+    // Create the plans directory structure
+    await fs.mkdir(path.dirname(realPlanPath), { recursive: true });
+
+    const tool = createFileEditInsertTool({
+      ...getTestDeps(),
+      cwd: workspaceCwd,
+      runtime: createRuntime({ type: "local", srcBaseDir: workspaceCwd }),
+      runtimeTempDir: testDir,
+      mode: "plan",
+      planFilePath: realPlanPath, // The REAL plan file path
+    });
+
+    // Agent mistakenly tries to create ".mux/plan.md" in workspace
+    const args: FileEditInsertToolArgs = {
+      file_path: ".mux/plan.md", // Wrong path - relative to cwd
+      content: "# My Plan\n\n- Step 1\n",
+    };
+
+    const result = (await tool.execute!(args, mockToolCallOptions)) as FileEditInsertToolResult;
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("In plan mode, only the plan file can be edited");
+      expect(result.error).toContain("Use path:");
+      expect(result.error).toContain(realPlanPath);
+      expect(result.error).toContain(".mux/plan.md");
+    }
+
+    // Ensure the wrong file was NOT created
+    const wrongFileExists = await fs
+      .stat(wrongPlanPath)
+      .then(() => true)
+      .catch(() => false);
+    expect(wrongFileExists).toBe(false);
+  });
 });

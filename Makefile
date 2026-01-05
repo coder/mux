@@ -23,6 +23,11 @@
 #   AVOID CONDITIONAL BRANCHES (if/else) IN BUILD TARGETS AT ALL COSTS.
 #   Branches reduce reproducibility - builds should fail fast with clear errors
 #   if dependencies are missing, not silently fall back to different behavior.
+#
+# Telemetry in Development:
+#   Telemetry is enabled by default in dev mode (same as production).
+#   It is automatically disabled in CI, test environments, and automation contexts.
+#   To manually disable telemetry, set MUX_DISABLE_TELEMETRY=1.
 
 # Use PATH-resolved bash for portability across different systems.
 # - Windows: /usr/bin/bash doesn't exist in Chocolatey's make environment or GitHub Actions
@@ -39,6 +44,9 @@ endif
 ifeq (,$(filter -j%,$(MAKEFLAGS)))
 MAKEFLAGS += -j
 endif
+
+# Common esbuild flags for CLI API bundle (ESM format for trpc-cli)
+ESBUILD_CLI_FLAGS := --bundle --format=esm --platform=node --target=node20 --outfile=dist/cli/api.mjs --external:zod --external:commander --external:@trpc/server --banner:js='import { createRequire } from "module"; const require = createRequire(import.meta.url);'
 
 # Include formatting rules
 include fmt.mk
@@ -79,6 +87,8 @@ endef
 # Storybook uses 'open' package which tries xdg-open on Linux, open on macOS, start on Windows
 HAS_BROWSER_OPENER := $(shell command -v xdg-open >/dev/null 2>&1 && echo "yes" || echo "no")
 STORYBOOK_OPEN_FLAG := $(if $(filter yes,$(HAS_BROWSER_OPENER)),,--no-open)
+
+DOCS_SOURCES := $(shell find docs -type f \( -name '*.mdx' -o -name '*.md' -o -name 'docs.json' \))
 
 TS_SOURCES := $(shell find src -type f \( -name '*.ts' -o -name '*.tsx' \))
 
@@ -133,13 +143,13 @@ dev: node_modules/.installed build-main ## Start development server (Vite + node
 	# https://github.com/oven-sh/bun/issues/18275
 	@NODE_OPTIONS="--max-old-space-size=4096" npm x concurrently -k --raw \
 		"bun x nodemon --watch src --watch tsconfig.main.json --watch tsconfig.json --ext ts,tsx,json --ignore dist --ignore node_modules --exec node scripts/build-main-watch.js" \
-		"npx esbuild src/cli/api.ts --bundle --format=esm --platform=node --target=node20 --outfile=dist/cli/api.mjs --external:zod --external:commander --external:@trpc/server --watch" \
+		"npx esbuild src/cli/api.ts $(ESBUILD_CLI_FLAGS) --watch" \
 		"vite"
 else
 dev: node_modules/.installed build-main build-preload ## Start development server (Vite + tsgo watcher for 10x faster type checking)
 	@bun x concurrently -k \
 		"bun x concurrently \"$(TSGO) -w -p tsconfig.main.json\" \"bun x tsc-alias -w -p tsconfig.main.json\"" \
-		"bun x esbuild src/cli/api.ts --bundle --format=esm --platform=node --target=node20 --outfile=dist/cli/api.mjs --external:zod --external:commander --external:@trpc/server --watch" \
+		"bun x esbuild src/cli/api.ts $(ESBUILD_CLI_FLAGS) --watch" \
 		"vite"
 endif
 
@@ -153,7 +163,7 @@ dev-server: node_modules/.installed build-main ## Start server mode with hot rel
 	@# On Windows, use npm run because bunx doesn't correctly pass arguments
 	@npmx concurrently -k \
 		"npmx nodemon --watch src --watch tsconfig.main.json --watch tsconfig.json --ext ts,tsx,json --ignore dist --ignore node_modules --exec node scripts/build-main-watch.js" \
-		"npx esbuild src/cli/api.ts --bundle --format=esm --platform=node --target=node20 --outfile=dist/cli/api.mjs --external:zod --external:commander --external:@trpc/server --watch" \
+		"npx esbuild src/cli/api.ts $(ESBUILD_CLI_FLAGS) --watch" \
 		"npmx nodemon --watch dist/cli/index.js --watch dist/cli/server.js --delay 500ms --exec \"node dist/cli/index.js server --host $(or $(BACKEND_HOST),localhost) --port $(or $(BACKEND_PORT),3000)\"" \
 		"$(SHELL) -lc \"MUX_VITE_HOST=$(or $(VITE_HOST),127.0.0.1) MUX_VITE_PORT=$(or $(VITE_PORT),5173) VITE_BACKEND_URL=http://$(or $(BACKEND_HOST),localhost):$(or $(BACKEND_PORT),3000) vite\""
 else
@@ -165,7 +175,7 @@ dev-server: node_modules/.installed build-main ## Start server mode with hot rel
 	@echo "For remote access: make dev-server VITE_HOST=0.0.0.0 BACKEND_HOST=0.0.0.0"
 	@bun x concurrently -k \
 		"bun x concurrently \"$(TSGO) -w -p tsconfig.main.json\" \"bun x tsc-alias -w -p tsconfig.main.json\"" \
-		"bun x esbuild src/cli/api.ts --bundle --format=esm --platform=node --target=node20 --outfile=dist/cli/api.mjs --external:zod --external:commander --external:@trpc/server --watch" \
+		"bun x esbuild src/cli/api.ts $(ESBUILD_CLI_FLAGS) --watch" \
 		"bun x nodemon --watch dist/cli/index.js --watch dist/cli/server.js --delay 500ms --exec 'NODE_ENV=development node dist/cli/index.js server --host $(or $(BACKEND_HOST),localhost) --port $(or $(BACKEND_PORT),3000)'" \
 		"MUX_VITE_HOST=$(or $(VITE_HOST),127.0.0.1) MUX_VITE_PORT=$(or $(VITE_PORT),5173) VITE_BACKEND_URL=http://$(or $(BACKEND_HOST),localhost):$(or $(BACKEND_PORT),3000) vite"
 endif
@@ -180,7 +190,16 @@ build: node_modules/.installed src/version.ts build-renderer build-main build-pr
 
 build-main: node_modules/.installed dist/cli/index.js dist/cli/api.mjs ## Build main process
 
-dist/cli/index.js: src/cli/index.ts src/desktop/main.ts src/cli/server.ts src/version.ts tsconfig.main.json tsconfig.json $(TS_SOURCES)
+BUILTIN_AGENTS_GENERATED := src/node/services/agentDefinitions/builtInAgentContent.generated.ts
+BUILTIN_SKILLS_GENERATED := src/node/services/agentSkills/builtInSkillContent.generated.ts
+
+$(BUILTIN_AGENTS_GENERATED): src/node/builtinAgents/*.md scripts/generate-builtin-agents.sh
+	@./scripts/generate-builtin-agents.sh
+
+$(BUILTIN_SKILLS_GENERATED): src/node/builtinSkills/*.md $(DOCS_SOURCES) scripts/generate-builtin-skills.sh scripts/gen_builtin_skills.ts
+	@./scripts/generate-builtin-skills.sh
+
+dist/cli/index.js: src/cli/index.ts src/desktop/main.ts src/cli/server.ts src/version.ts tsconfig.main.json tsconfig.json $(TS_SOURCES) $(BUILTIN_AGENTS_GENERATED) $(BUILTIN_SKILLS_GENERATED)
 	@echo "Building main process..."
 	@NODE_ENV=production $(TSGO) -p tsconfig.main.json
 	@NODE_ENV=production bun x tsc-alias -p tsconfig.main.json
@@ -188,15 +207,7 @@ dist/cli/index.js: src/cli/index.ts src/desktop/main.ts src/cli/server.ts src/ve
 # Build API CLI as ESM bundle (trpc-cli requires ESM with top-level await)
 dist/cli/api.mjs: src/cli/api.ts src/cli/proxifyOrpc.ts $(TS_SOURCES)
 	@echo "Building API CLI (ESM)..."
-	@bun x esbuild src/cli/api.ts \
-		--bundle \
-		--format=esm \
-		--platform=node \
-		--target=node20 \
-		--outfile=dist/cli/api.mjs \
-		--external:zod \
-		--external:commander \
-		--external:@trpc/server
+	@bun x esbuild src/cli/api.ts $(ESBUILD_CLI_FLAGS)
 
 build-preload: node_modules/.installed dist/preload.js ## Build preload script
 
@@ -218,6 +229,23 @@ build-static: ## Copy static assets to dist
 	@mkdir -p dist
 	@cp static/splash.html dist/splash.html
 	@cp -r public/* dist/
+	@# Copy TypeScript lib files for PTC runtime type validation (es5 through es2023).
+	@# electron-builder ignores .d.ts files by default and this cannot be overridden:
+	@# https://github.com/electron-userland/electron-builder/issues/5064
+	@# Workaround: rename to .d.ts.txt extension to bypass the filter.
+	@mkdir -p dist/typescript-lib
+	@for f in node_modules/typescript/lib/lib.es5.d.ts \
+	          node_modules/typescript/lib/lib.es2015*.d.ts \
+	          node_modules/typescript/lib/lib.es2016*.d.ts \
+	          node_modules/typescript/lib/lib.es2017*.d.ts \
+	          node_modules/typescript/lib/lib.es2018*.d.ts \
+	          node_modules/typescript/lib/lib.es2019*.d.ts \
+	          node_modules/typescript/lib/lib.es2020*.d.ts \
+	          node_modules/typescript/lib/lib.es2021*.d.ts \
+	          node_modules/typescript/lib/lib.es2022*.d.ts \
+	          node_modules/typescript/lib/lib.es2023*.d.ts; do \
+		cp "$$f" "dist/typescript-lib/$$(basename $$f).txt"; \
+	done
 
 # Always regenerate version file (marked as .PHONY above)
 version: ## Generate version file
@@ -241,15 +269,15 @@ build/icon.png: docs/img/logo.webp scripts/generate-icons.ts
 	@bun scripts/generate-icons.ts png
 
 ## Quality checks (can run in parallel)
-static-check: lint typecheck fmt-check check-eager-imports check-bench-agent check-docs-links ## Run all static checks
+static-check: lint typecheck fmt-check check-eager-imports check-bench-agent check-docs-links check-code-docs-links ## Run all static checks
 
 check-bench-agent: ## Verify terminal-bench agent configuration and imports
 	@./scripts/check-bench-agent.sh
 
-lint: node_modules/.installed src/version.ts ## Run ESLint (typecheck runs in separate target)
+lint: node_modules/.installed src/version.ts $(BUILTIN_SKILLS_GENERATED) ## Run ESLint (typecheck runs in separate target)
 	@./scripts/lint.sh
 
-lint-fix: node_modules/.installed src/version.ts ## Run linter with --fix
+lint-fix: node_modules/.installed src/version.ts $(BUILTIN_SKILLS_GENERATED) ## Run linter with --fix
 	@./scripts/lint.sh --fix
 
 ifeq ($(OS),Windows_NT)
@@ -378,8 +406,11 @@ check-docs-links: ## Check documentation for broken links
 	@echo "🔗 Checking documentation links..."
 	@cd docs && npx mintlify broken-links
 
+check-code-docs-links: ## Validate code references to docs paths
+	@./scripts/check-code-docs-links.sh
+
 ## Storybook
-storybook: node_modules/.installed ## Start Storybook development server
+storybook: node_modules/.installed src/version.ts ## Start Storybook development server
 	$(check_node_version)
 	@bun x storybook dev -p 6006 $(STORYBOOK_OPEN_FLAG)
 

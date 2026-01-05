@@ -1,11 +1,14 @@
 import { useState, useEffect } from "react";
 import App from "../App";
+import { AuthTokenModal } from "./AuthTokenModal";
 import { LoadingScreen } from "./LoadingScreen";
-import { useWorkspaceStoreRaw } from "../stores/WorkspaceStore";
+import { useWorkspaceStoreRaw, workspaceStore } from "../stores/WorkspaceStore";
 import { useGitStatusStoreRaw } from "../stores/GitStatusStore";
 import { ProjectProvider, useProjectContext } from "../contexts/ProjectContext";
 import { APIProvider, useAPI, type APIClient } from "@/browser/contexts/API";
 import { WorkspaceProvider, useWorkspaceContext } from "../contexts/WorkspaceContext";
+import { RouterProvider } from "../contexts/RouterContext";
+import { TelemetryEnabledProvider } from "../contexts/TelemetryEnabledContext";
 
 interface AppLoaderProps {
   /** Optional pre-created ORPC api?. If provided, skips internal connection setup. */
@@ -18,7 +21,8 @@ interface AppLoaderProps {
  * 2. Sync stores with loaded data
  * 3. Only render App when everything is ready
  *
- * WorkspaceContext handles workspace selection restoration (localStorage, URL hash, launch project).
+ * WorkspaceContext handles workspace selection restoration from URL.
+ * RouterProvider must wrap WorkspaceProvider since workspace state is derived from URL.
  * WorkspaceProvider must be nested inside ProjectProvider so it can call useProjectContext().
  * This ensures App.tsx can assume stores are always synced and removes
  * the need for conditional guards in effects.
@@ -26,11 +30,13 @@ interface AppLoaderProps {
 export function AppLoader(props: AppLoaderProps) {
   return (
     <APIProvider client={props.client}>
-      <ProjectProvider>
-        <WorkspaceProvider>
-          <AppLoaderInner />
-        </WorkspaceProvider>
-      </ProjectProvider>
+      <RouterProvider>
+        <ProjectProvider>
+          <WorkspaceProvider>
+            <AppLoaderInner />
+          </WorkspaceProvider>
+        </ProjectProvider>
+      </RouterProvider>
     </APIProvider>
   );
 }
@@ -42,10 +48,11 @@ export function AppLoader(props: AppLoaderProps) {
 function AppLoaderInner() {
   const workspaceContext = useWorkspaceContext();
   const projectContext = useProjectContext();
-  const { api } = useAPI();
+  const apiState = useAPI();
+  const api = apiState.api;
 
   // Get store instances
-  const workspaceStore = useWorkspaceStoreRaw();
+  const workspaceStoreInstance = useWorkspaceStoreRaw();
   const gitStatusStore = useGitStatusStoreRaw();
 
   // Track whether stores have been synced
@@ -54,13 +61,19 @@ function AppLoaderInner() {
   // Sync stores when metadata finishes loading
   useEffect(() => {
     if (api) {
-      workspaceStore.setClient(api);
+      workspaceStoreInstance.setClient(api);
       gitStatusStore.setClient(api);
     }
 
     if (!workspaceContext.loading) {
-      workspaceStore.syncWorkspaces(workspaceContext.workspaceMetadata);
+      workspaceStoreInstance.syncWorkspaces(workspaceContext.workspaceMetadata);
       gitStatusStore.syncWorkspaces(workspaceContext.workspaceMetadata);
+
+      // Wire up file-modification subscription (idempotent - only subscribes once)
+      gitStatusStore.subscribeToFileModifications((listener) =>
+        workspaceStore.subscribeFileModifyingTool(listener)
+      );
+
       setStoresSynced(true);
     } else {
       setStoresSynced(false);
@@ -68,10 +81,15 @@ function AppLoaderInner() {
   }, [
     workspaceContext.loading,
     workspaceContext.workspaceMetadata,
-    workspaceStore,
+    workspaceStoreInstance,
     gitStatusStore,
     api,
   ]);
+
+  // If we're in browser mode and auth is required, show the token prompt before any data loads.
+  if (apiState.status === "auth_required") {
+    return <AuthTokenModal isOpen={true} onSubmit={apiState.authenticate} error={apiState.error} />;
+  }
 
   // Show loading screen until both projects and workspaces are loaded and stores synced
   if (projectContext.loading || workspaceContext.loading || !storesSynced) {
@@ -79,5 +97,9 @@ function AppLoaderInner() {
   }
 
   // Render App - all state available via contexts
-  return <App />;
+  return (
+    <TelemetryEnabledProvider>
+      <App />
+    </TelemetryEnabledProvider>
+  );
 }

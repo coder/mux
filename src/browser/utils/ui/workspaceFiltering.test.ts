@@ -4,9 +4,13 @@ import {
   formatDaysThreshold,
   AGE_THRESHOLDS_DAYS,
   buildSortedWorkspacesByProject,
+  getVisibleWorkspaces,
+  getAllVisibleWorkspaces,
+  partitionWorkspacesBySection,
+  sortSectionsByLinkedList,
 } from "./workspaceFiltering";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import type { ProjectConfig } from "@/common/types/project";
+import type { ProjectConfig, SectionConfig } from "@/common/types/project";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 
 describe("partitionWorkspacesByAge", () => {
@@ -165,6 +169,247 @@ describe("partitionWorkspacesByAge", () => {
   });
 });
 
+describe("getVisibleWorkspaces", () => {
+  const now = Date.now();
+  const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+  const projectPath = "/test/project";
+
+  const createWorkspace = (id: string): FrontendWorkspaceMetadata => ({
+    id,
+    name: `workspace-${id}`,
+    projectName: "test-project",
+    projectPath,
+    namedWorkspacePath: `${projectPath}/workspace-${id}`,
+    runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+  });
+
+  it("should return only recent workspaces when no tiers are expanded", () => {
+    const workspaces = [
+      createWorkspace("recent1"),
+      createWorkspace("recent2"),
+      createWorkspace("old1"),
+      createWorkspace("old2"),
+    ];
+
+    const recency = {
+      recent1: now - 1000,
+      recent2: now - 2000,
+      old1: now - 2 * ONE_DAY_MS,
+      old2: now - 3 * ONE_DAY_MS,
+    };
+
+    const visible = getVisibleWorkspaces(projectPath, workspaces, recency, {});
+
+    expect(visible).toHaveLength(2);
+    expect(visible.map((w) => w.id)).toEqual(["recent1", "recent2"]);
+  });
+
+  it("should include old workspaces when their tier is expanded", () => {
+    const workspaces = [
+      createWorkspace("recent"),
+      createWorkspace("old1"),
+      createWorkspace("old2"),
+    ];
+
+    const recency = {
+      recent: now - 1000,
+      old1: now - 2 * ONE_DAY_MS, // bucket 0 (1-7 days)
+      old2: now - 3 * ONE_DAY_MS, // bucket 0 (1-7 days)
+    };
+
+    // Expand tier 0
+    const expandedOldWorkspaces = { [`${projectPath}:0`]: true };
+
+    const visible = getVisibleWorkspaces(projectPath, workspaces, recency, expandedOldWorkspaces);
+
+    expect(visible).toHaveLength(3);
+    expect(visible.map((w) => w.id)).toEqual(["recent", "old1", "old2"]);
+  });
+
+  it("should stop at first collapsed tier", () => {
+    const workspaces = [
+      createWorkspace("recent"),
+      createWorkspace("tier0"), // 1-7 days
+      createWorkspace("tier1"), // 7-30 days
+      createWorkspace("tier2"), // >30 days
+    ];
+
+    const recency = {
+      recent: now - 1000,
+      tier0: now - 3 * ONE_DAY_MS, // bucket 0
+      tier1: now - 15 * ONE_DAY_MS, // bucket 1
+      tier2: now - 60 * ONE_DAY_MS, // bucket 2
+    };
+
+    // Only expand tier 0, not tier 1
+    const expandedOldWorkspaces = { [`${projectPath}:0`]: true };
+
+    const visible = getVisibleWorkspaces(projectPath, workspaces, recency, expandedOldWorkspaces);
+
+    expect(visible).toHaveLength(2);
+    expect(visible.map((w) => w.id)).toEqual(["recent", "tier0"]);
+  });
+
+  it("should include all tiers when all are expanded", () => {
+    const workspaces = [
+      createWorkspace("recent"),
+      createWorkspace("tier0"),
+      createWorkspace("tier1"),
+      createWorkspace("tier2"),
+    ];
+
+    const recency = {
+      recent: now - 1000,
+      tier0: now - 3 * ONE_DAY_MS,
+      tier1: now - 15 * ONE_DAY_MS,
+      tier2: now - 60 * ONE_DAY_MS,
+    };
+
+    const expandedOldWorkspaces = {
+      [`${projectPath}:0`]: true,
+      [`${projectPath}:1`]: true,
+      [`${projectPath}:2`]: true,
+    };
+
+    const visible = getVisibleWorkspaces(projectPath, workspaces, recency, expandedOldWorkspaces);
+
+    expect(visible).toHaveLength(4);
+    expect(visible.map((w) => w.id)).toEqual(["recent", "tier0", "tier1", "tier2"]);
+  });
+
+  it("should handle empty workspace list", () => {
+    const visible = getVisibleWorkspaces(projectPath, [], {}, {});
+    expect(visible).toHaveLength(0);
+  });
+
+  it("should handle all workspaces being old with none expanded", () => {
+    // When all workspaces are old, partitionWorkspacesByAge moves one to recent
+    const workspaces = [createWorkspace("old1"), createWorkspace("old2")];
+
+    const recency = {
+      old1: now - 2 * ONE_DAY_MS,
+      old2: now - 3 * ONE_DAY_MS,
+    };
+
+    const visible = getVisibleWorkspaces(projectPath, workspaces, recency, {});
+
+    // old1 should be moved to recent by partitionWorkspacesByAge
+    expect(visible).toHaveLength(1);
+    expect(visible[0].id).toBe("old1");
+  });
+
+  it("should skip empty tiers and respect expansion of later tiers", () => {
+    const workspaces = [
+      createWorkspace("recent"),
+      // No tier 0 workspaces (1-7 days)
+      createWorkspace("tier1"), // 7-30 days
+      createWorkspace("tier2"), // >30 days
+    ];
+
+    const recency = {
+      recent: now - 1000,
+      tier1: now - 15 * ONE_DAY_MS,
+      tier2: now - 60 * ONE_DAY_MS,
+    };
+
+    // Expand tier 1 (first non-empty tier after recent)
+    const expandedOldWorkspaces = { [`${projectPath}:1`]: true };
+
+    const visible = getVisibleWorkspaces(projectPath, workspaces, recency, expandedOldWorkspaces);
+
+    expect(visible).toHaveLength(2);
+    expect(visible.map((w) => w.id)).toEqual(["recent", "tier1"]);
+  });
+});
+
+describe("getAllVisibleWorkspaces", () => {
+  const now = Date.now();
+  const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+  const createWorkspace = (id: string, projectPath: string): FrontendWorkspaceMetadata => ({
+    id,
+    name: `workspace-${id}`,
+    projectName: projectPath.split("/").pop() ?? "unknown",
+    projectPath,
+    namedWorkspacePath: `${projectPath}/workspace-${id}`,
+    runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+  });
+
+  it("should return workspaces from all expanded projects in order", () => {
+    const projectA = "/project/a";
+    const projectB = "/project/b";
+
+    const sortedWorkspacesByProject = new Map([
+      [projectA, [createWorkspace("a1", projectA), createWorkspace("a2", projectA)]],
+      [projectB, [createWorkspace("b1", projectB), createWorkspace("b2", projectB)]],
+    ]);
+
+    const recency = { a1: now, a2: now, b1: now, b2: now };
+
+    const visible = getAllVisibleWorkspaces(
+      [projectA, projectB],
+      sortedWorkspacesByProject,
+      new Set([projectA, projectB]),
+      recency,
+      {}
+    );
+
+    expect(visible.map((w) => w.id)).toEqual(["a1", "a2", "b1", "b2"]);
+  });
+
+  it("should skip collapsed projects", () => {
+    const projectA = "/project/a";
+    const projectB = "/project/b";
+
+    const sortedWorkspacesByProject = new Map([
+      [projectA, [createWorkspace("a1", projectA)]],
+      [projectB, [createWorkspace("b1", projectB)]],
+    ]);
+
+    const recency = { a1: now, b1: now };
+
+    // Only project B is expanded
+    const visible = getAllVisibleWorkspaces(
+      [projectA, projectB],
+      sortedWorkspacesByProject,
+      new Set([projectB]),
+      recency,
+      {}
+    );
+
+    expect(visible.map((w) => w.id)).toEqual(["b1"]);
+  });
+
+  it("should respect age tier expansion within projects", () => {
+    const projectA = "/project/a";
+
+    const sortedWorkspacesByProject = new Map([
+      [projectA, [createWorkspace("recent", projectA), createWorkspace("old", projectA)]],
+    ]);
+
+    const recency = {
+      recent: now - 1000,
+      old: now - 3 * ONE_DAY_MS,
+    };
+
+    // Project expanded but old tier collapsed
+    const visible = getAllVisibleWorkspaces(
+      [projectA],
+      sortedWorkspacesByProject,
+      new Set([projectA]),
+      recency,
+      {}
+    );
+
+    expect(visible.map((w) => w.id)).toEqual(["recent"]);
+  });
+
+  it("should handle empty project list", () => {
+    const visible = getAllVisibleWorkspaces([], new Map(), new Set(), {}, {});
+    expect(visible).toHaveLength(0);
+  });
+});
+
 describe("formatDaysThreshold", () => {
   it("should format singular day correctly", () => {
     expect(formatDaysThreshold(1)).toBe("1 day");
@@ -180,7 +425,8 @@ describe("buildSortedWorkspacesByProject", () => {
   const createWorkspace = (
     id: string,
     projectPath: string,
-    status?: "creating"
+    status?: "creating",
+    parentWorkspaceId?: string
   ): FrontendWorkspaceMetadata => ({
     id,
     name: `workspace-${id}`,
@@ -189,6 +435,7 @@ describe("buildSortedWorkspacesByProject", () => {
     namedWorkspacePath: `${projectPath}/workspace-${id}`,
     runtimeConfig: DEFAULT_RUNTIME_CONFIG,
     status,
+    parentWorkspaceId,
   });
 
   it("should include workspaces from persisted config", () => {
@@ -246,6 +493,54 @@ describe("buildSortedWorkspacesByProject", () => {
     expect(result.get("/new/project")?.[0].id).toBe("pending1");
   });
 
+  it("should use stable tie-breakers when recency is equal", () => {
+    const projects = new Map<string, ProjectConfig>([
+      [
+        "/project/a",
+        {
+          workspaces: [
+            { path: "/a/ws1", id: "ws1" },
+            { path: "/a/ws2", id: "ws2" },
+            { path: "/a/ws3", id: "ws3" },
+          ],
+        },
+      ],
+    ]);
+
+    const metadata = new Map<string, FrontendWorkspaceMetadata>([
+      [
+        "ws1",
+        {
+          ...createWorkspace("ws1", "/project/a"),
+          name: "beta",
+          createdAt: "2020-01-01T00:00:00.000Z",
+        },
+      ],
+      [
+        "ws2",
+        {
+          ...createWorkspace("ws2", "/project/a"),
+          name: "alpha",
+          createdAt: "2021-01-01T00:00:00.000Z",
+        },
+      ],
+      [
+        "ws3",
+        {
+          ...createWorkspace("ws3", "/project/a"),
+          name: "aardvark",
+          createdAt: "2020-01-01T00:00:00.000Z",
+        },
+      ],
+    ]);
+
+    // No recency timestamps → all ties
+    const result = buildSortedWorkspacesByProject(projects, metadata, {});
+
+    // Tie-break order: createdAt desc, then name asc, then id asc
+    expect(result.get("/project/a")?.map((w) => w.id)).toEqual(["ws2", "ws3", "ws1"]);
+  });
+
   it("should sort workspaces by recency (most recent first)", () => {
     const now = Date.now();
     const projects = new Map<string, ProjectConfig>([
@@ -274,6 +569,46 @@ describe("buildSortedWorkspacesByProject", () => {
     const result = buildSortedWorkspacesByProject(projects, metadata, recency);
 
     expect(result.get("/project/a")?.map((w) => w.id)).toEqual(["ws2", "ws3", "ws1"]);
+  });
+
+  it("should flatten child workspaces directly under their parent", () => {
+    const now = Date.now();
+    const projects = new Map<string, ProjectConfig>([
+      [
+        "/project/a",
+        {
+          workspaces: [
+            { path: "/a/root", id: "root" },
+            { path: "/a/child1", id: "child1" },
+            { path: "/a/child2", id: "child2" },
+            { path: "/a/grand", id: "grand" },
+          ],
+        },
+      ],
+    ]);
+
+    const metadata = new Map<string, FrontendWorkspaceMetadata>([
+      ["root", createWorkspace("root", "/project/a")],
+      ["child1", createWorkspace("child1", "/project/a", undefined, "root")],
+      ["child2", createWorkspace("child2", "/project/a", undefined, "root")],
+      ["grand", createWorkspace("grand", "/project/a", undefined, "child1")],
+    ]);
+
+    // Child workspaces are more recent than the parent, but should still render below it.
+    const recency = {
+      child1: now - 1000,
+      child2: now - 2000,
+      grand: now - 3000,
+      root: now - 4000,
+    };
+
+    const result = buildSortedWorkspacesByProject(projects, metadata, recency);
+    expect(result.get("/project/a")?.map((w) => w.id)).toEqual([
+      "root",
+      "child1",
+      "grand",
+      "child2",
+    ]);
   });
 
   it("should not duplicate workspaces that exist in both config and have creating status", () => {
@@ -315,5 +650,145 @@ describe("buildSortedWorkspacesByProject", () => {
     const result = buildSortedWorkspacesByProject(projects, metadata, {});
 
     expect(result.get("/project/a")).toHaveLength(0);
+  });
+});
+
+describe("sortSectionsByLinkedList", () => {
+  it("should sort sections by nextId linked list", () => {
+    const sections: SectionConfig[] = [
+      { id: "c", name: "C", nextId: null },
+      { id: "a", name: "A", nextId: "b" },
+      { id: "b", name: "B", nextId: "c" },
+    ];
+
+    const sorted = sortSectionsByLinkedList(sections);
+    expect(sorted.map((s) => s.id)).toEqual(["a", "b", "c"]);
+  });
+
+  it("should handle empty array", () => {
+    expect(sortSectionsByLinkedList([])).toEqual([]);
+  });
+
+  it("should handle single section", () => {
+    const sections: SectionConfig[] = [{ id: "only", name: "Only", nextId: null }];
+    const sorted = sortSectionsByLinkedList(sections);
+    expect(sorted.map((s) => s.id)).toEqual(["only"]);
+  });
+
+  it("should handle reordered sections (C, A, B order)", () => {
+    // After reorder to C->A->B, the pointers should be: C->A->B->null
+    const sections: SectionConfig[] = [
+      { id: "a", name: "A", nextId: "b" },
+      { id: "b", name: "B", nextId: null },
+      { id: "c", name: "C", nextId: "a" },
+    ];
+
+    const sorted = sortSectionsByLinkedList(sections);
+    expect(sorted.map((s) => s.id)).toEqual(["c", "a", "b"]);
+  });
+
+  it("should append orphaned sections", () => {
+    // Section "orphan" is not in the linked list
+    const sections: SectionConfig[] = [
+      { id: "a", name: "A", nextId: "b" },
+      { id: "b", name: "B", nextId: null },
+      { id: "orphan", name: "Orphan", nextId: "nonexistent" },
+    ];
+
+    const sorted = sortSectionsByLinkedList(sections);
+    expect(sorted.map((s) => s.id)).toEqual(["a", "b", "orphan"]);
+  });
+});
+
+describe("partitionWorkspacesBySection", () => {
+  const createWorkspace = (
+    id: string,
+    sectionId?: string,
+    parentWorkspaceId?: string
+  ): FrontendWorkspaceMetadata => ({
+    id,
+    name: `workspace-${id}`,
+    projectName: "test-project",
+    projectPath: "/test/project",
+    namedWorkspacePath: `/test/project/workspace-${id}`,
+    runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+    sectionId,
+    parentWorkspaceId,
+  });
+
+  it("should partition workspaces by section", () => {
+    const workspaces = [
+      createWorkspace("ws1", "section-a"),
+      createWorkspace("ws2", "section-b"),
+      createWorkspace("ws3"), // unsectioned
+    ];
+    const sections: SectionConfig[] = [
+      { id: "section-a", name: "A" },
+      { id: "section-b", name: "B" },
+    ];
+
+    const result = partitionWorkspacesBySection(workspaces, sections);
+
+    expect(result.unsectioned.map((w: FrontendWorkspaceMetadata) => w.id)).toEqual(["ws3"]);
+    expect(
+      result.bySectionId.get("section-a")?.map((w: FrontendWorkspaceMetadata) => w.id)
+    ).toEqual(["ws1"]);
+    expect(
+      result.bySectionId.get("section-b")?.map((w: FrontendWorkspaceMetadata) => w.id)
+    ).toEqual(["ws2"]);
+  });
+
+  it("should keep child workspaces directly after their parent within a section", () => {
+    // Parent in section-a, child also in section-a
+    // Input order from flattenWorkspaceTree: parent, child (already correct)
+    const workspaces = [
+      createWorkspace("parent", "section-a"),
+      createWorkspace("child", "section-a", "parent"),
+    ];
+    const sections: SectionConfig[] = [{ id: "section-a", name: "A" }];
+
+    const result = partitionWorkspacesBySection(workspaces, sections);
+
+    // Child should be directly after parent
+    expect(
+      result.bySectionId.get("section-a")?.map((w: FrontendWorkspaceMetadata) => w.id)
+    ).toEqual(["parent", "child"]);
+  });
+
+  it("should keep child workspaces with parent even when child has no sectionId (inherits parent section)", () => {
+    // BUG REPRODUCTION: Parent in section-a, child has no sectionId
+    // Child should render under parent in section-a, NOT in unsectioned
+    const workspaces = [
+      createWorkspace("parent", "section-a"),
+      createWorkspace("child", undefined, "parent"), // child without sectionId
+    ];
+    const sections: SectionConfig[] = [{ id: "section-a", name: "A" }];
+
+    const result = partitionWorkspacesBySection(workspaces, sections);
+
+    // Child should inherit parent's section placement
+    expect(
+      result.bySectionId.get("section-a")?.map((w: FrontendWorkspaceMetadata) => w.id)
+    ).toEqual(["parent", "child"]);
+    // Unsectioned should be empty
+    expect(result.unsectioned).toHaveLength(0);
+  });
+
+  it("should handle nested children inheriting section from root parent", () => {
+    // Root in section-a, child1 and grandchild have no sectionId
+    const workspaces = [
+      createWorkspace("root", "section-a"),
+      createWorkspace("child1", undefined, "root"),
+      createWorkspace("grandchild", undefined, "child1"),
+    ];
+    const sections: SectionConfig[] = [{ id: "section-a", name: "A" }];
+
+    const result = partitionWorkspacesBySection(workspaces, sections);
+
+    // All should be in section-a, in tree order
+    expect(
+      result.bySectionId.get("section-a")?.map((w: FrontendWorkspaceMetadata) => w.id)
+    ).toEqual(["root", "child1", "grandchild"]);
+    expect(result.unsectioned).toHaveLength(0);
   });
 });

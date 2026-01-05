@@ -28,6 +28,18 @@ export const CUSTOM_EVENTS = {
   OPEN_MODEL_SELECTOR: "mux:openModelSelector",
 
   /**
+   * Event to open the agent picker (AgentModePicker)
+   * No detail
+   */
+  OPEN_AGENT_PICKER: "mux:openAgentPicker",
+
+  /**
+   * Event to close the agent picker (AgentModePicker)
+   * No detail
+   */
+  CLOSE_AGENT_PICKER: "mux:closeAgentPicker",
+
+  /**
    * Event to trigger resume check for a workspace
    * Detail: { workspaceId: string }
    *
@@ -78,6 +90,8 @@ export interface CustomEventPayloads {
     mode?: "replace" | "append";
     imageParts?: ImagePart[];
   };
+  [CUSTOM_EVENTS.OPEN_AGENT_PICKER]: never; // No payload
+  [CUSTOM_EVENTS.CLOSE_AGENT_PICKER]: never; // No payload
   [CUSTOM_EVENTS.OPEN_MODEL_SELECTOR]: never; // No payload
   [CUSTOM_EVENTS.RESUME_CHECK_REQUESTED]: {
     workspaceId: string;

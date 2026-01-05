@@ -551,6 +551,23 @@ export async function createTempGitRepo(): Promise<string> {
 }
 
 /**
+ * Add a fake origin remote to a git repo for testing GitStatusStore.
+ * Creates a bare clone to serve as origin, enabling ahead/behind detection.
+ */
+export async function addFakeOrigin(repoPath: string): Promise<void> {
+  const bareDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-test-bare-"));
+  await execAsync(`git clone --bare "${repoPath}" "${bareDir}"`);
+  await execAsync(`git remote add origin "${bareDir}"`, { cwd: repoPath });
+  // Set up tracking for main/master branch
+  const { stdout: branch } = await execAsync(`git branch --show-current`, { cwd: repoPath });
+  const branchName = branch.trim();
+  await execAsync(`git fetch origin`, { cwd: repoPath });
+  await execAsync(`git branch --set-upstream-to=origin/${branchName} ${branchName}`, {
+    cwd: repoPath,
+  });
+}
+
+/**
  * Add a git submodule to a repository
  * @param repoPath - Path to the repository to add the submodule to
  * @param submoduleUrl - URL of the submodule repository (defaults to leftpad)

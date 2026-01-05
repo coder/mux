@@ -44,6 +44,36 @@ describe("Config", () => {
     });
   });
 
+  describe("api server settings", () => {
+    it("should persist apiServerBindHost, apiServerPort, and apiServerServeWebUi", async () => {
+      await config.editConfig((cfg) => {
+        cfg.apiServerBindHost = "0.0.0.0";
+        cfg.apiServerPort = 3000;
+        cfg.apiServerServeWebUi = true;
+        return cfg;
+      });
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.apiServerBindHost).toBe("0.0.0.0");
+      expect(loaded.apiServerPort).toBe(3000);
+      expect(loaded.apiServerServeWebUi).toBe(true);
+    });
+
+    it("should ignore invalid apiServerPort values on load", () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          projects: [],
+          apiServerPort: 70000,
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.apiServerPort).toBeUndefined();
+    });
+  });
+
   describe("generateStableId", () => {
     it("should generate a 10-character hex string", () => {
       const id = config.generateStableId();

@@ -8,6 +8,12 @@ export const ServerLockDataSchema = z.object({
   baseUrl: z.url(),
   token: z.string(),
   startedAt: z.string(),
+  /** Bind host/interface the server is listening on (e.g. "127.0.0.1" or "0.0.0.0") */
+  bindHost: z.string().optional(),
+  /** The port the server is listening on */
+  port: z.number().int().min(0).max(65535).optional(),
+  /** Additional base URLs that are reachable from other devices (LAN/VPN) */
+  networkBaseUrls: z.array(z.url()).optional(),
 });
 
 export type ServerLockData = z.infer<typeof ServerLockDataSchema>;
@@ -29,12 +35,32 @@ export class ServerLockfile {
    * Acquire the lockfile with the given baseUrl and token.
    * Writes atomically with 0600 permissions (owner read/write only).
    */
-  async acquire(baseUrl: string, token: string): Promise<void> {
+  async acquire(
+    baseUrl: string,
+    token: string,
+    extra?: {
+      bindHost?: string;
+      port?: number;
+      networkBaseUrls?: string[];
+    }
+  ): Promise<void> {
+    const bindHost = extra?.bindHost?.trim() ? extra.bindHost.trim() : undefined;
+    const port =
+      typeof extra?.port === "number" &&
+      Number.isInteger(extra.port) &&
+      extra.port >= 0 &&
+      extra.port <= 65535
+        ? extra.port
+        : undefined;
+
     const data: ServerLockData = {
       pid: process.pid,
       baseUrl,
       token,
       startedAt: new Date().toISOString(),
+      bindHost,
+      port,
+      networkBaseUrls: extra?.networkBaseUrls?.length ? extra.networkBaseUrls : undefined,
     };
 
     // Ensure directory exists

@@ -1,0 +1,114 @@
+---
+title: Notifications
+description: Configure how agents notify you about important events
+---
+
+## Overview
+
+Mux agents can send system notifications to alert you about important events. Notifications appear as native OS notifications (macOS Notification Center, Windows Toast, Linux notification daemon) and work even when Mux is in the background.
+
+The `notify` tool gives agents the ability to send these notifications. Clicking a notification takes you directly to the workspace that sent it. You control when and how agents use this tool through your prompts or scoped instructions.
+
+## Quick examples
+
+```text
+Notify me when you have this test passing.
+```
+
+```text
+Notify me before finishing your message.
+```
+
+```text
+Notify me once you're halfway through.
+```
+
+```text
+Work on these 5 tasks. Notify me after each one completes.
+```
+
+## Controlling notification behavior
+
+### Via Tool scoped instructions (recommended)
+
+The recommended way to configure the `notify` tool is via a `Tool: notify` scoped instruction in your system prompt or AGENTS.md:
+
+```markdown
+## Tool: notify
+
+- Notify on CI failures or deployment issues
+- Notify when waiting for user input longer than 30 seconds
+- Do not notify for routine status updates
+- Use status_set for progress updates instead
+```
+
+See [Instruction Files](/agents/instruction-files) for more on scoped instructions.
+
+### Disable notifications for a specific agent
+
+If you have an agent that should not interrupt you (e.g. a `review` agent), remove `notify` from that agent's tool policy:
+
+```md
+# .mux/agents/review.md
+
+---
+
+name: Review
+description: Terse reviewer-style feedback
+base: exec
+tools:
+remove: - notify
+
+---
+
+You are a code reviewer.
+
+- Focus on correctness, risks, and test coverage.
+- Prefer short, actionable comments.
+```
+
+## Platform notes
+
+Notifications use your operating system's native notification system:
+
+| Platform | Notification Type                               |
+| -------- | ----------------------------------------------- |
+| macOS    | Notification Center                             |
+| Windows  | Toast notifications                             |
+| Linux    | Desktop notifications (via notification daemon) |
+
+Notification settings (sound, Do Not Disturb, etc.) are controlled by your OS preferences, not Mux.
+
+## Tool definition
+
+The `notify` tool definition from source:
+
+{/* BEGIN NOTIFY_TOOL */}
+
+```typescript
+notify: {
+    description:
+      "Send a system notification to the user. Use this to alert the user about important events that require their attention, such as long-running task completion, errors requiring intervention, or questions. " +
+      "Notifications appear as OS-native notifications (macOS Notification Center, Windows Toast, Linux). " +
+      "Infer whether to send notifications from user instructions. If no instructions provided, reserve notifications for major wins or blocking issues. Do not use for routine status updates (use status_set instead).",
+    schema: z
+      .object({
+        title: z
+          .string()
+          .min(1)
+          .max(64)
+          .describe("Short notification title (max 64 chars). Should be concise and actionable."),
+        message: z
+          .string()
+          .max(200)
+          .optional()
+          .describe(
+            "Optional notification body with more details (max 200 chars). " +
+              "Keep it brief - users may only see a preview."
+          ),
+      })
+      .strict(),
+  },
+```
+
+{/* END NOTIFY_TOOL */}

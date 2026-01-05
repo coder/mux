@@ -1,11 +1,9 @@
 import React, { useEffect, useId } from "react";
-import type { ThinkingLevel, ThinkingLevelOn } from "@/common/types/thinking";
+import type { ThinkingLevel } from "@/common/types/thinking";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
-import { getThinkingPolicyForModel } from "@/browser/utils/thinking/policy";
-import { updatePersistedState } from "@/browser/hooks/usePersistedState";
-import { getLastThinkingByModelKey } from "@/common/constants/storage";
+import { getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
 
 // Uses CSS variable --color-thinking-mode for theme compatibility
 // Glow is applied via CSS using color-mix with the theme color
@@ -147,12 +145,6 @@ export const ThinkingSliderComponent: React.FC<ThinkingControlProps> = ({ modelS
 
   const handleThinkingLevelChange = (newLevel: ThinkingLevel) => {
     setThinkingLevel(newLevel);
-    // Also save to lastThinkingByModel for Ctrl+Shift+T toggle memory
-    // Only save active levels (not "off") - matches useAIViewKeybinds logic
-    if (newLevel !== "off") {
-      const lastThinkingKey = getLastThinkingByModelKey(modelString);
-      updatePersistedState(lastThinkingKey, newLevel as ThinkingLevelOn);
-    }
   };
 
   // Cycle through allowed thinking levels
@@ -207,7 +199,7 @@ export const ThinkingSliderComponent: React.FC<ThinkingControlProps> = ({ modelS
         </div>
       </TooltipTrigger>
       <TooltipContent align="center">
-        Thinking: {formatKeybind(KEYBINDS.TOGGLE_THINKING)} to toggle. Click level to cycle.
+        Thinking: {formatKeybind(KEYBINDS.TOGGLE_THINKING)} to cycle. Saved per workspace.
       </TooltipContent>
     </Tooltip>
   );

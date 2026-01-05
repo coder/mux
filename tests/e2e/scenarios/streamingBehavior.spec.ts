@@ -1,6 +1,9 @@
 import { electronTest as test, electronExpect as expect } from "../electronTest";
-import { LIST_PROGRAMMING_LANGUAGES } from "@/node/services/mock/scenarios/basicChat";
-import { ERROR_PROMPTS, ERROR_MESSAGES } from "@/node/services/mock/scenarios/errorScenarios";
+import {
+  MOCK_ERROR_MESSAGES,
+  MOCK_ERROR_PROMPTS,
+  MOCK_LIST_PROGRAMMING_LANGUAGES,
+} from "../mockAiPrompts";
 
 test.skip(
   ({ browserName }) => browserName !== "chromium",
@@ -12,7 +15,7 @@ test.describe("streaming behavior", () => {
     await ui.projects.openFirstWorkspace();
 
     const streamPromise = ui.chat.captureStreamTimeline(async () => {
-      await ui.chat.sendMessage(LIST_PROGRAMMING_LANGUAGES);
+      await ui.chat.sendMessage(MOCK_LIST_PROGRAMMING_LANGUAGES);
     });
 
     await page.waitForTimeout(50);
@@ -31,7 +34,7 @@ test.describe("streaming behavior", () => {
     await ui.chat.setMode("Plan");
 
     const timeline = await ui.chat.captureStreamTimeline(async () => {
-      await ui.chat.sendMessage(LIST_PROGRAMMING_LANGUAGES);
+      await ui.chat.sendMessage(MOCK_LIST_PROGRAMMING_LANGUAGES);
     });
 
     expect(timeline.events.some((e) => e.type === "stream-end")).toBe(true);
@@ -40,9 +43,9 @@ test.describe("streaming behavior", () => {
 
   // Consolidate error tests using parameterization
   for (const [errorType, prompt, expectedMessage] of [
-    ["rate limit", ERROR_PROMPTS.TRIGGER_RATE_LIMIT, ERROR_MESSAGES.RATE_LIMIT],
-    ["server", ERROR_PROMPTS.TRIGGER_API_ERROR, ERROR_MESSAGES.API_ERROR],
-    ["network", ERROR_PROMPTS.TRIGGER_NETWORK_ERROR, ERROR_MESSAGES.NETWORK_ERROR],
+    ["rate limit", MOCK_ERROR_PROMPTS.TRIGGER_RATE_LIMIT, MOCK_ERROR_MESSAGES.RATE_LIMIT],
+    ["server", MOCK_ERROR_PROMPTS.TRIGGER_API_ERROR, MOCK_ERROR_MESSAGES.API_ERROR],
+    ["network", MOCK_ERROR_PROMPTS.TRIGGER_NETWORK_ERROR, MOCK_ERROR_MESSAGES.NETWORK_ERROR],
   ] as const) {
     test(`${errorType} error displays in transcript`, async ({ ui, page }) => {
       await ui.projects.openFirstWorkspace();
@@ -63,12 +66,12 @@ test.describe("streaming behavior", () => {
     await ui.chat.setMode("Exec");
 
     await ui.chat.captureStreamTimeline(async () => {
-      await ui.chat.sendMessage(ERROR_PROMPTS.TRIGGER_API_ERROR);
+      await ui.chat.sendMessage(MOCK_ERROR_PROMPTS.TRIGGER_API_ERROR);
     });
 
     await ui.chat.setMode("Plan");
     const timeline = await ui.chat.captureStreamTimeline(async () => {
-      await ui.chat.sendMessage(LIST_PROGRAMMING_LANGUAGES);
+      await ui.chat.sendMessage(MOCK_LIST_PROGRAMMING_LANGUAGES);
     });
 
     expect(timeline.events.some((e) => e.type === "stream-end")).toBe(true);

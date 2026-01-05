@@ -9,6 +9,7 @@ import { CommandIds } from "@/browser/utils/commandIds";
 import type { ProjectConfig } from "@/node/config";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { BranchListResult } from "@/common/orpc/types";
+import type { WorkspaceState } from "@/browser/stores/WorkspaceStore";
 import type { RuntimeConfig } from "@/common/types/runtime";
 
 export interface BuildSourcesParams {
@@ -17,6 +18,7 @@ export interface BuildSourcesParams {
   /** Map of workspace ID to workspace metadata (keyed by metadata.id, not path) */
   workspaceMetadata: Map<string, FrontendWorkspaceMetadata>;
   theme: ThemeMode;
+  selectedWorkspaceState?: WorkspaceState | null;
   selectedWorkspace: {
     projectPath: string;
     projectName: string;
@@ -49,6 +51,7 @@ export interface BuildSourcesParams {
   onToggleTheme: () => void;
   onSetTheme: (theme: ThemeMode) => void;
   onOpenSettings?: (section?: string) => void;
+  onClearTimingStats?: (workspaceId: string) => void;
 }
 
 const THINKING_LEVELS: ThinkingLevel[] = ["off", "low", "medium", "high", "xhigh"];
@@ -117,7 +120,9 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         title: `${isCurrent ? "• " : ""}Switch to ${meta.name}`,
         subtitle: `${meta.projectName}${isStreaming ? " • streaming" : ""}`,
         section: section.workspaces,
-        keywords: [meta.name, meta.projectName, meta.namedWorkspacePath],
+        keywords: [meta.name, meta.projectName, meta.namedWorkspacePath, meta.title].filter(
+          (k): k is string => !!k
+        ),
         run: () =>
           p.onSelectWorkspace({
             projectPath: meta.projectPath,
@@ -148,7 +153,13 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         subtitle: workspaceDisplayName,
         section: section.workspaces,
         run: async () => {
-          const ok = confirm("Remove current workspace? This cannot be undone.");
+          const branchName =
+            selectedMeta?.name ??
+            selected.namedWorkspacePath.split("/").pop() ??
+            selected.namedWorkspacePath;
+          const ok = confirm(
+            `Remove current workspace? This will delete the worktree and local branch "${branchName}". This cannot be undone.`
+          );
           if (ok) await p.onRemoveWorkspace(selected.workspaceId);
         },
       });
@@ -200,7 +211,13 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
                   return {
                     id: meta.id,
                     label,
-                    keywords: [meta.name, meta.projectName, meta.namedWorkspacePath, meta.id],
+                    keywords: [
+                      meta.name,
+                      meta.projectName,
+                      meta.namedWorkspacePath,
+                      meta.id,
+                      meta.title,
+                    ].filter((k): k is string => !!k),
                   };
                 }),
             },
@@ -230,7 +247,13 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
                   return {
                     id: meta.id,
                     label,
-                    keywords: [meta.name, meta.projectName, meta.namedWorkspacePath, meta.id],
+                    keywords: [
+                      meta.name,
+                      meta.projectName,
+                      meta.namedWorkspacePath,
+                      meta.id,
+                      meta.title,
+                    ].filter((k): k is string => !!k),
                   };
                 }),
             },
@@ -272,7 +295,13 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
                   return {
                     id: meta.id,
                     label,
-                    keywords: [meta.name, meta.projectName, meta.namedWorkspacePath, meta.id],
+                    keywords: [
+                      meta.name,
+                      meta.projectName,
+                      meta.namedWorkspacePath,
+                      meta.id,
+                      meta.title,
+                    ].filter((k): k is string => !!k),
                   };
                 }),
             },
@@ -282,7 +311,10 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
               (m) => m.id === vals.workspaceId
             );
             const workspaceName = meta ? `${meta.projectName}/${meta.name}` : vals.workspaceId;
-            const ok = confirm(`Remove workspace ${workspaceName}? This cannot be undone.`);
+            const branchName = meta?.name ?? workspaceName.split("/").pop() ?? workspaceName;
+            const ok = confirm(
+              `Remove workspace ${workspaceName}? This will delete the worktree and local branch "${branchName}". This cannot be undone.`
+            );
             if (ok) {
               await p.onRemoveWorkspace(vals.workspaceId);
             }
@@ -373,6 +405,9 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         title: "Interrupt Streaming",
         section: section.chat,
         run: async () => {
+          if (p.selectedWorkspaceState?.awaitingUserQuestion) {
+            return;
+          }
           await p.api?.workspace.interruptStream({ workspaceId: id });
         },
       });
@@ -398,6 +433,15 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
           window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.TOGGLE_VOICE_INPUT));
         },
       });
+      list.push({
+        id: CommandIds.chatClearTimingStats(),
+        title: "Clear Timing Stats",
+        subtitle: "Reset session timing data for this workspace",
+        section: section.chat,
+        run: () => {
+          p.onClearTimingStats?.(id);
+        },
+      });
     }
     return list;
   });
@@ -407,11 +451,20 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
     const list: CommandAction[] = [
       {
         id: CommandIds.modeToggle(),
-        title: "Toggle Plan/Exec Mode",
+        title: "Open Agent Picker",
         section: section.mode,
         shortcutHint: formatKeybind(KEYBINDS.TOGGLE_MODE),
         run: () => {
-          const ev = new KeyboardEvent("keydown", { key: "M", ctrlKey: true, shiftKey: true });
+          window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.OPEN_AGENT_PICKER));
+        },
+      },
+      {
+        id: "cycle-agent",
+        title: "Cycle Agent",
+        section: section.mode,
+        shortcutHint: formatKeybind(KEYBINDS.CYCLE_AGENT),
+        run: () => {
+          const ev = new KeyboardEvent("keydown", { key: ".", ctrlKey: true });
           window.dispatchEvent(ev);
         },
       },
@@ -486,7 +539,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
       section: section.help,
       run: () => {
         try {
-          window.open("https://mux.coder.com/keybinds", "_blank");
+          window.open("https://mux.coder.com/config/keybinds", "_blank");
         } catch {
           /* ignore */
         }

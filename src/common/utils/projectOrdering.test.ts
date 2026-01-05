@@ -17,10 +17,10 @@ describe("projectOrdering", () => {
   };
 
   describe("sortProjectsByOrder", () => {
-    it("returns natural order when order array is empty", () => {
+    it("returns lexical order when order array is empty", () => {
       const projects = createProjects(["/a", "/c", "/b"]);
       const result = sortProjectsByOrder(projects, []);
-      expect(result.map(([p]) => p)).toEqual(["/a", "/c", "/b"]);
+      expect(result.map(([p]) => p)).toEqual(["/a", "/b", "/c"]);
     });
 
     it("sorts projects according to order array", () => {
@@ -69,11 +69,25 @@ describe("projectOrdering", () => {
       expect(result).toEqual(["/a", "/b"]);
     });
 
-    it("appends new projects to the end", () => {
+    it("prepends new projects to the front in lexical order", () => {
       const projects = createProjects(["/a", "/b", "/c", "/d"]);
       const order = ["/b", "/a"];
       const result = normalizeOrder(order, projects);
-      expect(result).toEqual(["/b", "/a", "/c", "/d"]);
+      // /c and /d are missing from order, prepended in lexical order
+      expect(result).toEqual(["/c", "/d", "/b", "/a"]);
+    });
+
+    it("sorts missing projects lexically for deterministic order", () => {
+      // Even if Map iteration order is non-lexical, missing projects should be sorted
+      const projects = new Map<string, ProjectConfig>([
+        ["/z-project", { workspaces: [] }],
+        ["/a-project", { workspaces: [] }],
+        ["/m-project", { workspaces: [] }],
+      ]);
+      const order: string[] = []; // empty order, all projects are "missing"
+      const result = normalizeOrder(order, projects);
+      // Should be lexically sorted regardless of Map insertion order
+      expect(result).toEqual(["/a-project", "/m-project", "/z-project"]);
     });
 
     it("preserves order of existing projects", () => {
@@ -130,13 +144,13 @@ describe("projectOrdering", () => {
       // After projects load, normalization should work normally:
       // 1. projectOrder is still ["/a", "/b", "/c"] from localStorage
       // 2. Projects are now loaded with an additional project ["/d"]
-      // 3. Normalization should append the new project
+      // 3. Normalization should treat the new project as "most recent" and put it first
       const projectOrder = ["/a", "/b", "/c"];
       const loadedProjects = createProjects(["/a", "/b", "/c", "/d"]);
 
       const result = normalizeOrder(projectOrder, loadedProjects);
 
-      expect(result).toEqual(["/a", "/b", "/c", "/d"]);
+      expect(result).toEqual(["/d", "/a", "/b", "/c"]);
     });
   });
 });

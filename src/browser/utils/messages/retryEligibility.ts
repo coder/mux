@@ -90,6 +90,19 @@ export function hasInterruptedStream(
 
   const lastMessage = messages[messages.length - 1];
 
+  // ask_user_question is a special case: an unfinished tool call represents an
+  // intentional "waiting for user input" state, not a stream interruption.
+  //
+  // Treating it as interrupted causes RetryBarrier + auto-resume to fire on app
+  // restart, which re-runs the LLM call and re-asks the questions.
+  if (
+    lastMessage.type === "tool" &&
+    lastMessage.toolName === "ask_user_question" &&
+    lastMessage.status === "executing"
+  ) {
+    return false;
+  }
+
   return (
     lastMessage.type === "stream-error" || // Stream errored out (show UI for ALL error types)
     lastMessage.type === "user" || // No response received yet (app restart during slow model)

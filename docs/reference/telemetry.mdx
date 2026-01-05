@@ -1,0 +1,60 @@
+---
+title: Telemetry
+description: What mux collects, what it doesn’t, and how to disable it
+---
+
+mux collects anonymous usage telemetry to help improve the product.
+
+## Privacy policy
+
+- **No personal information**: mux does not collect usernames, project names, file paths, or code content.
+- **Random IDs only**: Only randomly generated workspace IDs are sent.
+- **No hashing**: Hashing is vulnerable to rainbow table attacks.
+- **Transparent payload**: See exactly what is sent in [`src/common/telemetry/payload.ts`](https://github.com/coder/mux/blob/main/src/common/telemetry/payload.ts).
+
+## What mux tracks
+
+All telemetry events include basic system information:
+
+- Application version
+- Operating system platform (`darwin`, `win32`, `linux`)
+- Electron version
+
+### Specific events
+
+- **App started**: When the app launches (includes a first-launch flag)
+- **Workspace creation**: When a new workspace is created (workspace ID only)
+- **Workspace switching**: When you switch between workspaces (workspace IDs only)
+- **Message sending**: When messages are sent (model, mode, message length rounded to base-2)
+- **Errors**: Error types and context (no sensitive data)
+
+### What mux does _not_ track
+
+- Your messages or code
+- Project names or file paths
+- API keys or credentials
+- Usernames or email addresses
+- Any personally identifiable information
+
+## Disabling telemetry
+
+To disable telemetry, set `MUX_DISABLE_TELEMETRY` before starting the app:
+
+```bash
+MUX_DISABLE_TELEMETRY=1 mux
+```
+
+This disables telemetry collection at the backend level.
+
+<Note>
+  Disabling telemetry also hides the **Share** button on assistant messages. Link sharing uses
+  [mux.md](https://mux.md), a separate mux service, and is gated on telemetry enablement to respect
+  your privacy preferences.
+</Note>
+
+## Source code
+
+- **Payload definitions**: [`src/common/telemetry/payload.ts`](https://github.com/coder/mux/blob/main/src/common/telemetry/payload.ts)
+- **Backend service**: [`src/node/services/telemetryService.ts`](https://github.com/coder/mux/blob/main/src/node/services/telemetryService.ts)
+- **Frontend client**: [`src/common/telemetry/client.ts`](https://github.com/coder/mux/blob/main/src/common/telemetry/client.ts)
+- **Privacy utilities**: [`src/common/telemetry/utils.ts`](https://github.com/coder/mux/blob/main/src/common/telemetry/utils.ts)

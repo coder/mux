@@ -45,7 +45,7 @@ export const modelsExtra: Record<string, ModelData> = {
   // Cached input: $0.175/M
   // Supports off, low, medium, high, xhigh reasoning levels
   "gpt-5.2": {
-    max_input_tokens: 400000,
+    max_input_tokens: 272000,
     max_output_tokens: 128000,
     input_cost_per_token: 0.00000175, // $1.75 per million input tokens
     output_cost_per_token: 0.000014, // $14 per million output tokens
@@ -64,7 +64,7 @@ export const modelsExtra: Record<string, ModelData> = {
   // $21/M input, $168/M output
   // Supports medium, high, xhigh reasoning levels
   "gpt-5.2-pro": {
-    max_input_tokens: 400000,
+    max_input_tokens: 272000,
     max_output_tokens: 128000,
     input_cost_per_token: 0.000021, // $21 per million input tokens
     output_cost_per_token: 0.000168, // $168 per million output tokens

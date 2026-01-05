@@ -1,0 +1,96 @@
+---
+title: Storybook
+description: Develop and test mux UI states in isolation
+---
+
+Storybook renders mux's **renderer UI** without running the full Electron app.
+
+## Starting Storybook
+
+```bash
+make storybook
+# or
+bun run storybook
+```
+
+This will start the Storybook development server at `http://localhost:6006`.
+
+## Building Static Storybook
+
+To build a static version of Storybook that can be deployed:
+
+```bash
+make storybook-build
+# or
+bun run storybook:build
+```
+
+The output will be in `storybook-static/`.
+
+## Writing Stories (full app only)
+
+mux intentionally uses **full-app** stories (no isolated component stories).
+
+Stories live in `src/browser/stories/` and must be named `App.*.stories.tsx`.
+
+Storybook is configured to load `src/browser/stories/**/*.stories.@(ts|tsx)` (see `.storybook/main.ts`).
+
+### Basic App story structure
+
+```tsx
+import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
+import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
+import { createWorkspace, groupWorkspacesByProject } from "./mockFactory";
+
+export default {
+  ...appMeta,
+  title: "App/Sidebar",
+};
+
+export const SingleProject: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const workspaces = [createWorkspace({ id: "ws-1", name: "main", projectName: "my-app" })];
+
+        return createMockORPCClient({
+          workspaces,
+          projects: groupWorkspacesByProject(workspaces),
+        });
+      }}
+    />
+  ),
+};
+```
+
+### Helpers & fixtures
+
+- `src/browser/stories/meta.tsx` – shared `appMeta` + `AppWithMocks` wrapper
+- `src/browser/stories/mocks/orpc.ts` – `createMockORPCClient()` for building an `APIClient`
+- `src/browser/stories/mockFactory.ts` – deterministic fixtures (workspaces, messages, timestamps)
+- `src/browser/stories/storyHelpers.ts` / `storyPlayHelpers.ts` – localStorage + play-function helpers
+
+## Global styles & determinism
+
+- Global CSS is loaded from `src/browser/styles/globals.css` in `.storybook/preview.tsx`.
+- `.storybook/preview.tsx` stubs `Date.now()` to a stable value for deterministic snapshots; prefer using `NOW` / `STABLE_TIMESTAMP` from `mockFactory.ts` when constructing fixtures.
+
+## Examples
+
+See the existing stories for patterns:
+
+- `src/browser/stories/App.sidebar.stories.tsx`
+- `src/browser/stories/App.chat.stories.tsx`
+- `src/browser/stories/App.settings.stories.tsx`
+
+## Configuration
+
+- `.storybook/main.ts` - Main Storybook configuration (stories glob, addons, Vite config)
+- `.storybook/preview.tsx` - Global decorators and snapshot stabilization helpers
+- `tsconfig.json` - Includes `.storybook/**/*.ts(x)` for type checking
+
+## Tips
+
+- Keep story data deterministic (no `Math.random()` / real `Date.now()` in fixtures).
+- Use `play` functions (`@storybook/test`) to navigate the UI into the desired state.
+- If async rendering changes element heights (Markdown, Mermaid, tool expansion), wait for scroll stabilization (double `requestAnimationFrame`) before snapshotting.

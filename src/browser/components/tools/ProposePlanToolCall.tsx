@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import type {
   ProposePlanToolResult,
   ProposePlanToolError,
@@ -15,16 +15,20 @@ import {
 } from "./shared/ToolPrimitives";
 import { useToolExpansion, getStatusDisplay, type ToolStatus } from "./shared/toolUtils";
 import { MarkdownRenderer } from "../Messages/MarkdownRenderer";
+import { IconActionButton, type ButtonConfig } from "../Messages/MessageWindow";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useStartHere } from "@/browser/hooks/useStartHere";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
-import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { cn } from "@/common/lib/utils";
 import { useAPI } from "@/browser/contexts/API";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
-import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
+import { useOptionalWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { usePopoverError } from "@/browser/hooks/usePopoverError";
 import { PopoverError } from "../PopoverError";
+import { getPlanContentKey } from "@/common/constants/storage";
+import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { Clipboard, ClipboardCheck, FileText, ListStart, Pencil, X } from "lucide-react";
+import { ShareMessagePopover } from "../ShareMessagePopover";
 
 /**
  * Check if the result is a successful file-based propose_plan result.
@@ -117,16 +121,27 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   const [showRaw, setShowRaw] = useState(false);
   const { api } = useAPI();
   const openInEditor = useOpenInEditor();
-  const { workspaceMetadata } = useWorkspaceContext();
+  const workspaceContext = useOptionalWorkspaceContext();
   const editorError = usePopoverError();
+  const editButtonRef = useRef<HTMLDivElement>(null);
 
-  // Get runtimeConfig for the workspace (needed for SSH-aware editor opening)
-  const runtimeConfig = workspaceId ? workspaceMetadata.get(workspaceId)?.runtimeConfig : undefined;
+  // Get runtimeConfig and name for the workspace (needed for SSH-aware editor opening and share filename)
+  const workspaceMetadata = workspaceId
+    ? workspaceContext?.workspaceMetadata.get(workspaceId)
+    : undefined;
+  const runtimeConfig = workspaceMetadata?.runtimeConfig;
+  const workspaceName = workspaceMetadata?.name;
 
   // Fresh content from disk for the latest plan (external edit detection)
-  // Skip for ephemeral previews which already have fresh content
-  const [freshContent, setFreshContent] = useState<string | null>(null);
-  const [freshPath, setFreshPath] = useState<string | null>(null);
+  // Initialize from localStorage cache for instant render (no flash on reload)
+  const cacheKey = workspaceId ? getPlanContentKey(workspaceId) : "";
+  const cached =
+    workspaceId && isLatest && !isEphemeralPreview
+      ? readPersistedState<{ content: string; path: string } | null>(cacheKey, null)
+      : null;
+
+  const [freshContent, setFreshContent] = useState<string | null>(cached?.content ?? null);
+  const [freshPath, setFreshPath] = useState<string | null>(cached?.path ?? null);
 
   // Fetch fresh plan content for the latest plan
   // Re-fetches on mount and when window regains focus (after user edits in external editor)
@@ -139,9 +154,11 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
         if (res.success) {
           setFreshContent(res.data.content);
           setFreshPath(res.data.path);
+          // Update cache for next load (optimistic rendering)
+          updatePersistedState(cacheKey, { content: res.data.content, path: res.data.path });
         }
       } catch {
-        // Fetch failed, use cached content from result
+        // Fetch failed, keep cached/existing content
       }
     };
 
@@ -157,7 +174,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     return () => {
       window.removeEventListener("focus", handleFocus);
     };
-  }, [api, workspaceId, isLatest, isEphemeralPreview]);
+  }, [api, workspaceId, isLatest, isEphemeralPreview, cacheKey]);
 
   // Determine plan content and title based on result type
   // For ephemeral previews, use direct content/path props
@@ -213,121 +230,121 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     planTitle = "Plan";
   }
 
-  // Format: Title as H1 + plan content for "Start Here" functionality
-  const startHereContent = `# ${planTitle}\n\n${planContent}`;
+  // Format: Title as H1 + plan content for "Start Here" functionality.
+  // Note: we intentionally preserve the plan file on disk when starting here so it can be
+  // referenced later (e.g., via post-compaction attachments).
+  const planPathNote = planPath ? `\n\n---\n\n*Plan file preserved at:* \`${planPath}\`` : "";
+  const startHereContent = `# ${planTitle}\n\n${planContent}${planPathNote}`;
   const {
     openModal,
     buttonLabel,
     disabled: startHereDisabled,
     modal,
-  } = useStartHere(
-    workspaceId,
-    startHereContent,
-    false, // Plans are never already compacted
-    { deletePlanFile: true }
-  );
+  } = useStartHere(workspaceId, startHereContent, false, {
+    // Preserve the source mode so exec mode can detect a plan→exec transition
+    // even after replacing chat history.
+    sourceMode: "plan",
+  });
 
   // Copy to clipboard with feedback
   const { copied, copyToClipboard } = useCopyToClipboard();
 
-  const handleOpenInEditor = async (event: React.MouseEvent) => {
+  const handleOpenInEditor = async () => {
     if (!planPath || !workspaceId) return;
-    const result = await openInEditor(workspaceId, planPath, runtimeConfig);
-    if (!result.success && result.error) {
-      const rect = (event.target as HTMLElement).getBoundingClientRect();
-      editorError.showError("plan-editor", result.error, {
-        top: rect.bottom + 8,
-        left: rect.left,
-      });
+
+    // Capture positioning from the ref for error popover placement
+    const anchorPosition = editButtonRef.current
+      ? (() => {
+          const { bottom, left } = editButtonRef.current.getBoundingClientRect();
+          return { top: bottom + 8, left };
+        })()
+      : { top: 100, left: 100 };
+
+    try {
+      const result = await openInEditor(workspaceId, planPath, runtimeConfig);
+      if (!result.success && result.error) {
+        editorError.showError("plan-editor", result.error, anchorPosition);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      editorError.showError("plan-editor", message, anchorPosition);
     }
   };
 
-  const controlButtonClasses =
-    "px-2 py-1 text-[10px] font-mono rounded-sm cursor-pointer transition-all duration-150 active:translate-y-px";
   const statusDisplay = getStatusDisplay(status);
+
+  // Build action buttons array (similar to AssistantMessage)
+  const actionButtons: ButtonConfig[] = [
+    {
+      label: copied ? "Copied" : "Copy",
+      onClick: () => void copyToClipboard(planContent),
+      icon: copied ? <ClipboardCheck /> : <Clipboard />,
+    },
+    {
+      label: "Share",
+      component: (
+        <ShareMessagePopover
+          content={planContent}
+          disabled={!planContent}
+          workspaceName={workspaceName}
+        />
+      ),
+    },
+  ];
+
+  // Edit button config (rendered separately with ref for error positioning)
+  const showEditButton = (isEphemeralPreview ?? isLatest) && planPath && workspaceId;
+  const editButton: ButtonConfig | null = showEditButton
+    ? {
+        label: "Edit",
+        onClick: () => void handleOpenInEditor(),
+        icon: <Pencil />,
+        tooltip: "Open plan in external editor",
+      }
+    : null;
+
+  // Start Here button: only for tool calls, not ephemeral previews
+  if (!isEphemeralPreview && workspaceId) {
+    actionButtons.push({
+      label: buttonLabel,
+      onClick: openModal,
+      disabled: startHereDisabled,
+      icon: <ListStart />,
+      tooltip: "Replace all chat history with this plan",
+    });
+  }
+
+  // Show raw toggle
+  actionButtons.push({
+    label: showRaw ? "Show Markdown" : "Show Text",
+    onClick: () => setShowRaw(!showRaw),
+    active: showRaw,
+    icon: <FileText />,
+  });
+
+  // Close button: only for ephemeral previews
+  if (isEphemeralPreview && onClose) {
+    actionButtons.push({
+      label: "Close",
+      onClick: onClose,
+      icon: <X />,
+      tooltip: "Close preview",
+    });
+  }
 
   // Shared plan UI content (used in both tool call and ephemeral preview modes)
   const planUI = (
     <div className="plan-surface rounded-md p-3 shadow-md">
+      {/* Header: title only */}
       <div className="plan-divider mb-3 flex items-center gap-2 border-b pb-2">
-        <div className="flex flex-1 items-center gap-2">
-          <div className="text-base">📋</div>
-          <div className="text-plan-mode font-mono text-[13px] font-semibold">{planTitle}</div>
-          {isEphemeralPreview && (
-            <div className="text-muted font-mono text-[10px] italic">preview only</div>
-          )}
-        </div>
-        <div className="flex items-center gap-1.5">
-          {/* Edit button: show for ephemeral preview OR latest tool call */}
-          {(isEphemeralPreview ?? isLatest) && planPath && workspaceId && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={(e) => void handleOpenInEditor(e)}
-                  className={cn(
-                    controlButtonClasses,
-                    "plan-chip-ghost hover:plan-chip-ghost-hover"
-                  )}
-                >
-                  Edit
-                </button>
-              </TooltipTrigger>
-              <TooltipContent align="center">Open plan in external editor</TooltipContent>
-            </Tooltip>
-          )}
-          {/* Start Here button: only for tool calls, not ephemeral previews */}
-          {!isEphemeralPreview && workspaceId && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={openModal}
-                  disabled={startHereDisabled}
-                  className={cn(
-                    controlButtonClasses,
-                    "plan-chip-ghost",
-                    startHereDisabled
-                      ? "cursor-not-allowed opacity-50"
-                      : "hover:plan-chip-ghost-hover"
-                  )}
-                >
-                  {buttonLabel}
-                </button>
-              </TooltipTrigger>
-              <TooltipContent align="center">
-                Replace all chat history with this plan
-              </TooltipContent>
-            </Tooltip>
-          )}
-          <button
-            onClick={() => void copyToClipboard(planContent)}
-            className={cn(controlButtonClasses, "plan-chip-ghost hover:plan-chip-ghost-hover")}
-          >
-            {copied ? "Copied" : "Copy"}
-          </button>
-          <button
-            onClick={() => setShowRaw(!showRaw)}
-            className={cn(
-              controlButtonClasses,
-              showRaw
-                ? "plan-chip hover:plan-chip-hover active:plan-chip-active"
-                : "plan-chip-ghost text-muted hover:plan-chip-ghost-hover"
-            )}
-          >
-            {showRaw ? "Show Markdown" : "Show Text"}
-          </button>
-          {/* Close button: only for ephemeral previews */}
-          {isEphemeralPreview && onClose && (
-            <button
-              onClick={onClose}
-              className={cn(controlButtonClasses, "plan-chip-ghost hover:plan-chip-ghost-hover")}
-              title="Close preview"
-            >
-              ✕
-            </button>
-          )}
-        </div>
+        <div className="text-base">📋</div>
+        <div className="text-plan-mode font-mono text-[13px] font-semibold">{planTitle}</div>
+        {isEphemeralPreview && (
+          <div className="text-muted font-mono text-[10px] italic">preview only</div>
+        )}
       </div>
 
+      {/* Content */}
       {errorMessage ? (
         <div className="text-error rounded-sm p-2 font-mono text-xs">{errorMessage}</div>
       ) : showRaw ? (
@@ -343,11 +360,24 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
       {/* Completion guidance: only for completed tool calls without errors, not ephemeral previews */}
       {!isEphemeralPreview && status === "completed" && !errorMessage && (
         <div className="plan-divider text-muted mt-3 border-t pt-3 text-[11px] leading-normal italic">
-          Respond with revisions or switch to Exec mode (
-          <span className="font-primary not-italic">{formatKeybind(KEYBINDS.TOGGLE_MODE)}</span>)
-          and ask to implement.
+          Respond with revisions or switch to the Exec agent (
+          <span className="font-primary not-italic">{formatKeybind(KEYBINDS.CYCLE_AGENT)}</span> to
+          cycle) and ask to implement.
         </div>
       )}
+
+      {/* Actions row at the bottom (matching MessageWindow style) */}
+      <div className="mt-3 flex items-center gap-0.5">
+        {actionButtons.map((button, index) => (
+          <IconActionButton key={index} button={button} />
+        ))}
+        {/* Edit button rendered with ref for error popover positioning */}
+        {editButton && (
+          <div ref={editButtonRef}>
+            <IconActionButton button={editButton} />
+          </div>
+        )}
+      </div>
     </div>
   );
 

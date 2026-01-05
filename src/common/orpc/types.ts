@@ -9,6 +9,7 @@ import type {
   ToolCallStartEvent,
   ToolCallDeltaEvent,
   ToolCallEndEvent,
+  BashOutputEvent,
   ReasoningDeltaEvent,
   ReasoningEndEvent,
   UsageDeltaEvent,
@@ -29,10 +30,17 @@ export type DeleteMessage = z.infer<typeof schemas.DeleteMessageSchema>;
 export type WorkspaceInitEvent = z.infer<typeof schemas.WorkspaceInitEventSchema>;
 export type UpdateStatus = z.infer<typeof schemas.UpdateStatusSchema>;
 export type ChatMuxMessage = z.infer<typeof schemas.ChatMuxMessageSchema>;
+export type WorkspaceStatsSnapshot = z.infer<typeof schemas.WorkspaceStatsSnapshotSchema>;
 export type WorkspaceActivitySnapshot = z.infer<typeof schemas.WorkspaceActivitySnapshotSchema>;
 export type FrontendWorkspaceMetadataSchemaType = z.infer<
   typeof schemas.FrontendWorkspaceMetadataSchema
 >;
+
+// Server types (single source of truth - derived from schemas)
+export type ApiServerStatus = z.infer<typeof schemas.ApiServerStatusSchema>;
+
+// Experiment types (single source of truth - derived from schemas)
+export type ExperimentValue = z.infer<typeof schemas.ExperimentValueSchema>;
 
 // Type guards for common chat message variants
 export function isCaughtUpMessage(msg: WorkspaceChatMessage): msg is CaughtUpMessage {
@@ -71,6 +79,9 @@ export function isToolCallDelta(msg: WorkspaceChatMessage): msg is ToolCallDelta
   return (msg as { type?: string }).type === "tool-call-delta";
 }
 
+export function isBashOutputEvent(msg: WorkspaceChatMessage): msg is BashOutputEvent {
+  return (msg as { type?: string }).type === "bash-output";
+}
 export function isToolCallEnd(msg: WorkspaceChatMessage): msg is ToolCallEndEvent {
   return (msg as { type?: string }).type === "tool-call-end";
 }

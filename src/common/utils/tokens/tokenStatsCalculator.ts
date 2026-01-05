@@ -72,8 +72,29 @@ export function countEncryptedWebSearchTokens(data: unknown[]): number {
       encryptedChars += (item as { encryptedContent: string }).encryptedContent.length;
     }
   }
+
   // Use heuristic: encrypted chars * 0.75 for token estimation
   return Math.ceil(encryptedChars * 0.75);
+}
+
+/**
+ * Derive the consumer label for a tool call.
+ *
+ * Most tools use their tool name as-is. Some tools (like `task`) are a union of
+ * multiple behaviors, so we split them into more useful buckets.
+ */
+export function getConsumerInfoForToolCall(
+  toolName: string,
+  _input: unknown
+): { consumer: string; toolNameForDefinition: string } {
+  if (toolName === "task") {
+    return {
+      consumer: "task",
+      toolNameForDefinition: "task",
+    };
+  }
+
+  return { consumer: toolName, toolNameForDefinition: toolName };
 }
 
 /**
@@ -102,7 +123,15 @@ async function countToolOutputTokens(
  * Represents a single token counting operation
  */
 export interface TokenCountJob {
+  /** Display name / grouping key in the consumer breakdown */
   consumer: string;
+  /** Optional tool name used to attribute tool-definition overhead.
+   *
+   * This lets us split a single tool into multiple consumer buckets
+   * (e.g., `task (bash)` vs `task (agent)`) while still counting the
+   * *single* tool definition only once.
+   */
+  toolNameForDefinition?: string;
   promise: Promise<number>;
 }
 
@@ -148,15 +177,19 @@ function createTokenCountingJobs(messages: MuxMessage[], tokenizer: Tokenizer): 
       // Tool parts - count arguments and results separately
       for (const part of message.parts) {
         if (part.type === "dynamic-tool") {
+          const consumerInfo = getConsumerInfoForToolCall(part.toolName, part.input);
+
           // Tool arguments
           jobs.push({
-            consumer: part.toolName,
+            consumer: consumerInfo.consumer,
+            toolNameForDefinition: consumerInfo.toolNameForDefinition,
             promise: countTokensForData(part.input, tokenizer),
           });
 
           // Tool results (if available)
           jobs.push({
-            consumer: part.toolName,
+            consumer: consumerInfo.consumer,
+            toolNameForDefinition: consumerInfo.toolNameForDefinition,
             promise: countToolOutputTokens(part, tokenizer),
           });
         }
@@ -267,11 +300,16 @@ export function mergeResults(
 
     const existing = consumerMap.get(job.consumer) ?? { fixed: 0, variable: 0 };
 
+    const toolNameForDefinition = job.toolNameForDefinition ?? job.consumer;
+
     // Add tool definition tokens if this is the first time we see this tool
     let fixedTokens = existing.fixed;
-    if (toolDefinitions.has(job.consumer) && !toolsWithDefinitions.has(job.consumer)) {
-      fixedTokens += toolDefinitions.get(job.consumer)!;
-      toolsWithDefinitions.add(job.consumer);
+    if (
+      toolDefinitions.has(toolNameForDefinition) &&
+      !toolsWithDefinitions.has(toolNameForDefinition)
+    ) {
+      fixedTokens += toolDefinitions.get(toolNameForDefinition)!;
+      toolsWithDefinitions.add(toolNameForDefinition);
     }
 
     // Add variable tokens

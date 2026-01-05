@@ -3,12 +3,15 @@ import {
   trackWorkspaceCreated,
   trackWorkspaceSwitched,
   trackMessageSent,
+  trackStatsTabOpened,
   trackStreamCompleted,
   trackProviderConfigured,
   trackCommandUsed,
   trackVoiceTranscription,
   trackErrorOccurred,
+  trackExperimentOverridden,
 } from "@/common/telemetry";
+import type { AgentMode } from "@/common/types/mode";
 import type {
   ErrorContext,
   TelemetryRuntimeType,
@@ -35,6 +38,7 @@ import type {
  * telemetry.commandUsed(commandType);
  * telemetry.voiceTranscription(audioDurationSecs, success);
  * telemetry.errorOccurred(errorType, context);
+ * telemetry.experimentOverridden(experimentId, assignedVariant, userChoice);
  * ```
  */
 export function useTelemetry() {
@@ -50,7 +54,7 @@ export function useTelemetry() {
     (
       workspaceId: string,
       model: string,
-      mode: string,
+      mode: AgentMode,
       messageLength: number,
       runtimeType: TelemetryRuntimeType,
       thinkingLevel: TelemetryThinkingLevel
@@ -60,6 +64,12 @@ export function useTelemetry() {
     []
   );
 
+  const statsTabOpened = useCallback(
+    (viewMode: "session" | "last-request", showModeBreakdown: boolean) => {
+      trackStatsTabOpened(viewMode, showModeBreakdown);
+    },
+    []
+  );
   const streamCompleted = useCallback(
     (model: string, wasInterrupted: boolean, durationSecs: number, outputTokens: number) => {
       trackStreamCompleted(model, wasInterrupted, durationSecs, outputTokens);
@@ -83,14 +93,23 @@ export function useTelemetry() {
     trackErrorOccurred(errorType, context);
   }, []);
 
+  const experimentOverridden = useCallback(
+    (experimentId: string, assignedVariant: string | boolean | null, userChoice: boolean) => {
+      trackExperimentOverridden(experimentId, assignedVariant, userChoice);
+    },
+    []
+  );
+
   return {
     workspaceSwitched,
     workspaceCreated,
     messageSent,
+    statsTabOpened,
     streamCompleted,
     providerConfigured,
     commandUsed,
     voiceTranscription,
     errorOccurred,
+    experimentOverridden,
   };
 }

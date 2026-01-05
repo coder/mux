@@ -1,22 +1,22 @@
 import { useState, useEffect, useCallback } from "react";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { RuntimeConfig, RuntimeMode } from "@/common/types/runtime";
-import type { UIMode } from "@/common/types/mode";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { parseRuntimeString } from "@/browser/utils/chatCommands";
 import { useDraftWorkspaceSettings } from "@/browser/hooks/useDraftWorkspaceSettings";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
 import {
+  getAgentIdKey,
   getInputKey,
+  getInputImagesKey,
   getModelKey,
-  getModeKey,
+  getThinkingLevelKey,
+  getWorkspaceAISettingsByModeKey,
   getPendingScopeId,
   getProjectScopeId,
-  getThinkingLevelKey,
 } from "@/common/constants/storage";
 import type { Toast } from "@/browser/components/ChatInputToast";
-import { createErrorToast } from "@/browser/components/ChatInputToasts";
 import { useAPI } from "@/browser/contexts/API";
 import type { ImagePart } from "@/common/orpc/types";
 import {
@@ -30,6 +30,8 @@ interface UseCreationWorkspaceOptions {
   onWorkspaceCreated: (metadata: FrontendWorkspaceMetadata) => void;
   /** Current message input for name generation */
   message: string;
+  /** Section ID to assign the new workspace to */
+  sectionId?: string | null;
 }
 
 function syncCreationPreferences(projectPath: string, workspaceId: string): void {
@@ -42,17 +44,37 @@ function syncCreationPreferences(projectPath: string, workspaceId: string): void
     updatePersistedState(getModelKey(workspaceId), projectModel);
   }
 
-  const projectMode = readPersistedState<UIMode | null>(getModeKey(projectScopeId), null);
-  if (projectMode) {
-    updatePersistedState(getModeKey(workspaceId), projectMode);
+  const projectAgentId = readPersistedState<string | null>(getAgentIdKey(projectScopeId), null);
+  if (projectAgentId) {
+    updatePersistedState(getAgentIdKey(workspaceId), projectAgentId);
   }
 
-  const projectThinking = readPersistedState<ThinkingLevel | null>(
+  const projectThinkingLevel = readPersistedState<ThinkingLevel | null>(
     getThinkingLevelKey(projectScopeId),
     null
   );
-  if (projectThinking) {
-    updatePersistedState(getThinkingLevelKey(workspaceId), projectThinking);
+  if (projectThinkingLevel !== null) {
+    updatePersistedState(getThinkingLevelKey(workspaceId), projectThinkingLevel);
+  }
+
+  if (projectModel) {
+    const effectiveAgentId =
+      typeof projectAgentId === "string" && projectAgentId.trim().length > 0
+        ? projectAgentId.trim().toLowerCase()
+        : "exec";
+    const effectiveThinking: ThinkingLevel = projectThinkingLevel ?? "off";
+
+    updatePersistedState<Partial<Record<string, { model: string; thinkingLevel: ThinkingLevel }>>>(
+      getWorkspaceAISettingsByModeKey(workspaceId),
+      (prev) => {
+        const record = prev && typeof prev === "object" ? prev : {};
+        return {
+          ...(record as Partial<Record<string, { model: string; thinkingLevel: ThinkingLevel }>>),
+          [effectiveAgentId]: { model: projectModel, thinkingLevel: effectiveThinking },
+        };
+      },
+      {}
+    );
   }
 }
 
@@ -79,6 +101,8 @@ interface UseCreationWorkspaceReturn {
   nameState: WorkspaceNameState;
   /** The confirmed identity being used for creation (null until generation resolves) */
   creatingWithIdentity: WorkspaceIdentity | null;
+  /** Reload branches (e.g., after git init) */
+  reloadBranches: () => Promise<void>;
 }
 
 /**
@@ -93,6 +117,7 @@ export function useCreationWorkspace({
   projectPath,
   onWorkspaceCreated,
   message,
+  sectionId,
 }: UseCreationWorkspaceOptions): UseCreationWorkspaceReturn {
   const { api } = useAPI();
   const [branches, setBranches] = useState<string[]>([]);
@@ -129,26 +154,45 @@ export function useCreationWorkspace({
   // Destructure name state functions for use in callbacks
   const { waitForGeneration } = workspaceNameState;
 
-  // Load branches on mount
-  useEffect(() => {
-    // This can be created with an empty project path when the user is
-    // creating a new workspace.
-    if (!projectPath.length || !api) {
-      return;
-    }
+  // Load branches - used on mount and after git init
+  // Returns a cleanup function to track mounted state
+  const loadBranches = useCallback(async () => {
+    if (!projectPath.length || !api) return;
     setBranchesLoaded(false);
-    const loadBranches = async () => {
+    try {
+      const result = await api.projects.listBranches({ projectPath });
+      setBranches(result.branches);
+      setRecommendedTrunk(result.recommendedTrunk);
+    } catch (err) {
+      console.error("Failed to load branches:", err);
+    } finally {
+      setBranchesLoaded(true);
+    }
+  }, [projectPath, api]);
+
+  // Load branches on mount with mounted guard
+  useEffect(() => {
+    if (!projectPath.length || !api) return;
+    let mounted = true;
+    setBranchesLoaded(false);
+    const doLoad = async () => {
       try {
         const result = await api.projects.listBranches({ projectPath });
+        if (!mounted) return;
         setBranches(result.branches);
         setRecommendedTrunk(result.recommendedTrunk);
       } catch (err) {
         console.error("Failed to load branches:", err);
       } finally {
-        setBranchesLoaded(true);
+        if (mounted) {
+          setBranchesLoaded(true);
+        }
       }
     };
-    void loadBranches();
+    void doLoad();
+    return () => {
+      mounted = false;
+    };
   }, [projectPath, api]);
 
   const handleSend = useCallback(
@@ -189,6 +233,7 @@ export function useCreationWorkspace({
           trunkBranch: settings.trunkBranch,
           title: identity.title,
           runtimeConfig,
+          sectionId: sectionId ?? undefined,
         });
 
         if (!createResult.success) {
@@ -203,8 +248,50 @@ export function useCreationWorkspace({
 
         const { metadata } = createResult;
 
-        // Now send the message to the newly created workspace
-        const result = await api.workspace.sendMessage({
+        // Best-effort: persist the initial AI settings to the backend immediately so this workspace
+        // is portable across devices even before the first stream starts.
+        try {
+          api.workspace
+            .updateModeAISettings({
+              workspaceId: metadata.id,
+              mode: settings.mode,
+              aiSettings: {
+                model: settings.model,
+                thinkingLevel: settings.thinkingLevel,
+              },
+            })
+            .catch(() => {
+              // Ignore (offline / older backend). sendMessage will persist as a fallback.
+            });
+        } catch {
+          api.workspace
+            .updateAISettings({
+              workspaceId: metadata.id,
+              aiSettings: {
+                model: settings.model,
+                thinkingLevel: settings.thinkingLevel,
+              },
+            })
+            .catch(() => {
+              // Ignore (offline / older backend). sendMessage will persist as a fallback.
+            });
+        }
+        // Sync preferences immediately (before switching)
+        syncCreationPreferences(projectPath, metadata.id);
+        if (projectPath) {
+          const pendingScopeId = getPendingScopeId(projectPath);
+          updatePersistedState(getInputKey(pendingScopeId), "");
+          updatePersistedState(getInputImagesKey(pendingScopeId), undefined);
+        }
+
+        // Switch to the workspace IMMEDIATELY after creation to exit splash faster.
+        // The user sees the workspace UI while sendMessage kicks off the stream.
+        onWorkspaceCreated(metadata);
+        setIsSending(false);
+
+        // Fire sendMessage in the background - stream errors will be shown in the workspace UI
+        // via the normal stream-error event handling. We don't await this.
+        void api.workspace.sendMessage({
           workspaceId: metadata.id,
           message: messageText,
           options: {
@@ -213,22 +300,6 @@ export function useCreationWorkspace({
           },
         });
 
-        if (!result.success) {
-          setToast(createErrorToast(result.error));
-          setIsSending(false);
-          return false;
-        }
-
-        // Sync preferences and complete
-        syncCreationPreferences(projectPath, metadata.id);
-        if (projectPath) {
-          const pendingInputKey = getInputKey(getPendingScopeId(projectPath));
-          updatePersistedState(pendingInputKey, "");
-        }
-        // Settings are already persisted via useDraftWorkspaceSettings
-        // Notify parent to switch workspace (clears input via parent unmount)
-        onWorkspaceCreated(metadata);
-        setIsSending(false);
         return true;
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : String(err);
@@ -248,8 +319,12 @@ export function useCreationWorkspace({
       projectScopeId,
       onWorkspaceCreated,
       getRuntimeString,
+      settings.mode,
+      settings.model,
+      settings.thinkingLevel,
       settings.trunkBranch,
       waitForGeneration,
+      sectionId,
     ]
   );
 
@@ -272,5 +347,7 @@ export function useCreationWorkspace({
     nameState: workspaceNameState,
     // The confirmed identity being used for creation (null until generation resolves)
     creatingWithIdentity,
+    // Reload branches (e.g., after git init)
+    reloadBranches: loadBranches,
   };
 }

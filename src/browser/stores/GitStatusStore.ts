@@ -3,32 +3,35 @@ import type { AppRouter } from "@/node/orpc/router";
 import type { FrontendWorkspaceMetadata, GitStatus } from "@/common/types/workspace";
 import { parseGitShowBranchForStatus } from "@/common/utils/git/parseGitStatus";
 import {
-  GIT_STATUS_SCRIPT,
+  generateGitStatusScript,
   GIT_FETCH_SCRIPT,
   parseGitStatusScriptOutput,
 } from "@/common/utils/git/gitStatus";
+import { readPersistedState } from "@/browser/hooks/usePersistedState";
+import { STORAGE_KEYS, WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { useSyncExternalStore } from "react";
 import { MapStore } from "./MapStore";
 import { isSSHRuntime } from "@/common/types/runtime";
+import { RefreshController } from "@/browser/utils/RefreshController";
 
 /**
  * External store for git status of all workspaces.
  *
  * Architecture:
  * - Lives outside React lifecycle (stable references)
- * - Polls git status every 3 seconds
+ * - Event-driven updates (no polling):
+ *   - Initial subscription triggers immediate fetch
+ *   - File-modifying tools trigger debounced refresh (3s)
+ *   - Window focus triggers refresh for visible workspaces
+ *   - Explicit invalidation (branch switch, etc.)
  * - Manages git fetch with exponential backoff
  * - Notifies subscribers when status changes
  * - Components only re-render when their specific workspace status changes
  *
- * Migration from GitStatusContext:
- * - Eliminates provider re-renders every 3 seconds
- * - useSyncExternalStore enables selective re-renders
- * - Store manages polling logic internally (no useEffect cleanup in components)
+ * Uses RefreshController for debouncing, focus handling, and in-flight guards.
  */
 
 // Configuration
-const GIT_STATUS_INTERVAL_MS = 3000; // 3 seconds - interactive updates
 const MAX_CONCURRENT_GIT_OPS = 5;
 
 // Fetch configuration - aggressive intervals for fresh data
@@ -45,16 +48,31 @@ export class GitStatusStore {
   private statuses = new MapStore<string, GitStatus | null>();
   private fetchCache = new Map<string, FetchState>();
   private client: RouterClient<AppRouter> | null = null;
-  private pollInterval: NodeJS.Timeout | null = null;
   private immediateUpdateQueued = false;
   private workspaceMetadata = new Map<string, FrontendWorkspaceMetadata>();
   private isActive = true;
 
+  // File modification subscription
+  private fileModifyUnsubscribe: (() => void) | null = null;
+
+  // RefreshController handles debouncing, focus/visibility, and in-flight guards
+  private readonly refreshController: RefreshController;
+
+  // Per-workspace refreshing state for UI shimmer effects
+  private refreshingWorkspaces = new MapStore<string, boolean>();
+
   setClient(client: RouterClient<AppRouter>) {
     this.client = client;
   }
+
   constructor() {
-    // Store is ready for workspace sync
+    // Create refresh controller with proactive focus refresh (catches external git changes)
+    this.refreshController = new RefreshController({
+      onRefresh: () => this.updateGitStatus(),
+      debounceMs: 3000, // Same as TOOL_REFRESH_DEBOUNCE_MS in ReviewPanel
+      refreshOnFocus: true, // Proactively refresh on focus to catch external changes
+      focusDebounceMs: 500, // Prevent spam from rapid alt-tabbing
+    });
   }
 
   /**
@@ -70,16 +88,14 @@ export class GitStatusStore {
   subscribeKey = (workspaceId: string, listener: () => void) => {
     const unsubscribe = this.statuses.subscribeKey(workspaceId, listener);
 
-    // If a component subscribes after we started polling (common on initial load),
-    // kick an immediate update so the UI doesn't wait for the next interval tick.
-    //
-    // We schedule the update as a microtask to avoid doing work in the subscribe
-    // call itself, and to preserve the batching/concurrency limits of updateGitStatus().
+    // If a component subscribes after initial load, kick an immediate update
+    // so the UI doesn't wait. Uses microtask to batch multiple subscriptions.
+    // Routes through RefreshController to respect in-flight guards.
     if (!this.immediateUpdateQueued && this.isActive && this.client) {
       this.immediateUpdateQueued = true;
       queueMicrotask(() => {
         this.immediateUpdateQueued = false;
-        void this.updateGitStatus();
+        this.refreshController.requestImmediate();
       });
     }
 
@@ -102,7 +118,52 @@ export class GitStatusStore {
     });
   }
 
+  /**
+   * Invalidate status for a workspace, triggering immediate refresh.
+   * Call after operations that change git state (e.g., branch switch).
+   *
+   * Note: Old status is preserved during refresh to avoid UI flash.
+   * Components can use isWorkspaceRefreshing() to show a shimmer effect.
+   */
+  invalidateWorkspace(workspaceId: string): void {
+    // Increment generation to mark any in-flight status checks as stale
+    const currentGen = this.invalidationGeneration.get(workspaceId) ?? 0;
+    this.invalidationGeneration.set(workspaceId, currentGen + 1);
+    // Mark workspace as refreshing (for shimmer effect)
+    this.setWorkspaceRefreshing(workspaceId, true);
+    // Trigger immediate refresh (routes through RefreshController for in-flight guard)
+    this.refreshController.requestImmediate();
+  }
+
+  /**
+   * Set the refreshing state for a workspace and notify subscribers.
+   */
+  private setWorkspaceRefreshing(workspaceId: string, refreshing: boolean): void {
+    this.refreshingWorkspaces.bump(workspaceId);
+    // Store the actual value in a simple map (MapStore is for notifications)
+    this.refreshingWorkspacesCache.set(workspaceId, refreshing);
+  }
+
+  private refreshingWorkspacesCache = new Map<string, boolean>();
+
+  /**
+   * Check if a workspace is currently refreshing.
+   */
+  isWorkspaceRefreshing(workspaceId: string): boolean {
+    return this.refreshingWorkspacesCache.get(workspaceId) ?? false;
+  }
+
+  /**
+   * Subscribe to refreshing state changes for a specific workspace.
+   */
+  subscribeRefreshingKey = (workspaceId: string, listener: () => void) => {
+    return this.refreshingWorkspaces.subscribeKey(workspaceId, listener);
+  };
+
   private statusCache = new Map<string, GitStatus | null>();
+  // Generation counter to detect and ignore stale status updates after invalidation.
+  // Incremented on invalidate; status updates check generation to avoid race conditions.
+  private invalidationGeneration = new Map<string, number>();
 
   /**
    * Sync workspaces with metadata.
@@ -122,42 +183,16 @@ export class GitStatusStore {
     for (const id of Array.from(this.statusCache.keys())) {
       if (!metadata.has(id)) {
         this.statusCache.delete(id);
+        this.invalidationGeneration.delete(id);
         this.statuses.delete(id); // Also clean up reactive state
       }
     }
 
-    // Start polling only once (not on every sync)
-    if (!this.pollInterval) {
-      this.startPolling();
-    }
-  }
+    // Bind focus/visibility listeners once (catches external git changes)
+    this.refreshController.bindListeners();
 
-  /**
-   * Start polling git status.
-   */
-  private startPolling(): void {
-    // Clear existing interval
-    if (this.pollInterval) {
-      clearInterval(this.pollInterval);
-    }
-
-    // Run immediately
-    void this.updateGitStatus();
-
-    // Poll at configured interval
-    this.pollInterval = setInterval(() => {
-      void this.updateGitStatus();
-    }, GIT_STATUS_INTERVAL_MS);
-  }
-
-  /**
-   * Stop polling git status.
-   */
-  private stopPolling(): void {
-    if (this.pollInterval) {
-      clearInterval(this.pollInterval);
-      this.pollInterval = null;
-    }
+    // Initial fetch for all workspaces (routes through RefreshController)
+    this.refreshController.requestImmediate();
   }
 
   /**
@@ -175,6 +210,12 @@ export class GitStatusStore {
 
     if (workspaces.length === 0) {
       return;
+    }
+
+    // Capture current generation for each workspace to detect stale results
+    const generationSnapshot = new Map<string, number>();
+    for (const ws of workspaces) {
+      generationSnapshot.set(ws.id, this.invalidationGeneration.get(ws.id) ?? 0);
     }
 
     // Try to fetch workspaces that need it (background, non-blocking)
@@ -199,6 +240,19 @@ export class GitStatusStore {
 
     // Update statuses - bump version if changed
     for (const [workspaceId, newStatus] of results) {
+      // Skip stale results: if generation changed since we started, the result is outdated
+      const snapshotGen = generationSnapshot.get(workspaceId) ?? 0;
+      const currentGen = this.invalidationGeneration.get(workspaceId) ?? 0;
+      if (snapshotGen !== currentGen) {
+        // Status was invalidated during check - discard this stale result
+        continue;
+      }
+
+      // Clear refreshing state now that we have a result
+      if (this.refreshingWorkspacesCache.get(workspaceId)) {
+        this.setWorkspaceRefreshing(workspaceId, false);
+      }
+
       const oldStatus = this.statusCache.get(workspaceId) ?? null;
 
       // Check if status actually changed (cheap for simple objects)
@@ -245,13 +299,24 @@ export class GitStatusStore {
     }
 
     try {
+      // Use the same diff base as the review panel (per-workspace override,
+      // falling back to the project default).
+      const projectDefaultBase = readPersistedState<string>(
+        STORAGE_KEYS.reviewDefaultBase(metadata.projectPath),
+        WORKSPACE_DEFAULTS.reviewBase
+      );
+      const baseRef = readPersistedState<string>(
+        STORAGE_KEYS.reviewDiffBase(metadata.id),
+        projectDefaultBase
+      );
+
+      // Generate script with the configured base ref
+      const script = generateGitStatusScript(baseRef);
+
       const result = await this.client.workspace.executeBash({
         workspaceId: metadata.id,
-        script: GIT_STATUS_SCRIPT,
-        options: {
-          timeout_secs: 5,
-          niceness: 19,
-        },
+        script,
+        options: { timeout_secs: 5 },
       });
 
       if (!result.success) {
@@ -397,10 +462,7 @@ export class GitStatusStore {
       const result = await this.client.workspace.executeBash({
         workspaceId,
         script: GIT_FETCH_SCRIPT,
-        options: {
-          timeout_secs: 30,
-          niceness: 19,
-        },
+        options: { timeout_secs: 30 },
       });
 
       if (!result.success) {
@@ -446,9 +508,37 @@ export class GitStatusStore {
    */
   dispose(): void {
     this.isActive = false;
-    this.stopPolling();
     this.statuses.clear();
+    this.refreshingWorkspaces.clear();
+    this.refreshingWorkspacesCache.clear();
     this.fetchCache.clear();
+    this.fileModifyUnsubscribe?.();
+    this.fileModifyUnsubscribe = null;
+    this.refreshController.dispose();
+  }
+
+  /**
+   * Subscribe to file-modifying tool completions from WorkspaceStore.
+   * Triggers debounced git status refresh when files change.
+   * Idempotent: only subscribes once, subsequent calls are no-ops.
+   */
+  subscribeToFileModifications(
+    subscribeAny: (listener: (workspaceId: string) => void) => () => void
+  ): void {
+    // Only subscribe once - subsequent calls are no-ops
+    if (this.fileModifyUnsubscribe) {
+      return;
+    }
+
+    this.fileModifyUnsubscribe = subscribeAny((workspaceId) => {
+      // Only schedule if workspace has subscribers (same optimization as before)
+      if (!this.statuses.hasKeySubscribers(workspaceId)) {
+        return;
+      }
+
+      // RefreshController handles debouncing, focus gating, and in-flight guards
+      this.refreshController.schedule();
+    });
   }
 }
 
@@ -484,8 +574,30 @@ export function useGitStatus(workspaceId: string): GitStatus | null {
 }
 
 /**
+ * Hook to check if a workspace's git status is currently being refreshed.
+ * Use this to show shimmer/loading effects while preserving old status.
+ */
+export function useGitStatusRefreshing(workspaceId: string): boolean {
+  const store = getGitStoreInstance();
+
+  return useSyncExternalStore(
+    (listener) => store.subscribeRefreshingKey(workspaceId, listener),
+    () => store.isWorkspaceRefreshing(workspaceId)
+  );
+}
+
+/**
  * Hook to access the raw store for imperative operations.
  */
 export function useGitStatusStoreRaw(): GitStatusStore {
   return getGitStoreInstance();
+}
+
+/**
+ * Invalidate git status for a workspace, triggering an immediate refresh.
+ * Call this after operations that change git state (e.g., branch switch).
+ */
+export function invalidateGitStatus(workspaceId: string): void {
+  const store = getGitStoreInstance();
+  store.invalidateWorkspace(workspaceId);
 }

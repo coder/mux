@@ -103,7 +103,10 @@ describe("chatTimelineReducer", () => {
 
     const withOutput = applyChatEvent(
       initialTimeline,
-      createWorkspaceInitMessage({ lines: ["Starting services"], timestamp: 2 })
+      createWorkspaceInitMessage({
+        lines: [{ line: "Starting services", isError: false }],
+        timestamp: 2,
+      })
     );
 
     const outputMessage = withOutput.find(
@@ -112,7 +115,7 @@ describe("chatTimelineReducer", () => {
 
     expect(outputMessage?.type).toBe("workspace-init");
     expect(outputMessage && "lines" in outputMessage ? outputMessage.lines : []).toEqual([
-      "Starting services",
+      { line: "Starting services", isError: false },
     ]);
 
     const completed = applyChatEvent(
@@ -120,7 +123,10 @@ describe("chatTimelineReducer", () => {
       createWorkspaceInitMessage({
         status: "success",
         exitCode: 0,
-        lines: ["Starting services", "Done"],
+        lines: [
+          { line: "Starting services", isError: false },
+          { line: "Done", isError: false },
+        ],
         timestamp: 3,
       })
     );
@@ -137,8 +143,8 @@ describe("chatTimelineReducer", () => {
       completedMessage && "exitCode" in completedMessage ? completedMessage.exitCode : null
     ).toBe(0);
     expect(completedMessage && "lines" in completedMessage ? completedMessage.lines : []).toEqual([
-      "Starting services",
-      "Done",
+      { line: "Starting services", isError: false },
+      { line: "Done", isError: false },
     ]);
   });
   it("keeps existing parts for the same historyId", () => {

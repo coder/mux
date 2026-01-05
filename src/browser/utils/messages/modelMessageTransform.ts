@@ -44,10 +44,37 @@ export function filterEmptyAssistantMessages(
       return false;
     }
 
-    // Keep assistant messages that have at least one text or tool part
-    const hasContent = msg.parts.some(
-      (part) => (part.type === "text" && part.text) || part.type === "dynamic-tool"
-    );
+    // Keep assistant messages that have at least one part that will survive
+    // conversion to provider ModelMessages.
+    //
+    // Important: We call convertToModelMessages(..., { ignoreIncompleteToolCalls: true }).
+    // That means *incomplete* tool calls (state: "input-available") will be dropped.
+    // If we treat them as content here, we can end up sending an assistant message that
+    // becomes empty after conversion, which the AI SDK rejects ("all messages must have
+    // non-empty content...") and can brick a workspace after a crash.
+    const hasContent = msg.parts.some((part) => {
+      if (part.type === "text") {
+        return part.text.length > 0;
+      }
+
+      // Reasoning-only messages are handled below (provider-dependent).
+      if (part.type === "reasoning") {
+        return false;
+      }
+
+      if (part.type === "dynamic-tool") {
+        // Only completed tool calls produce content that can be replayed to the model.
+        return part.state === "output-available";
+      }
+
+      // File/image parts count as content.
+      if (part.type === "file") {
+        return true;
+      }
+
+      // Future-proofing: unknown parts should not brick the request.
+      return true;
+    });
 
     if (hasContent) {
       return true;
@@ -121,13 +148,15 @@ export function addInterruptedSentinel(messages: MuxMessage[]): MuxMessage[] {
  * @param currentMode The mode for the upcoming assistant response (e.g., "plan", "exec")
  * @param toolNames Optional list of available tool names to include in transition message
  * @param planContent Optional plan content to include when transitioning plan → exec
+ * @param planFilePath Optional plan file path to include when transitioning plan → exec
  * @returns Messages with mode transition context injected if needed
  */
 export function injectModeTransition(
   messages: MuxMessage[],
   currentMode?: string,
   toolNames?: string[],
-  planContent?: string
+  planContent?: string,
+  planFilePath?: string
 ): MuxMessage[] {
   // No mode specified, nothing to do
   if (!currentMode) {
@@ -184,9 +213,10 @@ export function injectModeTransition(
 
   // When transitioning plan → exec with plan content, include the plan for context
   if (lastMode === "plan" && currentMode === "exec" && planContent) {
+    const planFilePathText = planFilePath ? `Plan file path: ${planFilePath}\n\n` : "";
     transitionText += `
 
-The following plan was developed in plan mode. Based on the user's message, determine if they have accepted the plan. If accepted and relevant, use it to guide your implementation:
+${planFilePathText}The following plan was developed in plan mode. Based on the user's message, determine if they have accepted the plan. If accepted and relevant, use it to guide your implementation:
 
 <plan>
 ${planContent}
@@ -392,51 +422,94 @@ function splitMixedContentMessages(messages: ModelMessage[]): ModelMessage[] {
       }
     }
 
-    for (const group of groups) {
+    for (let groupIndex = 0; groupIndex < groups.length; groupIndex++) {
+      const group = groups[groupIndex];
       if (group.parts.length === 0) {
         continue;
       }
 
-      if (group.type === "tool-call") {
-        const partsToInclude = group.parts.filter(
-          (p) => p.type === "tool-call" && toolResultsById.has(p.toolCallId)
-        );
+      // If text is immediately followed by tool calls, keep them together.
+      // Text before tool_use is allowed by Anthropic; only *text after tool_use* is invalid.
+      if (group.type === "text") {
+        const nextGroup = groups[groupIndex + 1];
+        if (nextGroup?.type === "tool-call" && nextGroup.parts.length > 0) {
+          const toolPartsToInclude = nextGroup.parts.filter(
+            (p) => p.type === "tool-call" && toolResultsById.has(p.toolCallId)
+          );
 
-        if (partsToInclude.length === 0) {
+          // If none of the tool calls have results, keep just the text portion.
+          if (toolPartsToInclude.length === 0) {
+            result.push({ role: "assistant", content: group.parts });
+            groupIndex++;
+            continue;
+          }
+
+          const newAssistantMsg: AssistantModelMessage = {
+            role: "assistant",
+            content: [...group.parts, ...toolPartsToInclude],
+          };
+          result.push(newAssistantMsg);
+
+          const relevantResults: ToolModelMessage["content"] = [];
+          for (const part of toolPartsToInclude) {
+            if (part.type !== "tool-call") {
+              continue;
+            }
+            const results = toolResultsById.get(part.toolCallId);
+            if (results) {
+              relevantResults.push(...results);
+              toolResultsById.delete(part.toolCallId);
+            }
+          }
+
+          if (relevantResults.length > 0) {
+            const newToolMsg: ToolModelMessage = {
+              role: "tool",
+              content: relevantResults,
+            };
+            result.push(newToolMsg);
+          }
+
+          groupIndex++;
           continue;
         }
 
-        const newAssistantMsg: AssistantModelMessage = {
-          role: "assistant",
-          content: partsToInclude,
-        };
-        result.push(newAssistantMsg);
+        result.push({ role: "assistant", content: group.parts });
+        continue;
+      }
 
-        const relevantResults: ToolModelMessage["content"] = [];
-        for (const part of partsToInclude) {
-          if (part.type !== "tool-call") {
-            continue;
-          }
-          const results = toolResultsById.get(part.toolCallId);
-          if (results) {
-            relevantResults.push(...results);
-            toolResultsById.delete(part.toolCallId);
-          }
-        }
+      const partsToInclude = group.parts.filter(
+        (p) => p.type === "tool-call" && toolResultsById.has(p.toolCallId)
+      );
 
-        if (relevantResults.length > 0) {
-          const newToolMsg: ToolModelMessage = {
-            role: "tool",
-            content: relevantResults,
-          };
-          result.push(newToolMsg);
+      if (partsToInclude.length === 0) {
+        continue;
+      }
+
+      const newAssistantMsg: AssistantModelMessage = {
+        role: "assistant",
+        content: partsToInclude,
+      };
+      result.push(newAssistantMsg);
+
+      const relevantResults: ToolModelMessage["content"] = [];
+      for (const part of partsToInclude) {
+        if (part.type !== "tool-call") {
+          continue;
         }
-      } else {
-        const newAssistantMsg: AssistantModelMessage = {
-          role: "assistant",
-          content: group.parts,
+        const results = toolResultsById.get(part.toolCallId);
+        if (results) {
+          relevantResults.push(...results);
+          toolResultsById.delete(part.toolCallId);
+        }
+      }
+
+      if (relevantResults.length > 0) {
+        const newToolMsg: ToolModelMessage = {
+          role: "tool",
+          content: relevantResults,
         };
-        result.push(newAssistantMsg);
+        result.push(newToolMsg);
       }
     }
 
@@ -460,6 +533,62 @@ function filterReasoningOnlyMessages(messages: ModelMessage[]): ModelMessage[] {
     const hasNonReasoningContent = msg.content.some((part) => part.type !== "reasoning");
 
     return hasNonReasoningContent;
+  });
+}
+
+/**
+ * Strip Anthropic reasoning parts that lack a valid signature.
+ *
+ * Anthropic's Extended Thinking API requires thinking blocks to include a signature
+ * for replay. The Vercel AI SDK's Anthropic provider only sends reasoning parts to
+ * the API if they have providerOptions.anthropic.signature. Reasoning parts we create
+ * (placeholders) or from history (where we didn't capture the signature) will be
+ * silently dropped by the SDK.
+ *
+ * If all parts of an assistant message are unsigned reasoning, the SDK drops them all,
+ * leaving an empty message that Anthropic rejects with:
+ * "all messages must have non-empty content except for the optional final assistant message"
+ *
+ * This function removes unsigned reasoning upfront and filters resulting empty messages.
+ *
+ * NOTE: This is Anthropic-specific. Other providers (e.g., OpenAI) handle reasoning
+ * differently and don't require signatures.
+ */
+function stripUnsignedAnthropicReasoning(messages: ModelMessage[]): ModelMessage[] {
+  const stripped = messages.map((msg) => {
+    if (msg.role !== "assistant") {
+      return msg;
+    }
+
+    const assistantMsg = msg;
+    if (typeof assistantMsg.content === "string") {
+      return msg;
+    }
+
+    // Filter out reasoning parts without anthropic.signature in providerOptions
+    const content = assistantMsg.content.filter((part) => {
+      if (part.type !== "reasoning") {
+        return true;
+      }
+      // Check for anthropic.signature in providerOptions
+      const anthropicMeta = (part.providerOptions as { anthropic?: { signature?: string } })
+        ?.anthropic;
+      return anthropicMeta?.signature != null;
+    });
+
+    const result: typeof assistantMsg = { ...assistantMsg, content };
+    return result;
+  });
+
+  // Filter out messages that became empty after stripping reasoning
+  return stripped.filter((msg) => {
+    if (msg.role !== "assistant") {
+      return true;
+    }
+    if (typeof msg.content === "string") {
+      return msg.content.length > 0;
+    }
+    return msg.content.length > 0;
   });
 }
 
@@ -499,6 +628,24 @@ function coalesceConsecutiveParts(messages: ModelMessage[]): ModelMessage[] {
       // Merge consecutive reasoning parts (extended thinking)
       if (part.type === "reasoning" && lastPart?.type === "reasoning") {
         lastPart.text += part.text;
+        // Preserve signature from later parts - during streaming, the signature
+        // arrives at the end and is attached to the last reasoning part.
+        // Cast needed because AI SDK's ReasoningPart doesn't have signature,
+        // but our MuxReasoningPart (which flows through convertToModelMessages) does.
+        const partWithSig = part as typeof part & {
+          signature?: string;
+          providerOptions?: { anthropic?: { signature?: string } };
+        };
+        const lastWithSig = lastPart as typeof lastPart & {
+          signature?: string;
+          providerOptions?: { anthropic?: { signature?: string } };
+        };
+        if (partWithSig.signature) {
+          lastWithSig.signature = partWithSig.signature;
+        }
+        if (partWithSig.providerOptions) {
+          lastWithSig.providerOptions = partWithSig.providerOptions;
+        }
         continue;
       }
 
@@ -512,7 +659,6 @@ function coalesceConsecutiveParts(messages: ModelMessage[]): ModelMessage[] {
     };
   });
 }
-
 /**
  * Merge consecutive user messages with newline separators.
  * When filtering removes assistant messages, we can end up with consecutive user messages.
@@ -566,6 +712,107 @@ function mergeConsecutiveUserMessages(messages: ModelMessage[]): ModelMessage[] 
   return merged;
 }
 
+function ensureAnthropicThinkingBeforeToolCalls(messages: ModelMessage[]): ModelMessage[] {
+  const result: ModelMessage[] = [];
+
+  for (const msg of messages) {
+    if (msg.role !== "assistant") {
+      result.push(msg);
+      continue;
+    }
+
+    const assistantMsg = msg;
+    if (typeof assistantMsg.content === "string") {
+      result.push(msg);
+      continue;
+    }
+
+    const content = assistantMsg.content;
+    const hasToolCall = content.some((part) => part.type === "tool-call");
+    if (!hasToolCall) {
+      result.push(msg);
+      continue;
+    }
+
+    let reasoningParts = content.filter((part) => part.type === "reasoning");
+    const nonReasoningParts = content.filter((part) => part.type !== "reasoning");
+
+    // If no reasoning is present, try to merge it from the immediately preceding assistant message
+    // if that message consists of reasoning-only parts. This commonly happens after splitting.
+    if (reasoningParts.length === 0 && result.length > 0) {
+      const prev = result[result.length - 1];
+      if (prev.role === "assistant") {
+        const prevAssistant = prev;
+        if (typeof prevAssistant.content !== "string") {
+          const prevIsReasoningOnly =
+            prevAssistant.content.length > 0 &&
+            prevAssistant.content.every((part) => part.type === "reasoning");
+          if (prevIsReasoningOnly) {
+            result.pop();
+            reasoningParts = prevAssistant.content.filter((part) => part.type === "reasoning");
+          }
+        }
+      }
+    }
+
+    // Anthropic extended thinking requires tool-use assistant messages to start with a thinking block.
+    // If we still have no reasoning available, insert a minimal placeholder reasoning part.
+    // NOTE: The text cannot be empty - Anthropic API rejects empty content.
+    if (reasoningParts.length === 0) {
+      reasoningParts = [{ type: "reasoning" as const, text: "..." }];
+    }
+
+    result.push({
+      ...assistantMsg,
+      content: [...reasoningParts, ...nonReasoningParts],
+    });
+  }
+
+  // Anthropic extended thinking also requires the *final* assistant message in the request
+  // to start with a thinking block. If the last assistant message is text-only (common for
+  // synthetic messages like sub-agent reports), insert an empty reasoning part as a minimal
+  // placeholder. This transformation affects only the provider request, not stored history/UI.
+  for (let i = result.length - 1; i >= 0; i--) {
+    const msg = result[i];
+    if (msg.role !== "assistant") {
+      continue;
+    }
+
+    const assistantMsg = msg;
+
+    if (typeof assistantMsg.content === "string") {
+      // String-only assistant messages need converting to part arrays to insert reasoning.
+      const text = assistantMsg.content;
+      // If it's truly empty, leave it unchanged (it will be filtered elsewhere).
+      if (text.length === 0) break;
+      result[i] = {
+        ...assistantMsg,
+        content: [
+          { type: "reasoning" as const, text: "..." },
+          { type: "text" as const, text },
+        ],
+      };
+      break;
+    }
+
+    const content = assistantMsg.content;
+    if (content.length === 0) {
+      break;
+    }
+    if (content[0].type === "reasoning") {
+      break;
+    }
+
+    result[i] = {
+      ...assistantMsg,
+      content: [{ type: "reasoning" as const, text: "..." }, ...content],
+    };
+    break;
+  }
+
+  return result;
+}
+
 /**
  * Transform messages to ensure provider API compliance.
  * Applies multiple transformation passes based on provider requirements:
@@ -582,7 +829,11 @@ function mergeConsecutiveUserMessages(messages: ModelMessage[]): ModelMessage[] 
  * @param messages The messages to transform
  * @param provider The provider name (e.g., "anthropic", "openai")
  */
-export function transformModelMessages(messages: ModelMessage[], provider: string): ModelMessage[] {
+export function transformModelMessages(
+  messages: ModelMessage[],
+  provider: string,
+  options?: { anthropicThinkingEnabled?: boolean }
+): ModelMessage[] {
   // Pass 0: Coalesce consecutive parts to reduce JSON overhead from streaming (applies to all providers)
   const coalesced = coalesceConsecutiveParts(messages);
 
@@ -596,8 +847,15 @@ export function transformModelMessages(messages: ModelMessage[], provider: strin
     // Only filter out reasoning-only messages (messages with no text/tool-call content)
     reasoningHandled = filterReasoningOnlyMessages(split);
   } else if (provider === "anthropic") {
-    // Anthropic: Filter out reasoning-only messages (API rejects messages with only reasoning)
-    reasoningHandled = filterReasoningOnlyMessages(split);
+    // Anthropic: When extended thinking is enabled, preserve reasoning-only messages and ensure
+    // tool-call messages start with reasoning. When it's disabled, filter reasoning-only messages.
+    if (options?.anthropicThinkingEnabled) {
+      // First strip reasoning without signatures (SDK will drop them anyway, causing empty messages)
+      const signedReasoning = stripUnsignedAnthropicReasoning(split);
+      reasoningHandled = ensureAnthropicThinkingBeforeToolCalls(signedReasoning);
+    } else {
+      reasoningHandled = filterReasoningOnlyMessages(split);
+    }
   } else {
     // Unknown provider: no reasoning handling
     reasoningHandled = split;
@@ -692,4 +950,68 @@ export function validateAnthropicCompliance(messages: ModelMessage[]): {
   }
 
   return { valid: true };
+}
+
+function hasAnthropicThinkingSignature(part: { providerOptions?: unknown } | undefined): boolean {
+  const providerOptions = part?.providerOptions as
+    | { anthropic?: { signature?: unknown } }
+    | undefined;
+  return (
+    typeof providerOptions?.anthropic?.signature === "string" &&
+    providerOptions.anthropic.signature.length > 0
+  );
+}
+
+/**
+ * Anthropic Extended Thinking self-healing check.
+ *
+ * When Anthropic `thinking` is enabled, the API requires that assistant messages containing
+ * tool calls begin with a thinking block. The AI SDK only replays thinking blocks when the
+ * reasoning part includes a valid Anthropic signature.
+ *
+ * If we have tool-call messages but no signed reasoning to replay, Anthropic rejects the
+ * request with errors like:
+ * "Expected thinking or redacted_thinking, but found tool_use."
+ *
+ * In that case, the safest fallback is to disable thinking for the request.
+ */
+export function getAnthropicThinkingDisableReason(messages: ModelMessage[]): string | undefined {
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    if (msg.role !== "assistant") {
+      continue;
+    }
+
+    // String-only assistant messages never contain tool calls.
+    if (typeof msg.content === "string") {
+      continue;
+    }
+
+    // Treat unsigned reasoning as absent (the AI SDK will drop it).
+    const content = msg.content.filter(
+      (part) => part.type !== "reasoning" || hasAnthropicThinkingSignature(part)
+    );
+
+    const hasToolCall = content.some((part) => part.type === "tool-call");
+    if (!hasToolCall) {
+      continue;
+    }
+
+    const firstPart = content[0];
+    if (!firstPart) {
+      // Shouldn't happen, but defensively treat it as unsupported.
+      return `Message ${i}: tool-call assistant message became empty after stripping unsigned reasoning`;
+    }
+
+    if (firstPart.type !== "reasoning") {
+      return `Message ${i}: tool-call assistant message does not start with signed reasoning (starts with ${firstPart.type})`;
+    }
+
+    if (!hasAnthropicThinkingSignature(firstPart)) {
+      // Shouldn't happen because we filtered, but keep error message explicit.
+      return `Message ${i}: assistant message starts with reasoning but is missing anthropic.signature`;
+    }
+  }
+
+  return undefined;
 }

@@ -1,4 +1,12 @@
-import React, { createContext, useContext, useSyncExternalStore, useCallback } from "react";
+import React, {
+  createContext,
+  useContext,
+  useSyncExternalStore,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   type ExperimentId,
   EXPERIMENTS,
@@ -6,6 +14,8 @@ import {
   getExperimentList,
 } from "@/common/constants/experiments";
 import { getStorageChangeEvent } from "@/common/constants/events";
+import type { ExperimentValue } from "@/common/orpc/types";
+import { useAPI } from "@/browser/contexts/API";
 
 /**
  * Subscribe to experiment changes for a specific experiment ID.
@@ -28,21 +38,75 @@ function subscribeToExperiment(experimentId: ExperimentId, callback: () => void)
 }
 
 /**
- * Get current experiment state from localStorage.
+ * Get explicit localStorage override for an experiment.
+ * Returns undefined if no value is set or parsing fails.
  */
-function getExperimentSnapshot(experimentId: ExperimentId): boolean {
-  const experiment = EXPERIMENTS[experimentId];
+function getExperimentOverrideSnapshot(experimentId: ExperimentId): boolean | undefined {
   const key = getExperimentKey(experimentId);
 
   try {
     const stored = window.localStorage.getItem(key);
+    // Check for literal "undefined" string defensively - this can occur if
+    // JSON.stringify(undefined) is accidentally stored (it returns "undefined")
     if (stored === null || stored === "undefined") {
-      return experiment.enabledByDefault;
+      return undefined;
     }
-    return JSON.parse(stored) as boolean;
+
+    const parsed = JSON.parse(stored) as unknown;
+    return typeof parsed === "boolean" ? parsed : undefined;
   } catch {
-    return experiment.enabledByDefault;
+    return undefined;
   }
+}
+
+/**
+ * Get current experiment state from localStorage.
+ * Returns the stored value or the default if not set.
+ */
+function getExperimentSnapshot(experimentId: ExperimentId): boolean {
+  const experiment = EXPERIMENTS[experimentId];
+  return getExperimentOverrideSnapshot(experimentId) ?? experiment.enabledByDefault;
+}
+
+/**
+ * Check if user has explicitly set a local override for an experiment.
+ * Returns true if there's a value in localStorage (not using default).
+ */
+function hasLocalOverride(experimentId: ExperimentId): boolean {
+  return getExperimentOverrideSnapshot(experimentId) !== undefined;
+}
+
+/**
+ * Convert PostHog experiment variant to boolean enabled state.
+ * For experiments with control/test variants, "test" means enabled.
+ */
+function getRemoteExperimentEnabled(value: string | boolean): boolean {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  return value === "test";
+}
+
+/**
+ * True when any remote experiment value is still pending a background PostHog refresh.
+ */
+function hasPendingRemoteExperimentValues(
+  remoteExperiments: Partial<Record<ExperimentId, ExperimentValue>>
+): boolean {
+  return Object.values(remoteExperiments).some(
+    (remote) => remote?.source === "cache" && remote.value === null
+  );
+}
+
+const REMOTE_EXPERIMENTS_POLL_INITIAL_DELAY_MS = 100;
+const REMOTE_EXPERIMENTS_POLL_MAX_DELAY_MS = 5_000;
+const REMOTE_EXPERIMENTS_POLL_MAX_ATTEMPTS = 8;
+
+function getRemoteExperimentsPollDelayMs(attempt: number): number {
+  return Math.min(
+    REMOTE_EXPERIMENTS_POLL_INITIAL_DELAY_MS * 2 ** attempt,
+    REMOTE_EXPERIMENTS_POLL_MAX_DELAY_MS
+  );
 }
 
 /**
@@ -70,6 +134,8 @@ function setExperimentState(experimentId: ExperimentId, enabled: boolean): void 
  */
 interface ExperimentsContextValue {
   setExperiment: (experimentId: ExperimentId, enabled: boolean) => void;
+  remoteExperiments: Partial<Record<ExperimentId, ExperimentValue>> | null;
+  reloadRemoteExperiments: () => Promise<void>;
 }
 
 const ExperimentsContext = createContext<ExperimentsContextValue | null>(null);
@@ -83,8 +149,104 @@ export function ExperimentsProvider(props: { children: React.ReactNode }) {
     setExperimentState(experimentId, enabled);
   }, []);
 
+  const apiState = useAPI();
+  const [remoteExperiments, setRemoteExperiments] = useState<Partial<
+    Record<ExperimentId, ExperimentValue>
+  > | null>(null);
+
+  const loadRemoteExperiments = useCallback(async () => {
+    if (apiState.status !== "connected" || !apiState.api) {
+      setRemoteExperiments(null);
+      return;
+    }
+
+    try {
+      const result = await apiState.api.experiments.getAll();
+      setRemoteExperiments(result as Partial<Record<ExperimentId, ExperimentValue>>);
+    } catch {
+      setRemoteExperiments(null);
+    }
+  }, [apiState.status, apiState.api]);
+
+  const reloadRemoteExperiments = useCallback(async () => {
+    if (apiState.status !== "connected" || !apiState.api) {
+      setRemoteExperiments(null);
+      return;
+    }
+
+    try {
+      await apiState.api.experiments.reload();
+    } catch {
+      // Best effort
+    }
+
+    await loadRemoteExperiments();
+  }, [apiState.status, apiState.api, loadRemoteExperiments]);
+
+  // On cold start, experiments.getAll can return { source: "cache", value: null } while
+  // ExperimentsService refreshes from PostHog in the background. Poll a few times so the
+  // renderer picks up remote variants without requiring a manual reload.
+  const remotePollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const remotePollAttemptRef = useRef(0);
+
+  const clearRemotePoll = useCallback(() => {
+    if (remotePollTimeoutRef.current === null) {
+      return;
+    }
+
+    clearTimeout(remotePollTimeoutRef.current);
+    remotePollTimeoutRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      clearRemotePoll();
+    };
+  }, [clearRemotePoll]);
+
+  useEffect(() => {
+    if (apiState.status !== "connected" || !apiState.api) {
+      remotePollAttemptRef.current = 0;
+      clearRemotePoll();
+      return;
+    }
+
+    if (!remoteExperiments) {
+      remotePollAttemptRef.current = 0;
+      clearRemotePoll();
+      return;
+    }
+
+    if (!hasPendingRemoteExperimentValues(remoteExperiments)) {
+      remotePollAttemptRef.current = 0;
+      clearRemotePoll();
+      return;
+    }
+
+    if (remotePollTimeoutRef.current !== null) {
+      return;
+    }
+
+    const attempt = remotePollAttemptRef.current;
+    if (attempt >= REMOTE_EXPERIMENTS_POLL_MAX_ATTEMPTS) {
+      return;
+    }
+
+    const delayMs = getRemoteExperimentsPollDelayMs(attempt);
+    remotePollTimeoutRef.current = setTimeout(() => {
+      remotePollTimeoutRef.current = null;
+      remotePollAttemptRef.current += 1;
+      void loadRemoteExperiments();
+    }, delayMs);
+  }, [apiState.status, apiState.api, remoteExperiments, clearRemotePoll, loadRemoteExperiments]);
+  useEffect(() => {
+    void loadRemoteExperiments();
+  }, [loadRemoteExperiments]);
+
   return (
-    <ExperimentsContext.Provider value={{ setExperiment }}>
+    <ExperimentsContext.Provider
+      value={{ setExperiment, remoteExperiments, reloadRemoteExperiments }}
+    >
       {props.children}
     </ExperimentsContext.Provider>
   );
@@ -95,16 +257,59 @@ export function ExperimentsProvider(props: { children: React.ReactNode }) {
  * Uses useSyncExternalStore for efficient, selective re-renders.
  * Only re-renders when THIS specific experiment changes.
  *
+ * Resolution priority:
+ * - If userOverridable && user has explicitly set a local value → use local
+ * - If remote PostHog assignment exists → use remote
+ * - Otherwise → use local (which may be default)
+ *
  * @param experimentId - The experiment to subscribe to
  * @returns Whether the experiment is enabled
  */
 export function useExperimentValue(experimentId: ExperimentId): boolean {
+  const experiment = EXPERIMENTS[experimentId];
   const subscribe = useCallback(
     (callback: () => void) => subscribeToExperiment(experimentId, callback),
     [experimentId]
   );
 
   const getSnapshot = useCallback(() => getExperimentSnapshot(experimentId), [experimentId]);
+
+  const localEnabled = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+
+  const context = useContext(ExperimentsContext);
+  const remote = context?.remoteExperiments?.[experimentId];
+
+  // User-overridable: local wins if explicitly set
+  if (experiment.userOverridable && hasLocalOverride(experimentId)) {
+    return localEnabled;
+  }
+
+  // Remote assignment (if available and not disabled)
+  if (remote && remote.source !== "disabled" && remote.value !== null) {
+    return getRemoteExperimentEnabled(remote.value);
+  }
+
+  // Fallback to local (which may be default)
+  return localEnabled;
+}
+
+/**
+ * Hook to read only an explicit local override for an experiment.
+ *
+ * Returns `undefined` when the user has not explicitly set a value in localStorage.
+ * This is important for user-overridable experiments: the backend can then apply
+ * the PostHog assignment instead of treating the default value as a user choice.
+ */
+export function useExperimentOverrideValue(experimentId: ExperimentId): boolean | undefined {
+  const subscribe = useCallback(
+    (callback: () => void) => subscribeToExperiment(experimentId, callback),
+    [experimentId]
+  );
+
+  const getSnapshot = useCallback(
+    () => getExperimentOverrideSnapshot(experimentId),
+    [experimentId]
+  );
 
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
@@ -115,6 +320,11 @@ export function useExperimentValue(experimentId: ExperimentId): boolean {
  *
  * @returns Function to set experiment state
  */
+
+export function useRemoteExperimentValue(experimentId: ExperimentId): ExperimentValue | null {
+  const context = useContext(ExperimentsContext);
+  return context?.remoteExperiments?.[experimentId] ?? null;
+}
 export function useSetExperiment(): (experimentId: ExperimentId, enabled: boolean) => void {
   const context = useContext(ExperimentsContext);
   if (!context) {
@@ -149,6 +359,8 @@ export function useExperiment(experimentId: ExperimentId): [boolean, (enabled: b
  */
 export function useAllExperiments(): Record<ExperimentId, boolean> {
   const experiments = getExperimentList();
+  const context = useContext(ExperimentsContext);
+  const remoteExperiments = context?.remoteExperiments;
 
   // Subscribe to all experiments
   const subscribe = useCallback(
@@ -161,11 +373,29 @@ export function useAllExperiments(): Record<ExperimentId, boolean> {
 
   const getSnapshot = useCallback(() => {
     const result: Partial<Record<ExperimentId, boolean>> = {};
+
     for (const exp of experiments) {
-      result[exp.id] = getExperimentSnapshot(exp.id);
+      const localValue = getExperimentSnapshot(exp.id);
+      const remote = remoteExperiments?.[exp.id];
+
+      // User-overridable: local wins if explicitly set
+      if (exp.userOverridable && hasLocalOverride(exp.id)) {
+        result[exp.id] = localValue;
+        continue;
+      }
+
+      // Remote assignment (if available and not disabled)
+      if (remote && remote.source !== "disabled" && remote.value !== null) {
+        result[exp.id] = getRemoteExperimentEnabled(remote.value);
+        continue;
+      }
+
+      // Fallback to local (which may be default)
+      result[exp.id] = localValue;
     }
+
     return result as Record<ExperimentId, boolean>;
-  }, [experiments]);
+  }, [experiments, remoteExperiments]);
 
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }

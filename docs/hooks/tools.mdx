@@ -1,0 +1,229 @@
+---
+title: Tool Hooks
+description: Block dangerous commands, lint after edits, and set up your environment
+---
+
+<Note>Tool hooks are experimental. Expect breaking changes while we iterate.</Note>
+
+Tool hooks let you run your own scripts before and after mux tool executions.
+
+## What do you want to do?
+
+<CardGroup cols={3}>
+  <Card title="Block dangerous commands" icon="shield" href="#block-dangerous-commands">
+    Prevent force pushes, rm -rf, etc.
+  </Card>
+  <Card title="Lint after file edits" icon="check" href="#lint-after-file-edits">
+    Run ruff, eslint, tsc after changes
+  </Card>
+  <Card title="Set up environment" icon="gear" href="#set-up-environment">
+    direnv, nvm, virtualenv
+  </Card>
+</CardGroup>
+
+---
+
+## Block dangerous commands
+
+Create `.mux/tool_pre` to validate commands before they run. Exit non-zero to block:
+
+```bash
+#!/usr/bin/env bash
+# .mux/tool_pre - runs before every tool
+
+if [[ "$MUX_TOOL" == "bash" ]]; then
+  script=$(echo "$MUX_TOOL_INPUT" | jq -r '.script')
+
+  if echo "$script" | grep -q 'push.*--force'; then
+    echo "❌ Force push blocked" >&2
+    exit 1
+  fi
+
+  if echo "$script" | grep -q 'rm -rf /'; then
+    echo "❌ Dangerous rm blocked" >&2
+    exit 1
+  fi
+fi
+
+exit 0  # Allow tool to run
+```
+
+```bash
+chmod +x .mux/tool_pre
+```
+
+The agent sees your error message and can adjust its approach.
+
+---
+
+## Lint after file edits
+
+Create `.mux/tool_post` to run validation after tools complete:
+
+```bash
+#!/usr/bin/env bash
+# .mux/tool_post - runs after every tool
+
+if [[ "$MUX_TOOL" == file_edit_* ]]; then
+  file=$(echo "$MUX_TOOL_INPUT" | jq -r '.file_path')
+
+  case "$file" in
+    *.py)
+      ruff check "$file" 2>&1 || exit 1
+      ;;
+    *.ts|*.tsx)
+      npx tsc --noEmit "$file" 2>&1 || exit 1
+      ;;
+  esac
+fi
+```
+
+```bash
+chmod +x .mux/tool_post
+```
+
+Lint errors appear in `hook_output` and the agent can fix them.
+
+---
+
+## Set up environment
+
+Create `.mux/tool_env` to configure your shell environment. This file is **sourced** before every `bash` tool call:
+
+```bash
+# .mux/tool_env - sourced before bash commands
+
+# direnv
+eval "$(direnv export bash 2>/dev/null)" || true
+
+# nvm
+# export NVM_DIR="$HOME/.nvm"
+# [ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
+
+# Python virtualenv
+# source .venv/bin/activate 2>/dev/null || true
+```
+
+<Note>
+  Unlike hooks, `tool_env` doesn't need to be executable—it's sourced, not run. It only affects
+  `bash` tools.
+</Note>
+
+---
+
+## Reference
+
+<Accordion title="Environment Variables">
+
+All hooks receive these environment variables:
+
+| Variable              | Description                                                      |
+| --------------------- | ---------------------------------------------------------------- |
+| `MUX_TOOL`            | Tool name: `bash`, `file_edit_replace_string`, `file_read`, etc. |
+| `MUX_TOOL_INPUT`      | JSON string with tool arguments (placeholder if large)           |
+| `MUX_TOOL_INPUT_PATH` | Path to full input JSON (when input is large)                    |
+| `MUX_WORKSPACE_ID`    | Current workspace identifier                                     |
+| `MUX_PROJECT_DIR`     | Workspace root directory                                         |
+
+**Post-hook only (`tool_post`):**
+
+| Variable               | Description                           |
+| ---------------------- | ------------------------------------- |
+| `MUX_TOOL_RESULT`      | Tool result JSON (truncated if large) |
+| `MUX_TOOL_RESULT_PATH` | Path to full result JSON file         |
+
+</Accordion>
+
+<Accordion title="Exit Codes">
+
+| Exit Code | `tool_pre` behavior                | `tool_post` behavior                  |
+| --------- | ---------------------------------- | ------------------------------------- |
+| `0`       | Tool executes normally             | Success, output shown to agent        |
+| Non-zero  | Tool blocked, error shown to agent | Failure, error shown in `hook_output` |
+
+</Accordion>
+
+<Accordion title="Hook Priority & Location">
+
+mux searches for each hook file in this order:
+
+1. Project-level: `.mux/<hook>`
+2. User-level: `~/.mux/<hook>`
+
+This applies to `tool_pre`, `tool_post`, and `tool_env`.
+
+For SSH workspaces, hooks execute **on the remote machine**.
+
+</Accordion>
+
+<Accordion title="Timeouts">
+
+Hooks must complete within 5 minutes or they're terminated. Long-running tools (builds, tests) don't count against this—only hook execution time.
+
+</Accordion>
+
+<Accordion title="Comparison">
+
+| Feature        | `.mux/tool_pre`          | `.mux/tool_post`      | `.mux/tool_env`         |
+| -------------- | ------------------------ | --------------------- | ----------------------- |
+| **Purpose**    | Block dangerous commands | Lint/validate results | Environment setup       |
+| **Runs**       | Before tool              | After tool            | Sourced in bash shell   |
+| **Applies to** | All tools                | All tools             | `bash` tool only        |
+| **Use case**   | Block force-push         | Run ruff/eslint       | direnv, nvm, virtualenv |
+
+</Accordion>
+
+---
+
+## More examples
+
+<Accordion title="Format files after edits">
+
+```bash
+#!/usr/bin/env bash
+# .mux/tool_post
+
+if [[ "$MUX_TOOL" == file_edit_* ]]; then
+  file=$(echo "$MUX_TOOL_INPUT" | jq -r '.file_path')
+
+  if prettier --write "$file" 2>/dev/null; then
+    echo "Formatted: $file" >&2
+  fi
+fi
+```
+
+</Accordion>
+
+<Accordion title="Log tool execution times">
+
+```bash
+#!/usr/bin/env bash
+# .mux/tool_post
+
+# MUX_TOOL_RESULT contains the result JSON
+echo "$(date '+%H:%M:%S') $MUX_TOOL completed" >> /tmp/mux-tools.log
+```
+
+</Accordion>
+
+<Accordion title="Python hook">
+
+```python
+#!/usr/bin/env python3
+# .mux/tool_pre
+
+import os, sys, json
+
+tool = os.environ.get('MUX_TOOL', '')
+tool_input = json.loads(os.environ.get('MUX_TOOL_INPUT', '{}'))
+
+if tool == 'bash':
+    script = tool_input.get('script', '')
+    if 'rm -rf /' in script:
+        print("❌ Blocked dangerous command", file=sys.stderr)
+        sys.exit(1)
+
+sys.exit(0)  # Allow
+```
+
+</Accordion>

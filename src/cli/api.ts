@@ -15,7 +15,11 @@ import { router } from "@/node/orpc/router";
 import { proxifyOrpc } from "./proxifyOrpc";
 import { ServerLockfile } from "@/node/services/serverLockfile";
 import { getMuxHome } from "@/common/constants/paths";
-import type { Command } from "commander";
+import { getArgsAfterSplice } from "./argv";
+
+// index.ts already splices "api" from argv before importing this module,
+// so we just need to get the remaining args after the splice point.
+const args = getArgsAfterSplice();
 
 interface ServerDiscovery {
   baseUrl: string;
@@ -57,9 +61,24 @@ async function discoverServer(): Promise<ServerDiscovery> {
   const { baseUrl, authToken } = await discoverServer();
 
   const proxiedRouter = proxifyOrpc(router(), { baseUrl, authToken });
-  const cli = createCli({ router: proxiedRouter }).buildProgram() as Command;
 
-  cli.name("mux api");
-  cli.description("Interact with the mux API via a running server");
-  cli.parse();
+  // Use trpc-cli's run() method instead of buildProgram().parse()
+  // run() sets exitOverride on root, uses parseAsync, and handles process exit properly
+  const { run } = createCli({
+    router: proxiedRouter,
+    name: "mux api",
+    description: "Interact with the mux API via a running server",
+  });
+
+  try {
+    await run({ argv: args });
+  } catch (error) {
+    // trpc-cli throws FailedToExitError after calling process.exit()
+    // In Electron, process.exit() doesn't immediately terminate, so the error surfaces.
+    // This is expected and safe to ignore since exit was already requested.
+    if (error instanceof Error && error.constructor.name === "FailedToExitError") {
+      return;
+    }
+    throw error;
+  }
 })();

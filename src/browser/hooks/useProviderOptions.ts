@@ -5,7 +5,6 @@ export function useProviderOptions() {
   return {
     options: context.options,
     setAnthropicOptions: context.setAnthropicOptions,
-    setOpenAIOptions: context.setOpenAIOptions,
     setGoogleOptions: context.setGoogleOptions,
   };
 }

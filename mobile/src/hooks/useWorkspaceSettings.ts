@@ -131,7 +131,13 @@ function validateMode(value: string): WorkspaceMode | null {
 }
 
 function validateThinkingLevel(value: string): ThinkingLevel | null {
-  if (value === "off" || value === "low" || value === "medium" || value === "high") {
+  if (
+    value === "off" ||
+    value === "low" ||
+    value === "medium" ||
+    value === "high" ||
+    value === "xhigh"
+  ) {
     return value;
   }
   return null;

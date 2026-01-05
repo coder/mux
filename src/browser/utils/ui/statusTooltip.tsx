@@ -8,12 +8,14 @@ import { formatRelativeTime } from "@/browser/utils/ui/dateTime";
  */
 export function getStatusTooltip(options: {
   isStreaming: boolean;
+  isAwaitingInput?: boolean;
   streamingModel: string | null;
   agentStatus?: { emoji: string; message: string; url?: string };
   isUnread?: boolean;
   recencyTimestamp?: number | null;
 }): React.ReactNode {
-  const { isStreaming, streamingModel, agentStatus, isUnread, recencyTimestamp } = options;
+  const { isStreaming, isAwaitingInput, streamingModel, agentStatus, isUnread, recencyTimestamp } =
+    options;
 
   // If agent status is set, show message and URL (if available)
   if (agentStatus) {
@@ -27,6 +29,11 @@ export function getStatusTooltip(options: {
       );
     }
     return agentStatus.message;
+  }
+
+  // Show awaiting input status
+  if (isAwaitingInput) {
+    return "Awaiting your input";
   }
 
   // Otherwise show streaming/idle status

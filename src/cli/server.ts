@@ -11,6 +11,13 @@ import { Command } from "commander";
 import { validateProjectPath } from "@/node/utils/pathUtils";
 import { createOrpcServer } from "@/node/orpc/server";
 import type { ORPCContext } from "@/node/orpc/context";
+import { VERSION } from "@/version";
+import {
+  buildMuxMdnsServiceOptions,
+  MdnsAdvertiserService,
+} from "@/node/services/mdnsAdvertiserService";
+import * as os from "os";
+import { getParseOptions } from "./argv";
 
 const program = new Command();
 program
@@ -21,7 +28,7 @@ program
   .option("--auth-token <token>", "optional bearer token for HTTP/WS auth")
   .option("--ssh-host <host>", "SSH hostname/alias for editor deep links (e.g., devbox)")
   .option("--add-project <path>", "add and open project at the specified path (idempotent)")
-  .parse(process.argv);
+  .parse(process.argv, getParseOptions());
 
 const options = program.opts();
 const HOST = options.host as string;
@@ -34,6 +41,17 @@ const CLI_SSH_HOST = options.sshHost as string | undefined;
 
 // Track the launch project path for initial navigation
 let launchProjectPath: string | null = null;
+
+function isLoopbackHost(host: string): boolean {
+  const normalized = host.trim().toLowerCase();
+
+  // IPv4 loopback range (RFC 1122): 127.0.0.0/8
+  if (normalized.startsWith("127.")) {
+    return true;
+  }
+
+  return normalized === "localhost" || normalized === "::1";
+}
 
 // Minimal BrowserWindow stub for services that expect one
 const mockWindow: BrowserWindow = {
@@ -79,6 +97,7 @@ const mockWindow: BrowserWindow = {
     aiService: serviceContainer.aiService,
     projectService: serviceContainer.projectService,
     workspaceService: serviceContainer.workspaceService,
+    taskService: serviceContainer.taskService,
     providerService: serviceContainer.providerService,
     terminalService: serviceContainer.terminalService,
     editorService: serviceContainer.editorService,
@@ -87,13 +106,19 @@ const mockWindow: BrowserWindow = {
     tokenizerService: serviceContainer.tokenizerService,
     serverService: serviceContainer.serverService,
     menuEventService: serviceContainer.menuEventService,
+    workspaceMcpOverridesService: serviceContainer.workspaceMcpOverridesService,
     mcpConfigService: serviceContainer.mcpConfigService,
+    featureFlagService: serviceContainer.featureFlagService,
+    sessionTimingService: serviceContainer.sessionTimingService,
     mcpServerManager: serviceContainer.mcpServerManager,
     voiceService: serviceContainer.voiceService,
     telemetryService: serviceContainer.telemetryService,
+    experimentsService: serviceContainer.experimentsService,
     sessionUsageService: serviceContainer.sessionUsageService,
+    signingService: serviceContainer.signingService,
   };
 
+  const mdnsAdvertiser = new MdnsAdvertiserService();
   const server = await createOrpcServer({
     host: HOST,
     port: PORT,
@@ -104,6 +129,29 @@ const mockWindow: BrowserWindow = {
 
   // Acquire lockfile so other instances know we're running
   await lockfile.acquire(server.baseUrl, AUTH_TOKEN ?? "");
+
+  const mdnsAdvertisementEnabled = config.getMdnsAdvertisementEnabled();
+  if (mdnsAdvertisementEnabled !== false && !isLoopbackHost(HOST)) {
+    const instanceName = config.getMdnsServiceName() ?? `mux-${os.hostname()}`;
+    const serviceOptions = buildMuxMdnsServiceOptions({
+      bindHost: HOST,
+      port: server.port,
+      instanceName,
+      version: VERSION.git_describe,
+      authRequired: AUTH_TOKEN?.trim().length ? true : false,
+    });
+
+    try {
+      await mdnsAdvertiser.start(serviceOptions);
+    } catch (err) {
+      console.warn("Failed to advertise mux API server via mDNS:", err);
+    }
+  } else if (mdnsAdvertisementEnabled === true && isLoopbackHost(HOST)) {
+    console.warn(
+      "mDNS advertisement requested, but the API server is loopback-only. " +
+        "Set --host 0.0.0.0 (or a LAN IP) to enable LAN discovery."
+    );
+  }
 
   console.log(`Server is running on ${server.baseUrl}`);
 
@@ -129,6 +177,12 @@ const mockWindow: BrowserWindow = {
       await serviceContainer.dispose();
 
       // Release lockfile and close server
+      try {
+        await mdnsAdvertiser.stop();
+      } catch (err) {
+        console.warn("Failed to stop mDNS advertiser:", err);
+      }
+
       await lockfile.release();
       await server.close();
 

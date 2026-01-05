@@ -1,6 +1,5 @@
 import { useCallback, useEffect } from "react";
 import type { ProjectConfig } from "@/node/config";
-import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar";
 import { CUSTOM_EVENTS, type CustomEventPayloads } from "@/common/constants/events";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import {
@@ -53,7 +52,6 @@ export function persistWorkspaceCreationPrefill(
 interface UseStartWorkspaceCreationOptions {
   projects: Map<string, ProjectConfig>;
   beginWorkspaceCreation: (projectPath: string) => void;
-  setSelectedWorkspace: (selection: WorkspaceSelection | null) => void;
 }
 
 function resolveProjectPath(
@@ -70,7 +68,6 @@ function resolveProjectPath(
 export function useStartWorkspaceCreation({
   projects,
   beginWorkspaceCreation,
-  setSelectedWorkspace,
 }: UseStartWorkspaceCreationOptions) {
   const startWorkspaceCreation = useCallback(
     (projectPath: string, detail?: StartWorkspaceCreationDetail) => {
@@ -83,9 +80,8 @@ export function useStartWorkspaceCreation({
 
       persistWorkspaceCreationPrefill(resolvedProjectPath, detail);
       beginWorkspaceCreation(resolvedProjectPath);
-      setSelectedWorkspace(null);
     },
-    [projects, beginWorkspaceCreation, setSelectedWorkspace]
+    [projects, beginWorkspaceCreation]
   );
 
   useEffect(() => {

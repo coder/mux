@@ -11,6 +11,7 @@ import {
   WEB_FETCH_MAX_HTML_BYTES,
 } from "@/common/constants/toolLimits";
 import { execBuffered } from "@/node/utils/runtime/helpers";
+import { isMuxMdUrl, parseMuxMdUrl, downloadFromMuxMd, MUX_MD_BASE_URL } from "@/common/lib/muxMd";
 
 const USER_AGENT = "Mux/1.0 (https://github.com/coder/mux; web-fetch tool)";
 
@@ -84,6 +85,33 @@ export const createWebFetchTool: ToolFactory = (config: ToolConfiguration) => {
     inputSchema: TOOL_DEFINITIONS.web_fetch.schema,
     execute: async ({ url }, { abortSignal }): Promise<WebFetchToolResult> => {
       try {
+        // Handle mux.md share links with client-side decryption
+        if (isMuxMdUrl(url)) {
+          const parsed = parseMuxMdUrl(url);
+          if (!parsed) {
+            return { success: false, error: "Invalid mux.md URL format" };
+          }
+          try {
+            const result = await downloadFromMuxMd(parsed.id, parsed.key, abortSignal);
+            let content = result.content;
+            if (content.length > WEB_FETCH_MAX_OUTPUT_BYTES) {
+              content = content.slice(0, WEB_FETCH_MAX_OUTPUT_BYTES) + "\n\n[Content truncated]";
+            }
+            return {
+              success: true,
+              title: result.fileInfo?.name ?? "Shared Message",
+              content,
+              url: `${MUX_MD_BASE_URL}/${parsed.id}#${parsed.key}`,
+              length: content.length,
+            };
+          } catch (err) {
+            return {
+              success: false,
+              error: err instanceof Error ? err.message : "Failed to download from mux.md",
+            };
+          }
+        }
+
         // Build curl command with safe defaults
         // Use shell quoting helper to escape values safely
         const shellQuote = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
