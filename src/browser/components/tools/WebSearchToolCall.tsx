@@ -20,17 +20,20 @@ interface WebSearchToolCallProps {
 }
 
 /**
- * Check if results contain encrypted content (Anthropic's web_search returns encrypted results)
+ * Unwrap JSON container from streamManager's stripEncryptedContent.
+ * Results arrive as { type: "json", value: [...] } or direct array/object.
  */
-function isEncryptedResult(result: unknown): boolean {
-  if (!Array.isArray(result)) return false;
-  return result.some(
-    (item) =>
-      item !== null &&
-      typeof item === "object" &&
-      "encryptedContent" in item &&
-      typeof (item as Record<string, unknown>).encryptedContent === "string"
-  );
+function unwrapResult(result: unknown): unknown {
+  if (
+    result !== null &&
+    typeof result === "object" &&
+    "type" in result &&
+    (result as { type: string }).type === "json" &&
+    "value" in result
+  ) {
+    return (result as { value: unknown }).value;
+  }
+  return result;
 }
 
 /**
@@ -38,14 +41,15 @@ function isEncryptedResult(result: unknown): boolean {
  */
 function extractQuery(args: { query?: string }, result: unknown): string | undefined {
   if (args.query) return args.query;
+  const unwrapped = unwrapResult(result);
   // OpenAI puts query in result.action.query
   if (
-    result !== null &&
-    typeof result === "object" &&
-    "action" in result &&
-    typeof (result as Record<string, unknown>).action === "object"
+    unwrapped !== null &&
+    typeof unwrapped === "object" &&
+    "action" in unwrapped &&
+    typeof (unwrapped as Record<string, unknown>).action === "object"
   ) {
-    const action = (result as { action: Record<string, unknown> }).action;
+    const action = (unwrapped as { action: Record<string, unknown> }).action;
     if (typeof action.query === "string") return action.query;
   }
   return undefined;
@@ -55,14 +59,15 @@ function extractQuery(args: { query?: string }, result: unknown): string | undef
  * Get result count - Anthropic returns array, OpenAI returns { sources: [] }
  */
 function getResultCount(result: unknown): number {
-  if (Array.isArray(result)) return result.length;
+  const unwrapped = unwrapResult(result);
+  if (Array.isArray(unwrapped)) return unwrapped.length;
   if (
-    result !== null &&
-    typeof result === "object" &&
-    "sources" in result &&
-    Array.isArray((result as { sources: unknown }).sources)
+    unwrapped !== null &&
+    typeof unwrapped === "object" &&
+    "sources" in unwrapped &&
+    Array.isArray((unwrapped as { sources: unknown }).sources)
   ) {
-    return (result as { sources: unknown[] }).sources.length;
+    return (unwrapped as { sources: unknown[] }).sources.length;
   }
   return 0;
 }
@@ -73,7 +78,6 @@ export const WebSearchToolCall: React.FC<WebSearchToolCallProps> = ({
   status = "pending",
 }) => {
   const { expanded, toggleExpanded } = useToolExpansion();
-  const encrypted = isEncryptedResult(result);
   const query = extractQuery(args, result);
   const resultCount = getResultCount(result);
 
@@ -88,7 +92,6 @@ export const WebSearchToolCall: React.FC<WebSearchToolCallProps> = ({
         {result !== undefined && resultCount > 0 && (
           <span className="text-secondary ml-2 text-[10px] whitespace-nowrap">
             {resultCount} result{resultCount !== 1 ? "s" : ""}
-            {encrypted && " (encrypted)"}
           </span>
         )}
         <StatusIndicator status={status}>{getStatusDisplay(status)}</StatusIndicator>
@@ -98,7 +101,7 @@ export const WebSearchToolCall: React.FC<WebSearchToolCallProps> = ({
         <ToolDetails>
           <DetailSection>
             <div className="bg-code-bg flex flex-wrap gap-4 rounded px-2 py-1.5 text-[11px] leading-[1.4]">
-{query && (
+              {query && (
                 <div className="flex min-w-0 gap-1.5">
                   <span className="text-secondary font-medium">Query:</span>
                   <span className="text-text">{query}</span>
@@ -107,7 +110,7 @@ export const WebSearchToolCall: React.FC<WebSearchToolCallProps> = ({
             </div>
           </DetailSection>
 
-          {result !== undefined && !encrypted && (
+          {result !== undefined && (
             <DetailSection>
               <DetailLabel>Results</DetailLabel>
               <div className="bg-code-bg max-h-[300px] overflow-y-auto rounded px-3 py-2 text-[12px]">
@@ -115,8 +118,6 @@ export const WebSearchToolCall: React.FC<WebSearchToolCallProps> = ({
               </div>
             </DetailSection>
           )}
-
-
 
           {status === "executing" && !result && (
             <DetailSection>

@@ -50,21 +50,17 @@ export const Conversation: AppStory = {
                 toolCalls: [createWebSearchTool("call-0", "JWT authentication best practices", 5)],
               }
             ),
-            createAssistantMessage(
-              "msg-3",
-              "Great, let me check the current implementation.",
-              {
-                historySequence: 3,
-                timestamp: STABLE_TIMESTAMP - 290000,
-                toolCalls: [
-                  createFileReadTool(
-                    "call-1",
-                    "src/api/users.ts",
-                    "export function getUser(req, res) {\n  const user = db.users.find(req.params.id);\n  res.json(user);\n}"
-                  ),
-                ],
-              }
-            ),
+            createAssistantMessage("msg-3", "Great, let me check the current implementation.", {
+              historySequence: 3,
+              timestamp: STABLE_TIMESTAMP - 290000,
+              toolCalls: [
+                createFileReadTool(
+                  "call-1",
+                  "src/api/users.ts",
+                  "export function getUser(req, res) {\n  const user = db.users.find(req.params.id);\n  res.json(user);\n}"
+                ),
+              ],
+            }),
             createUserMessage("msg-4", "Yes, add JWT token validation", {
               historySequence: 4,
               timestamp: STABLE_TIMESTAMP - 280000,
