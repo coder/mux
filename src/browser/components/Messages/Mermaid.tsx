@@ -118,6 +118,8 @@ export const Mermaid: React.FC<{ chart: string }> = ({ chart }) => {
   // Debounce chart changes to avoid flickering during streaming
   const [debouncedChart, setDebouncedChart] = useState(chart);
   useEffect(() => {
+    // Clear stale errors when chart changes - avoids error flash at end of stream
+    setError(null);
     const timer = setTimeout(() => setDebouncedChart(chart), 350);
     return () => clearTimeout(timer);
   }, [chart]);
