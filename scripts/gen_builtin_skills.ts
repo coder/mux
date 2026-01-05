@@ -208,6 +208,34 @@ function extractDocsPages(docsJson: unknown): string[] {
   return pages;
 }
 
+function existsPathCaseSensitive(filePath: string): boolean {
+  if (!fs.existsSync(filePath)) {
+    return false;
+  }
+
+  // On case-insensitive filesystems (common on macOS), fs.existsSync can return true
+  // for paths that differ only by case. We want doc page resolution to be stable
+  // across platforms, so require exact-case matches.
+  const abs = path.resolve(filePath);
+  const parsed = path.parse(abs);
+
+  let current = parsed.root;
+  const parts = abs
+    .slice(parsed.root.length)
+    .split(path.sep)
+    .filter(Boolean);
+
+  for (const part of parts) {
+    const entries = fs.readdirSync(current);
+    if (!entries.includes(part)) {
+      return false;
+    }
+    current = path.join(current, part);
+  }
+
+  return true;
+}
+
 function resolveDocsPageFilePath(page: string): string {
   const candidates = [
     path.join(DOCS_DIR, `${page}.mdx`),
@@ -217,7 +245,7 @@ function resolveDocsPageFilePath(page: string): string {
   ];
 
   for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) return candidate;
+    if (existsPathCaseSensitive(candidate)) return candidate;
   }
 
   throw new Error(`docs/docs.json references '${page}' but no file found under docs/`);
