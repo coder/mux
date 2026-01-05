@@ -34,6 +34,7 @@ COPY src/ src/
 COPY tsconfig.json tsconfig.main.json ./
 COPY scripts/generate-version.sh scripts/generate-builtin-agents.sh scripts/generate-builtin-skills.sh scripts/
 COPY scripts/gen_builtin_skills.ts scripts/
+COPY docs/ docs/
 COPY index.html terminal.html vite.config.ts ./
 COPY public/ public/
 COPY static/ static/
