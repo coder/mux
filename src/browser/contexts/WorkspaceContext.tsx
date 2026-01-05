@@ -476,12 +476,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
               : null;
 
             if (parentMeta) {
-              setSelectedWorkspace({
-                workspaceId: parentMeta.id,
-                projectPath: parentMeta.projectPath,
-                projectName: parentMeta.projectName,
-                namedWorkspacePath: parentMeta.namedWorkspacePath,
-              });
+              setSelectedWorkspace(toWorkspaceSelection(parentMeta));
               continue;
             }
 
@@ -498,12 +493,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
               );
 
             if (fallbackMeta) {
-              setSelectedWorkspace({
-                workspaceId: fallbackMeta.id,
-                projectPath: fallbackMeta.projectPath,
-                projectName: fallbackMeta.projectName,
-                namedWorkspacePath: fallbackMeta.namedWorkspacePath,
-              });
+              setSelectedWorkspace(toWorkspaceSelection(fallbackMeta));
             } else if (projectPath) {
               navigateToProject(projectPath);
             } else {
