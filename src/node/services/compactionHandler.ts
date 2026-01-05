@@ -18,68 +18,25 @@ import {
 } from "@/common/utils/messages/extractEditedFiles";
 
 /**
- * Check if a string looks like raw tool call JSON that the model incorrectly
- * output as text. This can happen when tools are disabled during compaction
- * but the model still tries to make a tool call.
+ * Check if a string is just a raw JSON object, which suggests the model
+ * tried to output a tool call as text (happens when tools are disabled).
  *
- * Known patterns:
- * - bash tool: {"script": "...", "timeout_secs": ..., "run_in_background": ..., "display_name": ...}
- * - file_edit: {"file_path": "...", "old_string": "...", "new_string": ...}
- * - task: {"prompt": "...", "title": "...", ...}
+ * A valid compaction summary should be prose text describing the conversation,
+ * not a JSON blob. This general check catches any tool that might leak through.
  */
-function looksLikeToolCallJson(text: string): boolean {
+function looksLikeRawJsonObject(text: string): boolean {
   const trimmed = text.trim();
-  // Must start with { and end with }
+
+  // Must be a JSON object (not array, not primitive)
   if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) {
     return false;
   }
 
   try {
     const parsed: unknown = JSON.parse(trimmed);
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-      return false;
-    }
-
-    // Check for common tool input field patterns
-    const keys = Object.keys(parsed as Record<string, unknown>);
-
-    // bash tool pattern
-    if (
-      keys.includes("script") &&
-      (keys.includes("timeout_secs") || keys.includes("display_name"))
-    ) {
-      return true;
-    }
-
-    // file_edit pattern
-    if (
-      keys.includes("file_path") &&
-      (keys.includes("old_string") || keys.includes("new_string"))
-    ) {
-      return true;
-    }
-
-    // task pattern
-    if (keys.includes("prompt") && keys.includes("title")) {
-      return true;
-    }
-
-    // file_read pattern
-    if (keys.includes("filePath") && (keys.includes("offset") || keys.includes("limit"))) {
-      return true;
-    }
-
-    // web_fetch/web_search pattern
-    if (keys.includes("url") && keys.length <= 3) {
-      return true;
-    }
-    if (keys.includes("query") && keys.length === 1) {
-      return true;
-    }
-
-    return false;
+    // Must parse as a non-null, non-array object
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed);
   } catch {
-    // Not valid JSON
     return false;
   }
 }
@@ -184,13 +141,12 @@ export class CompactionHandler {
       .map((part) => part.text)
       .join("");
 
-    // Self-healing: Reject compaction if summary looks like raw tool call JSON.
-    // This can happen when tools are disabled but the model still tries to make a tool call,
-    // outputting the tool input as plain text instead. Using this as a summary would brick
-    // the workspace by making subsequent messages start with tool call JSON.
-    if (looksLikeToolCallJson(summary)) {
+    // Self-healing: Reject compaction if summary is just a raw JSON object.
+    // This happens when tools are disabled but the model still tries to output a tool call.
+    // A valid summary should be prose text, not a JSON blob.
+    if (looksLikeRawJsonObject(summary)) {
       log.warn(
-        "Compaction summary looks like raw tool call JSON - aborting compaction to prevent corrupted history",
+        "Compaction summary is a raw JSON object - aborting compaction to prevent corrupted history",
         {
           workspaceId: this.workspaceId,
           summaryPreview: summary.slice(0, 200),
