@@ -715,7 +715,11 @@ export const terminal = {
     output: eventIterator(z.number()),
   },
   openWindow: {
-    input: z.object({ workspaceId: z.string() }),
+    input: z.object({
+      workspaceId: z.string(),
+      /** Optional session ID to reattach to an existing terminal session (for pop-out handoff) */
+      sessionId: z.string().optional(),
+    }),
     output: z.void(),
   },
   closeWindow: {
