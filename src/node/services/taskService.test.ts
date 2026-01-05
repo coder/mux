@@ -7,7 +7,7 @@ import { execSync } from "node:child_process";
 import { Config } from "@/node/config";
 import { HistoryService } from "@/node/services/historyService";
 import { PartialService } from "@/node/services/partialService";
-import { TaskService } from "@/node/services/taskService";
+import { TaskService, type AgentTaskStatus } from "@/node/services/taskService";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { Ok, Err, type Result } from "@/common/types/result";
 import type { StreamEndEvent } from "@/common/types/stream";
@@ -15,8 +15,21 @@ import { createMuxMessage } from "@/common/types/message";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { AIService } from "@/node/services/aiService";
 import type { WorkspaceService } from "@/node/services/workspaceService";
-import type { InitStateManager } from "@/node/services/initStateManager";
-import { InitStateManager as RealInitStateManager } from "@/node/services/initStateManager";
+import {
+  InitStateManager as RealInitStateManager,
+  type InitStateManager,
+} from "@/node/services/initStateManager";
+interface TaskServiceStatusInternal {
+  setTaskStatus: (
+    workspaceId: string,
+    status: AgentTaskStatus,
+    options?: { allowMissing?: boolean }
+  ) => Promise<void>;
+}
+
+interface TaskServiceWaiterInternal extends TaskServiceStatusInternal {
+  resolveWaiters: (taskId: string, report: { reportMarkdown: string; title?: string }) => void;
+}
 
 function initGitRepo(projectPath: string): void {
   execSync("git init -b main", { cwd: projectPath, stdio: "ignore" });
@@ -121,6 +134,7 @@ function createWorkspaceServiceMocks(
     resumeStream: ReturnType<typeof mock>;
     remove: ReturnType<typeof mock>;
     emit: ReturnType<typeof mock>;
+    on: ReturnType<typeof mock>;
   }>
 ): {
   workspaceService: WorkspaceService;
@@ -128,6 +142,7 @@ function createWorkspaceServiceMocks(
   resumeStream: ReturnType<typeof mock>;
   remove: ReturnType<typeof mock>;
   emit: ReturnType<typeof mock>;
+  on: ReturnType<typeof mock>;
 } {
   const sendMessage =
     overrides?.sendMessage ?? mock((): Promise<Result<void>> => Promise.resolve(Ok(undefined)));
@@ -135,19 +150,47 @@ function createWorkspaceServiceMocks(
     overrides?.resumeStream ?? mock((): Promise<Result<void>> => Promise.resolve(Ok(undefined)));
   const remove =
     overrides?.remove ?? mock((): Promise<Result<void>> => Promise.resolve(Ok(undefined)));
-  const emit = overrides?.emit ?? mock(() => true);
 
-  return {
-    workspaceService: {
-      sendMessage,
-      resumeStream,
-      remove,
-      emit,
-    } as unknown as WorkspaceService,
+  const listenersByEvent = new Map<string, Array<(...args: unknown[]) => void>>();
+
+  const workspaceService = {} as unknown as WorkspaceService;
+
+  const emit =
+    overrides?.emit ??
+    mock((event: string, ...args: unknown[]) => {
+      const listeners = listenersByEvent.get(event);
+      if (listeners) {
+        for (const listener of listeners) {
+          listener(...args);
+        }
+      }
+      return true;
+    });
+
+  const on =
+    overrides?.on ??
+    mock((event: string, listener: (...args: unknown[]) => void) => {
+      const list = listenersByEvent.get(event) ?? [];
+      list.push(listener);
+      listenersByEvent.set(event, list);
+      return workspaceService;
+    });
+
+  Object.assign(workspaceService as unknown as Record<string, unknown>, {
     sendMessage,
     resumeStream,
     remove,
     emit,
+    on,
+  });
+
+  return {
+    workspaceService,
+    sendMessage,
+    resumeStream,
+    remove,
+    emit,
+    on,
   };
 }
 
@@ -354,15 +397,8 @@ describe("TaskService", () => {
     expect(queued.data.status).toBe("queued");
 
     // Free the slot by marking the first task as reported.
-    await config.editConfig((cfg) => {
-      for (const [_project, project] of cfg.projects) {
-        const ws = project.workspaces.find((w) => w.id === running.data.taskId);
-        if (ws) {
-          ws.taskStatus = "reported";
-        }
-      }
-      return cfg;
-    });
+    const internal = taskService as unknown as TaskServiceStatusInternal;
+    await internal.setTaskStatus(running.data.taskId, "reported");
 
     await taskService.initialize();
 
@@ -458,9 +494,8 @@ describe("TaskService", () => {
       requestingWorkspaceId: parentTask.data.taskId,
     });
 
-    const internal = taskService as unknown as {
+    const internal = taskService as unknown as TaskServiceWaiterInternal & {
       maybeStartQueuedTasks: () => Promise<void>;
-      resolveWaiters: (taskId: string, report: { reportMarkdown: string; title?: string }) => void;
     };
 
     await internal.maybeStartQueuedTasks();
@@ -579,15 +614,8 @@ describe("TaskService", () => {
     );
 
     // Free slot and start queued tasks.
-    await config.editConfig((cfg) => {
-      for (const [_project, project] of cfg.projects) {
-        const ws = project.workspaces.find((w) => w.id === running.data.taskId);
-        if (ws) {
-          ws.taskStatus = "reported";
-        }
-      }
-      return cfg;
-    });
+    const internal = taskService as unknown as TaskServiceStatusInternal;
+    await internal.setTaskStatus(running.data.taskId, "reported");
 
     await taskService.initialize();
 
@@ -894,7 +922,16 @@ describe("TaskService", () => {
 
     const { aiService } = createAIServiceMocks(config);
     const { workspaceService, resumeStream } = createWorkspaceServiceMocks();
-    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+    const { historyService, taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+
+    const writeHistory = await historyService.appendToHistory(
+      rootWorkspaceId,
+      createMuxMessage("user-root", "user", "hi", { timestamp: Date.now() })
+    );
+    expect(writeHistory.success).toBe(true);
 
     const internal = taskService as unknown as {
       handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
@@ -916,6 +953,102 @@ describe("TaskService", () => {
         thinkingLevel: "medium",
       })
     );
+
+    const resumeCalls = (resumeStream as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    const options = resumeCalls[0]?.[1];
+    if (!options || typeof options !== "object") {
+      throw new Error("Expected resumeStream to be called with an options object");
+    }
+
+    const additionalSystemInstructions = (options as { additionalSystemInstructions?: unknown })
+      .additionalSystemInstructions;
+    expect(typeof additionalSystemInstructions).toBe("string");
+    expect(additionalSystemInstructions).toContain(childTaskId);
+  });
+
+  test("defers auto-resume during compaction until history is rewritten", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const childTaskId = "task-222";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              {
+                path: path.join(projectPath, "root"),
+                id: rootWorkspaceId,
+                name: "root",
+                aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+              },
+              {
+                path: path.join(projectPath, "child-task"),
+                id: childTaskId,
+                name: "agent_explore_child",
+                parentWorkspaceId: rootWorkspaceId,
+                agentType: "explore",
+                taskStatus: "running",
+                taskModelString: "openai:gpt-5.2",
+                taskThinkingLevel: "medium",
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, resumeStream } = createWorkspaceServiceMocks();
+    const { historyService, taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+
+    const writeHistory = await historyService.appendToHistory(
+      rootWorkspaceId,
+      createMuxMessage("compaction-request", "user", "/compact", {
+        timestamp: Date.now(),
+        muxMetadata: {
+          type: "compaction-request",
+          rawCommand: "/compact",
+          parsed: {},
+        },
+      })
+    );
+    expect(writeHistory.success).toBe(true);
+
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+    };
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: rootWorkspaceId,
+      messageId: "assistant-compaction",
+      metadata: { model: "openai:gpt-5.2" },
+      parts: [],
+    });
+
+    // Should not resume immediately while compaction is in progress.
+    expect(resumeStream).toHaveBeenCalledTimes(0);
+
+    const clearResult = await historyService.clearHistory(rootWorkspaceId);
+    expect(clearResult.success).toBe(true);
+
+    const appendSummary = await historyService.appendToHistory(
+      rootWorkspaceId,
+      createMuxMessage("summary", "assistant", "summary", { timestamp: Date.now() })
+    );
+    expect(appendSummary.success).toBe(true);
+
+    await new Promise((resolve) => setTimeout(resolve, 250));
+
+    expect(resumeStream).toHaveBeenCalledTimes(1);
 
     const resumeCalls = (resumeStream as unknown as { mock: { calls: unknown[][] } }).mock.calls;
     const options = resumeCalls[0]?.[1];
@@ -1038,6 +1171,107 @@ describe("TaskService", () => {
     expect(remove).toHaveBeenNthCalledWith(2, parentTaskId, true);
   });
 
+  test("initialize cleans up orphaned agent tasks when parent workspace is missing", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const missingParentId = "missing-parent";
+    const orphanId = "task-orphan";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              {
+                path: path.join(projectPath, "orphan"),
+                id: orphanId,
+                name: "agent_explore_orphan",
+                parentWorkspaceId: missingParentId,
+                agentType: "explore",
+                taskStatus: "queued",
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const remove = mock(async (workspaceId: string): Promise<Result<void>> => {
+      await config.removeWorkspace(workspaceId);
+      return Ok(undefined);
+    });
+    const { workspaceService } = createWorkspaceServiceMocks({ remove });
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+
+    await taskService.initialize();
+
+    expect(remove).toHaveBeenCalledWith(orphanId, true);
+    expect(config.findWorkspace(orphanId)).toBeNull();
+  });
+
+  test("handleWorkspaceRemoved terminates descendant tasks for a removed workspace", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const parentTaskId = "task-parent";
+    const childTaskId = "task-child";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
+              {
+                path: path.join(projectPath, "parent-task"),
+                id: parentTaskId,
+                name: "agent_exec_parent",
+                parentWorkspaceId: rootWorkspaceId,
+                agentType: "exec",
+                taskStatus: "running",
+              },
+              {
+                path: path.join(projectPath, "child-task"),
+                id: childTaskId,
+                name: "agent_explore_child",
+                parentWorkspaceId: parentTaskId,
+                agentType: "explore",
+                taskStatus: "running",
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const remove = mock(async (workspaceId: string): Promise<Result<void>> => {
+      await config.removeWorkspace(workspaceId);
+      return Ok(undefined);
+    });
+    const { workspaceService } = createWorkspaceServiceMocks({ remove });
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+
+    const internal = taskService as unknown as {
+      handleWorkspaceRemoved: (workspaceId: string) => Promise<void>;
+    };
+
+    await internal.handleWorkspaceRemoved(rootWorkspaceId);
+
+    expect(remove).toHaveBeenNthCalledWith(1, childTaskId, true);
+    expect(remove).toHaveBeenNthCalledWith(2, parentTaskId, true);
+
+    expect(config.findWorkspace(childTaskId)).toBeNull();
+    expect(config.findWorkspace(parentTaskId)).toBeNull();
+  });
+
   test("initialize resumes awaiting_report tasks after restart", async () => {
     const config = await createTestConfig(rootDir);
 
@@ -1118,16 +1352,162 @@ describe("TaskService", () => {
     // Wait longer than timeout while task is still queued.
     await new Promise((r) => setTimeout(r, 100));
 
-    const internal = taskService as unknown as {
-      setTaskStatus: (workspaceId: string, status: "queued" | "running") => Promise<void>;
-      resolveWaiters: (taskId: string, report: { reportMarkdown: string; title?: string }) => void;
-    };
+    const internal = taskService as unknown as TaskServiceWaiterInternal;
 
     await internal.setTaskStatus(childId, "running");
     internal.resolveWaiters(childId, { reportMarkdown: "ok" });
 
     const report = await reportPromise;
     expect(report.reportMarkdown).toBe("ok");
+  });
+
+  test("setTaskStatus refuses invalid transitions out of reported", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-111";
+    const childId = "child-222";
+    const reportedAt = new Date().toISOString();
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
+              {
+                path: path.join(projectPath, "child"),
+                id: childId,
+                name: "agent_explore_child",
+                parentWorkspaceId: parentId,
+                agentType: "explore",
+                taskStatus: "reported",
+                reportedAt,
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
+    });
+
+    const { taskService } = createTaskServiceHarness(config);
+
+    const internal = taskService as unknown as TaskServiceStatusInternal;
+
+    await internal.setTaskStatus(childId, "running");
+
+    const cfg = config.loadConfigOrDefault();
+    const child = Array.from(cfg.projects.values())
+      .flatMap((p) => p.workspaces)
+      .find((w) => w.id === childId);
+
+    expect(child?.taskStatus).toBe("reported");
+    expect(child?.reportedAt).toBe(reportedAt);
+  });
+
+  test("setTaskStatus stamps reportedAt when marking reported", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-111";
+    const childId = "child-222";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
+              {
+                path: path.join(projectPath, "child"),
+                id: childId,
+                name: "agent_explore_child",
+                parentWorkspaceId: parentId,
+                agentType: "explore",
+                taskStatus: "running",
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
+    });
+
+    const { taskService } = createTaskServiceHarness(config);
+
+    const internal = taskService as unknown as TaskServiceStatusInternal;
+
+    await internal.setTaskStatus(childId, "reported");
+
+    const cfg = config.loadConfigOrDefault();
+    const child = Array.from(cfg.projects.values())
+      .flatMap((p) => p.workspaces)
+      .find((w) => w.id === childId);
+
+    expect(child?.taskStatus).toBe("reported");
+    expect(child?.reportedAt).toBeTruthy();
+    expect(Number.isNaN(Date.parse(child!.reportedAt!))).toBe(false);
+  });
+
+  test("waitForAgentReport returns immediately for reported tasks (no hang)", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-111";
+    const childId = "child-222";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
+              {
+                path: path.join(projectPath, "child"),
+                id: childId,
+                name: "agent_explore_child",
+                parentWorkspaceId: parentId,
+                agentType: "explore",
+                taskStatus: "reported",
+                reportedAt: new Date().toISOString(),
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
+    });
+
+    const { historyService, taskService } = createTaskServiceHarness(config);
+
+    // Persist the agent_report tool-call so waitForAgentReport can recover after restarts.
+    const historyMsg = createMuxMessage(
+      "assistant-child-history",
+      "assistant",
+      "",
+      { timestamp: Date.now() },
+      [
+        {
+          type: "dynamic-tool",
+          toolCallId: "agent-report-call-1",
+          toolName: "agent_report",
+          input: { reportMarkdown: "Hello from child", title: "Result" },
+          state: "output-available",
+          output: { success: true },
+        },
+      ]
+    );
+
+    const append = await historyService.appendToHistory(childId, historyMsg);
+    expect(append.success).toBe(true);
+
+    const report = await taskService.waitForAgentReport(childId, { timeoutMs: 25 });
+    expect(report.reportMarkdown).toBe("Hello from child");
+    expect(report.title).toBe("Result");
   });
 
   test("waitForAgentReport returns cached report even after workspace is removed", async () => {
@@ -1161,9 +1541,7 @@ describe("TaskService", () => {
 
     const { taskService } = createTaskServiceHarness(config);
 
-    const internal = taskService as unknown as {
-      resolveWaiters: (taskId: string, report: { reportMarkdown: string; title?: string }) => void;
-    };
+    const internal = taskService as unknown as TaskServiceWaiterInternal;
     internal.resolveWaiters(childId, { reportMarkdown: "ok", title: "t" });
 
     await config.removeWorkspace(childId);
@@ -1204,9 +1582,7 @@ describe("TaskService", () => {
 
     const { taskService } = createTaskServiceHarness(config);
 
-    const internal = taskService as unknown as {
-      resolveWaiters: (taskId: string, report: { reportMarkdown: string; title?: string }) => void;
-    };
+    const internal = taskService as unknown as TaskServiceWaiterInternal;
     internal.resolveWaiters(childId, { reportMarkdown: "ok", title: "t" });
 
     await config.removeWorkspace(childId);
@@ -1246,9 +1622,7 @@ describe("TaskService", () => {
 
     const { taskService } = createTaskServiceHarness(config);
 
-    const internal = taskService as unknown as {
-      resolveWaiters: (taskId: string, report: { reportMarkdown: string; title?: string }) => void;
-    };
+    const internal = taskService as unknown as TaskServiceWaiterInternal;
     internal.resolveWaiters(childId, { reportMarkdown: "ok", title: "t" });
 
     await config.removeWorkspace(childId);
@@ -1288,8 +1662,7 @@ describe("TaskService", () => {
 
     const { taskService } = createTaskServiceHarness(config);
 
-    const internal = taskService as unknown as {
-      resolveWaiters: (taskId: string, report: { reportMarkdown: string; title?: string }) => void;
+    const internal = taskService as unknown as TaskServiceWaiterInternal & {
       cleanupExpiredCompletedReports: (nowMs: number) => void;
     };
     internal.resolveWaiters(childId, { reportMarkdown: "ok", title: "t" });
