@@ -281,13 +281,13 @@ lint-fix: node_modules/.installed src/version.ts $(BUILTIN_SKILLS_GENERATED) ## 
 	@./scripts/lint.sh --fix
 
 ifeq ($(OS),Windows_NT)
-typecheck: node_modules/.installed src/version.ts ## Run TypeScript type checking (uses tsgo for 10x speedup)
+typecheck: node_modules/.installed src/version.ts $(BUILTIN_AGENTS_GENERATED) $(BUILTIN_SKILLS_GENERATED) ## Run TypeScript type checking (uses tsgo for 10x speedup)
 	@# On Windows, use npm run because bun x doesn't correctly pass arguments
 	@npmx concurrently -g \
 		"$(TSGO) --noEmit" \
 		"$(TSGO) --noEmit -p tsconfig.main.json"
 else
-typecheck: node_modules/.installed src/version.ts
+typecheck: node_modules/.installed src/version.ts $(BUILTIN_AGENTS_GENERATED) $(BUILTIN_SKILLS_GENERATED)
 	@bun x concurrently -g \
 		"$(TSGO) --noEmit" \
 		"$(TSGO) --noEmit -p tsconfig.main.json"
