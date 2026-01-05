@@ -272,6 +272,10 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       const current = selectedWorkspaceRef.current;
       const newValue = typeof update === "function" ? update(current) : update;
 
+      // Keep the ref in sync immediately so async handlers (metadata events, etc.) can
+      // reliably see the user's latest navigation intent.
+      selectedWorkspaceRef.current = newValue;
+
       if (newValue) {
         navigateToWorkspace(newValue.workspaceId);
         // Persist to localStorage for next session
@@ -405,34 +409,46 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         for await (const event of iterator) {
           if (signal.aborted) break;
 
-          // 1. ALWAYS update metadata map first - this is the critical data update
-          if (event.metadata !== null) {
-            ensureCreatedAt(event.metadata);
-            seedWorkspaceLocalStorageFromBackend(event.metadata);
+          const meta = event.metadata;
+
+          // 1. ALWAYS normalize incoming metadata first - this is the critical data update.
+          if (meta !== null) {
+            ensureCreatedAt(meta);
+            seedWorkspaceLocalStorageFromBackend(meta);
+          }
+
+          const isNowArchived =
+            meta !== null && isWorkspaceArchived(meta.archivedAt, meta.unarchivedAt);
+
+          // If the currently-selected workspace is being archived, navigate away *before*
+          // removing it from the active metadata map. Otherwise we can briefly render the
+          // welcome screen while still on `/workspace/:id`.
+          if (meta !== null && isNowArchived) {
+            const currentSelection = selectedWorkspaceRef.current;
+            if (currentSelection?.workspaceId === event.workspaceId) {
+              selectedWorkspaceRef.current = null;
+              updatePersistedState(SELECTED_WORKSPACE_KEY, null);
+              navigateToProject(meta.projectPath);
+            }
           }
 
           // Capture deleted workspace info before removing from map (needed for navigation)
           const deletedMeta =
-            event.metadata === null ? workspaceMetadataRef.current.get(event.workspaceId) : null;
+            meta === null ? workspaceMetadataRef.current.get(event.workspaceId) : null;
 
           setWorkspaceMetadata((prev) => {
             const updated = new Map(prev);
-            const isNewWorkspace = !prev.has(event.workspaceId) && event.metadata !== null;
+            const isNewWorkspace = !prev.has(event.workspaceId) && meta !== null;
             const existingMeta = prev.get(event.workspaceId);
             const wasCreating = existingMeta?.status === "creating";
-            const isNowReady = event.metadata !== null && event.metadata.status !== "creating";
+            const isNowReady = meta !== null && meta.status !== "creating";
 
-            // Check if workspace is/became archived (consistent with initial load filtering)
-            const isNowArchived =
-              event.metadata !== null &&
-              isWorkspaceArchived(event.metadata.archivedAt, event.metadata.unarchivedAt);
-
-            if (event.metadata === null || isNowArchived) {
+            if (meta === null || isNowArchived) {
               // Remove deleted or newly-archived workspaces from active map
               updated.delete(event.workspaceId);
-            } else if (!isNowArchived) {
+            } else {
               // Only add/update non-archived workspaces (including unarchived ones)
-              updated.set(event.workspaceId, event.metadata);
+              updated.set(event.workspaceId, meta);
             }
 
             // Reload projects when:
@@ -446,7 +462,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           });
 
           // 2. THEN handle side effects (cleanup, navigation) - these can't break data updates
-          if (event.metadata === null) {
+          if (meta === null) {
             deleteWorkspaceStorage(event.workspaceId);
 
             // Navigate away only if the deleted workspace was selected
@@ -642,35 +658,22 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     async (workspaceId: string): Promise<{ success: boolean; error?: string }> => {
       if (!api) return { success: false, error: "API not connected" };
 
-      // Capture the current selection before the async operation
-      // We need to know if the archived workspace is currently selected
-      // and its projectPath so we can navigate to the project page
-      const wasSelected = selectedWorkspace?.workspaceId === workspaceId;
-      const projectPath = selectedWorkspace?.projectPath;
-
       try {
         const result = await api.workspace.archive({ workspaceId });
         if (result.success) {
-          // Reload workspace metadata to get the updated state
-          await loadWorkspaceMetadata();
-
-          // If the archived workspace was selected, navigate to its project page
-          // instead of going home (user likely wants to stay in context)
-          if (wasSelected && projectPath) {
-            navigateToProject(projectPath);
-          }
+          // Workspace list + navigation are driven by the workspace metadata subscription.
           return { success: true };
-        } else {
-          console.error("Failed to archive workspace:", result.error);
-          return { success: false, error: result.error };
         }
+
+        console.error("Failed to archive workspace:", result.error);
+        return { success: false, error: result.error };
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         console.error("Failed to archive workspace:", errorMessage);
         return { success: false, error: errorMessage };
       }
     },
-    [loadWorkspaceMetadata, navigateToProject, selectedWorkspace, api]
+    [api]
   );
 
   const unarchiveWorkspace = useCallback(

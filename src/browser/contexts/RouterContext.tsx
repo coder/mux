@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { MemoryRouter, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
 import { SELECTED_WORKSPACE_KEY } from "@/common/constants/storage";
@@ -64,6 +64,11 @@ function useUrlSync(): void {
 
 function RouterContextInner(props: { children: ReactNode }) {
   const navigate = useNavigate();
+  const navigateRef = useRef(navigate);
+  useEffect(() => {
+    navigateRef.current = navigate;
+  }, [navigate]);
+
   const location = useLocation();
   const [searchParams] = useSearchParams();
   useUrlSync();
@@ -73,20 +78,39 @@ function RouterContextInner(props: { children: ReactNode }) {
   const currentProjectPath = location.pathname === "/project" ? searchParams.get("path") : null;
   const pendingSectionId = location.pathname === "/project" ? searchParams.get("section") : null;
 
-  const value: RouterContext = {
-    navigateToWorkspace: (id: string) =>
-      void navigate(`/workspace/${encodeURIComponent(id)}`, { replace: true }),
-    navigateToProject: (path: string, sectionId?: string) => {
-      const url = sectionId
-        ? `/project?path=${encodeURIComponent(path)}&section=${encodeURIComponent(sectionId)}`
-        : `/project?path=${encodeURIComponent(path)}`;
-      void navigate(url, { replace: true });
-    },
-    navigateToHome: () => void navigate("/", { replace: true }),
-    currentWorkspaceId,
-    currentProjectPath,
-    pendingSectionId,
-  };
+  const navigateToWorkspace = useCallback((id: string) => {
+    void navigateRef.current(`/workspace/${encodeURIComponent(id)}`, { replace: true });
+  }, []);
+
+  const navigateToProject = useCallback((path: string, sectionId?: string) => {
+    const url = sectionId
+      ? `/project?path=${encodeURIComponent(path)}&section=${encodeURIComponent(sectionId)}`
+      : `/project?path=${encodeURIComponent(path)}`;
+    void navigateRef.current(url, { replace: true });
+  }, []);
+
+  const navigateToHome = useCallback(() => {
+    void navigateRef.current("/", { replace: true });
+  }, []);
+
+  const value = useMemo<RouterContext>(
+    () => ({
+      navigateToWorkspace,
+      navigateToProject,
+      navigateToHome,
+      currentWorkspaceId,
+      currentProjectPath,
+      pendingSectionId,
+    }),
+    [
+      navigateToHome,
+      navigateToProject,
+      navigateToWorkspace,
+      currentProjectPath,
+      currentWorkspaceId,
+      pendingSectionId,
+    ]
+  );
 
   return <RouterContext.Provider value={value}>{props.children}</RouterContext.Provider>;
 }

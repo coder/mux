@@ -166,6 +166,167 @@ describe("WorkspaceContext", () => {
     await waitFor(() => expect(ctx().selectedWorkspace?.workspaceId).toBe(parentId));
   });
 
+  test("navigates to project page when selected workspace is archived", async () => {
+    const workspaceId = "ws-archive";
+    const projectPath = "/alpha";
+
+    const workspaces: FrontendWorkspaceMetadata[] = [
+      createWorkspaceMetadata({
+        id: workspaceId,
+        projectPath,
+        projectName: "alpha",
+        name: "main",
+        namedWorkspacePath: "/alpha-main",
+      }),
+    ];
+
+    let emitArchive:
+      | ((event: { workspaceId: string; metadata: FrontendWorkspaceMetadata | null }) => void)
+      | null = null;
+
+    createMockAPI({
+      workspace: {
+        list: () => Promise.resolve(workspaces),
+        onMetadata: () =>
+          Promise.resolve(
+            (async function* () {
+              const event = await new Promise<{
+                workspaceId: string;
+                metadata: FrontendWorkspaceMetadata | null;
+              }>((resolve) => {
+                emitArchive = resolve;
+              });
+              yield event;
+            })() as unknown as Awaited<ReturnType<APIClient["workspace"]["onMetadata"]>>
+          ),
+      },
+      projects: {
+        list: () => Promise.resolve([]),
+      },
+      localStorage: {
+        [SELECTED_WORKSPACE_KEY]: JSON.stringify({
+          workspaceId,
+          projectPath,
+          projectName: "alpha",
+          namedWorkspacePath: "/alpha-main",
+        }),
+      },
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().selectedWorkspace?.workspaceId).toBe(workspaceId));
+    await waitFor(() => expect(emitArchive).toBeTruthy());
+
+    act(() => {
+      emitArchive?.({
+        workspaceId,
+        metadata: createWorkspaceMetadata({
+          id: workspaceId,
+          projectPath,
+          projectName: "alpha",
+          name: "main",
+          namedWorkspacePath: "/alpha-main",
+          archivedAt: "2025-02-01T00:00:00.000Z",
+        }),
+      });
+    });
+
+    await waitFor(() => expect(ctx().pendingNewWorkspaceProject).toBe(projectPath));
+    expect(ctx().selectedWorkspace).toBeNull();
+    await waitFor(() => expect(ctx().workspaceMetadata.has(workspaceId)).toBe(false));
+    expect(localStorage.getItem(SELECTED_WORKSPACE_KEY)).toBeNull();
+  });
+
+  test("archiving does not override a rapid manual workspace switch", async () => {
+    const archivedId = "ws-archive-old";
+    const nextId = "ws-keep";
+
+    const workspaces: FrontendWorkspaceMetadata[] = [
+      createWorkspaceMetadata({
+        id: archivedId,
+        projectPath: "/alpha",
+        projectName: "alpha",
+        name: "main",
+        namedWorkspacePath: "/alpha-main",
+      }),
+      createWorkspaceMetadata({
+        id: nextId,
+        projectPath: "/beta",
+        projectName: "beta",
+        name: "main",
+        namedWorkspacePath: "/beta-main",
+      }),
+    ];
+
+    let emitArchive:
+      | ((event: { workspaceId: string; metadata: FrontendWorkspaceMetadata | null }) => void)
+      | null = null;
+
+    createMockAPI({
+      workspace: {
+        list: () => Promise.resolve(workspaces),
+        onMetadata: () =>
+          Promise.resolve(
+            (async function* () {
+              const event = await new Promise<{
+                workspaceId: string;
+                metadata: FrontendWorkspaceMetadata | null;
+              }>((resolve) => {
+                emitArchive = resolve;
+              });
+              yield event;
+            })() as unknown as Awaited<ReturnType<APIClient["workspace"]["onMetadata"]>>
+          ),
+      },
+      projects: {
+        list: () => Promise.resolve([]),
+      },
+      localStorage: {
+        [SELECTED_WORKSPACE_KEY]: JSON.stringify({
+          workspaceId: archivedId,
+          projectPath: "/alpha",
+          projectName: "alpha",
+          namedWorkspacePath: "/alpha-main",
+        }),
+      },
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().selectedWorkspace?.workspaceId).toBe(archivedId));
+    await waitFor(() => expect(emitArchive).toBeTruthy());
+
+    const nextSelection = {
+      workspaceId: nextId,
+      projectPath: "/beta",
+      projectName: "beta",
+      namedWorkspacePath: "/beta-main",
+    };
+
+    // Simulate a fast user click to switch workspaces while the archive event is in flight.
+    // The metadata handler must not navigate to the project page after this intent.
+    act(() => {
+      ctx().setSelectedWorkspace(nextSelection);
+      emitArchive?.({
+        workspaceId: archivedId,
+        metadata: createWorkspaceMetadata({
+          id: archivedId,
+          projectPath: "/alpha",
+          projectName: "alpha",
+          name: "main",
+          namedWorkspacePath: "/alpha-main",
+          archivedAt: "2025-02-01T00:00:00.000Z",
+        }),
+      });
+    });
+
+    await waitFor(() => expect(ctx().selectedWorkspace?.workspaceId).toBe(nextId));
+    expect(ctx().pendingNewWorkspaceProject).toBeNull();
+    await waitFor(() => expect(ctx().workspaceMetadata.has(archivedId)).toBe(false));
+    expect(localStorage.getItem(SELECTED_WORKSPACE_KEY)).toContain(nextId);
+  });
+
   test("removes non-selected child workspace from metadata map when deleted", async () => {
     // Bug regression: when a sub-agent workspace is deleted while not selected,
     // it was staying in the metadata map due to early return in the handler.
