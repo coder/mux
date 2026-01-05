@@ -49,4 +49,8 @@ storybook-static/
 Thumbs.db
 *.md
 !README.md
+!src/node/builtinAgents/*.md
+!src/node/builtinSkills/*.md
+!docs/**/*.md
+!docs/**/*.mdx
 LICENSE
