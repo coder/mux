@@ -175,281 +175,330 @@ export async function injectFileAtMentions(
   assert(options.runtime, "runtime is required");
   assert(options.workspacePath, "workspacePath is required");
 
-  // Find the last user-authored message (ignore synthetic injections like mode transitions).
-  let targetIndex = -1;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i];
-    if (msg?.role === "user" && msg.metadata?.synthetic !== true) {
-      targetIndex = i;
-      break;
-    }
-  }
+  // Expand @file mentions across *all* user-authored messages (not just the last).
+  //
+  // Why:
+  // - Injected content isn't persisted to history.
+  // - If we only expand the last user message, a subsequent message with no @mentions
+  //   would drop previously-injected files from the provider context.
+  // - Re-injecting in place preserves prompt-caching prefixes across turns.
 
-  if (targetIndex === -1) {
-    return messages;
-  }
+  // Map from message index -> blocks to inject before it.
+  const blocksByTargetIndex = new Map<number, string[]>();
 
-  const target = messages[targetIndex];
-  assert(target, "target message must exist");
-
-  const textParts = (target.parts ?? [])
-    .filter((p) => p.type === "text")
-    .map((p) => p.text)
-    .filter((t) => typeof t === "string" && t.length > 0);
-
-  if (textParts.length === 0) {
-    return messages;
-  }
-
-  const mentionCandidates = extractAtMentions(textParts.join("\n")).slice(0, MAX_MENTION_FILES * 5);
-
-  if (mentionCandidates.length === 0) {
-    return messages;
-  }
-
-  // Deduplicate by token (path + optional range) to avoid bloating context.
+  // Deduplicate by token (path + optional range) across the full conversation.
   const seenTokens = new Set<string>();
-  const mentions = mentionCandidates.filter((m) => {
-    if (seenTokens.has(m.token)) return false;
-    seenTokens.add(m.token);
-    return true;
-  });
 
-  const blocks: string[] = [];
+  let totalBlocks = 0;
   let totalBytes = 0;
 
-  for (const mention of mentions) {
-    if (blocks.length >= MAX_MENTION_FILES) {
-      break;
-    }
+  const createdAt = Date.now();
 
-    const displayPath = mention.path;
-    const pathLooksLikeFilePath = isLikelyFilePathToken(displayPath) || mention.range !== undefined;
-
-    if (mention.rangeError) {
-      let shouldEmitRangeError = pathLooksLikeFilePath;
-
-      // For "bare" @mentions, only emit range errors if the path actually exists as a file.
-      // This avoids noisy errors for patterns like "@alice#123".
-      if (!shouldEmitRangeError) {
-        try {
-          const resolvedPathForRange = resolveWorkspaceFilePath(
-            options.runtime,
-            options.workspacePath,
-            mention.path
-          );
-          const statForRange = await options.runtime.stat(
-            resolvedPathForRange,
-            options.abortSignal
-          );
-          shouldEmitRangeError = !statForRange.isDirectory;
-        } catch {
-          shouldEmitRangeError = false;
-        }
-      }
-
-      if (!shouldEmitRangeError) {
-        continue;
-      }
-
-      const block = renderMuxFileError(displayPath, mention.rangeError);
-      const blockBytes = Buffer.byteLength(block, "utf8");
-      if (totalBytes + blockBytes > MAX_TOTAL_BYTES) {
-        break;
-      }
-      blocks.push(block);
-      totalBytes += blockBytes;
-      continue;
-    }
-
-    let resolvedPath: string;
-    try {
-      resolvedPath = resolveWorkspaceFilePath(options.runtime, options.workspacePath, mention.path);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const block = renderMuxFileError(displayPath, message);
-      const blockBytes = Buffer.byteLength(block, "utf8");
-      if (totalBytes + blockBytes > MAX_TOTAL_BYTES) {
-        break;
-      }
-      blocks.push(block);
-      totalBytes += blockBytes;
-      continue;
-    }
-
-    let stat;
-    try {
-      stat = await options.runtime.stat(resolvedPath, options.abortSignal);
-    } catch (error) {
-      if (!pathLooksLikeFilePath) {
-        continue;
-      }
-
-      const message = error instanceof Error ? error.message : String(error);
-      const block = renderMuxFileError(displayPath, `Failed to stat file: ${message}`);
-      const blockBytes = Buffer.byteLength(block, "utf8");
-      if (totalBytes + blockBytes > MAX_TOTAL_BYTES) {
-        break;
-      }
-      blocks.push(block);
-      totalBytes += blockBytes;
-      continue;
-    }
-
-    if (stat.isDirectory) {
-      if (!pathLooksLikeFilePath) {
-        continue;
-      }
-
-      const block = renderMuxFileError(displayPath, "Path is a directory, not a file.");
-      const blockBytes = Buffer.byteLength(block, "utf8");
-      if (totalBytes + blockBytes > MAX_TOTAL_BYTES) {
-        break;
-      }
-      blocks.push(block);
-      totalBytes += blockBytes;
-      continue;
-    }
-
-    if (stat.size > MAX_FILE_SIZE) {
-      const sizeMB = (stat.size / (1024 * 1024)).toFixed(2);
-      const maxMB = (MAX_FILE_SIZE / (1024 * 1024)).toFixed(2);
-      const block = renderMuxFileError(
-        displayPath,
-        `File is too large to include (${sizeMB}MB > ${maxMB}MB). Use a smaller #L<start>-<end> range or file_read.`
-      );
-      const blockBytes = Buffer.byteLength(block, "utf8");
-      if (totalBytes + blockBytes > MAX_TOTAL_BYTES) {
-        break;
-      }
-      blocks.push(block);
-      totalBytes += blockBytes;
-      continue;
-    }
-
-    let content: string;
-    try {
-      content = await readFileString(options.runtime, resolvedPath, options.abortSignal);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const block = renderMuxFileError(displayPath, `Failed to read file: ${message}`);
-      const blockBytes = Buffer.byteLength(block, "utf8");
-      if (totalBytes + blockBytes > MAX_TOTAL_BYTES) {
-        break;
-      }
-      blocks.push(block);
-      totalBytes += blockBytes;
-      continue;
-    }
-
-    if (content.includes("\u0000")) {
-      const block = renderMuxFileError(displayPath, "Binary file detected (NUL byte). Skipping.");
-      const blockBytes = Buffer.byteLength(block, "utf8");
-      if (totalBytes + blockBytes > MAX_TOTAL_BYTES) {
-        break;
-      }
-      blocks.push(block);
-      totalBytes += blockBytes;
-      continue;
-    }
-
-    const rawLines = content === "" ? [] : content.split("\n");
-    const lines = rawLines.map((line) => line.replace(/\r$/, ""));
-
-    const requestedStart = mention.range?.startLine ?? 1;
-    const requestedEnd = mention.range?.endLine ?? Math.max(1, lines.length);
-
-    if (lines.length > 0 && requestedStart > lines.length) {
-      const block = renderMuxFileError(
-        displayPath,
-        `Range starts beyond end of file: requested L${requestedStart}, file has ${lines.length} lines.`
-      );
-      const blockBytes = Buffer.byteLength(block, "utf8");
-      if (totalBytes + blockBytes > MAX_TOTAL_BYTES) {
-        break;
-      }
-      blocks.push(block);
-      totalBytes += blockBytes;
-      continue;
-    }
-
-    const unclampedEnd = requestedEnd;
-    const end = Math.min(unclampedEnd, Math.max(0, lines.length));
-
-    const startIndex = Math.max(0, requestedStart - 1);
-    const endIndex = Math.max(startIndex, end);
-
-    let snippetLines = lines.slice(startIndex, endIndex);
-
-    let truncated = false;
-    if (snippetLines.length > MAX_LINES_PER_FILE) {
-      snippetLines = snippetLines.slice(0, MAX_LINES_PER_FILE);
-      truncated = true;
-    }
-
-    const processedLines: string[] = [];
-    for (const line of snippetLines) {
-      const res = truncateLine(line);
-      processedLines.push(res.line);
-      if (res.truncated) truncated = true;
-    }
-
-    // Apply total + per-file byte limits.
-    const remainingTotalBytes = MAX_TOTAL_BYTES - totalBytes;
-
-    // Compute an upper bound for overhead before we decide how many lines to include.
-    // This isn't perfect, but it's good enough to prevent runaway context growth.
-    const rangeStart = requestedStart;
-    const rangeEnd = processedLines.length > 0 ? requestedStart + processedLines.length - 1 : 0;
-    const rangeLabel = formatRange(rangeStart, rangeEnd, processedLines.length);
-    const header = renderMuxFileBlock({
-      filePath: displayPath,
-      rangeLabel,
-      content: "",
-      truncated,
-    });
-    const overheadBytes = Buffer.byteLength(header, "utf8");
-
-    if (overheadBytes > remainingTotalBytes) {
-      break;
-    }
-
-    const contentBudget = Math.min(MAX_BYTES_PER_FILE, remainingTotalBytes - overheadBytes);
-    const limited = takeLinesWithinByteLimit(processedLines, contentBudget);
-
-    const finalLines = limited.lines;
-    if (limited.truncated) truncated = true;
-
-    const finalRangeEnd = finalLines.length > 0 ? requestedStart + finalLines.length - 1 : 0;
-    const finalRangeLabel = formatRange(requestedStart, finalRangeEnd, finalLines.length);
-
-    const block = renderMuxFileBlock({
-      filePath: displayPath,
-      rangeLabel: finalRangeLabel,
-      content: finalLines.join("\n"),
-      truncated,
-    });
+  const addBlock = (targetIndex: number, block: string): boolean => {
     const blockBytes = Buffer.byteLength(block, "utf8");
+    if (totalBytes + blockBytes > MAX_TOTAL_BYTES) {
+      return false;
+    }
 
-    if (blockBytes > remainingTotalBytes) {
-      // If our earlier overhead estimate was too optimistic, bail.
+    const existing = blocksByTargetIndex.get(targetIndex) ?? [];
+    existing.push(block);
+    blocksByTargetIndex.set(targetIndex, existing);
+
+    totalBlocks += 1;
+    totalBytes += blockBytes;
+    return true;
+  };
+
+  // Iterate newest → oldest so the current turn wins if we hit caps.
+  for (let targetIndex = messages.length - 1; targetIndex >= 0; targetIndex--) {
+    if (totalBlocks >= MAX_MENTION_FILES || totalBytes >= MAX_TOTAL_BYTES) {
       break;
     }
 
-    blocks.push(block);
-    totalBytes += blockBytes;
+    const target = messages[targetIndex];
+    if (target?.role !== "user" || target.metadata?.synthetic === true) {
+      continue;
+    }
+
+    const textParts = (target.parts ?? [])
+      .filter((p) => p.type === "text")
+      .map((p) => p.text)
+      .filter((t) => typeof t === "string" && t.length > 0);
+
+    if (textParts.length === 0) {
+      continue;
+    }
+
+    const mentionCandidates = extractAtMentions(textParts.join("\n")).slice(
+      0,
+      MAX_MENTION_FILES * 5
+    );
+
+    if (mentionCandidates.length === 0) {
+      continue;
+    }
+
+    // Deduplicate within this message to keep ordering stable.
+    const seenTokensInMessage = new Set<string>();
+    const mentions = mentionCandidates.filter((m) => {
+      if (seenTokensInMessage.has(m.token)) return false;
+      seenTokensInMessage.add(m.token);
+      return true;
+    });
+
+    for (const mention of mentions) {
+      if (totalBlocks >= MAX_MENTION_FILES || totalBytes >= MAX_TOTAL_BYTES) {
+        break;
+      }
+
+      if (seenTokens.has(mention.token)) {
+        continue;
+      }
+
+      const displayPath = mention.path;
+      const pathLooksLikeFilePath =
+        isLikelyFilePathToken(displayPath) || mention.range !== undefined;
+
+      if (mention.rangeError) {
+        let shouldEmitRangeError = pathLooksLikeFilePath;
+
+        // For "bare" @mentions, only emit range errors if the path actually exists as a file.
+        // This avoids noisy errors for patterns like "@alice#123".
+        if (!shouldEmitRangeError) {
+          try {
+            const resolvedPathForRange = resolveWorkspaceFilePath(
+              options.runtime,
+              options.workspacePath,
+              mention.path
+            );
+            const statForRange = await options.runtime.stat(
+              resolvedPathForRange,
+              options.abortSignal
+            );
+            shouldEmitRangeError = !statForRange.isDirectory;
+          } catch {
+            shouldEmitRangeError = false;
+          }
+        }
+
+        if (!shouldEmitRangeError) {
+          continue;
+        }
+
+        const block = renderMuxFileError(displayPath, mention.rangeError);
+        if (!addBlock(targetIndex, block)) {
+          break;
+        }
+
+        seenTokens.add(mention.token);
+        continue;
+      }
+
+      let resolvedPath: string;
+      try {
+        resolvedPath = resolveWorkspaceFilePath(
+          options.runtime,
+          options.workspacePath,
+          mention.path
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const block = renderMuxFileError(displayPath, message);
+
+        if (!addBlock(targetIndex, block)) {
+          break;
+        }
+
+        seenTokens.add(mention.token);
+        continue;
+      }
+
+      let stat;
+      try {
+        stat = await options.runtime.stat(resolvedPath, options.abortSignal);
+      } catch (error) {
+        if (!pathLooksLikeFilePath) {
+          continue;
+        }
+
+        const message = error instanceof Error ? error.message : String(error);
+        const block = renderMuxFileError(displayPath, `Failed to stat file: ${message}`);
+
+        if (!addBlock(targetIndex, block)) {
+          break;
+        }
+
+        seenTokens.add(mention.token);
+        continue;
+      }
+
+      if (stat.isDirectory) {
+        if (!pathLooksLikeFilePath) {
+          continue;
+        }
+
+        const block = renderMuxFileError(displayPath, "Path is a directory, not a file.");
+        if (!addBlock(targetIndex, block)) {
+          break;
+        }
+
+        seenTokens.add(mention.token);
+        continue;
+      }
+
+      if (stat.size > MAX_FILE_SIZE) {
+        const sizeMB = (stat.size / (1024 * 1024)).toFixed(2);
+        const maxMB = (MAX_FILE_SIZE / (1024 * 1024)).toFixed(2);
+        const block = renderMuxFileError(
+          displayPath,
+          `File is too large to include (${sizeMB}MB > ${maxMB}MB). Use a smaller #L<start>-<end> range or file_read.`
+        );
+
+        if (!addBlock(targetIndex, block)) {
+          break;
+        }
+
+        seenTokens.add(mention.token);
+        continue;
+      }
+
+      let content: string;
+      try {
+        content = await readFileString(options.runtime, resolvedPath, options.abortSignal);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const block = renderMuxFileError(displayPath, `Failed to read file: ${message}`);
+
+        if (!addBlock(targetIndex, block)) {
+          break;
+        }
+
+        seenTokens.add(mention.token);
+        continue;
+      }
+
+      if (content.includes("\u0000")) {
+        const block = renderMuxFileError(displayPath, "Binary file detected (NUL byte). Skipping.");
+
+        if (!addBlock(targetIndex, block)) {
+          break;
+        }
+
+        seenTokens.add(mention.token);
+        continue;
+      }
+
+      const rawLines = content === "" ? [] : content.split("\n");
+      const lines = rawLines.map((line) => line.replace(/\r$/, ""));
+
+      const requestedStart = mention.range?.startLine ?? 1;
+      const requestedEnd = mention.range?.endLine ?? Math.max(1, lines.length);
+
+      if (lines.length > 0 && requestedStart > lines.length) {
+        const block = renderMuxFileError(
+          displayPath,
+          `Range starts beyond end of file: requested L${requestedStart}, file has ${lines.length} lines.`
+        );
+
+        if (!addBlock(targetIndex, block)) {
+          break;
+        }
+
+        seenTokens.add(mention.token);
+        continue;
+      }
+
+      const unclampedEnd = requestedEnd;
+      const end = Math.min(unclampedEnd, Math.max(0, lines.length));
+
+      const startIndex = Math.max(0, requestedStart - 1);
+      const endIndex = Math.max(startIndex, end);
+
+      let snippetLines = lines.slice(startIndex, endIndex);
+
+      let truncated = false;
+      if (snippetLines.length > MAX_LINES_PER_FILE) {
+        snippetLines = snippetLines.slice(0, MAX_LINES_PER_FILE);
+        truncated = true;
+      }
+
+      const processedLines: string[] = [];
+      for (const line of snippetLines) {
+        const res = truncateLine(line);
+        processedLines.push(res.line);
+        if (res.truncated) truncated = true;
+      }
+
+      // Apply total + per-file byte limits.
+      const remainingTotalBytes = MAX_TOTAL_BYTES - totalBytes;
+
+      // Compute an upper bound for overhead before we decide how many lines to include.
+      // This isn't perfect, but it's good enough to prevent runaway context growth.
+      const rangeStart = requestedStart;
+      const rangeEnd = processedLines.length > 0 ? requestedStart + processedLines.length - 1 : 0;
+      const rangeLabel = formatRange(rangeStart, rangeEnd, processedLines.length);
+      const header = renderMuxFileBlock({
+        filePath: displayPath,
+        rangeLabel,
+        content: "",
+        truncated,
+      });
+      const overheadBytes = Buffer.byteLength(header, "utf8");
+
+      if (overheadBytes > remainingTotalBytes) {
+        break;
+      }
+
+      const contentBudget = Math.min(MAX_BYTES_PER_FILE, remainingTotalBytes - overheadBytes);
+      const limited = takeLinesWithinByteLimit(processedLines, contentBudget);
+
+      const finalLines = limited.lines;
+      if (limited.truncated) truncated = true;
+
+      const finalRangeEnd = finalLines.length > 0 ? requestedStart + finalLines.length - 1 : 0;
+      const finalRangeLabel = formatRange(requestedStart, finalRangeEnd, finalLines.length);
+
+      const block = renderMuxFileBlock({
+        filePath: displayPath,
+        rangeLabel: finalRangeLabel,
+        content: finalLines.join("\n"),
+        truncated,
+      });
+      const blockBytes = Buffer.byteLength(block, "utf8");
+
+      if (blockBytes > remainingTotalBytes) {
+        // If our earlier overhead estimate was too optimistic, bail.
+        break;
+      }
+
+      if (!addBlock(targetIndex, block)) {
+        break;
+      }
+
+      seenTokens.add(mention.token);
+    }
   }
 
-  if (blocks.length === 0) {
+  if (blocksByTargetIndex.size === 0) {
     return messages;
   }
 
-  const injected = createMuxMessage(`file-at-mentions-${Date.now()}`, "user", blocks.join("\n\n"), {
-    timestamp: Date.now(),
-    synthetic: true,
-  });
+  const result: MuxMessage[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    const blocks = blocksByTargetIndex.get(i);
+    if (blocks && blocks.length > 0) {
+      result.push(
+        createMuxMessage(`file-at-mentions-${createdAt}-${i}`, "user", blocks.join("\n\n"), {
+          timestamp: createdAt,
+          synthetic: true,
+        })
+      );
+    }
 
-  const result = [...messages];
-  result.splice(targetIndex, 0, injected);
+    const msg = messages[i];
+    assert(msg, "message must exist");
+    result.push(msg);
+  }
+
   return result;
 }
