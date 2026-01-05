@@ -113,7 +113,7 @@ function preserveHunkReferences(prev: DiffHunk[], next: DiffHunk[]): DiffHunk[] 
   const result = next.map((hunk, i) => {
     const prevHunk = prevById.get(hunk.id);
     // Fast path: same ID and content means unchanged (content hash is part of ID)
-    if (prevHunk && prevHunk.content === hunk.content) {
+    if (prevHunk?.content === hunk.content) {
       if (allSame && prev[i]?.id !== hunk.id) allSame = false;
       return prevHunk;
     }

@@ -895,8 +895,7 @@ export class WorkspaceStore {
     // streaming token and sidebar items don't use them. Components needing timing should
     // use useWorkspaceStatsSnapshot() which has its own subscription.
     if (
-      cached &&
-      cached.canInterrupt === fullState.canInterrupt &&
+      cached?.canInterrupt === fullState.canInterrupt &&
       cached.awaitingUserQuestion === fullState.awaitingUserQuestion &&
       cached.currentModel === fullState.currentModel &&
       cached.recencyTimestamp === fullState.recencyTimestamp &&
