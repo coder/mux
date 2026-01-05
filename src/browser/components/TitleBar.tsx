@@ -77,7 +77,7 @@ function parseBuildInfo(version: unknown) {
 
 export function TitleBar() {
   const { api } = useAPI();
-  const { buildDate, extendedTimestamp, gitDescribe } = parseBuildInfo(VERSION satisfies unknown);
+  const { extendedTimestamp, gitDescribe } = parseBuildInfo(VERSION satisfies unknown);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ type: "idle" });
   const [isCheckingOnHover, setIsCheckingOnHover] = useState(false);
   const lastHoverCheckTime = useRef<number>(0);
@@ -261,19 +261,18 @@ export function TitleBar() {
             </TooltipContent>
           </Tooltip>
         )}
-        <div className="min-w-0 cursor-text truncate text-xs font-normal tracking-wider select-text">
-          mux {gitDescribe ?? "(dev)"}
-        </div>
-      </div>
-      <div className="flex items-center gap-3">
-        <SettingsButton />
         <Tooltip>
           <TooltipTrigger asChild>
-            <div className="cursor-default text-[11px] opacity-70">{buildDate}</div>
+            <div className="min-w-0 cursor-text truncate text-xs font-normal tracking-wider select-text">
+              mux {gitDescribe ?? "(dev)"}
+            </div>
           </TooltipTrigger>
-          <TooltipContent align="end">Built at {extendedTimestamp}</TooltipContent>
+          <TooltipContent side="bottom" align="start">
+            Built at {extendedTimestamp}
+          </TooltipContent>
         </Tooltip>
       </div>
+      <SettingsButton />
     </div>
   );
 }
