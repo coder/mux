@@ -16,6 +16,74 @@ import {
   extractEditedFileDiffs,
   type FileEditDiff,
 } from "@/common/utils/messages/extractEditedFiles";
+
+/**
+ * Check if a string looks like raw tool call JSON that the model incorrectly
+ * output as text. This can happen when tools are disabled during compaction
+ * but the model still tries to make a tool call.
+ *
+ * Known patterns:
+ * - bash tool: {"script": "...", "timeout_secs": ..., "run_in_background": ..., "display_name": ...}
+ * - file_edit: {"file_path": "...", "old_string": "...", "new_string": ...}
+ * - task: {"prompt": "...", "title": "...", ...}
+ */
+function looksLikeToolCallJson(text: string): boolean {
+  const trimmed = text.trim();
+  // Must start with { and end with }
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) {
+    return false;
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return false;
+    }
+
+    // Check for common tool input field patterns
+    const keys = Object.keys(parsed as Record<string, unknown>);
+
+    // bash tool pattern
+    if (
+      keys.includes("script") &&
+      (keys.includes("timeout_secs") || keys.includes("display_name"))
+    ) {
+      return true;
+    }
+
+    // file_edit pattern
+    if (
+      keys.includes("file_path") &&
+      (keys.includes("old_string") || keys.includes("new_string"))
+    ) {
+      return true;
+    }
+
+    // task pattern
+    if (keys.includes("prompt") && keys.includes("title")) {
+      return true;
+    }
+
+    // file_read pattern
+    if (keys.includes("filePath") && (keys.includes("offset") || keys.includes("limit"))) {
+      return true;
+    }
+
+    // web_fetch/web_search pattern
+    if (keys.includes("url") && keys.length <= 3) {
+      return true;
+    }
+    if (keys.includes("query") && keys.length === 1) {
+      return true;
+    }
+
+    return false;
+  } catch {
+    // Not valid JSON
+    return false;
+  }
+}
+
 import { computeRecencyFromMessages } from "@/common/utils/recency";
 
 interface CompactionHandlerOptions {
@@ -115,6 +183,22 @@ export class CompactionHandler {
       .filter((part): part is { type: "text"; text: string } => part.type === "text")
       .map((part) => part.text)
       .join("");
+
+    // Self-healing: Reject compaction if summary looks like raw tool call JSON.
+    // This can happen when tools are disabled but the model still tries to make a tool call,
+    // outputting the tool input as plain text instead. Using this as a summary would brick
+    // the workspace by making subsequent messages start with tool call JSON.
+    if (looksLikeToolCallJson(summary)) {
+      log.warn(
+        "Compaction summary looks like raw tool call JSON - aborting compaction to prevent corrupted history",
+        {
+          workspaceId: this.workspaceId,
+          summaryPreview: summary.slice(0, 200),
+        }
+      );
+      // Don't mark as processed so user can retry
+      return false;
+    }
 
     // Check if this was an idle-compaction (auto-triggered due to inactivity)
     const muxMeta = lastUserMsg.metadata?.muxMetadata;

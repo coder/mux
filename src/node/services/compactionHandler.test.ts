@@ -728,4 +728,108 @@ describe("CompactionHandler", () => {
       expect(summaryMsg.metadata?.compacted).toBe("user");
     });
   });
+
+  describe("Tool Call JSON Validation", () => {
+    it("should reject compaction when summary looks like bash tool call JSON", async () => {
+      const compactionRequestMsg = createMuxMessage("compact-req-1", "user", "/compact", {
+        historySequence: 0,
+        timestamp: Date.now() - 1000,
+        muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
+      });
+      mockHistoryService.mockGetHistory(Ok([compactionRequestMsg]));
+
+      // Summary that looks like a bash tool call input
+      const toolCallJson = JSON.stringify({
+        script: "cd tpred && sed -n '405,520p' train/trainer.py",
+        timeout_secs: 10,
+        run_in_background: false,
+        display_name: "Inspect trainer",
+      });
+      const event = createStreamEndEvent(toolCallJson);
+
+      const result = await handler.handleCompletion(event);
+
+      // Should return false and NOT perform compaction
+      expect(result).toBe(false);
+      expect(mockHistoryService.clearHistory).not.toHaveBeenCalled();
+      expect(mockHistoryService.appendToHistory).not.toHaveBeenCalled();
+    });
+
+    it("should reject compaction when summary looks like file_edit tool call JSON", async () => {
+      const compactionRequestMsg = createMuxMessage("compact-req-1", "user", "/compact", {
+        historySequence: 0,
+        timestamp: Date.now() - 1000,
+        muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
+      });
+      mockHistoryService.mockGetHistory(Ok([compactionRequestMsg]));
+
+      const toolCallJson = JSON.stringify({
+        file_path: "src/foo.ts",
+        old_string: "const x = 1;",
+        new_string: "const x = 2;",
+      });
+      const event = createStreamEndEvent(toolCallJson);
+
+      const result = await handler.handleCompletion(event);
+      expect(result).toBe(false);
+    });
+
+    it("should reject compaction when summary looks like task tool call JSON", async () => {
+      const compactionRequestMsg = createMuxMessage("compact-req-1", "user", "/compact", {
+        historySequence: 0,
+        timestamp: Date.now() - 1000,
+        muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
+      });
+      mockHistoryService.mockGetHistory(Ok([compactionRequestMsg]));
+
+      const toolCallJson = JSON.stringify({
+        prompt: "Do some work",
+        title: "Task title",
+        run_in_background: false,
+      });
+      const event = createStreamEndEvent(toolCallJson);
+
+      const result = await handler.handleCompletion(event);
+      expect(result).toBe(false);
+    });
+
+    it("should accept valid compaction summary text", async () => {
+      const compactionRequestMsg = createMuxMessage("compact-req-1", "user", "/compact", {
+        historySequence: 0,
+        timestamp: Date.now() - 1000,
+        muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
+      });
+      mockHistoryService.mockGetHistory(Ok([compactionRequestMsg]));
+      mockHistoryService.mockClearHistory(Ok([0]));
+      mockHistoryService.mockAppendToHistory(Ok(undefined));
+
+      // Normal summary text
+      const event = createStreamEndEvent(
+        "The user was working on implementing a new feature. Key decisions included using TypeScript."
+      );
+
+      const result = await handler.handleCompletion(event);
+      expect(result).toBe(true);
+      expect(mockHistoryService.clearHistory).toHaveBeenCalled();
+    });
+
+    it("should accept summary with JSON-like content that is not a tool call", async () => {
+      const compactionRequestMsg = createMuxMessage("compact-req-1", "user", "/compact", {
+        historySequence: 0,
+        timestamp: Date.now() - 1000,
+        muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
+      });
+      mockHistoryService.mockGetHistory(Ok([compactionRequestMsg]));
+      mockHistoryService.mockClearHistory(Ok([0]));
+      mockHistoryService.mockAppendToHistory(Ok(undefined));
+
+      // Summary that mentions JSON but isn't a tool call
+      const event = createStreamEndEvent(
+        'The user configured {"apiKey": "xxx", "endpoint": "http://localhost"} in config.json.'
+      );
+
+      const result = await handler.handleCompletion(event);
+      expect(result).toBe(true);
+    });
+  });
 });
