@@ -110,7 +110,7 @@ export const WebSearchToolCall: React.FC<WebSearchToolCallProps> = ({
             </div>
           </DetailSection>
 
-          {result !== undefined && (
+          {result != null && (
             <DetailSection>
               <DetailLabel>Results</DetailLabel>
               <div className="bg-code-bg max-h-[300px] overflow-y-auto rounded px-3 py-2 text-[12px]">
