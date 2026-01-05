@@ -53,6 +53,11 @@ Use this index to find a page's:
   - **Workspaces**
     - Workspaces (`/workspaces`) → `references/docs/workspaces/index.mdx` — Isolated development environments for parallel agent work
     - Forking Workspaces (`/workspaces/fork`) → `references/docs/workspaces/fork.mdx` — Clone workspaces with conversation history to explore alternatives
+    - Message Sharing (`/workspaces/sharing`) → `references/docs/workspaces/sharing.mdx` — Share encrypted messages with cryptographic signatures via mux.md
+    - **Compaction**
+      - Compaction (`/workspaces/compaction`) → `references/docs/workspaces/compaction/index.mdx` — Managing conversation context size with compaction
+      - Manual Compaction (`/workspaces/compaction/manual`) → `references/docs/workspaces/compaction/manual.mdx` — Commands for manually managing conversation context
+      - Automatic Compaction (`/workspaces/compaction/automatic`) → `references/docs/workspaces/compaction/automatic.mdx` — Let mux automatically compact your conversations based on usage or idle time
     - **Runtimes**
       - Runtimes (`/runtime`) → `references/docs/runtime/index.mdx` — Configure where and how mux executes agent workspaces
       - Local Runtime (`/runtime/local`) → `references/docs/runtime/local.mdx` — Run agents directly in your project directory
@@ -67,6 +72,7 @@ Use this index to find a page's:
     - Agent Skills (`/agents/agent-skills`) → `references/docs/agents/agent-skills.mdx` — Share reusable workflows and references with skills
     - Plan Mode (`/agents/plan-mode`) → `references/docs/agents/plan-mode.mdx` — Review and collaborate on plans before execution
     - System Prompt (`/agents/system-prompt`) → `references/docs/agents/system-prompt.mdx` — How mux constructs the system prompt for AI models
+    - Prompting Tips (`/agents/prompting-tips`) → `references/docs/agents/prompting-tips.mdx` — Tips and tricks for getting the most out of your AI agents
   - **Configuration**
     - Models (`/config/models`) → `references/docs/config/models.mdx` — Configure AI providers including Anthropic, OpenAI, Google, xAI, DeepSeek, and more
     - MCP Servers (`/config/mcp-servers`) → `references/docs/config/mcp-servers.mdx` — Extend agent capabilities with Model Context Protocol servers
@@ -74,12 +80,7 @@ Use this index to find a page's:
     - Agentic Git Identity (`/config/agentic-git-identity`) → `references/docs/config/agentic-git-identity.mdx` — Configure a separate Git identity for AI-generated commits
     - Keyboard Shortcuts (`/config/keybinds`) → `references/docs/config/keybinds.mdx` — Complete keyboard shortcut reference for mux
     - Notifications (`/config/notifications`) → `references/docs/config/notifications.mdx` — Configure how agents notify you about important events
-  - **Guides**
-    - Command Line Interface (`/guides/cli`) → `references/docs/guides/cli.mdx` — Run one-off agent tasks from the command line with mux run
-    - Context Management (`/guides/context-management`) → `references/docs/guides/context-management.mdx` — Commands for managing conversation history and token usage
-    - Message Sharing (`/guides/sharing`) → `references/docs/guides/sharing.mdx` — Share encrypted messages with cryptographic signatures via mux.md
-    - Prompting Tips (`/guides/prompting-tips`) → `references/docs/guides/prompting-tips.mdx` — Tips and tricks for getting the most out of your AI agents
-    - Vim Mode (`/guides/vim-mode`) → `references/docs/guides/vim-mode.mdx` — Vim-style editing in the mux chat input
+    - Vim Mode (`/config/vim-mode`) → `references/docs/config/vim-mode.mdx` — Vim-style editing in the mux chat input
   - **Integrations**
     - VS Code Extension (`/integrations/vscode-extension`) → `references/docs/integrations/vscode-extension.mdx` — Pair mux workspaces with VS Code and Cursor editors
   - **Reference**

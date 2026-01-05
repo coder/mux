@@ -1,50 +1,24 @@
 ---
-title: Context Management
-description: Commands for managing conversation history and token usage
+title: Manual Compaction
+description: Commands for manually managing conversation context
 ---
 
-Commands for managing conversation history length and token usage.
-
-## Comparison
-
-| Approach                 | `/clear` | `/truncate` | `/compact`       | Start Here  |
-| ------------------------ | -------- | ----------- | ---------------- | ----------- |
-| **Speed**                | Instant  | Instant     | Slower (uses AI) | Instant     |
-| **Context Preservation** | None     | Temporal    | Intelligent      | Intelligent |
-| **Cost**                 | Free     | Free        | Uses API tokens  | Free        |
-| **Reversible**           | No       | No          | No               | Yes         |
+Manual compaction commands give you direct control over your conversation history.
 
 ## Start Here
 
 Start Here allows you to restart your conversation from a specific point, using that message as the entire conversation history. This is available on:
 
-- **Plans** - Click "🎯 Start Here" on any plan to use it as your conversation starting point
-- **Final Assistant messages** - Click "🎯 Start Here" on any completed assistant response
+- **Plans** — Click "🎯 Start Here" on any plan to use it as your conversation starting point
+- **Final Assistant messages** — Click "🎯 Start Here" on any completed assistant response
 
-![Start Here](../img/plan-compact.webp)
+![Start Here](/img/plan-compact.webp)
 
-This is a form of "opportunistic compaction" - the content is already well-structured, so the operation is instant. You can review the new starting point before the old context is permanently removed, making this the only reversible
-compaction approach.
-
-## `/clear` - Clear All History
-
-Remove all messages from conversation history.
-
-### Syntax
-
-```
-/clear
-```
-
-### Notes
-
-- Instant deletion of all messages
-- **Irreversible** - all history is permanently removed
-- Use when you want to start a completely new conversation
+This is a form of "opportunistic compaction" — the content is already well-structured, so the operation is instant. You can review the new starting point before the old context is permanently removed, making this the only reversible compaction approach.
 
 ---
 
-## `/compact` - AI Summarization
+## `/compact` — AI Summarization
 
 Compress conversation history using AI summarization. Replaces the conversation with a compact summary that preserves context.
 
@@ -57,8 +31,8 @@ Compress conversation history using AI summarization. Replaces the conversation 
 
 ### Options
 
-- `-t <tokens>` - Maximum output tokens for the summary (default: ~2000 words)
-- `-m <model>` - Model to use for compaction (sticky preference). Supports abbreviations like `haiku`, `sonnet`, or full model strings
+- `-t <tokens>` — Maximum output tokens for the summary (default: ~2000 words)
+- `-m <model>` — Model to use for compaction (sticky preference). Supports abbreviations like `haiku`, `sonnet`, or full model strings
 
 ### Examples
 
@@ -115,12 +89,30 @@ Combine custom model, token limit, and auto-continue message.
 - Model preference persists globally across workspaces
 - Uses the specified model (or workspace model by default) to summarize conversation history
 - Preserves actionable context and specific details
-- **Irreversible** - original messages are replaced
+- **Irreversible** — original messages are replaced
 - Continue message is sent once after compaction completes (not persisted)
 
 ---
 
-## `/truncate` - Simple Truncation
+## `/clear` — Clear All History
+
+Remove all messages from conversation history.
+
+### Syntax
+
+```
+/clear
+```
+
+### Notes
+
+- Instant deletion of all messages
+- **Irreversible** — all history is permanently removed
+- Use when you want to start a completely new conversation
+
+---
+
+## `/truncate` — Simple Truncation
 
 Remove a percentage of messages from conversation history (from the oldest first).
 
@@ -132,7 +124,7 @@ Remove a percentage of messages from conversation history (from the oldest first
 
 ### Parameters
 
-- `percentage` (required) - Percentage of messages to remove (0-100)
+- `percentage` (required) — Percentage of messages to remove (0-100)
 
 ### Examples
 
@@ -148,7 +140,7 @@ Remove oldest 50% of messages.
 - Removes messages from oldest to newest
 - About as fast as `/clear`
 - `/truncate 100` is equivalent to `/clear`
-- **Irreversible** - messages are permanently removed
+- **Irreversible** — messages are permanently removed
 
 ### OpenAI Responses API Limitation
 

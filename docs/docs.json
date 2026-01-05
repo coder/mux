@@ -41,6 +41,15 @@
             "pages": [
               "workspaces",
               "workspaces/fork",
+              "workspaces/sharing",
+              {
+                "group": "Compaction",
+                "pages": [
+                  "workspaces/compaction",
+                  "workspaces/compaction/manual",
+                  "workspaces/compaction/automatic"
+                ]
+              },
               {
                 "group": "Runtimes",
                 "pages": [
@@ -66,7 +75,8 @@
               "agents/instruction-files",
               "agents/agent-skills",
               "agents/plan-mode",
-              "agents/system-prompt"
+              "agents/system-prompt",
+              "agents/prompting-tips"
             ]
           },
           {
@@ -77,19 +87,11 @@
               "config/project-secrets",
               "config/agentic-git-identity",
               "config/keybinds",
-              "config/notifications"
+              "config/notifications",
+              "config/vim-mode"
             ]
           },
-          {
-            "group": "Guides",
-            "pages": [
-              "guides/cli",
-              "guides/context-management",
-              "guides/sharing",
-              "guides/prompting-tips",
-              "guides/vim-mode"
-            ]
-          },
+
           {
             "group": "Integrations",
             "pages": ["integrations/vscode-extension"]
@@ -133,11 +135,19 @@
     { "source": "/agentic-git-identity", "destination": "/config/agentic-git-identity" },
     { "source": "/keybinds", "destination": "/config/keybinds" },
     { "source": "/notifications", "destination": "/config/notifications" },
-    { "source": "/cli", "destination": "/guides/cli" },
-    { "source": "/context-management", "destination": "/guides/context-management" },
-    { "source": "/sharing", "destination": "/guides/sharing" },
-    { "source": "/prompting-tips", "destination": "/guides/prompting-tips" },
-    { "source": "/vim-mode", "destination": "/guides/vim-mode" },
+    { "source": "/cli", "destination": "/reference/cli" },
+    { "source": "/guides/cli", "destination": "/reference/cli" },
+    { "source": "/context-management", "destination": "/workspaces/compaction" },
+    { "source": "/guides/context-management", "destination": "/workspaces/compaction" },
+    { "source": "/guides/compaction", "destination": "/workspaces/compaction" },
+    { "source": "/guides/compaction/manual", "destination": "/workspaces/compaction/manual" },
+    { "source": "/guides/compaction/automatic", "destination": "/workspaces/compaction/automatic" },
+    { "source": "/sharing", "destination": "/workspaces/sharing" },
+    { "source": "/guides/sharing", "destination": "/workspaces/sharing" },
+    { "source": "/prompting-tips", "destination": "/agents/prompting-tips" },
+    { "source": "/guides/prompting-tips", "destination": "/agents/prompting-tips" },
+    { "source": "/vim-mode", "destination": "/config/vim-mode" },
+    { "source": "/guides/vim-mode", "destination": "/config/vim-mode" },
     { "source": "/vscode-extension", "destination": "/integrations/vscode-extension" },
     { "source": "/telemetry", "destination": "/reference/telemetry" },
     { "source": "/storybook", "destination": "/reference/storybook" },

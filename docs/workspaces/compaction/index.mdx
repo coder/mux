@@ -1,0 +1,27 @@
+---
+title: Compaction
+description: Managing conversation context size with compaction
+---
+
+As conversations grow, they consume more of the model's context window. Compaction reduces context size while preserving important information, keeping your conversations responsive and cost-effective.
+
+## Approaches
+
+| Approach                                                                  | Speed            | Context Preservation | Cost            | Reversible |
+| ------------------------------------------------------------------------- | ---------------- | -------------------- | --------------- | ---------- |
+| [Start Here](/workspaces/compaction/manual#start-here)                    | Instant          | Intelligent          | Free            | Yes        |
+| [`/compact`](/workspaces/compaction/manual#compact---ai-summarization)    | Slower (uses AI) | Intelligent          | Uses API tokens | No         |
+| [`/clear`](/workspaces/compaction/manual#clear---clear-all-history)       | Instant          | None                 | Free            | No         |
+| [`/truncate`](/workspaces/compaction/manual#truncate---simple-truncation) | Instant          | Temporal             | Free            | No         |
+| [Auto-Compaction](/workspaces/compaction/automatic)                       | Automatic        | Intelligent          | Uses API tokens | No         |
+
+## When to compact
+
+- **Proactively**: Before hitting context limits, especially on long-running tasks
+- **After major milestones**: When you've completed a phase and want to preserve learnings without full history
+- **When responses degrade**: Large contexts can reduce response quality
+
+## Next steps
+
+- [Manual Compaction](/workspaces/compaction/manual) — Commands for manually managing context
+- [Automatic Compaction](/workspaces/compaction/automatic) — Let mux compact for you based on usage or idle time

@@ -1,0 +1,89 @@
+---
+title: Automatic Compaction
+description: Let mux automatically compact your conversations based on usage or idle time
+---
+
+mux can run `/compact` for you to keep context size manageable. There are two types of automatic compaction:
+
+- **Usage-based**: Compacts when your conversation reaches a configurable percentage of the model's context window
+- **Idle-based**: Optionally compacts inactive workspaces after a period of time
+
+## Usage-based auto-compaction
+
+When enabled, mux monitors your context usage and:
+
+1. Shows a subtle warning as you approach the threshold (e.g., "Auto-Compact in 12% usage")
+2. When you send your next message **at or above the threshold**, mux runs compaction first, then automatically sends your message as a follow-up
+
+### Configure the threshold
+
+- Open the **Costs** sidebar tab and find **Context Usage**
+- Drag the blue marker to set the percentage
+- The setting is **saved per model** (and applies to any workspace using that model)
+- Default is **70%**
+- Set it to **100%** to disable usage-based auto-compaction
+
+mux caps the enabled threshold at **90%** to leave a safety buffer before hard context limits.
+
+### Force-compaction during streaming
+
+If a single response pushes context usage above your threshold while streaming, mux may interrupt and compact automatically once you exceed the threshold by an additional buffer (currently **+5%**). After compaction, mux resumes the conversation automatically.
+
+This safety mechanism prevents hitting hard context limits mid-stream.
+
+---
+
+## Idle-based auto-compaction
+
+Idle-based auto-compaction is **off by default**.
+
+When enabled for a project, mux periodically checks for workspaces that:
+
+- Have been inactive for the configured number of hours
+- Are not currently streaming
+- Are not already compacted
+
+Eligible workspaces are compacted automatically and marked with the idle-compacted badge (**💤📦**).
+
+### Configure idle compaction
+
+You can configure idle compaction via the UI or a slash command:
+
+**Via UI:**
+
+- Click the context usage indicator in the chat input toolbar
+- Enable idle-based auto-compact and set the hours
+
+**Via command:**
+
+```
+/idle <hours>
+/idle off
+```
+
+Examples:
+
+```
+/idle 24
+```
+
+Compact workspaces after 24 hours of inactivity.
+
+```
+/idle off
+```
+
+Disable idle compaction for this project.
+
+### Notes
+
+- The setting is **per project** (applies to all workspaces in the project)
+- mux checks roughly **once per hour**, so compaction may not trigger immediately when the timer expires
+
+---
+
+## General notes
+
+- Auto-compaction uses API tokens (same cost model as `/compact`)
+- Auto-compaction requires known model context limits; if mux can't determine a model's context window, usage-based auto-compaction won't run
+- Both types of auto-compaction use the same summarization logic as manual `/compact`

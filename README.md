@@ -46,7 +46,7 @@ Here are some specific use cases we enable:
 - Rich markdown outputs (mermaid diagrams, LaTeX, etc.)
 
 mux has a custom agent loop but much of the core UX is inspired by Claude Code. You'll find familiar features like Plan/Exec mode, vim inputs, `/compact` and new ones
-like [opportunistic compaction](https://mux.coder.com/guides/context-management) and [mode prompts](https://mux.coder.com/agents/instruction-files#mode-prompts).
+like [opportunistic compaction](https://mux.coder.com/workspaces/compaction) and [mode prompts](https://mux.coder.com/agents/instruction-files#mode-prompts).
 
 **[Read the full documentation →](https://mux.coder.com)**
 
