@@ -1,13 +1,16 @@
-import React, { useState, useCallback } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Check, X, Eye, EyeOff, ExternalLink } from "lucide-react";
 
 import { createEditKeyHandler } from "@/browser/utils/ui/keybinds";
 import { SUPPORTED_PROVIDERS } from "@/common/constants/providers";
+import { KNOWN_MODELS } from "@/common/constants/knownModels";
+import type { ProvidersConfigMap } from "@/common/orpc/types";
 import type { ProviderName } from "@/common/constants/providers";
 import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
 import { useAPI } from "@/browser/contexts/API";
+import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
-import { useGateway } from "@/browser/hooks/useGatewayModels";
+import { isProviderSupported, useGateway } from "@/browser/hooks/useGatewayModels";
 import { Button } from "@/browser/components/ui/button";
 import {
   Select,
@@ -24,6 +27,31 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/browser/components/ui/tooltip";
+
+const GATEWAY_MODELS_KEY = "gateway-models";
+
+const BUILT_IN_MODELS: string[] = Object.values(KNOWN_MODELS).map((model) => model.id);
+
+function getEligibleGatewayModels(config: ProvidersConfigMap | null): string[] {
+  const customModels: string[] = [];
+
+  if (config) {
+    for (const [provider, providerConfig] of Object.entries(config)) {
+      if (provider === "mux-gateway") continue;
+      for (const modelId of providerConfig.models ?? []) {
+        customModels.push(`${provider}:${modelId}`);
+      }
+    }
+  }
+
+  const unique = new Set<string>();
+  for (const modelId of [...customModels, ...BUILT_IN_MODELS]) {
+    if (!isProviderSupported(modelId)) continue;
+    unique.add(modelId);
+  }
+
+  return Array.from(unique).sort((a, b) => a.localeCompare(b));
+}
 
 interface FieldConfig {
   key: string;
@@ -102,7 +130,29 @@ const PROVIDER_KEY_URLS: Partial<Record<ProviderName, string>> = {
 export function ProvidersSection() {
   const { api } = useAPI();
   const { config, updateOptimistically } = useProvidersConfig();
+  const [gatewayModels, setGatewayModels] = usePersistedState<string[]>(GATEWAY_MODELS_KEY, [], {
+    listener: true,
+  });
+
+  const eligibleGatewayModels = useMemo(() => getEligibleGatewayModels(config), [config]);
+
+  const isGatewayDefaultEnabled = useMemo(
+    () =>
+      eligibleGatewayModels.length > 0 &&
+      eligibleGatewayModels.every((modelId) => gatewayModels.includes(modelId)),
+    [eligibleGatewayModels, gatewayModels]
+  );
+
+  const setGatewayDefaultEnabled = useCallback(
+    (next: boolean) => {
+      setGatewayModels(next ? eligibleGatewayModels : []);
+    },
+    [eligibleGatewayModels, setGatewayModels]
+  );
+
   const gateway = useGateway();
+
+  const wasGatewayCouponCodeSet = config?.["mux-gateway"]?.couponCodeSet ?? false;
   const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
   const [editingField, setEditingField] = useState<{
     provider: string;
@@ -135,6 +185,12 @@ export function ProvidersSection() {
 
     const { provider, field } = editingField;
 
+    const shouldAutoEnableGatewayDefault =
+      provider === "mux-gateway" &&
+      field === "couponCode" &&
+      editValue !== "" &&
+      !wasGatewayCouponCodeSet;
+
     // Optimistic update for instant feedback
     if (field === "apiKey") {
       updateOptimistically(provider, { apiKeySet: editValue !== "" });
@@ -144,13 +200,24 @@ export function ProvidersSection() {
       updateOptimistically(provider, { couponCodeSet: editValue !== "" });
     }
 
+    if (shouldAutoEnableGatewayDefault) {
+      setGatewayDefaultEnabled(true);
+    }
+
     setEditingField(null);
     setEditValue("");
     setShowPassword(false);
 
     // Save in background
     void api.providers.setProviderConfig({ provider, keyPath: [field], value: editValue });
-  }, [api, editingField, editValue, updateOptimistically]);
+  }, [
+    api,
+    editingField,
+    editValue,
+    setGatewayDefaultEnabled,
+    updateOptimistically,
+    wasGatewayCouponCodeSet,
+  ]);
 
   const handleClearField = useCallback(
     (provider: string, field: string) => {
@@ -435,18 +502,37 @@ export function ProvidersSection() {
                     </Select>
                   </div>
                 )}
-                {/* Gateway enabled toggle - only for mux-gateway when configured */}
+                {/* Gateway toggles - only for mux-gateway when configured */}
                 {provider === "mux-gateway" && gateway.isConfigured && (
-                  <div className="border-border-light flex items-center justify-between border-t pt-3">
-                    <div>
-                      <label className="text-foreground block text-xs font-medium">Enabled</label>
-                      <span className="text-muted text-xs">Route requests through Mux Gateway</span>
+                  <div className="border-border-light space-y-3 border-t pt-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <label className="text-foreground block text-xs font-medium">Enabled</label>
+                        <span className="text-muted text-xs">
+                          Route requests through Mux Gateway
+                        </span>
+                      </div>
+                      <Switch
+                        checked={gateway.isEnabled}
+                        onCheckedChange={() => gateway.toggleEnabled()}
+                        aria-label="Toggle Mux Gateway"
+                      />
                     </div>
-                    <Switch
-                      checked={gateway.isEnabled}
-                      onCheckedChange={() => gateway.toggleEnabled()}
-                      aria-label="Toggle Mux Gateway"
-                    />
+
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <label className="text-foreground block text-xs font-medium">Default</label>
+                        <span className="text-muted text-xs">
+                          Enabling Mux Gateway as default will set all models to be used through Mux
+                          Gateway.
+                        </span>
+                      </div>
+                      <Switch
+                        checked={isGatewayDefaultEnabled}
+                        onCheckedChange={setGatewayDefaultEnabled}
+                        aria-label="Toggle Mux Gateway Default"
+                      />
+                    </div>
                   </div>
                 )}
               </div>
