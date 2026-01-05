@@ -7,6 +7,7 @@
  */
 import cors from "cors";
 import express, { type Express } from "express";
+import * as fs from "fs/promises";
 import * as http from "http";
 import * as path from "path";
 import { WebSocketServer } from "ws";
@@ -83,6 +84,16 @@ function formatHostForUrl(host: string): string {
   return trimmed;
 }
 
+function injectBaseHref(indexHtml: string, baseHref: string): string {
+  // Avoid double-injecting if the HTML already has a base tag.
+  if (/<base\b/i.test(indexHtml)) {
+    return indexHtml;
+  }
+
+  // Insert immediately after the opening <head> tag (supports <head> and <head ...attrs>).
+  return indexHtml.replace(/<head[^>]*>/i, (match) => `${match}\n    <base href="${baseHref}" />`);
+}
+
 /**
  * Create an oRPC server with HTTP and WebSocket endpoints.
  *
@@ -116,8 +127,18 @@ export async function createOrpcServer({
   app.use(cors());
   app.use(express.json({ limit: "50mb" }));
 
+  let spaIndexHtml: string | null = null;
+
   // Static file serving (optional)
   if (serveStatic) {
+    try {
+      const indexHtmlPath = path.join(staticDir, "index.html");
+      const indexHtml = await fs.readFile(indexHtmlPath, "utf8");
+      spaIndexHtml = injectBaseHref(indexHtml, "/");
+    } catch (error) {
+      log.error("Failed to read index.html for SPA fallback:", error);
+    }
+
     app.use(express.static(staticDir));
   }
 
@@ -229,6 +250,12 @@ export async function createOrpcServer({
       // Don't swallow API/ORPC routes with index.html.
       if (req.path.startsWith("/orpc") || req.path.startsWith("/api")) {
         return next();
+      }
+
+      if (spaIndexHtml !== null) {
+        res.setHeader("Content-Type", "text/html");
+        res.send(spaIndexHtml);
+        return;
       }
 
       res.sendFile(path.join(staticDir, "index.html"));

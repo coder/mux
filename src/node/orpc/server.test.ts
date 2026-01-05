@@ -24,7 +24,8 @@ describe("createOrpcServer", () => {
     const stubContext: Partial<ORPCContext> = {};
 
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-static-"));
-    const indexHtml = "<!doctype html><title>mux</title><div>ok</div>";
+    const indexHtml =
+      "<!doctype html><html><head><title>mux</title></head><body><div>ok</div></body></html>";
 
     let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
 
@@ -42,7 +43,9 @@ describe("createOrpcServer", () => {
 
       const uiRes = await fetch(`${server.baseUrl}/some/spa/route`);
       expect(uiRes.status).toBe(200);
-      expect(await uiRes.text()).toContain("mux");
+      const uiText = await uiRes.text();
+      expect(uiText).toContain("mux");
+      expect(uiText).toContain('<base href="/"');
 
       const apiRes = await fetch(`${server.baseUrl}/api/not-a-real-route`);
       expect(apiRes.status).toBe(404);
