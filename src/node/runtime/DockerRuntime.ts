@@ -297,13 +297,23 @@ export class DockerRuntime extends RemoteRuntime {
     return CONTAINER_SRC_DIR;
   }
 
-  // eslint-disable-next-line @typescript-eslint/require-await -- interface requires Promise return type
   async createWorkspace(params: WorkspaceCreationParams): Promise<WorkspaceCreationResult> {
     const { projectPath, branchName } = params;
 
-    // Generate and store container name - actual container creation happens in initWorkspace
-    // so that image pull progress is visible in the init section
+    // Generate container name and check for collisions before persisting metadata
     const containerName = getContainerName(projectPath, branchName);
+
+    // Check if container already exists (collision detection)
+    const checkResult = await runDockerCommand(`docker inspect ${containerName}`, 10000);
+    if (checkResult.exitCode === 0) {
+      return {
+        success: false,
+        error: `Workspace already exists: container ${containerName}`,
+      };
+    }
+
+    // Store container name - actual container creation happens in initWorkspace
+    // so that image pull progress is visible in the init section
     this.containerName = containerName;
 
     return {
@@ -584,17 +594,23 @@ export class DockerRuntime extends RemoteRuntime {
           };
         }
 
-        // Check for unpushed commits
-        const unpushedResult = await runDockerCommand(
-          `docker exec ${containerName} bash -c 'cd ${CONTAINER_SRC_DIR} && git log --branches --not --remotes --oneline'`,
+        // Check for unpushed commits (only if remotes exist - repos with no remotes would show all commits)
+        const hasRemotes = await runDockerCommand(
+          `docker exec ${containerName} bash -c 'cd ${CONTAINER_SRC_DIR} && git remote | grep -q .'`,
           10000
         );
+        if (hasRemotes.exitCode === 0) {
+          const unpushedResult = await runDockerCommand(
+            `docker exec ${containerName} bash -c 'cd ${CONTAINER_SRC_DIR} && git log --branches --not --remotes --oneline'`,
+            10000
+          );
 
-        if (unpushedResult.exitCode === 0 && unpushedResult.stdout.trim()) {
-          return {
-            success: false,
-            error: `Workspace contains unpushed commits:\n\n${unpushedResult.stdout.trim()}`,
-          };
+          if (unpushedResult.exitCode === 0 && unpushedResult.stdout.trim()) {
+            return {
+              success: false,
+              error: `Workspace contains unpushed commits:\n\n${unpushedResult.stdout.trim()}`,
+            };
+          }
         }
       }
 

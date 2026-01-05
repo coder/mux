@@ -91,7 +91,7 @@ type WorkspaceUpdateAISettingsResult = Awaited<
 type WorkspaceCreateResult = Awaited<ReturnType<APIClient["workspace"]["create"]>>;
 type NameGenerationArgs = Parameters<APIClient["nameGeneration"]["generate"]>[0];
 type NameGenerationResult = Awaited<ReturnType<APIClient["nameGeneration"]["generate"]>>;
-type MockOrpcProjectsClient = Pick<APIClient["projects"], "listBranches">;
+type MockOrpcProjectsClient = Pick<APIClient["projects"], "listBranches" | "runtimeAvailability">;
 type MockOrpcWorkspaceClient = Pick<
   APIClient["workspace"],
   "sendMessage" | "create" | "updateAISettings"
@@ -193,6 +193,13 @@ const setupWindow = ({
   currentORPCClient = {
     projects: {
       listBranches: (input: ListBranchesArgs) => listBranchesMock(input),
+      runtimeAvailability: () =>
+        Promise.resolve({
+          local: { available: true },
+          worktree: { available: true },
+          ssh: { available: true },
+          docker: { available: true },
+        }),
     },
     workspace: {
       sendMessage: (input: WorkspaceSendMessageArgs) => sendMessageMock(input),
