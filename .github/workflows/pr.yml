@@ -14,8 +14,10 @@ on:
         type: string
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # For PRs: group by PR number so pushes to same PR cancel previous runs
+  # For main: use unique SHA so builds never cancel each other (we want all artifacts)
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Permissions for GCP workload identity authentication (Windows code signing on main)
 permissions:
