@@ -264,9 +264,9 @@ export function createFileReadTool(toolCallId: string, filePath: string, content
   return {
     type: "dynamic-tool",
     toolCallId,
-    toolName: "read_file",
+    toolName: "file_read",
     state: "output-available",
-    input: { target_file: filePath },
+    input: { filePath },
     output: { success: true, content },
   };
 }

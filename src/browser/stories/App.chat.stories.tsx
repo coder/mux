@@ -271,8 +271,8 @@ export const Streaming: AppStory = {
           streamText: "I'll help you refactor the database connection to use connection pooling.",
           pendingTool: {
             toolCallId: "call-1",
-            toolName: "read_file",
-            args: { target_file: "src/db/connection.ts" },
+            toolName: "file_read",
+            args: { filePath: "src/db/connection.ts" },
           },
           gitStatus: { dirty: 1 },
         })
