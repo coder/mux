@@ -67,6 +67,22 @@ export function TerminalView({
     outputBufferRef.current = [];
     outputBufferBytesRef.current = 0;
   };
+
+  const clearOutputBuffer = () => {
+    outputBufferRef.current = [];
+    outputBufferBytesRef.current = 0;
+  };
+
+  // Clear output buffer when workspaceId changes to prevent cross-workspace contamination.
+  // The buffer is meant for keep-alive sessions within a single workspace, not across workspaces.
+  const prevWorkspaceIdRef = useRef(workspaceId);
+  useEffect(() => {
+    if (prevWorkspaceIdRef.current !== workspaceId) {
+      clearOutputBuffer();
+      prevWorkspaceIdRef.current = workspaceId;
+    }
+  }, [workspaceId]);
+
   const [terminalReady, setTerminalReady] = useState(false);
   const [terminalSize, setTerminalSize] = useState<{ cols: number; rows: number } | null>(null);
 

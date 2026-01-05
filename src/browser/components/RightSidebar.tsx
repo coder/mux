@@ -7,7 +7,9 @@ import {
 import { readPersistedState, usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useWorkspaceUsage, useWorkspaceStatsSnapshot } from "@/browser/stores/WorkspaceStore";
 import { useFeatureFlags } from "@/browser/contexts/FeatureFlagsContext";
+import { useAPI } from "@/browser/contexts/API";
 import { CostsTab } from "./RightSidebar/CostsTab";
+import { ExternalLink } from "lucide-react";
 
 import { ReviewPanel } from "./RightSidebar/CodeReview/ReviewPanel";
 import { ErrorBoundary } from "./ErrorBoundary";
@@ -18,7 +20,11 @@ import { matchesKeybind, KEYBINDS, formatKeybind } from "@/browser/utils/ui/keyb
 import { SidebarCollapseButton } from "./ui/SidebarCollapseButton";
 import { cn } from "@/common/lib/utils";
 import type { ReviewNoteData } from "@/common/types/review";
-import { TerminalTab } from "./RightSidebar/TerminalTab";
+import {
+  TerminalTab,
+  getTerminalSessionId,
+  releaseTerminalSession,
+} from "./RightSidebar/TerminalTab";
 import { RIGHT_SIDEBAR_TABS, isTabType, type TabType } from "@/browser/types/rightSidebar";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import {
@@ -43,6 +49,7 @@ import {
   getTabName,
   type TabDragData,
 } from "./RightSidebar/RightSidebarTabStrip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import {
   DndContext,
   DragOverlay,
@@ -176,6 +183,10 @@ interface RightSidebarTabsetNodeProps {
   /** Data about the currently dragged tab (if any) */
   activeDragData: TabDragData | null;
   setLayout: (updater: (prev: RightSidebarLayoutState) => RightSidebarLayoutState) => void;
+  /** Handler to pop out terminal to a separate window */
+  onPopOutTerminal: () => void;
+  /** Whether the terminal has been popped out to a separate window */
+  terminalPoppedOut: boolean;
 }
 
 const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) => {
@@ -283,7 +294,25 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
           )}
         </>
       ) : (
-        <>Terminal</>
+        <span className="inline-flex items-center gap-1">
+          Terminal
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                className="text-muted hover:text-foreground -my-0.5 rounded p-0.5 transition-colors"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  props.onPopOutTerminal();
+                }}
+                aria-label="Open terminal in new window"
+              >
+                <ExternalLink className="h-3 w-3" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Open in new window</TooltipContent>
+          </Tooltip>
+        </span>
       );
 
     return [
@@ -401,6 +430,7 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
             <TerminalTab
               workspaceId={props.workspaceId}
               visible={props.node.activeTab === "terminal"}
+              poppedOut={props.terminalPoppedOut}
             />
           </div>
         )}
@@ -617,6 +647,39 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   // @dnd-kit state for tracking active drag
   const [activeDragData, setActiveDragData] = React.useState<TabDragData | null>(null);
 
+  // Terminal pop-out state - tracks whether the terminal has been popped out to a separate window
+  const [terminalPoppedOut, setTerminalPoppedOut] = React.useState(false);
+
+  // API for opening terminal windows
+  const { api } = useAPI();
+
+  // Handler to pop out the terminal to a separate window, preserving the session
+  const handlePopOutTerminal = React.useCallback(() => {
+    const sessionId = getTerminalSessionId(workspaceId);
+
+    // Check if running in browser mode (window.api is only available in Electron)
+    const isBrowser = !window.api;
+
+    // Build URL with sessionId for seamless handoff
+    const params = new URLSearchParams({ workspaceId });
+    if (sessionId) {
+      params.set("sessionId", sessionId);
+    }
+    const url = `/terminal.html?${params.toString()}`;
+
+    if (isBrowser) {
+      // In browser mode, open client-side
+      window.open(url, `terminal-${workspaceId}-${Date.now()}`, "width=1000,height=600,popup=yes");
+    }
+
+    // Open via backend (Electron pops up BrowserWindow, browser already opened above)
+    void api?.terminal.openWindow({ workspaceId, sessionId: sessionId ?? undefined });
+
+    // Release the session from the embedded terminal and show placeholder
+    releaseTerminalSession(workspaceId);
+    setTerminalPoppedOut(true);
+  }, [workspaceId, api]);
+
   // Configure sensors with distance threshold for click vs drag disambiguation
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -761,6 +824,8 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         activeDragData={activeDragData}
         sessionCost={sessionCost}
         setLayout={setLayout}
+        onPopOutTerminal={handlePopOutTerminal}
+        terminalPoppedOut={terminalPoppedOut}
       />
     );
   };
