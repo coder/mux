@@ -1408,10 +1408,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           const result = await handleCompactCommand(parsed, context);
           if (!result.clearInput) {
             setInput(messageText); // Restore input on error
-          } else if (reviewsData && reviewsData.length > 0) {
-            // Mark attached reviews as checked on success
-            const sentReviewIds = attachedReviews.map((r) => r.id);
-            props.onCheckReviews?.(sentReviewIds);
+          } else {
+            if (reviewsData && reviewsData.length > 0) {
+              // Mark attached reviews as checked on success
+              const sentReviewIds = attachedReviews.map((r) => r.id);
+              props.onCheckReviews?.(sentReviewIds);
+            }
+            props.onMessageSent?.();
           }
           return;
         }

@@ -96,6 +96,59 @@ describe("Compaction UI (mock AI router)", () => {
     }
   }, 60_000);
 
+  test("/compact command sends any foreground bash to background", async () => {
+    const app = await createAppHarness({ branchPrefix: "compaction-ui" });
+
+    let unregister: (() => void) | undefined;
+
+    try {
+      const manager = getBackgroundProcessManager(app.env);
+
+      const toolCallId = "bash-foreground-compact";
+      let backgrounded = false;
+
+      const registration = manager.registerForegroundProcess(
+        app.workspaceId,
+        toolCallId,
+        "echo foreground bash for compact",
+        "foreground bash for compact",
+        () => {
+          backgrounded = true;
+          unregister?.();
+        }
+      );
+
+      unregister = registration.unregister;
+
+      // Ensure the UI's subscription has observed the foreground bash before sending /compact.
+      await waitForForegroundToolCallId(app.env, app.workspaceId, toolCallId);
+
+      const seedMessage = "Seed conversation for /compact test";
+
+      const seedResult = await app.env.orpc.workspace.sendMessage({
+        workspaceId: app.workspaceId,
+        message: seedMessage,
+      });
+      expect(seedResult.success).toBe(true);
+      await app.chat.expectTranscriptContains(`Mock response: ${seedMessage}`);
+
+      // Send /compact command via the UI (like a user would)
+      await app.chat.send("/compact -t 500");
+
+      await app.chat.expectTranscriptContains("Mock compaction summary:", 60_000);
+
+      await waitFor(
+        () => {
+          expect(backgrounded).toBe(true);
+        },
+        { timeout: 60_000 }
+      );
+    } finally {
+      unregister?.();
+      await app.dispose();
+    }
+  }, 60_000);
+
   test("force compaction sends any foreground bash to background", async () => {
     const app = await createAppHarness({ branchPrefix: "compaction-ui" });
 
