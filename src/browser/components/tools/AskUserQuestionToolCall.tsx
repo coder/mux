@@ -274,8 +274,18 @@ export function AskUserQuestionToolCall(props: {
     });
   }, [draftAnswers, props.args.questions]);
 
+  const submitButtonRef = useRef<HTMLButtonElement>(null);
+
   const summaryIndex = props.args.questions.length;
   const isOnSummary = activeIndex === summaryIndex;
+
+  // Focus submit button when reaching summary so Enter submits
+  useEffect(() => {
+    if (props.status === "executing" && isOnSummary) {
+      submitButtonRef.current?.focus();
+    }
+  }, [isOnSummary, props.status]);
+
   const currentQuestion = isOnSummary
     ? null
     : props.args.questions[Math.min(activeIndex, props.args.questions.length - 1)];
@@ -638,7 +648,7 @@ export function AskUserQuestionToolCall(props: {
             {props.status === "executing" && (
               <div className="flex justify-end">
                 {isOnSummary ? (
-                  <Button disabled={isSubmitting} onClick={handleSubmit}>
+                  <Button ref={submitButtonRef} disabled={isSubmitting} onClick={handleSubmit}>
                     {isSubmitting ? "Submitting…" : "Submit answers"}
                   </Button>
                 ) : (
