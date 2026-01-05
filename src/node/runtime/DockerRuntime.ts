@@ -581,35 +581,42 @@ export class DockerRuntime extends RemoteRuntime {
       }
 
       if (!force) {
-        // Check for uncommitted changes
-        const checkResult = await runDockerCommand(
-          `docker exec ${containerName} bash -c 'cd ${CONTAINER_SRC_DIR} && git diff --quiet --exit-code && git diff --quiet --cached --exit-code'`,
-          10000
-        );
-
-        if (checkResult.exitCode !== 0) {
-          return {
-            success: false,
-            error: "Workspace contains uncommitted changes. Use force flag to delete anyway.",
-          };
-        }
-
-        // Check for unpushed commits (only if remotes exist - repos with no remotes would show all commits)
-        const hasRemotes = await runDockerCommand(
-          `docker exec ${containerName} bash -c 'cd ${CONTAINER_SRC_DIR} && git remote | grep -q .'`,
-          10000
-        );
-        if (hasRemotes.exitCode === 0) {
-          const unpushedResult = await runDockerCommand(
-            `docker exec ${containerName} bash -c 'cd ${CONTAINER_SRC_DIR} && git log --branches --not --remotes --oneline'`,
+        // Start container if stopped (docker start is idempotent - succeeds if already running)
+        const startResult = await runDockerCommand(`docker start ${containerName}`, 30000);
+        if (startResult.exitCode !== 0) {
+          // Container won't start - skip dirty checks, allow deletion
+          // (container is broken/orphaned, user likely wants to clean up)
+        } else {
+          // Check for uncommitted changes
+          const checkResult = await runDockerCommand(
+            `docker exec ${containerName} bash -c 'cd ${CONTAINER_SRC_DIR} && git diff --quiet --exit-code && git diff --quiet --cached --exit-code'`,
             10000
           );
 
-          if (unpushedResult.exitCode === 0 && unpushedResult.stdout.trim()) {
+          if (checkResult.exitCode !== 0) {
             return {
               success: false,
-              error: `Workspace contains unpushed commits:\n\n${unpushedResult.stdout.trim()}`,
+              error: "Workspace contains uncommitted changes. Use force flag to delete anyway.",
             };
+          }
+
+          // Check for unpushed commits (only if remotes exist - repos with no remotes would show all commits)
+          const hasRemotes = await runDockerCommand(
+            `docker exec ${containerName} bash -c 'cd ${CONTAINER_SRC_DIR} && git remote | grep -q .'`,
+            10000
+          );
+          if (hasRemotes.exitCode === 0) {
+            const unpushedResult = await runDockerCommand(
+              `docker exec ${containerName} bash -c 'cd ${CONTAINER_SRC_DIR} && git log --branches --not --remotes --oneline'`,
+              10000
+            );
+
+            if (unpushedResult.exitCode === 0 && unpushedResult.stdout.trim()) {
+              return {
+                success: false,
+                error: `Workspace contains unpushed commits:\n\n${unpushedResult.stdout.trim()}`,
+              };
+            }
           }
         }
       }

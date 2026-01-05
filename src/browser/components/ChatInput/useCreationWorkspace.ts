@@ -181,16 +181,22 @@ export function useCreationWorkspace({
     setBranchesLoaded(false);
     const doLoad = async () => {
       try {
-        const [branchResult, availabilityResult] = await Promise.all([
+        // Use allSettled so failures are independent - branches can load even if availability fails
+        const [branchResult, availabilityResult] = await Promise.allSettled([
           api.projects.listBranches({ projectPath }),
           api.projects.runtimeAvailability({ projectPath }),
         ]);
         if (!mounted) return;
-        setBranches(branchResult.branches);
-        setRecommendedTrunk(branchResult.recommendedTrunk);
-        setRuntimeAvailability(availabilityResult);
-      } catch (err) {
-        console.error("Failed to load project state:", err);
+        if (branchResult.status === "fulfilled") {
+          setBranches(branchResult.value.branches);
+          setRecommendedTrunk(branchResult.value.recommendedTrunk);
+        } else {
+          console.error("Failed to load branches:", branchResult.reason);
+        }
+        if (availabilityResult.status === "fulfilled") {
+          setRuntimeAvailability(availabilityResult.value);
+        }
+        // If availability fails, runtimeAvailability stays null and UI shows all runtimes enabled
       } finally {
         if (mounted) {
           setBranchesLoaded(true);
