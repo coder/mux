@@ -21,21 +21,6 @@ img[src*="/img/dark.svg"] {
   height: 2.4rem !important;
 }
 
-/* Override link colors to match grayscale theme */
-a,
-.prose a,
-main a,
-[data-testid="main-content"] a {
-  color: #999 !important;
-}
-
-a:hover,
-.prose a:hover,
-main a:hover,
-[data-testid="main-content"] a:hover {
-  color: #FFF !important;
-}
-
 /* Apply styling to all images in docs */
 main img,
 .prose img,
