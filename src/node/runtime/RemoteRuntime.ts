@@ -57,7 +57,10 @@ export abstract class RemoteRuntime implements Runtime {
    * @param options Original exec options
    * @returns The spawned process and optional pre-exec work
    */
-  protected abstract spawnRemoteProcess(fullCommand: string, options: ExecOptions): SpawnResult;
+  protected abstract spawnRemoteProcess(
+    fullCommand: string,
+    options: ExecOptions
+  ): Promise<SpawnResult>;
 
   /**
    * Get the base path for file operations (used as cwd for file commands).
@@ -130,13 +133,10 @@ export abstract class RemoteRuntime implements Runtime {
     }
 
     // Spawn the remote process (SSH or Docker)
-    const { process: childProcess, preExec } = this.spawnRemoteProcess(fullCommand, options);
+    // For SSH, this awaits connection pool backoff before spawning
+    const { process: childProcess } = await this.spawnRemoteProcess(fullCommand, options);
 
-    // Wrap in DisposableProcess for cleanup.
-    //
-    // Important: Register process event handlers before awaiting preExec.
-    // Otherwise fast commands (like `mkdir`) can exit before we subscribe to
-    // the "close" event, leaving `exitCode` unresolved forever.
+    // Wrap in DisposableProcess for cleanup
     const disposable = new DisposableProcess(childProcess);
 
     // Track if we killed the process due to timeout or abort
@@ -240,17 +240,6 @@ export abstract class RemoteRuntime implements Runtime {
         childProcess.stdin?.destroy();
       },
     });
-
-    // Wait for any pre-exec work (e.g., SSH connection pool)
-    if (preExec) {
-      try {
-        await preExec;
-      } catch (error) {
-        // Ensure we don't leak a child process if preExec fails.
-        disposable[Symbol.dispose]();
-        throw error;
-      }
-    }
 
     log.debug(`${this.commandPrefix} command: ${fullCommand}`);
 

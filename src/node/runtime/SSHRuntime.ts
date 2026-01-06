@@ -138,7 +138,15 @@ export class SSHRuntime extends RemoteRuntime {
     }
   }
 
-  protected spawnRemoteProcess(fullCommand: string, options: ExecOptions): SpawnResult {
+  protected async spawnRemoteProcess(
+    fullCommand: string,
+    options: ExecOptions
+  ): Promise<SpawnResult> {
+    // Acquire connection from pool BEFORE spawning (enforces backoff)
+    await sshConnectionPool.acquireConnection(this.config, {
+      abortSignal: options.abortSignal,
+    });
+
     // Build SSH args from shared base config
     // -T: Disable pseudo-terminal allocation (default)
     // -t: Force pseudo-terminal allocation (for interactive shells)
@@ -167,12 +175,7 @@ export class SSHRuntime extends RemoteRuntime {
       windowsHide: true,
     });
 
-    // Pre-exec: acquire connection from pool for backoff protection
-    const preExec = sshConnectionPool.acquireConnection(this.config, {
-      abortSignal: options.abortSignal,
-    });
-
-    return { process, preExec };
+    return { process };
   }
 
   /**
