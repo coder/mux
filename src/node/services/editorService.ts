@@ -125,12 +125,11 @@ export class EditorService {
 
   /**
    * Check if a command is available in the system PATH.
-   * Uses shell: true to ensure we get the full PATH from user's shell profile,
-   * which is necessary for commands installed via Homebrew or similar.
+   * Inherits enriched PATH from process.env (set by initShellEnv at startup).
    */
   private isCommandAvailable(command: string): boolean {
     try {
-      const result = spawnSync("which", [command], { encoding: "utf8", shell: true });
+      const result = spawnSync("which", [command], { encoding: "utf8" });
       return result.status === 0;
     } catch {
       return false;

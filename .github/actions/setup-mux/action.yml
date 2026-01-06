@@ -46,10 +46,14 @@ runs:
 
     # Always run install if we didn't get an exact cache hit.
     # This handles restore-key matches which may have stale/incomplete node_modules.
+    # Delete node_modules first to ensure a clean install - bun install --frozen-lockfile
+    # only verifies packages are present, it doesn't update stale packages from a restore-key match.
     - name: Install dependencies
       if: steps.cache-node-modules.outputs.cache-hit != 'true'
       shell: bash
-      run: bun install --frozen-lockfile
+      run: |
+        rm -rf node_modules
+        bun install --frozen-lockfile
 
     # Cache Electron binaries and electron-builder resources (NSIS, etc.)
     # These are downloaded during electron-builder and can be 200MB+ total

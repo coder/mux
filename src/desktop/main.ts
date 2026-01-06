@@ -1,5 +1,19 @@
 // Enable source map support for better error stack traces in production
 import "source-map-support/register";
+
+// Fix PATH on macOS when launched from Finder (not terminal).
+// GUI apps inherit minimal PATH from launchd, missing Homebrew tools like git-lfs.
+// Must run before any child process spawns. Failures are silently ignored.
+if (process.platform === "darwin") {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    (require("fix-path") as { default: () => void }).default();
+  } catch (e) {
+    // App works with existing PATH; debug log for troubleshooting
+    console.debug("[fix-path] Failed to enrich PATH:", e);
+  }
+}
+
 import { randomBytes } from "crypto";
 import { RPCHandler } from "@orpc/server/message-port";
 import { onError } from "@orpc/server";
