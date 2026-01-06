@@ -567,6 +567,9 @@ export class TerminalService {
    * Get serialized screen state for a session.
    * Called by frontend on reconnect to restore terminal view instantly (~4KB vs 512KB raw replay).
    * Returns VT escape sequences that reconstruct the current screen state.
+   *
+   * Note: @xterm/addon-serialize v0.14+ automatically includes the alternate buffer switch
+   * sequence (\x1b[?1049h) when the terminal is in alternate screen mode (htop, vim, etc.).
    */
   getScreenState(sessionId: string): string {
     const addon = this.serializeAddons.get(sessionId);

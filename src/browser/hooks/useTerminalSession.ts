@@ -157,6 +157,18 @@ export function useTerminalSession(
             true
           );
 
+          // Immediately resize PTY to match current frontend dimensions.
+          // This is critical for TUI apps (htop, vim) that were running when we switched away.
+          // The restored screen state may have been captured at different dimensions, and
+          // sending a resize causes the app to redraw properly.
+          if (terminalSize) {
+            void api.terminal.resize({
+              sessionId: existingSessionId,
+              cols: terminalSize.cols,
+              rows: terminalSize.rows,
+            });
+          }
+
           // Give the subscription a brief moment to fail if session is stale
           await new Promise((resolve) => setTimeout(resolve, 100));
 

@@ -436,4 +436,85 @@ describeIntegration("terminal PTY", () => {
     },
     25000
   );
+
+  test.concurrent(
+    "reattach via attach should restore terminal state with escape sequences",
+    async () => {
+      const env = await createTestEnvironment();
+      const tempGitRepo = await createTempGitRepo();
+
+      try {
+        const createResult = await createWorkspace(env, tempGitRepo, "test-reattach");
+        const metadata = expectWorkspaceCreationSuccess(createResult);
+        const workspaceId = metadata.id;
+        const client = resolveOrpcClient(env);
+
+        // Create terminal session
+        const session = await client.terminal.create({
+          workspaceId,
+          cols: 80,
+          rows: 24,
+        });
+
+        // Wait for shell to initialize and produce output
+        await new Promise((resolve) => setTimeout(resolve, 500));
+
+        // Send a command that produces visible output
+        const outputChunks: string[] = [];
+        const outputPromise = (async () => {
+          const iterator = await client.terminal.onOutput({ sessionId: session.sessionId });
+          for await (const chunk of iterator) {
+            outputChunks.push(chunk);
+            if (outputChunks.join("").includes("REATTACH_TEST")) break;
+          }
+        })();
+
+        client.terminal.sendInput({
+          sessionId: session.sessionId,
+          data: "echo REATTACH_TEST\n",
+        });
+
+        await Promise.race([
+          outputPromise,
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("Timeout waiting for output")), 5000)
+          ),
+        ]);
+
+        // Now use attach to reattach - simulating what happens on workspace switch
+        const attachMessages: Array<{ type: "screenState" | "output"; data: string }> = [];
+        const attachPromise = (async () => {
+          const iterator = await client.terminal.attach({ sessionId: session.sessionId });
+          for await (const msg of iterator) {
+            attachMessages.push(msg);
+            // Just get the first message (screenState)
+            break;
+          }
+        })();
+
+        await Promise.race([
+          attachPromise,
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("Timeout in attach")), 5000)
+          ),
+        ]);
+
+        // First message should be screenState
+        expect(attachMessages[0].type).toBe("screenState");
+
+        // Screen state should contain escape sequences (colors, cursor positioning, etc.)
+        const screenState = attachMessages[0].data;
+        expect(screenState.length).toBeGreaterThan(0);
+        // Should contain escape sequences
+        expect(screenState).toMatch(/\x1b\[/);
+
+        await client.terminal.close({ sessionId: session.sessionId });
+        await client.workspace.remove({ workspaceId });
+      } finally {
+        await cleanupTestEnvironment(env);
+        await cleanupTempGitRepo(tempGitRepo);
+      }
+    },
+    15000
+  );
 });
