@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { highlightCode } from "@/browser/utils/highlighting/highlightWorkerClient";
 import { extractShikiLines } from "@/browser/utils/highlighting/shiki-shared";
 import { useTheme } from "@/browser/contexts/ThemeContext";
+import { cn } from "@/common/lib/utils";
 
 interface HighlightedCodeProps {
   code: string;
@@ -72,15 +73,17 @@ export const HighlightedCode: React.FC<HighlightedCodeProps> = ({
     );
   }
 
+  const baseClasses = cn("font-mono text-[11px] leading-relaxed", className);
+
   if (highlightedLines) {
     return (
       <div
-        className={className}
+        className={baseClasses}
         dangerouslySetInnerHTML={{ __html: highlightedLines.join("\n") }}
       />
     );
   }
-  return <div className={className}>{code}</div>;
+  return <div className={baseClasses}>{code}</div>;
 };
 
 interface JsonHighlightProps {
