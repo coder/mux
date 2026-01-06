@@ -47,7 +47,8 @@
                 "pages": [
                   "workspaces/compaction",
                   "workspaces/compaction/manual",
-                  "workspaces/compaction/automatic"
+                  "workspaces/compaction/automatic",
+                  "workspaces/compaction/customization"
                 ]
               },
               {

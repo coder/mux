@@ -1,0 +1,107 @@
+---
+title: Customization
+description: Customize the compaction system prompt and behavior
+---
+
+You can customize how mux summarizes conversations during compaction by creating a custom `compact` agent.
+
+## Default behavior
+
+The built-in compact agent uses this system prompt:
+
+```
+You are running a compaction/summarization pass. Do not call tools.
+```
+
+Combined with a user message that instructs the model to:
+
+- Summarize in approximately 2000 words (configurable via `-t`)
+- Include: goals, decisions, current state, technical details, errors, blockers
+- Exclude: next steps, filler, redundant information
+
+## Creating a custom compact agent
+
+Create `.mux/agents/compact.md` in your project (or `~/.mux/agents/compact.md` for global):
+
+```md
+---
+name: Compact
+description: Custom compaction behavior
+base: compact
+---
+
+Additional instructions for summarization.
+
+When summarizing:
+
+- Always preserve file paths as absolute paths
+- Include the exact git branch and commit if mentioned
+- Summarize test failures with their full error messages
+```
+
+The `base: compact` inherits the built-in compact agent's configuration (tools disabled, hidden from UI), and your instructions are **appended** to the base prompt.
+
+## Replacing the prompt entirely
+
+To completely replace the compaction instructions instead of appending:
+
+```md
+---
+name: Compact
+description: Minimal compaction
+base: compact
+prompt:
+  append: false
+---
+
+Summarize this conversation in 3 bullet points:
+
+1. What the user wanted
+2. What was accomplished
+3. What's left to do
+
+Be extremely brief. Maximum 200 words.
+```
+
+Setting `prompt.append: false` replaces the base agent's body with yours.
+
+## Project-specific compaction
+
+Different projects may need different summarization styles:
+
+**For a documentation project:**
+
+```md
+---
+name: Compact
+base: compact
+---
+
+When summarizing documentation work:
+
+- List all files that were created or modified
+- Note the documentation structure/hierarchy
+- Preserve any style guide decisions
+```
+
+**For a debugging session:**
+
+```md
+---
+name: Compact
+base: compact
+---
+
+When summarizing debugging sessions:
+
+- Preserve the full stack traces of errors encountered
+- Note hypotheses that were tested and ruled out
+- Keep exact reproduction steps
+```
+
+## Notes
+
+- The compact agent always has tools disabled (you cannot enable them)
+- The compact agent is hidden from the agent selector (`ui.hidden: true`)
+- Custom compact agents are used for both manual `/compact` and auto-compaction
+- The `-t` flag (word target) is passed in the user message, not the system prompt
