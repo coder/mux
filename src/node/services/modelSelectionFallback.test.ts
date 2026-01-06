@@ -117,7 +117,34 @@ describe("selectModelForNameGeneration", () => {
     expect(result).toBe("openrouter:anthropic/claude-haiku-4-5");
   });
 
-  it("falls back to any known model when all preferred and OpenRouter variants fail", async () => {
+  it("tries Mux Gateway variants when direct models aren't available", async () => {
+    // Only Mux Gateway is available (user has coupon but no direct API keys)
+    const mockService = createMockAiService(new Set(["mux-gateway:anthropic/claude-haiku-4-5"]));
+
+    const result = await selectModelForNameGeneration(mockService as AIService, [
+      "anthropic:claude-haiku-4-5",
+      "openai:gpt-5.1-codex-mini",
+    ]);
+
+    // Should find Mux Gateway variant
+    expect(result).toBe("mux-gateway:anthropic/claude-haiku-4-5");
+  });
+
+  it("prefers Mux Gateway over OpenRouter when both available", async () => {
+    // Both Mux Gateway and OpenRouter are available
+    const mockService = createMockAiService(
+      new Set(["mux-gateway:anthropic/claude-haiku-4-5", "openrouter:anthropic/claude-haiku-4-5"])
+    );
+
+    const result = await selectModelForNameGeneration(mockService as AIService, [
+      "anthropic:claude-haiku-4-5",
+    ]);
+
+    // Mux Gateway should be preferred (tried before OpenRouter)
+    expect(result).toBe("mux-gateway:anthropic/claude-haiku-4-5");
+  });
+
+  it("falls back to any known model when all preferred and gateway variants fail", async () => {
     // Only Grok is available
     const mockService = createMockAiService(new Set(["xai:grok-4-1-fast"]));
 
