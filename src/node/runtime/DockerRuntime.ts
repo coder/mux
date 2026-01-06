@@ -883,7 +883,7 @@ export class DockerRuntime extends RemoteRuntime {
         `git checkout ${shescape.quote(newWorkspaceName)} 2>/dev/null || ` +
         `git checkout -b ${shescape.quote(newWorkspaceName)} ${shescape.quote(sourceBranch)}`;
       const checkoutResult = await runDockerCommand(
-        `docker exec ${destContainerName} bash -c 'cd ${CONTAINER_SRC_DIR} && ${checkoutCmd}'`,
+        `docker exec ${destContainerName} bash -c ${shescape.quote(`cd ${CONTAINER_SRC_DIR} && ${checkoutCmd}`)}`,
         120000
       );
       if (checkoutResult.exitCode !== 0) {
