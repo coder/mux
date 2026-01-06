@@ -190,9 +190,8 @@ export class SSHRuntime implements Runtime {
 
     sshArgs.push(this.config.host, fullCommand);
 
-    // Debug: log the actual SSH command being executed
-    log.debug(`SSH command: ssh ${sshArgs.join(" ")}`);
-    log.debug(`Remote command: ${command}`);
+    // Debug: log the command being executed (exclude sshArgs which contains env secrets in fullCommand)
+    log.debug(`SSH exec on ${this.config.host}: ${command}`);
 
     // Spawn ssh command
     const sshProcess = spawn("ssh", sshArgs, {
