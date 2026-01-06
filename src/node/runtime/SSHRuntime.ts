@@ -46,6 +46,16 @@ function logSSHBackoffWait(initLogger: InitLogger, waitMs: number): void {
   initLogger.logStep(`SSH unavailable; retrying in ${secs}s...`);
 }
 
+/** Truncate SSH stderr for error logging (keep first line, max 200 chars) */
+function truncateSSHError(stderr: string): string {
+  const trimmed = stderr.trim();
+  if (!trimmed) return "exit code 255";
+  // Take first line only (SSH errors are usually single-line)
+  const firstLine = trimmed.split("\n")[0];
+  if (firstLine.length <= 200) return firstLine;
+  return firstLine.slice(0, 197) + "...";
+}
+
 // Re-export SSHRuntimeConfig from connection pool (defined there to avoid circular deps)
 export type { SSHRuntimeConfig } from "./sshConnectionPool";
 
@@ -209,6 +219,13 @@ export class SSHRuntime implements Runtime {
     const stderr = Readable.toWeb(sshProcess.stderr) as unknown as ReadableStream<Uint8Array>;
     const stdin = Writable.toWeb(sshProcess.stdin) as unknown as WritableStream<Uint8Array>;
 
+    // Capture stderr for error reporting (SSH-level failures like exit code 255)
+    // This is collected in parallel with passing stderr stream to caller
+    let stderrForErrorReporting = "";
+    sshProcess.stderr.on("data", (data: Buffer) => {
+      stderrForErrorReporting += data.toString();
+    });
+
     // No stream cleanup in DisposableProcess - streams close naturally when process exits
     // bash.ts handles cleanup after waiting for exitCode
 
@@ -237,7 +254,7 @@ export class SSHRuntime implements Runtime {
         // This prevents thundering herd when a previously healthy host goes down
         // Any other exit code means the connection worked (command may have failed)
         if (exitCode === 255) {
-          sshConnectionPool.reportFailure(this.config, "SSH connection failed (exit code 255)");
+          sshConnectionPool.reportFailure(this.config, truncateSSHError(stderrForErrorReporting));
         } else {
           sshConnectionPool.markHealthy(this.config);
         }
@@ -482,7 +499,7 @@ export class SSHRuntime implements Runtime {
         if (code !== 0) {
           // SSH exit code 255 indicates connection failure - report to pool for backoff
           if (code === 255) {
-            sshConnectionPool.reportFailure(this.config, "SSH connection failed (exit code 255)");
+            sshConnectionPool.reportFailure(this.config, truncateSSHError(stderr));
           }
           reject(new RuntimeErrorClass(`SSH command failed: ${stderr.trim()}`, "network"));
           return;
