@@ -20,16 +20,12 @@ import { matchesKeybind, KEYBINDS, formatKeybind } from "@/browser/utils/ui/keyb
 import { SidebarCollapseButton } from "./ui/SidebarCollapseButton";
 import { cn } from "@/common/lib/utils";
 import type { ReviewNoteData } from "@/common/types/review";
-import {
-  TerminalTab,
-  getTerminalSessionId,
-  releaseTerminalSession,
-} from "./RightSidebar/TerminalTab";
+import { TerminalTab } from "./RightSidebar/TerminalTab";
 import {
   RIGHT_SIDEBAR_TABS,
   isTabType,
   isTerminalTab,
-  getTerminalInstanceId,
+  getTerminalSessionId,
   makeTerminalTabType,
   type TabType,
 } from "@/browser/types/rightSidebar";
@@ -200,6 +196,8 @@ interface RightSidebarTabsetNodeProps {
   terminalTitles: Map<TabType, string>;
   /** Handler to update a terminal's title */
   onTerminalTitleChange: (tab: TabType, title: string) => void;
+  /** Handler called when a terminal session is created (for placeholder tabs) */
+  onSessionCreated: (oldTab: TabType, sessionId: string) => void;
 }
 
 const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) => {
@@ -491,6 +489,7 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
                 workspaceId={props.workspaceId}
                 tabType={terminalTab}
                 visible={isActive}
+                onSessionCreated={(sessionId) => props.onSessionCreated(terminalTab, sessionId)}
                 onTitleChange={(title) => props.onTerminalTitleChange(terminalTab, title)}
               />
             </div>
@@ -718,11 +717,45 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   // Terminal titles from OSC sequences (e.g., shell setting window title)
   const [terminalTitles, setTerminalTitles] = React.useState<Map<TabType, string>>(new Map());
 
-  // Counter for generating unique terminal instance IDs
-  const nextTerminalIdRef = React.useRef(2); // Start at 2 since "terminal" is implicitly 1
-
-  // API for opening terminal windows
+  // API for opening terminal windows and managing sessions
   const { api } = useAPI();
+
+  // Restore terminal tabs from backend sessions on workspace mount.
+  // This enables reattach after page reload (backend sessions survive, frontend doesn't).
+  React.useEffect(() => {
+    if (!api) return;
+
+    let cancelled = false;
+
+    void api.terminal.listSessions({ workspaceId }).then((sessionIds) => {
+      if (cancelled || sessionIds.length === 0) return;
+
+      // Get current terminal tabs in layout
+      const currentTabs = collectAllTabs(layout.root);
+      const currentTerminalSessionIds = new Set(
+        currentTabs.filter(isTerminalTab).map(getTerminalSessionId).filter(Boolean)
+      );
+
+      // Find sessions that don't have tabs yet
+      const missingSessions = sessionIds.filter((sid) => !currentTerminalSessionIds.has(sid));
+
+      if (missingSessions.length > 0) {
+        // Add tabs for backend sessions that don't have tabs
+        setLayout((prev) => {
+          let next = prev;
+          for (const sessionId of missingSessions) {
+            next = addTabToFocusedTabset(next, makeTerminalTabType(sessionId));
+          }
+          return next;
+        });
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- Only run on workspace change, not layout change. layout.root would cause infinite loop.
+  }, [api, workspaceId, setLayout]);
 
   // Handler to update a terminal's title (from OSC sequences)
   const handleTerminalTitleChange = React.useCallback((tab: TabType, title: string) => {
@@ -733,19 +766,67 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     });
   }, []);
 
-  // Handler to add a new terminal tab
+  // Handler to add a new terminal tab (adds placeholder, session created by TerminalTab)
   const handleAddTerminal = React.useCallback(() => {
-    const instanceId = String(nextTerminalIdRef.current++);
-    const newTab = makeTerminalTabType(instanceId);
-    setLayout((prev) => addTabToFocusedTabset(prev, newTab));
+    // Add placeholder "terminal" tab - TerminalTab will create the session
+    // and call onSessionCreated to update the tab with the real sessionId
+    setLayout((prev) => addTabToFocusedTabset(prev, "terminal"));
   }, [setLayout]);
+
+  // Handler called when TerminalTab creates a new session (for placeholder tabs)
+  const handleSessionCreated = React.useCallback(
+    (oldTab: TabType, sessionId: string) => {
+      const newTab = makeTerminalTabType(sessionId);
+
+      // Replace placeholder tab with real sessionId tab
+      setLayout((prev) => {
+        // Find the tabset containing the old tab and replace it
+        const replaceInNode = (node: RightSidebarLayoutNode): RightSidebarLayoutNode => {
+          if (node.type === "tabset") {
+            const idx = node.tabs.indexOf(oldTab);
+            if (idx >= 0) {
+              const newTabs = [...node.tabs];
+              newTabs[idx] = newTab;
+              return {
+                ...node,
+                tabs: newTabs,
+                activeTab: node.activeTab === oldTab ? newTab : node.activeTab,
+              };
+            }
+            return node;
+          }
+          // Split: recurse into children
+          return {
+            ...node,
+            children: [replaceInNode(node.children[0]), replaceInNode(node.children[1])],
+          };
+        };
+        return { ...prev, root: replaceInNode(prev.root) };
+      });
+
+      // Transfer title if any
+      setTerminalTitles((prev) => {
+        const title = prev.get(oldTab);
+        if (title) {
+          const next = new Map(prev);
+          next.delete(oldTab);
+          next.set(newTab, title);
+          return next;
+        }
+        return prev;
+      });
+    },
+    [setLayout]
+  );
 
   // Handler to close a terminal tab
   const handleCloseTerminal = React.useCallback(
     (tab: TabType) => {
-      // Release the session so it gets cleaned up
-      const instanceId = getTerminalInstanceId(tab);
-      releaseTerminalSession(workspaceId, instanceId);
+      // Close the backend session
+      const sessionId = getTerminalSessionId(tab);
+      if (sessionId) {
+        void api?.terminal.close({ sessionId });
+      }
 
       // Remove the tab from layout
       setLayout((prev) => removeTabEverywhere(prev, tab));
@@ -757,14 +838,14 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         return next;
       });
     },
-    [workspaceId, setLayout]
+    [api, setLayout]
   );
 
   // Handler to pop out a terminal to a separate window, then remove the tab
   const handlePopOutTerminal = React.useCallback(
     (tab: TabType) => {
-      const instanceId = getTerminalInstanceId(tab);
-      const sessionId = getTerminalSessionId(workspaceId, instanceId);
+      // Session ID is embedded in the tab type
+      const sessionId = getTerminalSessionId(tab);
 
       // Check if running in browser mode (window.api is only available in Electron)
       const isBrowser = !window.api;
@@ -788,10 +869,8 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       // Open via backend (Electron pops up BrowserWindow, browser already opened above)
       void api?.terminal.openWindow({ workspaceId, sessionId: sessionId ?? undefined });
 
-      // Release the session from the embedded terminal
-      releaseTerminalSession(workspaceId, instanceId);
-
       // Remove the tab from the sidebar (terminal now lives in its own window)
+      // Don't close the session - the pop-out window takes over
       setLayout((prev) => removeTabEverywhere(prev, tab));
 
       // Clean up title
@@ -953,6 +1032,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         onCloseTerminal={handleCloseTerminal}
         terminalTitles={terminalTitles}
         onTerminalTitleChange={handleTerminalTitleChange}
+        onSessionCreated={handleSessionCreated}
       />
     );
   };
