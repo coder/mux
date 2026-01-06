@@ -54,23 +54,13 @@ export async function findAvailableModel(
 }
 
 /**
- * Convert a model ID to its Mux Gateway variant.
- * e.g., "anthropic:claude-haiku-4-5" -> "mux-gateway:anthropic/claude-haiku-4-5"
+ * Convert a model ID to a gateway variant (mux-gateway or openrouter).
+ * e.g., toGatewayVariant("anthropic:claude-haiku-4-5", "mux-gateway") -> "mux-gateway:anthropic/claude-haiku-4-5"
  */
-function toMuxGatewayVariant(modelId: string): string {
+function toGatewayVariant(modelId: string, gateway: "mux-gateway" | "openrouter"): string {
   const [provider, model] = modelId.split(":");
   if (!provider || !model) return modelId;
-  return `mux-gateway:${provider}/${model}`;
-}
-
-/**
- * Convert a model ID to its OpenRouter variant.
- * e.g., "anthropic:claude-haiku-4-5" -> "openrouter:anthropic/claude-haiku-4-5"
- */
-function toOpenRouterVariant(modelId: string): string {
-  const [provider, model] = modelId.split(":");
-  if (!provider || !model) return modelId;
-  return `openrouter:${provider}/${model}`;
+  return `${gateway}:${provider}/${model}`;
 }
 
 /**
@@ -99,7 +89,7 @@ export async function selectModelForNameGeneration(
 
   // 2. Try Mux Gateway variants of preferred models
   for (const modelId of preferredModels) {
-    const gatewayVariant = toMuxGatewayVariant(modelId);
+    const gatewayVariant = toGatewayVariant(modelId, "mux-gateway");
     const result = await aiService.createModel(gatewayVariant);
     if (result.success) {
       return gatewayVariant;
@@ -108,7 +98,7 @@ export async function selectModelForNameGeneration(
 
   // 3. Try OpenRouter variants of preferred models
   for (const modelId of preferredModels) {
-    const openRouterVariant = toOpenRouterVariant(modelId);
+    const openRouterVariant = toGatewayVariant(modelId, "openrouter");
     const result = await aiService.createModel(openRouterVariant);
     if (result.success) {
       return openRouterVariant;
@@ -126,14 +116,14 @@ export async function selectModelForNameGeneration(
     }
 
     // Try Mux Gateway variant
-    const gatewayVariant = toMuxGatewayVariant(modelId);
+    const gatewayVariant = toGatewayVariant(modelId, "mux-gateway");
     const gatewayResult = await aiService.createModel(gatewayVariant);
     if (gatewayResult.success) {
       return gatewayVariant;
     }
 
     // Try OpenRouter variant
-    const openRouterVariant = toOpenRouterVariant(modelId);
+    const openRouterVariant = toGatewayVariant(modelId, "openrouter");
     const openRouterResult = await aiService.createModel(openRouterVariant);
     if (openRouterResult.success) {
       return openRouterVariant;
