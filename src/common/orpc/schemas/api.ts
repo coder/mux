@@ -764,6 +764,14 @@ export const terminal = {
     output: z.void(),
   },
   /**
+   * List active terminal sessions for a workspace.
+   * Used by frontend to discover existing sessions to reattach to after reload.
+   */
+  listSessions: {
+    input: z.object({ workspaceId: z.string() }),
+    output: z.array(z.string()),
+  },
+  /**
    * Open the native system terminal for a workspace.
    * Opens the user's preferred terminal emulator (Ghostty, Terminal.app, etc.)
    * with the working directory set to the workspace path.

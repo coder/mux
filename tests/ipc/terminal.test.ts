@@ -517,4 +517,51 @@ describeIntegration("terminal PTY", () => {
     },
     15000
   );
+
+  test.concurrent(
+    "listSessions should return active session IDs for a workspace",
+    async () => {
+      const env = await createTestEnvironment();
+      const tempGitRepo = await createTempGitRepo();
+
+      try {
+        const createResult = await createWorkspace(env, tempGitRepo, "test-list-sessions");
+        const metadata = expectWorkspaceCreationSuccess(createResult);
+        const workspaceId = metadata.id;
+        const client = resolveOrpcClient(env);
+
+        // Initially no sessions
+        const initialSessions = await client.terminal.listSessions({ workspaceId });
+        expect(initialSessions).toEqual([]);
+
+        // Create a terminal session
+        const session = await client.terminal.create({
+          workspaceId,
+          cols: 80,
+          rows: 24,
+        });
+
+        // Now should have one session
+        const afterCreate = await client.terminal.listSessions({ workspaceId });
+        expect(afterCreate).toContain(session.sessionId);
+        expect(afterCreate.length).toBe(1);
+
+        // Close session
+        await client.terminal.close({ sessionId: session.sessionId });
+
+        // Wait for close to propagate
+        await new Promise((resolve) => setTimeout(resolve, 100));
+
+        // Should be empty again
+        const afterClose = await client.terminal.listSessions({ workspaceId });
+        expect(afterClose).toEqual([]);
+
+        await client.workspace.remove({ workspaceId });
+      } finally {
+        await cleanupTestEnvironment(env);
+        await cleanupTempGitRepo(tempGitRepo);
+      }
+    },
+    15000
+  );
 });

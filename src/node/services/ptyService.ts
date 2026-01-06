@@ -317,6 +317,16 @@ export class PTYService {
   }
 
   /**
+   * Get all session IDs for a workspace.
+   * Used by frontend to discover existing sessions to reattach to after reload.
+   */
+  getWorkspaceSessionIds(workspaceId: string): string[] {
+    return Array.from(this.sessions.entries())
+      .filter(([, session]) => session.workspaceId === workspaceId)
+      .map(([id]) => id);
+  }
+
+  /**
    * Close all terminal sessions for a workspace
    */
   closeWorkspaceSessions(workspaceId: string): void {

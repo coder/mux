@@ -1,5 +1,6 @@
 import React from "react";
 import { TerminalView } from "@/browser/components/TerminalView";
+import { useAPI } from "@/browser/contexts/API";
 import type { TabType } from "@/browser/types/rightSidebar";
 import { getTerminalInstanceId } from "@/browser/types/rightSidebar";
 
@@ -13,10 +14,8 @@ function makeSessionKey(workspaceId: string, instanceId?: string): string {
 
 // In-memory keep-alive mapping for terminal sessions.
 // Key is "workspaceId" or "workspaceId:instanceId" for multiple terminals.
-// Intentionally not persisted across reloads: backend sessions won't survive a restart.
-// Sessions persist while the app runs to allow quick workspace switching without losing
-// terminal state. Backend cleanup happens on workspace deletion (workspaceService calls
-// terminalService.closeWorkspaceSessions) and app restart.
+// Survives workspace switching; on page reload, we query backend for existing sessions.
+// Backend cleanup happens on workspace deletion and server restart.
 const terminalSessions = new Map<string, string>();
 
 /**
@@ -45,15 +44,60 @@ interface TerminalTabProps {
 }
 
 export const TerminalTab: React.FC<TerminalTabProps> = (props) => {
+  const { api } = useAPI();
   // Dummy state to trigger re-render when session is set (since Map mutation doesn't cause re-render)
   const [, forceUpdate] = React.useReducer((x: number) => x + 1, 0);
+  // Track if we've checked the backend for existing sessions for this workspace
+  const [checkedBackend, setCheckedBackend] = React.useState(false);
 
   const instanceId = getTerminalInstanceId(props.tabType);
   const sessionKey = makeSessionKey(props.workspaceId, instanceId);
 
+  // On mount or workspace change, query backend for existing sessions.
+  // This enables reattach after page reload (backend sessions survive, frontend doesn't).
+  React.useEffect(() => {
+    if (!api) return;
+
+    // Skip if we already have a session in memory (no need to query)
+    if (terminalSessions.has(sessionKey)) {
+      setCheckedBackend(true);
+      return;
+    }
+
+    setCheckedBackend(false);
+    let cancelled = false;
+
+    api.terminal
+      .listSessions({ workspaceId: props.workspaceId })
+      .then((sessionIds) => {
+        if (cancelled) return;
+
+        // Find matching session for this instance.
+        // Sessions are named "${workspaceId}-${timestamp}", so we can match by prefix.
+        // For multi-terminal support, we'd need additional metadata on the backend.
+        // For now, pick the first session if this is the default terminal instance.
+        if (sessionIds.length > 0 && !instanceId) {
+          // Default terminal instance: use first session
+          terminalSessions.set(sessionKey, sessionIds[0]);
+          forceUpdate();
+        }
+        // Additional terminal instances (instanceId != undefined) won't auto-reattach
+        // since we can't distinguish which backend session maps to which instance.
+        // They'll create new sessions, which is acceptable behavior.
+
+        setCheckedBackend(true);
+      })
+      .catch(() => {
+        // On error, proceed without existing session (will create new)
+        if (!cancelled) setCheckedBackend(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [api, props.workspaceId, sessionKey, instanceId]);
+
   // Read sessionId directly from the Map to ensure it always matches the current workspaceId.
-  // Using useState with useEffect caused a timing bug: when workspaceId changed, the old sessionId
-  // was passed to TerminalView before the effect could sync the new value.
   const existingSessionId = terminalSessions.get(sessionKey);
 
   const handleSessionId = React.useCallback(
@@ -63,6 +107,12 @@ export const TerminalTab: React.FC<TerminalTabProps> = (props) => {
     },
     [sessionKey]
   );
+
+  // Don't render TerminalView until we've checked the backend for existing sessions.
+  // This prevents creating a new session when one already exists.
+  if (!checkedBackend) {
+    return null;
+  }
 
   return (
     <TerminalView

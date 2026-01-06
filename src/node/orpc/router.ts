@@ -1779,6 +1779,12 @@ export const router = (authToken?: string) => {
         .handler(({ context, input }) => {
           return context.terminalService.closeWindow(input.workspaceId);
         }),
+      listSessions: t
+        .input(schemas.terminal.listSessions.input)
+        .output(schemas.terminal.listSessions.output)
+        .handler(({ context, input }) => {
+          return context.terminalService.getWorkspaceSessionIds(input.workspaceId);
+        }),
       openNative: t
         .input(schemas.terminal.openNative.input)
         .output(schemas.terminal.openNative.output)

@@ -588,6 +588,14 @@ export class TerminalService {
   }
 
   /**
+   * Get all session IDs for a workspace.
+   * Used by frontend to discover existing sessions to reattach to after reload.
+   */
+  getWorkspaceSessionIds(workspaceId: string): string[] {
+    return this.ptyService.getWorkspaceSessionIds(workspaceId);
+  }
+
+  /**
    * Close all terminal sessions for a workspace.
    * Called when a workspace is removed to prevent resource leaks.
    */
