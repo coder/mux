@@ -22,6 +22,8 @@ interface TerminalViewProps {
   closeOnCleanup?: boolean;
   /** Called when the terminal session id becomes available (created or reattached). */
   onSessionId?: (sessionId: string) => void;
+  /** Called when the terminal title changes (via OSC escape sequences from running processes) */
+  onTitleChange?: (title: string) => void;
 }
 
 export function TerminalView({
@@ -31,6 +33,7 @@ export function TerminalView({
   setDocumentTitle = true,
   closeOnCleanup = true,
   onSessionId,
+  onTitleChange,
 }: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -144,11 +147,13 @@ export function TerminalView({
   // Keep refs to latest functions so callbacks always use current version
   const sendInputRef = useRef(sendInput);
   const resizeRef = useRef(resize);
+  const onTitleChangeRef = useRef(onTitleChange);
 
   useEffect(() => {
     sendInputRef.current = sendInput;
     resizeRef.current = resize;
-  }, [sendInput, resize]);
+    onTitleChangeRef.current = onTitleChange;
+  }, [sendInput, resize, onTitleChange]);
 
   // Initialize terminal when visible
   useEffect(() => {
@@ -165,6 +170,7 @@ export function TerminalView({
 
     let terminal: Terminal | null = null;
     let disposeOnData: { dispose: () => void } | null = null;
+    let disposeOnTitleChange: { dispose: () => void } | null = null;
 
     setTerminalError(null);
 
@@ -225,6 +231,12 @@ export function TerminalView({
           sendInputRef.current(data);
         });
 
+        // Terminal title changes (from OSC escape sequences like "echo -ne '\033]0;Title\007'")
+        // Use ref to always get latest callback
+        disposeOnTitleChange = terminal.onTitleChange((title: string) => {
+          onTitleChangeRef.current?.(title);
+        });
+
         termRef.current = terminal;
         fitAddonRef.current = fitAddon;
 
@@ -248,6 +260,7 @@ export function TerminalView({
       cancelled = true;
 
       disposeOnData?.dispose();
+      disposeOnTitleChange?.dispose();
 
       if (terminal) {
         terminal.dispose();

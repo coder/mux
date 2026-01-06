@@ -4,7 +4,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useDroppable, useDndContext } from "@dnd-kit/core";
-import type { TabType } from "@/browser/types/rightSidebar";
+import { Plus } from "lucide-react";
+import { isTerminalTab, type TabType } from "@/browser/types/rightSidebar";
 
 /** Data attached to dragged sidebar tabs */
 export interface TabDragData {
@@ -34,18 +35,23 @@ interface RightSidebarTabStripProps {
   onTabDrop?: (tab: TabType, sourceTabsetId: string) => void;
   /** Called when tabs are reordered within this tabset */
   onTabReorder?: (fromIndex: number, toIndex: number) => void;
+  /** Called when user clicks the "+" button to add a new terminal */
+  onAddTerminal?: () => void;
 }
 
 export function getTabName(tab: TabType): string {
+  if (isTerminalTab(tab)) {
+    return "Terminal";
+  }
   switch (tab) {
     case "costs":
       return "Costs";
     case "review":
       return "Review";
-    case "terminal":
-      return "Terminal";
     case "stats":
       return "Stats";
+    default:
+      return tab;
   }
 }
 
@@ -116,6 +122,7 @@ export const RightSidebarTabStrip: React.FC<RightSidebarTabStripProps> = ({
   ariaLabel = "Sidebar views",
   tabsetId,
   onTabDrop,
+  onAddTerminal,
 }) => {
   const { active } = useDndContext();
   const activeData = active?.data.current as TabDragData | undefined;
@@ -143,7 +150,7 @@ export const RightSidebarTabStrip: React.FC<RightSidebarTabStripProps> = ({
     <div
       ref={setNodeRef}
       className={cn(
-        "border-border-light flex gap-1 border-b px-2 py-1.5 transition-colors",
+        "border-border-light flex items-center gap-1 border-b px-2 py-1.5 transition-colors",
         showDropHighlight && "bg-accent/30",
         isDraggingFromHere && "bg-accent/10"
       )}
@@ -153,6 +160,21 @@ export const RightSidebarTabStrip: React.FC<RightSidebarTabStripProps> = ({
       {items.map((item, index) => (
         <SortableTab key={item.id} item={item} index={index} tabsetId={tabsetId} />
       ))}
+      {onAddTerminal && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              className="text-muted hover:bg-hover hover:text-foreground ml-auto rounded-md p-1 transition-colors"
+              onClick={onAddTerminal}
+              aria-label="New terminal"
+            >
+              <Plus className="h-3.5 w-3.5" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">New terminal</TooltipContent>
+        </Tooltip>
+      )}
     </div>
   );
 };
