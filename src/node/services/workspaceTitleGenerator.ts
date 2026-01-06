@@ -116,11 +116,27 @@ export async function selectModelForNameGeneration(
   }
 
   // 4. Fallback to any available model from known models
+  // Try each known model directly, then via gateway/OpenRouter
   const knownModelIds = Object.values(KNOWN_MODELS).map((m) => m.id);
   for (const modelId of knownModelIds) {
-    const result = await aiService.createModel(modelId);
-    if (result.success) {
+    // Try direct first
+    const directResult = await aiService.createModel(modelId);
+    if (directResult.success) {
       return modelId;
+    }
+
+    // Try Mux Gateway variant
+    const gatewayVariant = toMuxGatewayVariant(modelId);
+    const gatewayResult = await aiService.createModel(gatewayVariant);
+    if (gatewayResult.success) {
+      return gatewayVariant;
+    }
+
+    // Try OpenRouter variant
+    const openRouterVariant = toOpenRouterVariant(modelId);
+    const openRouterResult = await aiService.createModel(openRouterVariant);
+    if (openRouterResult.success) {
+      return openRouterVariant;
     }
   }
 
