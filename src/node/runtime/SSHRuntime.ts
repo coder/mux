@@ -192,7 +192,7 @@ export class SSHRuntime implements Runtime {
 
     // Debug: log the actual SSH command being executed
     log.debug(`SSH command: ssh ${sshArgs.join(" ")}`);
-    log.debug(`Remote command: ${fullCommand}`);
+    log.debug(`Remote command: ${command}`);
 
     // Spawn ssh command
     const sshProcess = spawn("ssh", sshArgs, {
