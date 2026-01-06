@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useEffect, useRef } from "react";
 import { Layers } from "lucide-react";
 import type { BashToolArgs, BashToolResult } from "@/common/types/tools";
 import { BASH_DEFAULT_TIMEOUT_SECS } from "@/common/constants/toolLimits";
@@ -38,6 +38,64 @@ interface BashToolCallProps {
   onSendToBackground?: () => void;
 }
 
+/**
+ * Isolated component for elapsed time display.
+ * Uses requestAnimationFrame + local state to avoid re-rendering parent component.
+ */
+const ElapsedTimeDisplay: React.FC<{ startedAt: number | undefined; isActive: boolean }> = ({
+  startedAt,
+  isActive,
+}) => {
+  const elapsedRef = useRef(0);
+  const frameRef = useRef<number | null>(null);
+  const [, forceUpdate] = React.useReducer((x: number) => x + 1, 0);
+  const baseStart = useRef(startedAt ?? Date.now());
+
+  useEffect(() => {
+    if (!isActive) {
+      elapsedRef.current = 0;
+      if (frameRef.current !== null) {
+        cancelAnimationFrame(frameRef.current);
+        frameRef.current = null;
+      }
+      return;
+    }
+
+    baseStart.current = startedAt ?? Date.now();
+    let lastSecond = -1;
+
+    const tick = () => {
+      const now = Date.now();
+      const elapsed = now - baseStart.current;
+      const currentSecond = Math.floor(elapsed / 1000);
+
+      // Only update when second changes to minimize renders
+      if (currentSecond !== lastSecond) {
+        lastSecond = currentSecond;
+        elapsedRef.current = elapsed;
+        forceUpdate();
+      }
+
+      frameRef.current = requestAnimationFrame(tick);
+    };
+
+    tick();
+
+    return () => {
+      if (frameRef.current !== null) {
+        cancelAnimationFrame(frameRef.current);
+        frameRef.current = null;
+      }
+    };
+  }, [isActive, startedAt]);
+
+  if (!isActive || elapsedRef.current === 0) {
+    return null;
+  }
+
+  return <> • {Math.round(elapsedRef.current / 1000)}s</>;
+};
+
 const EMPTY_LIVE_OUTPUT = {
   stdout: "",
   stderr: "",
@@ -56,7 +114,6 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
   onSendToBackground,
 }) => {
   const { expanded, setExpanded, toggleExpanded } = useToolExpansion();
-  const [elapsedTime, setElapsedTime] = useState(0);
 
   const liveOutput = useBashToolLiveOutput(workspaceId, toolCallId);
   const latestStreamingBashId = useLatestStreamingBashId(workspaceId);
@@ -80,7 +137,6 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
       el.scrollTop = el.scrollHeight;
     }
   }, [combinedLiveOutput]);
-  const startTimeRef = useRef<number>(startedAt ?? Date.now());
 
   // Track whether user manually toggled expansion to avoid fighting with auto-expand
   const userToggledRef = useRef(false);
@@ -122,24 +178,6 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
       }
     };
   }, [isLatestStreamingBash, latestStreamingBashId, status, setExpanded]);
-
-  // Track elapsed time for pending/executing status
-  useEffect(() => {
-    if (status === "executing" || status === "pending") {
-      const baseStart = startedAt ?? Date.now();
-      startTimeRef.current = baseStart;
-      setElapsedTime(Date.now() - baseStart);
-
-      const timer = setInterval(() => {
-        setElapsedTime(Date.now() - startTimeRef.current);
-      }, 1000);
-
-      return () => clearInterval(timer);
-    }
-
-    setElapsedTime(0);
-    return undefined;
-  }, [status, startedAt]);
 
   const isPending = status === "executing" || status === "pending";
   const isBackground = args.run_in_background ?? (result && "backgroundProcessId" in result);
@@ -184,7 +222,7 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
             >
               timeout: {args.timeout_secs ?? BASH_DEFAULT_TIMEOUT_SECS}s
               {result && ` • took ${formatDuration(result.wall_duration_ms)}`}
-              {!result && isPending && elapsedTime > 0 && ` • ${Math.round(elapsedTime / 1000)}s`}
+              {!result && <ElapsedTimeDisplay startedAt={startedAt} isActive={isPending} />}
             </span>
             {result && <ExitCodeBadge exitCode={result.exitCode} className="ml-2" />}
           </>
