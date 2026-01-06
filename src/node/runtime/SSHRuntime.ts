@@ -271,7 +271,7 @@ export class SSHRuntime implements Runtime {
       }, options.timeout * 1000);
 
       // Clear timeout if process exits naturally
-      void exitCode.finally(() => clearTimeout(timeoutHandle));
+      void exitCode.catch(() => undefined).finally(() => clearTimeout(timeoutHandle));
     }
 
     return { stdout, stderr, stdin, exitCode, duration };

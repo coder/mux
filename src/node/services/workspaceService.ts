@@ -2320,15 +2320,8 @@ export class WorkspaceService extends EventEmitter {
 
       return Ok(result);
     } catch (error) {
-      // Race with workspace removal: cwd was deleted after the guard check but before/during spawn.
-      // Return the same error as the guard so callers handle it uniformly.
-      // RuntimeError stores cause as a property, and spawn ENOENT has code on the cause.
-      const cause =
-        error instanceof Error && "cause" in error ? (error as { cause?: Error }).cause : undefined;
-      const isEnoent = cause instanceof Error && "code" in cause && cause.code === "ENOENT";
-      if (isEnoent && this.removingWorkspaces.has(workspaceId)) {
-        return Err(`Workspace ${workspaceId} is being removed`);
-      }
+      // bashTool.execute returns error results instead of throwing, so this only catches
+      // failures from setup code (getWorkspaceMetadata, findWorkspace, createRuntime, etc.)
       const message = error instanceof Error ? error.message : String(error);
       return Err(`Failed to execute bash command: ${message}`);
     }

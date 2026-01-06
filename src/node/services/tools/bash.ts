@@ -610,6 +610,9 @@ ${scriptWithEnv}`;
       // Also race with the background promise to detect early return request
       const foregroundCompletion = Promise.all([execStream.exitCode, consumeStdout, consumeStderr]);
 
+      // Attach a no-op rejection handler to prevent Node's unhandled rejection warning.
+      void foregroundCompletion.catch(() => undefined);
+
       let exitCode: number;
       try {
         const result = await Promise.race([
