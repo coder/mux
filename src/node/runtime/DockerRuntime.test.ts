@@ -44,13 +44,13 @@ describe("DockerRuntime constructor", () => {
 describe("getContainerName", () => {
   it("should generate container name from project and workspace", () => {
     expect(getContainerName("/home/user/myproject", "feature-branch")).toBe(
-      "mux-myproject-feature-branch"
+      "mux-myproject-feature-branch-a8d18a"
     );
   });
 
   it("should sanitize special characters", () => {
     expect(getContainerName("/home/user/my@project", "feature/branch")).toBe(
-      "mux-my-project-feature-branch"
+      "mux-my-project-feature-branch-b354b4"
     );
   });
 

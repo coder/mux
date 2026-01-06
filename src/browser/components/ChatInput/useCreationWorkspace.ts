@@ -179,6 +179,7 @@ export function useCreationWorkspace({
     if (!projectPath.length || !api) return;
     let mounted = true;
     setBranchesLoaded(false);
+    setRuntimeAvailability(null);
     const doLoad = async () => {
       try {
         // Use allSettled so failures are independent - branches can load even if availability fails

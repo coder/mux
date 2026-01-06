@@ -12,6 +12,7 @@
  */
 
 import { spawn, exec } from "child_process";
+import { createHash } from "crypto";
 import * as path from "path";
 import * as fs from "fs/promises";
 import * as os from "os";
@@ -267,11 +268,17 @@ function sanitizeContainerName(name: string): string {
 
 /**
  * Generate container name from project path and workspace name.
- * Format: mux-{projectName}-{workspaceName}
+ * Format: mux-{projectName}-{workspaceName}-{hash}
+ * Hash suffix prevents collisions (e.g., feature/foo vs feature-foo)
  */
 export function getContainerName(projectPath: string, workspaceName: string): string {
   const projectName = getProjectName(projectPath);
-  return sanitizeContainerName(`mux-${projectName}-${workspaceName}`);
+  const base = sanitizeContainerName(`mux-${projectName}-${workspaceName}`);
+  const hash = createHash("sha256")
+    .update(`${projectPath}:${workspaceName}`)
+    .digest("hex")
+    .slice(0, 6);
+  return `${base}-${hash}`.slice(0, 63);
 }
 
 /**
