@@ -18,7 +18,9 @@ import {
   RIGHT_SIDEBAR_TAB_KEY,
   RIGHT_SIDEBAR_COSTS_WIDTH_KEY,
   RIGHT_SIDEBAR_REVIEW_WIDTH_KEY,
+  RIGHT_SIDEBAR_FILES_WIDTH_KEY,
 } from "@/common/constants/storage";
+import { getExperimentKey, EXPERIMENT_IDS } from "@/common/constants/experiments";
 import type { ComponentType } from "react";
 import type { MockSessionUsage } from "@/browser/stories/mocks/orpc";
 
@@ -917,4 +919,123 @@ export const ReviewTabReadMoreBoundaries: AppStory = {
     />
   ),
   // No play function - interaction testing covered by tests/ui/readMore.integration.test.ts
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FILES TAB STORIES (requires FILE_PANEL experiment)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Files tab - basic file tree display with experiment enabled
+ */
+export const FilesTab: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        // Enable the FILE_PANEL experiment
+        const experimentKey = getExperimentKey(EXPERIMENT_IDS.FILE_PANEL);
+        localStorage.setItem(experimentKey, JSON.stringify(true));
+
+        localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("files"));
+        localStorage.setItem(RIGHT_SIDEBAR_FILES_WIDTH_KEY, "600");
+
+        const client = setupSimpleChatStory({
+          workspaceId: "ws-files",
+          workspaceName: "feature/file-browser",
+          projectName: "my-app",
+          messages: [
+            createUserMessage("msg-1", "Show me the project structure", { historySequence: 1 }),
+            createAssistantMessage("msg-2", "Here's the project structure in the Files panel.", {
+              historySequence: 2,
+            }),
+          ],
+        });
+        expandRightSidebar();
+        return client;
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Wait for Files tab to be visible and selected
+    await waitFor(
+      () => {
+        const tab = canvas.getByRole("tab", { name: /^files/i });
+        expect(tab).toHaveAttribute("aria-selected", "true");
+      },
+      { timeout: 5000 }
+    );
+
+    // Wait for file tree to load
+    await waitFor(
+      () => {
+        canvas.getByText("Files");
+      },
+      { timeout: 3000 }
+    );
+
+    // Verify file tree structure is visible
+    await waitFor(
+      () => {
+        canvas.getByText("src");
+      },
+      { timeout: 3000 }
+    );
+  },
+};
+
+/**
+ * Files tab with file selected - shows file content viewer
+ */
+export const FilesTabWithFileSelected: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        // Enable the FILE_PANEL experiment
+        const experimentKey = getExperimentKey(EXPERIMENT_IDS.FILE_PANEL);
+        localStorage.setItem(experimentKey, JSON.stringify(true));
+
+        localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("files"));
+        localStorage.setItem(RIGHT_SIDEBAR_FILES_WIDTH_KEY, "600");
+
+        // Pre-select a file
+        localStorage.setItem("filePanelSelectedFile:ws-files-selected", JSON.stringify("src/App.tsx"));
+
+        const client = setupSimpleChatStory({
+          workspaceId: "ws-files-selected",
+          workspaceName: "feature/file-viewer",
+          projectName: "my-app",
+          messages: [
+            createUserMessage("msg-1", "Show me the App component", { historySequence: 1 }),
+            createAssistantMessage("msg-2", "The App.tsx file is shown in the Files panel.", {
+              historySequence: 2,
+            }),
+          ],
+        });
+        expandRightSidebar();
+        return client;
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Wait for Files tab to be visible
+    await waitFor(
+      () => {
+        canvas.getByRole("tab", { name: /^files/i, selected: true });
+      },
+      { timeout: 5000 }
+    );
+
+    // Wait for file content to load (look for file header with filename)
+    await waitFor(
+      () => {
+        // The file viewer shows the filename in the header
+        canvas.getByText("App.tsx");
+      },
+      { timeout: 5000 }
+    );
+  },
 };

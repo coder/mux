@@ -16,7 +16,7 @@ import { createAuthMiddleware } from "./authMiddleware";
 import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
 
 import { createRuntime } from "@/node/runtime/runtimeFactory";
-import { readPlanFile } from "@/node/utils/runtime/helpers";
+import { readPlanFile, execBuffered, readFileString } from "@/node/utils/runtime/helpers";
 import { secretsToRecord } from "@/common/types/secrets";
 import { roundToBase2 } from "@/common/telemetry/utils";
 import { createAsyncEventQueue } from "@/common/utils/asyncEventIterator";
@@ -33,6 +33,133 @@ import {
 } from "@/node/services/agentDefinitions/agentDefinitionsService";
 import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/resolveAgentInheritanceChain";
 import { isWorkspaceArchived } from "@/common/utils/archive";
+import type { FileTreeNode } from "@/common/utils/git/numstatParser";
+
+/**
+ * Build a hierarchical file tree from a list of file paths.
+ * Simplified version of buildFileTree from numstatParser (without diff stats).
+ */
+function buildFileTreeFromPaths(files: string[]): FileTreeNode {
+  const root: FileTreeNode = {
+    name: "",
+    path: "",
+    isDirectory: true,
+    children: [],
+  };
+
+  for (const filePath of files) {
+    const parts = filePath.split("/");
+    let current = root;
+
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
+      const isFile = i === parts.length - 1;
+      const currentPath = parts.slice(0, i + 1).join("/");
+
+      let child = current.children.find((c) => c.name === part);
+      if (!child) {
+        child = {
+          name: part,
+          path: currentPath,
+          isDirectory: !isFile,
+          children: [],
+        };
+        current.children.push(child);
+      }
+      current = child;
+    }
+  }
+
+  // Sort children: directories first, then alphabetically
+  const sortChildren = (node: FileTreeNode) => {
+    node.children.sort((a, b) => {
+      if (a.isDirectory !== b.isDirectory) {
+        return a.isDirectory ? -1 : 1;
+      }
+      return a.name.localeCompare(b.name);
+    });
+    node.children.forEach(sortChildren);
+  };
+  sortChildren(root);
+
+  return root;
+}
+
+/**
+ * Detect programming language from file path for syntax highlighting.
+ */
+function detectLanguageFromPath(path: string): string {
+  const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  const extMap: Record<string, string> = {
+    ts: "typescript",
+    tsx: "tsx",
+    js: "javascript",
+    jsx: "jsx",
+    json: "json",
+    md: "markdown",
+    py: "python",
+    rb: "ruby",
+    go: "go",
+    rs: "rust",
+    java: "java",
+    c: "c",
+    cpp: "cpp",
+    h: "c",
+    hpp: "cpp",
+    cs: "csharp",
+    css: "css",
+    scss: "scss",
+    less: "less",
+    html: "html",
+    xml: "xml",
+    yaml: "yaml",
+    yml: "yaml",
+    toml: "toml",
+    sh: "bash",
+    bash: "bash",
+    zsh: "bash",
+    fish: "fish",
+    ps1: "powershell",
+    sql: "sql",
+    graphql: "graphql",
+    gql: "graphql",
+    vue: "vue",
+    svelte: "svelte",
+    php: "php",
+    swift: "swift",
+    kt: "kotlin",
+    kts: "kotlin",
+    scala: "scala",
+    clj: "clojure",
+    ex: "elixir",
+    exs: "elixir",
+    erl: "erlang",
+    hs: "haskell",
+    lua: "lua",
+    r: "r",
+    jl: "julia",
+    dart: "dart",
+    dockerfile: "dockerfile",
+    makefile: "makefile",
+    cmake: "cmake",
+    txt: "plaintext",
+    log: "plaintext",
+    conf: "ini",
+    ini: "ini",
+    env: "dotenv",
+    gitignore: "gitignore",
+    editorconfig: "editorconfig",
+  };
+
+  // Handle special filenames
+  const fileName = path.split("/").pop()?.toLowerCase() ?? "";
+  if (fileName === "dockerfile") return "dockerfile";
+  if (fileName === "makefile" || fileName === "gnumakefile") return "makefile";
+  if (fileName === ".gitignore") return "gitignore";
+  if (fileName === ".env" || fileName.startsWith(".env.")) return "dotenv";
+
+  return extMap[ext] ?? "plaintext";
+}
 
 /**
  * Resolves runtime and discovery path for agent operations.
@@ -1566,6 +1693,124 @@ export const router = (authToken?: string) => {
             }
           }),
       },
+      listFiles: t
+        .input(schemas.workspace.listFiles.input)
+        .output(schemas.workspace.listFiles.output)
+        .handler(async ({ context, input }) => {
+          try {
+            const metadataResult = await context.aiService.getWorkspaceMetadata(input.workspaceId);
+            if (!metadataResult.success) {
+              return { success: false, error: metadataResult.error };
+            }
+            const metadata = metadataResult.data;
+            const runtime = createRuntime(metadata.runtimeConfig, {
+              projectPath: metadata.projectPath,
+            });
+            const workspacePath = runtime.getWorkspacePath(metadata.projectPath, metadata.name);
+
+            // Use git ls-files for tracked files (works across all runtime types)
+            // For gitChangesOnly, compare against HEAD (uncommitted changes)
+            const gitCommand = input.gitChangesOnly
+              ? "git diff --name-only HEAD 2>/dev/null || true"
+              : "git ls-files 2>/dev/null || true";
+
+            const result = await execBuffered(runtime, gitCommand, { cwd: workspacePath, timeout: 30000 });
+            if (result.exitCode !== 0) {
+              return { success: false, error: result.stderr || "Failed to list files" };
+            }
+
+            const files = result.stdout
+              .split("\n")
+              .map((f) => f.trim())
+              .filter((f) => f.length > 0);
+
+            if (files.length === 0) {
+              return { success: true, data: null };
+            }
+
+            // Build file tree structure (reusing pattern from review panel)
+            const fileTree = buildFileTreeFromPaths(files);
+            return { success: true, data: fileTree };
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return { success: false, error: message };
+          }
+        }),
+      readFile: t
+        .input(schemas.workspace.readFile.input)
+        .output(schemas.workspace.readFile.output)
+        .handler(async ({ context, input }) => {
+          try {
+            const metadataResult = await context.aiService.getWorkspaceMetadata(input.workspaceId);
+            if (!metadataResult.success) {
+              return { success: false, error: metadataResult.error };
+            }
+            const metadata = metadataResult.data;
+            const runtime = createRuntime(metadata.runtimeConfig, {
+              projectPath: metadata.projectPath,
+            });
+            const workspacePath = runtime.getWorkspacePath(metadata.projectPath, metadata.name);
+
+            // Security: prevent path traversal
+            const normalizedPath = input.path.replace(/\\/g, "/");
+            if (normalizedPath.includes("..") || normalizedPath.startsWith("/")) {
+              return { success: false, error: "Invalid path: path traversal not allowed" };
+            }
+
+            const fullPath = `${workspacePath}/${normalizedPath}`;
+            const maxBytes = input.maxBytes ?? 1024 * 1024; // 1MB default
+
+            // Get file size first using runtime.stat()
+            let totalSize = 0;
+            let truncated = false;
+            try {
+              const stat = await runtime.stat(fullPath);
+              totalSize = stat.size;
+              truncated = totalSize > maxBytes;
+            } catch {
+              // File might not exist or be unreadable - continue to try reading
+            }
+
+            // Read file content using runtime.readFile (supports truncation via streaming)
+            let content: string;
+            try {
+              if (truncated) {
+                // For truncated files, use head command
+                const headResult = await execBuffered(
+                  runtime,
+                  `head -c ${maxBytes} ${JSON.stringify(fullPath)}`,
+                  { cwd: workspacePath, timeout: 30000 }
+                );
+                if (headResult.exitCode !== 0) {
+                  return { success: false, error: `Failed to read file: ${headResult.stderr}` };
+                }
+                content = headResult.stdout;
+              } else {
+                // For full files, use the streaming readFile
+                content = await readFileString(runtime, fullPath);
+              }
+            } catch (error) {
+              const msg = error instanceof Error ? error.message : String(error);
+              return { success: false, error: `Failed to read file: ${msg}` };
+            }
+
+            // Detect language from file extension
+            const language = detectLanguageFromPath(normalizedPath);
+
+            return {
+              success: true,
+              data: {
+                content,
+                language,
+                truncated,
+                totalSize,
+              },
+            };
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return { success: false, error: message };
+          }
+        }),
     },
     tasks: {
       create: t

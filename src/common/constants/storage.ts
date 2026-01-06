@@ -315,6 +315,24 @@ export function getFileTreeExpandStateKey(workspaceId: string): string {
 }
 
 /**
+ * Get the localStorage key for File Panel tree expand/collapse state per workspace
+ * Stores directory expand/collapse preferences for the Files tab
+ * Format: "filePanelExpandState:{workspaceId}"
+ */
+export function getFilePanelExpandStateKey(workspaceId: string): string {
+  return `filePanelExpandState:${workspaceId}`;
+}
+
+/**
+ * Get the localStorage key for File Panel selected file per workspace
+ * Stores the currently selected file path for viewing
+ * Format: "filePanelSelectedFile:{workspaceId}"
+ */
+export function getFilePanelSelectedFileKey(workspaceId: string): string {
+  return `filePanelSelectedFile:${workspaceId}`;
+}
+
+/**
  * Get the localStorage key for persisted agent status for a workspace
  * Stores the most recent successful status_set payload (emoji, message, url)
  * Format: "statusState:{workspaceId}"
@@ -356,6 +374,12 @@ export const RIGHT_SIDEBAR_COSTS_WIDTH_KEY = "right-sidebar:width:costs";
  * Format: "review-sidebar-width"
  */
 export const RIGHT_SIDEBAR_REVIEW_WIDTH_KEY = "review-sidebar-width";
+
+/**
+ * Right sidebar width for Files tab (global)
+ * Format: "right-sidebar:width:files"
+ */
+export const RIGHT_SIDEBAR_FILES_WIDTH_KEY = "right-sidebar:width:files";
 
 /**
  * Get the localStorage key for unified Review search state per workspace
@@ -410,6 +434,8 @@ const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string>
   getReviewExpandStateKey,
   getReviewReadMoreKey,
   getFileTreeExpandStateKey,
+  getFilePanelExpandStateKey,
+  getFilePanelSelectedFileKey,
   getReviewSearchStateKey,
   getReviewsKey,
   getAutoCompactionEnabledKey,

@@ -28,6 +28,7 @@ import {
 import { normalizeModeAiDefaults, type ModeAiDefaults } from "@/common/types/modeAiDefaults";
 import { normalizeAgentAiDefaults, type AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
+import type { FileTreeNode } from "@/common/utils/git/numstatParser";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 
 /** Session usage data structure matching SessionUsageFileSchema */
@@ -130,6 +131,10 @@ export interface MockORPCClientOptions {
   gitInit?: (input: {
     projectPath: string;
   }) => Promise<{ success: true } | { success: false; error: string }>;
+  /** Mock file tree for workspace.listFiles */
+  fileTree?: FileTreeNode;
+  /** Mock file contents for workspace.readFile - maps path to content */
+  fileContents?: Map<string, string>;
   /** Idle compaction hours per project (null = disabled) */
   idleCompactionHours?: Map<string, number | null>;
   /** Override signing capabilities response */
@@ -159,6 +164,30 @@ interface MockMcpOverrides {
   disabledServers?: string[];
   enabledServers?: string[];
   toolAllowlist?: Record<string, string[]>;
+}
+
+
+
+/**
+ * Helper to detect language from file extension for syntax highlighting
+ */
+function detectLanguageFromExtension(path: string): string {
+  const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  const extMap: Record<string, string> = {
+    ts: "typescript",
+    tsx: "tsx",
+    js: "javascript",
+    jsx: "jsx",
+    json: "json",
+    md: "markdown",
+    py: "python",
+    css: "css",
+    html: "html",
+    sh: "bash",
+    yml: "yaml",
+    yaml: "yaml",
+  };
+  return extMap[ext] ?? "plaintext";
 }
 
 type MockMcpTestResult = { success: true; tools: string[] } | { success: false; error: string };
@@ -642,6 +671,70 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         const query = input.query.toLowerCase();
         const filtered = mockPaths.filter((p) => p.toLowerCase().includes(query));
         return Promise.resolve({ paths: filtered.slice(0, input.limit ?? 20) });
+      },
+      listFiles: () => {
+        if (options.fileTree) {
+          return Promise.resolve({ success: true, data: options.fileTree });
+        }
+        // Default mock file tree
+        const defaultTree: FileTreeNode = {
+          name: "",
+          path: "",
+          isDirectory: true,
+          children: [
+            {
+              name: "src",
+              path: "src",
+              isDirectory: true,
+              children: [
+                {
+                  name: "index.ts",
+                  path: "src/index.ts",
+                  isDirectory: false,
+                  children: [],
+                },
+                {
+                  name: "App.tsx",
+                  path: "src/App.tsx",
+                  isDirectory: false,
+                  children: [],
+                },
+              ],
+            },
+            {
+              name: "README.md",
+              path: "README.md",
+              isDirectory: false,
+              children: [],
+            },
+          ],
+        };
+        return Promise.resolve({ success: true, data: defaultTree });
+      },
+      readFile: (input: { workspaceId: string; path: string; maxBytes?: number }) => {
+        const fileContents = options.fileContents ?? new Map<string, string>();
+        const content = fileContents.get(input.path);
+        if (content !== undefined) {
+          return Promise.resolve({
+            success: true,
+            data: {
+              content,
+              language: detectLanguageFromExtension(input.path),
+              truncated: false,
+              totalSize: content.length,
+            },
+          });
+        }
+        // Default mock content
+        return Promise.resolve({
+          success: true,
+          data: {
+            content: `// Content of ${input.path}\n\nconsole.log("Hello from ${input.path}");`,
+            language: detectLanguageFromExtension(input.path),
+            truncated: false,
+            totalSize: 100,
+          },
+        });
       },
     },
     window: {
