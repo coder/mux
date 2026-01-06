@@ -64,9 +64,8 @@ export const RuntimeConfigSchema = z.union([
       .string()
       .optional()
       .meta({ description: "Container name (populated after workspace creation)" }),
-    shareCredentials: z
-      .boolean()
-      .optional()
-      .meta({ description: "Mount host credentials (~/.ssh, ~/.gitconfig, ~/.config/gh) read-only" }),
+    shareCredentials: z.boolean().optional().meta({
+      description: "Mount host ~/.ssh and ~/.gitconfig read-only",
+    }),
   }),
 ]);

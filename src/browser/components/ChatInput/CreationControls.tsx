@@ -469,7 +469,9 @@ export function CreationControls(props: CreationControlsProps) {
                 disabled={props.disabled}
                 className="accent-accent"
               />
-              <span className="text-muted">Share host credentials (git, SSH, gh CLI)</span>
+              <span className="text-muted">
+                Share credentials (~/.ssh, ~/.gitconfig, SSH agent, GH CLI)
+              </span>
             </label>
           )}
         </div>

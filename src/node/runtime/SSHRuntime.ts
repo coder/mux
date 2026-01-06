@@ -172,28 +172,7 @@ export class SSHRuntime extends RemoteRuntime {
       abortSignal: options.abortSignal,
     });
 
-    const duration = exitCode.then(() => performance.now() - startTime);
-
-    // Handle abort signal
-    if (options.abortSignal) {
-      options.abortSignal.addEventListener("abort", () => {
-        aborted = true;
-        disposable[Symbol.dispose](); // Kill process and run cleanup
-      });
-    }
-
-    // Handle timeout (only if timeout specified)
-    if (options.timeout !== undefined) {
-      const timeoutHandle = setTimeout(() => {
-        timedOut = true;
-        disposable[Symbol.dispose](); // Kill process and run cleanup
-      }, options.timeout * 1000);
-
-      // Clear timeout if process exits naturally
-      void exitCode.catch(() => undefined).finally(() => clearTimeout(timeoutHandle));
-    }
-
-    return { stdout, stderr, stdin, exitCode, duration };
+    return { process, preExec };
   }
 
   /**

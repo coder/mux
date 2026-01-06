@@ -131,33 +131,36 @@ function runSpawnCommand(
 
 /**
  * Build Docker args for credential sharing.
- * Mounts ~/.ssh, ~/.gitconfig, and ~/.config/gh read-only into the container.
- * Only includes mounts for paths that exist on the host.
+ * Mounts ~/.ssh and ~/.gitconfig read-only into the container.
  * Also sets GIT_SSH_COMMAND to auto-accept new host keys.
  */
 function buildCredentialArgs(): string[] {
   const home = os.homedir();
-  const args: string[] = [];
-
-  // Only mount paths that exist to avoid Docker creating empty directories
-  const credentialPaths = [
-    { host: `${home}/.ssh`, container: "/root/.ssh" },
-    { host: `${home}/.gitconfig`, container: "/root/.gitconfig" },
-    { host: `${home}/.config/gh`, container: "/root/.config/gh" },
+  const args = [
+    "-v",
+    `${home}/.ssh:/root/.ssh:ro`,
+    "-v",
+    `${home}/.gitconfig:/root/.gitconfig:ro`,
+    "-e",
+    // -F /dev/null skips ~/.ssh/config which has ownership issues (owned by host user, not root)
+    "GIT_SSH_COMMAND=ssh -F /dev/null -o BatchMode=yes -o StrictHostKeyChecking=accept-new",
   ];
 
-  for (const { host, container } of credentialPaths) {
-    try {
-      // Sync check is fine here - called once during container creation
-      require("fs").accessSync(host);
-      args.push("-v", `${host}:${container}:ro`);
-    } catch {
-      // Path doesn't exist, skip it
-    }
+  // SSH agent forwarding
+  if (process.platform === "darwin") {
+    // macOS Docker Desktop uses a magic socket path
+    args.push("-v", "/run/host-services/ssh-auth.sock:/ssh-agent:ro");
+    args.push("-e", "SSH_AUTH_SOCK=/ssh-agent");
+  } else if (process.env.SSH_AUTH_SOCK) {
+    // Linux: mount the actual socket
+    args.push("-v", `${process.env.SSH_AUTH_SOCK}:/ssh-agent:ro`);
+    args.push("-e", "SSH_AUTH_SOCK=/ssh-agent");
   }
 
-  // Auto-accept new SSH host keys (same as gitStatus.ts)
-  args.push("-e", "GIT_SSH_COMMAND=ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new");
+  // GitHub CLI auth via token
+  if (process.env.GH_TOKEN) {
+    args.push("-e", `GH_TOKEN=${process.env.GH_TOKEN}`);
+  }
 
   return args;
 }
