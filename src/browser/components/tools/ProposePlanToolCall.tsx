@@ -133,18 +133,19 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   const workspaceName = workspaceMetadata?.name;
 
   // Fresh content from disk for the latest plan (external edit detection)
-  // Initialize from localStorage cache for instant render (no flash on reload)
+  // Only use cache for completed tools (page reload case) - not for in-flight tools
+  // which may have stale cache from a previous propose_plan call
   const cacheKey = workspaceId ? getPlanContentKey(workspaceId) : "";
-  const cached =
-    workspaceId && isLatest && !isEphemeralPreview
-      ? readPersistedState<{ content: string; path: string } | null>(cacheKey, null)
-      : null;
+  const shouldUseCache = workspaceId && isLatest && !isEphemeralPreview && status === "completed";
+  const cached = shouldUseCache
+    ? readPersistedState<{ content: string; path: string } | null>(cacheKey, null)
+    : null;
 
   const [freshContent, setFreshContent] = useState<string | null>(cached?.content ?? null);
   const [freshPath, setFreshPath] = useState<string | null>(cached?.path ?? null);
 
   // Fetch fresh plan content for the latest plan
-  // Re-fetches on mount and when window regains focus (after user edits in external editor)
+  // Re-fetches on mount, when window regains focus, and when tool completes
   useEffect(() => {
     if (isEphemeralPreview || !isLatest || !workspaceId || !api) return;
 
@@ -154,11 +155,11 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
         if (res.success) {
           setFreshContent(res.data.content);
           setFreshPath(res.data.path);
-          // Update cache for next load (optimistic rendering)
+          // Update cache for page reload (only useful when tool is completed)
           updatePersistedState(cacheKey, { content: res.data.content, path: res.data.path });
         }
       } catch {
-        // Fetch failed, keep cached/existing content
+        // Fetch failed, keep existing content
       }
     };
 
@@ -166,15 +167,11 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     void fetchPlan();
 
     // Re-fetch when window regains focus (user returns from external editor)
-    const handleFocus = () => {
-      void fetchPlan();
-    };
+    const handleFocus = () => void fetchPlan();
     window.addEventListener("focus", handleFocus);
-
-    return () => {
-      window.removeEventListener("focus", handleFocus);
-    };
-  }, [api, workspaceId, isLatest, isEphemeralPreview, cacheKey]);
+    return () => window.removeEventListener("focus", handleFocus);
+    // status in deps ensures refetch when tool completes (captures final file state)
+  }, [api, workspaceId, isLatest, isEphemeralPreview, cacheKey, status]);
 
   // Determine plan content and title based on result type
   // For ephemeral previews, use direct content/path props
