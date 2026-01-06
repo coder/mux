@@ -6,6 +6,10 @@ import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { SendMessageError } from "@/common/types/errors";
 import crypto from "crypto";
+import { KNOWN_MODELS, getKnownModel } from "@/common/constants/knownModels";
+
+/** Small, fast models preferred for name generation (cheap and quick) */
+const DEFAULT_NAME_GENERATION_MODELS = [getKnownModel("HAIKU").id, getKnownModel("GPT_MINI").id];
 
 /** Schema for AI-generated workspace identity (area name + descriptive title) */
 const workspaceIdentitySchema = z.object({
@@ -46,6 +50,62 @@ export async function findAvailableModel(
       return modelId;
     }
   }
+  return null;
+}
+
+/**
+ * Convert a model ID to its OpenRouter variant.
+ * e.g., "anthropic:claude-haiku-4-5" -> "openrouter:anthropic/claude-haiku-4-5"
+ */
+function toOpenRouterVariant(modelId: string): string {
+  const [provider, model] = modelId.split(":");
+  if (!provider || !model) return modelId;
+  return `openrouter:${provider}/${model}`;
+}
+
+/**
+ * Select a model for name generation with intelligent fallback.
+ *
+ * Priority order:
+ * 1. Try preferred models directly (Haiku, GPT-Mini by default)
+ * 2. Try OpenRouter variants of preferred models (e.g., openrouter:anthropic/claude-haiku-4-5)
+ * 3. Fallback to any available model from the known models list
+ *
+ * This ensures name generation works even if the user only has OpenRouter configured
+ * or only has a non-preferred provider available.
+ */
+export async function selectModelForNameGeneration(
+  aiService: Pick<AIService, "createModel">,
+  preferredModels: string[] = DEFAULT_NAME_GENERATION_MODELS
+): Promise<string | null> {
+  // 1. Try preferred models directly
+  for (const modelId of preferredModels) {
+    const result = await aiService.createModel(modelId);
+    if (result.success) {
+      return modelId;
+    }
+  }
+
+  // 2. Try OpenRouter variants of preferred models
+  for (const modelId of preferredModels) {
+    const openRouterVariant = toOpenRouterVariant(modelId);
+    const result = await aiService.createModel(openRouterVariant);
+    if (result.success) {
+      return openRouterVariant;
+    }
+  }
+
+  // 3. Fallback to any available model from known models
+  // Try each known model (these are the models we have good support for)
+  const knownModelIds = Object.values(KNOWN_MODELS).map((m) => m.id);
+  for (const modelId of knownModelIds) {
+    const result = await aiService.createModel(modelId);
+    if (result.success) {
+      return modelId;
+    }
+  }
+
+  // No models available at all
   return null;
 }
 

@@ -141,14 +141,11 @@ export function useCreationWorkspace({
   // Project scope ID for reading send options at send time
   const projectScopeId = getProjectScopeId(projectPath);
 
-  // Read the user's preferred model for fallback (same source as ChatInput's preferredModel)
-  const fallbackModel = readPersistedState<string | null>(getModelKey(projectScopeId), null);
-
   // Workspace name generation with debounce
+  // Backend now handles fallback to any available model automatically
   const workspaceNameState = useWorkspaceName({
     message,
     debounceMs: 500,
-    fallbackModel: fallbackModel ?? undefined,
   });
 
   // Destructure name state functions for use in callbacks

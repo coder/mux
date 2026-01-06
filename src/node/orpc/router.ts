@@ -2,7 +2,7 @@ import { os } from "@orpc/server";
 import * as schemas from "@/common/orpc/schemas";
 import type { ORPCContext } from "./context";
 import {
-  findAvailableModel,
+  selectModelForNameGeneration,
   generateWorkspaceIdentity,
 } from "@/node/services/workspaceTitleGenerator";
 import type {
@@ -959,10 +959,14 @@ export const router = (authToken?: string) => {
         .input(schemas.nameGeneration.generate.input)
         .output(schemas.nameGeneration.generate.output)
         .handler(async ({ context, input }) => {
-          // Try preferred models in order, fall back to user's configured model
-          const model =
-            (await findAvailableModel(context.aiService, input.preferredModels ?? [])) ??
-            input.fallbackModel;
+          // Select model with intelligent fallback:
+          // 1. Try preferred models (Haiku, GPT-Mini) or caller-specified models
+          // 2. Try OpenRouter variants of preferred models
+          // 3. Fallback to any available known model
+          const model = await selectModelForNameGeneration(
+            context.aiService,
+            input.preferredModels
+          );
           if (!model) {
             return {
               success: false,
