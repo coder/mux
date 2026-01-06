@@ -180,6 +180,37 @@ export const ProvidersConfigured: AppStory = {
   },
 };
 
+/** Providers section - expanded to show quick links (docs + get API key) */
+export const ProvidersExpanded: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSettingsStory({
+          providersConfig: {
+            anthropic: { apiKeySet: true, baseUrl: "" },
+            openai: { apiKeySet: false, baseUrl: "" },
+            xai: { apiKeySet: false, baseUrl: "" },
+          },
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await openSettingsToSection(canvasElement, "providers");
+
+    const body = within(canvasElement.ownerDocument.body);
+    const dialog = await body.findByRole("dialog");
+    const dialogCanvas = within(dialog);
+
+    // Click on a provider to expand it and reveal the API key link
+    const openaiButton = await dialogCanvas.findByRole("button", { name: /openai/i });
+    await userEvent.click(openaiButton);
+
+    // Verify "Get API Key" link is visible
+    await dialogCanvas.findByRole("link", { name: /get api key/i });
+  },
+};
+
 /** Models section - no custom models */
 export const ModelsEmpty: AppStory = {
   render: () => (

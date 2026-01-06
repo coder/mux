@@ -1,5 +1,6 @@
 import React, { useState, useCallback } from "react";
-import { ChevronDown, ChevronRight, Check, X, Eye, EyeOff } from "lucide-react";
+import { ChevronDown, ChevronRight, Check, X, Eye, EyeOff, ExternalLink } from "lucide-react";
+
 import { createEditKeyHandler } from "@/browser/utils/ui/keybinds";
 import { SUPPORTED_PROVIDERS } from "@/common/constants/providers";
 import type { ProviderName } from "@/common/constants/providers";
@@ -83,6 +84,20 @@ function getProviderFields(provider: ProviderName): FieldConfig[] {
     },
   ];
 }
+
+/**
+ * URLs to create/manage API keys for each provider.
+ */
+const PROVIDER_KEY_URLS: Partial<Record<ProviderName, string>> = {
+  anthropic: "https://console.anthropic.com/settings/keys",
+  openai: "https://platform.openai.com/api-keys",
+  google: "https://aistudio.google.com/app/apikey",
+  xai: "https://console.x.ai/team/default/api-keys",
+  deepseek: "https://platform.deepseek.com/api_keys",
+  openrouter: "https://openrouter.ai/settings/keys",
+  // bedrock: AWS credential chain, no simple key URL
+  // ollama: local service, no key needed
+};
 
 export function ProvidersSection() {
   const { api } = useAPI();
@@ -260,6 +275,19 @@ export function ProvidersSection() {
             {/* Provider settings */}
             {isExpanded && (
               <div className="border-border-medium space-y-3 border-t px-4 py-3">
+                {/* Quick link to get API key */}
+                {PROVIDER_KEY_URLS[provider] && (
+                  <a
+                    href={PROVIDER_KEY_URLS[provider]}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-muted hover:text-accent inline-flex items-center gap-1 text-xs transition-colors"
+                  >
+                    Get API Key
+                    <ExternalLink className="h-2.5 w-2.5" />
+                  </a>
+                )}
+
                 {fields.map((fieldConfig) => {
                   const isEditing =
                     editingField?.provider === provider && editingField?.field === fieldConfig.key;
