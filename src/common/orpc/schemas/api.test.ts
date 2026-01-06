@@ -35,6 +35,7 @@ describe("ProviderConfigInfoSchema conformance", () => {
   it("preserves all ProviderConfigInfo fields (base case)", () => {
     const full: ProviderConfigInfo = {
       apiKeySet: true,
+      isConfigured: true,
       baseUrl: "https://api.example.com",
       models: ["model-a", "model-b"],
     };
@@ -48,6 +49,7 @@ describe("ProviderConfigInfoSchema conformance", () => {
   it("preserves all ProviderConfigInfo fields (with AWS/Bedrock)", () => {
     const full: ProviderConfigInfo = {
       apiKeySet: false,
+      isConfigured: false,
       baseUrl: undefined,
       models: [],
       aws: {
@@ -68,6 +70,7 @@ describe("ProviderConfigInfoSchema conformance", () => {
   it("preserves all ProviderConfigInfo fields (with couponCodeSet)", () => {
     const full: ProviderConfigInfo = {
       apiKeySet: true,
+      isConfigured: true,
       couponCodeSet: true,
     };
 
@@ -81,6 +84,7 @@ describe("ProviderConfigInfoSchema conformance", () => {
     // This is the most comprehensive test - includes ALL possible fields
     const full: ProviderConfigInfo = {
       apiKeySet: true,
+      isConfigured: true,
       baseUrl: "https://custom.endpoint.com",
       models: ["claude-3-opus", "claude-3-sonnet"],
       serviceTier: "flex",
@@ -111,14 +115,17 @@ describe("ProviderConfigInfoSchema conformance", () => {
     const full: ProvidersConfigMap = {
       anthropic: {
         apiKeySet: true,
+        isConfigured: true,
         models: ["claude-3-opus"],
       },
       openai: {
         apiKeySet: true,
+        isConfigured: true,
         serviceTier: "auto",
       },
       bedrock: {
         apiKeySet: false,
+        isConfigured: false,
         aws: {
           region: "us-west-2",
           bearerTokenSet: false,
@@ -128,6 +135,7 @@ describe("ProviderConfigInfoSchema conformance", () => {
       },
       "mux-gateway": {
         apiKeySet: false,
+        isConfigured: false,
         couponCodeSet: true,
         models: ["anthropic/claude-sonnet-4-5"],
       },

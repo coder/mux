@@ -171,23 +171,9 @@ export function ProvidersSection() {
     [api, updateOptimistically]
   );
 
+  /** Check if provider is configured (uses backend-computed isConfigured) */
   const isConfigured = (provider: string): boolean => {
-    const providerConfig = config?.[provider];
-    if (!providerConfig) return false;
-
-    // For Bedrock, check if any AWS credential field is set
-    if (provider === "bedrock" && providerConfig.aws) {
-      const { aws } = providerConfig;
-      return !!(aws.region ?? aws.bearerTokenSet ?? aws.accessKeyIdSet ?? aws.secretAccessKeySet);
-    }
-
-    // For Mux Gateway, check couponCodeSet
-    if (provider === "mux-gateway") {
-      return providerConfig.couponCodeSet ?? false;
-    }
-
-    // For other providers, check apiKeySet
-    return providerConfig.apiKeySet ?? false;
+    return config?.[provider]?.isConfigured ?? false;
   };
 
   const getFieldValue = (provider: string, field: string): string | undefined => {

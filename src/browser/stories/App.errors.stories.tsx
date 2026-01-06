@@ -119,8 +119,8 @@ export const ContextExceededSuggestion: AppStory = {
         return setupCustomChatStory({
           workspaceId,
           providersConfig: {
-            openai: { apiKeySet: true },
-            xai: { apiKeySet: true },
+            openai: { apiKeySet: true, isConfigured: true },
+            xai: { apiKeySet: true, isConfigured: true },
           },
           chatHandler: (callback: (event: WorkspaceChatMessage) => void) => {
             setTimeout(() => {

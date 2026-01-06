@@ -20,9 +20,14 @@ describe("getSuggestedModels", () => {
     }
 
     const config: ProvidersConfigMap = {
-      openai: { apiKeySet: true, models: ["my-team-model"] },
-      [builtInProvider]: { apiKeySet: true, models: [builtInModelId] },
-      "mux-gateway": { apiKeySet: true, couponCodeSet: true, models: ["ignored"] },
+      openai: { apiKeySet: true, isConfigured: true, models: ["my-team-model"] },
+      [builtInProvider]: { apiKeySet: true, isConfigured: true, models: [builtInModelId] },
+      "mux-gateway": {
+        apiKeySet: true,
+        isConfigured: true,
+        couponCodeSet: true,
+        models: ["ignored"],
+      },
     };
 
     const suggested = getSuggestedModels(config);
