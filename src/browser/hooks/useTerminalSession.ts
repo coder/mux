@@ -28,6 +28,12 @@ export function useTerminalSession(
      * should preserve the session for later re-attach.
      */
     closeOnCleanup?: boolean;
+    /**
+     * Called with buffered output when reattaching to an existing session.
+     * This allows the frontend to restore terminal state before live streaming begins.
+     * The chunks are the raw PTY output that was captured while disconnected.
+     */
+    onBufferedOutput?: (chunks: string[]) => void;
   }
 ) {
   const { api } = useAPI();
@@ -126,6 +132,22 @@ export function useTerminalSession(
           // Try to reattach to existing session (e.g., keep-alive terminal)
           targetSessionId = existingSessionId;
           createdSessionRef.current = false;
+
+          // Fetch buffered output to restore terminal state before live streaming
+          // This allows the frontend to show terminal history from while it was disconnected
+          if (options?.onBufferedOutput) {
+            try {
+              const bufferedChunks = await api.terminal.getBufferedOutput({
+                sessionId: existingSessionId,
+              });
+              if (mounted && bufferedChunks.length > 0) {
+                options.onBufferedOutput(bufferedChunks);
+              }
+            } catch (err) {
+              // If buffer fetch fails, continue anyway - live stream will still work
+              console.warn("[Terminal] Failed to fetch buffered output:", err);
+            }
+          }
 
           // Set up subscription with a callback for invalid session detection
           subscribeToSession(targetSessionId, signal, () => {

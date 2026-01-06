@@ -726,6 +726,14 @@ export const terminal = {
     input: z.object({ sessionId: z.string() }),
     output: eventIterator(z.number()),
   },
+  /**
+   * Get buffered output for a terminal session.
+   * Used by frontend on reconnect to restore terminal state (replay history).
+   */
+  getBufferedOutput: {
+    input: z.object({ sessionId: z.string() }),
+    output: z.array(z.string()),
+  },
   openWindow: {
     input: z.object({
       workspaceId: z.string(),

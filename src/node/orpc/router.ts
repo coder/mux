@@ -1709,6 +1709,12 @@ export const router = (authToken?: string) => {
             unsubscribe();
           }
         }),
+      getBufferedOutput: t
+        .input(schemas.terminal.getBufferedOutput.input)
+        .output(schemas.terminal.getBufferedOutput.output)
+        .handler(({ context, input }) => {
+          return context.terminalService.getBufferedOutput(input.sessionId);
+        }),
       openWindow: t
         .input(schemas.terminal.openWindow.input)
         .output(schemas.terminal.openWindow.output)

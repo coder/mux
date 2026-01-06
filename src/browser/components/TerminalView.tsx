@@ -40,74 +40,18 @@ export function TerminalView({
   const fitAddonRef = useRef<FitAddon | null>(null);
   const [terminalError, setTerminalError] = useState<string | null>(null);
 
-  // Buffer output while the terminal UI is not mounted (e.g., tab hidden).
-  // This preserves output for keep-alive sessions without keeping the WASM terminal instance alive.
-  const outputBufferRef = useRef<string[]>([]);
-  const outputBufferBytesRef = useRef(0);
-  const MAX_BUFFER_BYTES = 512 * 1024; // 512KiB cap to prevent runaway memory
-
-  const bufferOutput = (data: string) => {
-    outputBufferRef.current.push(data);
-    outputBufferBytesRef.current += data.length;
-
-    // Trim from the front until we are within the limit.
-    while (outputBufferBytesRef.current > MAX_BUFFER_BYTES && outputBufferRef.current.length > 0) {
-      const removed = outputBufferRef.current.shift();
-      if (removed) {
-        outputBufferBytesRef.current -= removed.length;
-      }
-    }
-  };
-
-  const flushOutputBuffer = () => {
-    const term = termRef.current;
-    if (!term) return;
-
-    const chunks = outputBufferRef.current;
-    if (chunks.length === 0) return;
-
-    term.write(chunks.join(""));
-    outputBufferRef.current = [];
-    outputBufferBytesRef.current = 0;
-  };
-
-  const clearOutputBuffer = () => {
-    outputBufferRef.current = [];
-    outputBufferBytesRef.current = 0;
-  };
-
-  // Clear output buffer when workspaceId changes to prevent cross-workspace contamination.
-  // The buffer is meant for keep-alive sessions within a single workspace, not across workspaces.
-  const prevWorkspaceIdRef = useRef(workspaceId);
-  useEffect(() => {
-    if (prevWorkspaceIdRef.current !== workspaceId) {
-      clearOutputBuffer();
-      prevWorkspaceIdRef.current = workspaceId;
-    }
-  }, [workspaceId]);
-
   const [terminalReady, setTerminalReady] = useState(false);
   const [terminalSize, setTerminalSize] = useState<{ cols: number; rows: number } | null>(null);
 
-  // Handler for terminal output
+  // Handler for terminal output - write directly to terminal
   const handleOutput = (data: string) => {
-    const term = termRef.current;
-    if (term) {
-      term.write(data);
-    } else {
-      bufferOutput(data);
-    }
+    termRef.current?.write(data);
   };
 
   // Handler for terminal exit
   const handleExit = (exitCode: number) => {
     const msg = `\r\n[Process exited with code ${exitCode}]\r\n`;
-    const term = termRef.current;
-    if (term) {
-      term.write(msg);
-    } else {
-      bufferOutput(msg);
-    }
+    termRef.current?.write(msg);
   };
 
   const { api } = useAPI();
@@ -130,6 +74,15 @@ export function TerminalView({
     };
     void setWindowDetails();
   }, [api, workspaceId, setDocumentTitle]);
+  // Handler for buffered output - called when reattaching to an existing session
+  // Writes all buffered chunks to restore terminal state
+  const handleBufferedOutput = (chunks: string[]) => {
+    if (termRef.current && chunks.length > 0) {
+      // Write all buffered output to restore terminal state
+      termRef.current.write(chunks.join(""));
+    }
+  };
+
   const {
     sendInput,
     resize,
@@ -137,6 +90,7 @@ export function TerminalView({
     error: sessionError,
   } = useTerminalSession(workspaceId, sessionId, visible, terminalSize, handleOutput, handleExit, {
     closeOnCleanup,
+    onBufferedOutput: handleBufferedOutput,
   });
 
   useEffect(() => {
@@ -155,10 +109,11 @@ export function TerminalView({
     onTitleChangeRef.current = onTitleChange;
   }, [sendInput, resize, onTitleChange]);
 
-  // Initialize terminal when visible
+  // Initialize terminal once when component mounts.
+  // The terminal stays alive even when hidden to preserve state (vim, etc.).
   useEffect(() => {
     const containerEl = containerRef.current;
-    if (!containerEl || !visible) {
+    if (!containerEl) {
       return;
     }
 
@@ -240,9 +195,6 @@ export function TerminalView({
         termRef.current = terminal;
         fitAddonRef.current = fitAddon;
 
-        // Flush any buffered output collected while this view was hidden.
-        flushOutputBuffer();
-
         setTerminalReady(true);
       } catch (err) {
         if (cancelled) {
@@ -276,7 +228,8 @@ export function TerminalView({
     };
     // Note: sendInput and resize are intentionally not in deps
     // They're used in callbacks, not during effect execution
-  }, [visible, workspaceId]);
+    // Terminal is recreated when workspaceId changes (different session)
+  }, [workspaceId]);
 
   // Resize on container size change
   useEffect(() => {
