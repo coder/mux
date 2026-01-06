@@ -84,7 +84,7 @@ describeIntegration("Docker runtime selection (UI)", () => {
       const imageInput = await waitFor(
         () => {
           const input = view.container.querySelector(
-            'input[placeholder="ubuntu:22.04"]'
+            'input[placeholder="node:20"]'
           ) as HTMLInputElement | null;
           if (!input) {
             throw new Error("Docker image input not found");
@@ -98,8 +98,8 @@ describeIntegration("Docker runtime selection (UI)", () => {
       const hostInput = view.container.querySelector('input[placeholder="user@host"]');
       expect(hostInput).toBeNull();
 
-      fireEvent.change(imageInput, { target: { value: "ubuntu:22.04" } });
-      expect(imageInput.value).toBe("ubuntu:22.04");
+      fireEvent.change(imageInput, { target: { value: "node:20" } });
+      expect(imageInput.value).toBe("node:20");
 
       // Switching to SSH should hide Docker image input and show host input
       const sshButton = findRuntimeButton(view.container, "SSH");
@@ -116,7 +116,7 @@ describeIntegration("Docker runtime selection (UI)", () => {
         { timeout: 2_000 }
       );
 
-      const imageInputAfter = view.container.querySelector('input[placeholder="ubuntu:22.04"]');
+      const imageInputAfter = view.container.querySelector('input[placeholder="node:20"]');
       expect(imageInputAfter).toBeNull();
     } finally {
       await cleanupView(view, cleanupDom);
