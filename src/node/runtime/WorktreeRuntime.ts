@@ -198,14 +198,14 @@ export class WorktreeRuntime extends LocalBaseRuntime {
   }
 
   async initWorkspace(params: WorkspaceInitParams): Promise<WorkspaceInitResult> {
-    const { projectPath, branchName, workspacePath, initLogger } = params;
+    const { projectPath, branchName, workspacePath, initLogger, env } = params;
 
     try {
       // Run .mux/init hook if it exists
       // Note: runInitHook calls logComplete() internally if hook exists
       const hookExists = await checkInitHookExists(projectPath);
       if (hookExists) {
-        const muxEnv = getMuxEnv(projectPath, "worktree", branchName);
+        const muxEnv = { ...getMuxEnv(projectPath, "worktree", branchName), ...env };
         await this.runInitHook(workspacePath, muxEnv, initLogger);
       } else {
         // No hook - signal completion immediately

@@ -70,13 +70,13 @@ export class LocalRuntime extends LocalBaseRuntime {
   }
 
   async initWorkspace(params: WorkspaceInitParams): Promise<WorkspaceInitResult> {
-    const { projectPath, branchName, workspacePath, initLogger } = params;
+    const { projectPath, branchName, workspacePath, initLogger, env } = params;
 
     try {
       // Run .mux/init hook if it exists
       const hookExists = await checkInitHookExists(projectPath);
       if (hookExists) {
-        const muxEnv = getMuxEnv(projectPath, "local", branchName);
+        const muxEnv = { ...getMuxEnv(projectPath, "local", branchName), ...env };
         await this.runInitHook(workspacePath, muxEnv, initLogger);
       } else {
         // No hook - signal completion immediately

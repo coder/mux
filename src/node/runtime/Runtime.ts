@@ -193,6 +193,8 @@ export interface WorkspaceInitParams {
   initLogger: InitLogger;
   /** Optional abort signal for cancellation */
   abortSignal?: AbortSignal;
+  /** Environment variables to inject (MUX_ vars + secrets) */
+  env?: Record<string, string>;
 }
 
 /**
