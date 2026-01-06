@@ -691,8 +691,14 @@ export class DockerRuntime extends RemoteRuntime {
       const inspectResult = await runDockerCommand(`docker inspect ${containerName}`, 10000);
 
       if (inspectResult.exitCode !== 0) {
-        // Container doesn't exist - deletion is idempotent
-        return { success: true, deletedPath };
+        // Only treat as "doesn't exist" if Docker says so
+        if (inspectResult.stderr.includes("No such object")) {
+          return { success: true, deletedPath };
+        }
+        return {
+          success: false,
+          error: `Docker error: ${inspectResult.stderr || inspectResult.stdout || "unknown error"}`,
+        };
       }
 
       if (!force) {
