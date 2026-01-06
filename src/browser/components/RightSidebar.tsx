@@ -327,8 +327,6 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
       const terminalIndex = terminalTabs.indexOf(tab);
       const fallbackName = terminalIndex === 0 ? "Terminal" : `Terminal ${terminalIndex + 1}`;
       const displayName = dynamicTitle ?? fallbackName;
-      const canClose = terminalTabs.length > 1; // Can close if not the only terminal
-
       label = (
         <span className="inline-flex items-center gap-1">
           <TerminalIcon className="h-3 w-3 shrink-0" />
@@ -349,24 +347,22 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
             </TooltipTrigger>
             <TooltipContent side="bottom">Open in new window</TooltipContent>
           </Tooltip>
-          {canClose && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  className="text-muted hover:text-destructive -my-0.5 rounded p-0.5 transition-colors"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    props.onCloseTerminal(tab);
-                  }}
-                  aria-label="Close terminal"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">Close terminal</TooltipContent>
-            </Tooltip>
-          )}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                className="text-muted hover:text-destructive -my-0.5 rounded p-0.5 transition-colors"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  props.onCloseTerminal(tab);
+                }}
+                aria-label="Close terminal"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Close terminal</TooltipContent>
+          </Tooltip>
         </span>
       );
     } else {
