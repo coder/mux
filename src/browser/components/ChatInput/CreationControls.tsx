@@ -439,12 +439,38 @@ export function CreationControls(props: CreationControlsProps) {
                 aria-label="Docker image"
                 type="text"
                 value={selectedRuntime.image}
-                onChange={(e) => onSelectedRuntimeChange({ mode: "docker", image: e.target.value })}
+                onChange={(e) =>
+                  onSelectedRuntimeChange({
+                    mode: "docker",
+                    image: e.target.value,
+                    shareCredentials: selectedRuntime.shareCredentials,
+                  })
+                }
                 placeholder="node:20"
                 disabled={props.disabled}
                 className="bg-bg-dark text-foreground border-border-medium focus:border-accent h-7 w-36 rounded-md border px-2 text-sm focus:outline-none disabled:opacity-50"
               />
             </div>
+          )}
+
+          {/* Docker Credential Sharing */}
+          {selectedRuntime.mode === "docker" && (
+            <label className="flex items-center gap-1.5 text-xs">
+              <input
+                type="checkbox"
+                checked={selectedRuntime.shareCredentials ?? false}
+                onChange={(e) =>
+                  onSelectedRuntimeChange({
+                    mode: "docker",
+                    image: selectedRuntime.image,
+                    shareCredentials: e.target.checked,
+                  })
+                }
+                disabled={props.disabled}
+                className="accent-accent"
+              />
+              <span className="text-muted">Share host credentials (git, SSH, gh CLI)</span>
+            </label>
           )}
         </div>
       </div>

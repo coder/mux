@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { RuntimeConfig, RuntimeMode, ParsedRuntime } from "@/common/types/runtime";
+import { buildRuntimeConfig } from "@/common/types/runtime";
 import type { ThinkingLevel } from "@/common/types/thinking";
-import { parseRuntimeString } from "@/browser/utils/chatCommands";
 import { useDraftWorkspaceSettings } from "@/browser/hooks/useDraftWorkspaceSettings";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
@@ -141,7 +141,7 @@ export function useCreationWorkspace({
   );
 
   // Centralized draft workspace settings with automatic persistence
-  const { settings, setSelectedRuntime, setDefaultRuntimeMode, setTrunkBranch, getRuntimeString } =
+  const { settings, setSelectedRuntime, setDefaultRuntimeMode, setTrunkBranch } =
     useDraftWorkspaceSettings(projectPath, branches, recommendedTrunk);
 
   // Project scope ID for reading send options at send time
@@ -229,11 +229,10 @@ export function useCreationWorkspace({
         // Set the confirmed identity for splash UI display
         setCreatingWithIdentity(identity);
 
-        // Get runtime config from options
-        const runtimeString = getRuntimeString();
-        const runtimeConfig: RuntimeConfig | undefined = runtimeString
-          ? parseRuntimeString(runtimeString, "")
-          : undefined;
+        // Build runtime config from selected runtime (preserves all fields like shareCredentials)
+        const runtimeConfig: RuntimeConfig | undefined = buildRuntimeConfig(
+          settings.selectedRuntime
+        );
 
         // Validate Docker image is not empty
         if (runtimeConfig?.type === "docker" && !runtimeConfig.image?.trim()) {
@@ -343,7 +342,7 @@ export function useCreationWorkspace({
       projectPath,
       projectScopeId,
       onWorkspaceCreated,
-      getRuntimeString,
+      settings.selectedRuntime,
       settings.mode,
       settings.model,
       settings.thinkingLevel,

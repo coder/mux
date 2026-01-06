@@ -86,6 +86,83 @@ function runDockerCommand(command: string, timeoutMs = 30000): Promise<DockerCom
 }
 
 /**
+ * Run a command with array args (no shell interpolation).
+ * Similar to runDockerCommand but safer for paths with special characters.
+ */
+function runSpawnCommand(
+  command: string,
+  args: string[],
+  timeoutMs = 30000
+): Promise<DockerCommandResult> {
+  return new Promise((resolve) => {
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+
+    const child = spawn(command, args);
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill();
+      resolve({ exitCode: -1, stdout, stderr: "Command timed out" });
+    }, timeoutMs);
+
+    child.stdout?.on("data", (data: Buffer) => {
+      stdout += data.toString();
+    });
+
+    child.stderr?.on("data", (data: Buffer) => {
+      stderr += data.toString();
+    });
+
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (timedOut) return;
+      resolve({ exitCode: code ?? -1, stdout, stderr });
+    });
+
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      if (timedOut) return;
+      resolve({ exitCode: -1, stdout, stderr: err.message });
+    });
+  });
+}
+
+/**
+ * Build Docker args for credential sharing.
+ * Mounts ~/.ssh, ~/.gitconfig, and ~/.config/gh read-only into the container.
+ * Only includes mounts for paths that exist on the host.
+ * Also sets GIT_SSH_COMMAND to auto-accept new host keys.
+ */
+function buildCredentialArgs(): string[] {
+  const home = os.homedir();
+  const args: string[] = [];
+
+  // Only mount paths that exist to avoid Docker creating empty directories
+  const credentialPaths = [
+    { host: `${home}/.ssh`, container: "/root/.ssh" },
+    { host: `${home}/.gitconfig`, container: "/root/.gitconfig" },
+    { host: `${home}/.config/gh`, container: "/root/.config/gh" },
+  ];
+
+  for (const { host, container } of credentialPaths) {
+    try {
+      // Sync check is fine here - called once during container creation
+      require("fs").accessSync(host);
+      args.push("-v", `${host}:${container}:ro`);
+    } catch {
+      // Path doesn't exist, skip it
+    }
+  }
+
+  // Auto-accept new SSH host keys (same as gitStatus.ts)
+  args.push("-e", "GIT_SSH_COMMAND=ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new");
+
+  return args;
+}
+
+/**
  * Run docker run with streaming output (for image pull progress).
  * Streams stdout/stderr to initLogger for visibility during image pulls.
  */
@@ -93,9 +170,10 @@ function streamDockerRun(
   containerName: string,
   image: string,
   initLogger: InitLogger,
-  abortSignal?: AbortSignal,
-  timeoutMs = 600000 // 10 minutes for large image pulls
+  options?: { abortSignal?: AbortSignal; shareCredentials?: boolean; timeoutMs?: number }
 ): Promise<DockerCommandResult> {
+  const { abortSignal, shareCredentials, timeoutMs = 600000 } = options ?? {};
+
   return new Promise((resolve) => {
     let stdout = "";
     let stderr = "";
@@ -109,16 +187,15 @@ function streamDockerRun(
       resolve(result);
     };
 
+    // Build docker run args
+    const dockerArgs = ["run", "-d", "--name", containerName];
+    if (shareCredentials) {
+      dockerArgs.push(...buildCredentialArgs());
+    }
+    dockerArgs.push(image, "sleep", "infinity");
+
     // Use spawn for streaming output - array args don't need shell escaping
-    const child = spawn("docker", [
-      "run",
-      "-d",
-      "--name",
-      containerName,
-      image,
-      "sleep",
-      "infinity",
-    ]);
+    const child = spawn("docker", dockerArgs);
 
     const timer = setTimeout(() => {
       child.kill();
@@ -169,6 +246,8 @@ export interface DockerRuntimeConfig {
    * to allow exec operations without calling createWorkspace again.
    */
   containerName?: string;
+  /** Mount host credentials (~/.ssh, ~/.gitconfig, ~/.config/gh) read-only into container */
+  shareCredentials?: boolean;
 }
 
 /**
@@ -364,12 +443,10 @@ export class DockerRuntime extends RemoteRuntime {
       }
 
       // Create and start container with streaming output for image pull progress
-      const runResult = await streamDockerRun(
-        containerName,
-        this.config.image,
-        initLogger,
-        abortSignal
-      );
+      const runResult = await streamDockerRun(containerName, this.config.image, initLogger, {
+        abortSignal,
+        shareCredentials: this.config.shareCredentials,
+      });
       if (runResult.exitCode !== 0) {
         initLogger.logStderr(`Failed to create container: ${runResult.stderr}`);
         initLogger.logComplete(-1);
@@ -696,8 +773,12 @@ export class DockerRuntime extends RemoteRuntime {
 
       // 5. Create destination container
       initLogger.logStep(`Creating container: ${destContainerName}...`);
-      const runCmd = `docker run -d --name ${destContainerName} ${shescape.quote(this.config.image)} sleep infinity`;
-      const runResult = await runDockerCommand(runCmd, 60000);
+      const dockerArgs = ["run", "-d", "--name", destContainerName];
+      if (this.config.shareCredentials) {
+        dockerArgs.push(...buildCredentialArgs());
+      }
+      dockerArgs.push(this.config.image, "sleep", "infinity");
+      const runResult = await runSpawnCommand("docker", dockerArgs, 60000);
       if (runResult.exitCode !== 0) {
         // Handle TOCTOU race - container may have been created between check and run
         if (runResult.stderr.includes("already in use")) {

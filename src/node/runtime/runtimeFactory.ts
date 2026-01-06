@@ -97,6 +97,7 @@ export function createRuntime(config: RuntimeConfig, options?: CreateRuntimeOpti
       return new DockerRuntime({
         image: config.image,
         containerName,
+        shareCredentials: config.shareCredentials,
       });
     }
 

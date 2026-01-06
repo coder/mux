@@ -45,7 +45,7 @@ export type ParsedRuntime =
   | { mode: "local" }
   | { mode: "worktree" }
   | { mode: "ssh"; host: string }
-  | { mode: "docker"; image: string };
+  | { mode: "docker"; image: string; shareCredentials?: boolean };
 
 /**
  * Parse runtime string from localStorage or UI input into structured result.
@@ -125,6 +125,33 @@ export function buildRuntimeString(parsed: ParsedRuntime): string | undefined {
       return "local";
     case RUNTIME_MODE.WORKTREE:
       // Worktree is default, no string needed
+      return undefined;
+  }
+}
+
+/**
+ * Convert ParsedRuntime to RuntimeConfig for workspace creation.
+ * This preserves all fields (like shareCredentials for Docker) that would be lost
+ * in string serialization via buildRuntimeString + parseRuntimeString.
+ */
+export function buildRuntimeConfig(parsed: ParsedRuntime): RuntimeConfig | undefined {
+  switch (parsed.mode) {
+    case RUNTIME_MODE.SSH:
+      return {
+        type: RUNTIME_MODE.SSH,
+        host: parsed.host,
+        srcBaseDir: "~/mux", // Default remote base directory (tilde resolved by backend)
+      };
+    case RUNTIME_MODE.DOCKER:
+      return {
+        type: RUNTIME_MODE.DOCKER,
+        image: parsed.image,
+        shareCredentials: parsed.shareCredentials,
+      };
+    case RUNTIME_MODE.LOCAL:
+      return { type: RUNTIME_MODE.LOCAL };
+    case RUNTIME_MODE.WORKTREE:
+      // Worktree uses system default config
       return undefined;
   }
 }
