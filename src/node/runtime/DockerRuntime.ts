@@ -315,7 +315,13 @@ export class DockerRuntime extends RemoteRuntime {
   }
 
   protected quoteForRemote(filePath: string): string {
-    return shescape.quote(filePath);
+    // Expand ~ to /root since container runs as root
+    const expanded = filePath.startsWith("~/")
+      ? `/root/${filePath.slice(2)}`
+      : filePath === "~"
+        ? "/root"
+        : filePath;
+    return shescape.quote(expanded);
   }
 
   protected cdCommand(cwd: string): string {
