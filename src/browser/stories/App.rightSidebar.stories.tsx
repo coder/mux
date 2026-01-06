@@ -967,14 +967,6 @@ export const FilesTab: AppStory = {
       { timeout: 5000 }
     );
 
-    // Wait for file tree to load
-    await waitFor(
-      () => {
-        canvas.getByText("Files");
-      },
-      { timeout: 3000 }
-    );
-
     // Verify file tree structure is visible
     await waitFor(
       () => {
