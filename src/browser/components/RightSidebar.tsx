@@ -579,6 +579,10 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   const [layoutDraft, setLayoutDraft] = React.useState<RightSidebarLayoutState | null>(null);
   const layoutDraftRef = React.useRef<RightSidebarLayoutState | null>(null);
 
+  // Ref to access latest layoutRaw without causing callback recreation
+  const layoutRawRef = React.useRef(layoutRaw);
+  layoutRawRef.current = layoutRaw;
+
   const isSidebarTabDragInProgressRef = React.useRef(false);
 
   const handleSidebarTabDragStart = React.useCallback(() => {
@@ -632,8 +636,10 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   const setLayout = React.useCallback(
     (updater: (prev: RightSidebarLayoutState) => RightSidebarLayoutState) => {
       if (isSidebarTabDragInProgressRef.current) {
+        // Use ref to get latest layoutRaw without dependency
         const base =
-          layoutDraftRef.current ?? parseRightSidebarLayoutState(layoutRaw, initialActiveTab);
+          layoutDraftRef.current ??
+          parseRightSidebarLayoutState(layoutRawRef.current, initialActiveTab);
         const next = updater(base);
         layoutDraftRef.current = next;
         setLayoutDraft(next);
@@ -642,7 +648,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
 
       setLayoutRaw((prevRaw) => updater(parseRightSidebarLayoutState(prevRaw, initialActiveTab)));
     },
-    [initialActiveTab, layoutRaw, setLayoutRaw]
+    [initialActiveTab, setLayoutRaw]
   );
 
   // Keyboard shortcuts for tab switching (auto-expands if collapsed)
