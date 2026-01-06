@@ -32,6 +32,10 @@
             "pages": [
               "index",
               "install",
+              {
+                "group": "Models",
+                "pages": ["config/models", "config/providers"]
+              },
               "getting-started/why-parallelize",
               "getting-started/mux-codes"
             ]
@@ -82,7 +86,6 @@
           {
             "group": "Configuration",
             "pages": [
-              "config/models",
               "config/mcp-servers",
               "config/project-secrets",
               "config/agentic-git-identity",
@@ -130,6 +133,7 @@
     { "source": "/plan-mode", "destination": "/agents/plan-mode" },
     { "source": "/system-prompt", "destination": "/agents/system-prompt" },
     { "source": "/models", "destination": "/config/models" },
+    { "source": "/providers", "destination": "/config/providers" },
     { "source": "/mcp-servers", "destination": "/config/mcp-servers" },
     { "source": "/project-secrets", "destination": "/config/project-secrets" },
     { "source": "/agentic-git-identity", "destination": "/config/agentic-git-identity" },
