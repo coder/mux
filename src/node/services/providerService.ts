@@ -8,6 +8,7 @@ import type {
   ProvidersConfigMap,
 } from "@/common/orpc/types";
 import { log } from "@/node/services/log";
+import { checkProviderConfigured } from "@/node/utils/providerRequirements";
 
 // Re-export types for backward compatibility
 export type { AWSCredentialStatus, ProviderConfigInfo, ProvidersConfigMap };
@@ -64,6 +65,7 @@ export class ProviderService {
 
       const providerInfo: ProviderConfigInfo = {
         apiKeySet: !!config.apiKey,
+        isConfigured: false, // computed below
         baseUrl: config.baseUrl,
         models: config.models,
       };
@@ -95,6 +97,9 @@ export class ProviderService {
         const muxConfig = config as { couponCode?: string; voucher?: string };
         providerInfo.couponCodeSet = !!(muxConfig.couponCode ?? muxConfig.voucher);
       }
+
+      // Compute isConfigured using shared utility (checks config + env vars)
+      providerInfo.isConfigured = checkProviderConfigured(provider, config).isConfigured;
 
       result[provider] = providerInfo;
     }

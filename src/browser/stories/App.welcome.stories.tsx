@@ -354,3 +354,101 @@ export const ProjectPageWithArchivedWorkspaces: AppStory = {
     />
   ),
 };
+
+/**
+ * No providers configured - shows the configure providers prompt.
+ * This is displayed instead of ChatInput when the user hasn't set up any API keys.
+ */
+export const NoProvidersConfigured: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        expandProjects(["/Users/dev/my-project"]);
+        return createMockORPCClient({
+          projects: new Map([projectWithNoWorkspaces("/Users/dev/my-project")]),
+          workspaces: [],
+          // Empty providers config - no API keys set
+          providersConfig: {},
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    const canvas = within(storyRoot);
+
+    // Wait for the configure prompt to appear
+    await canvas.findByTestId("configure-providers-prompt", {}, { timeout: 10000 });
+  },
+};
+
+/**
+ * Single provider configured - shows the provider bar with one icon and ChatInput.
+ */
+export const SingleProviderConfigured: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        expandProjects(["/Users/dev/my-project"]);
+        return createMockORPCClient({
+          projects: new Map([projectWithNoWorkspaces("/Users/dev/my-project")]),
+          workspaces: [],
+          providersConfig: {
+            anthropic: { apiKeySet: true, isConfigured: true },
+          },
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    const canvas = within(storyRoot);
+
+    // Wait for the provider bar to appear (it contains "Providers" settings link)
+    await waitFor(
+      () => {
+        if (!canvas.queryByText("Providers")) {
+          throw new Error("Provider bar not visible");
+        }
+      },
+      { timeout: 10000 }
+    );
+  },
+};
+
+/**
+ * Multiple providers configured - shows the provider bar with multiple icons.
+ */
+export const MultipleProvidersConfigured: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        expandProjects(["/Users/dev/my-project"]);
+        return createMockORPCClient({
+          projects: new Map([projectWithNoWorkspaces("/Users/dev/my-project")]),
+          workspaces: [],
+          providersConfig: {
+            anthropic: { apiKeySet: true, isConfigured: true },
+            openai: { apiKeySet: true, isConfigured: true },
+            google: { apiKeySet: true, isConfigured: true },
+            xai: { apiKeySet: true, isConfigured: true },
+          },
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    const canvas = within(storyRoot);
+
+    // Wait for the provider bar to appear
+    await waitFor(
+      () => {
+        if (!canvas.queryByText("Providers")) {
+          throw new Error("Provider bar not visible");
+        }
+      },
+      { timeout: 10000 }
+    );
+  },
+};

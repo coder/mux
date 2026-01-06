@@ -16,6 +16,20 @@ void mock.module("@/browser/contexts/API", () => ({
   }),
 }));
 
+// Mock useProvidersConfig to return a configured provider so ChatInput renders
+void mock.module("@/browser/hooks/useProvidersConfig", () => ({
+  useProvidersConfig: () => ({
+    config: { anthropic: { apiKeySet: true, isConfigured: true } },
+    loading: false,
+    error: null,
+  }),
+}));
+
+// Mock ConfiguredProvidersBar to avoid tooltip/context dependencies
+void mock.module("./ConfiguredProvidersBar", () => ({
+  ConfiguredProvidersBar: () => <div data-testid="ConfiguredProvidersBarMock" />,
+}));
+
 // Mock ChatInput to simulate the old (buggy) behavior where onReady can fire again
 // on unrelated re-renders (e.g. workspace list updates).
 void mock.module("./ChatInput/index", () => ({

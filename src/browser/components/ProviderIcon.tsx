@@ -27,6 +27,13 @@ const PROVIDER_ICONS: Partial<Record<ProviderName, React.FC>> = {
   "mux-gateway": GatewayIcon,
 };
 
+/**
+ * Check if a provider has an icon available.
+ */
+export function hasProviderIcon(provider: string): boolean {
+  return provider in PROVIDER_ICONS;
+}
+
 export interface ProviderIconProps {
   provider: string;
   className?: string;

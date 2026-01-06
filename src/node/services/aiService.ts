@@ -54,6 +54,7 @@ import type { MCPServerManager, MCPWorkspaceStats } from "@/node/services/mcpSer
 import { WorkspaceMcpOverridesService } from "./workspaceMcpOverridesService";
 import type { TaskService } from "@/node/services/taskService";
 import { buildProviderOptions } from "@/common/utils/ai/providerOptions";
+import { resolveProviderCredentials } from "@/node/utils/providerRequirements";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
 import type {
@@ -580,36 +581,19 @@ export class AIService extends EventEmitter {
 
       // Handle Anthropic provider
       if (providerName === "anthropic") {
-        // Anthropic API key can come from:
-        // 1. providers.jsonc config (providerConfig.apiKey)
-        // 2. ANTHROPIC_API_KEY env var (SDK reads this automatically)
-        // 3. ANTHROPIC_AUTH_TOKEN env var (we pass this explicitly since SDK doesn't check it)
-        // We allow env var passthrough so users don't need explicit config.
-
-        const hasApiKeyInConfig = Boolean(providerConfig.apiKey);
-        const hasApiKeyEnvVar = Boolean(process.env.ANTHROPIC_API_KEY);
-        const hasAuthTokenEnvVar = Boolean(process.env.ANTHROPIC_AUTH_TOKEN);
-
-        // Return structured error if no credentials available anywhere
-        if (!hasApiKeyInConfig && !hasApiKeyEnvVar && !hasAuthTokenEnvVar) {
-          return Err({
-            type: "api_key_not_found",
-            provider: providerName,
-          });
+        // Resolve credentials from config + env (single source of truth)
+        const creds = resolveProviderCredentials("anthropic", providerConfig);
+        if (!creds.isConfigured) {
+          return Err({ type: "api_key_not_found", provider: providerName });
         }
 
-        // If SDK won't find a key (no config, no ANTHROPIC_API_KEY), use ANTHROPIC_AUTH_TOKEN
-        let configWithApiKey = providerConfig;
-        if (!hasApiKeyInConfig && !hasApiKeyEnvVar && hasAuthTokenEnvVar) {
-          configWithApiKey = { ...providerConfig, apiKey: process.env.ANTHROPIC_AUTH_TOKEN };
-        }
+        // Build config with resolved credentials
+        const configWithApiKey = creds.apiKey
+          ? { ...providerConfig, apiKey: creds.apiKey }
+          : providerConfig;
 
-        // Normalize base URL to ensure /v1 suffix (SDK expects it).
-        // Check config first, then fall back to ANTHROPIC_BASE_URL env var.
-        // We must explicitly pass baseURL to ensure /v1 normalization happens
-        // (SDK reads env var but doesn't normalize it).
-        const baseURLFromEnv = process.env.ANTHROPIC_BASE_URL?.trim();
-        const effectiveBaseURL = configWithApiKey.baseURL ?? baseURLFromEnv;
+        // Normalize base URL to ensure /v1 suffix (SDK expects it)
+        const effectiveBaseURL = configWithApiKey.baseURL ?? creds.baseUrl?.trim();
         const normalizedConfig = effectiveBaseURL
           ? { ...configWithApiKey, baseURL: normalizeAnthropicBaseURL(effectiveBaseURL) }
           : configWithApiKey;
@@ -842,20 +826,12 @@ export class AIService extends EventEmitter {
 
       // Handle Amazon Bedrock provider
       if (providerName === "bedrock") {
-        // Bedrock requires a region - check config or environment
-        // Support AWS_REGION (standard) and AWS_DEFAULT_REGION (used by AWS CLI profiles)
-        const configRegion = providerConfig.region;
-        const region =
-          typeof configRegion === "string" && configRegion
-            ? configRegion
-            : (process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION);
-
-        if (!region) {
-          return Err({
-            type: "api_key_not_found",
-            provider: providerName,
-          });
+        // Resolve region from config + env (single source of truth)
+        const creds = resolveProviderCredentials("bedrock", providerConfig);
+        if (!creds.isConfigured || !creds.region) {
+          return Err({ type: "api_key_not_found", provider: providerName });
         }
+        const { region } = creds;
 
         const baseFetch = getProviderFetch(providerConfig);
         const { createAmazonBedrock } = await PROVIDER_REGISTRY.bedrock();
@@ -915,14 +891,12 @@ export class AIService extends EventEmitter {
 
       // Handle Mux Gateway provider
       if (providerName === "mux-gateway") {
-        // Mux Gateway uses couponCode as the API key (fallback to legacy voucher)
-        const couponCode = providerConfig.couponCode ?? providerConfig.voucher;
-        if (typeof couponCode !== "string" || !couponCode) {
-          return Err({
-            type: "api_key_not_found",
-            provider: providerName,
-          });
+        // Resolve couponCode from config (single source of truth)
+        const creds = resolveProviderCredentials("mux-gateway", providerConfig);
+        if (!creds.isConfigured || !creds.couponCode) {
+          return Err({ type: "api_key_not_found", provider: providerName });
         }
+        const { couponCode } = creds;
 
         const { createGateway } = await PROVIDER_REGISTRY["mux-gateway"]();
         // For Anthropic models via gateway, wrap fetch to inject cache_control on tools

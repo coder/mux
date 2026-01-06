@@ -9,6 +9,11 @@ import { ArchivedWorkspaces } from "./ArchivedWorkspaces";
 import { useAPI } from "@/browser/contexts/API";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 import { GitInitBanner } from "./GitInitBanner";
+import { ConfiguredProvidersBar } from "./ConfiguredProvidersBar";
+import { ConfigureProvidersPrompt } from "./ConfigureProvidersPrompt";
+import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
+import type { ProvidersConfigMap } from "@/common/orpc/types";
+import { SUPPORTED_PROVIDERS } from "@/common/constants/providers";
 
 interface ProjectPageProps {
   projectPath: string;
@@ -29,6 +34,12 @@ function archivedListsEqual(
   return next.every((w) => prevIds.has(w.id));
 }
 
+/** Check if any provider is configured (uses backend-computed isConfigured) */
+function hasConfiguredProvider(config: ProvidersConfigMap | null): boolean {
+  if (!config) return false;
+  return SUPPORTED_PROVIDERS.some((p) => config[p]?.isConfigured);
+}
+
 /**
  * Project page shown when a project is selected but no workspace is active.
  * Combines workspace creation with archived workspaces view.
@@ -43,6 +54,8 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
   const { api } = useAPI();
   const chatInputRef = useRef<ChatInputAPI | null>(null);
   const [archivedWorkspaces, setArchivedWorkspaces] = useState<FrontendWorkspaceMetadata[]>([]);
+  const { config: providersConfig, loading: providersLoading } = useProvidersConfig();
+  const hasProviders = hasConfiguredProvider(providersConfig);
 
   // Git repository state for the banner
   const [branchesLoaded, setBranchesLoaded] = useState(false);
@@ -176,16 +189,27 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
                 {isNonGitRepo && (
                   <GitInitBanner projectPath={projectPath} onSuccess={loadBranches} />
                 )}
-                {/* ChatInput for workspace creation - includes section selector */}
-                <ChatInput
-                  variant="creation"
-                  projectPath={projectPath}
-                  projectName={projectName}
-                  pendingSectionId={pendingSectionId}
-                  onProviderConfig={onProviderConfig}
-                  onReady={handleChatReady}
-                  onWorkspaceCreated={onWorkspaceCreated}
-                />
+                {/* Show configure prompt when no providers, otherwise show ChatInput */}
+                {!providersLoading && !hasProviders ? (
+                  <ConfigureProvidersPrompt />
+                ) : (
+                  <>
+                    {/* Configured providers bar - compact icon carousel */}
+                    {providersConfig && hasProviders && (
+                      <ConfiguredProvidersBar providersConfig={providersConfig} />
+                    )}
+                    {/* ChatInput for workspace creation - includes section selector */}
+                    <ChatInput
+                      variant="creation"
+                      projectPath={projectPath}
+                      projectName={projectName}
+                      pendingSectionId={pendingSectionId}
+                      onProviderConfig={onProviderConfig}
+                      onReady={handleChatReady}
+                      onWorkspaceCreated={onWorkspaceCreated}
+                    />
+                  </>
+                )}
               </div>
             </div>
             {/* Archived workspaces: separate section below centered area */}

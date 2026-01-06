@@ -57,6 +57,17 @@ export async function createTestEnvironment(): Promise<TestEnvironment> {
   // Create config with temporary directory
   const config = new Config(tempDir);
 
+  // Some UI tests render ProjectPage, which now hard-blocks workspace creation when no providers
+  // are configured. For non-integration tests, seed a dummy provider so the UI can render.
+  //
+  // For integration tests (TEST_INTEGRATION=1), do NOT write dummy keys here (they would override
+  // real env-backed credentials used by tests like name generation).
+  if (!shouldRunIntegrationTests()) {
+    config.saveProvidersConfig({
+      anthropic: { apiKey: "test-key-for-ui-tests" },
+    });
+  }
+
   // Create mock BrowserWindow
   const mockWindow = createMockBrowserWindow();
 
