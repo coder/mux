@@ -2037,8 +2037,10 @@ export class WorkspaceService extends EventEmitter {
       try {
         // Use exec to delete files since runtime doesn't have a deleteFile method.
         // Delete both paths in one command for efficiency.
+        // Use runtime workspace path (not host projectPath) for Docker containers.
+        const workspacePath = runtime.getWorkspacePath(metadata.projectPath, metadata.name);
         const execStream = await runtime.exec(`rm -f ${quotedPlanPath} ${quotedLegacyPlanPath}`, {
-          cwd: metadata.projectPath,
+          cwd: workspacePath,
           timeout: 10,
         });
 

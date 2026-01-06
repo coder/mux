@@ -2,7 +2,7 @@
  * Welcome/Empty state and workspace creation stories
  */
 
-import { within, userEvent, waitFor } from "@storybook/test";
+import { within, userEvent, waitFor, expect } from "@storybook/test";
 
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { createMockORPCClient, type MockSessionUsage } from "@/browser/stories/mocks/orpc";
@@ -109,6 +109,13 @@ export const NonGitRepository: AppStory = {
           workspaces: [],
           // Return empty branches (indicates non-git repo)
           listBranches: () => Promise.resolve({ branches: [], recommendedTrunk: null }),
+          // Mark non-local runtimes as unavailable for non-git repos
+          runtimeAvailability: {
+            local: { available: true },
+            worktree: { available: false, reason: "Requires git repository" },
+            ssh: { available: false, reason: "Requires git repository" },
+            docker: { available: false, reason: "Requires git repository" },
+          },
         });
       }}
     />
@@ -137,6 +144,13 @@ export const NonGitRepositorySuccess: AppStory = {
           workspaces: [],
           // Always return empty branches so banner stays visible after success
           listBranches: () => Promise.resolve({ branches: [], recommendedTrunk: null }),
+          // Mark non-local runtimes as unavailable for non-git repos
+          runtimeAvailability: {
+            local: { available: true },
+            worktree: { available: false, reason: "Requires git repository" },
+            ssh: { available: false, reason: "Requires git repository" },
+            docker: { available: false, reason: "Requires git repository" },
+          },
           // Simulate git init success
           gitInit: () => Promise.resolve({ success: true as const }),
         });
@@ -180,6 +194,12 @@ export const NonGitRepositoryInProgress: AppStory = {
           projects: new Map([projectWithNoWorkspaces("/Users/dev/new-project")]),
           workspaces: [],
           listBranches: () => Promise.resolve({ branches: [], recommendedTrunk: null }),
+          runtimeAvailability: {
+            local: { available: true },
+            worktree: { available: false, reason: "Requires git repository" },
+            ssh: { available: false, reason: "Requires git repository" },
+            docker: { available: false, reason: "Requires git repository" },
+          },
           // Never resolve - keeps in loading state
           // eslint-disable-next-line @typescript-eslint/no-empty-function
           gitInit: () => new Promise(() => {}),
@@ -224,6 +244,12 @@ export const NonGitRepositoryError: AppStory = {
           projects: new Map([projectWithNoWorkspaces("/Users/dev/new-project")]),
           workspaces: [],
           listBranches: () => Promise.resolve({ branches: [], recommendedTrunk: null }),
+          runtimeAvailability: {
+            local: { available: true },
+            worktree: { available: false, reason: "Requires git repository" },
+            ssh: { available: false, reason: "Requires git repository" },
+            docker: { available: false, reason: "Requires git repository" },
+          },
           // Return error
           gitInit: () =>
             Promise.resolve({
@@ -254,6 +280,47 @@ export const NonGitRepositoryError: AppStory = {
         }
       },
       { timeout: 2000 }
+    );
+  },
+};
+
+/**
+ * Docker unavailable - demonstrates the UI when Docker daemon is not running.
+ * The Docker button should be greyed out with a tooltip explaining why.
+ */
+export const DockerUnavailable: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        expandProjects(["/Users/dev/new-project"]);
+        return createMockORPCClient({
+          projects: new Map([projectWithNoWorkspaces("/Users/dev/new-project")]),
+          workspaces: [],
+          // Docker unavailable, but git repo exists
+          runtimeAvailability: {
+            local: { available: true },
+            worktree: { available: true },
+            ssh: { available: true },
+            docker: { available: false, reason: "Docker daemon not running" },
+          },
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    const canvas = within(storyRoot);
+
+    // Wait for workspace type buttons to appear
+    await canvas.findByText("Workspace Type", {}, { timeout: 10000 });
+
+    // Wait for Docker button to become disabled (runtimeAvailability loads async)
+    await waitFor(
+      async () => {
+        const dockerButton = canvas.getByRole("button", { name: /Docker/i });
+        await expect(dockerButton).toBeDisabled();
+      },
+      { timeout: 5000 }
     );
   },
 };

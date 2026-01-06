@@ -126,6 +126,13 @@ export interface MockORPCClientOptions {
   listBranches?: (input: {
     projectPath: string;
   }) => Promise<{ branches: string[]; recommendedTrunk: string | null }>;
+  /** Custom runtimeAvailability response (for testing non-git repos) */
+  runtimeAvailability?: {
+    local: { available: true } | { available: false; reason: string };
+    worktree: { available: true } | { available: false; reason: string };
+    ssh: { available: true } | { available: false; reason: string };
+    docker: { available: true } | { available: false; reason: string };
+  };
   /** Custom gitInit implementation (for testing git init flow) */
   gitInit?: (input: {
     projectPath: string;
@@ -204,6 +211,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     agentDefinitions: initialAgentDefinitions,
     listBranches: customListBranches,
     gitInit: customGitInit,
+    runtimeAvailability: customRuntimeAvailability,
     signingCapabilities: customSigningCapabilities,
   } = options;
 
@@ -445,12 +453,14 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         });
       },
       runtimeAvailability: () =>
-        Promise.resolve({
-          local: { available: true },
-          worktree: { available: true },
-          ssh: { available: true },
-          docker: { available: true },
-        }),
+        Promise.resolve(
+          customRuntimeAvailability ?? {
+            local: { available: true },
+            worktree: { available: true },
+            ssh: { available: true },
+            docker: { available: true },
+          }
+        ),
       gitInit: (input: { projectPath: string }) => {
         if (customGitInit) {
           return customGitInit(input);
