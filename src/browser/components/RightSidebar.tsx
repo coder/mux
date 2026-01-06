@@ -158,12 +158,16 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         e.preventDefault();
         setSelectedTab("stats");
         setCollapsed(false);
+      } else if (filePanelEnabled && matchesKeybind(e, KEYBINDS.FILES_TAB)) {
+        e.preventDefault();
+        setSelectedTab("files");
+        setCollapsed(false);
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [setSelectedTab, setCollapsed, statsTabEnabled]);
+  }, [setSelectedTab, setCollapsed, statsTabEnabled, filePanelEnabled]);
 
   const usage = useWorkspaceUsage(workspaceId);
 
@@ -328,22 +332,29 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
               </Tooltip>
             )}
             {filePanelEnabled && (
-              <button
-                className={cn(
-                  "rounded-md px-3 py-1 text-xs font-medium transition-all duration-150 flex items-baseline gap-1.5",
-                  selectedTab === "files"
-                    ? "bg-hover text-foreground"
-                    : "bg-transparent text-muted hover:bg-hover/50 hover:text-foreground"
-                )}
-                onClick={() => setSelectedTab("files")}
-                id={filesTabId}
-                role="tab"
-                type="button"
-                aria-selected={selectedTab === "files"}
-                aria-controls={filesPanelId}
-              >
-                Files
-              </button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    className={cn(
+                      "rounded-md px-3 py-1 text-xs font-medium transition-all duration-150 flex items-baseline gap-1.5",
+                      selectedTab === "files"
+                        ? "bg-hover text-foreground"
+                        : "bg-transparent text-muted hover:bg-hover/50 hover:text-foreground"
+                    )}
+                    onClick={() => setSelectedTab("files")}
+                    id={filesTabId}
+                    role="tab"
+                    type="button"
+                    aria-selected={selectedTab === "files"}
+                    aria-controls={filesPanelId}
+                  >
+                    Files
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" align="center">
+                  {formatKeybind(KEYBINDS.FILES_TAB)}
+                </TooltipContent>
+              </Tooltip>
             )}
           </div>
           <div

@@ -1755,8 +1755,13 @@ export const router = (authToken?: string) => {
             const workspacePath = runtime.getWorkspacePath(metadata.projectPath, metadata.name);
 
             // Security: prevent path traversal
+            // Normalize the path and check for ../ segments (not just ".." substring which blocks valid filenames like "foo..bar.ts")
             const normalizedPath = input.path.replace(/\\/g, "/");
-            if (normalizedPath.includes("..") || normalizedPath.startsWith("/")) {
+            const pathSegments = normalizedPath.split("/");
+            const hasTraversal = pathSegments.some(
+              (segment) => segment === ".." || segment === "."
+            );
+            if (hasTraversal || normalizedPath.startsWith("/")) {
               return { success: false, error: "Invalid path: path traversal not allowed" };
             }
 
