@@ -16,6 +16,10 @@ import * as path from "path";
 import * as yaml from "yaml";
 import * as prettier from "prettier";
 import { KNOWN_MODELS, DEFAULT_MODEL } from "../src/common/constants/knownModels";
+import {
+  buildCompactionPrompt,
+  DEFAULT_COMPACTION_WORD_TARGET,
+} from "../src/common/constants/ui";
 import { formatModelDisplayName } from "../src/common/utils/ai/modelDisplay";
 import { AgentDefinitionFrontmatterSchema } from "../src/common/orpc/schemas/agentDefinition";
 
@@ -274,6 +278,50 @@ async function syncBuiltinAgents(): Promise<boolean> {
 }
 
 // ---------------------------------------------------------------------------
+// Compaction customization docs sync
+// ---------------------------------------------------------------------------
+
+function generateCompactAgentSystemPromptBlock(): string {
+  const compact = loadBuiltinAgents().find((agent) => agent.id === "compact");
+  if (!compact) {
+    throw new Error("Could not find built-in compact agent");
+  }
+
+  return "```text\n" + compact.body.trim() + "\n```";
+}
+
+async function syncCompactAgentSystemPrompt(): Promise<boolean> {
+  return syncDoc({
+    docsFile: "workspaces/compaction/customization.mdx",
+    sourceLabel: "src/node/builtinAgents/compact.md",
+    markerName: "COMPACT_AGENT_SYSTEM_PROMPT",
+    generateBlock: generateCompactAgentSystemPromptBlock,
+  });
+}
+
+function generateCompactionUserPromptBlock(): string {
+  const prompt = buildCompactionPrompt(DEFAULT_COMPACTION_WORD_TARGET);
+  return "```text\n" + prompt.trim() + "\n```";
+}
+
+
+async function syncCompactionCustomizationDocs(): Promise<boolean> {
+  // These markers live in the same file, so they must be updated sequentially.
+  const systemPromptResult = await syncCompactAgentSystemPrompt();
+  const userPromptResult = await syncCompactionUserPrompt();
+  return systemPromptResult && userPromptResult;
+}
+async function syncCompactionUserPrompt(): Promise<boolean> {
+  return syncDoc({
+    docsFile: "workspaces/compaction/customization.mdx",
+    sourceLabel: "src/common/constants/ui.ts",
+    markerName: "COMPACTION_USER_PROMPT",
+    generateBlock: generateCompactionUserPromptBlock,
+  });
+}
+
+
+// ---------------------------------------------------------------------------
 // User notify tool docs sync
 // ---------------------------------------------------------------------------
 
@@ -321,6 +369,7 @@ async function main(): Promise<void> {
     syncSystemPrompt(),
     syncKnownModels(),
     syncBuiltinAgents(),
+    syncCompactionCustomizationDocs(),
     syncNotifyDocs(),
   ]);
 

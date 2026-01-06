@@ -58,7 +58,7 @@ Use this index to find a page's:
       - Compaction (`/workspaces/compaction`) → `references/docs/workspaces/compaction/index.mdx` — Managing conversation context size with compaction
       - Manual Compaction (`/workspaces/compaction/manual`) → `references/docs/workspaces/compaction/manual.mdx` — Commands for manually managing conversation context
       - Automatic Compaction (`/workspaces/compaction/automatic`) → `references/docs/workspaces/compaction/automatic.mdx` — Let mux automatically compact your conversations based on usage or idle time
-      - Customization (`/workspaces/compaction/customization`) → `references/docs/workspaces/compaction/customization.mdx` — Customize the compaction system prompt and behavior
+      - Customization (`/workspaces/compaction/customization`) → `references/docs/workspaces/compaction/customization.mdx` — Customize the compaction system prompt
     - **Runtimes**
       - Runtimes (`/runtime`) → `references/docs/runtime/index.mdx` — Configure where and how mux executes agent workspaces
       - Local Runtime (`/runtime/local`) → `references/docs/runtime/local.mdx` — Run agents directly in your project directory
