@@ -444,6 +444,13 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           recommendedTrunk: "main",
         });
       },
+      runtimeAvailability: () =>
+        Promise.resolve({
+          local: { available: true },
+          worktree: { available: true },
+          ssh: { available: true },
+          docker: { available: true },
+        }),
       gitInit: (input: { projectPath: string }) => {
         if (customGitInit) {
           return customGitInit(input);

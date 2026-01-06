@@ -93,7 +93,7 @@ export function createRuntime(config: RuntimeConfig, options?: CreateRuntimeOpti
       const containerName =
         options?.projectPath && options?.workspaceName
           ? getContainerName(options.projectPath, options.workspaceName)
-          : undefined;
+          : config.containerName;
       return new DockerRuntime({
         image: config.image,
         containerName,
