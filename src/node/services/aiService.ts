@@ -1424,6 +1424,8 @@ export class AIService extends EventEmitter {
         }
       }
 
+      // Wait for init to complete before creating temp dir (SSH runtime may not be ready)
+      await this.initStateManager.waitForInit(workspaceId);
       const runtimeTempDir = await this.streamManager.createTempDirForStream(streamToken, runtime);
 
       // Extract tool-specific instructions from AGENTS.md files and agent definition
