@@ -117,11 +117,7 @@ describe("WorkspaceContext", () => {
   });
 
   test("subscribes to new workspace immediately when metadata event fires", async () => {
-    const { workspace: workspaceApi } = createMockAPI({
-      workspace: {
-        list: () => Promise.resolve([]),
-      },
-    });
+    const { workspace: workspaceApi } = createMockAPI();
 
     await setup();
 
@@ -157,9 +153,6 @@ describe("WorkspaceContext", () => {
       workspace: {
         list: () => Promise.resolve(workspaces),
         onMetadata: metadataStream.onMetadata,
-      },
-      projects: {
-        list: () => Promise.resolve([]),
       },
       localStorage: {
         [SELECTED_WORKSPACE_KEY]: JSON.stringify({
@@ -205,9 +198,6 @@ describe("WorkspaceContext", () => {
       workspace: {
         list: () => Promise.resolve(workspaces),
         onMetadata: metadataStream.onMetadata,
-      },
-      projects: {
-        list: () => Promise.resolve([]),
       },
       localStorage: {
         [SELECTED_WORKSPACE_KEY]: JSON.stringify({
@@ -271,9 +261,6 @@ describe("WorkspaceContext", () => {
       workspace: {
         list: () => Promise.resolve(workspaces),
         onMetadata: metadataStream.onMetadata,
-      },
-      projects: {
-        list: () => Promise.resolve([]),
       },
       localStorage: {
         [SELECTED_WORKSPACE_KEY]: JSON.stringify({
@@ -350,9 +337,6 @@ describe("WorkspaceContext", () => {
       workspace: {
         list: () => Promise.resolve(workspaces),
         onMetadata: metadataStream.onMetadata,
-      },
-      projects: {
-        list: () => Promise.resolve([]),
       },
       // Parent is selected, not the child
       localStorage: {
@@ -737,9 +721,6 @@ describe("WorkspaceContext", () => {
             }),
           ]),
       },
-      projects: {
-        list: () => Promise.resolve([]),
-      },
       server: {
         getLaunchProject: () => Promise.resolve("/launch-project"),
       },
@@ -776,9 +757,6 @@ describe("WorkspaceContext", () => {
               namedWorkspacePath: "/launch-project-main",
             }),
           ]),
-      },
-      projects: {
-        list: () => Promise.resolve([]),
       },
       localStorage: {
         selectedWorkspace: JSON.stringify({
@@ -862,9 +840,6 @@ describe("WorkspaceContext", () => {
     const projectsListMock = mock(() => Promise.resolve([]));
 
     createMockAPI({
-      workspace: {
-        list: () => Promise.resolve([]),
-      },
       projects: {
         list: projectsListMock,
       },
@@ -892,9 +867,6 @@ describe("WorkspaceContext", () => {
     createMockAPI({
       workspace: {
         list: () => Promise.resolve([workspaceWithoutTimestamp]),
-      },
-      projects: {
-        list: () => Promise.resolve([]),
       },
     });
 

@@ -538,19 +538,10 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         // Update metadata immediately to avoid race condition with validation effect
         ensureCreatedAt(result.metadata);
         seedWorkspaceLocalStorageFromBackend(result.metadata);
-        setWorkspaceMetadata((prev) => {
-          const updated = new Map(prev);
-          updated.set(result.metadata.id, result.metadata);
-          return updated;
-        });
+        setWorkspaceMetadata((prev) => new Map(prev).set(result.metadata.id, result.metadata));
 
         // Return the new workspace selection
-        return {
-          projectPath,
-          projectName: result.metadata.projectName,
-          namedWorkspacePath: result.metadata.namedWorkspacePath,
-          workspaceId: result.metadata.id,
-        };
+        return toWorkspaceSelection(result.metadata);
       } else {
         throw new Error(result.error);
       }
