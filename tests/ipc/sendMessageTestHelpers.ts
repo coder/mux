@@ -17,7 +17,6 @@ import {
   cleanupTempGitRepo,
   generateBranchName,
   createStreamCollector,
-  addFakeOrigin,
   INIT_HOOK_WAIT_MS,
 } from "./helpers";
 import { detectDefaultTrunkBranch } from "../../src/node/git";
@@ -31,14 +30,11 @@ let sharedRepoPath: string | null = null;
 /**
  * Create shared test environment and git repo.
  * Call in beforeAll() to share resources across tests.
- * Adds a fake origin remote for GitStatusStore tests.
  */
 export async function createSharedRepo(): Promise<void> {
   await preloadTestModules();
   sharedEnv = await createTestEnvironment();
   sharedRepoPath = await createTempGitRepo();
-  // Add fake origin for GitStatusStore to detect ahead/behind status
-  await addFakeOrigin(sharedRepoPath);
 }
 
 /**

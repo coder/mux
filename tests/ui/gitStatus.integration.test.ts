@@ -4,8 +4,10 @@ import { shouldRunIntegrationTests } from "../testUtils";
 import {
   cleanupSharedRepo,
   createSharedRepo,
+  getSharedRepoPath,
   withSharedWorkspace,
 } from "../ipc/sendMessageTestHelpers";
+import { addFakeOrigin } from "../ipc/helpers";
 
 import { installDom } from "./dom";
 import { renderReviewPanel } from "./renderReviewPanel";
@@ -32,6 +34,8 @@ function simulateWindowFocus(): void {
 describeIntegration("GitStatus (UI + ORPC)", () => {
   beforeAll(async () => {
     await createSharedRepo();
+    // Add fake origin for ahead/behind status tests
+    await addFakeOrigin(getSharedRepoPath());
   });
 
   afterAll(async () => {
