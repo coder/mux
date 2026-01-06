@@ -1714,7 +1714,10 @@ export const router = (authToken?: string) => {
               ? "git diff --name-only HEAD 2>/dev/null || true"
               : "git ls-files 2>/dev/null || true";
 
-            const result = await execBuffered(runtime, gitCommand, { cwd: workspacePath, timeout: 30000 });
+            const result = await execBuffered(runtime, gitCommand, {
+              cwd: workspacePath,
+              timeout: 30000,
+            });
             if (result.exitCode !== 0) {
               return { success: false, error: result.stderr || "Failed to list files" };
             }

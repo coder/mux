@@ -1000,7 +1000,10 @@ export const FilesTabWithFileSelected: AppStory = {
         localStorage.setItem(RIGHT_SIDEBAR_FILES_WIDTH_KEY, "600");
 
         // Pre-select a file
-        localStorage.setItem("filePanelSelectedFile:ws-files-selected", JSON.stringify("src/App.tsx"));
+        localStorage.setItem(
+          "filePanelSelectedFile:ws-files-selected",
+          JSON.stringify("src/App.tsx")
+        );
 
         const client = setupSimpleChatStory({
           workspaceId: "ws-files-selected",

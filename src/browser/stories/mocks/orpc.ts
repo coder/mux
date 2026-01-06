@@ -166,8 +166,6 @@ interface MockMcpOverrides {
   toolAllowlist?: Record<string, string[]>;
 }
 
-
-
 /**
  * Helper to detect language from file extension for syntax highlighting
  */
