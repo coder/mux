@@ -246,6 +246,17 @@ export function useCreationWorkspace({
           return false;
         }
 
+        // Validate SSH host is not empty
+        if (runtimeConfig?.type === "ssh" && !runtimeConfig.host?.trim()) {
+          setToast({
+            id: Date.now().toString(),
+            type: "error",
+            message: "SSH host is required",
+          });
+          setIsSending(false);
+          return false;
+        }
+
         // Read send options fresh from localStorage at send time to avoid
         // race conditions with React state updates (requestAnimationFrame batching
         // in usePersistedState can delay state updates after model selection)

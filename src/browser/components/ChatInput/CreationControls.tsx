@@ -239,10 +239,11 @@ export function CreationControls(props: CreationControlsProps) {
 
   const { selectedRuntime, onSelectedRuntimeChange } = props;
 
-  // Check if git is required (worktree unavailable due to git)
+  // Check if git is required (worktree unavailable due to git or no branches)
   const isNonGitRepo =
-    runtimeAvailability?.worktree?.available === false &&
-    runtimeAvailability.worktree.reason === "Requires git repository";
+    (runtimeAvailability?.worktree?.available === false &&
+      runtimeAvailability.worktree.reason === "Requires git repository") ||
+    (props.branchesLoaded && props.branches.length === 0);
 
   // Force local runtime for non-git directories
   useEffect(() => {
