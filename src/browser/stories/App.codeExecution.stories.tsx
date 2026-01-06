@@ -10,7 +10,10 @@ import {
   createCodeExecutionTool,
   createPendingCodeExecutionTool,
 } from "./mockFactory";
+
 import { setupSimpleChatStory } from "./storyHelpers";
+import { waitForChatMessagesLoaded } from "./storyPlayHelpers";
+import { userEvent, waitFor } from "@storybook/test";
 
 export default {
   ...appMeta,
@@ -439,4 +442,93 @@ export const Interrupted: AppStory = {
       }
     />
   ),
+};
+
+/** Code execution showing the code view (monospace font test) */
+export const ShowCodeView: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          messages: [
+            createUserMessage("msg-1", "Run some analysis code", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 60000,
+            }),
+            createAssistantMessage("msg-2", "Running analysis.", {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP - 50000,
+              toolCalls: [
+                createCodeExecutionTool(
+                  "call-1",
+                  `// Analysis script with various syntax elements
+const data = mux.file_read({ filePath: "data.json" });
+const parsed = JSON.parse(data.content);
+
+function analyze(items) {
+  return items.map(item => ({
+    name: item.name,
+    score: item.value * 1.5,
+  }));
+}
+
+const results = analyze(parsed.items);
+console.log("Processed", results.length, "items");
+return results;`,
+                  {
+                    success: true,
+                    result: [{ name: "test", score: 15 }],
+                    toolCalls: [],
+                    consoleOutput: [
+                      {
+                        level: "log",
+                        args: ["Processed", 1, "items"],
+                        timestamp: STABLE_TIMESTAMP,
+                      },
+                    ],
+                    duration_ms: 45,
+                  },
+                  []
+                ),
+              ],
+            }),
+          ],
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await waitForChatMessagesLoaded(canvasElement);
+
+    // Find and click the "Show Code" button (CodeIcon)
+    await waitFor(
+      () => {
+        const buttons = canvasElement.querySelectorAll('button[type="button"]');
+        const showCodeBtn = Array.from(buttons).find((btn) => {
+          const svg = btn.querySelector("svg");
+          return svg?.classList.contains("lucide-code");
+        });
+        if (!showCodeBtn) throw new Error("Show Code button not found");
+        return showCodeBtn;
+      },
+      { timeout: 5000 }
+    );
+
+    const buttons = canvasElement.querySelectorAll('button[type="button"]');
+    const showCodeBtn = Array.from(buttons).find((btn) => {
+      const svg = btn.querySelector("svg");
+      return svg?.classList.contains("lucide-code");
+    }) as HTMLElement;
+
+    await userEvent.click(showCodeBtn);
+
+    // Wait for code view to be displayed (font-mono class should be present)
+    await waitFor(
+      () => {
+        const codeContainer = canvasElement.querySelector(".font-mono");
+        if (!codeContainer) throw new Error("Code view not displayed");
+      },
+      { timeout: 3000 }
+    );
+  },
 };
