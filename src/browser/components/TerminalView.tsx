@@ -193,7 +193,7 @@ export function TerminalView({
         const terminalFg = styles.getPropertyValue("--color-terminal-fg").trim() || "#d4d4d4";
 
         terminal = new Terminal({
-          fontSize: 14,
+          fontSize: 13,
           fontFamily: "JetBrains Mono, Menlo, Monaco, monospace",
           cursorBlink: true,
           theme: {
