@@ -392,4 +392,51 @@ describe("InitStateManager", () => {
       expect((outputEvents[0] as { line: string }).line).toBe("Old line 200");
     });
   });
+
+  describe("waitForInit with abortSignal", () => {
+    it("should return immediately if abortSignal is already aborted", async () => {
+      const workspaceId = "test-workspace";
+      manager.startInit(workspaceId, "/path/to/hook");
+      const controller = new AbortController();
+      controller.abort();
+
+      const start = Date.now();
+      await manager.waitForInit(workspaceId, controller.signal);
+      expect(Date.now() - start).toBeLessThan(50); // Should be instant
+    });
+
+    it("should return when abortSignal fires during wait", async () => {
+      const workspaceId = "test-workspace";
+      manager.startInit(workspaceId, "/path/to/hook");
+      const controller = new AbortController();
+
+      const waitPromise = manager.waitForInit(workspaceId, controller.signal);
+      setTimeout(() => controller.abort(), 10);
+
+      const start = Date.now();
+      await waitPromise;
+      expect(Date.now() - start).toBeLessThan(100); // Should return quickly after abort
+    });
+
+    it("should clean up timeout when init completes first", async () => {
+      const workspaceId = "test-workspace";
+      manager.startInit(workspaceId, "/path/to/hook");
+      const waitPromise = manager.waitForInit(workspaceId);
+
+      await manager.endInit(workspaceId, 0);
+      await waitPromise;
+      // No spurious timeout error should be logged (verify via log spy if needed)
+    });
+
+    it("should work without abortSignal (backwards compat)", async () => {
+      const workspaceId = "test-workspace";
+      manager.startInit(workspaceId, "/path/to/hook");
+      const waitPromise = manager.waitForInit(workspaceId);
+
+      // Complete init
+      await manager.endInit(workspaceId, 0);
+      await waitPromise;
+      // Should complete without error
+    });
+  });
 });

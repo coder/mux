@@ -363,7 +363,7 @@ export class InitStateManager extends EventEmitter {
    *
    * @param workspaceId Workspace ID to wait for
    */
-  async waitForInit(workspaceId: string): Promise<void> {
+  async waitForInit(workspaceId: string, abortSignal?: AbortSignal): Promise<void> {
     const state = this.getInitState(workspaceId);
 
     // No init state - proceed immediately (backwards compat or init not needed)
@@ -377,6 +377,11 @@ export class InitStateManager extends EventEmitter {
       return;
     }
 
+    // Early exit if already aborted
+    if (abortSignal?.aborted) {
+      return;
+    }
+
     // Init is running - wait for completion promise with timeout
     const promiseEntry = this.initPromises.get(workspaceId);
 
@@ -387,25 +392,46 @@ export class InitStateManager extends EventEmitter {
     }
 
     const INIT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
-    const timeoutPromise = new Promise<void>((resolve) => {
-      setTimeout(() => {
-        log.error(
-          `Init timeout for ${workspaceId} after 5 minutes - tools will proceed anyway. ` +
-            `Init will continue in background.`
-        );
-        resolve(); // Resolve, don't reject - tools should proceed
-      }, INIT_TIMEOUT_MS);
-    });
 
-    // Race between completion and timeout
-    // Both resolve (no rejection), so tools always proceed
+    // Track cleanup handlers
+    let timeoutId: NodeJS.Timeout | undefined;
+    let abortHandler: (() => void) | undefined;
+
     try {
-      await Promise.race([promiseEntry.promise, timeoutPromise]);
+      const timeoutPromise = new Promise<void>((resolve) => {
+        timeoutId = setTimeout(() => {
+          log.error(
+            `Init timeout for ${workspaceId} after 5 minutes - tools will proceed anyway. ` +
+              `Init will continue in background.`
+          );
+          resolve();
+        }, INIT_TIMEOUT_MS);
+      });
+
+      const abortPromise = new Promise<void>((resolve) => {
+        if (!abortSignal) return; // Never resolves if no signal
+        if (abortSignal.aborted) {
+          resolve();
+          return;
+        }
+        abortHandler = () => resolve();
+        abortSignal.addEventListener("abort", abortHandler, { once: true });
+      });
+
+      // Race between completion, timeout, and abort
+      await Promise.race([promiseEntry.promise, timeoutPromise, abortPromise]);
     } catch (error) {
       // Init promise was rejected (e.g., workspace deleted)
       // Log and proceed anyway - let the tool fail with its own error if needed
       const errorMsg = error instanceof Error ? error.message : String(error);
       log.error(`Init wait interrupted for ${workspaceId}: ${errorMsg} - proceeding anyway`);
+    } finally {
+      // Clean up timeout to prevent spurious error logs
+      if (timeoutId) clearTimeout(timeoutId);
+      // Clean up abort listener to prevent memory leak
+      if (abortHandler && abortSignal) {
+        abortSignal.removeEventListener("abort", abortHandler);
+      }
     }
   }
 }
