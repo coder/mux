@@ -133,6 +133,8 @@ export interface ExecAsyncOptions {
  * using proc = execAsync("nohup bash -c ...", { shell: getBashPath() });
  */
 export function execAsync(command: string, options?: ExecAsyncOptions): DisposableExec {
+  // Child processes inherit process.env automatically, which includes
+  // the enriched PATH set by initShellEnv() at startup
   const child = exec(command, { shell: options?.shell });
   const promise = new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
     let stdout = "";

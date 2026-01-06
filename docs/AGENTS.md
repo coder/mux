@@ -85,6 +85,7 @@ EOF
 - Prefer **self-healing** behavior: if corrupted or invalid data exists in persisted state (e.g., `chat.jsonl`), the system should sanitize or filter it at load/request time rather than failing permanently.
 - Never let a single malformed line in history brick a workspace—apply defensive filtering in request-building paths so the user can continue working.
 - When streaming crashes, any incomplete state committed to disk should either be repairable on next load or excluded from provider requests to avoid API validation errors.
+- **Startup-time initialization must never crash the app.** Wrap in try-catch, use timeouts, fall back silently.
 
 ## Testing Doctrine
 

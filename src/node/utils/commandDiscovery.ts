@@ -42,7 +42,7 @@ export async function isCommandAvailable(command: string): Promise<boolean> {
     }
   }
 
-  // Fall back to which
+  // Fall back to which (inherits enriched PATH from process.env)
   try {
     const result = spawnSync("which", [command], { encoding: "utf8" });
     return result.status === 0;
