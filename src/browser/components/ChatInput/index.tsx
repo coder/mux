@@ -1,13 +1,4 @@
-import React, {
-  Suspense,
-  useState,
-  useRef,
-  useCallback,
-  useEffect,
-  useId,
-  useMemo,
-  useDeferredValue,
-} from "react";
+import React, { useState, useRef, useCallback, useEffect, useId, useMemo } from "react";
 import {
   CommandSuggestions,
   COMMAND_SUGGESTION_KEYS,
@@ -97,7 +88,6 @@ import { prepareUserMessageForSend } from "@/common/types/message";
 import { MODEL_ABBREVIATION_EXAMPLES } from "@/common/constants/knownModels";
 import { useTelemetry } from "@/browser/hooks/useTelemetry";
 
-import { getTokenCountPromise } from "@/browser/utils/tokenizer/rendererClient";
 import { CreationCenterContent } from "./CreationCenterContent";
 import { cn } from "@/common/lib/utils";
 import { CreationControls } from "./CreationControls";
@@ -116,35 +106,6 @@ import initMessage from "@/browser/assets/initMessage.txt?raw";
 // localStorage quotas are environment-dependent and relatively small.
 // Be conservative here so we can warn the user before writes start failing.
 const MAX_PERSISTED_IMAGE_DRAFT_CHARS = 4_000_000;
-type TokenCountReader = () => number;
-
-function createTokenCountResource(promise: Promise<number>): TokenCountReader {
-  let status: "pending" | "success" | "error" = "pending";
-  let value = 0;
-  let error: Error | null = null;
-
-  const suspender = promise.then(
-    (resolved) => {
-      status = "success";
-      value = resolved;
-    },
-    (reason: unknown) => {
-      status = "error";
-      error = reason instanceof Error ? reason : new Error(String(reason));
-    }
-  );
-
-  return () => {
-    if (status === "pending") {
-      // eslint-disable-next-line @typescript-eslint/only-throw-error
-      throw suspender;
-    }
-    if (status === "error") {
-      throw error ?? new Error("Unknown tokenizer error");
-    }
-    return value;
-  };
-}
 
 // Import types from local types file
 import type { ChatInputProps, ChatInputAPI } from "./types";
@@ -475,19 +436,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       variant,
       workspaceId,
     ]
-  );
-  const deferredModel = useDeferredValue(preferredModel);
-  const deferredInput = useDeferredValue(input);
-  const tokenCountPromise = useMemo(() => {
-    if (!deferredModel || deferredInput.trim().length === 0 || deferredInput.startsWith("/")) {
-      return Promise.resolve(0);
-    }
-    if (!api) return Promise.resolve(0);
-    return getTokenCountPromise(api, deferredModel, deferredInput);
-  }, [api, deferredModel, deferredInput]);
-  const tokenCountReader = useMemo(
-    () => createTokenCountResource(tokenCountPromise),
-    [tokenCountPromise]
   );
 
   // Model cycling candidates. Prefer the user's custom model list (as configured in Settings).
@@ -2080,14 +2028,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   }
                   className={variant === "creation" ? "min-h-24" : undefined}
                 />
-                {/* Token count - positioned to left of mic */}
-                {preferredModel && hasTypedText && (
-                  <div className="absolute right-8 bottom-2">
-                    <Suspense fallback={<span className="text-muted/50 text-xs">…</span>}>
-                      <TokenCountDisplay reader={tokenCountReader} />
-                    </Suspense>
-                  </div>
-                )}
                 {/* Floating voice input button inside textarea */}
                 <div className="absolute right-2 bottom-2">
                   <VoiceInputButton
@@ -2223,15 +2163,3 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
 export const ChatInput = React.memo(ChatInputInner);
 ChatInput.displayName = "ChatInput";
-
-const TokenCountDisplay: React.FC<{ reader: TokenCountReader }> = ({ reader }) => {
-  const tokens = reader();
-  if (!tokens) {
-    return null;
-  }
-  return (
-    <span className="text-muted/50 text-xs" data-component="TokenEstimate">
-      {tokens.toLocaleString()} tokens
-    </span>
-  );
-};
