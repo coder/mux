@@ -74,6 +74,10 @@ function toGatewayVariant(modelId: string, gateway: "mux-gateway" | "openrouter"
  *
  * This ensures name generation works with any provider setup:
  * direct API keys, Mux Gateway (coupon), or OpenRouter.
+ *
+ * Note: createModel() validates provider configuration internally,
+ * returning Err({ type: "api_key_not_found" }) for unconfigured providers.
+ * We only use models where createModel succeeds.
  */
 export async function selectModelForNameGeneration(
   aiService: Pick<AIService, "createModel">,
