@@ -413,6 +413,13 @@ export class DockerRuntime extends RemoteRuntime {
         error: `Workspace already exists: container ${containerName}`,
       };
     }
+    // Distinguish "container doesn't exist" from actual Docker errors
+    if (!checkResult.stderr.includes("No such object")) {
+      return {
+        success: false,
+        error: `Docker error: ${checkResult.stderr || checkResult.stdout || "unknown error"}`,
+      };
+    }
 
     // Store container name - actual container creation happens in initWorkspace
     // so that image pull progress is visible in the init section
