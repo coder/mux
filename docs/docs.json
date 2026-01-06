@@ -32,6 +32,10 @@
             "pages": [
               "index",
               "install",
+              {
+                "group": "Models",
+                "pages": ["config/models", "config/providers"]
+              },
               "getting-started/why-parallelize",
               "getting-started/mux-codes"
             ]
@@ -82,13 +86,6 @@
           {
             "group": "Configuration",
             "pages": [
-              {
-                "group": "Models",
-                "pages": [
-                  "config/models",
-                  "config/providers"
-                ]
-              },
               "config/mcp-servers",
               "config/project-secrets",
               "config/agentic-git-identity",

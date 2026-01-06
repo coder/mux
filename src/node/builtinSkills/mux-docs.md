@@ -48,6 +48,9 @@ Use this index to find a page's:
   - **Getting Started**
     - Introduction (`/`) → `references/docs/index.mdx` — mux - Coding Agent Multiplexer for AI-assisted development
     - Install (`/install`) → `references/docs/install.mdx` — Download and install mux for macOS, Linux, and Windows
+    - **Models**
+      - Models (`/config/models`) → `references/docs/config/models.mdx` — Select and configure AI models in mux
+      - Providers (`/config/providers`) → `references/docs/config/providers.mdx` — Configure API keys and settings for AI providers
     - Why Parallelize? (`/getting-started/why-parallelize`) → `references/docs/getting-started/why-parallelize.mdx` — Use cases for running multiple AI agents in parallel
     - Mux Codes (`/getting-started/mux-codes`) → `references/docs/getting-started/mux-codes.mdx` — Redeem free LLM token credits for evaluating Mux
   - **Workspaces**
@@ -74,9 +77,6 @@ Use this index to find a page's:
     - System Prompt (`/agents/system-prompt`) → `references/docs/agents/system-prompt.mdx` — How mux constructs the system prompt for AI models
     - Prompting Tips (`/agents/prompting-tips`) → `references/docs/agents/prompting-tips.mdx` — Tips and tricks for getting the most out of your AI agents
   - **Configuration**
-    - **Models**
-      - Models (`/config/models`) → `references/docs/config/models.mdx` — Select and configure AI models in mux
-      - Providers (`/config/providers`) → `references/docs/config/providers.mdx` — Configure API keys and settings for AI providers
     - MCP Servers (`/config/mcp-servers`) → `references/docs/config/mcp-servers.mdx` — Extend agent capabilities with Model Context Protocol servers
     - Project Secrets (`/config/project-secrets`) → `references/docs/config/project-secrets.mdx` — Manage environment variables and API keys for your projects
     - Agentic Git Identity (`/config/agentic-git-identity`) → `references/docs/config/agentic-git-identity.mdx` — Configure a separate Git identity for AI-generated commits
