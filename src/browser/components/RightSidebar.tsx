@@ -9,7 +9,7 @@ import { useWorkspaceUsage, useWorkspaceStatsSnapshot } from "@/browser/stores/W
 import { useFeatureFlags } from "@/browser/contexts/FeatureFlagsContext";
 import { useAPI } from "@/browser/contexts/API";
 import { CostsTab } from "./RightSidebar/CostsTab";
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, Terminal as TerminalIcon, X } from "lucide-react";
 
 import { ReviewPanel } from "./RightSidebar/CodeReview/ReviewPanel";
 import { ErrorBoundary } from "./ErrorBoundary";
@@ -25,7 +25,14 @@ import {
   getTerminalSessionId,
   releaseTerminalSession,
 } from "./RightSidebar/TerminalTab";
-import { RIGHT_SIDEBAR_TABS, isTabType, type TabType } from "@/browser/types/rightSidebar";
+import {
+  RIGHT_SIDEBAR_TABS,
+  isTabType,
+  isTerminalTab,
+  getTerminalInstanceId,
+  makeTerminalTabType,
+  type TabType,
+} from "@/browser/types/rightSidebar";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import {
   addTabToFocusedTabset,
@@ -183,18 +190,25 @@ interface RightSidebarTabsetNodeProps {
   /** Data about the currently dragged tab (if any) */
   activeDragData: TabDragData | null;
   setLayout: (updater: (prev: RightSidebarLayoutState) => RightSidebarLayoutState) => void;
-  /** Handler to pop out terminal to a separate window */
-  onPopOutTerminal: () => void;
-  /** Whether the terminal has been popped out to a separate window */
-  terminalPoppedOut: boolean;
+  /** Handler to pop out a terminal tab to a separate window */
+  onPopOutTerminal: (tab: TabType) => void;
+  /** Handler to add a new terminal tab */
+  onAddTerminal: () => void;
+  /** Handler to close a terminal tab */
+  onCloseTerminal: (tab: TabType) => void;
+  /** Map of terminal tab types to their current titles (from OSC sequences) */
+  terminalTitles: Map<TabType, string>;
+  /** Handler to update a terminal's title */
+  onTerminalTitleChange: (tab: TabType, title: string) => void;
 }
 
 const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) => {
   const tabsetBaseId = `${props.baseId}-${props.node.id}`;
 
+  const activeIsTerminal = isTerminalTab(props.node.activeTab);
   const tabsetContentClassName = cn(
     "relative flex-1 min-h-0",
-    props.node.activeTab === "terminal" ? "overflow-hidden p-0" : "overflow-y-auto",
+    activeIsTerminal ? "overflow-hidden p-0" : "overflow-y-auto",
     props.node.activeTab === "review"
       ? "p-0"
       : props.node.activeTab === "costs" || props.node.activeTab === "stats"
@@ -243,6 +257,9 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
     });
   };
 
+  // Count terminal tabs in this tabset for numbering (Terminal, Terminal 2, etc.)
+  const terminalTabs = props.node.tabs.filter(isTerminalTab);
+
   const items = props.node.tabs.flatMap((tab) => {
     if (tab === "stats" && !props.statsTabEnabled) {
       return [];
@@ -251,17 +268,23 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
     const tabId = `${tabsetBaseId}-tab-${tab}`;
     const panelId = `${tabsetBaseId}-panel-${tab}`;
 
-    const tooltip =
-      tab === "costs"
+    // Terminal tabs: show keyboard shortcut only for the first terminal
+    const isTerminal = isTerminalTab(tab);
+    const tooltip = isTerminal
+      ? tab === "terminal"
+        ? formatKeybind(KEYBINDS.TERMINAL_TAB)
+        : undefined
+      : tab === "costs"
         ? formatKeybind(KEYBINDS.COSTS_TAB)
         : tab === "review"
           ? formatKeybind(KEYBINDS.REVIEW_TAB)
-          : tab === "terminal"
-            ? formatKeybind(KEYBINDS.TERMINAL_TAB)
-            : formatKeybind(KEYBINDS.STATS_TAB);
+          : formatKeybind(KEYBINDS.STATS_TAB);
 
-    const label =
-      tab === "costs" ? (
+    // Build label based on tab type
+    let label: React.ReactNode;
+
+    if (tab === "costs") {
+      label = (
         <>
           Costs
           {props.sessionCost !== null && (
@@ -270,7 +293,9 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
             </span>
           )}
         </>
-      ) : tab === "review" ? (
+      );
+    } else if (tab === "review") {
+      label = (
         <>
           Review
           {props.reviewStats !== null && props.reviewStats.total > 0 && (
@@ -284,7 +309,9 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
             </span>
           )}
         </>
-      ) : tab === "stats" ? (
+      );
+    } else if (tab === "stats") {
+      label = (
         <>
           Stats
           {props.sessionDuration !== null && (
@@ -293,9 +320,19 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
             </span>
           )}
         </>
-      ) : (
+      );
+    } else if (isTerminal) {
+      // Terminal tab: show icon, dynamic title or numbered fallback, plus action buttons
+      const dynamicTitle = props.terminalTitles.get(tab);
+      const terminalIndex = terminalTabs.indexOf(tab);
+      const fallbackName = terminalIndex === 0 ? "Terminal" : `Terminal ${terminalIndex + 1}`;
+      const displayName = dynamicTitle ?? fallbackName;
+      const canClose = terminalTabs.length > 1; // Can close if not the only terminal
+
+      label = (
         <span className="inline-flex items-center gap-1">
-          Terminal
+          <TerminalIcon className="h-3 w-3 shrink-0" />
+          <span className="truncate">{displayName}</span>
           <Tooltip>
             <TooltipTrigger asChild>
               <button
@@ -303,7 +340,7 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
                 className="text-muted hover:text-foreground -my-0.5 rounded p-0.5 transition-colors"
                 onClick={(e) => {
                   e.stopPropagation();
-                  props.onPopOutTerminal();
+                  props.onPopOutTerminal(tab);
                 }}
                 aria-label="Open terminal in new window"
               >
@@ -312,8 +349,29 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
             </TooltipTrigger>
             <TooltipContent side="bottom">Open in new window</TooltipContent>
           </Tooltip>
+          {canClose && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className="text-muted hover:text-destructive -my-0.5 rounded p-0.5 transition-colors"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    props.onCloseTerminal(tab);
+                  }}
+                  aria-label="Close terminal"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">Close terminal</TooltipContent>
+            </Tooltip>
+          )}
         </span>
       );
+    } else {
+      label = tab;
+    }
 
     return [
       {
@@ -335,12 +393,10 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
 
   const costsPanelId = `${tabsetBaseId}-panel-costs`;
   const reviewPanelId = `${tabsetBaseId}-panel-review`;
-  const terminalPanelId = `${tabsetBaseId}-panel-terminal`;
   const statsPanelId = `${tabsetBaseId}-panel-stats`;
 
   const costsTabId = `${tabsetBaseId}-tab-costs`;
   const reviewTabId = `${tabsetBaseId}-tab-review`;
-  const terminalTabId = `${tabsetBaseId}-tab-terminal`;
   const statsTabId = `${tabsetBaseId}-tab-stats`;
 
   // Generate sortable IDs for tabs in this tabset
@@ -354,6 +410,7 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
           items={items}
           tabsetId={props.node.id}
           onTabDrop={handleTabDrop}
+          onAddTerminal={props.onAddTerminal}
         />
       </SortableContext>
       <div
@@ -419,21 +476,30 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
           </div>
         )}
 
-        {props.node.tabs.includes("terminal") && (
-          <div
-            role="tabpanel"
-            id={terminalPanelId}
-            aria-labelledby={terminalTabId}
-            className="h-full"
-            hidden={props.node.activeTab !== "terminal"}
-          >
-            <TerminalTab
-              workspaceId={props.workspaceId}
-              visible={props.node.activeTab === "terminal"}
-              poppedOut={props.terminalPoppedOut}
-            />
-          </div>
-        )}
+        {/* Render all terminal tabs (keep-alive: hidden but mounted) */}
+        {terminalTabs.map((terminalTab) => {
+          const terminalTabId = `${tabsetBaseId}-tab-${terminalTab}`;
+          const terminalPanelId = `${tabsetBaseId}-panel-${terminalTab}`;
+          const isActive = props.node.activeTab === terminalTab;
+
+          return (
+            <div
+              key={terminalTab}
+              role="tabpanel"
+              id={terminalPanelId}
+              aria-labelledby={terminalTabId}
+              className="h-full"
+              hidden={!isActive}
+            >
+              <TerminalTab
+                workspaceId={props.workspaceId}
+                tabType={terminalTab}
+                visible={isActive}
+                onTitleChange={(title) => props.onTerminalTitleChange(terminalTab, title)}
+              />
+            </div>
+          );
+        })}
 
         {props.node.tabs.includes("stats") && props.statsTabEnabled && (
           <div
@@ -647,38 +713,94 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   // @dnd-kit state for tracking active drag
   const [activeDragData, setActiveDragData] = React.useState<TabDragData | null>(null);
 
-  // Terminal pop-out state - tracks whether the terminal has been popped out to a separate window
-  const [terminalPoppedOut, setTerminalPoppedOut] = React.useState(false);
+  // Terminal titles from OSC sequences (e.g., shell setting window title)
+  const [terminalTitles, setTerminalTitles] = React.useState<Map<TabType, string>>(new Map());
+
+  // Counter for generating unique terminal instance IDs
+  const nextTerminalIdRef = React.useRef(2); // Start at 2 since "terminal" is implicitly 1
 
   // API for opening terminal windows
   const { api } = useAPI();
 
-  // Handler to pop out the terminal to a separate window, preserving the session
-  const handlePopOutTerminal = React.useCallback(() => {
-    const sessionId = getTerminalSessionId(workspaceId);
+  // Handler to update a terminal's title (from OSC sequences)
+  const handleTerminalTitleChange = React.useCallback((tab: TabType, title: string) => {
+    setTerminalTitles((prev) => {
+      const next = new Map(prev);
+      next.set(tab, title);
+      return next;
+    });
+  }, []);
 
-    // Check if running in browser mode (window.api is only available in Electron)
-    const isBrowser = !window.api;
+  // Handler to add a new terminal tab
+  const handleAddTerminal = React.useCallback(() => {
+    const instanceId = String(nextTerminalIdRef.current++);
+    const newTab = makeTerminalTabType(instanceId);
+    setLayout((prev) => addTabToFocusedTabset(prev, newTab));
+  }, [setLayout]);
 
-    // Build URL with sessionId for seamless handoff
-    const params = new URLSearchParams({ workspaceId });
-    if (sessionId) {
-      params.set("sessionId", sessionId);
-    }
-    const url = `/terminal.html?${params.toString()}`;
+  // Handler to close a terminal tab
+  const handleCloseTerminal = React.useCallback(
+    (tab: TabType) => {
+      // Release the session so it gets cleaned up
+      const instanceId = getTerminalInstanceId(tab);
+      releaseTerminalSession(workspaceId, instanceId);
 
-    if (isBrowser) {
-      // In browser mode, open client-side
-      window.open(url, `terminal-${workspaceId}-${Date.now()}`, "width=1000,height=600,popup=yes");
-    }
+      // Remove the tab from layout
+      setLayout((prev) => removeTabEverywhere(prev, tab));
 
-    // Open via backend (Electron pops up BrowserWindow, browser already opened above)
-    void api?.terminal.openWindow({ workspaceId, sessionId: sessionId ?? undefined });
+      // Clean up title
+      setTerminalTitles((prev) => {
+        const next = new Map(prev);
+        next.delete(tab);
+        return next;
+      });
+    },
+    [workspaceId, setLayout]
+  );
 
-    // Release the session from the embedded terminal and show placeholder
-    releaseTerminalSession(workspaceId);
-    setTerminalPoppedOut(true);
-  }, [workspaceId, api]);
+  // Handler to pop out a terminal to a separate window, then remove the tab
+  const handlePopOutTerminal = React.useCallback(
+    (tab: TabType) => {
+      const instanceId = getTerminalInstanceId(tab);
+      const sessionId = getTerminalSessionId(workspaceId, instanceId);
+
+      // Check if running in browser mode (window.api is only available in Electron)
+      const isBrowser = !window.api;
+
+      // Build URL with sessionId for seamless handoff
+      const params = new URLSearchParams({ workspaceId });
+      if (sessionId) {
+        params.set("sessionId", sessionId);
+      }
+      const url = `/terminal.html?${params.toString()}`;
+
+      if (isBrowser) {
+        // In browser mode, open client-side
+        window.open(
+          url,
+          `terminal-${workspaceId}-${Date.now()}`,
+          "width=1000,height=600,popup=yes"
+        );
+      }
+
+      // Open via backend (Electron pops up BrowserWindow, browser already opened above)
+      void api?.terminal.openWindow({ workspaceId, sessionId: sessionId ?? undefined });
+
+      // Release the session from the embedded terminal
+      releaseTerminalSession(workspaceId, instanceId);
+
+      // Remove the tab from the sidebar (terminal now lives in its own window)
+      setLayout((prev) => removeTabEverywhere(prev, tab));
+
+      // Clean up title
+      setTerminalTitles((prev) => {
+        const next = new Map(prev);
+        next.delete(tab);
+        return next;
+      });
+    },
+    [workspaceId, api, setLayout]
+  );
 
   // Configure sensors with distance threshold for click vs drag disambiguation
   const sensors = useSensors(
@@ -825,7 +947,10 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         sessionCost={sessionCost}
         setLayout={setLayout}
         onPopOutTerminal={handlePopOutTerminal}
-        terminalPoppedOut={terminalPoppedOut}
+        onAddTerminal={handleAddTerminal}
+        onCloseTerminal={handleCloseTerminal}
+        terminalTitles={terminalTitles}
+        onTerminalTitleChange={handleTerminalTitleChange}
       />
     );
   };
