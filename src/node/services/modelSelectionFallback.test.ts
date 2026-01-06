@@ -7,6 +7,7 @@
  * 3. Model selection properly prioritizes the preference order
  */
 
+import { describe, it, expect, mock } from "bun:test";
 import { selectModelForNameGeneration } from "@/node/services/workspaceTitleGenerator";
 import type { AIService } from "@/node/services/aiService";
 import { Ok, Err, type Result } from "@/common/types/result";
@@ -16,7 +17,7 @@ import type { LanguageModel } from "ai";
 // Helper to create a mock AI service that only "succeeds" for specific models
 function createMockAiService(availableModels: Set<string>): Pick<AIService, "createModel"> {
   return {
-    createModel: jest.fn((modelId: string): Promise<Result<LanguageModel, SendMessageError>> => {
+    createModel: mock((modelId: string): Promise<Result<LanguageModel, SendMessageError>> => {
       if (availableModels.has(modelId)) {
         // Return a mock LanguageModel (we just need success status)
         return Promise.resolve(Ok({ modelId } as unknown as LanguageModel));
