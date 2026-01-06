@@ -174,5 +174,5 @@ export const KNOWN_MODEL_OPTIONS = Object.values(KNOWN_MODELS).map((model) => ({
 /** Tooltip-friendly abbreviation examples: show representative shortcuts */
 export const MODEL_ABBREVIATION_EXAMPLES = (["opus", "sonnet"] as const).map((abbrev) => ({
   abbrev,
-  displayName: formatModelDisplayName(MODEL_ABBREVIATIONS[abbrev].split(":")[1]),
+  displayName: formatModelDisplayName(MODEL_ABBREVIATIONS[abbrev]?.split(":")[1] ?? abbrev),
 }));
