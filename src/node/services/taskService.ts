@@ -613,6 +613,7 @@ export class TaskService {
     await this.emitWorkspaceMetadata(taskId);
 
     // Kick init hook (best-effort, async).
+    const secrets = secretsToRecord(this.config.getProjectSecrets(parentMeta.projectPath));
     void runtime
       .initWorkspace({
         projectPath: parentMeta.projectPath,
@@ -620,6 +621,7 @@ export class TaskService {
         trunkBranch,
         workspacePath,
         initLogger,
+        env: secrets,
       })
       .catch((error: unknown) => {
         const errorMessage = error instanceof Error ? error.message : String(error);
