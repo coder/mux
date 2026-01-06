@@ -483,6 +483,14 @@ export class DockerRuntime extends RemoteRuntime {
 
       initLogger.logStep("Container ready");
 
+      // Configure gh CLI as git credential helper if GH_TOKEN is set
+      if (this.config.shareCredentials) {
+        await runDockerCommand(
+          `docker exec ${containerName} sh -c 'command -v gh >/dev/null && [ -n "$GH_TOKEN" ] && gh auth setup-git || true'`,
+          10000
+        );
+      }
+
       // 2. Sync project to container using git bundle + docker cp
       initLogger.logStep("Syncing project files to container...");
       try {
