@@ -1022,7 +1022,8 @@ export class AIService extends EventEmitter {
     changedFileAttachments?: EditedFileAttachment[],
     postCompactionAttachments?: PostCompactionAttachment[] | null,
     experiments?: { programmaticToolCalling?: boolean; programmaticToolCallingExclusive?: boolean },
-    disableWorkspaceAgents?: boolean
+    disableWorkspaceAgents?: boolean,
+    hasQueuedMessage?: () => boolean
   ): Promise<Result<void, SendMessageError>> {
     try {
       if (this.mockModeEnabled && this.mockAiStreamPlayer) {
@@ -1792,7 +1793,8 @@ export class AIService extends EventEmitter {
         providerOptions,
         maxOutputTokens,
         effectiveToolPolicy,
-        streamToken // Pass the pre-generated stream token
+        streamToken, // Pass the pre-generated stream token
+        hasQueuedMessage
       );
 
       if (!streamResult.success) {

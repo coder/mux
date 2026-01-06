@@ -703,7 +703,8 @@ export class AgentSession {
       changedFileAttachments.length > 0 ? changedFileAttachments : undefined,
       postCompactionAttachments,
       options?.experiments,
-      options?.disableWorkspaceAgents
+      options?.disableWorkspaceAgents,
+      () => !this.messageQueue.isEmpty()
     );
   }
 
@@ -746,9 +747,6 @@ export class AgentSession {
       ) {
         this.onPostCompactionStateChange?.();
       }
-
-      // Tool call completed: auto-send queued messages
-      this.sendQueuedMessages();
     });
     forward("reasoning-delta", (payload) => this.emitChatEvent(payload));
     forward("reasoning-end", (payload) => this.emitChatEvent(payload));

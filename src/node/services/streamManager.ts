@@ -644,7 +644,8 @@ export class StreamManager extends EventEmitter {
     initialMetadata?: Partial<MuxMetadata>,
     providerOptions?: Record<string, unknown>,
     maxOutputTokens?: number,
-    toolPolicy?: ToolPolicy
+    toolPolicy?: ToolPolicy,
+    hasQueuedMessage?: () => boolean
   ): WorkspaceStreamInfo {
     // Create abort controller for this specific stream
     const abortController = new AbortController();
@@ -727,7 +728,10 @@ export class StreamManager extends EventEmitter {
         // Otherwise allow effectively unlimited steps (100k) for autonomous multi-turn workflows.
         // IMPORTANT: Models should be able to run for hours or even days calling tools repeatedly
         // to complete complex tasks. The stopWhen condition allows the model to decide when it's done.
-        ...(toolChoice ? { maxSteps: 1 } : { stopWhen: stepCountIs(100000) }),
+        // Also stop at step boundaries when a message is queued to allow immediate handling.
+        ...(toolChoice
+          ? { maxSteps: 1 }
+          : { stopWhen: [stepCountIs(100000), () => hasQueuedMessage?.() ?? false] }),
         // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment
         providerOptions: finalProviderOptions as any, // Pass provider-specific options (thinking/reasoning config)
         // Default to 32000 tokens if not specified (Anthropic defaults to 4096)
@@ -1598,7 +1602,8 @@ export class StreamManager extends EventEmitter {
     providerOptions?: Record<string, unknown>,
     maxOutputTokens?: number,
     toolPolicy?: ToolPolicy,
-    providedStreamToken?: StreamToken
+    providedStreamToken?: StreamToken,
+    hasQueuedMessage?: () => boolean
   ): Promise<Result<StreamToken, SendMessageError>> {
     const typedWorkspaceId = workspaceId as WorkspaceId;
 
@@ -1653,7 +1658,8 @@ export class StreamManager extends EventEmitter {
         initialMetadata,
         providerOptions,
         maxOutputTokens,
-        toolPolicy
+        toolPolicy,
+        hasQueuedMessage
       );
 
       // Step 5: Track the processing promise for guaranteed cleanup
