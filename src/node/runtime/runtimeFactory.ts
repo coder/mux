@@ -136,7 +136,10 @@ async function isGitRepository(projectPath: string): Promise<boolean> {
 async function isDockerAvailable(): Promise<boolean> {
   try {
     using proc = execAsync("docker info");
-    await proc.result;
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("timeout")), 5000)
+    );
+    await Promise.race([proc.result, timeout]);
     return true;
   } catch {
     return false;
