@@ -214,4 +214,226 @@ describeIntegration("terminal PTY", () => {
     },
     20000
   );
+
+  test.concurrent(
+    "attach should return screenState first, then live output",
+    async () => {
+      const env = await createTestEnvironment();
+      const tempGitRepo = await createTempGitRepo();
+
+      try {
+        const createResult = await createWorkspace(env, tempGitRepo, "test-attach");
+        const metadata = expectWorkspaceCreationSuccess(createResult);
+        const workspaceId = metadata.id;
+        const client = resolveOrpcClient(env);
+
+        // Create terminal session
+        const session = await client.terminal.create({
+          workspaceId,
+          cols: 80,
+          rows: 24,
+        });
+
+        // Give terminal time to initialize
+        await new Promise((resolve) => setTimeout(resolve, 500));
+
+        // Use attach endpoint - first message should be screenState
+        const messages: Array<{ type: "screenState" | "output"; data: string }> = [];
+        const attachPromise = (async () => {
+          const iterator = await client.terminal.attach({ sessionId: session.sessionId });
+          for await (const msg of iterator) {
+            messages.push(msg);
+            // Collect until we have screenState + at least one output with our marker
+            const fullOutput = messages
+              .filter((m) => m.type === "output")
+              .map((m) => m.data)
+              .join("");
+            if (messages.length >= 1 && fullOutput.includes("ATTACH_TEST")) {
+              break;
+            }
+            // Safety limit
+            if (messages.length > 50) break;
+          }
+        })();
+
+        // Small delay to ensure attach has started
+        await new Promise((resolve) => setTimeout(resolve, 100));
+
+        // Send command
+        client.terminal.sendInput({
+          sessionId: session.sessionId,
+          data: "echo ATTACH_TEST\\n",
+        });
+
+        const timeoutPromise = new Promise<void>((_, reject) => {
+          setTimeout(() => reject(new Error("Timeout in attach test")), 10000);
+        });
+
+        await Promise.race([attachPromise, timeoutPromise]);
+
+        // First message should always be screenState
+        expect(messages.length).toBeGreaterThan(0);
+        expect(messages[0].type).toBe("screenState");
+
+        // Should have output messages after screenState
+        const outputMessages = messages.filter((m) => m.type === "output");
+        expect(outputMessages.length).toBeGreaterThan(0);
+
+        // Output should contain our test marker
+        const fullOutput = outputMessages.map((m) => m.data).join("");
+        expect(fullOutput).toContain("ATTACH_TEST");
+
+        await client.terminal.close({ sessionId: session.sessionId });
+        await client.workspace.remove({ workspaceId });
+      } finally {
+        await cleanupTestEnvironment(env);
+        await cleanupTempGitRepo(tempGitRepo);
+      }
+    },
+    20000
+  );
+
+  test.concurrent(
+    "getScreenState should return serialized terminal state",
+    async () => {
+      const env = await createTestEnvironment();
+      const tempGitRepo = await createTempGitRepo();
+
+      try {
+        const createResult = await createWorkspace(env, tempGitRepo, "test-screen-state");
+        const metadata = expectWorkspaceCreationSuccess(createResult);
+        const workspaceId = metadata.id;
+        const client = resolveOrpcClient(env);
+
+        // Create terminal session
+        const session = await client.terminal.create({
+          workspaceId,
+          cols: 80,
+          rows: 24,
+        });
+
+        // Wait for shell to initialize
+        await new Promise((resolve) => setTimeout(resolve, 500));
+
+        // Get screen state - it should be non-empty after shell startup
+        // (contains prompt, escape sequences, etc.)
+        const screenState = await client.terminal.getScreenState({
+          sessionId: session.sessionId,
+        });
+
+        // Screen state should be a string (VT escape sequences)
+        expect(typeof screenState).toBe("string");
+        // Should be non-empty (contains at least the shell prompt)
+        expect(screenState.length).toBeGreaterThan(0);
+        // Should contain terminal escape sequences (CSI = \x1b[ or ESC[)
+        expect(screenState).toMatch(/\x1b\[|\[\d+m/);
+
+        await client.terminal.close({ sessionId: session.sessionId });
+        await client.workspace.remove({ workspaceId });
+      } finally {
+        await cleanupTestEnvironment(env);
+        await cleanupTempGitRepo(tempGitRepo);
+      }
+    },
+    20000
+  );
+
+  test.concurrent(
+    "attach should preserve output order - no race conditions",
+    async () => {
+      const env = await createTestEnvironment();
+      const tempGitRepo = await createTempGitRepo();
+
+      try {
+        const createResult = await createWorkspace(env, tempGitRepo, "test-attach-order");
+        const metadata = expectWorkspaceCreationSuccess(createResult);
+        const workspaceId = metadata.id;
+        const client = resolveOrpcClient(env);
+
+        // Create terminal and send numbered output
+        const session = await client.terminal.create({
+          workspaceId,
+          cols: 80,
+          rows: 24,
+        });
+
+        await new Promise((resolve) => setTimeout(resolve, 500));
+
+        // First, send some commands to populate terminal state
+        client.terminal.sendInput({
+          sessionId: session.sessionId,
+          data: "echo LINE1\\n",
+        });
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        client.terminal.sendInput({
+          sessionId: session.sessionId,
+          data: "echo LINE2\\n",
+        });
+        await new Promise((resolve) => setTimeout(resolve, 200));
+
+        // Now attach and send more lines - verify order is preserved
+        const messages: Array<{ type: "screenState" | "output"; data: string }> = [];
+        const attachPromise = (async () => {
+          const iterator = await client.terminal.attach({ sessionId: session.sessionId });
+          for await (const msg of iterator) {
+            messages.push(msg);
+            const fullOutput = messages
+              .filter((m) => m.type === "output")
+              .map((m) => m.data)
+              .join("");
+            if (fullOutput.includes("LINE4")) {
+              break;
+            }
+            if (messages.length > 100) break;
+          }
+        })();
+
+        // After attach starts, send more lines
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        client.terminal.sendInput({
+          sessionId: session.sessionId,
+          data: "echo LINE3\\n",
+        });
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        client.terminal.sendInput({
+          sessionId: session.sessionId,
+          data: "echo LINE4\\n",
+        });
+
+        await Promise.race([
+          attachPromise,
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("Timeout in order test")), 10000)
+          ),
+        ]);
+
+        // Screen state should be first
+        expect(messages[0].type).toBe("screenState");
+
+        // Screen state should contain LINE1 and LINE2 (from before attach)
+        expect(messages[0].data).toContain("LINE1");
+        expect(messages[0].data).toContain("LINE2");
+
+        // Output messages should contain LINE3 and LINE4 (sent after attach)
+        const outputData = messages
+          .filter((m) => m.type === "output")
+          .map((m) => m.data)
+          .join("");
+        expect(outputData).toContain("LINE3");
+        expect(outputData).toContain("LINE4");
+
+        // Verify LINE3 comes before LINE4 in output
+        const line3Pos = outputData.indexOf("LINE3");
+        const line4Pos = outputData.indexOf("LINE4");
+        expect(line3Pos).toBeLessThan(line4Pos);
+
+        await client.terminal.close({ sessionId: session.sessionId });
+        await client.workspace.remove({ workspaceId });
+      } finally {
+        await cleanupTestEnvironment(env);
+        await cleanupTempGitRepo(tempGitRepo);
+      }
+    },
+    25000
+  );
 });

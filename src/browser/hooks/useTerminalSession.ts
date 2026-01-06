@@ -74,14 +74,27 @@ export function useTerminalSession(
       return session.sessionId;
     };
 
-    const subscribeToSession = (sid: string, signal: AbortSignal, onSessionInvalid: () => void) => {
-      // Subscribe to output events via ORPC async iterator
+    const subscribeToSession = (
+      sid: string,
+      signal: AbortSignal,
+      onSessionInvalid: () => void,
+      restoreScreenState: boolean
+    ) => {
+      // Use attach endpoint for race-free screen state + output streaming
+      // This guarantees no missed output between state snapshot and live stream
       (async () => {
         try {
-          const iterator = await api.terminal.onOutput({ sessionId: sid }, { signal });
-          for await (const data of iterator) {
+          const iterator = await api.terminal.attach({ sessionId: sid }, { signal });
+          for await (const msg of iterator) {
             if (!mounted) break;
-            if (onOutput) onOutput(data);
+            if (msg.type === "screenState") {
+              // Only restore screen state when reattaching to existing session
+              if (restoreScreenState && msg.data && options?.onScreenState) {
+                options.onScreenState(msg.data);
+              }
+            } else if (msg.type === "output") {
+              if (onOutput) onOutput(msg.data);
+            }
           }
         } catch (err) {
           if (!signal.aborted) {
@@ -91,7 +104,7 @@ export function useTerminalSession(
               console.warn("[Terminal] Session appears stale, will create new session");
               onSessionInvalid();
             } else {
-              console.error("[Terminal] Output stream error:", err);
+              console.error("[Terminal] Attach stream error:", err);
             }
           }
         }
@@ -109,7 +122,7 @@ export function useTerminalSession(
           }
         } catch (err) {
           if (!signal.aborted) {
-            // Ignore stale session errors for exit stream (onOutput handler will deal with it)
+            // Ignore stale session errors for exit stream (attach handler will deal with it)
             const errMsg = err instanceof Error ? err.message : String(err);
             if (!errMsg.includes("isOpen") && !errMsg.includes("undefined")) {
               console.error("[Terminal] Exit stream error:", err);
@@ -130,28 +143,19 @@ export function useTerminalSession(
 
         if (existingSessionId) {
           // Try to reattach to existing session (e.g., keep-alive terminal)
+          // The attach endpoint handles screen state restore atomically - no race condition
           targetSessionId = existingSessionId;
           createdSessionRef.current = false;
 
-          // Fetch serialized screen state to restore terminal view instantly before live streaming
-          if (options?.onScreenState) {
-            try {
-              const screenState = await api.terminal.getScreenState({
-                sessionId: existingSessionId,
-              });
-              if (mounted && screenState) {
-                options.onScreenState(screenState);
-              }
-            } catch (err) {
-              // If state fetch fails, continue anyway - live stream will still work
-              console.warn("[Terminal] Failed to fetch screen state:", err);
-            }
-          }
-
-          // Set up subscription with a callback for invalid session detection
-          subscribeToSession(targetSessionId, signal, () => {
-            needsRecreate = true;
-          });
+          // Set up subscription with screen state restore enabled
+          subscribeToSession(
+            targetSessionId,
+            signal,
+            () => {
+              needsRecreate = true;
+            },
+            true
+          );
 
           // Give the subscription a brief moment to fail if session is stale
           await new Promise((resolve) => setTimeout(resolve, 100));
@@ -166,24 +170,36 @@ export function useTerminalSession(
             targetSessionId = await createNewSession();
             if (!mounted) return;
 
-            subscribeToSession(targetSessionId, newAbortController.signal, () => {
-              // If this one fails too, just show error
-              if (mounted) {
-                setError("Failed to establish terminal session");
-              }
-            });
+            // New session - no screen state restore needed
+            subscribeToSession(
+              targetSessionId,
+              newAbortController.signal,
+              () => {
+                // If this one fails too, just show error
+                if (mounted) {
+                  setError("Failed to establish terminal session");
+                }
+              },
+              false
+            );
           }
         } else {
           // Create new terminal session with current terminal size
           targetSessionId = await createNewSession();
           if (!mounted) return;
 
-          subscribeToSession(targetSessionId, signal, () => {
-            // Newly created session shouldn't be stale
-            if (mounted) {
-              setError("Terminal session unexpectedly invalid");
-            }
-          });
+          // New session - no screen state restore needed
+          subscribeToSession(
+            targetSessionId,
+            signal,
+            () => {
+              // Newly created session shouldn't be stale
+              if (mounted) {
+                setError("Terminal session unexpectedly invalid");
+              }
+            },
+            false
+          );
         }
 
         setSessionId(targetSessionId);

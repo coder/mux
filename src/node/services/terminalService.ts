@@ -128,7 +128,12 @@ export class TerminalService {
       this.exitEmitters.set(session.sessionId, new EventEmitter());
 
       // Create headless terminal to maintain parsed state for reconnection
-      const headless = new Terminal({ cols: params.cols, rows: params.rows });
+      // allowProposedApi is required for SerializeAddon to access the buffer
+      const headless = new Terminal({
+        cols: params.cols,
+        rows: params.rows,
+        allowProposedApi: true,
+      });
       const serializeAddon = new SerializeAddon();
       headless.loadAddon(serializeAddon);
       this.headlessTerminals.set(session.sessionId, headless);

@@ -722,6 +722,22 @@ export const terminal = {
     input: z.object({ sessionId: z.string() }),
     output: eventIterator(z.string()),
   },
+  /**
+   * Attach to a terminal session with race-free state restore.
+   * First yields { type: "screenState", data: string } with serialized screen (~4KB),
+   * then yields { type: "output", data: string } for each live output chunk.
+   * Guarantees no missed output between state snapshot and live stream.
+   */
+  attach: {
+    input: z.object({ sessionId: z.string() }),
+    output: eventIterator(
+      z.discriminatedUnion("type", [
+        z.object({ type: z.literal("screenState"), data: z.string() }),
+        z.object({ type: z.literal("output"), data: z.string() }),
+      ])
+    ),
+  },
+
   onExit: {
     input: z.object({ sessionId: z.string() }),
     output: eventIterator(z.number()),
