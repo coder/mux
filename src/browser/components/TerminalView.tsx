@@ -74,12 +74,11 @@ export function TerminalView({
     };
     void setWindowDetails();
   }, [api, workspaceId, setDocumentTitle]);
-  // Handler for buffered output - called when reattaching to an existing session
-  // Writes all buffered chunks to restore terminal state
-  const handleBufferedOutput = (chunks: string[]) => {
-    if (termRef.current && chunks.length > 0) {
-      // Write all buffered output to restore terminal state
-      termRef.current.write(chunks.join(""));
+  // Handler for screen state restore - called when reattaching to an existing session
+  // Writes serialized screen state (~4KB) to instantly restore terminal view
+  const handleScreenState = (state: string) => {
+    if (termRef.current && state) {
+      termRef.current.write(state);
     }
   };
 
@@ -90,7 +89,7 @@ export function TerminalView({
     error: sessionError,
   } = useTerminalSession(workspaceId, sessionId, visible, terminalSize, handleOutput, handleExit, {
     closeOnCleanup,
-    onBufferedOutput: handleBufferedOutput,
+    onScreenState: handleScreenState,
   });
 
   useEffect(() => {

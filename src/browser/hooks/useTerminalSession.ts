@@ -29,11 +29,11 @@ export function useTerminalSession(
      */
     closeOnCleanup?: boolean;
     /**
-     * Called with buffered output when reattaching to an existing session.
-     * This allows the frontend to restore terminal state before live streaming begins.
-     * The chunks are the raw PTY output that was captured while disconnected.
+     * Called with serialized screen state when reattaching to an existing session.
+     * This allows the frontend to restore terminal view instantly before live streaming begins.
+     * The state is VT escape sequences that reconstruct the current screen (~4KB).
      */
-    onBufferedOutput?: (chunks: string[]) => void;
+    onScreenState?: (state: string) => void;
   }
 ) {
   const { api } = useAPI();
@@ -133,19 +133,18 @@ export function useTerminalSession(
           targetSessionId = existingSessionId;
           createdSessionRef.current = false;
 
-          // Fetch buffered output to restore terminal state before live streaming
-          // This allows the frontend to show terminal history from while it was disconnected
-          if (options?.onBufferedOutput) {
+          // Fetch serialized screen state to restore terminal view instantly before live streaming
+          if (options?.onScreenState) {
             try {
-              const bufferedChunks = await api.terminal.getBufferedOutput({
+              const screenState = await api.terminal.getScreenState({
                 sessionId: existingSessionId,
               });
-              if (mounted && bufferedChunks.length > 0) {
-                options.onBufferedOutput(bufferedChunks);
+              if (mounted && screenState) {
+                options.onScreenState(screenState);
               }
             } catch (err) {
-              // If buffer fetch fails, continue anyway - live stream will still work
-              console.warn("[Terminal] Failed to fetch buffered output:", err);
+              // If state fetch fails, continue anyway - live stream will still work
+              console.warn("[Terminal] Failed to fetch screen state:", err);
             }
           }
 

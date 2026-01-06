@@ -1709,11 +1709,11 @@ export const router = (authToken?: string) => {
             unsubscribe();
           }
         }),
-      getBufferedOutput: t
-        .input(schemas.terminal.getBufferedOutput.input)
-        .output(schemas.terminal.getBufferedOutput.output)
+      getScreenState: t
+        .input(schemas.terminal.getScreenState.input)
+        .output(schemas.terminal.getScreenState.output)
         .handler(({ context, input }) => {
-          return context.terminalService.getBufferedOutput(input.sessionId);
+          return context.terminalService.getScreenState(input.sessionId);
         }),
       openWindow: t
         .input(schemas.terminal.openWindow.input)

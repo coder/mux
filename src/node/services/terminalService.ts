@@ -13,41 +13,8 @@ import type { RuntimeConfig } from "@/common/types/runtime";
 import { isSSHRuntime, isDockerRuntime } from "@/common/types/runtime";
 import { log } from "@/node/services/log";
 import { isCommandAvailable, findAvailableCommand } from "@/node/utils/commandDiscovery";
-
-/**
- * Ring buffer for terminal output that caps at a byte limit rather than chunk count.
- * This allows browser reconnects to replay terminal history and restore the view.
- */
-class OutputRingBuffer {
-  private chunks: string[] = [];
-  private totalBytes = 0;
-  private readonly maxBytes: number;
-
-  constructor(maxBytes: number) {
-    this.maxBytes = maxBytes;
-  }
-
-  push(data: string): void {
-    const dataBytes = Buffer.byteLength(data, "utf8");
-    this.chunks.push(data);
-    this.totalBytes += dataBytes;
-
-    // Evict oldest chunks until under limit
-    while (this.totalBytes > this.maxBytes && this.chunks.length > 1) {
-      const removed = this.chunks.shift()!;
-      this.totalBytes -= Buffer.byteLength(removed, "utf8");
-    }
-  }
-
-  getAll(): string[] {
-    return [...this.chunks];
-  }
-
-  clear(): void {
-    this.chunks = [];
-    this.totalBytes = 0;
-  }
-}
+import { Terminal } from "@xterm/headless";
+import { SerializeAddon } from "@xterm/addon-serialize";
 
 /**
  * Configuration for opening a native terminal
@@ -70,10 +37,10 @@ export class TerminalService {
   private readonly outputEmitters = new Map<string, EventEmitter>();
   private readonly exitEmitters = new Map<string, EventEmitter>();
 
-  // Ring buffer for terminal output - persists across frontend disconnects
-  // Allows browser reconnects to replay history and restore terminal view
-  private readonly outputBuffers = new Map<string, OutputRingBuffer>();
-  private readonly OUTPUT_BUFFER_MAX_BYTES = 512 * 1024; // 512KB per session
+  // Headless terminals for maintaining parsed terminal state on the backend.
+  // On reconnect, we serialize the screen state (~4KB) instead of replaying raw output (~512KB).
+  private readonly headlessTerminals = new Map<string, Terminal>();
+  private readonly serializeAddons = new Map<string, SerializeAddon>();
 
   constructor(config: Config, ptyService: PTYService) {
     this.config = config;
@@ -156,10 +123,16 @@ export class TerminalService {
 
       tempSessionId = session.sessionId;
 
-      // Initialize emitters and buffer
+      // Initialize emitters and headless terminal for state tracking
       this.outputEmitters.set(session.sessionId, new EventEmitter());
       this.exitEmitters.set(session.sessionId, new EventEmitter());
-      this.outputBuffers.set(session.sessionId, new OutputRingBuffer(this.OUTPUT_BUFFER_MAX_BYTES));
+
+      // Create headless terminal to maintain parsed state for reconnection
+      const headless = new Terminal({ cols: params.cols, rows: params.rows });
+      const serializeAddon = new SerializeAddon();
+      headless.loadAddon(serializeAddon);
+      this.headlessTerminals.set(session.sessionId, headless);
+      this.serializeAddons.set(session.sessionId, serializeAddon);
 
       // Replay local buffer that arrived during creation
       for (const data of localBuffer) {
@@ -191,6 +164,10 @@ export class TerminalService {
   resize(params: TerminalResizeParams): void {
     try {
       this.ptyService.resize(params);
+
+      // Also resize the headless terminal to keep state in sync
+      const headless = this.headlessTerminals.get(params.sessionId);
+      headless?.resize(params.cols, params.rows);
     } catch (err) {
       log.error("Error resizing terminal:", err);
       throw err;
@@ -555,13 +532,8 @@ export class TerminalService {
       };
     }
 
-    // Replay buffer for late subscribers
-    const buffer = this.outputBuffers.get(sessionId);
-    if (buffer) {
-      for (const data of buffer.getAll()) {
-        callback(data);
-      }
-    }
+    // Note: Frontend should call getScreenState() on reconnect to restore terminal state.
+    // This subscription only provides live output from the point of subscription onward.
 
     const handler = (data: string) => callback(data);
     emitter.on("data", handler);
@@ -587,12 +559,13 @@ export class TerminalService {
   }
 
   /**
-   * Get all buffered output for a session.
-   * Called by frontend on reconnect to restore terminal state.
+   * Get serialized screen state for a session.
+   * Called by frontend on reconnect to restore terminal view instantly (~4KB vs 512KB raw replay).
+   * Returns VT escape sequences that reconstruct the current screen state.
    */
-  getBufferedOutput(sessionId: string): string[] {
-    const buffer = this.outputBuffers.get(sessionId);
-    return buffer ? buffer.getAll() : [];
+  getScreenState(sessionId: string): string {
+    const addon = this.serializeAddons.get(sessionId);
+    return addon?.serialize() ?? "";
   }
 
   private emitOutput(sessionId: string, data: string) {
@@ -601,9 +574,9 @@ export class TerminalService {
       emitter.emit("data", data);
     }
 
-    // Update ring buffer
-    const buffer = this.outputBuffers.get(sessionId);
-    buffer?.push(data);
+    // Write to headless terminal to maintain parsed state
+    const headless = this.headlessTerminals.get(sessionId);
+    headless?.write(data);
   }
 
   /**
@@ -625,6 +598,11 @@ export class TerminalService {
   private cleanup(sessionId: string) {
     this.outputEmitters.delete(sessionId);
     this.exitEmitters.delete(sessionId);
-    this.outputBuffers.delete(sessionId);
+
+    // Dispose and clean up headless terminal
+    const headless = this.headlessTerminals.get(sessionId);
+    headless?.dispose();
+    this.headlessTerminals.delete(sessionId);
+    this.serializeAddons.delete(sessionId);
   }
 }

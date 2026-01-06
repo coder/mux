@@ -727,12 +727,13 @@ export const terminal = {
     output: eventIterator(z.number()),
   },
   /**
-   * Get buffered output for a terminal session.
-   * Used by frontend on reconnect to restore terminal state (replay history).
+   * Get serialized screen state for a terminal session.
+   * Returns VT escape sequences that reconstruct the current screen (~4KB).
+   * Used by frontend on reconnect for instant terminal restore.
    */
-  getBufferedOutput: {
+  getScreenState: {
     input: z.object({ sessionId: z.string() }),
-    output: z.array(z.string()),
+    output: z.string(),
   },
   openWindow: {
     input: z.object({
