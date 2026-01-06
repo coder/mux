@@ -15,6 +15,7 @@ import { spawn, exec } from "child_process";
 import { createHash } from "crypto";
 import * as path from "path";
 import * as fs from "fs/promises";
+import { existsSync } from "fs";
 import * as os from "os";
 import type {
   ExecOptions,
@@ -137,23 +138,29 @@ function runSpawnCommand(
  */
 function buildCredentialArgs(): string[] {
   const home = os.homedir();
-  const args = [
-    "-v",
-    `${home}/.ssh:/root/.ssh:ro`,
-    "-v",
-    `${home}/.gitconfig:/root/.gitconfig:ro`,
-    "-e",
+  const args: string[] = [];
+
+  const sshDir = path.join(home, ".ssh");
+  const gitconfig = path.join(home, ".gitconfig");
+
+  if (existsSync(sshDir)) {
+    args.push("-v", `${sshDir}:/root/.ssh:ro`);
     // -F /dev/null skips ~/.ssh/config which has ownership issues (owned by host user, not root)
-    "GIT_SSH_COMMAND=ssh -F /dev/null -o BatchMode=yes -o StrictHostKeyChecking=accept-new",
-  ];
+    args.push(
+      "-e",
+      "GIT_SSH_COMMAND=ssh -F /dev/null -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
+    );
+  }
+  if (existsSync(gitconfig)) {
+    args.push("-v", `${gitconfig}:/root/.gitconfig:ro`);
+  }
 
   // SSH agent forwarding
   if (process.platform === "darwin") {
     // macOS Docker Desktop uses a magic socket path
     args.push("-v", "/run/host-services/ssh-auth.sock:/ssh-agent:ro");
     args.push("-e", "SSH_AUTH_SOCK=/ssh-agent");
-  } else if (process.env.SSH_AUTH_SOCK) {
-    // Linux: mount the actual socket
+  } else if (process.env.SSH_AUTH_SOCK && existsSync(process.env.SSH_AUTH_SOCK)) {
     args.push("-v", `${process.env.SSH_AUTH_SOCK}:/ssh-agent:ro`);
     args.push("-e", "SSH_AUTH_SOCK=/ssh-agent");
   }
@@ -262,8 +269,7 @@ function sanitizeContainerName(name: string): string {
   return name
     .replace(/[^a-zA-Z0-9_.-]/g, "-")
     .replace(/^[^a-zA-Z0-9]+/, "")
-    .replace(/-+/g, "-")
-    .slice(0, 63); // Docker has a 64 char limit
+    .replace(/-+/g, "-");
 }
 
 /**
@@ -273,12 +279,13 @@ function sanitizeContainerName(name: string): string {
  */
 export function getContainerName(projectPath: string, workspaceName: string): string {
   const projectName = getProjectName(projectPath);
-  const base = sanitizeContainerName(`mux-${projectName}-${workspaceName}`);
   const hash = createHash("sha256")
     .update(`${projectPath}:${workspaceName}`)
     .digest("hex")
     .slice(0, 6);
-  return `${base}-${hash}`.slice(0, 63);
+  // Reserve 7 chars for "-{hash}", leaving 56 for base
+  const base = sanitizeContainerName(`mux-${projectName}-${workspaceName}`).slice(0, 56);
+  return `${base}-${hash}`;
 }
 
 /**
