@@ -965,7 +965,8 @@ export const router = (authToken?: string) => {
           // 3. Fallback to any available known model
           const model = await selectModelForNameGeneration(
             context.aiService,
-            input.preferredModels
+            input.preferredModels,
+            input.userModel
           );
           if (!model) {
             return {

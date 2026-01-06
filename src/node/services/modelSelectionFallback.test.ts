@@ -182,4 +182,34 @@ describe("selectModelForNameGeneration", () => {
     // Should fallback to OpenRouter variant of Grok
     expect(result).toBe("openrouter:xai/grok-4-1-fast");
   });
+
+  it("uses user's selected model when preferred models unavailable", async () => {
+    // User has Ollama configured (not in KNOWN_MODELS)
+    const mockService = createMockAiService(new Set(["ollama:llama3"]));
+
+    const result = await selectModelForNameGeneration(
+      mockService as AIService,
+      ["anthropic:claude-haiku-4-5"], // preferred models unavailable
+      "ollama:llama3" // user's model
+    );
+
+    // Should use user's Ollama model
+    expect(result).toBe("ollama:llama3");
+  });
+
+  it("prefers cheap models over user's potentially expensive model", async () => {
+    // Both Haiku (cheap) and user's Opus (expensive) are available
+    const mockService = createMockAiService(
+      new Set(["anthropic:claude-haiku-4-5", "anthropic:claude-opus-4"])
+    );
+
+    const result = await selectModelForNameGeneration(
+      mockService as AIService,
+      ["anthropic:claude-haiku-4-5"],
+      "anthropic:claude-opus-4" // user's expensive model
+    );
+
+    // Should prefer cheap Haiku over expensive Opus
+    expect(result).toBe("anthropic:claude-haiku-4-5");
+  });
 });

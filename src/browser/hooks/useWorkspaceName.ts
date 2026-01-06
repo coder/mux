@@ -6,6 +6,8 @@ export interface UseWorkspaceNameOptions {
   message: string;
   /** Debounce delay in milliseconds (default: 500) */
   debounceMs?: number;
+  /** User's selected model to try after preferred models (for Ollama/Bedrock/custom providers) */
+  userModel?: string;
 }
 
 /** Generated workspace identity (name + title) */
@@ -47,7 +49,7 @@ export interface UseWorkspaceNameReturn extends WorkspaceNameState {
  * auto-generation resumes.
  */
 export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspaceNameReturn {
-  const { message, debounceMs = 500 } = options;
+  const { message, debounceMs = 500, userModel } = options;
   const { api } = useAPI();
 
   // Generated identity (name + title) from AI
@@ -118,10 +120,12 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
       try {
         // Backend handles model selection with intelligent fallback:
         // 1. Tries preferred small/fast models (Haiku, GPT-Mini)
-        // 2. Tries OpenRouter variants
-        // 3. Falls back to any available configured model
+        // 2. Tries gateway/OpenRouter variants
+        // 3. Tries user's selected model (for Ollama/Bedrock/custom)
+        // 4. Falls back to any available configured model
         const result = await api.nameGeneration.generate({
           message: forMessage,
+          userModel,
         });
 
         // Check if this request is still current (wasn't cancelled)
@@ -163,7 +167,7 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
         }
       }
     },
-    [api]
+    [api, userModel]
   );
 
   // Debounced generation effect

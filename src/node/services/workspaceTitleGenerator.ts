@@ -68,12 +68,13 @@ function toGatewayVariant(modelId: string, gateway: "mux-gateway" | "openrouter"
  *
  * Priority order:
  * 1. Try preferred models (Haiku, GPT-Mini) directly
- * 2. Try Mux Gateway variants (mux-gateway:provider/model)
- * 3. Try OpenRouter variants (openrouter:provider/model)
- * 4. Fallback to any available model from the known models list
+ * 2. Try Mux Gateway variants of preferred models
+ * 3. Try OpenRouter variants of preferred models
+ * 4. Try user's selected model (for Ollama/Bedrock/custom providers)
+ * 5. Fallback to any available model from the known models list
  *
  * This ensures name generation works with any provider setup:
- * direct API keys, Mux Gateway (coupon), or OpenRouter.
+ * direct API keys, Mux Gateway (coupon), OpenRouter, or custom providers.
  *
  * Note: createModel() validates provider configuration internally,
  * returning Err({ type: "api_key_not_found" }) for unconfigured providers.
@@ -81,7 +82,8 @@ function toGatewayVariant(modelId: string, gateway: "mux-gateway" | "openrouter"
  */
 export async function selectModelForNameGeneration(
   aiService: Pick<AIService, "createModel">,
-  preferredModels: string[] = DEFAULT_NAME_GENERATION_MODELS
+  preferredModels: string[] = DEFAULT_NAME_GENERATION_MODELS,
+  userModel?: string
 ): Promise<string | null> {
   // 1. Try preferred models directly
   for (const modelId of preferredModels) {
@@ -109,7 +111,15 @@ export async function selectModelForNameGeneration(
     }
   }
 
-  // 4. Fallback to any available model from known models
+  // 4. Try user's selected model (supports Ollama, Bedrock, custom providers)
+  if (userModel) {
+    const result = await aiService.createModel(userModel);
+    if (result.success) {
+      return userModel;
+    }
+  }
+
+  // 5. Fallback to any available model from known models
   // Try each known model directly, then via gateway/OpenRouter
   const knownModelIds = Object.values(KNOWN_MODELS).map((m) => m.id);
   for (const modelId of knownModelIds) {

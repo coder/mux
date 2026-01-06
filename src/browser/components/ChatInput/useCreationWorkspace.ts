@@ -32,6 +32,8 @@ interface UseCreationWorkspaceOptions {
   message: string;
   /** Section ID to assign the new workspace to */
   sectionId?: string | null;
+  /** User's currently selected model (for name generation fallback) */
+  userModel?: string;
 }
 
 function syncCreationPreferences(projectPath: string, workspaceId: string): void {
@@ -118,6 +120,7 @@ export function useCreationWorkspace({
   onWorkspaceCreated,
   message,
   sectionId,
+  userModel,
 }: UseCreationWorkspaceOptions): UseCreationWorkspaceReturn {
   const { api } = useAPI();
   const [branches, setBranches] = useState<string[]>([]);
@@ -142,10 +145,11 @@ export function useCreationWorkspace({
   const projectScopeId = getProjectScopeId(projectPath);
 
   // Workspace name generation with debounce
-  // Backend now handles fallback to any available model automatically
+  // Backend tries cheap models first, then user's model, then any available
   const workspaceNameState = useWorkspaceName({
     message,
     debounceMs: 500,
+    userModel,
   });
 
   // Destructure name state functions for use in callbacks

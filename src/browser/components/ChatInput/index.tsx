@@ -558,6 +558,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           onWorkspaceCreated: props.onWorkspaceCreated,
           message: input,
           sectionId: selectedSectionId,
+          userModel: preferredModel,
         }
       : {
           // Dummy values for workspace variant (never used)
