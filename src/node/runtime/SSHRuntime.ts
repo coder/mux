@@ -1070,7 +1070,7 @@ export class SSHRuntime implements Runtime {
       // Note: runInitHook calls logComplete() internally if hook exists
       const hookExists = await checkInitHookExists(projectPath);
       if (hookExists) {
-        const muxEnv = { ...getMuxEnv(projectPath, "ssh", branchName), ...env };
+        const muxEnv = { ...env, ...getMuxEnv(projectPath, "ssh", branchName) };
         await this.runInitHook(workspacePath, muxEnv, initLogger, abortSignal);
       } else {
         // No hook - signal completion immediately

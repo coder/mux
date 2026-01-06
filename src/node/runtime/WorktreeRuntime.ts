@@ -205,7 +205,7 @@ export class WorktreeRuntime extends LocalBaseRuntime {
       // Note: runInitHook calls logComplete() internally if hook exists
       const hookExists = await checkInitHookExists(projectPath);
       if (hookExists) {
-        const muxEnv = { ...getMuxEnv(projectPath, "worktree", branchName), ...env };
+        const muxEnv = { ...env, ...getMuxEnv(projectPath, "worktree", branchName) };
         await this.runInitHook(workspacePath, muxEnv, initLogger);
       } else {
         // No hook - signal completion immediately
