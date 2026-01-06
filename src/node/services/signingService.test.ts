@@ -73,9 +73,10 @@ describe("SigningService", () => {
       expect(creds.privateKeyBase64).toBeDefined();
       expect(creds.privateKeyBase64.length).toBeGreaterThan(0);
       expect(creds.publicKey).toStartWith("ecdsa-sha2-nistp256 ");
-      // ECDSA P-256 private scalar is 32 bytes
+      // ECDSA P-256 private scalar is up to 32 bytes (may be 31 if leading byte is zero)
       const keyBytes = Buffer.from(creds.privateKeyBase64, "base64");
-      expect(keyBytes.length).toBe(32);
+      expect(keyBytes.length).toBeGreaterThanOrEqual(31);
+      expect(keyBytes.length).toBeLessThanOrEqual(32);
     });
   });
 

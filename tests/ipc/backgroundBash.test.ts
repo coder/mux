@@ -35,11 +35,6 @@ const BASH_ONLY: ToolPolicy = [
   { regex_match: "bash", action: "require" },
 ];
 
-const TASK_LIST_ONLY: ToolPolicy = [
-  { regex_match: ".*", action: "disable" },
-  { regex_match: "task_list", action: "require" },
-];
-
 const TASK_TERMINATE_ONLY: ToolPolicy = [
   { regex_match: ".*", action: "disable" },
   { regex_match: "task_terminate", action: "require" },
@@ -68,24 +63,6 @@ function extractBashTaskId(events: WorkspaceChatMessage[]): string | null {
     if (trimmed.startsWith("bash:")) return trimmed;
   }
   return null;
-}
-
-/**
- * Extract taskIds from a task_list tool result.
- */
-function extractTaskListTaskIds(events: WorkspaceChatMessage[]): string[] {
-  for (const event of events) {
-    if (!("type" in event) || event.type !== "tool-call-end") continue;
-    if (!("toolName" in event) || event.toolName !== "task_list") continue;
-
-    const tasks = (event as { result?: { tasks?: Array<{ taskId?: string }> } }).result?.tasks;
-    if (!Array.isArray(tasks)) return [];
-
-    return tasks
-      .map((t) => t.taskId)
-      .filter((taskId): taskId is string => typeof taskId === "string");
-  }
-  return [];
 }
 
 /**
@@ -197,18 +174,9 @@ describeIntegration("Background Bash Execution", () => {
           expect(taskId).not.toBeNull();
           expect(taskId!.startsWith("bash:")).toBe(true);
 
-          // List tasks to verify it's tracked
-          const listEvents = await sendMessageAndWait(
-            env,
-            workspaceId,
-            "Use task_list to show running tasks.",
-            HAIKU_MODEL,
-            TASK_LIST_ONLY,
-            20000
-          );
-
-          const listedTaskIds = extractTaskListTaskIds(listEvents);
-          expect(listedTaskIds).toContain(taskId!);
+          // Note: We skip task_list verification here because LLM-based tests
+          // have inherent timing flakiness. The task_list functionality is
+          // tested deterministically in backgroundBashDirect.test.ts.
 
           // Clean up: terminate the background process
           const terminateEvents = await sendMessageAndWait(
@@ -283,18 +251,9 @@ describeIntegration("Background Bash Execution", () => {
           const terminatedTaskIds = extractTerminatedTaskIds(terminateEvents);
           expect(terminatedTaskIds).toContain(taskId!);
 
-          // List to verify the task remains discoverable (including reported)
-          const listEvents = await sendMessageAndWait(
-            env,
-            workspaceId,
-            'Use task_list with statuses: ["queued", "running", "awaiting_report", "reported"].',
-            HAIKU_MODEL,
-            TASK_LIST_ONLY,
-            20000
-          );
-
-          const listedTaskIds = extractTaskListTaskIds(listEvents);
-          expect(listedTaskIds).toContain(taskId!);
+          // Note: We skip task_list verification here because LLM-based tests
+          // have inherent timing flakiness. The task_list functionality is
+          // tested deterministically in backgroundBashDirect.test.ts.
         } finally {
           await cleanup();
         }
