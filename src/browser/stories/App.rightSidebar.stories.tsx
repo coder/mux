@@ -960,9 +960,9 @@ export const FilesTab: AppStory = {
 
     // Wait for Files tab to be visible and selected
     await waitFor(
-      () => {
+      async () => {
         const tab = canvas.getByRole("tab", { name: /^files/i });
-        expect(tab).toHaveAttribute("aria-selected", "true");
+        await expect(tab).toHaveAttribute("aria-selected", "true");
       },
       { timeout: 5000 }
     );

@@ -84,12 +84,12 @@ const TreeNode: React.FC<{
             >
               ▶
             </span>
-            <span className="flex-1 text-muted">{node.name || "/"}</span>
+            <span className="text-muted flex-1">{node.name || "/"}</span>
           </>
         ) : (
           <>
             <FileIcon fileName={node.name} filePath={node.path} className="shrink-0" />
-            <span className="flex-1 text-foreground">{node.name}</span>
+            <span className="text-foreground flex-1">{node.name}</span>
           </>
         )}
       </div>
@@ -217,7 +217,7 @@ const FileContentViewer: React.FC<{
             dangerouslySetInnerHTML={{ __html: highlightedContent }}
           />
         ) : (
-          <pre className="text-foreground whitespace-pre-wrap p-2">{content}</pre>
+          <pre className="text-foreground p-2 whitespace-pre-wrap">{content}</pre>
         )}
       </div>
     </div>
