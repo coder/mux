@@ -872,7 +872,6 @@ function WorkspaceScreenInner({
 
       const identity = await client.nameGeneration.generate({
         message: trimmed,
-        fallbackModel: sendMessageOptions.model,
       });
 
       if (!identity.success) {
