@@ -13,10 +13,7 @@ import {
   readPersistedState,
 } from "./hooks/usePersistedState";
 import { matchesKeybind, KEYBINDS } from "./utils/ui/keybinds";
-import {
-  buildSortedWorkspacesByProject,
-  getAllVisibleWorkspaces,
-} from "./utils/ui/workspaceFiltering";
+import { buildSortedWorkspacesByProject } from "./utils/ui/workspaceFiltering";
 import { useResumeManager } from "./hooks/useResumeManager";
 import { useUnreadTracking } from "./hooks/useUnreadTracking";
 import { useWorkspaceStoreRaw, useWorkspaceRecency } from "./stores/WorkspaceStore";
@@ -34,14 +31,12 @@ import type { UIMode } from "@/common/types/mode";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { isWorkspaceForkSwitchEvent } from "./utils/workspaceEvents";
 import {
-  EXPANDED_PROJECTS_KEY,
   getAgentIdKey,
   getModelKey,
   getThinkingLevelByModelKey,
   getThinkingLevelKey,
   getWorkspaceAISettingsByModeKey,
 } from "@/common/constants/storage";
-import { sortProjectsByOrder } from "@/common/utils/projectOrdering";
 import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
@@ -227,49 +222,30 @@ function AppInner() {
 
   const handleNavigateWorkspace = useCallback(
     (direction: "next" | "prev") => {
-      // Build list of all visible workspaces across all projects (matching sidebar order)
-      const projectOrder = readPersistedState<string[]>("mux:projectOrder", []);
-      const expandedProjectsArray = readPersistedState<string[]>(EXPANDED_PROJECTS_KEY, []);
-      const expandedProjects = new Set(expandedProjectsArray);
-      const expandedOldWorkspaces = readPersistedState<Record<string, boolean>>(
-        "expandedOldWorkspaces",
-        {}
-      );
+      // Read actual rendered workspace order from DOM - impossible to drift from sidebar
+      // Use compound selector to target only row elements (not archive buttons or edit inputs)
+      const els = document.querySelectorAll("[data-workspace-id][data-workspace-path]");
+      const visibleIds = Array.from(els).map((el) => el.getAttribute("data-workspace-id")!);
 
-      // Get sorted project paths (respecting user's drag order)
-      const sortedProjectPaths = sortProjectsByOrder(projects, projectOrder).map(([p]) => p);
+      if (visibleIds.length === 0) return;
 
-      const visibleWorkspaces = getAllVisibleWorkspaces(
-        sortedProjectPaths,
-        sortedWorkspacesByProject,
-        expandedProjects,
-        workspaceRecency,
-        expandedOldWorkspaces
-      );
-
-      if (visibleWorkspaces.length === 0) return;
-
-      // Find current workspace index (or start from beginning/end if not found)
       const currentIndex = selectedWorkspace
-        ? visibleWorkspaces.findIndex((m) => m.id === selectedWorkspace.workspaceId)
+        ? visibleIds.indexOf(selectedWorkspace.workspaceId)
         : -1;
 
       let targetIndex: number;
       if (currentIndex === -1) {
-        // Current workspace not visible - go to first/last visible
-        targetIndex = direction === "next" ? 0 : visibleWorkspaces.length - 1;
+        targetIndex = direction === "next" ? 0 : visibleIds.length - 1;
       } else if (direction === "next") {
-        targetIndex = (currentIndex + 1) % visibleWorkspaces.length;
+        targetIndex = (currentIndex + 1) % visibleIds.length;
       } else {
-        targetIndex = currentIndex === 0 ? visibleWorkspaces.length - 1 : currentIndex - 1;
+        targetIndex = currentIndex === 0 ? visibleIds.length - 1 : currentIndex - 1;
       }
 
-      const targetMetadata = visibleWorkspaces[targetIndex];
-      if (!targetMetadata) return;
-
-      setSelectedWorkspace(toWorkspaceSelection(targetMetadata));
+      const targetMeta = workspaceMetadata.get(visibleIds[targetIndex]);
+      if (targetMeta) setSelectedWorkspace(toWorkspaceSelection(targetMeta));
     },
-    [selectedWorkspace, projects, sortedWorkspacesByProject, workspaceRecency, setSelectedWorkspace]
+    [selectedWorkspace, workspaceMetadata, setSelectedWorkspace]
   );
 
   // Register command sources with registry

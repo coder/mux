@@ -217,43 +217,6 @@ export function getTierKey(projectPath: string, tierIndex: number): string {
 }
 
 /**
- * Compute all visible workspaces across all projects in sidebar display order.
- * Respects project ordering, project expansion, and age-tier expansion.
- *
- * @param sortedProjectPaths - Project paths in display order
- * @param sortedWorkspacesByProject - Workspaces per project in display order
- * @param expandedProjects - Set of expanded project paths
- * @param workspaceRecency - Recency timestamps
- * @param expandedOldWorkspaces - Record of expanded tier states
- * @returns Array of visible workspaces in sidebar display order
- */
-export function getAllVisibleWorkspaces(
-  sortedProjectPaths: string[],
-  sortedWorkspacesByProject: Map<string, FrontendWorkspaceMetadata[]>,
-  expandedProjects: Set<string>,
-  workspaceRecency: Record<string, number>,
-  expandedOldWorkspaces: Record<string, boolean>
-): FrontendWorkspaceMetadata[] {
-  const allVisible: FrontendWorkspaceMetadata[] = [];
-
-  for (const projectPath of sortedProjectPaths) {
-    // Skip collapsed projects
-    if (!expandedProjects.has(projectPath)) continue;
-
-    const workspaces = sortedWorkspacesByProject.get(projectPath) ?? [];
-    const visible = getVisibleWorkspaces(
-      projectPath,
-      workspaces,
-      workspaceRecency,
-      expandedOldWorkspaces
-    );
-    allVisible.push(...visible);
-  }
-
-  return allVisible;
-}
-
-/**
  * Find the next non-empty tier starting from a given index.
  * @returns The index of the next non-empty bucket, or -1 if none found.
  */
@@ -320,46 +283,6 @@ export function partitionWorkspacesByAge(
   }
 
   return { recent, buckets };
-}
-
-/**
- * Compute which workspaces are currently visible in the sidebar.
- * Respects the expanded/collapsed state of age-based tier sections.
- *
- * @param projectPath - The project path (used to build tier keys)
- * @param workspaces - All workspaces for the project (in display order)
- * @param workspaceRecency - Recency timestamps
- * @param expandedOldWorkspaces - Record of expanded tier states (keys: "projectPath:tierIndex")
- * @returns Array of visible workspaces in display order
- */
-export function getVisibleWorkspaces(
-  projectPath: string,
-  workspaces: FrontendWorkspaceMetadata[],
-  workspaceRecency: Record<string, number>,
-  expandedOldWorkspaces: Record<string, boolean>
-): FrontendWorkspaceMetadata[] {
-  if (workspaces.length === 0) return [];
-
-  const { recent, buckets } = partitionWorkspacesByAge(workspaces, workspaceRecency);
-  const visible: FrontendWorkspaceMetadata[] = [...recent];
-
-  // Traverse expanded tiers in order
-  let currentTier = findNextNonEmptyTier(buckets, 0);
-  while (currentTier !== -1) {
-    const isExpanded = expandedOldWorkspaces[getTierKey(projectPath, currentTier)] ?? false;
-
-    if (!isExpanded) {
-      // Tier is collapsed, stop traversing
-      break;
-    }
-
-    // Add this tier's workspaces
-    visible.push(...buckets[currentTier]);
-    // Move to next non-empty tier
-    currentTier = findNextNonEmptyTier(buckets, currentTier + 1);
-  }
-
-  return visible;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
