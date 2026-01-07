@@ -165,6 +165,19 @@ const DragAwarePanelResizeHandle: React.FC<{
   return <PanelResizeHandle className={className} />;
 };
 
+function findFirstTerminalSessionTab(
+  node: RightSidebarLayoutNode
+): { tabsetId: string; tab: TabType } | null {
+  if (node.type === "tabset") {
+    const tab = node.tabs.find((t) => t.startsWith("terminal:") && t !== "terminal");
+    return tab ? { tabsetId: node.id, tab } : null;
+  }
+
+  return (
+    findFirstTerminalSessionTab(node.children[0]) ?? findFirstTerminalSessionTab(node.children[1])
+  );
+}
+
 type TabsetNode = Extract<RightSidebarLayoutNode, { type: "tabset" }>;
 
 interface RightSidebarTabsetNodeProps {
@@ -476,7 +489,7 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
 
           return (
             <div
-              key={terminalTab}
+              key={terminalPanelId}
               role="tabpanel"
               id={terminalPanelId}
               aria-labelledby={terminalTabId}
@@ -661,7 +674,15 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         setFocusTrigger((prev) => prev + 1);
       } else if (matchesKeybind(e, KEYBINDS.TERMINAL_TAB)) {
         e.preventDefault();
-        setLayout((prev) => selectTabInFocusedTabset(prev, "terminal"));
+
+        const current = parseRightSidebarLayoutState(layoutRawRef.current, initialActiveTab);
+        const found = findFirstTerminalSessionTab(current.root);
+        if (found) {
+          setLayout((prev) =>
+            selectTabInTabset(setFocusedTabset(prev, found.tabsetId), found.tabsetId, found.tab)
+          );
+        }
+
         setCollapsed(false);
       } else if (statsTabEnabled && matchesKeybind(e, KEYBINDS.STATS_TAB)) {
         e.preventDefault();
@@ -672,7 +693,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [setLayout, setCollapsed, statsTabEnabled]);
+  }, [initialActiveTab, setLayout, setCollapsed, statsTabEnabled]);
 
   const usage = useWorkspaceUsage(workspaceId);
 
@@ -974,6 +995,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
 
     return (
       <RightSidebarTabsetNode
+        key={node.id}
         node={node}
         baseId={baseId}
         workspaceId={workspaceId}

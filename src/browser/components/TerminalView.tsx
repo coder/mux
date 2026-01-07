@@ -108,9 +108,40 @@ export function TerminalView({
     onTitleChangeRef.current = onTitleChange;
   }, [sendInput, resize, onTitleChange]);
 
-  // Initialize terminal once when component mounts.
-  // The terminal stays alive even when hidden to preserve state (vim, etc.).
+  const disposeOnDataRef = useRef<{ dispose: () => void } | null>(null);
+  const disposeOnTitleChangeRef = useRef<{ dispose: () => void } | null>(null);
+  const initInProgressRef = useRef(false);
+
+  // Clean up the terminal instance when workspace changes (or component unmounts).
   useEffect(() => {
+    const containerEl = containerRef.current;
+
+    return () => {
+      disposeOnDataRef.current?.dispose();
+      disposeOnTitleChangeRef.current?.dispose();
+      disposeOnDataRef.current = null;
+      disposeOnTitleChangeRef.current = null;
+
+      termRef.current?.dispose();
+
+      // Ensure the DOM is clean even if the terminal init was interrupted.
+      containerEl?.replaceChildren();
+
+      termRef.current = null;
+      fitAddonRef.current = null;
+      initInProgressRef.current = false;
+      setTerminalReady(false);
+      setTerminalSize(null);
+    };
+  }, [workspaceId]);
+
+  // Initialize terminal when it first becomes visible.
+  // We intentionally keep the terminal instance alive when hidden so we don't lose
+  // frontend-only state (like scrollback) and so TUI apps don't thrash on tab switches.
+  useEffect(() => {
+    if (!visible) return;
+    if (termRef.current || initInProgressRef.current) return;
+
     const containerEl = containerRef.current;
     if (!containerEl) {
       return;
@@ -121,6 +152,7 @@ export function TerminalView({
     // terminals wired to the same DOM node (double cursor + duplicated input). Make the
     // init path explicitly cancelable.
     let cancelled = false;
+    initInProgressRef.current = true;
 
     let terminal: Terminal | null = null;
     let disposeOnData: { dispose: () => void } | null = null;
@@ -193,6 +225,8 @@ export function TerminalView({
 
         termRef.current = terminal;
         fitAddonRef.current = fitAddon;
+        disposeOnDataRef.current = disposeOnData;
+        disposeOnTitleChangeRef.current = disposeOnTitleChange;
 
         setTerminalReady(true);
       } catch (err) {
@@ -202,6 +236,8 @@ export function TerminalView({
 
         console.error("Failed to initialize terminal:", err);
         setTerminalError(err instanceof Error ? err.message : "Failed to initialize terminal");
+      } finally {
+        initInProgressRef.current = false;
       }
     };
 
@@ -210,25 +246,19 @@ export function TerminalView({
     return () => {
       cancelled = true;
 
-      disposeOnData?.dispose();
-      disposeOnTitleChange?.dispose();
-
-      if (terminal) {
-        terminal.dispose();
+      // If the terminal finished initializing, we keep it alive across visible toggles.
+      if (termRef.current) {
+        return;
       }
 
-      // Ensure the DOM is clean even if the terminal init was interrupted.
+      // Otherwise, clean up any partially created resources so a future attempt can succeed.
+      disposeOnData?.dispose();
+      disposeOnTitleChange?.dispose();
+      terminal?.dispose();
       containerEl.replaceChildren();
-
-      termRef.current = null;
-      fitAddonRef.current = null;
-      setTerminalReady(false);
-      setTerminalSize(null);
+      initInProgressRef.current = false;
     };
-    // Note: sendInput and resize are intentionally not in deps
-    // They're used in callbacks, not during effect execution
-    // Terminal is recreated when workspaceId changes (different session)
-  }, [workspaceId]);
+  }, [visible, workspaceId]);
 
   // Resize on container size change
   useEffect(() => {
@@ -314,15 +344,13 @@ export function TerminalView({
     };
   }, [visible, terminalReady]); // terminalReady ensures ResizeObserver is set up after terminal is initialized
 
-  if (!visible) return null;
-
   const errorMessage = terminalError ?? sessionError;
 
   return (
     <div
       className="terminal-view"
       style={{
-        display: "flex",
+        display: visible ? "flex" : "none",
         flexDirection: "column",
         width: "100%",
         height: "100%",

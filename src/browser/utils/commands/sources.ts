@@ -12,6 +12,8 @@ import {
   addToolToFocusedTabset,
   getDefaultRightSidebarLayoutState,
   parseRightSidebarLayoutState,
+  selectTabInTabset,
+  setFocusedTabset,
   splitFocusedTabset,
 } from "@/browser/utils/rightSidebarLayout";
 
@@ -109,6 +111,19 @@ const updateRightSidebarLayout = (
     getRightSidebarLayoutKey(workspaceId),
     (prev) => updater(parseRightSidebarLayoutState(prev, fallback)),
     defaultLayout
+  );
+};
+
+const findFirstTerminalSessionTab = (
+  node: ReturnType<typeof parseRightSidebarLayoutState>["root"]
+): { tabsetId: string; tab: TabType } | null => {
+  if (node.type === "tabset") {
+    const tab = node.tabs.find((t) => t.startsWith("terminal:") && t !== "terminal");
+    return tab ? { tabsetId: node.id, tab } : null;
+  }
+
+  return (
+    findFirstTerminalSessionTab(node.children[0]) ?? findFirstTerminalSessionTab(node.children[1])
   );
 };
 export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandAction[]> {
@@ -390,7 +405,16 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
           title: "Right Sidebar: Focus Terminal",
           section: section.navigation,
           shortcutHint: formatKeybind(KEYBINDS.TERMINAL_TAB),
-          run: () => updateRightSidebarLayout(wsId, (s) => addToolToFocusedTabset(s, "terminal")),
+          run: () =>
+            updateRightSidebarLayout(wsId, (s) => {
+              const found = findFirstTerminalSessionTab(s.root);
+              if (!found) return s;
+              return selectTabInTabset(
+                setFocusedTabset(s, found.tabsetId),
+                found.tabsetId,
+                found.tab
+              );
+            }),
         },
         {
           id: CommandIds.navRightSidebarSplitHorizontal(),
@@ -428,6 +452,22 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
             onSubmit: (vals) => {
               const tool = vals.tool;
               if (!isTabType(tool)) return;
+
+              // "terminal" is now an alias for "focus an existing terminal session tab".
+              // Creating new terminal sessions is handled in the main UI ("+" button).
+              if (tool === "terminal") {
+                updateRightSidebarLayout(wsId, (s) => {
+                  const found = findFirstTerminalSessionTab(s.root);
+                  if (!found) return s;
+                  return selectTabInTabset(
+                    setFocusedTabset(s, found.tabsetId),
+                    found.tabsetId,
+                    found.tab
+                  );
+                });
+                return;
+              }
+
               updateRightSidebarLayout(wsId, (s) => addToolToFocusedTabset(s, tool));
             },
           },

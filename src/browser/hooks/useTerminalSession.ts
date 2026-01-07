@@ -44,6 +44,17 @@ export function useTerminalSession(
 
   // Track whether we created the session (vs reattaching to existing)
   // Used to determine if we should close the session on cleanup
+
+  // Keep refs to the latest callbacks so long-lived async iterators don't capture stale closures.
+  const onOutputRef = useRef(onOutput);
+  const onExitRef = useRef(onExit);
+  const onScreenStateRef = useRef(options?.onScreenState);
+
+  useEffect(() => {
+    onOutputRef.current = onOutput;
+    onExitRef.current = onExit;
+    onScreenStateRef.current = options?.onScreenState;
+  }, [onOutput, onExit, options?.onScreenState]);
   const createdSessionRef = useRef(false);
 
   // Watch for terminalSize to become available
@@ -56,7 +67,7 @@ export function useTerminalSession(
   // Create terminal session and subscribe to IPC events
   // Only depends on workspaceId, existingSessionId and shouldInit, NOT terminalSize
   useEffect(() => {
-    if (!shouldInit || !terminalSize || !api) {
+    if (!enabled || !shouldInit || !terminalSize || !api) {
       return;
     }
 
@@ -89,11 +100,11 @@ export function useTerminalSession(
             if (!mounted) break;
             if (msg.type === "screenState") {
               // Only restore screen state when reattaching to existing session
-              if (restoreScreenState && msg.data && options?.onScreenState) {
-                options.onScreenState(msg.data);
+              if (restoreScreenState && msg.data && onScreenStateRef.current) {
+                onScreenStateRef.current(msg.data);
               }
             } else if (msg.type === "output") {
-              if (onOutput) onOutput(msg.data);
+              onOutputRef.current?.(msg.data);
             }
           }
         } catch (err) {
@@ -117,7 +128,7 @@ export function useTerminalSession(
           for await (const code of iterator) {
             if (!mounted) break;
             setConnected(false);
-            if (onExit) onExit(code);
+            onExitRef.current?.(code);
             break; // Exit happens only once
           }
         } catch (err) {
@@ -245,7 +256,7 @@ export function useTerminalSession(
       setShouldInit(false);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaceId, existingSessionId, shouldInit, api, options?.closeOnCleanup]); // DO NOT include terminalSize - changes should not recreate session
+  }, [workspaceId, existingSessionId, enabled, shouldInit, api, options?.closeOnCleanup]); // DO NOT include terminalSize - changes should not recreate session
 
   // Send input to terminal
   const sendInput = useCallback(
