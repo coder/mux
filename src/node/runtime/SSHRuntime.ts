@@ -200,9 +200,8 @@ export class SSHRuntime implements Runtime {
 
     sshArgs.push(this.config.host, fullCommand);
 
-    // Debug: log the actual SSH command being executed
-    log.debug(`SSH command: ssh ${sshArgs.join(" ")}`);
-    log.debug(`Remote command: ${fullCommand}`);
+    // Debug: log the command being executed (exclude sshArgs which contains env secrets in fullCommand)
+    log.debug(`SSH exec on ${this.config.host}: ${command}`);
 
     // Spawn ssh command
     const sshProcess = spawn("ssh", sshArgs, {
@@ -946,7 +945,8 @@ export class SSHRuntime implements Runtime {
   }
 
   async initWorkspace(params: WorkspaceInitParams): Promise<WorkspaceInitResult> {
-    const { projectPath, branchName, trunkBranch, workspacePath, initLogger, abortSignal } = params;
+    const { projectPath, branchName, trunkBranch, workspacePath, initLogger, abortSignal, env } =
+      params;
 
     try {
       // If the workspace directory already exists and contains a git repo (e.g. forked from
@@ -1086,7 +1086,7 @@ export class SSHRuntime implements Runtime {
       // Note: runInitHook calls logComplete() internally if hook exists
       const hookExists = await checkInitHookExists(projectPath);
       if (hookExists) {
-        const muxEnv = getMuxEnv(projectPath, "ssh", branchName);
+        const muxEnv = { ...env, ...getMuxEnv(projectPath, "ssh", branchName) };
         await this.runInitHook(workspacePath, muxEnv, initLogger, abortSignal);
       } else {
         // No hook - signal completion immediately

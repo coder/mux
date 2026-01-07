@@ -647,6 +647,7 @@ export class WorkspaceService extends EventEmitter {
 
       session.emitMetadata(completeMetadata);
 
+      const secrets = secretsToRecord(this.config.getProjectSecrets(projectPath));
       void runtime
         .initWorkspace({
           projectPath,
@@ -654,6 +655,7 @@ export class WorkspaceService extends EventEmitter {
           trunkBranch: normalizedTrunkBranch,
           workspacePath: createResult!.workspacePath,
           initLogger,
+          env: secrets,
         })
         .catch((error: unknown) => {
           const errorMsg = error instanceof Error ? error.message : String(error);
