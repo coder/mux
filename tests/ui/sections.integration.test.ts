@@ -233,8 +233,7 @@ describeIntegration("Workspace Sections", () => {
     }
   }, 60_000);
 
-  // SKIP: Test fails on this branch - needs investigation separate from Docker hang fix
-  test.skip("clicking section add button sets pending section for creation", async () => {
+  test("clicking section add button sets pending section for creation", async () => {
     const env = getSharedEnv();
     const projectPath = getSharedRepoPath();
     const trunkBranch = await detectDefaultTrunkBranch(projectPath);

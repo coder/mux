@@ -1169,8 +1169,7 @@ describeIntegration("Runtime integration tests", () => {
    *
    * Tests container lifecycle: create, delete, idempotent delete
    */
-  // TEMPORARY: Skip to isolate CI hang cause
-  describe.skip("DockerRuntime workspace operations", () => {
+  describe("DockerRuntime workspace operations", () => {
     const testForDocker = shouldRunIntegrationTests() ? test : test.skip;
 
     // Helper to run docker commands on host
