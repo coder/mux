@@ -470,9 +470,8 @@ export function CreationControls(props: CreationControlsProps) {
                 disabled={props.disabled}
                 className="accent-accent"
               />
-              <span className="text-muted">
-                Share credentials (~/.ssh, ~/.gitconfig, SSH agent, GH CLI)
-              </span>
+              <span className="text-muted">Share credentials (SSH, Git)</span>
+              <DocsLink path="/runtime/docker#credential-sharing" />
             </label>
           )}
         </div>

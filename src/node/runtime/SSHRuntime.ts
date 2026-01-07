@@ -176,8 +176,8 @@ export class SSHRuntime extends RemoteRuntime {
 
     sshArgs.push(this.config.host, fullCommand);
 
-    // Debug: log the command being executed (exclude sshArgs which contains env secrets in fullCommand)
-    log.debug(`SSH exec on ${this.config.host}: ${command}`);
+    // Debug: log the SSH host (fullCommand may contain secrets via env exports)
+    log.debug(`SSH exec on ${this.config.host}`);
     // Spawn ssh command
     const process = spawn("ssh", sshArgs, {
       stdio: ["pipe", "pipe", "pipe"],
@@ -642,7 +642,9 @@ export class SSHRuntime extends RemoteRuntime {
       const hookExists = await checkInitHookExists(projectPath);
       if (hookExists) {
         const muxEnv = { ...env, ...getMuxEnv(projectPath, "ssh", branchName) };
-        await this.runInitHook(workspacePath, muxEnv, initLogger, abortSignal);
+        // Expand tilde in hook path (quoted paths don't auto-expand on remote)
+        const hookPath = expandHookPath(`${workspacePath}/.mux/init`);
+        await runInitHookOnRuntime(this, hookPath, workspacePath, muxEnv, initLogger, abortSignal);
       } else {
         // No hook - signal completion immediately
         initLogger.logComplete(0);

@@ -25,3 +25,11 @@ Select Docker in the workspace creation UI and specify an image:
 - `node:20` - Node.js with git pre-installed
 - `python:3.12` - Python with git pre-installed
 - Custom images with your toolchain
+
+## Credential sharing
+
+Check "Share credentials" when creating a Docker workspace to enable git authentication:
+
+- **SSH agent forwarding** — Your SSH keys work inside the container without copying private keys
+- **Git config** — Host `~/.gitconfig` is mounted so git has your identity and settings
+- **GitHub CLI** — If `GH_TOKEN` is set in [project secrets](/config/project-secrets), mux runs `gh auth setup-git` to configure HTTPS authentication (requires `gh` CLI in the container image)
