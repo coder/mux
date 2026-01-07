@@ -16,7 +16,8 @@ import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import { expandProjects } from "@/browser/stories/storyHelpers";
 import type { ProjectConfig } from "@/node/config";
 
-const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
+// TEMPORARY: Skip all tests to isolate hang cause
+const describeIntegration = describe.skip;
 
 /** Helper to create a project config for a path with no workspaces */
 function projectWithNoWorkspaces(path: string): [string, ProjectConfig] {

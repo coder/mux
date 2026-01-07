@@ -134,15 +134,18 @@ async function isGitRepository(projectPath: string): Promise<boolean> {
  * Check if Docker daemon is running and accessible.
  */
 async function isDockerAvailable(): Promise<boolean> {
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   try {
     using proc = execAsync("docker info");
-    const timeout = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("timeout")), 5000)
-    );
+    const timeout = new Promise<never>((_, reject) => {
+      timeoutHandle = setTimeout(() => reject(new Error("timeout")), 5000);
+    });
     await Promise.race([proc.result, timeout]);
     return true;
   } catch {
     return false;
+  } finally {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
   }
 }
 
