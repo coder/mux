@@ -40,7 +40,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   const [mcpModalOpen, setMcpModalOpen] = useState(false);
 
   const handleOpenTerminal = useCallback(() => {
-    openTerminal(workspaceId, runtimeConfig);
+    void openTerminal(workspaceId, runtimeConfig);
   }, [workspaceId, openTerminal, runtimeConfig]);
 
   const handleOpenInEditor = useCallback(async () => {
