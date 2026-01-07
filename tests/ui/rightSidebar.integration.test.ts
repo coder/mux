@@ -105,26 +105,50 @@ describeIntegration("RightSidebar (UI)", () => {
           expect(costsTab.getAttribute("aria-selected")).toBe("false");
         });
 
-        // Verify persisted state updated
-        const persistedTab = localStorage.getItem(RIGHT_SIDEBAR_TAB_KEY);
-        expect(persistedTab).toBe(JSON.stringify("review"));
+        // Verify persisted layout updated (per-workspace)
+        const persistedLayoutRaw = localStorage.getItem(getRightSidebarLayoutKey(workspaceId));
+        expect(persistedLayoutRaw).toBeTruthy();
+        const persistedLayout = JSON.parse(persistedLayoutRaw ?? "null") as RightSidebarLayoutState;
+        expect(persistedLayout.root).toMatchObject({ type: "tabset", activeTab: "review" });
 
-        // Click Terminal tab
-        const terminalTab = sidebar.querySelector(
-          '[role="tab"][aria-controls*="terminal"]'
-        ) as HTMLElement;
-        expect(terminalTab).toBeTruthy();
-        fireEvent.click(terminalTab);
+        // Create a terminal via the "+" button
+        const newTerminalButton = await waitFor(
+          () => {
+            const btn = sidebar.querySelector('button[aria-label="New terminal"]');
+            if (!btn) throw new Error("New terminal button not found");
+            return btn as HTMLElement;
+          },
+          { timeout: 5_000 }
+        );
+        fireEvent.click(newTerminalButton);
 
-        // Wait for Terminal tab to become selected
+        // Wait for the terminal tab to appear and become selected
+        const terminalTab = await waitFor(
+          () => {
+            const tab = sidebar.querySelector(
+              '[role="tab"][aria-controls*="terminal:"]'
+            ) as HTMLElement | null;
+            if (!tab) throw new Error("Terminal tab not found");
+            return tab;
+          },
+          { timeout: 10_000 }
+        );
+
         await waitFor(() => {
           expect(terminalTab.getAttribute("aria-selected")).toBe("true");
           expect(reviewTab.getAttribute("aria-selected")).toBe("false");
         });
 
-        // Verify persisted state updated
-        const persistedTab2 = localStorage.getItem(RIGHT_SIDEBAR_TAB_KEY);
-        expect(persistedTab2).toBe(JSON.stringify("terminal"));
+        // Verify persisted layout now points at a terminal tab
+        const persistedLayoutRaw2 = localStorage.getItem(getRightSidebarLayoutKey(workspaceId));
+        expect(persistedLayoutRaw2).toBeTruthy();
+        const persistedLayout2 = JSON.parse(
+          persistedLayoutRaw2 ?? "null"
+        ) as RightSidebarLayoutState;
+        expect(persistedLayout2.root).toMatchObject({ type: "tabset" });
+        if (persistedLayout2.root.type === "tabset") {
+          expect(persistedLayout2.root.activeTab.startsWith("terminal:")).toBe(true);
+        }
       } finally {
         await cleanupView(view, cleanupDom);
       }
@@ -216,7 +240,18 @@ describeIntegration("RightSidebar (UI)", () => {
       const cleanupDom = installDom();
 
       // Start with Review tab selected
-      localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
+      const initialLayout: RightSidebarLayoutState = {
+        version: 1,
+        nextId: 2,
+        focusedTabsetId: "tabset-1",
+        root: {
+          type: "tabset",
+          id: "tabset-1",
+          tabs: ["costs", "review"],
+          activeTab: "review",
+        },
+      };
+      localStorage.setItem(getRightSidebarLayoutKey(workspaceId), JSON.stringify(initialLayout));
 
       const view = renderApp({
         apiClient: env.orpc,
@@ -315,9 +350,16 @@ describeIntegration("RightSidebar (UI)", () => {
         );
 
         // Switch to Costs tab and verify content
-        const costsTab = sidebar.querySelector(
-          '[role="tab"][aria-controls*="costs"]'
-        ) as HTMLElement;
+        const costsTab = await waitFor(
+          () => {
+            const tab = sidebar.querySelector(
+              '[role="tab"][aria-controls*="costs"]'
+            ) as HTMLElement | null;
+            if (!tab) throw new Error("Costs tab not found");
+            return tab;
+          },
+          { timeout: 5_000 }
+        );
         fireEvent.click(costsTab);
         await waitFor(() => {
           // Costs panel should contain model/cost info or "No usage data"
@@ -326,9 +368,16 @@ describeIntegration("RightSidebar (UI)", () => {
         });
 
         // Switch to Review tab and verify content
-        const reviewTab = sidebar.querySelector(
-          '[role="tab"][aria-controls*="review"]'
-        ) as HTMLElement;
+        const reviewTab = await waitFor(
+          () => {
+            const tab = sidebar.querySelector(
+              '[role="tab"][aria-controls*="review"]'
+            ) as HTMLElement | null;
+            if (!tab) throw new Error("Review tab not found");
+            return tab;
+          },
+          { timeout: 5_000 }
+        );
         fireEvent.click(reviewTab);
         await waitFor(() => {
           // Review panel should exist
@@ -336,11 +385,33 @@ describeIntegration("RightSidebar (UI)", () => {
           if (!reviewPanel) throw new Error("Review panel not found");
         });
 
-        // Switch to Terminal tab and verify content
-        const terminalTab = sidebar.querySelector(
-          '[role="tab"][aria-controls*="terminal"]'
-        ) as HTMLElement;
-        fireEvent.click(terminalTab);
+        // Create a terminal via the "+" button
+        const newTerminalButton = await waitFor(
+          () => {
+            const btn = sidebar.querySelector('button[aria-label="New terminal"]');
+            if (!btn) throw new Error("New terminal button not found");
+            return btn as HTMLElement;
+          },
+          { timeout: 5_000 }
+        );
+        fireEvent.click(newTerminalButton);
+
+        // Wait for the terminal tab to appear and verify its content
+        const terminalTab = await waitFor(
+          () => {
+            const tab = sidebar.querySelector(
+              '[role="tab"][aria-controls*="terminal:"]'
+            ) as HTMLElement | null;
+            if (!tab) throw new Error("Terminal tab not found");
+            return tab;
+          },
+          { timeout: 10_000 }
+        );
+
+        await waitFor(() => {
+          expect(terminalTab.getAttribute("aria-selected")).toBe("true");
+        });
+
         await waitFor(() => {
           // Terminal panel should exist (may contain terminal-view class)
           const terminalPanel = sidebar.querySelector('[role="tabpanel"][id*="terminal"]');
@@ -391,9 +462,16 @@ describeIntegration("RightSidebar (UI)", () => {
 
         // Simulate drag resize to 500px
         // Start on Costs tab (default)
-        const costsTab = sidebar.querySelector(
-          '[role="tab"][aria-controls*="costs"]'
-        ) as HTMLElement;
+        const costsTab = await waitFor(
+          () => {
+            const tab = sidebar.querySelector(
+              '[role="tab"][aria-controls*="costs"]'
+            ) as HTMLElement | null;
+            if (!tab) throw new Error("Costs tab not found");
+            return tab;
+          },
+          { timeout: 5_000 }
+        );
         expect(costsTab.getAttribute("aria-selected")).toBe("true");
 
         // Simulate mousedown on resize handle
@@ -420,9 +498,16 @@ describeIntegration("RightSidebar (UI)", () => {
         );
 
         // Switch to Review tab
-        const reviewTab = sidebar.querySelector(
-          '[role="tab"][aria-controls*="review"]'
-        ) as HTMLElement;
+        const reviewTab = await waitFor(
+          () => {
+            const tab = sidebar.querySelector(
+              '[role="tab"][aria-controls*="review"]'
+            ) as HTMLElement | null;
+            if (!tab) throw new Error("Review tab not found");
+            return tab;
+          },
+          { timeout: 5_000 }
+        );
         fireEvent.click(reviewTab);
 
         await waitFor(() => {
@@ -433,11 +518,27 @@ describeIntegration("RightSidebar (UI)", () => {
         const widthOnReview = parseInt(localStorage.getItem("right-sidebar:width") ?? "300", 10);
         expect(widthOnReview).toBe(persistedWidthOnCosts);
 
-        // Switch to Terminal tab
-        const terminalTab = sidebar.querySelector(
-          '[role="tab"][aria-controls*="terminal"]'
-        ) as HTMLElement;
-        fireEvent.click(terminalTab);
+        // Create a terminal via the "+" button (terminal tabs are not present by default)
+        const newTerminalButton = await waitFor(
+          () => {
+            const btn = sidebar.querySelector('button[aria-label="New terminal"]');
+            if (!btn) throw new Error("New terminal button not found");
+            return btn as HTMLElement;
+          },
+          { timeout: 5_000 }
+        );
+        fireEvent.click(newTerminalButton);
+
+        const terminalTab = await waitFor(
+          () => {
+            const tab = sidebar.querySelector(
+              '[role="tab"][aria-controls*="terminal:"]'
+            ) as HTMLElement | null;
+            if (!tab) throw new Error("Terminal tab not found");
+            return tab;
+          },
+          { timeout: 10_000 }
+        );
 
         await waitFor(() => {
           expect(terminalTab.getAttribute("aria-selected")).toBe("true");
@@ -479,9 +580,16 @@ describeIntegration("RightSidebar (UI)", () => {
         );
 
         // Switch to Review tab first
-        const reviewTab = sidebar.querySelector(
-          '[role="tab"][aria-controls*="review"]'
-        ) as HTMLElement;
+        const reviewTab = await waitFor(
+          () => {
+            const tab = sidebar.querySelector(
+              '[role="tab"][aria-controls*="review"]'
+            ) as HTMLElement | null;
+            if (!tab) throw new Error("Review tab not found");
+            return tab;
+          },
+          { timeout: 5_000 }
+        );
         fireEvent.click(reviewTab);
 
         await waitFor(() => {
@@ -515,9 +623,16 @@ describeIntegration("RightSidebar (UI)", () => {
         );
 
         // Switch to Costs tab
-        const costsTab = sidebar.querySelector(
-          '[role="tab"][aria-controls*="costs"]'
-        ) as HTMLElement;
+        const costsTab = await waitFor(
+          () => {
+            const tab = sidebar.querySelector(
+              '[role="tab"][aria-controls*="costs"]'
+            ) as HTMLElement | null;
+            if (!tab) throw new Error("Costs tab not found");
+            return tab;
+          },
+          { timeout: 5_000 }
+        );
         fireEvent.click(costsTab);
 
         await waitFor(() => {
