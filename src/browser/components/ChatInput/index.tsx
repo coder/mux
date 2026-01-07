@@ -468,6 +468,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const creationSections = creationProject?.sections ?? [];
 
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(() => pendingSectionId);
+  const [runtimeFieldError, setRuntimeFieldError] = useState<"docker" | "ssh" | null>(null);
 
   // Keep local selection in sync with the URL-driven pending section (sidebar "+" button).
   useEffect(() => {
@@ -537,6 +538,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           sections: creationSections,
           selectedSectionId,
           onSectionChange: setSelectedSectionId,
+          runtimeFieldError,
         } satisfies React.ComponentProps<typeof CreationControls>)
       : null;
   const hasTypedText = input.trim().length > 0;
@@ -546,13 +548,29 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     variant === "creation" &&
     creationState.selectedRuntime.mode === "docker" &&
     !creationState.selectedRuntime.image.trim();
-  const canSend =
-    (hasTypedText || hasImages || hasReviews) &&
-    !disabled &&
-    !isSendInFlight &&
-    !isDockerMissingImage;
+  const isSshMissingHost =
+    variant === "creation" &&
+    creationState.selectedRuntime.mode === "ssh" &&
+    !creationState.selectedRuntime.host.trim();
+  const canSend = (hasTypedText || hasImages || hasReviews) && !disabled && !isSendInFlight;
 
   const creationProjectPath = variant === "creation" ? props.projectPath : "";
+
+  // Clear runtime field error when runtime mode changes or field becomes valid
+  useEffect(() => {
+    if (variant !== "creation" || !runtimeFieldError) {
+      return;
+    }
+    const rt = creationState.selectedRuntime;
+    // Clear if mode changed or if the relevant field is now filled
+    if (rt.mode !== runtimeFieldError) {
+      setRuntimeFieldError(null);
+    } else if (rt.mode === "docker" && rt.image.trim()) {
+      setRuntimeFieldError(null);
+    } else if (rt.mode === "ssh" && rt.host.trim()) {
+      setRuntimeFieldError(null);
+    }
+  }, [variant, runtimeFieldError, creationState.selectedRuntime]);
 
   // Creation variant: keep the project-scoped model/thinking in sync with global per-mode defaults
   // so switching Plan/Exec uses the configured defaults (and respects "inherit" semantics).
@@ -1182,6 +1200,16 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
     // Route to creation handler for creation variant
     if (variant === "creation") {
+      // Validate runtime fields before creating workspace
+      if (isDockerMissingImage) {
+        setRuntimeFieldError("docker");
+        return;
+      }
+      if (isSshMissingHost) {
+        setRuntimeFieldError("ssh");
+        return;
+      }
+
       // Handle /init command in creation variant - populate input with init message
       if (messageText.startsWith("/")) {
         const parsed = parseCommand(messageText);

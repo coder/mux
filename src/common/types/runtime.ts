@@ -139,13 +139,13 @@ export function buildRuntimeConfig(parsed: ParsedRuntime): RuntimeConfig | undef
     case RUNTIME_MODE.SSH:
       return {
         type: RUNTIME_MODE.SSH,
-        host: parsed.host,
+        host: parsed.host.trim(),
         srcBaseDir: "~/mux", // Default remote base directory (tilde resolved by backend)
       };
     case RUNTIME_MODE.DOCKER:
       return {
         type: RUNTIME_MODE.DOCKER,
-        image: parsed.image,
+        image: parsed.image.trim(),
         shareCredentials: parsed.shareCredentials,
       };
     case RUNTIME_MODE.LOCAL:

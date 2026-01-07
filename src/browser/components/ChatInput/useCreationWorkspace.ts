@@ -214,6 +214,9 @@ export function useCreationWorkspace({
     async (messageText: string, imageParts?: ImagePart[]): Promise<boolean> => {
       if (!messageText.trim() || isSending || !api) return false;
 
+      // Build runtime config early (used later for workspace creation)
+      const runtimeConfig: RuntimeConfig | undefined = buildRuntimeConfig(settings.selectedRuntime);
+
       setIsSending(true);
       setToast(null);
       setCreatingWithIdentity(null);
@@ -229,33 +232,6 @@ export function useCreationWorkspace({
 
         // Set the confirmed identity for splash UI display
         setCreatingWithIdentity(identity);
-
-        // Build runtime config from selected runtime (preserves all fields like shareCredentials)
-        const runtimeConfig: RuntimeConfig | undefined = buildRuntimeConfig(
-          settings.selectedRuntime
-        );
-
-        // Validate Docker image is not empty
-        if (runtimeConfig?.type === "docker" && !runtimeConfig.image?.trim()) {
-          setToast({
-            id: Date.now().toString(),
-            type: "error",
-            message: "Docker image is required",
-          });
-          setIsSending(false);
-          return false;
-        }
-
-        // Validate SSH host is not empty
-        if (runtimeConfig?.type === "ssh" && !runtimeConfig.host?.trim()) {
-          setToast({
-            id: Date.now().toString(),
-            type: "error",
-            message: "SSH host is required",
-          });
-          setIsSending(false);
-          return false;
-        }
 
         // Read send options fresh from localStorage at send time to avoid
         // race conditions with React state updates (requestAnimationFrame batching

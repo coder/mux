@@ -36,6 +36,8 @@ interface CreationControlsProps {
   selectedSectionId?: string | null;
   /** Callback when section selection changes */
   onSectionChange?: (sectionId: string | null) => void;
+  /** Which runtime field (if any) is in error state for visual feedback */
+  runtimeFieldError?: "docker" | "ssh" | null;
 }
 
 /** Runtime type button group with icons and colors */
@@ -424,7 +426,10 @@ export function CreationControls(props: CreationControlsProps) {
                 onChange={(e) => onSelectedRuntimeChange({ mode: "ssh", host: e.target.value })}
                 placeholder="user@host"
                 disabled={props.disabled}
-                className="bg-bg-dark text-foreground border-border-medium focus:border-accent h-7 w-36 rounded-md border px-2 text-sm focus:outline-none disabled:opacity-50"
+                className={cn(
+                  "bg-bg-dark text-foreground border-border-medium focus:border-accent h-7 w-36 rounded-md border px-2 text-sm focus:outline-none disabled:opacity-50",
+                  props.runtimeFieldError === "ssh" && "border-red-500"
+                )}
               />
             </div>
           )}
@@ -449,7 +454,10 @@ export function CreationControls(props: CreationControlsProps) {
                 }
                 placeholder="node:20"
                 disabled={props.disabled}
-                className="bg-bg-dark text-foreground border-border-medium focus:border-accent h-7 w-36 rounded-md border px-2 text-sm focus:outline-none disabled:opacity-50"
+                className={cn(
+                  "bg-bg-dark text-foreground border-border-medium focus:border-accent h-7 w-36 rounded-md border px-2 text-sm focus:outline-none disabled:opacity-50",
+                  props.runtimeFieldError === "docker" && "border-red-500"
+                )}
               />
             </div>
           )}
