@@ -605,8 +605,10 @@ export class DockerRuntime extends RemoteRuntime {
     abortSignal?: AbortSignal
   ): Promise<void> {
     const timestamp = Date.now();
-    const remoteBundlePath = `/tmp/mux-bundle-${timestamp}.bundle`;
-    const localBundlePath = `/tmp/mux-bundle-${timestamp}.bundle`;
+    const bundleFilename = `mux-bundle-${timestamp}.bundle`;
+    const remoteBundlePath = `/tmp/${bundleFilename}`;
+    // Use os.tmpdir() for host path (Windows doesn't have /tmp)
+    const localBundlePath = path.join(os.tmpdir(), bundleFilename);
 
     await syncProjectViaGitBundle({
       projectPath,
