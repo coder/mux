@@ -580,6 +580,42 @@ export const workspace = {
       output: ResultSchema(z.void(), z.string()),
     },
   },
+  /**
+   * List files in a workspace for the file browser panel.
+   * Returns a hierarchical file tree structure.
+   */
+  listFiles: {
+    input: z.object({
+      workspaceId: z.string(),
+      /** When true, only show files that have git changes (vs trunk) */
+      gitChangesOnly: z.boolean().optional(),
+    }),
+    output: ResultSchema(FileTreeNodeSchema.nullable(), z.string()),
+  },
+  /**
+   * Read file content from a workspace for the file browser panel.
+   */
+  readFile: {
+    input: z.object({
+      workspaceId: z.string(),
+      /** Path relative to workspace root */
+      path: z.string(),
+      /** Maximum bytes to read (default 1MB for performance) */
+      maxBytes: z.number().int().positive().optional(),
+    }),
+    output: ResultSchema(
+      z.object({
+        content: z.string(),
+        /** Detected programming language for syntax highlighting */
+        language: z.string(),
+        /** True if file was truncated due to size limits */
+        truncated: z.boolean(),
+        /** Total file size in bytes */
+        totalSize: z.number(),
+      }),
+      z.string()
+    ),
+  },
 };
 
 export type WorkspaceSendMessageOutput = z.infer<typeof workspace.sendMessage.output>;

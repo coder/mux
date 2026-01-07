@@ -3,10 +3,13 @@ import { RIGHT_SIDEBAR_TAB_KEY, RIGHT_SIDEBAR_COLLAPSED_KEY } from "@/common/con
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useWorkspaceUsage, useWorkspaceStatsSnapshot } from "@/browser/stores/WorkspaceStore";
 import { useFeatureFlags } from "@/browser/contexts/FeatureFlagsContext";
+import { useExperimentValue } from "@/browser/contexts/ExperimentsContext";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { CostsTab } from "./RightSidebar/CostsTab";
 import { StatsTab } from "./RightSidebar/StatsTab";
 import { ReviewPanel } from "./RightSidebar/CodeReview/ReviewPanel";
+import { FilePanel } from "./RightSidebar/FilePanel";
 import { sumUsageHistory, type ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import { matchesKeybind, KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
@@ -84,7 +87,7 @@ const SidebarContainer: React.FC<SidebarContainerProps> = ({
   );
 };
 
-type TabType = "costs" | "stats" | "review";
+type TabType = "costs" | "stats" | "review" | "files";
 
 export type { TabType };
 
@@ -122,12 +125,16 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
 
   const { statsTabState } = useFeatureFlags();
   const statsTabEnabled = Boolean(statsTabState?.enabled);
+  const filePanelEnabled = useExperimentValue(EXPERIMENT_IDS.FILE_PANEL);
 
   React.useEffect(() => {
     if (!statsTabEnabled && selectedTab === "stats") {
       setSelectedTab("costs");
     }
-  }, [statsTabEnabled, selectedTab, setSelectedTab]);
+    if (!filePanelEnabled && selectedTab === "files") {
+      setSelectedTab("costs");
+    }
+  }, [statsTabEnabled, filePanelEnabled, selectedTab, setSelectedTab]);
 
   // Trigger for focusing Review panel (preserves hunk selection)
   const [focusTrigger, setFocusTrigger] = React.useState(0);
@@ -151,12 +158,16 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         e.preventDefault();
         setSelectedTab("stats");
         setCollapsed(false);
+      } else if (filePanelEnabled && matchesKeybind(e, KEYBINDS.FILES_TAB)) {
+        e.preventDefault();
+        setSelectedTab("files");
+        setCollapsed(false);
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [setSelectedTab, setCollapsed, statsTabEnabled]);
+  }, [setSelectedTab, setCollapsed, statsTabEnabled, filePanelEnabled]);
 
   const usage = useWorkspaceUsage(workspaceId);
 
@@ -164,9 +175,11 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   const costsTabId = `${baseId}-tab-costs`;
   const statsTabId = `${baseId}-tab-stats`;
   const reviewTabId = `${baseId}-tab-review`;
+  const filesTabId = `${baseId}-tab-files`;
   const costsPanelId = `${baseId}-panel-costs`;
   const statsPanelId = `${baseId}-panel-stats`;
   const reviewPanelId = `${baseId}-panel-review`;
+  const filesPanelId = `${baseId}-panel-files`;
 
   // Calculate session cost for tab display
   const sessionCost = React.useMemo(() => {
@@ -201,7 +214,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   return (
     <SidebarContainer
       collapsed={collapsed}
-      wide={selectedTab === "review" && !width} // Auto-wide only if not drag-resizing
+      wide={(selectedTab === "review" || selectedTab === "files") && !width} // Auto-wide only if not drag-resizing
       customWidth={width} // Per-tab resized width from AIView
       isResizing={isResizing}
       role="complementary"
@@ -318,9 +331,37 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
                 </TooltipContent>
               </Tooltip>
             )}
+            {filePanelEnabled && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    className={cn(
+                      "rounded-md px-3 py-1 text-xs font-medium transition-all duration-150 flex items-baseline gap-1.5",
+                      selectedTab === "files"
+                        ? "bg-hover text-foreground"
+                        : "bg-transparent text-muted hover:bg-hover/50 hover:text-foreground"
+                    )}
+                    onClick={() => setSelectedTab("files")}
+                    id={filesTabId}
+                    role="tab"
+                    type="button"
+                    aria-selected={selectedTab === "files"}
+                    aria-controls={filesPanelId}
+                  >
+                    Files
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" align="center">
+                  {formatKeybind(KEYBINDS.FILES_TAB)}
+                </TooltipContent>
+              </Tooltip>
+            )}
           </div>
           <div
-            className={cn("flex-1 overflow-y-auto", selectedTab === "review" ? "p-0" : "p-[15px]")}
+            className={cn(
+              "flex-1 overflow-y-auto",
+              selectedTab === "review" || selectedTab === "files" ? "p-0" : "p-[15px]"
+            )}
           >
             {selectedTab === "costs" && (
               <div role="tabpanel" id={costsPanelId} aria-labelledby={costsTabId}>
@@ -350,6 +391,18 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
               <div role="tabpanel" id={statsPanelId} aria-labelledby={statsTabId}>
                 <ErrorBoundary workspaceInfo="Stats tab">
                   <StatsTab workspaceId={workspaceId} />
+                </ErrorBoundary>
+              </div>
+            )}
+            {filePanelEnabled && selectedTab === "files" && (
+              <div
+                role="tabpanel"
+                id={filesPanelId}
+                aria-labelledby={filesTabId}
+                className="h-full"
+              >
+                <ErrorBoundary workspaceInfo="Files panel">
+                  <FilePanel key={workspaceId} workspaceId={workspaceId} />
                 </ErrorBoundary>
               </div>
             )}

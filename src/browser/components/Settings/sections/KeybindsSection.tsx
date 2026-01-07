@@ -30,6 +30,7 @@ const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
   COSTS_TAB: "Costs tab",
   REVIEW_TAB: "Review tab",
   STATS_TAB: "Stats tab",
+  FILES_TAB: "Files tab",
   REFRESH_REVIEW: "Refresh diff",
   FOCUS_REVIEW_SEARCH: "Search in review",
   TOGGLE_HUNK_READ: "Toggle hunk read",
@@ -79,7 +80,7 @@ const KEYBIND_GROUPS: Array<{ label: string; keys: Array<keyof typeof KEYBINDS> 
   },
   {
     label: "Tabs",
-    keys: ["COSTS_TAB", "REVIEW_TAB", "STATS_TAB"],
+    keys: ["COSTS_TAB", "REVIEW_TAB", "STATS_TAB", "FILES_TAB"],
   },
   {
     label: "Code Review",
