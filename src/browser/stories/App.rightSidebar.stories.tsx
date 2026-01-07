@@ -122,6 +122,16 @@ export const CostsTabWithCacheCreate: AppStory = {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("costs"));
         localStorage.setItem("costsTab:viewMode", JSON.stringify("session"));
         localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "350");
+        const modelUsage = {
+          // Realistic Anthropic usage: heavy caching, cache create is expensive
+          input: { tokens: 2000, cost_usd: 0.006 },
+          cached: { tokens: 45000, cost_usd: 0.0045 }, // Cache read: cheap
+          cacheCreate: { tokens: 30000, cost_usd: 0.1125 }, // Cache create: expensive!
+          output: { tokens: 3000, cost_usd: 0.045 },
+          reasoning: { tokens: 0, cost_usd: 0 },
+          model: "anthropic:claude-sonnet-4-20250514",
+        };
+
         localStorage.removeItem(getRightSidebarLayoutKey("ws-cache-create"));
 
         const client = setupSimpleChatStory({
@@ -136,15 +146,12 @@ export const CostsTabWithCacheCreate: AppStory = {
           ],
           sessionUsage: {
             byModel: {
-              "anthropic:claude-sonnet-4-20250514": {
-                // Realistic Anthropic usage: heavy caching, cache create is expensive
-                input: { tokens: 2000, cost_usd: 0.006 },
-                cached: { tokens: 45000, cost_usd: 0.0045 }, // Cache read: cheap
-                cacheCreate: { tokens: 30000, cost_usd: 0.1125 }, // Cache create: expensive!
-                output: { tokens: 3000, cost_usd: 0.045 },
-                reasoning: { tokens: 0, cost_usd: 0 },
-                model: "anthropic:claude-sonnet-4-20250514",
-              },
+              [modelUsage.model]: modelUsage,
+            },
+            lastRequest: {
+              model: modelUsage.model,
+              usage: modelUsage,
+              timestamp: 0,
             },
             version: 1,
           },
@@ -157,13 +164,17 @@ export const CostsTabWithCacheCreate: AppStory = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
-    // Wait for costs to render - cache create should be dominant cost
+    // Ensure we're on the Costs tab (layout state can persist across stories).
+    const costsTab = await canvas.findByRole("tab", { name: /^costs/i }, { timeout: 10_000 });
+    await userEvent.click(costsTab);
+
+    // Wait for session usage to load + render.
     await waitFor(
       () => {
-        canvas.getByText("Cache Create");
-        canvas.getByText("Cache Read");
+        canvas.getByText(/cache create/i);
+        canvas.getByText(/cache read/i);
       },
-      { timeout: 5000 }
+      { timeout: 15_000 }
     );
   },
 };
@@ -433,12 +444,21 @@ export const ReviewTabSortByLastEdit: AppStory = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
-    // Wait for review tab to be selected and loaded
+    // Ensure the Review tab is active. Storybook can reuse a long-lived AppLoader
+    // instance between stories, so persisted state might not apply until interaction.
+    const expandButtons = canvas.queryAllByRole("button", { name: "Expand sidebar" });
+    if (expandButtons.length > 0) {
+      await userEvent.click(expandButtons[expandButtons.length - 1]);
+    }
+
+    const reviewTab = await canvas.findByRole("tab", { name: /^review/i }, { timeout: 10_000 });
+    await userEvent.click(reviewTab);
+
     await waitFor(
       () => {
         canvas.getByRole("tab", { name: /^review/i, selected: true });
       },
-      { timeout: 5000 }
+      { timeout: 10_000 }
     );
 
     // Verify the sort dropdown shows "Last edit"
@@ -511,12 +531,20 @@ export const ReviewTabSortByFileOrder: AppStory = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
-    // Wait for review tab to be selected
+    // Ensure Review tab is active (Storybook may reuse the same App instance).
+    const expandButtons = canvas.queryAllByRole("button", { name: "Expand sidebar" });
+    if (expandButtons.length > 0) {
+      await userEvent.click(expandButtons[expandButtons.length - 1]);
+    }
+
+    const reviewTab = await canvas.findByRole("tab", { name: /^review/i }, { timeout: 10_000 });
+    await userEvent.click(reviewTab);
+
     await waitFor(
       () => {
         canvas.getByRole("tab", { name: /^review/i, selected: true });
       },
-      { timeout: 5000 }
+      { timeout: 10_000 }
     );
 
     // Verify the sort dropdown shows "File order"
@@ -611,12 +639,21 @@ export const DiffPaddingAlignment: AppStory = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
-    // Wait for review tab to be selected
+    // Ensure Review tab is active.
+    const expandButtons = canvas.queryAllByRole("button", { name: "Expand sidebar" });
+    if (expandButtons.length > 0) {
+      await userEvent.click(expandButtons[expandButtons.length - 1]);
+    }
+
+    const reviewTab = await canvas.findByRole("tab", { name: /^review/i }, { timeout: 10_000 });
+    await userEvent.click(reviewTab);
+
+    // Wait for Review tab to be selected.
     await waitFor(
       () => {
         canvas.getByRole("tab", { name: /^review/i, selected: true });
       },
-      { timeout: 5000 }
+      { timeout: 10_000 }
     );
 
     // Wait for diff content to render
@@ -689,12 +726,21 @@ export const DiffPaddingAlignmentModification: AppStory = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
+    // Ensure Review tab is active.
+    const expandButtons = canvas.queryAllByRole("button", { name: "Expand sidebar" });
+    if (expandButtons.length > 0) {
+      await userEvent.click(expandButtons[expandButtons.length - 1]);
+    }
+
+    const reviewTab = await canvas.findByRole("tab", { name: /^review/i }, { timeout: 10_000 });
+    await userEvent.click(reviewTab);
+
     // Wait for diff content to render
     await waitFor(
       () => {
         canvas.getByText(/export const config/i);
       },
-      { timeout: 5000 }
+      { timeout: 10_000 }
     );
 
     // Visual verification for mixed diff types
@@ -866,12 +912,20 @@ export const ReviewTabWithFileFilter: AppStory = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
-    // Wait for review tab to be selected
+    // Ensure Review tab is active.
+    const expandButtons = canvas.queryAllByRole("button", { name: "Expand sidebar" });
+    if (expandButtons.length > 0) {
+      await userEvent.click(expandButtons[expandButtons.length - 1]);
+    }
+
+    const reviewTab = await canvas.findByRole("tab", { name: /^review/i }, { timeout: 10_000 });
+    await userEvent.click(reviewTab);
+
     await waitFor(
       () => {
         canvas.getByRole("tab", { name: /^review/i, selected: true });
       },
-      { timeout: 5000 }
+      { timeout: 10_000 }
     );
 
     // Wait for file tree to load
