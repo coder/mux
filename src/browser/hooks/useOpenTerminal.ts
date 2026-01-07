@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import { useAPI } from "@/browser/contexts/API";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { isSSHRuntime } from "@/common/types/runtime";
+import { createTerminalSession, openTerminalPopout } from "@/browser/utils/terminal";
 
 /**
  * Hook to open a terminal window for a workspace.
@@ -32,29 +33,8 @@ export function useOpenTerminal() {
       // because the PTY service handles the SSH connection to the remote host
       if (isBrowser || isSSH) {
         // Create terminal session first - window needs sessionId to connect
-        const session = await api.terminal.create({
-          workspaceId,
-          cols: 80,
-          rows: 24,
-        });
-
-        if (isBrowser) {
-          // In browser mode, we must open the window client-side using window.open
-          // The backend cannot open a window on the user's client
-          const params = new URLSearchParams({
-            workspaceId,
-            sessionId: session.sessionId,
-          });
-          window.open(
-            `/terminal.html?${params.toString()}`,
-            `terminal-${workspaceId}-${Date.now()}`,
-            "width=1000,height=600,popup=yes"
-          );
-        }
-
-        // Open web terminal window (Electron pops up BrowserWindow, browser already opened above)
-        // For SSH: this is the only way to get a terminal that works through PTY service
-        void api.terminal.openWindow({ workspaceId, sessionId: session.sessionId });
+        const session = await createTerminalSession(api, workspaceId);
+        openTerminalPopout(api, workspaceId, session.sessionId);
       } else {
         // In Electron (desktop) mode with local workspace, open the native system terminal
         // This spawns the user's preferred terminal emulator (Ghostty, Terminal.app, etc.)

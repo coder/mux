@@ -1,0 +1,66 @@
+/**
+ * Terminal utilities for managing terminal sessions and windows.
+ *
+ * Consolidates common terminal operations used across:
+ * - useOpenTerminal hook (new pop-out terminals)
+ * - RightSidebar (integrated terminals, pop-out existing)
+ */
+
+import type { RouterClient } from "@orpc/server";
+import type { AppRouter } from "@/node/orpc/router";
+
+type APIClient = RouterClient<AppRouter>;
+
+/** Default terminal size used when creating sessions before the terminal is mounted */
+export const DEFAULT_TERMINAL_SIZE = { cols: 80, rows: 24 };
+
+/**
+ * Open a terminal in a pop-out window.
+ *
+ * Handles both browser mode (window.open) and Electron mode (terminal.openWindow).
+ * In browser mode, opens the window client-side since the backend can't open windows.
+ * In Electron mode, the backend opens a BrowserWindow.
+ *
+ * @param api - The API client
+ * @param workspaceId - Workspace ID
+ * @param sessionId - Terminal session ID (required)
+ */
+export function openTerminalPopout(
+  api: APIClient,
+  workspaceId: string,
+  sessionId: string
+): void {
+  const isBrowser = !window.api;
+
+  if (isBrowser) {
+    // In browser mode, we must open the window client-side
+    // The backend cannot open a window on the user's client
+    const params = new URLSearchParams({ workspaceId, sessionId });
+    window.open(
+      `/terminal.html?${params.toString()}`,
+      `terminal-${workspaceId}-${Date.now()}`,
+      "width=1000,height=600,popup=yes"
+    );
+  }
+
+  // Open via backend (Electron pops up BrowserWindow, browser already opened above)
+  void api.terminal.openWindow({ workspaceId, sessionId });
+}
+
+/**
+ * Create a new terminal session with default size.
+ *
+ * @param api - The API client
+ * @param workspaceId - Workspace ID
+ * @returns The created session with sessionId
+ */
+export async function createTerminalSession(
+  api: APIClient,
+  workspaceId: string
+): Promise<{ sessionId: string; workspaceId: string; cols: number; rows: number }> {
+  return api.terminal.create({
+    workspaceId,
+    cols: DEFAULT_TERMINAL_SIZE.cols,
+    rows: DEFAULT_TERMINAL_SIZE.rows,
+  });
+}

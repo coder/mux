@@ -54,6 +54,7 @@ import {
   type TabDragData,
 } from "./RightSidebar/RightSidebarTabStrip";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { createTerminalSession, openTerminalPopout } from "@/browser/utils/terminal";
 import {
   DndContext,
   DragOverlay,
@@ -809,16 +810,10 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   const handleAddTerminal = React.useCallback(() => {
     if (!api) return;
 
-    // We need terminal size to create the session, but we don't have it yet.
-    // Use reasonable defaults - the terminal will resize once mounted.
-    const defaultSize = { cols: 80, rows: 24 };
-
-    void api.terminal
-      .create({ workspaceId, cols: defaultSize.cols, rows: defaultSize.rows })
-      .then((session) => {
-        const newTab = makeTerminalTabType(session.sessionId);
-        setLayout((prev) => addTabToFocusedTabset(prev, newTab));
-      });
+    void createTerminalSession(api, workspaceId).then((session) => {
+      const newTab = makeTerminalTabType(session.sessionId);
+      setLayout((prev) => addTabToFocusedTabset(prev, newTab));
+    });
   }, [api, workspaceId, setLayout]);
 
   // Handler to close a terminal tab
@@ -846,30 +841,14 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   // Handler to pop out a terminal to a separate window, then remove the tab
   const handlePopOutTerminal = React.useCallback(
     (tab: TabType) => {
+      if (!api) return;
+
       // Session ID is embedded in the tab type
       const sessionId = getTerminalSessionId(tab);
+      if (!sessionId) return; // Can't pop out without a session
 
-      // Check if running in browser mode (window.api is only available in Electron)
-      const isBrowser = !window.api;
-
-      // Build URL with sessionId for seamless handoff
-      const params = new URLSearchParams({ workspaceId });
-      if (sessionId) {
-        params.set("sessionId", sessionId);
-      }
-      const url = `/terminal.html?${params.toString()}`;
-
-      if (isBrowser) {
-        // In browser mode, open client-side
-        window.open(
-          url,
-          `terminal-${workspaceId}-${Date.now()}`,
-          "width=1000,height=600,popup=yes"
-        );
-      }
-
-      // Open via backend (Electron pops up BrowserWindow, browser already opened above)
-      void api?.terminal.openWindow({ workspaceId, sessionId: sessionId ?? undefined });
+      // Open the pop-out window (handles browser vs Electron modes)
+      openTerminalPopout(api, workspaceId, sessionId);
 
       // Remove the tab from the sidebar (terminal now lives in its own window)
       // Don't close the session - the pop-out window takes over
