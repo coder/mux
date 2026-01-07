@@ -111,6 +111,7 @@ Avoid mock-heavy tests that verify implementation details rather than behavior. 
 ### General Rules
 
 - Always run `make typecheck` after changes (covers main + renderer).
+- **Before committing, run `make static-check`** (includes typecheck, lint, fmt-check, and docs link validation).
 - Place unit tests beside implementation (`*.test.ts`). Reserve `tests/` for heavy integration/E2E cases.
 - Run unit suites with `bun test path/to/file.test.ts`.
 - Skip tautological tests (simple mappings, identical copies of implementation); focus on invariants and boundary failures.
