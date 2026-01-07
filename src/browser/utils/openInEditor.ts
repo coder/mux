@@ -74,8 +74,13 @@ export async function openInEditor(args: {
     // VS Code's attached-container URI scheme only supports opening folders as workspaces,
     // not individual files. Attempting to open a file path results in VS Code treating it
     // as a workspace root and failing with "chdir failed: not a directory".
-    // Workaround: open the parent directory so the file is visible in the file tree.
-    const targetDir = args.targetPath.substring(0, args.targetPath.lastIndexOf("/")) || "/";
+    // For file paths: open the parent directory so the file is visible in the file tree.
+    // For directory paths (e.g., /src): open as-is.
+    const lastSlash = args.targetPath.lastIndexOf("/");
+    const isRootLevelPath = lastSlash === 0; // e.g., /src, /var
+    const targetDir = isRootLevelPath
+      ? args.targetPath
+      : args.targetPath.substring(0, lastSlash) || "/";
     const deepLink = getDockerDeepLink({
       editor: editorConfig.editor as DeepLinkEditor,
       containerName,

@@ -46,6 +46,16 @@ function logSSHBackoffWait(initLogger: InitLogger, waitMs: number): void {
   initLogger.logStep(`SSH unavailable; retrying in ${secs}s...`);
 }
 
+/** Truncate SSH stderr for error logging (keep first line, max 200 chars) */
+function truncateSSHError(stderr: string): string {
+  const trimmed = stderr.trim();
+  if (!trimmed) return "exit code 255";
+  // Take first line only (SSH errors are usually single-line)
+  const firstLine = trimmed.split("\n")[0];
+  if (firstLine.length <= 200) return firstLine;
+  return firstLine.slice(0, 197) + "...";
+}
+
 // Re-export SSHRuntimeConfig from connection pool (defined there to avoid circular deps)
 export type { SSHRuntimeConfig } from "./sshConnectionPool";
 
@@ -128,11 +138,11 @@ export class SSHRuntime extends RemoteRuntime {
   /**
    * Handle exit codes for SSH connection pool health tracking.
    */
-  protected onExitCode(exitCode: number, _options: ExecOptions): void {
+  protected override onExitCode(exitCode: number, _options: ExecOptions, stderr: string): void {
     // SSH exit code 255 indicates connection failure - report to pool for backoff
     // This prevents thundering herd when a previously healthy host goes down
     if (exitCode === 255) {
-      sshConnectionPool.reportFailure(this.config, "SSH connection failed (exit code 255)");
+      sshConnectionPool.reportFailure(this.config, truncateSSHError(stderr));
     } else {
       sshConnectionPool.markHealthy(this.config);
     }

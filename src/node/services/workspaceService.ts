@@ -2036,10 +2036,11 @@ export class WorkspaceService extends EventEmitter {
         : shellQuote(expandTilde(planPath));
     // For legacy path: SSH/Docker use $HOME expansion, local expands tilde
     const quotedLegacyPlanPath =
-      isDocker || isSSH ? expandTildeForSSH(legacyPlanPath) : shellQuote(expandTilde(legacyPlanPath));
+      isDocker || isSSH
+        ? expandTildeForSSH(legacyPlanPath)
+        : shellQuote(expandTilde(legacyPlanPath));
 
     if (isDocker || isSSH) {
-
       try {
         // Use exec to delete files since runtime doesn't have a deleteFile method.
         // Use runtime workspace path (not host projectPath) for Docker containers.

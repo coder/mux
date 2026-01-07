@@ -83,8 +83,9 @@ export abstract class RemoteRuntime implements Runtime {
   /**
    * Called when exec completes with an exit code.
    * Subclasses can use this for connection pool health tracking.
+   * @param stderr - Captured stderr for error reporting (e.g., SSH connection failures)
    */
-  protected onExitCode(_exitCode: number, _options: ExecOptions): void {
+  protected onExitCode(_exitCode: number, _options: ExecOptions, _stderr: string): void {
     // Default: no-op. SSH overrides to report to connection pool.
   }
 
@@ -139,6 +140,13 @@ export abstract class RemoteRuntime implements Runtime {
     // Wrap in DisposableProcess for cleanup
     const disposable = new DisposableProcess(childProcess);
 
+    // Capture stderr for error reporting (e.g., SSH exit code 255 failures)
+    // This is collected in parallel with passing stderr stream to caller
+    let stderrForErrorReporting = "";
+    childProcess.stderr?.on("data", (data: Buffer) => {
+      stderrForErrorReporting += data.toString();
+    });
+
     // Track if we killed the process due to timeout or abort
     let timedOut = false;
     let aborted = false;
@@ -157,7 +165,7 @@ export abstract class RemoteRuntime implements Runtime {
         const finalExitCode = code ?? (signal ? -1 : 0);
 
         // Let subclass handle exit code (e.g., SSH connection pool)
-        this.onExitCode(finalExitCode, options);
+        this.onExitCode(finalExitCode, options, stderrForErrorReporting);
 
         resolve(finalExitCode);
       });
