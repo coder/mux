@@ -41,6 +41,7 @@ export interface WorkspaceUI {
   readonly metaSidebar: {
     expectVisible(): Promise<void>;
     selectTab(label: string): Promise<void>;
+    addTerminal(): Promise<void>;
     expectTerminalNoError(): Promise<void>;
     expectTerminalError(expectedText?: string): Promise<void>;
   };
@@ -439,6 +440,17 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
       if (selected !== "true") {
         throw new Error(`Tab "${label}" did not enter selected state`);
       }
+    },
+
+    async addTerminal(): Promise<void> {
+      // Click the "+" button to add a new terminal tab
+      const addButton = page.getByRole("button", { name: "New terminal" });
+      await expect(addButton).toBeVisible();
+      await addButton.click();
+      // Wait for Terminal tab to appear and be selected
+      const terminalTab = page.getByRole("tab", { name: "Terminal" });
+      await expect(terminalTab).toBeVisible({ timeout: 5000 });
+      await expect(terminalTab).toHaveAttribute("aria-selected", "true");
     },
 
     async expectTerminalNoError(): Promise<void> {

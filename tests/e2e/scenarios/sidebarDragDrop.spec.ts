@@ -49,6 +49,9 @@ test.describe("sidebar drag and drop", () => {
     const sidebar = page.getByRole("complementary", { name: "Workspace insights" });
     await expect(sidebar).toBeVisible({ timeout: 5000 });
 
+    // Add a terminal tab first (not present by default)
+    await ui.metaSidebar.addTerminal();
+
     const tablist = sidebar.getByRole("tablist");
     const costsTab = tablist.getByRole("tab", { name: /Costs/ });
     const reviewTab = tablist.getByRole("tab", { name: /Review/ });
@@ -57,9 +60,10 @@ test.describe("sidebar drag and drop", () => {
     await expect(reviewTab).toBeVisible({ timeout: 5000 });
     await expect(terminalTab).toBeVisible({ timeout: 5000 });
 
-    // Costs tab is selected by default - Review and Terminal are inactive
+    // Terminal tab is selected after adding; select Costs to make Terminal inactive
+    await costsTab.click();
     await expect(costsTab).toHaveAttribute("aria-selected", "true");
-    await expect(reviewTab).toHaveAttribute("aria-selected", "false");
+    await expect(terminalTab).toHaveAttribute("aria-selected", "false");
 
     // Verify initial order: costs, review, terminal
     const initialTabs = await tablist.getByRole("tab").all();
@@ -88,6 +92,9 @@ test.describe("sidebar drag and drop", () => {
 
     const sidebar = page.getByRole("complementary", { name: "Workspace insights" });
     await expect(sidebar).toBeVisible();
+
+    // Add a terminal tab first (not present by default)
+    await ui.metaSidebar.addTerminal();
 
     const tablist = sidebar.getByRole("tablist");
     await expect(tablist).toBeVisible();
