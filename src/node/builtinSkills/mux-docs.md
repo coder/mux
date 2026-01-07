@@ -71,6 +71,7 @@ Use this index to find a page's:
     - **Hooks**
       - Init Hooks (`/hooks/init`) → `references/docs/hooks/init.mdx` — Run setup commands automatically when creating new workspaces
       - Tool Hooks (`/hooks/tools`) → `references/docs/hooks/tools.mdx` — Block dangerous commands, lint after edits, and set up your environment
+      - Environment Variables (`/hooks/environment-variables`) → `references/docs/hooks/environment-variables.mdx` — Environment variables available in agent bash commands and hooks
   - **Agents**
     - Agents (`/agents`) → `references/docs/agents/index.mdx` — Define custom agents (modes + subagents) with Markdown files
     - Instruction Files (`/agents/instruction-files`) → `references/docs/agents/instruction-files.mdx` — Configure agent behavior with AGENTS.md files

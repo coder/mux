@@ -1,0 +1,46 @@
+---
+title: Environment Variables
+description: Environment variables available in agent bash commands and hooks
+---
+
+The following environment variables are available in all agent bash tool executions, including [init hooks](/hooks/init).
+
+## Available Variables
+
+| Variable             | Description                                                                                                                   |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `MUX_PROJECT_PATH`   | Absolute path to the project root on the **local machine**. Always refers to your local project path, even on SSH workspaces. |
+| `MUX_RUNTIME`        | Runtime type: `"local"`, `"worktree"`, `"ssh"`, or `"docker"`                                                                 |
+| `MUX_WORKSPACE_NAME` | Name of the workspace (typically the branch name)                                                                             |
+| `MUX_MODEL_STRING`   | Model identifier (e.g., `"anthropic:claude-sonnet-4-20250514"`)                                                               |
+| `MUX_THINKING_LEVEL` | Reasoning level: `"off"`, `"low"`, `"medium"`, or `"high"`                                                                    |
+| `MUX_COSTS_USD`      | Cumulative session costs in USD, formatted to 2 decimal places (e.g., `"1.23"`)                                               |
+
+## Usage Example
+
+```bash
+#!/usr/bin/env bash
+
+echo "Project: $MUX_PROJECT_PATH"
+echo "Runtime: $MUX_RUNTIME"
+echo "Workspace: $MUX_WORKSPACE_NAME"
+echo "Model: $MUX_MODEL_STRING"
+echo "Thinking: $MUX_THINKING_LEVEL"
+echo "Costs: \$${MUX_COSTS_USD:-0.00}"
+
+# Runtime-specific behavior
+if [ "$MUX_RUNTIME" = "ssh" ]; then
+  echo "Running on SSH remote"
+elif [ "$MUX_RUNTIME" = "docker" ]; then
+  echo "Running in Docker container"
+else
+  echo "Running locally"
+fi
+```
+
+## Use Cases
+
+- **PR footers**: Include model and cost information in automated PR descriptions
+- **Conditional logic**: Adapt scripts based on runtime environment
+- **Logging**: Track which model and settings were used for a task
+- **Cost monitoring**: Check cumulative costs before expensive operations

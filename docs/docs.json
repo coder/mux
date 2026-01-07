@@ -69,7 +69,8 @@
                 "group": "Hooks",
                 "pages": [
                   "hooks/init",
-                  "hooks/tools"
+                  "hooks/tools",
+                  "hooks/environment-variables"
                 ]
               }
             ]

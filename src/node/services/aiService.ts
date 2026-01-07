@@ -45,6 +45,7 @@ import { applyCacheControl } from "@/common/utils/ai/cacheStrategy";
 import type { HistoryService } from "./historyService";
 import type { PartialService } from "./partialService";
 import type { SessionUsageService } from "./sessionUsageService";
+import { sumUsageHistory, getTotalCost } from "@/common/utils/tokens/usageAggregator";
 import { buildSystemMessage, readToolInstructions } from "./systemMessage";
 import { getTokenizerForModel } from "@/node/utils/main/tokenizer";
 import type { TelemetryService } from "@/node/services/telemetryService";
@@ -398,6 +399,7 @@ export class AIService extends EventEmitter {
   private mockModeEnabled: boolean;
   private mockAiStreamPlayer?: MockAiStreamPlayer;
   private readonly backgroundProcessManager?: BackgroundProcessManager;
+  private readonly sessionUsageService?: SessionUsageService;
   private taskService?: TaskService;
 
   constructor(
@@ -420,6 +422,7 @@ export class AIService extends EventEmitter {
     this.partialService = partialService;
     this.initStateManager = initStateManager;
     this.backgroundProcessManager = backgroundProcessManager;
+    this.sessionUsageService = sessionUsageService;
     this.streamManager = new StreamManager(historyService, partialService, sessionUsageService);
     void this.ensureSessionsDir();
     this.setupStreamEventForwarding();
@@ -1427,6 +1430,16 @@ export class AIService extends EventEmitter {
         agentSystemPrompt
       );
 
+      // Calculate cumulative session costs for MUX_COSTS_USD env var
+      let sessionCostsUsd: number | undefined;
+      if (this.sessionUsageService) {
+        const sessionUsage = await this.sessionUsageService.getSessionUsage(workspaceId);
+        if (sessionUsage) {
+          const allUsage = sumUsageHistory(Object.values(sessionUsage.byModel));
+          sessionCostsUsd = getTotalCost(allUsage);
+        }
+      }
+
       // Get model-specific tools with workspace path (correct for local or remote)
       const allTools = await getToolsForModel(
         modelString,
@@ -1441,6 +1454,7 @@ export class AIService extends EventEmitter {
             {
               modelString,
               thinkingLevel: thinkingLevel ?? "off",
+              costsUsd: sessionCostsUsd,
             }
           ),
           runtimeTempDir,

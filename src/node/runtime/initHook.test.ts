@@ -120,6 +120,7 @@ describe("getMuxEnv", () => {
     expect(env.MUX_WORKSPACE_NAME).toBe("feature-branch");
     expect(env.MUX_MODEL_STRING).toBeUndefined();
     expect(env.MUX_THINKING_LEVEL).toBeUndefined();
+    expect(env.MUX_COSTS_USD).toBeUndefined();
   });
 
   it("should include model + thinking env vars when provided", () => {
@@ -140,5 +141,31 @@ describe("getMuxEnv", () => {
 
     expect(env.MUX_MODEL_STRING).toBe("anthropic:claude-3-5-sonnet");
     expect(env.MUX_THINKING_LEVEL).toBe("off");
+  });
+
+  it("should include MUX_COSTS_USD when costsUsd is provided", () => {
+    const env = getMuxEnv("/path/to/project", "worktree", "feature-branch", {
+      modelString: "anthropic:claude-opus-4-5",
+      thinkingLevel: "high",
+      costsUsd: 1.2345,
+    });
+
+    expect(env.MUX_COSTS_USD).toBe("1.23");
+  });
+
+  it("should include MUX_COSTS_USD=0.00 when costsUsd is 0", () => {
+    const env = getMuxEnv("/path/to/project", "worktree", "main", {
+      costsUsd: 0,
+    });
+
+    expect(env.MUX_COSTS_USD).toBe("0.00");
+  });
+
+  it("should not include MUX_COSTS_USD when costsUsd is undefined", () => {
+    const env = getMuxEnv("/path/to/project", "worktree", "main", {
+      modelString: "openai:gpt-4",
+    });
+
+    expect(env.MUX_COSTS_USD).toBeUndefined();
   });
 });

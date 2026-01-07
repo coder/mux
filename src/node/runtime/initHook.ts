@@ -48,6 +48,8 @@ export function getMuxEnv(
   options?: {
     modelString?: string;
     thinkingLevel?: ThinkingLevel;
+    /** Cumulative session costs in USD (if available) */
+    costsUsd?: number;
   }
 ): Record<string, string> {
   if (!projectPath) {
@@ -69,6 +71,10 @@ export function getMuxEnv(
 
   if (options?.thinkingLevel !== undefined) {
     env.MUX_THINKING_LEVEL = options.thinkingLevel;
+  }
+
+  if (options?.costsUsd !== undefined) {
+    env.MUX_COSTS_USD = options.costsUsd.toFixed(2);
   }
 
   return env;
