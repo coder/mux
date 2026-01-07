@@ -20,8 +20,17 @@ interface TerminalTabProps {
  * always contains a valid sessionId (never the placeholder "terminal").
  */
 export const TerminalTab: React.FC<TerminalTabProps> = (props) => {
-  // Extract session ID from tab type
+  // Extract session ID from tab type - must exist (sessions created before tab added)
   const sessionId = getTerminalSessionId(props.tabType);
+
+  if (!sessionId) {
+    // This should never happen - RightSidebar creates session before adding tab
+    return (
+      <div className="flex h-full items-center justify-center text-red-400">
+        Invalid terminal tab: missing session ID
+      </div>
+    );
+  }
 
   return (
     <TerminalView
@@ -29,8 +38,6 @@ export const TerminalTab: React.FC<TerminalTabProps> = (props) => {
       sessionId={sessionId}
       visible={props.visible}
       setDocumentTitle={false}
-      // Keep session alive: cleanup happens on workspace deletion or app restart
-      closeOnCleanup={false}
       onTitleChange={props.onTitleChange}
     />
   );

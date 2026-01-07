@@ -9,17 +9,18 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { TerminalView } from "@/browser/components/TerminalView";
 import { APIProvider } from "@/browser/contexts/API";
+import { TerminalRouterProvider } from "@/browser/terminal/TerminalRouterContext";
 import "./styles/globals.css";
 
 // Get workspace ID from query parameter
 const params = new URLSearchParams(window.location.search);
 const workspaceId = params.get("workspaceId");
-const sessionId = params.get("sessionId"); // Reserved for future reload support
+const sessionId = params.get("sessionId");
 
-if (!workspaceId) {
+if (!workspaceId || !sessionId) {
   document.body.innerHTML = `
     <div style="color: #f44; padding: 20px; font-family: monospace;">
-      Error: No workspace ID provided
+      Error: Missing workspace ID or session ID
     </div>
   `;
 } else {
@@ -30,7 +31,9 @@ if (!workspaceId) {
   // race conditions with WebSocket connections and terminal lifecycle
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <APIProvider>
-      <TerminalView workspaceId={workspaceId} sessionId={sessionId ?? undefined} visible={true} />
+      <TerminalRouterProvider>
+        <TerminalView workspaceId={workspaceId} sessionId={sessionId} visible={true} />
+      </TerminalRouterProvider>
     </APIProvider>
   );
 }

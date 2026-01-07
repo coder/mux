@@ -9,6 +9,7 @@ import { APIProvider, useAPI, type APIClient } from "@/browser/contexts/API";
 import { WorkspaceProvider, useWorkspaceContext } from "../contexts/WorkspaceContext";
 import { RouterProvider } from "../contexts/RouterContext";
 import { TelemetryEnabledProvider } from "../contexts/TelemetryEnabledContext";
+import { TerminalRouterProvider } from "../terminal/TerminalRouterContext";
 
 interface AppLoaderProps {
   /** Optional pre-created ORPC api?. If provided, skips internal connection setup. */
@@ -99,7 +100,9 @@ function AppLoaderInner() {
   // Render App - all state available via contexts
   return (
     <TelemetryEnabledProvider>
-      <App />
+      <TerminalRouterProvider>
+        <App />
+      </TerminalRouterProvider>
     </TelemetryEnabledProvider>
   );
 }

@@ -1,12 +1,12 @@
 import { useRef, useEffect, useState } from "react";
 import { init, Terminal, FitAddon } from "ghostty-web";
-import { useTerminalSession } from "@/browser/hooks/useTerminalSession";
 import { useAPI } from "@/browser/contexts/API";
+import { useTerminalRouter } from "@/browser/terminal/TerminalRouterContext";
 
 interface TerminalViewProps {
   workspaceId: string;
-  /** Optional existing session id to reattach to (e.g. keep-alive terminals) */
-  sessionId?: string;
+  /** Session ID to connect to (required - must be created before mounting) */
+  sessionId: string;
   visible: boolean;
   /**
    * Whether to set document.title based on workspace name.
@@ -15,13 +15,6 @@ interface TerminalViewProps {
    * Set to false when embedding inside the app (e.g. RightSidebar).
    */
   setDocumentTitle?: boolean;
-  /**
-   * Whether to close sessions created by this view when it cleans up.
-   * Default: true.
-   */
-  closeOnCleanup?: boolean;
-  /** Called when the terminal session id becomes available (created or reattached). */
-  onSessionId?: (sessionId: string) => void;
   /** Called when the terminal title changes (via OSC escape sequences from running processes) */
   onTitleChange?: (title: string) => void;
 }
@@ -31,30 +24,16 @@ export function TerminalView({
   sessionId,
   visible,
   setDocumentTitle = true,
-  closeOnCleanup = true,
-  onSessionId,
   onTitleChange,
 }: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const [terminalError, setTerminalError] = useState<string | null>(null);
-
   const [terminalReady, setTerminalReady] = useState(false);
-  const [terminalSize, setTerminalSize] = useState<{ cols: number; rows: number } | null>(null);
-
-  // Handler for terminal output - write directly to terminal
-  const handleOutput = (data: string) => {
-    termRef.current?.write(data);
-  };
-
-  // Handler for terminal exit
-  const handleExit = (exitCode: number) => {
-    const msg = `\r\n[Process exited with code ${exitCode}]\r\n`;
-    termRef.current?.write(msg);
-  };
 
   const { api } = useAPI();
+  const router = useTerminalRouter();
 
   // Set window title (dedicated terminal window only)
   useEffect(() => {
@@ -74,39 +53,44 @@ export function TerminalView({
     };
     void setWindowDetails();
   }, [api, workspaceId, setDocumentTitle]);
-  // Handler for screen state restore - called when reattaching to an existing session
-  // Writes serialized screen state (~4KB) to instantly restore terminal view
-  const handleScreenState = (state: string) => {
-    if (termRef.current && state) {
-      termRef.current.write(state);
+
+  // Subscribe to router when terminal is ready and visible
+  useEffect(() => {
+    if (!visible || !terminalReady || !termRef.current) {
+      return;
     }
-  };
 
-  const {
-    sendInput,
-    resize,
-    sessionId: activeSessionId,
-    error: sessionError,
-  } = useTerminalSession(workspaceId, sessionId, visible, terminalSize, handleOutput, handleExit, {
-    closeOnCleanup,
-    onScreenState: handleScreenState,
-  });
+    // Capture current terminal ref for this subscription's lifetime
+    const term = termRef.current;
 
-  useEffect(() => {
-    if (!activeSessionId) return;
-    onSessionId?.(activeSessionId);
-  }, [activeSessionId, onSessionId]);
+    const unsubscribe = router.subscribe(sessionId, {
+      onOutput: (data) => {
+        term.write(data);
+      },
+      onScreenState: (state) => {
+        if (state) {
+          // Clear before restoring to avoid artifacts
+          term.clear();
+          term.write(state);
+        }
+      },
+      onExit: (code) => {
+        term.write(`\r\n[Process exited with code ${code}]\r\n`);
+      },
+    });
 
-  // Keep refs to latest functions so callbacks always use current version
-  const sendInputRef = useRef(sendInput);
-  const resizeRef = useRef(resize);
+    // Send initial resize to sync PTY dimensions
+    const { cols, rows } = term;
+    router.resize(sessionId, cols, rows);
+
+    return unsubscribe;
+  }, [visible, terminalReady, sessionId, router]);
+
+  // Keep ref to onTitleChange for use in terminal callback
   const onTitleChangeRef = useRef(onTitleChange);
-
   useEffect(() => {
-    sendInputRef.current = sendInput;
-    resizeRef.current = resize;
     onTitleChangeRef.current = onTitleChange;
-  }, [sendInput, resize, onTitleChange]);
+  }, [onTitleChange]);
 
   const disposeOnDataRef = useRef<{ dispose: () => void } | null>(null);
   const disposeOnTitleChangeRef = useRef<{ dispose: () => void } | null>(null);
@@ -131,7 +115,6 @@ export function TerminalView({
       fitAddonRef.current = null;
       initInProgressRef.current = false;
       setTerminalReady(false);
-      setTerminalSize(null);
     };
   }, [workspaceId]);
 
@@ -201,20 +184,9 @@ export function TerminalView({
           textarea.focus();
         }
 
-        const { cols, rows } = terminal;
-
-        // Set terminal size so PTY session can be created with matching dimensions
-        // Use stable object reference to prevent unnecessary effect re-runs
-        setTerminalSize((prev) => {
-          if (prev?.cols === cols && prev?.rows === rows) {
-            return prev;
-          }
-          return { cols, rows };
-        });
-
-        // User input → IPC (use ref to always get latest sendInput)
+        // User input → router
         disposeOnData = terminal.onData((data: string) => {
-          sendInputRef.current(data);
+          router.sendInput(sessionId, data);
         });
 
         // Terminal title changes (from OSC escape sequences like "echo -ne '\033]0;Title\007'")
@@ -258,7 +230,7 @@ export function TerminalView({
       containerEl.replaceChildren();
       initInProgressRef.current = false;
     };
-  }, [visible, workspaceId]);
+  }, [visible, workspaceId, router, sessionId]);
 
   // Resize on container size change
   useEffect(() => {
@@ -289,14 +261,6 @@ export function TerminalView({
           lastCols = cols;
           lastRows = rows;
 
-          // Update state (with stable reference to prevent unnecessary re-renders)
-          setTerminalSize((prev) => {
-            if (prev?.cols === cols && prev?.rows === rows) {
-              return prev;
-            }
-            return { cols, rows };
-          });
-
           // Store pending resize
           pendingResize = { cols, rows };
 
@@ -308,14 +272,11 @@ export function TerminalView({
 
           resizeTimeoutId = setTimeout(() => {
             if (pendingResize) {
-              console.log(
-                `[TerminalView] Sending resize to PTY: ${pendingResize.cols}x${pendingResize.rows}`
-              );
               // Double requestAnimationFrame to ensure vim is ready
               requestAnimationFrame(() => {
                 requestAnimationFrame(() => {
                   if (pendingResize) {
-                    resizeRef.current(pendingResize.cols, pendingResize.rows);
+                    router.resize(sessionId, pendingResize.cols, pendingResize.rows);
                     pendingResize = null;
                   }
                 });
@@ -342,9 +303,9 @@ export function TerminalView({
       resizeObserver.disconnect();
       window.removeEventListener("resize", handleResize);
     };
-  }, [visible, terminalReady]); // terminalReady ensures ResizeObserver is set up after terminal is initialized
+  }, [visible, terminalReady, router, sessionId]);
 
-  const errorMessage = terminalError ?? sessionError;
+  const errorMessage = terminalError;
 
   return (
     <div
