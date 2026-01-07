@@ -25,11 +25,7 @@ export const DEFAULT_TERMINAL_SIZE = { cols: 80, rows: 24 };
  * @param workspaceId - Workspace ID
  * @param sessionId - Terminal session ID (required)
  */
-export function openTerminalPopout(
-  api: APIClient,
-  workspaceId: string,
-  sessionId: string
-): void {
+export function openTerminalPopout(api: APIClient, workspaceId: string, sessionId: string): void {
   const isBrowser = !window.api;
 
   if (isBrowser) {

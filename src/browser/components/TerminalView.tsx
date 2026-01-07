@@ -433,7 +433,7 @@ export function TerminalView({
             backgroundColor: "var(--color-terminal-bg)",
           }}
         >
-          <span className="text-muted text-sm animate-pulse">Connecting...</span>
+          <span className="text-muted animate-pulse text-sm">Connecting...</span>
         </div>
       )}
     </div>

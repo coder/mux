@@ -293,7 +293,6 @@ describeIntegration("terminal PTY", () => {
     20000
   );
 
-
   test.concurrent(
     "attach should preserve output order - no race conditions",
     async () => {

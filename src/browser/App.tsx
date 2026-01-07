@@ -443,7 +443,12 @@ function AppInner() {
     onRemoveProject: removeProjectFromPalette,
     onToggleSidebar: toggleSidebarFromPalette,
     onNavigateWorkspace: navigateWorkspaceFromPalette,
-    onOpenWorkspaceInTerminal: openWorkspaceInTerminal,
+    onOpenWorkspaceInTerminal: (workspaceId, runtimeConfig) => {
+      // Best-effort only. Palette actions should never throw.
+      void openWorkspaceInTerminal(workspaceId, runtimeConfig).catch(() => {
+        // Errors are surfaced elsewhere (toasts/logs) and users can retry.
+      });
+    },
     onToggleTheme: toggleTheme,
     onSetTheme: setThemePreference,
     onOpenSettings: openSettings,

@@ -404,7 +404,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
 
   const openTerminal = useOpenTerminal();
   const handleOpenTerminal = useCallback(() => {
-    openTerminal(workspaceId, runtimeConfig);
+    void openTerminal(workspaceId, runtimeConfig);
   }, [workspaceId, openTerminal, runtimeConfig]);
 
   const openInEditor = useOpenInEditor();

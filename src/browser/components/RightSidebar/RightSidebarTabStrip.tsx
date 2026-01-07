@@ -6,10 +6,9 @@ import { CSS } from "@dnd-kit/utilities";
 import { useDroppable, useDndContext } from "@dnd-kit/core";
 import { Plus } from "lucide-react";
 import type { TabType } from "@/browser/types/rightSidebar";
-import { getTabName } from "./tabs";
 
 // Re-export for consumers that import from this file
-export { getTabName };
+export { getTabName } from "./tabs";
 
 /** Data attached to dragged sidebar tabs */
 export interface TabDragData {
@@ -35,10 +34,6 @@ interface RightSidebarTabStripProps {
   ariaLabel?: string;
   /** Unique ID of this tabset (for drag/drop) */
   tabsetId: string;
-  /** Called when a tab is dropped onto this tabset from another tabset */
-  onTabDrop?: (tab: TabType, sourceTabsetId: string) => void;
-  /** Called when tabs are reordered within this tabset */
-  onTabReorder?: (fromIndex: number, toIndex: number) => void;
   /** Called when user clicks the "+" button to add a new terminal */
   onAddTerminal?: () => void;
 }
@@ -109,7 +104,6 @@ export const RightSidebarTabStrip: React.FC<RightSidebarTabStripProps> = ({
   items,
   ariaLabel = "Sidebar views",
   tabsetId,
-  onTabDrop,
   onAddTerminal,
 }) => {
   const { active } = useDndContext();
@@ -124,15 +118,8 @@ export const RightSidebarTabStrip: React.FC<RightSidebarTabStripProps> = ({
     data: { tabsetId },
   });
 
-  const canDrop = activeData && activeData.sourceTabsetId !== tabsetId;
+  const canDrop = activeData !== undefined && activeData.sourceTabsetId !== tabsetId;
   const showDropHighlight = isOver && canDrop;
-
-  // Handle drops from other tabsets
-  React.useEffect(() => {
-    if (isOver && canDrop && activeData && onTabDrop) {
-      // The actual drop is handled by onDragEnd in the parent DndContext
-    }
-  }, [isOver, canDrop, activeData, onTabDrop]);
 
   return (
     <div

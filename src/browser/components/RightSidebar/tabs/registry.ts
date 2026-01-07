@@ -3,12 +3,11 @@
  *
  * Each tab type defines:
  * - name: Display name for the tab
- * - icon: Optional icon component
  * - contentClassName: CSS classes for the tab panel container
- * - renderLabel: Optional custom label renderer (for tabs with badges/icons)
- * - renderContent: The tab's content component
+ * - keepAlive: Whether the tab should remain mounted while hidden
+ * - featureFlag: Optional feature flag key required to show the tab
  *
- * This eliminates sprawling switch statements and makes tabs self-contained.
+ * This keeps per-tab decisions out of RightSidebar.tsx and avoids switch statements.
  */
 
 import type { TabType } from "@/browser/types/rightSidebar";

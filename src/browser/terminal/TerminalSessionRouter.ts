@@ -88,7 +88,9 @@ export class TerminalSessionRouter {
 
     // Add subscriber
     session.subscribers.set(subscriberId, callbacks);
-    console.debug(`[TerminalRouter] Session ${sessionId} now has ${session.subscribers.size} subscribers`);
+    console.debug(
+      `[TerminalRouter] Session ${sessionId} now has ${session.subscribers.size} subscribers`
+    );
 
     // Deliver cached screenState if available (for late subscribers)
     if (session.screenState !== null) {
@@ -115,7 +117,9 @@ export class TerminalSessionRouter {
 
     // Return unsubscribe function
     return () => {
-      console.debug(`[TerminalRouter] Unsubscribe: session=${sessionId}, subscriberId=${subscriberId}`);
+      console.debug(
+        `[TerminalRouter] Unsubscribe: session=${sessionId}, subscriberId=${subscriberId}`
+      );
       const currentSession = this.sessions.get(sessionId);
       if (!currentSession) {
         console.debug(`[TerminalRouter] Session ${sessionId} already removed`);
@@ -123,7 +127,9 @@ export class TerminalSessionRouter {
       }
 
       currentSession.subscribers.delete(subscriberId);
-      console.debug(`[TerminalRouter] Session ${sessionId} now has ${currentSession.subscribers.size} subscribers`);
+      console.debug(
+        `[TerminalRouter] Session ${sessionId} now has ${currentSession.subscribers.size} subscribers`
+      );
 
       // If no more subscribers, tear down the stream
       if (currentSession.subscribers.size === 0) {

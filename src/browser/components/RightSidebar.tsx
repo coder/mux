@@ -47,7 +47,11 @@ import {
   type RightSidebarLayoutNode,
   type RightSidebarLayoutState,
 } from "@/browser/utils/rightSidebarLayout";
-import { RightSidebarTabStrip, getTabName, type TabDragData } from "./RightSidebar/RightSidebarTabStrip";
+import {
+  RightSidebarTabStrip,
+  getTabName,
+  type TabDragData,
+} from "./RightSidebar/RightSidebarTabStrip";
 import { createTerminalSession, openTerminalPopout } from "@/browser/utils/terminal";
 import {
   CostsTabLabel,
@@ -308,11 +312,6 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
     ];
   });
 
-  // Tab reorder and drop are now handled centrally in DndContext's onDragEnd
-  const handleTabDrop = (droppedTab: TabType, sourceTabsetId: string) => {
-    props.setLayout((prev) => moveTabToTabset(prev, droppedTab, sourceTabsetId, props.node.id));
-  };
-
   const costsPanelId = `${tabsetBaseId}-panel-costs`;
   const reviewPanelId = `${tabsetBaseId}-panel-review`;
   const statsPanelId = `${tabsetBaseId}-panel-stats`;
@@ -331,7 +330,6 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
           ariaLabel="Sidebar views"
           items={items}
           tabsetId={props.node.id}
-          onTabDrop={handleTabDrop}
           onAddTerminal={props.onAddTerminal}
         />
       </SortableContext>
@@ -681,7 +679,9 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       );
 
       // Find sessions that don't have tabs yet (add them)
-      const missingSessions = backendSessionIds.filter((sid) => !currentTerminalSessionIds.has(sid));
+      const missingSessions = backendSessionIds.filter(
+        (sid) => !currentTerminalSessionIds.has(sid)
+      );
 
       // Find tabs for sessions that no longer exist in backend (remove them)
       const ghostTabs = currentTerminalTabs.filter((tab) => {
