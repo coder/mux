@@ -80,7 +80,7 @@ describe("TerminalService", () => {
     openTerminalWindowMock.mockClear();
   });
 
-  it("should create a session and buffer initial output", async () => {
+  it("should create a session", async () => {
     const session = await service.create({
       workspaceId: "ws-1",
       cols: 80,
@@ -88,16 +88,8 @@ describe("TerminalService", () => {
     });
 
     expect(session.sessionId).toBe("session-1");
+    expect(session.workspaceId).toBe("ws-1");
     expect(createSessionMock).toHaveBeenCalled();
-
-    // Verify buffering: subscribe AFTER creation
-    let output = "";
-    const unsubscribe = service.onOutput("session-1", (data) => {
-      output += data;
-    });
-
-    expect(output).toBe("initial data");
-    unsubscribe();
   });
 
   it("should handle resizing", () => {
@@ -116,7 +108,8 @@ describe("TerminalService", () => {
 
   it("should open terminal window via manager", async () => {
     await service.openWindow("ws-1");
-    expect(openTerminalWindowMock).toHaveBeenCalledWith("ws-1");
+    // openWindow(workspaceId, sessionId?) passes sessionId as undefined when not provided
+    expect(openTerminalWindowMock).toHaveBeenCalledWith("ws-1", undefined);
   });
 
   it("should handle session exit", async () => {

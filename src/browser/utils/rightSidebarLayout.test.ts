@@ -122,21 +122,22 @@ test("moveTabToTabset removes empty source tabset", () => {
 });
 
 test("reorderTabInTabset reorders tabs within a tabset", () => {
+  // Default layout has ["costs", "review"]; reorder costs from 0 to 1
   const s0 = getDefaultRightSidebarLayoutState("costs");
-  const s1 = reorderTabInTabset(s0, "tabset-1", 0, 2);
+  const s1 = reorderTabInTabset(s0, "tabset-1", 0, 1);
 
   expect(s1.root.type).toBe("tabset");
   if (s1.root.type !== "tabset") throw new Error("expected tabset");
 
-  expect(s1.root.tabs).toEqual(["review", "terminal", "costs"]);
+  expect(s1.root.tabs).toEqual(["review", "costs"]);
   expect(s1.root.activeTab).toBe("costs");
 });
 
 test("dockTabToEdge splits a tabset and moves the dragged tab into the new pane", () => {
+  // Default layout has ["costs", "review"]; drag review into a bottom split
   const s0 = getDefaultRightSidebarLayoutState("costs");
 
-  // Drag terminal out of the tabset into a bottom split
-  const s1 = dockTabToEdge(s0, "terminal", "tabset-1", "tabset-1", "bottom");
+  const s1 = dockTabToEdge(s0, "review", "tabset-1", "tabset-1", "bottom");
 
   expect(s1.root.type).toBe("split");
   if (s1.root.type !== "split") throw new Error("expected split");
@@ -147,9 +148,9 @@ test("dockTabToEdge splits a tabset and moves the dragged tab into the new pane"
   const bottom = s1.root.children[1];
   if (top.type !== "tabset" || bottom.type !== "tabset") throw new Error("expected tabsets");
 
-  expect(bottom.tabs).toEqual(["terminal"]);
-  expect(bottom.activeTab).toBe("terminal");
-  expect(top.tabs).not.toContain("terminal");
+  expect(bottom.tabs).toEqual(["review"]);
+  expect(bottom.activeTab).toBe("review");
+  expect(top.tabs).not.toContain("review");
 });
 
 test("dockTabToEdge avoids empty tabsets when dragging out the last tab", () => {
