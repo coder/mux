@@ -76,6 +76,7 @@ export const CostsTab: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("costs"));
+        localStorage.setItem("costsTab:viewMode", JSON.stringify("session"));
         localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "400");
         localStorage.removeItem(getRightSidebarLayoutKey("ws-costs"));
 
@@ -119,6 +120,7 @@ export const CostsTabWithCacheCreate: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("costs"));
+        localStorage.setItem("costsTab:viewMode", JSON.stringify("session"));
         localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "350");
         localStorage.removeItem(getRightSidebarLayoutKey("ws-cache-create"));
 
