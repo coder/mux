@@ -740,33 +740,49 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   // API for opening terminal windows and managing sessions
   const { api } = useAPI();
 
-  // Restore terminal tabs from backend sessions on workspace mount.
-  // This enables reattach after page reload (backend sessions survive, frontend doesn't).
+  // Sync terminal tabs with backend sessions on workspace mount.
+  // - Adds tabs for backend sessions that don't have tabs (restore after reload)
+  // - Removes "ghost" tabs for sessions that no longer exist (cleanup after app restart)
   React.useEffect(() => {
     if (!api) return;
 
     let cancelled = false;
 
-    void api.terminal.listSessions({ workspaceId }).then((sessionIds) => {
-      if (cancelled || sessionIds.length === 0) return;
+    void api.terminal.listSessions({ workspaceId }).then((backendSessionIds) => {
+      if (cancelled) return;
+
+      const backendSessionSet = new Set(backendSessionIds);
 
       // Get current terminal tabs in layout
       const currentTabs = collectAllTabs(layout.root);
+      const currentTerminalTabs = currentTabs.filter(isTerminalTab);
       const currentTerminalSessionIds = new Set(
-        currentTabs.filter(isTerminalTab).map(getTerminalSessionId).filter(Boolean)
+        currentTerminalTabs.map(getTerminalSessionId).filter(Boolean)
       );
 
-      // Find sessions that don't have tabs yet
-      const missingSessions = sessionIds.filter((sid) => !currentTerminalSessionIds.has(sid));
+      // Find sessions that don't have tabs yet (add them)
+      const missingSessions = backendSessionIds.filter((sid) => !currentTerminalSessionIds.has(sid));
 
-      if (missingSessions.length > 0) {
-        // Add tabs for backend sessions that don't have tabs.
-        // Don't activate - don't jump user to restored terminals on reload.
+      // Find tabs for sessions that no longer exist in backend (remove them)
+      const ghostTabs = currentTerminalTabs.filter((tab) => {
+        const sessionId = getTerminalSessionId(tab);
+        return sessionId && !backendSessionSet.has(sessionId);
+      });
+
+      if (missingSessions.length > 0 || ghostTabs.length > 0) {
         setLayout((prev) => {
           let next = prev;
+
+          // Remove ghost tabs first
+          for (const ghostTab of ghostTabs) {
+            next = removeTabEverywhere(next, ghostTab);
+          }
+
+          // Add tabs for backend sessions that don't have tabs
           for (const sessionId of missingSessions) {
             next = addTabToFocusedTabset(next, makeTerminalTabType(sessionId), false);
           }
+
           return next;
         });
       }
