@@ -31,5 +31,5 @@ Select Docker in the workspace creation UI and specify an image:
 Check "Share credentials" when creating a Docker workspace to enable git authentication:
 
 - **SSH agent forwarding** — Your SSH keys work inside the container without copying private keys
-- **Git config** — Host `~/.gitconfig` is mounted so git has your identity and settings
+- **Git config** — Host `~/.gitconfig` is copied into the container so git has your identity and settings
 - **GitHub CLI** — If `GH_TOKEN` is set in [project secrets](/config/project-secrets), mux runs `gh auth setup-git` to configure HTTPS authentication (requires `gh` CLI in the container image)

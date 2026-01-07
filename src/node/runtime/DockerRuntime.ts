@@ -133,17 +133,12 @@ function runSpawnCommand(
 
 /**
  * Build Docker args for credential sharing.
- * Forwards SSH agent and mounts ~/.gitconfig read-only into the container.
+ * Forwards SSH agent into the container.
+ * Note: ~/.gitconfig is copied (not mounted) after container creation so gh can modify it.
  * Uses agent forwarding only (no ~/.ssh mount) to avoid passphrase/permission issues.
  */
 function buildCredentialArgs(): string[] {
-  const home = os.homedir();
   const args: string[] = [];
-
-  const gitconfig = path.join(home, ".gitconfig");
-  if (existsSync(gitconfig)) {
-    args.push("-v", `${gitconfig}:/root/.gitconfig:ro`);
-  }
 
   // SSH agent forwarding (no ~/.ssh mount - causes passphrase/permission issues)
   if (process.platform === "darwin") {
@@ -424,7 +419,8 @@ export class DockerRuntime extends RemoteRuntime {
   }
 
   async initWorkspace(params: WorkspaceInitParams): Promise<WorkspaceInitResult> {
-    const { projectPath, branchName, trunkBranch, workspacePath, initLogger, abortSignal } = params;
+    const { projectPath, branchName, trunkBranch, workspacePath, initLogger, abortSignal, env } =
+      params;
 
     try {
       if (!this.containerName) {
@@ -498,10 +494,20 @@ export class DockerRuntime extends RemoteRuntime {
 
       initLogger.logStep("Container ready");
 
-      // Configure gh CLI as git credential helper if GH_TOKEN is set
+      // Copy host gitconfig into container (not mounted, so gh can modify it)
       if (this.config.shareCredentials) {
+        const gitconfig = path.join(os.homedir(), ".gitconfig");
+        if (existsSync(gitconfig)) {
+          await runDockerCommand(`docker cp ${gitconfig} ${containerName}:/root/.gitconfig`, 10000);
+        }
+      }
+
+      // Configure gh CLI as git credential helper if GH_TOKEN is available
+      // GH_TOKEN can come from project secrets (env) or host environment (buildCredentialArgs)
+      const ghToken = env?.GH_TOKEN ?? process.env.GH_TOKEN;
+      if (this.config.shareCredentials && ghToken) {
         await runDockerCommand(
-          `docker exec ${containerName} sh -c 'command -v gh >/dev/null && [ -n "$GH_TOKEN" ] && gh auth setup-git || true'`,
+          `docker exec -e GH_TOKEN=${shescape.quote(ghToken)} ${containerName} sh -c 'command -v gh >/dev/null && gh auth setup-git || true'`,
           10000
         );
       }
@@ -561,7 +567,7 @@ export class DockerRuntime extends RemoteRuntime {
       // 4. Run .mux/init hook if it exists
       const hookExists = await checkInitHookExists(projectPath);
       if (hookExists) {
-        const muxEnv = getMuxEnv(projectPath, "docker", branchName);
+        const muxEnv = { ...env, ...getMuxEnv(projectPath, "docker", branchName) };
         const hookPath = `${workspacePath}/.mux/init`;
         await runInitHookOnRuntime(this, hookPath, workspacePath, muxEnv, initLogger, abortSignal);
       } else {
