@@ -72,14 +72,18 @@ export function TerminalView({
     // Capture current terminal ref for this subscription's lifetime
     const term = termRef.current;
 
+    // Clear terminal immediately to avoid "flash" of old content while waiting for screenState.
+    // This prevents cross-session bleed when switching between terminals.
+    term.clear();
+
     const unsubscribe = router.subscribe(sessionId, {
       onOutput: (data) => {
         term.write(data);
       },
       onScreenState: (state) => {
+        // Write screen state (may be empty for new sessions)
+        // No need to clear again - we cleared above before subscribing
         if (state) {
-          // Clear before restoring to avoid artifacts
-          term.clear();
           term.write(state);
         }
       },
