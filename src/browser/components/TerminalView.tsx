@@ -39,7 +39,6 @@ export function TerminalView({
   const fitAddonRef = useRef<FitAddon | null>(null);
   const [terminalError, setTerminalError] = useState<string | null>(null);
   const [terminalReady, setTerminalReady] = useState(false);
-  const [isFocused, setIsFocused] = useState(false);
   // Track whether we've received the initial screen state from backend
   const [isLoading, setIsLoading] = useState(true);
 
@@ -274,7 +273,6 @@ export function TerminalView({
     const container = containerRef.current;
 
     const handleFocusIn = () => {
-      setIsFocused(true);
       if (termRef.current) {
         termRef.current.options.cursorBlink = true;
       }
@@ -283,7 +281,6 @@ export function TerminalView({
     const handleFocusOut = (e: FocusEvent) => {
       // Only blur if focus is leaving the container entirely
       if (!container.contains(e.relatedTarget as Node)) {
-        setIsFocused(false);
         if (termRef.current) {
           termRef.current.options.cursorBlink = false;
         }
@@ -414,9 +411,6 @@ export function TerminalView({
           // ghostty-web uses a contenteditable root for input; hide the browser caret
           // so we don't show a "second cursor".
           caretColor: "transparent",
-          // Subtle focus indicator: inner glow when focused
-          boxShadow: isFocused ? "inset 0 0 0 1px var(--color-accent)" : "none",
-          transition: "box-shadow 0.15s ease-in-out",
           // Hide terminal content while loading to prevent flash
           visibility: showLoading ? "hidden" : "visible",
         }}
