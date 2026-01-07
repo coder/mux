@@ -375,7 +375,9 @@ export class DockerRuntime extends RemoteRuntime {
    * while keeping the symlink itself intact.
    */
   protected buildWriteCommand(quotedPath: string, quotedTempPath: string): string {
-    return `RESOLVED=$(readlink -f ${quotedPath} 2>/dev/null || echo ${quotedPath}) && PERMS=$(stat -c '%a' "$RESOLVED" 2>/dev/null || echo 600) && mkdir -p $(dirname "$RESOLVED") && cat > ${quotedTempPath} && chmod "$PERMS" ${quotedTempPath} && mv ${quotedTempPath} "$RESOLVED"`;
+    // Default to 644 (world-readable) for new files, particularly important for
+    // plan files in /var/mux which need to be readable by VS Code Dev Containers
+    return `RESOLVED=$(readlink -f ${quotedPath} 2>/dev/null || echo ${quotedPath}) && PERMS=$(stat -c '%a' "$RESOLVED" 2>/dev/null || echo 644) && mkdir -p $(dirname "$RESOLVED") && cat > ${quotedTempPath} && chmod "$PERMS" ${quotedTempPath} && mv ${quotedTempPath} "$RESOLVED"`;
   }
   // ===== Runtime interface implementations =====
 
@@ -414,7 +416,7 @@ export class DockerRuntime extends RemoteRuntime {
       };
     }
     // Distinguish "container doesn't exist" from actual Docker errors
-    if (!checkResult.stderr.includes("No such object")) {
+    if (!checkResult.stderr.toLowerCase().includes("no such object")) {
       return {
         success: false,
         error: `Docker error: ${checkResult.stderr || checkResult.stdout || "unknown error"}`,
@@ -486,10 +488,12 @@ export class DockerRuntime extends RemoteRuntime {
         };
       }
 
-      // Create /src directory in container
+      // Create /src directory and /var/mux/plans in container
+      // /var/mux is used instead of ~/.mux because /root has 700 permissions,
+      // which makes it inaccessible to VS Code Dev Containers (non-root user)
       initLogger.logStep("Preparing workspace directory...");
       const mkdirResult = await runDockerCommand(
-        `docker exec ${containerName} mkdir -p ${CONTAINER_SRC_DIR}`,
+        `docker exec ${containerName} mkdir -p ${CONTAINER_SRC_DIR} /var/mux/plans`,
         10000
       );
       if (mkdirResult.exitCode !== 0) {
@@ -692,7 +696,7 @@ export class DockerRuntime extends RemoteRuntime {
 
       if (inspectResult.exitCode !== 0) {
         // Only treat as "doesn't exist" if Docker says so
-        if (inspectResult.stderr.includes("No such object")) {
+        if (inspectResult.stderr.toLowerCase().includes("no such object")) {
           return { success: true, deletedPath };
         }
         return {
@@ -964,5 +968,14 @@ export class DockerRuntime extends RemoteRuntime {
     return result.exitCode === 0
       ? { ready: true }
       : { ready: false, error: result.stderr || "Failed to start container" };
+  }
+
+  /**
+   * Docker uses /var/mux instead of ~/.mux because:
+   * - /root has 700 permissions, inaccessible to VS Code Dev Containers (non-root user)
+   * - /var/mux is world-readable by default
+   */
+  override getMuxHome(): string {
+    return "/var/mux";
   }
 }

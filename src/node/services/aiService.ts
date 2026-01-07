@@ -1208,7 +1208,8 @@ export class AIService extends EventEmitter {
       // Construct plan mode instruction if in plan mode
       // This is done backend-side because we have access to the plan file path
       let effectiveAdditionalInstructions = additionalSystemInstructions;
-      const planFilePath = getPlanFilePath(metadata.name, metadata.projectName);
+      const muxHome = runtime.getMuxHome();
+      const planFilePath = getPlanFilePath(metadata.name, metadata.projectName, muxHome);
 
       // Read plan file (handles legacy migration transparently)
       const planResult = await readPlanFile(

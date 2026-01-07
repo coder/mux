@@ -427,6 +427,14 @@ export interface Runtime {
    * Used for background process output, temporary files, etc.
    */
   tempDir(): Promise<string>;
+
+  /**
+   * Get the mux home directory for this runtime.
+   * Used for storing plan files and other mux-specific data.
+   * - LocalRuntime/SSHRuntime: ~/.mux (tilde expanded by runtime)
+   * - DockerRuntime: /var/mux (world-readable, avoids /root permission issues)
+   */
+  getMuxHome(): string;
 }
 
 /**

@@ -22,6 +22,17 @@ describe("planStorage", () => {
       expect(result1).toBe(`${expectedMuxHome}/plans/mux/sidebar-a1b2.md`);
       expect(result2).toBe(`${expectedMuxHome}/plans/other-project/auth-c3d4.md`);
     });
+
+    it("should use custom muxHome when provided (Docker uses /var/mux)", () => {
+      const result = getPlanFilePath("fix-plan-a1b2", "mux", "/var/mux");
+      expect(result).toBe("/var/mux/plans/mux/fix-plan-a1b2.md");
+    });
+
+    it("should default to ~/.mux when muxHome not provided", () => {
+      const withDefault = getPlanFilePath("workspace", "project");
+      const withExplicit = getPlanFilePath("workspace", "project", "~/.mux");
+      expect(withDefault).toBe(withExplicit);
+    });
   });
 
   describe("getLegacyPlanFilePath", () => {

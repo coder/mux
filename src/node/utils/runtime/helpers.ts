@@ -142,7 +142,9 @@ export async function readPlanFile(
   projectName: string,
   workspaceId: string
 ): Promise<ReadPlanResult> {
-  const planPath = getPlanFilePath(workspaceName, projectName);
+  const muxHome = runtime.getMuxHome();
+  const planPath = getPlanFilePath(workspaceName, projectName, muxHome);
+  // Legacy paths only used for non-Docker runtimes
   const legacyPath = getLegacyPlanFilePath(workspaceId);
 
   // Resolve tilde to absolute path for client use (editor deep links, etc.)
@@ -185,8 +187,9 @@ export async function movePlanFile(
   newWorkspaceName: string,
   projectName: string
 ): Promise<void> {
-  const oldPath = getPlanFilePath(oldWorkspaceName, projectName);
-  const newPath = getPlanFilePath(newWorkspaceName, projectName);
+  const muxHome = runtime.getMuxHome();
+  const oldPath = getPlanFilePath(oldWorkspaceName, projectName, muxHome);
+  const newPath = getPlanFilePath(newWorkspaceName, projectName, muxHome);
 
   try {
     await runtime.stat(oldPath);
@@ -214,9 +217,11 @@ export async function copyPlanFile(
   targetWorkspaceName: string,
   projectName: string
 ): Promise<void> {
-  const sourcePath = getPlanFilePath(sourceWorkspaceName, projectName);
+  const muxHome = runtime.getMuxHome();
+  const sourcePath = getPlanFilePath(sourceWorkspaceName, projectName, muxHome);
+  // Legacy paths only used for non-Docker runtimes
   const legacySourcePath = getLegacyPlanFilePath(sourceWorkspaceId);
-  const targetPath = getPlanFilePath(targetWorkspaceName, projectName);
+  const targetPath = getPlanFilePath(targetWorkspaceName, projectName, muxHome);
 
   // Prefer the new layout, but fall back to the legacy layout.
   //

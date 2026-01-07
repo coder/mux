@@ -428,13 +428,15 @@ export class WorkspaceService extends EventEmitter {
       return { planPath: null, trackedFilePaths: [], excludedItems: exclusions.excludedItems };
     }
 
-    const planPath = getPlanFilePath(metadata.name, metadata.projectName);
-    // Expand tilde for comparison with absolute paths from message history
-    const expandedPlanPath = expandTilde(planPath);
-    // Also get legacy plan path (stored by workspace ID) for filtering
+    const runtime = createRuntime(metadata.runtimeConfig, { projectPath: metadata.projectPath });
+    const muxHome = runtime.getMuxHome();
+    const planPath = getPlanFilePath(metadata.name, metadata.projectName, muxHome);
+    // For local/SSH: expand tilde for comparison with message history paths
+    // For Docker: paths are already absolute (/var/mux/...), no expansion needed
+    const expandedPlanPath = muxHome.startsWith("~") ? expandTilde(planPath) : planPath;
+    // Legacy plan path (stored by workspace ID) for filtering
     const legacyPlanPath = getLegacyPlanFilePath(workspaceId);
     const expandedLegacyPlanPath = expandTilde(legacyPlanPath);
-    const runtime = createRuntime(metadata.runtimeConfig, { projectPath: metadata.projectPath });
 
     // Check both new and legacy plan paths, prefer new path
     const newPlanExists = await fileExists(runtime, planPath);
@@ -2013,30 +2015,33 @@ export class WorkspaceService extends EventEmitter {
     workspaceId: string,
     metadata: FrontendWorkspaceMetadata
   ): Promise<void> {
-    // Delete both new and legacy plan paths to handle migrated workspaces
-    const planPath = getPlanFilePath(metadata.name, metadata.projectName);
+    // Create runtime to get correct muxHome (Docker uses /var/mux, others use ~/.mux)
+    const runtime = createRuntime(metadata.runtimeConfig, {
+      projectPath: metadata.projectPath,
+    });
+    const muxHome = runtime.getMuxHome();
+    const planPath = getPlanFilePath(metadata.name, metadata.projectName, muxHome);
     const legacyPlanPath = getLegacyPlanFilePath(workspaceId);
 
-    const isRemoteRuntime =
-      isSSHRuntime(metadata.runtimeConfig) || isDockerRuntime(metadata.runtimeConfig);
+    const isDocker = isDockerRuntime(metadata.runtimeConfig);
+    const isSSH = isSSHRuntime(metadata.runtimeConfig);
 
-    // For SSH/Docker: use $HOME expansion so the runtime shell resolves to the runtime home directory.
-    // For local: expand tilde locally since shellQuote prevents shell expansion.
-    const quotedPlanPath = isRemoteRuntime
-      ? expandTildeForSSH(planPath)
-      : shellQuote(expandTilde(planPath));
-    const quotedLegacyPlanPath = isRemoteRuntime
-      ? expandTildeForSSH(legacyPlanPath)
-      : shellQuote(expandTilde(legacyPlanPath));
+    // For Docker: paths are already absolute (/var/mux/...), just quote
+    // For SSH: use $HOME expansion so the runtime shell resolves to the runtime home directory
+    // For local: expand tilde locally since shellQuote prevents shell expansion
+    const quotedPlanPath = isDocker
+      ? shellQuote(planPath)
+      : isSSH
+        ? expandTildeForSSH(planPath)
+        : shellQuote(expandTilde(planPath));
+    // For legacy path: SSH/Docker use $HOME expansion, local expands tilde
+    const quotedLegacyPlanPath =
+      isDocker || isSSH ? expandTildeForSSH(legacyPlanPath) : shellQuote(expandTilde(legacyPlanPath));
 
-    if (isRemoteRuntime) {
-      const runtime = createRuntime(metadata.runtimeConfig, {
-        projectPath: metadata.projectPath,
-      });
+    if (isDocker || isSSH) {
 
       try {
         // Use exec to delete files since runtime doesn't have a deleteFile method.
-        // Delete both paths in one command for efficiency.
         // Use runtime workspace path (not host projectPath) for Docker containers.
         const workspacePath = runtime.getWorkspacePath(metadata.projectPath, metadata.name);
         const execStream = await runtime.exec(`rm -f ${quotedPlanPath} ${quotedLegacyPlanPath}`, {

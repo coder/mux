@@ -363,6 +363,10 @@ export abstract class LocalBaseRuntime implements Runtime {
     return Promise.resolve(isWindows ? (process.env.TEMP ?? "C:\\Temp") : "/tmp");
   }
 
+  getMuxHome(): string {
+    return "~/.mux";
+  }
+
   /**
    * Local runtimes are always ready.
    */
