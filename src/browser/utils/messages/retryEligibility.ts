@@ -88,6 +88,13 @@ export function hasInterruptedStream(
     if (elapsed < PENDING_STREAM_START_GRACE_PERIOD_MS) return false;
   }
 
+  // Don't show retry barrier if workspace init is still running
+  // The backend is intentionally waiting for init to complete before starting the stream
+  const initMessage = messages.find((m) => m.type === "workspace-init");
+  if (initMessage?.type === "workspace-init" && initMessage.status === "running") {
+    return false;
+  }
+
   const lastMessage = messages[messages.length - 1];
 
   // ask_user_question is a special case: an unfinished tool call represents an
