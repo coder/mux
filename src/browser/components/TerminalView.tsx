@@ -187,12 +187,16 @@ export function TerminalView({
         terminal.open(containerEl);
         fitAddon.fit();
 
-        // ghostty-web focuses the container (contenteditable) on open(), which can show a
-        // browser caret in addition to the terminal cursor. Focus the hidden textarea instead,
-        // but only if autoFocus is enabled (to avoid stealing focus on workspace switch).
-        const textarea = containerEl.querySelector("textarea");
-        if (autoFocus && textarea instanceof HTMLTextAreaElement) {
-          textarea.focus();
+        // ghostty-web calls focus() internally in open(), which steals focus.
+        // If autoFocus is disabled, blur immediately to prevent input capture.
+        // If autoFocus is enabled, focus the hidden textarea to avoid browser caret.
+        if (autoFocus) {
+          const textarea = containerEl.querySelector("textarea");
+          if (textarea instanceof HTMLTextAreaElement) {
+            textarea.focus();
+          }
+        } else {
+          terminal.blur();
         }
 
         // User input → router
