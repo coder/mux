@@ -290,22 +290,30 @@ export class StreamManager extends EventEmitter {
    * Uses the Runtime abstraction so temp directories work for both local and SSH runtimes.
    */
   public async createTempDirForStream(streamToken: StreamToken, runtime: Runtime): Promise<string> {
-    // Create directory and get absolute path (works for both local and remote)
-    // Use 'cd' + 'pwd' to resolve ~ to absolute path
-    const command = `mkdir -p ~/.mux-tmp/${streamToken} && cd ~/.mux-tmp/${streamToken} && pwd`;
-    const result = await execBuffered(runtime, command, {
+    const tempDir = `~/.mux-tmp/${streamToken}`;
+
+    // Create directory on target runtime (local/SSH/Docker)
+    const result = await execBuffered(runtime, `mkdir -p ${tempDir}`, {
       cwd: "/",
       timeout: 10,
     });
 
     if (result.exitCode !== 0) {
-      throw new Error(
-        `Failed to create temp directory ~/.mux-tmp/${streamToken}: exit code ${result.exitCode}`
-      );
+      throw new Error(`Failed to create temp directory ${tempDir}: exit code ${result.exitCode}`);
     }
 
-    // Return absolute path (e.g., "/home/user/.mux-tmp/abc123")
-    return result.stdout.trim();
+    let resolvedPath = (await runtime.resolvePath(tempDir)).trim();
+
+    // In the main process, PlatformPaths defaults to POSIX behavior (no navigator),
+    // so we normalize Windows paths to forward slashes.
+    if (
+      process.platform === "win32" &&
+      (/^[A-Za-z]:\\/.test(resolvedPath) || resolvedPath.startsWith("\\\\"))
+    ) {
+      resolvedPath = resolvedPath.replace(/\\/g, "/");
+    }
+
+    return resolvedPath;
   }
 
   /**
