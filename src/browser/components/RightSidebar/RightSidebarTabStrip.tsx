@@ -5,7 +5,11 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useDroppable, useDndContext } from "@dnd-kit/core";
 import { Plus } from "lucide-react";
-import { isTerminalTab, type TabType } from "@/browser/types/rightSidebar";
+import type { TabType } from "@/browser/types/rightSidebar";
+import { getTabName } from "./tabs";
+
+// Re-export for consumers that import from this file
+export { getTabName };
 
 /** Data attached to dragged sidebar tabs */
 export interface TabDragData {
@@ -37,22 +41,6 @@ interface RightSidebarTabStripProps {
   onTabReorder?: (fromIndex: number, toIndex: number) => void;
   /** Called when user clicks the "+" button to add a new terminal */
   onAddTerminal?: () => void;
-}
-
-export function getTabName(tab: TabType): string {
-  if (isTerminalTab(tab)) {
-    return "Terminal";
-  }
-  switch (tab) {
-    case "costs":
-      return "Costs";
-    case "review":
-      return "Review";
-    case "stats":
-      return "Stats";
-    default:
-      return tab;
-  }
 }
 
 /**

@@ -47,11 +47,16 @@ interface SessionState {
 let nextSubscriberId = 1;
 
 export class TerminalSessionRouter {
-  private api: APIClient;
+  private readonly api: APIClient;
   private sessions = new Map<string, SessionState>();
 
   constructor(api: APIClient) {
     this.api = api;
+  }
+
+  /** Get the API client (for identity comparison when recreating router) */
+  getApi(): APIClient {
+    return this.api;
   }
 
   /**

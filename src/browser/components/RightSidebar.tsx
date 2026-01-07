@@ -9,7 +9,6 @@ import { useWorkspaceUsage, useWorkspaceStatsSnapshot } from "@/browser/stores/W
 import { useFeatureFlags } from "@/browser/contexts/FeatureFlagsContext";
 import { useAPI } from "@/browser/contexts/API";
 import { CostsTab } from "./RightSidebar/CostsTab";
-import { ExternalLink, Terminal as TerminalIcon, X } from "lucide-react";
 
 import { ReviewPanel } from "./RightSidebar/CodeReview/ReviewPanel";
 import { ErrorBoundary } from "./ErrorBoundary";
@@ -48,13 +47,16 @@ import {
   type RightSidebarLayoutNode,
   type RightSidebarLayoutState,
 } from "@/browser/utils/rightSidebarLayout";
-import {
-  RightSidebarTabStrip,
-  getTabName,
-  type TabDragData,
-} from "./RightSidebar/RightSidebarTabStrip";
-import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { RightSidebarTabStrip, getTabName, type TabDragData } from "./RightSidebar/RightSidebarTabStrip";
 import { createTerminalSession, openTerminalPopout } from "@/browser/utils/terminal";
+import {
+  CostsTabLabel,
+  ReviewTabLabel,
+  StatsTabLabel,
+  TerminalTabLabel,
+  getTabContentClassName,
+  type ReviewStats,
+} from "./RightSidebar/tabs";
 import {
   DndContext,
   DragOverlay,
@@ -67,20 +69,8 @@ import {
 } from "@dnd-kit/core";
 import { SortableContext, horizontalListSortingStrategy } from "@dnd-kit/sortable";
 
-/** Stats reported by ReviewPanel for tab display */
-export interface ReviewStats {
-  total: number;
-  read: number;
-}
-
-/** Format duration for tab display (compact format) */
-function formatTabDuration(ms: number): string {
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  if (ms < 60000) return `${Math.round(ms / 1000)}s`;
-  const mins = Math.floor(ms / 60000);
-  const secs = Math.round((ms % 60000) / 1000);
-  return secs > 0 ? `${mins}m${secs}s` : `${mins}m`;
-}
+// Re-export for consumers
+export type { ReviewStats };
 
 interface SidebarContainerProps {
   collapsed: boolean;
@@ -205,15 +195,10 @@ interface RightSidebarTabsetNodeProps {
 const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) => {
   const tabsetBaseId = `${props.baseId}-${props.node.id}`;
 
-  const activeIsTerminal = isTerminalTab(props.node.activeTab);
+  // Content container class comes from tab registry - each tab defines its own padding/overflow
   const tabsetContentClassName = cn(
     "relative flex-1 min-h-0",
-    activeIsTerminal ? "overflow-hidden p-0" : "overflow-y-auto",
-    props.node.activeTab === "review"
-      ? "p-0"
-      : props.node.activeTab === "costs" || props.node.activeTab === "stats"
-        ? "p-[15px]"
-        : "p-0"
+    getTabContentClassName(props.node.activeTab)
   );
 
   // Drop zones using @dnd-kit's useDroppable
@@ -287,90 +272,24 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
         ? formatKeybind(keybinds[tabPosition])
         : undefined;
 
-    // Build label based on tab type
+    // Build label using tab-specific label components
     let label: React.ReactNode;
 
     if (tab === "costs") {
-      label = (
-        <>
-          Costs
-          {props.sessionCost !== null && (
-            <span className="text-muted text-[10px]">
-              ${props.sessionCost < 0.01 ? "<0.01" : props.sessionCost.toFixed(2)}
-            </span>
-          )}
-        </>
-      );
+      label = <CostsTabLabel sessionCost={props.sessionCost} />;
     } else if (tab === "review") {
-      label = (
-        <>
-          Review
-          {props.reviewStats !== null && props.reviewStats.total > 0 && (
-            <span
-              className={cn(
-                "text-[10px]",
-                props.reviewStats.read === props.reviewStats.total ? "text-muted" : "text-muted"
-              )}
-            >
-              {props.reviewStats.read}/{props.reviewStats.total}
-            </span>
-          )}
-        </>
-      );
+      label = <ReviewTabLabel reviewStats={props.reviewStats} />;
     } else if (tab === "stats") {
-      label = (
-        <>
-          Stats
-          {props.sessionDuration !== null && (
-            <span className="text-muted text-[10px]">
-              {formatTabDuration(props.sessionDuration)}
-            </span>
-          )}
-        </>
-      );
+      label = <StatsTabLabel sessionDuration={props.sessionDuration} />;
     } else if (isTerminal) {
-      // Terminal tab: show icon, dynamic title or numbered fallback, plus action buttons
-      const dynamicTitle = props.terminalTitles.get(tab);
       const terminalIndex = terminalTabs.indexOf(tab);
-      const fallbackName = terminalIndex === 0 ? "Terminal" : `Terminal ${terminalIndex + 1}`;
-      const displayName = dynamicTitle ?? fallbackName;
       label = (
-        <span className="inline-flex items-center gap-1">
-          <TerminalIcon className="h-3 w-3 shrink-0" />
-          <span className="truncate">{displayName}</span>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                className="text-muted hover:text-foreground -my-0.5 rounded p-0.5 transition-colors"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  props.onPopOutTerminal(tab);
-                }}
-                aria-label="Open terminal in new window"
-              >
-                <ExternalLink className="h-3 w-3" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">Open in new window</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                className="text-muted hover:text-destructive -my-0.5 rounded p-0.5 transition-colors"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  props.onCloseTerminal(tab);
-                }}
-                aria-label="Close terminal"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">Close terminal</TooltipContent>
-          </Tooltip>
-        </span>
+        <TerminalTabLabel
+          dynamicTitle={props.terminalTitles.get(tab)}
+          terminalIndex={terminalIndex}
+          onPopOut={() => props.onPopOutTerminal(tab)}
+          onClose={() => props.onCloseTerminal(tab)}
+        />
       );
     } else {
       label = tab;
@@ -547,7 +466,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   isCreating = false,
 }) => {
   // Trigger for focusing Review panel (preserves hunk selection)
-  const [focusTrigger, setFocusTrigger] = React.useState(0);
+  const [focusTrigger, _setFocusTrigger] = React.useState(0);
 
   // Review stats reported by ReviewPanel
   const [reviewStats, setReviewStats] = React.useState<ReviewStats | null>(null);

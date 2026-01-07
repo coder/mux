@@ -26,7 +26,7 @@ export function TerminalRouterProvider(props: TerminalRouterProviderProps) {
   const routerRef = useRef<TerminalSessionRouter | null>(null);
 
   // Create/recreate router when API changes
-  if (api && (!routerRef.current || routerRef.current["api"] !== api)) {
+  if (api && (!routerRef.current || routerRef.current.getApi() !== api)) {
     // Dispose old router if exists
     routerRef.current?.dispose();
     routerRef.current = new TerminalSessionRouter(api);
