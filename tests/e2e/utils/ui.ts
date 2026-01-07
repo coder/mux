@@ -447,8 +447,12 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
       const addButton = page.getByRole("button", { name: "New terminal" });
       await expect(addButton).toBeVisible();
       await addButton.click();
-      // Wait for Terminal tab to appear and be selected
-      const terminalTab = page.getByRole("tab", { name: "Terminal" });
+      // Wait for a terminal tab to appear (name may be "Terminal" or include cwd path)
+      // and be selected. Use a locator that matches tabs containing "Terminal" or terminal icon.
+      const terminalTab = page
+        .locator('[role="tab"]')
+        .filter({ has: page.locator("svg") })
+        .last();
       await expect(terminalTab).toBeVisible({ timeout: 5000 });
       await expect(terminalTab).toHaveAttribute("aria-selected", "true");
     },
