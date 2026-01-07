@@ -133,29 +133,19 @@ function runSpawnCommand(
 
 /**
  * Build Docker args for credential sharing.
- * Mounts ~/.ssh and ~/.gitconfig read-only into the container.
- * Also sets GIT_SSH_COMMAND to auto-accept new host keys.
+ * Forwards SSH agent and mounts ~/.gitconfig read-only into the container.
+ * Uses agent forwarding only (no ~/.ssh mount) to avoid passphrase/permission issues.
  */
 function buildCredentialArgs(): string[] {
   const home = os.homedir();
   const args: string[] = [];
 
-  const sshDir = path.join(home, ".ssh");
   const gitconfig = path.join(home, ".gitconfig");
-
-  if (existsSync(sshDir)) {
-    args.push("-v", `${sshDir}:/root/.ssh:ro`);
-    // -F /dev/null skips ~/.ssh/config which has ownership issues (owned by host user, not root)
-    args.push(
-      "-e",
-      "GIT_SSH_COMMAND=ssh -F /dev/null -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
-    );
-  }
   if (existsSync(gitconfig)) {
     args.push("-v", `${gitconfig}:/root/.gitconfig:ro`);
   }
 
-  // SSH agent forwarding
+  // SSH agent forwarding (no ~/.ssh mount - causes passphrase/permission issues)
   if (process.platform === "darwin") {
     // macOS Docker Desktop uses a magic socket path
     args.push("-v", "/run/host-services/ssh-auth.sock:/ssh-agent:ro");
@@ -257,7 +247,7 @@ export interface DockerRuntimeConfig {
    * to allow exec operations without calling createWorkspace again.
    */
   containerName?: string;
-  /** Mount host credentials (~/.ssh, ~/.gitconfig, ~/.config/gh) read-only into container */
+  /** Forward SSH agent and mount ~/.gitconfig read-only into container */
   shareCredentials?: boolean;
 }
 
