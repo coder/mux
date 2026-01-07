@@ -68,6 +68,14 @@ export class TerminalService {
         throw new Error(`Workspace not found: ${params.workspaceId}`);
       }
 
+      // Validate required fields before proceeding - projectPath is required for project-dir runtimes
+      if (!workspaceMetadata.projectPath) {
+        throw new Error(
+          `Workspace "${workspaceMetadata.name}" (${params.workspaceId}) is missing projectPath. ` +
+            `This may indicate a corrupted config or a workspace that was not properly associated with a project.`
+        );
+      }
+
       // 2. Create runtime (pass workspace info for Docker container name derivation)
       const runtime = createRuntime(
         workspaceMetadata.runtimeConfig ?? { type: "local", srcBaseDir: this.config.srcDir },
