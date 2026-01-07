@@ -33,6 +33,7 @@ import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import {
   addTabToFocusedTabset,
   collectAllTabs,
+  collectAllTabsWithTabset,
   dockTabToEdge,
   getDefaultRightSidebarLayoutState,
   isRightSidebarLayoutState,
@@ -40,7 +41,7 @@ import {
   parseRightSidebarLayoutState,
   removeTabEverywhere,
   reorderTabInTabset,
-  selectTabInFocusedTabset,
+  selectTabByIndex,
   selectTabInTabset,
   setFocusedTabset,
   updateSplitSizes,
@@ -165,19 +166,6 @@ const DragAwarePanelResizeHandle: React.FC<{
   return <PanelResizeHandle className={className} />;
 };
 
-function findFirstTerminalSessionTab(
-  node: RightSidebarLayoutNode
-): { tabsetId: string; tab: TabType } | null {
-  if (node.type === "tabset") {
-    const tab = node.tabs.find((t) => t.startsWith("terminal:") && t !== "terminal");
-    return tab ? { tabsetId: node.id, tab } : null;
-  }
-
-  return (
-    findFirstTerminalSessionTab(node.children[0]) ?? findFirstTerminalSessionTab(node.children[1])
-  );
-}
-
 type TabsetNode = Extract<RightSidebarLayoutNode, { type: "tabset" }>;
 
 interface RightSidebarTabsetNodeProps {
@@ -209,6 +197,8 @@ interface RightSidebarTabsetNodeProps {
   terminalTitles: Map<TabType, string>;
   /** Handler to update a terminal's title */
   onTerminalTitleChange: (tab: TabType, title: string) => void;
+  /** Map of tab → global position index (0-based) for keybind tooltips */
+  tabPositions: Map<TabType, number>;
 }
 
 const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) => {
@@ -277,18 +267,24 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
     const tabId = `${tabsetBaseId}-tab-${tab}`;
     const panelId = `${tabsetBaseId}-panel-${tab}`;
 
-    // Terminal tabs: show keyboard shortcut only for the first terminal
+    // Show keybind for tabs 1-9 based on their position in the layout
     const isTerminal = isTerminalTab(tab);
-    const terminalIndex = isTerminal ? terminalTabs.indexOf(tab) : -1;
-    const tooltip = isTerminal
-      ? terminalIndex === 0
-        ? formatKeybind(KEYBINDS.TERMINAL_TAB)
-        : `Terminal ${terminalIndex + 1}`
-      : tab === "costs"
-        ? formatKeybind(KEYBINDS.COSTS_TAB)
-        : tab === "review"
-          ? formatKeybind(KEYBINDS.REVIEW_TAB)
-          : formatKeybind(KEYBINDS.STATS_TAB);
+    const tabPosition = props.tabPositions.get(tab);
+    const keybinds = [
+      KEYBINDS.SIDEBAR_TAB_1,
+      KEYBINDS.SIDEBAR_TAB_2,
+      KEYBINDS.SIDEBAR_TAB_3,
+      KEYBINDS.SIDEBAR_TAB_4,
+      KEYBINDS.SIDEBAR_TAB_5,
+      KEYBINDS.SIDEBAR_TAB_6,
+      KEYBINDS.SIDEBAR_TAB_7,
+      KEYBINDS.SIDEBAR_TAB_8,
+      KEYBINDS.SIDEBAR_TAB_9,
+    ];
+    const tooltip =
+      tabPosition !== undefined && tabPosition < keybinds.length
+        ? formatKeybind(keybinds[tabPosition])
+        : undefined;
 
     // Build label based on tab type
     let label: React.ReactNode;
@@ -661,44 +657,49 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     [initialActiveTab, setLayoutRaw]
   );
 
-  // Keyboard shortcuts for tab switching (auto-expands if collapsed)
+  // Keyboard shortcuts for tab switching by position (Cmd/Ctrl+1-9)
+  // Auto-expands sidebar if collapsed
   React.useEffect(() => {
+    const tabKeybinds = [
+      KEYBINDS.SIDEBAR_TAB_1,
+      KEYBINDS.SIDEBAR_TAB_2,
+      KEYBINDS.SIDEBAR_TAB_3,
+      KEYBINDS.SIDEBAR_TAB_4,
+      KEYBINDS.SIDEBAR_TAB_5,
+      KEYBINDS.SIDEBAR_TAB_6,
+      KEYBINDS.SIDEBAR_TAB_7,
+      KEYBINDS.SIDEBAR_TAB_8,
+      KEYBINDS.SIDEBAR_TAB_9,
+    ];
+
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (matchesKeybind(e, KEYBINDS.COSTS_TAB)) {
-        e.preventDefault();
-        setLayout((prev) => selectTabInFocusedTabset(prev, "costs"));
-        setCollapsed(false);
-      } else if (matchesKeybind(e, KEYBINDS.REVIEW_TAB)) {
-        e.preventDefault();
-        setLayout((prev) => selectTabInFocusedTabset(prev, "review"));
-        setCollapsed(false);
-        setFocusTrigger((prev) => prev + 1);
-      } else if (matchesKeybind(e, KEYBINDS.TERMINAL_TAB)) {
-        e.preventDefault();
-
-        const current = parseRightSidebarLayoutState(layoutRawRef.current, initialActiveTab);
-        const found = findFirstTerminalSessionTab(current.root);
-        if (found) {
-          setLayout((prev) =>
-            selectTabInTabset(setFocusedTabset(prev, found.tabsetId), found.tabsetId, found.tab)
-          );
+      for (let i = 0; i < tabKeybinds.length; i++) {
+        if (matchesKeybind(e, tabKeybinds[i])) {
+          e.preventDefault();
+          setLayout((prev) => selectTabByIndex(prev, i));
+          setCollapsed(false);
+          return;
         }
-
-        setCollapsed(false);
-      } else if (statsTabEnabled && matchesKeybind(e, KEYBINDS.STATS_TAB)) {
-        e.preventDefault();
-        setLayout((prev) => selectTabInFocusedTabset(prev, "stats"));
-        setCollapsed(false);
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [initialActiveTab, setLayout, setCollapsed, statsTabEnabled]);
+  }, [setLayout, setCollapsed]);
 
   const usage = useWorkspaceUsage(workspaceId);
 
   const baseId = `right-sidebar-${workspaceId}`;
+
+  // Build map of tab → position for keybind tooltips
+  const tabPositions = React.useMemo(() => {
+    const allTabs = collectAllTabsWithTabset(layout.root);
+    const positions = new Map<TabType, number>();
+    allTabs.forEach(({ tab }, index) => {
+      positions.set(tab, index);
+    });
+    return positions;
+  }, [layout.root]);
 
   // Calculate session cost for tab display
   const sessionCost = React.useMemo(() => {
@@ -1018,6 +1019,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         onCloseTerminal={handleCloseTerminal}
         terminalTitles={terminalTitles}
         onTerminalTitleChange={handleTerminalTitleChange}
+        tabPositions={tabPositions}
       />
     );
   };

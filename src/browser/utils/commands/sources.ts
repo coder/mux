@@ -404,7 +404,6 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
           id: CommandIds.navRightSidebarFocusTerminal(),
           title: "Right Sidebar: Focus Terminal",
           section: section.navigation,
-          shortcutHint: formatKeybind(KEYBINDS.TERMINAL_TAB),
           run: () =>
             updateRightSidebarLayout(wsId, (s) => {
               const found = findFirstTerminalSessionTab(s.root);

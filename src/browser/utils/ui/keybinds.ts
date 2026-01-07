@@ -266,23 +266,18 @@ export const KEYBINDS = {
   // macOS: Cmd+I, Win/Linux: Ctrl+I
   FOCUS_CHAT: { key: "I", ctrl: true },
 
-  /** Switch to Costs tab in right sidebar */
-  // macOS: Cmd+1, Win/Linux: Ctrl+1
-  COSTS_TAB: { key: "1", ctrl: true, description: "Costs tab" },
-
-  /** Switch to Review tab in right sidebar */
-  // macOS: Cmd+2, Win/Linux: Ctrl+2
+  /** Switch to tab by position in right sidebar (1-9) */
+  // macOS: Cmd+N, Win/Linux: Ctrl+N
   // NOTE: Both Ctrl and Cmd work for switching tabs on Mac (macOS has no standard Cmd+number behavior)
-  // This differs from other keybinds where we distinguish Ctrl (literal) from Cmd (meta)
-  REVIEW_TAB: { key: "2", ctrl: true, description: "Review tab" },
-
-  /** Switch to Stats tab in right sidebar */
-  // macOS: Cmd+3, Win/Linux: Ctrl+3
-  STATS_TAB: { key: "3", ctrl: true, description: "Stats tab" },
-
-  /** Switch to Terminal tab in right sidebar */
-  // macOS: Cmd+4, Win/Linux: Ctrl+4
-  TERMINAL_TAB: { key: "4", ctrl: true, description: "Terminal tab" },
+  SIDEBAR_TAB_1: { key: "1", ctrl: true, description: "Tab 1" },
+  SIDEBAR_TAB_2: { key: "2", ctrl: true, description: "Tab 2" },
+  SIDEBAR_TAB_3: { key: "3", ctrl: true, description: "Tab 3" },
+  SIDEBAR_TAB_4: { key: "4", ctrl: true, description: "Tab 4" },
+  SIDEBAR_TAB_5: { key: "5", ctrl: true, description: "Tab 5" },
+  SIDEBAR_TAB_6: { key: "6", ctrl: true, description: "Tab 6" },
+  SIDEBAR_TAB_7: { key: "7", ctrl: true, description: "Tab 7" },
+  SIDEBAR_TAB_8: { key: "8", ctrl: true, description: "Tab 8" },
+  SIDEBAR_TAB_9: { key: "9", ctrl: true, description: "Tab 9" },
 
   /** Refresh diff in Code Review panel */
   // macOS: Cmd+R, Win/Linux: Ctrl+R

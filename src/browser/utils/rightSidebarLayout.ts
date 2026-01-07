@@ -380,6 +380,38 @@ export function collectActiveTabs(node: RightSidebarLayoutNode): TabType[] {
   return [...collectActiveTabs(node.children[0]), ...collectActiveTabs(node.children[1])];
 }
 
+/**
+ * Collect all tabs from all tabsets with their tabset IDs.
+ * Returns tabs in layout order (depth-first, left-to-right/top-to-bottom).
+ */
+export function collectAllTabsWithTabset(
+  node: RightSidebarLayoutNode
+): Array<{ tab: TabType; tabsetId: string }> {
+  if (node.type === "tabset") {
+    return node.tabs.map((tab) => ({ tab, tabsetId: node.id }));
+  }
+  return [
+    ...collectAllTabsWithTabset(node.children[0]),
+    ...collectAllTabsWithTabset(node.children[1]),
+  ];
+}
+
+/**
+ * Select a tab by its position in the layout (0-indexed).
+ * Returns the updated state, or the original state if index is out of bounds.
+ */
+export function selectTabByIndex(
+  state: RightSidebarLayoutState,
+  index: number
+): RightSidebarLayoutState {
+  const allTabs = collectAllTabsWithTabset(state.root);
+  if (index < 0 || index >= allTabs.length) {
+    return state;
+  }
+  const { tab, tabsetId } = allTabs[index];
+  return selectTabInTabset(setFocusedTabset(state, tabsetId), tabsetId, tab);
+}
+
 export function getFocusedActiveTab(state: RightSidebarLayoutState, fallback: TabType): TabType {
   const focused = findTabset(state.root, state.focusedTabsetId);
   if (focused?.type === "tabset") return focused.activeTab;
