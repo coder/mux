@@ -1761,12 +1761,6 @@ export const router = (authToken?: string) => {
             unsubscribe();
           }
         }),
-      getScreenState: t
-        .input(schemas.terminal.getScreenState.input)
-        .output(schemas.terminal.getScreenState.output)
-        .handler(({ context, input }) => {
-          return context.terminalService.getScreenState(input.sessionId);
-        }),
       openWindow: t
         .input(schemas.terminal.openWindow.input)
         .output(schemas.terminal.openWindow.output)

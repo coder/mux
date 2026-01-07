@@ -552,7 +552,7 @@ export class TerminalService {
       };
     }
 
-    // Note: Frontend should call getScreenState() on reconnect to restore terminal state.
+    // Note: The attach stream yields screenState first, then live output.
     // This subscription only provides live output from the point of subscription onward.
 
     const handler = (data: string) => callback(data);

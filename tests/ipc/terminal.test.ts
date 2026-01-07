@@ -293,50 +293,6 @@ describeIntegration("terminal PTY", () => {
     20000
   );
 
-  test.concurrent(
-    "getScreenState should return serialized terminal state",
-    async () => {
-      const env = await createTestEnvironment();
-      const tempGitRepo = await createTempGitRepo();
-
-      try {
-        const createResult = await createWorkspace(env, tempGitRepo, "test-screen-state");
-        const metadata = expectWorkspaceCreationSuccess(createResult);
-        const workspaceId = metadata.id;
-        const client = resolveOrpcClient(env);
-
-        // Create terminal session
-        const session = await client.terminal.create({
-          workspaceId,
-          cols: 80,
-          rows: 24,
-        });
-
-        // Wait for shell to initialize
-        await new Promise((resolve) => setTimeout(resolve, 500));
-
-        // Get screen state - it should be non-empty after shell startup
-        // (contains prompt, escape sequences, etc.)
-        const screenState = await client.terminal.getScreenState({
-          sessionId: session.sessionId,
-        });
-
-        // Screen state should be a string (VT escape sequences)
-        expect(typeof screenState).toBe("string");
-        // Should be non-empty (contains at least the shell prompt)
-        expect(screenState.length).toBeGreaterThan(0);
-        // Should contain terminal escape sequences (CSI = \x1b[ or ESC[)
-        expect(screenState).toMatch(/\x1b\[|\[\d+m/);
-
-        await client.terminal.close({ sessionId: session.sessionId });
-        await client.workspace.remove({ workspaceId });
-      } finally {
-        await cleanupTestEnvironment(env);
-        await cleanupTempGitRepo(tempGitRepo);
-      }
-    },
-    20000
-  );
 
   test.concurrent(
     "attach should preserve output order - no race conditions",

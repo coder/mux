@@ -742,15 +742,6 @@ export const terminal = {
     input: z.object({ sessionId: z.string() }),
     output: eventIterator(z.number()),
   },
-  /**
-   * Get serialized screen state for a terminal session.
-   * Returns VT escape sequences that reconstruct the current screen (~4KB).
-   * Used by frontend on reconnect for instant terminal restore.
-   */
-  getScreenState: {
-    input: z.object({ sessionId: z.string() }),
-    output: z.string(),
-  },
   openWindow: {
     input: z.object({
       workspaceId: z.string(),
