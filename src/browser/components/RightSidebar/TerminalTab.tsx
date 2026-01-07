@@ -39,6 +39,7 @@ export const TerminalTab: React.FC<TerminalTabProps> = (props) => {
       visible={props.visible}
       setDocumentTitle={false}
       onTitleChange={props.onTitleChange}
+      autoFocus={false}
     />
   );
 };

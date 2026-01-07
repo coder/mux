@@ -279,10 +279,11 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
 
     // Terminal tabs: show keyboard shortcut only for the first terminal
     const isTerminal = isTerminalTab(tab);
+    const terminalIndex = isTerminal ? terminalTabs.indexOf(tab) : -1;
     const tooltip = isTerminal
-      ? tab === "terminal"
+      ? terminalIndex === 0
         ? formatKeybind(KEYBINDS.TERMINAL_TAB)
-        : undefined
+        : `Terminal ${terminalIndex + 1}`
       : tab === "costs"
         ? formatKeybind(KEYBINDS.COSTS_TAB)
         : tab === "review"

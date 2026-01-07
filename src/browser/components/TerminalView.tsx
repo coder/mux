@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect, useState, useCallback } from "react";
 import { init, Terminal, FitAddon } from "ghostty-web";
 import { useAPI } from "@/browser/contexts/API";
 import { useTerminalRouter } from "@/browser/terminal/TerminalRouterContext";
@@ -17,6 +17,13 @@ interface TerminalViewProps {
   setDocumentTitle?: boolean;
   /** Called when the terminal title changes (via OSC escape sequences from running processes) */
   onTitleChange?: (title: string) => void;
+  /**
+   * Whether to auto-focus the terminal on mount/visibility change.
+   *
+   * Default: true (used by dedicated terminal window).
+   * Set to false when embedding (e.g. RightSidebar) to avoid stealing focus on workspace switch.
+   */
+  autoFocus?: boolean;
 }
 
 export function TerminalView({
@@ -25,12 +32,14 @@ export function TerminalView({
   visible,
   setDocumentTitle = true,
   onTitleChange,
+  autoFocus = true,
 }: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const [terminalError, setTerminalError] = useState<string | null>(null);
   const [terminalReady, setTerminalReady] = useState(false);
+  const [isFocused, setIsFocused] = useState(false);
 
   const { api } = useAPI();
   const router = useTerminalRouter();
@@ -164,7 +173,8 @@ export function TerminalView({
         terminal = new Terminal({
           fontSize: 13,
           fontFamily: "JetBrains Mono, Menlo, Monaco, monospace",
-          cursorBlink: true,
+          // Start with no blinking - we enable it on focus
+          cursorBlink: false,
           theme: {
             background: terminalBg,
             foreground: terminalFg,
@@ -178,9 +188,10 @@ export function TerminalView({
         fitAddon.fit();
 
         // ghostty-web focuses the container (contenteditable) on open(), which can show a
-        // browser caret in addition to the terminal cursor. Focus the hidden textarea instead.
+        // browser caret in addition to the terminal cursor. Focus the hidden textarea instead,
+        // but only if autoFocus is enabled (to avoid stealing focus on workspace switch).
         const textarea = containerEl.querySelector("textarea");
-        if (textarea instanceof HTMLTextAreaElement) {
+        if (autoFocus && textarea instanceof HTMLTextAreaElement) {
           textarea.focus();
         }
 
@@ -230,7 +241,41 @@ export function TerminalView({
       containerEl.replaceChildren();
       initInProgressRef.current = false;
     };
-  }, [visible, workspaceId, router, sessionId]);
+  }, [visible, workspaceId, router, sessionId, autoFocus]);
+
+  // Track focus/blur on the terminal container to control cursor blinking
+  useEffect(() => {
+    if (!terminalReady || !containerRef.current) {
+      return;
+    }
+
+    const container = containerRef.current;
+
+    const handleFocusIn = () => {
+      setIsFocused(true);
+      if (termRef.current) {
+        termRef.current.options.cursorBlink = true;
+      }
+    };
+
+    const handleFocusOut = (e: FocusEvent) => {
+      // Only blur if focus is leaving the container entirely
+      if (!container.contains(e.relatedTarget as Node)) {
+        setIsFocused(false);
+        if (termRef.current) {
+          termRef.current.options.cursorBlink = false;
+        }
+      }
+    };
+
+    container.addEventListener("focusin", handleFocusIn);
+    container.addEventListener("focusout", handleFocusOut);
+
+    return () => {
+      container.removeEventListener("focusin", handleFocusIn);
+      container.removeEventListener("focusout", handleFocusOut);
+    };
+  }, [terminalReady]);
 
   // Resize on container size change
   useEffect(() => {
@@ -307,6 +352,13 @@ export function TerminalView({
 
   const errorMessage = terminalError;
 
+  // Focus the terminal when the container is clicked
+  const handleContainerClick = useCallback(() => {
+    if (termRef.current) {
+      termRef.current.focus();
+    }
+  }, []);
+
   return (
     <div
       className="terminal-view"
@@ -318,6 +370,7 @@ export function TerminalView({
         minHeight: 0,
         backgroundColor: "var(--color-terminal-bg)",
       }}
+      onClick={handleContainerClick}
     >
       {errorMessage && (
         <div className="border-b border-red-900/30 bg-red-900/20 p-2 text-sm text-red-400">
@@ -335,6 +388,9 @@ export function TerminalView({
           // ghostty-web uses a contenteditable root for input; hide the browser caret
           // so we don't show a "second cursor".
           caretColor: "transparent",
+          // Subtle focus indicator: inner glow when focused
+          boxShadow: isFocused ? "inset 0 0 0 1px var(--color-accent)" : "none",
+          transition: "box-shadow 0.15s ease-in-out",
         }}
       />
     </div>
