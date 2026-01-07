@@ -196,8 +196,6 @@ interface RightSidebarTabsetNodeProps {
   terminalTitles: Map<TabType, string>;
   /** Handler to update a terminal's title */
   onTerminalTitleChange: (tab: TabType, title: string) => void;
-  /** Handler called when a terminal session is created (for placeholder tabs) */
-  onSessionCreated: (oldTab: TabType, sessionId: string) => void;
 }
 
 const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) => {
@@ -489,7 +487,6 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
                 workspaceId={props.workspaceId}
                 tabType={terminalTab}
                 visible={isActive}
-                onSessionCreated={(sessionId) => props.onSessionCreated(terminalTab, sessionId)}
                 onTitleChange={(title) => props.onTerminalTitleChange(terminalTab, title)}
               />
             </div>
@@ -766,58 +763,23 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     });
   }, []);
 
-  // Handler to add a new terminal tab (adds placeholder, session created by TerminalTab)
+  // Handler to add a new terminal tab.
+  // Creates the backend session first, then adds the tab with the real sessionId.
+  // This ensures the tabType (and React key) never changes, preventing remounts.
   const handleAddTerminal = React.useCallback(() => {
-    // Add placeholder "terminal" tab - TerminalTab will create the session
-    // and call onSessionCreated to update the tab with the real sessionId
-    setLayout((prev) => addTabToFocusedTabset(prev, "terminal"));
-  }, [setLayout]);
+    if (!api) return;
 
-  // Handler called when TerminalTab creates a new session (for placeholder tabs)
-  const handleSessionCreated = React.useCallback(
-    (oldTab: TabType, sessionId: string) => {
-      const newTab = makeTerminalTabType(sessionId);
+    // We need terminal size to create the session, but we don't have it yet.
+    // Use reasonable defaults - the terminal will resize once mounted.
+    const defaultSize = { cols: 80, rows: 24 };
 
-      // Replace placeholder tab with real sessionId tab
-      setLayout((prev) => {
-        // Find the tabset containing the old tab and replace it
-        const replaceInNode = (node: RightSidebarLayoutNode): RightSidebarLayoutNode => {
-          if (node.type === "tabset") {
-            const idx = node.tabs.indexOf(oldTab);
-            if (idx >= 0) {
-              const newTabs = [...node.tabs];
-              newTabs[idx] = newTab;
-              return {
-                ...node,
-                tabs: newTabs,
-                activeTab: node.activeTab === oldTab ? newTab : node.activeTab,
-              };
-            }
-            return node;
-          }
-          // Split: recurse into children
-          return {
-            ...node,
-            children: [replaceInNode(node.children[0]), replaceInNode(node.children[1])],
-          };
-        };
-        return { ...prev, root: replaceInNode(prev.root) };
+    void api.terminal
+      .create({ workspaceId, cols: defaultSize.cols, rows: defaultSize.rows })
+      .then((session) => {
+        const newTab = makeTerminalTabType(session.sessionId);
+        setLayout((prev) => addTabToFocusedTabset(prev, newTab));
       });
-
-      // Transfer title if any
-      setTerminalTitles((prev) => {
-        const title = prev.get(oldTab);
-        if (title) {
-          const next = new Map(prev);
-          next.delete(oldTab);
-          next.set(newTab, title);
-          return next;
-        }
-        return prev;
-      });
-    },
-    [setLayout]
-  );
+  }, [api, workspaceId, setLayout]);
 
   // Handler to close a terminal tab
   const handleCloseTerminal = React.useCallback(
@@ -1032,7 +994,6 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         onCloseTerminal={handleCloseTerminal}
         terminalTitles={terminalTitles}
         onTerminalTitleChange={handleTerminalTitleChange}
-        onSessionCreated={handleSessionCreated}
       />
     );
   };
