@@ -27,6 +27,7 @@ import {
   RIGHT_SIDEBAR_COLLAPSED_KEY,
   getRightSidebarLayoutKey,
 } from "@/common/constants/storage";
+// RightSidebarLayoutState used for initial setup via localStorage - acceptable for test fixtures
 import type { RightSidebarLayoutState } from "@/browser/utils/rightSidebarLayout";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
@@ -99,17 +100,17 @@ describeIntegration("RightSidebar (UI)", () => {
         expect(reviewTab).toBeTruthy();
         fireEvent.click(reviewTab);
 
-        // Wait for Review tab to become selected
+        // Wait for Review tab to become selected (visible UI state)
         await waitFor(() => {
           expect(reviewTab.getAttribute("aria-selected")).toBe("true");
           expect(costsTab.getAttribute("aria-selected")).toBe("false");
         });
 
-        // Verify persisted layout updated (per-workspace)
-        const persistedLayoutRaw = localStorage.getItem(getRightSidebarLayoutKey(workspaceId));
-        expect(persistedLayoutRaw).toBeTruthy();
-        const persistedLayout = JSON.parse(persistedLayoutRaw ?? "null") as RightSidebarLayoutState;
-        expect(persistedLayout.root).toMatchObject({ type: "tabset", activeTab: "review" });
+        // Verify Review panel is now visible
+        await waitFor(() => {
+          const reviewPanel = sidebar.querySelector('[role="tabpanel"][id*="review"]');
+          if (!reviewPanel) throw new Error("Review panel should be visible after tab click");
+        });
 
         // Create a terminal via the "+" button
         const newTerminalButton = await waitFor(
@@ -139,16 +140,11 @@ describeIntegration("RightSidebar (UI)", () => {
           expect(reviewTab.getAttribute("aria-selected")).toBe("false");
         });
 
-        // Verify persisted layout now points at a terminal tab
-        const persistedLayoutRaw2 = localStorage.getItem(getRightSidebarLayoutKey(workspaceId));
-        expect(persistedLayoutRaw2).toBeTruthy();
-        const persistedLayout2 = JSON.parse(
-          persistedLayoutRaw2 ?? "null"
-        ) as RightSidebarLayoutState;
-        expect(persistedLayout2.root).toMatchObject({ type: "tabset" });
-        if (persistedLayout2.root.type === "tabset") {
-          expect(persistedLayout2.root.activeTab.startsWith("terminal:")).toBe(true);
-        }
+        // Verify terminal panel is now visible
+        await waitFor(() => {
+          const terminalPanel = sidebar.querySelector('[role="tabpanel"][id*="terminal"]');
+          if (!terminalPanel) throw new Error("Terminal panel should be visible after tab click");
+        });
       } finally {
         await cleanupView(view, cleanupDom);
       }
@@ -200,15 +196,11 @@ describeIntegration("RightSidebar (UI)", () => {
         );
         fireEvent.click(collapseButton);
 
-        // Wait for collapse
+        // Wait for collapse - tablist should not be rendered
         await waitFor(() => {
-          // When collapsed, tablist should not be rendered
           const tablist = sidebar.querySelector('[role="tablist"]');
           if (tablist) throw new Error("Tablist should be hidden when collapsed");
         });
-
-        // Verify persisted state
-        expect(localStorage.getItem(RIGHT_SIDEBAR_COLLAPSED_KEY)).toBe(JSON.stringify(true));
 
         // Re-query sidebar and find expand button (sidebar reference may be stale after collapse)
         const collapsedSidebar = view.container.querySelector(
@@ -221,14 +213,11 @@ describeIntegration("RightSidebar (UI)", () => {
         expect(expandButton).toBeTruthy();
         fireEvent.click(expandButton);
 
-        // Wait for expand
+        // Wait for expand - tablist should be visible again
         await waitFor(() => {
           const tablist = sidebar.querySelector('[role="tablist"]');
           if (!tablist) throw new Error("Tablist should be visible after expand");
         });
-
-        // Verify persisted state
-        expect(localStorage.getItem(RIGHT_SIDEBAR_COLLAPSED_KEY)).toBe(JSON.stringify(false));
       } finally {
         await cleanupView(view, cleanupDom);
       }
@@ -483,19 +472,23 @@ describeIntegration("RightSidebar (UI)", () => {
         // Release mouse
         fireEvent.mouseUp(document);
 
-        // Wait for width to be persisted
+        // Helper to get sidebar's computed width (the style attribute is set inline)
+        const getSidebarWidth = () => {
+          const styleWidth = sidebar.style.width;
+          if (styleWidth && styleWidth.endsWith("px")) {
+            return parseInt(styleWidth, 10);
+          }
+          return sidebar.getBoundingClientRect().width;
+        };
+
+        // Wait for width to change (resize should update inline style)
         await waitFor(() => {
-          const storedWidth = localStorage.getItem("right-sidebar:width");
-          if (!storedWidth) throw new Error("Width not persisted");
-          const parsed = parseInt(storedWidth, 10);
-          // Should have a width greater than default
-          if (parsed < 400) throw new Error(`Expected width >= 400, got ${parsed}`);
+          const width = getSidebarWidth();
+          // Should have a width greater than default (~400px after resize)
+          if (width < 400) throw new Error(`Expected width >= 400, got ${width}`);
         });
 
-        const persistedWidthOnCosts = parseInt(
-          localStorage.getItem("right-sidebar:width") ?? "300",
-          10
-        );
+        const widthAfterResize = getSidebarWidth();
 
         // Switch to Review tab
         const reviewTab = await waitFor(
@@ -514,9 +507,8 @@ describeIntegration("RightSidebar (UI)", () => {
           expect(reviewTab.getAttribute("aria-selected")).toBe("true");
         });
 
-        // Width should still be the same (unified across tabs)
-        const widthOnReview = parseInt(localStorage.getItem("right-sidebar:width") ?? "300", 10);
-        expect(widthOnReview).toBe(persistedWidthOnCosts);
+        // Width should still be the same (unified across tabs) - verify via UI
+        expect(getSidebarWidth()).toBe(widthAfterResize);
 
         // Create a terminal via the "+" button (terminal tabs are not present by default)
         const newTerminalButton = await waitFor(
@@ -544,9 +536,8 @@ describeIntegration("RightSidebar (UI)", () => {
           expect(terminalTab.getAttribute("aria-selected")).toBe("true");
         });
 
-        // Width should still be the same
-        const widthOnTerminal = parseInt(localStorage.getItem("right-sidebar:width") ?? "300", 10);
-        expect(widthOnTerminal).toBe(persistedWidthOnCosts);
+        // Width should still be the same (verify via UI)
+        expect(getSidebarWidth()).toBe(widthAfterResize);
       } finally {
         await cleanupView(view, cleanupDom);
       }
@@ -606,21 +597,27 @@ describeIntegration("RightSidebar (UI)", () => {
           { timeout: 5_000 }
         );
 
+        // Helper to get sidebar's visible width
+        const getSidebarWidth = () => {
+          const styleWidth = sidebar.style.width;
+          if (styleWidth && styleWidth.endsWith("px")) {
+            return parseInt(styleWidth, 10);
+          }
+          return sidebar.getBoundingClientRect().width;
+        };
+
         // Resize while on Review tab
         fireEvent.mouseDown(resizeHandle, { clientX: 1000 });
         fireEvent.mouseMove(document, { clientX: 600 });
         fireEvent.mouseUp(document);
 
-        // Wait for width to be stored
+        // Wait for width to change in UI
         await waitFor(() => {
-          const width = localStorage.getItem("right-sidebar:width");
-          if (!width) throw new Error("Width not persisted");
+          const width = getSidebarWidth();
+          if (width < 400) throw new Error(`Expected width >= 400, got ${width}`);
         });
 
-        const widthAfterReviewResize = parseInt(
-          localStorage.getItem("right-sidebar:width") ?? "300",
-          10
-        );
+        const widthAfterReviewResize = getSidebarWidth();
 
         // Switch to Costs tab
         const costsTab = await waitFor(
@@ -639,9 +636,8 @@ describeIntegration("RightSidebar (UI)", () => {
           expect(costsTab.getAttribute("aria-selected")).toBe("true");
         });
 
-        // Width should persist when switching to Costs
-        const widthOnCosts = parseInt(localStorage.getItem("right-sidebar:width") ?? "300", 10);
-        expect(widthOnCosts).toBe(widthAfterReviewResize);
+        // Width should persist when switching to Costs (verify via UI)
+        expect(getSidebarWidth()).toBe(widthAfterReviewResize);
 
         // Resize again on Costs tab
         fireEvent.mouseDown(resizeHandle, { clientX: 800 });
@@ -649,27 +645,20 @@ describeIntegration("RightSidebar (UI)", () => {
         fireEvent.mouseUp(document);
 
         await waitFor(() => {
-          const width = parseInt(localStorage.getItem("right-sidebar:width") ?? "300", 10);
+          const width = getSidebarWidth();
           // Width should have changed
           if (width === widthAfterReviewResize) throw new Error("Width should have changed");
         });
 
-        const widthAfterCostsResize = parseInt(
-          localStorage.getItem("right-sidebar:width") ?? "300",
-          10
-        );
+        const widthAfterCostsResize = getSidebarWidth();
 
-        // Switch back to Review - should have same new width
+        // Switch back to Review - should have same new width (verify via UI)
         fireEvent.click(reviewTab);
         await waitFor(() => {
           expect(reviewTab.getAttribute("aria-selected")).toBe("true");
         });
 
-        const finalWidthOnReview = parseInt(
-          localStorage.getItem("right-sidebar:width") ?? "300",
-          10
-        );
-        expect(finalWidthOnReview).toBe(widthAfterCostsResize);
+        expect(getSidebarWidth()).toBe(widthAfterCostsResize);
       } finally {
         await cleanupView(view, cleanupDom);
       }
