@@ -88,14 +88,19 @@ export function hasInterruptedStream(
     if (elapsed < PENDING_STREAM_START_GRACE_PERIOD_MS) return false;
   }
 
-  // Don't show retry barrier if workspace init is still running
-  // The backend is intentionally waiting for init to complete before starting the stream
+  const lastMessage = messages[messages.length - 1];
+
+  // Don't show retry barrier if workspace init is still running AND no stream error yet.
+  // The backend is intentionally waiting for init to complete before starting the stream.
+  // But if a stream error has already occurred (e.g., init timeout), still show the barrier.
   const initMessage = messages.find((m) => m.type === "workspace-init");
-  if (initMessage?.type === "workspace-init" && initMessage.status === "running") {
+  if (
+    initMessage?.type === "workspace-init" &&
+    initMessage.status === "running" &&
+    lastMessage.type !== "stream-error"
+  ) {
     return false;
   }
-
-  const lastMessage = messages[messages.length - 1];
 
   // ask_user_question is a special case: an unfinished tool call represents an
   // intentional "waiting for user input" state, not a stream interruption.

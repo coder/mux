@@ -1106,6 +1106,16 @@ export class AIService extends EventEmitter {
         return Err({ type: "unknown", raw: "Aborted during initialization wait" });
       }
 
+      // Verify runtime is reachable (container exists and can be started).
+      // If the container was deleted mid-session, this surfaces a clear error.
+      const readyResult = await runtime.ensureReady();
+      if (!readyResult.ready) {
+        return Err({
+          type: "unknown",
+          raw: readyResult.error ?? "Container unavailable. It may have been deleted.",
+        });
+      }
+
       // Resolve the active agent definition.
       //
       // Precedence:
