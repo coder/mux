@@ -40,6 +40,8 @@ export function TerminalView({
   const [terminalError, setTerminalError] = useState<string | null>(null);
   const [terminalReady, setTerminalReady] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
+  // Track whether we've received the initial screen state from backend
+  const [isLoading, setIsLoading] = useState(true);
 
   const { api } = useAPI();
   const router = useTerminalRouter();
@@ -63,6 +65,11 @@ export function TerminalView({
     void setWindowDetails();
   }, [api, workspaceId, setDocumentTitle]);
 
+  // Reset loading state when session changes
+  useEffect(() => {
+    setIsLoading(true);
+  }, [sessionId]);
+
   // Subscribe to router when terminal is ready and visible
   useEffect(() => {
     if (!visible || !terminalReady || !termRef.current) {
@@ -72,8 +79,7 @@ export function TerminalView({
     // Capture current terminal ref for this subscription's lifetime
     const term = termRef.current;
 
-    // Clear terminal immediately to avoid "flash" of old content while waiting for screenState.
-    // This prevents cross-session bleed when switching between terminals.
+    // Clear terminal before subscribing to prevent any stale content flash
     term.clear();
 
     const unsubscribe = router.subscribe(sessionId, {
@@ -82,10 +88,11 @@ export function TerminalView({
       },
       onScreenState: (state) => {
         // Write screen state (may be empty for new sessions)
-        // No need to clear again - we cleared above before subscribing
         if (state) {
           term.write(state);
         }
+        // Mark loading complete - we now have valid content to show
+        setIsLoading(false);
       },
       onExit: (code) => {
         term.write(`\r\n[Process exited with code ${code}]\r\n`);
@@ -374,6 +381,9 @@ export function TerminalView({
     }
   }, []);
 
+  // Show loading overlay until we receive initial screen state
+  const showLoading = isLoading && terminalReady && visible;
+
   return (
     <div
       className="terminal-view"
@@ -384,6 +394,7 @@ export function TerminalView({
         height: "100%",
         minHeight: 0,
         backgroundColor: "var(--color-terminal-bg)",
+        position: "relative",
       }}
       onClick={handleContainerClick}
     >
@@ -406,8 +417,25 @@ export function TerminalView({
           // Subtle focus indicator: inner glow when focused
           boxShadow: isFocused ? "inset 0 0 0 1px var(--color-accent)" : "none",
           transition: "box-shadow 0.15s ease-in-out",
+          // Hide terminal content while loading to prevent flash
+          visibility: showLoading ? "hidden" : "visible",
         }}
       />
+      {/* Loading overlay - shows until we receive screen state from backend */}
+      {showLoading && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: "var(--color-terminal-bg)",
+          }}
+        >
+          <span className="text-muted text-sm animate-pulse">Connecting...</span>
+        </div>
+      )}
     </div>
   );
 }
