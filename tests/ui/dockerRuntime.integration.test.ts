@@ -129,10 +129,18 @@ describeIntegration("Docker runtime selection (UI)", () => {
     const projectPath = "/Users/dev/non-git-docker-project";
     expandProjects([projectPath]);
 
+    // For non-git projects, the backend returns runtimeAvailability with git-based
+    // runtimes unavailable. The UI uses this to disable the buttons.
     const client = createMockORPCClient({
       projects: new Map([projectWithNoWorkspaces(projectPath)]),
       workspaces: [],
       listBranches: async () => ({ branches: [], recommendedTrunk: null }),
+      runtimeAvailability: {
+        local: { available: true },
+        worktree: { available: false, reason: "Requires git repository" },
+        ssh: { available: false, reason: "Requires git repository" },
+        docker: { available: false, reason: "Requires git repository" },
+      },
     });
 
     const view = renderApp({ apiClient: client });

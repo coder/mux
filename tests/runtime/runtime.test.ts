@@ -1183,6 +1183,14 @@ describeIntegration("Runtime integration tests", () => {
       });
     };
 
+    // Shared no-op logger for workspace operations
+    const noopInitLogger = {
+      logStep: () => {},
+      logStdout: () => {},
+      logStderr: () => {},
+      logComplete: () => {},
+    };
+
     describe("createWorkspace + deleteWorkspace", () => {
       testForDocker(
         "creates container and deletes it",
@@ -1193,39 +1201,57 @@ describeIntegration("Runtime integration tests", () => {
           const projectPath = `/tmp/${projectName}`;
           const containerName = getContainerName(projectPath, workspaceName);
 
-          const runtime = new DockerRuntime({ image: "ubuntu:22.04" });
-
-          // Create workspace
-          const createResult = await runtime.createWorkspace({
-            projectPath,
-            branchName: workspaceName,
-            trunkBranch: "main",
-            directoryName: workspaceName,
-            initLogger: {
-              logStep: () => {},
-              logStdout: () => {},
-              logStderr: () => {},
-              logComplete: () => {},
-            },
-          });
-
-          expect(createResult.success).toBe(true);
-          if (!createResult.success) return;
-
-          // Verify container exists
-          const inspectResult = await dockerCommand(
-            `docker inspect ${containerName} --format='{{.State.Running}}'`
+          // initWorkspace requires a git repo to bundle - create a minimal one with "main" branch
+          await dockerCommand(`mkdir -p ${projectPath}`);
+          await dockerCommand(
+            `cd ${projectPath} && git init -b main && git config user.email "test@test.com" && git config user.name "Test" && echo "test" > README.md && git add . && git commit -m "init"`
           );
-          expect(inspectResult.exitCode).toBe(0);
-          expect(inspectResult.stdout.trim()).toBe("true");
 
-          // Delete workspace
-          const deleteResult = await runtime.deleteWorkspace(projectPath, workspaceName, true);
-          expect(deleteResult.success).toBe(true);
+          const runtime = new DockerRuntime({ image: "mux-ssh-test" });
 
-          // Verify container no longer exists
-          const afterInspect = await dockerCommand(`docker inspect ${containerName} 2>&1`);
-          expect(afterInspect.exitCode).not.toBe(0);
+          try {
+            // Create workspace
+            const createResult = await runtime.createWorkspace({
+              projectPath,
+              branchName: workspaceName,
+              trunkBranch: "main",
+              directoryName: workspaceName,
+              initLogger: noopInitLogger,
+            });
+
+            expect(createResult.success).toBe(true);
+            if (!createResult.success) return;
+
+            // createWorkspace only stores container name; initWorkspace actually creates it
+            const initResult = await runtime.initWorkspace({
+              projectPath,
+              branchName: workspaceName,
+              trunkBranch: "main",
+              workspacePath: createResult.workspacePath!,
+              initLogger: noopInitLogger,
+            });
+            expect(initResult.success).toBe(true);
+            if (!initResult.success) return;
+
+            // Verify container exists and is running
+            const inspectResult = await dockerCommand(
+              `docker inspect ${containerName} --format='{{.State.Running}}'`
+            );
+            expect(inspectResult.exitCode).toBe(0);
+            expect(inspectResult.stdout.trim()).toBe("true");
+
+            // Delete workspace
+            const deleteResult = await runtime.deleteWorkspace(projectPath, workspaceName, true);
+            expect(deleteResult.success).toBe(true);
+
+            // Verify container no longer exists
+            const afterInspect = await dockerCommand(`docker inspect ${containerName} 2>&1`);
+            expect(afterInspect.exitCode).not.toBe(0);
+          } finally {
+            // Clean up temp git repo and any leftover container
+            await dockerCommand(`rm -rf ${projectPath}`);
+            await dockerCommand(`docker rm -f ${containerName} 2>/dev/null || true`);
+          }
         },
         60000
       );

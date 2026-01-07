@@ -465,6 +465,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const { projects } = useProjectContext();
   const pendingSectionId = variant === "creation" ? (props.pendingSectionId ?? null) : null;
   const creationProject = variant === "creation" ? projects.get(props.projectPath) : undefined;
+  const creationSections = creationProject?.sections ?? [];
 
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(() => pendingSectionId);
 
@@ -533,6 +534,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           projectName: props.projectName,
           nameState: creationState.nameState,
           runtimeAvailability: creationState.runtimeAvailability,
+          sections: creationSections,
+          selectedSectionId,
+          onSectionChange: setSelectedSectionId,
         } satisfies React.ComponentProps<typeof CreationControls>)
       : null;
   const hasTypedText = input.trim().length > 0;

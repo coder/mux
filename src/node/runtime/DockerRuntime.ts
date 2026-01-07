@@ -706,12 +706,27 @@ export class DockerRuntime extends RemoteRuntime {
       }
 
       if (!force) {
+        // Check if container is already running before we start it
+        const wasRunning = await runDockerCommand(
+          `docker inspect -f '{{.State.Running}}' ${containerName}`,
+          10000
+        );
+        const containerWasRunning =
+          wasRunning.exitCode === 0 && wasRunning.stdout.trim() === "true";
+
         // Start container if stopped (docker start is idempotent - succeeds if already running)
         const startResult = await runDockerCommand(`docker start ${containerName}`, 30000);
         if (startResult.exitCode !== 0) {
           // Container won't start - skip dirty checks, allow deletion
           // (container is broken/orphaned, user likely wants to clean up)
         } else {
+          // Helper to stop container if we started it (don't leave it running on check failure)
+          const stopIfWeStartedIt = async () => {
+            if (!containerWasRunning) {
+              await runDockerCommand(`docker stop ${containerName}`, 10000);
+            }
+          };
+
           // Check for uncommitted changes
           const checkResult = await runDockerCommand(
             `docker exec ${containerName} bash -c 'cd ${CONTAINER_SRC_DIR} && git diff --quiet --exit-code && git diff --quiet --cached --exit-code'`,
@@ -719,6 +734,7 @@ export class DockerRuntime extends RemoteRuntime {
           );
 
           if (checkResult.exitCode !== 0) {
+            await stopIfWeStartedIt();
             return {
               success: false,
               error: "Workspace contains uncommitted changes. Use force flag to delete anyway.",
@@ -737,6 +753,7 @@ export class DockerRuntime extends RemoteRuntime {
             );
 
             if (unpushedResult.exitCode === 0 && unpushedResult.stdout.trim()) {
+              await stopIfWeStartedIt();
               return {
                 success: false,
                 error: `Workspace contains unpushed commits:\n\n${unpushedResult.stdout.trim()}`,
