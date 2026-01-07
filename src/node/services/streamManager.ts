@@ -34,6 +34,7 @@ import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
 import { stripInternalToolResultFields } from "@/common/utils/tools/internalToolResultFields";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import { StreamingTokenTracker } from "@/node/utils/main/StreamingTokenTracker";
+import { shescape } from "@/node/runtime/streamUtils";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { execBuffered } from "@/node/utils/runtime/helpers";
 import {
@@ -292,25 +293,29 @@ export class StreamManager extends EventEmitter {
   public async createTempDirForStream(streamToken: StreamToken, runtime: Runtime): Promise<string> {
     const tempDir = `~/.mux-tmp/${streamToken}`;
 
+    // Resolve ~ in the runtime's context.
+    //
+    // IMPORTANT: On Windows local runtime, Git Bash may use a customized $HOME,
+    // while runtime.resolvePath expands ~ via Node (USERPROFILE). To avoid drift,
+    // create the directory using the resolved absolute path.
+    let resolvedPath = (await runtime.resolvePath(tempDir)).trim();
+
+    // In the main process, PlatformPaths defaults to POSIX behavior (no navigator),
+    // so we normalize Windows paths to forward slashes.
+    if (process.platform === "win32") {
+      resolvedPath = resolvedPath.replace(/\\/g, "/");
+    }
+
     // Create directory on target runtime (local/SSH/Docker)
-    const result = await execBuffered(runtime, `mkdir -p ${tempDir}`, {
+    const result = await execBuffered(runtime, `mkdir -p ${shescape.quote(resolvedPath)}`, {
       cwd: "/",
       timeout: 10,
     });
 
     if (result.exitCode !== 0) {
-      throw new Error(`Failed to create temp directory ${tempDir}: exit code ${result.exitCode}`);
-    }
-
-    let resolvedPath = (await runtime.resolvePath(tempDir)).trim();
-
-    // In the main process, PlatformPaths defaults to POSIX behavior (no navigator),
-    // so we normalize Windows paths to forward slashes.
-    if (
-      process.platform === "win32" &&
-      (/^[A-Za-z]:\\/.test(resolvedPath) || resolvedPath.startsWith("\\\\"))
-    ) {
-      resolvedPath = resolvedPath.replace(/\\/g, "/");
+      throw new Error(
+        `Failed to create temp directory ${resolvedPath}: exit code ${result.exitCode}`
+      );
     }
 
     return resolvedPath;
