@@ -613,6 +613,7 @@ export class WorkspaceService extends EventEmitter {
       }
 
       if (!createResult!.success || !createResult!.workspacePath) {
+        initLogger.logComplete(-1);
         return Err(createResult!.error ?? "Failed to create workspace");
       }
 
@@ -649,6 +650,7 @@ export class WorkspaceService extends EventEmitter {
       const allMetadata = await this.config.getAllWorkspaceMetadata();
       const completeMetadata = allMetadata.find((m) => m.id === workspaceId);
       if (!completeMetadata) {
+        initLogger.logComplete(-1);
         return Err("Failed to retrieve workspace metadata");
       }
 
@@ -673,6 +675,7 @@ export class WorkspaceService extends EventEmitter {
 
       return Ok({ metadata: completeMetadata });
     } catch (error) {
+      initLogger.logComplete(-1);
       const message = error instanceof Error ? error.message : String(error);
       return Err(`Failed to create workspace: ${message}`);
     }
@@ -1489,6 +1492,7 @@ export class WorkspaceService extends EventEmitter {
         } catch (cleanupError) {
           log.error(`Failed to clean up session dir ${newSessionDir}:`, cleanupError);
         }
+        initLogger.logComplete(-1);
         const message = copyError instanceof Error ? copyError.message : String(copyError);
         return Err(`Failed to copy chat history: ${message}`);
       }

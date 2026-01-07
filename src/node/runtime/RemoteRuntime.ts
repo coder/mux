@@ -140,16 +140,14 @@ export abstract class RemoteRuntime implements Runtime {
     // Wrap in DisposableProcess for cleanup
     const disposable = new DisposableProcess(childProcess);
 
-    // Capture stderr for error reporting (e.g., SSH exit code 255 failures)
-    // This is collected in parallel with passing stderr stream to caller
-    let stderrForErrorReporting = "";
-    childProcess.stderr?.on("data", (data: Buffer) => {
-      stderrForErrorReporting += data.toString();
-    });
-
     // Track if we killed the process due to timeout or abort
     let timedOut = false;
     let aborted = false;
+
+    // Declared here so it's captured by the exitCode promise closure,
+    // but the data listener is added AFTER Readable.toWeb() to avoid
+    // putting the stream in flowing mode prematurely.
+    let stderrForErrorReporting = "";
 
     // Create promises for exit code and duration immediately.
     const exitCode = new Promise<number>((resolve, reject) => {
@@ -204,6 +202,12 @@ export abstract class RemoteRuntime implements Runtime {
     // Convert Node.js streams to Web Streams
     const stdout = Readable.toWeb(childProcess.stdout!) as unknown as ReadableStream<Uint8Array>;
     const stderr = Readable.toWeb(childProcess.stderr!) as unknown as ReadableStream<Uint8Array>;
+
+    // Capture stderr for error reporting (e.g., SSH exit code 255 failures).
+    // Must be AFTER Readable.toWeb() to avoid putting the stream in flowing mode prematurely.
+    childProcess.stderr?.on("data", (data: Buffer) => {
+      stderrForErrorReporting += data.toString();
+    });
 
     // Writable.toWeb(childProcess.stdin) is surprisingly easy to get into an invalid state
     // for short-lived remote commands (notably via SSH) where stdin may already be closed
