@@ -47,39 +47,43 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
   // Git repository state for the banner
   const [branchesLoaded, setBranchesLoaded] = useState(false);
   const [hasBranches, setHasBranches] = useState(true); // Assume git repo until proven otherwise
+  const [branchRefreshKey, setBranchRefreshKey] = useState(0);
 
-  const isMountedRef = useRef(true);
+  // Load branches to determine if this is a git repository.
+  // Uses local cancelled flag (not ref) to handle StrictMode double-renders correctly.
   useEffect(() => {
-    return () => {
-      isMountedRef.current = false;
-    };
-  }, []);
+    if (!api) return;
+    let cancelled = false;
 
-  // Load branches to determine if this is a git repository
-  const loadBranches = useCallback(async () => {
-    if (!api || !isMountedRef.current) return;
-    setBranchesLoaded(false);
-    try {
-      const result = await api.projects.listBranches({ projectPath });
-      if (!isMountedRef.current) return;
-      setHasBranches(result.branches.length > 0);
-    } catch (err) {
-      console.error("Failed to load branches:", err);
-      if (!isMountedRef.current) return;
-      setHasBranches(true); // On error, don't show banner
-    } finally {
-      if (isMountedRef.current) {
-        setBranchesLoaded(true);
+    (async () => {
+      // Don't reset branchesLoaded - it starts false, becomes true after first load.
+      // This keeps banner mounted during refetch so success message stays visible.
+      try {
+        const result = await api.projects.listBranches({ projectPath });
+        if (cancelled) return;
+        setHasBranches(result.branches.length > 0);
+      } catch (err) {
+        console.error("Failed to load branches:", err);
+        if (cancelled) return;
+        setHasBranches(true); // On error, don't show banner
+      } finally {
+        if (!cancelled) {
+          setBranchesLoaded(true);
+        }
       }
-    }
-  }, [api, projectPath]);
+    })();
 
-  // Load branches on mount
-  useEffect(() => {
-    void loadBranches();
-  }, [loadBranches]);
+    return () => {
+      cancelled = true;
+    };
+  }, [api, projectPath, branchRefreshKey]);
 
   const isNonGitRepo = branchesLoaded && !hasBranches;
+
+  // Trigger branch refetch after git init to verify it worked
+  const handleGitInitSuccess = useCallback(() => {
+    setBranchRefreshKey((k) => k + 1);
+  }, []);
 
   // Track archived workspaces in a ref; only update state when the list actually changes
   const archivedMapRef = useRef<Map<string, FrontendWorkspaceMetadata>>(new Map());
@@ -174,7 +178,7 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
               <div className="flex w-full max-w-3xl flex-col gap-4">
                 {/* Git init banner - shown above ChatInput when not a git repo */}
                 {isNonGitRepo && (
-                  <GitInitBanner projectPath={projectPath} onSuccess={loadBranches} />
+                  <GitInitBanner projectPath={projectPath} onSuccess={handleGitInitSuccess} />
                 )}
                 {/* ChatInput for workspace creation - includes section selector */}
                 <ChatInput
