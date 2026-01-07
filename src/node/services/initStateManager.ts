@@ -406,6 +406,8 @@ export class InitStateManager extends EventEmitter {
           );
           resolve();
         }, INIT_TIMEOUT_MS);
+        // Don't keep Node alive just for this timeout (allows tests to exit)
+        timeoutId.unref();
       });
 
       const abortPromise = new Promise<void>((resolve) => {

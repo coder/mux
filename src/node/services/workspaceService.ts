@@ -1405,8 +1405,26 @@ export class WorkspaceService extends EventEmitter {
       });
 
       if (!forkResult.success) {
+        initLogger.logComplete(-1);
         return Err(forkResult.error ?? "Failed to fork workspace");
       }
+
+      // Run init hook for forked workspace (fire-and-forget like create())
+      // Use sourceBranch as trunk since fork is based on source workspace's branch
+      void runtime
+        .initWorkspace({
+          projectPath: foundProjectPath,
+          branchName: newName,
+          trunkBranch: forkResult.sourceBranch ?? "main",
+          workspacePath: forkResult.workspacePath!,
+          initLogger,
+        })
+        .catch((error: unknown) => {
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          log.error(`initWorkspace failed for forked workspace ${newWorkspaceId}:`, error);
+          initLogger.logStderr(`Initialization failed: ${errorMsg}`);
+          initLogger.logComplete(-1);
+        });
 
       const sourceSessionDir = this.config.getSessionDir(sourceWorkspaceId);
       const newSessionDir = this.config.getSessionDir(newWorkspaceId);
