@@ -253,33 +253,56 @@ describeIntegration("Runtime integration tests", () => {
           expect(result).toEqual({ ready: true });
         });
 
-        // SKIP: This test stops the shared SSH container, but containers started with --rm
-        // are removed on stop (not just stopped). This breaks subsequent SSH/Docker tests.
-        // TODO: Create a dedicated container for this test instead of reusing the SSH container.
-        test.skip("starts stopped container and returns ready", async () => {
-          // Use the shared SSH container which DockerRuntime is configured with
-          const containerName = sshConfig!.containerId;
+        testDockerOnly(
+          "starts stopped container and returns ready",
+          async () => {
+            // Create a dedicated container for this test (not the shared SSH container)
+            // so stopping it doesn't affect other tests
+            const { execSync } = await import("child_process");
+            const { DockerRuntime } = await import("@/node/runtime/DockerRuntime");
+            const containerName = `mux-docker-ready-test-${Date.now()}`;
 
-          // Stop the container
-          const { execSync } = await import("child_process");
-          execSync(`docker stop ${containerName}`, { timeout: 30000 });
+            // Start a fresh container (no --rm so we can stop/start it)
+            execSync(`docker run -d --name ${containerName} mux-ssh-test sleep infinity`, {
+              timeout: 60000,
+            });
 
-          try {
-            const runtime = createRuntime();
-            const result = await runtime.ensureReady();
-            expect(result).toEqual({ ready: true });
+            try {
+              // Stop the container
+              execSync(`docker stop ${containerName}`, { timeout: 30000 });
 
-            // Verify container is running again
-            const inspectOutput = execSync(
-              `docker inspect --format='{{.State.Running}}' ${containerName}`,
-              { encoding: "utf-8", timeout: 10000 }
-            );
-            expect(inspectOutput.trim()).toBe("true");
-          } finally {
-            // Ensure container is running for subsequent tests
-            execSync(`docker start ${containerName}`, { timeout: 30000 });
-          }
-        }, 60000);
+              // Verify it's stopped
+              const stoppedState = execSync(
+                `docker inspect --format='{{.State.Running}}' ${containerName}`,
+                { encoding: "utf-8", timeout: 10000 }
+              );
+              expect(stoppedState.trim()).toBe("false");
+
+              // ensureReady() should start it
+              const runtime = new DockerRuntime({
+                image: "mux-ssh-test",
+                containerName,
+              });
+              const result = await runtime.ensureReady();
+              expect(result).toEqual({ ready: true });
+
+              // Verify container is running again
+              const inspectOutput = execSync(
+                `docker inspect --format='{{.State.Running}}' ${containerName}`,
+                { encoding: "utf-8", timeout: 10000 }
+              );
+              expect(inspectOutput.trim()).toBe("true");
+            } finally {
+              // Clean up: stop and remove the test container
+              try {
+                execSync(`docker rm -f ${containerName}`, { timeout: 30000 });
+              } catch {
+                // Ignore cleanup errors
+              }
+            }
+          },
+          90000
+        );
 
         testDockerOnly("returns error for non-existent container", async () => {
           // Create a DockerRuntime pointing to a container that doesn't exist
