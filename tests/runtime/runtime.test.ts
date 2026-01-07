@@ -59,857 +59,857 @@ describeIntegration("Runtime integration tests", () => {
 
   // Test matrix: Run all tests for local, SSH, and Docker runtimes
   // TEMPORARY: Docker runtime skipped to isolate hang cause
-  describe.each<{ type: RuntimeType }>([{ type: "local" }, { type: "ssh" } /*, { type: "docker" }*/])(
-    "Runtime: $type",
-    ({ type }) => {
-      // Helper to create runtime for this test type
-      // Use a base working directory - TestWorkspace will create subdirectories as needed
-      // For local runtime, use os.tmpdir() which matches where TestWorkspace creates directories
-      const getBaseWorkdir = () => {
-        if (type === "ssh") {
-          return sshConfig!.workdir;
+  describe.each<{ type: RuntimeType }>([
+    { type: "local" },
+    { type: "ssh" } /*, { type: "docker" }*/,
+  ])("Runtime: $type", ({ type }) => {
+    // Helper to create runtime for this test type
+    // Use a base working directory - TestWorkspace will create subdirectories as needed
+    // For local runtime, use os.tmpdir() which matches where TestWorkspace creates directories
+    const getBaseWorkdir = () => {
+      if (type === "ssh") {
+        return sshConfig!.workdir;
+      }
+      if (type === "docker") {
+        return "/src";
+      }
+      return os.tmpdir();
+    };
+
+    // DockerRuntime is slower than local/ssh, and the integration job has a hard
+    // time budget. Keep the Docker coverage focused on the core Runtime contract.
+    //
+    // NOTE: Avoid assigning `describe.skip` or `test.skip` to variables. Bun's Jest
+    // compatibility can lose the skip semantics when these functions are detached.
+    function describeIf(shouldRun: boolean) {
+      return (...args: Parameters<typeof describe>) => {
+        if (shouldRun) {
+          describe(...args);
+        } else {
+          describe.skip(...args);
         }
-        if (type === "docker") {
-          return "/src";
-        }
-        return os.tmpdir();
       };
-
-      // DockerRuntime is slower than local/ssh, and the integration job has a hard
-      // time budget. Keep the Docker coverage focused on the core Runtime contract.
-      //
-      // NOTE: Avoid assigning `describe.skip` or `test.skip` to variables. Bun's Jest
-      // compatibility can lose the skip semantics when these functions are detached.
-      function describeIf(shouldRun: boolean) {
-        return (...args: Parameters<typeof describe>) => {
-          if (shouldRun) {
-            describe(...args);
-          } else {
-            describe.skip(...args);
-          }
-        };
-      }
-
-      // Running these runtime contract tests with test.concurrent can easily overwhelm
-      // the docker/ssh fixtures in CI and cause the overall integration job to hit its
-      // 10-minute timeout. Keep runtime tests deterministic by running them sequentially
-      // for remote runtimes.
-      const testForRuntime = type === "local" ? test.concurrent : test;
-      function testIf(shouldRun: boolean) {
-        return (...args: Parameters<typeof test>) => {
-          if (shouldRun) {
-            testForRuntime(...args);
-          } else {
-            test.skip(...args);
-          }
-        };
-      }
-
-      const isRemote = type !== "local";
-
-      const describeLocalOnly = describeIf(type === "local");
-      const describeNonDocker = describeIf(type !== "docker");
-      const testLocalOnly = testIf(!isRemote);
-      const testDockerOnly = testIf(type === "docker");
-      const createRuntime = (): Runtime =>
-        createTestRuntime(
-          type,
-          getBaseWorkdir(),
-          sshConfig,
-          type === "docker"
-            ? { image: "mux-ssh-test", containerName: sshConfig!.containerId }
-            : undefined
-        );
-
-      describe("exec() - Command execution", () => {
-        testForRuntime("captures stdout and stderr separately", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          const result = await execBuffered(runtime, 'echo "output" && echo "error" >&2', {
-            cwd: workspace.path,
-            timeout: 30,
-          });
-
-          expect(result.stdout.trim()).toBe("output");
-          expect(result.stderr.trim()).toBe("error");
-          expect(result.exitCode).toBe(0);
-          expect(result.duration).toBeGreaterThan(0);
-        });
-
-        testForRuntime("returns correct exit code for failed commands", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          const result = await execBuffered(runtime, "exit 42", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
-
-          expect(result.exitCode).toBe(42);
-        });
-
-        testLocalOnly("handles stdin input", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          const result = await execBuffered(runtime, "cat", {
-            cwd: workspace.path,
-            timeout: 30,
-            stdin: "hello from stdin",
-          });
-
-          expect(result.stdout).toBe("hello from stdin");
-          expect(result.exitCode).toBe(0);
-        });
-
-        testForRuntime("passes environment variables", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          const result = await execBuffered(runtime, 'echo "$TEST_VAR"', {
-            cwd: workspace.path,
-            timeout: 30,
-            env: { TEST_VAR: "test-value" },
-          });
-
-          expect(result.stdout.trim()).toBe("test-value");
-        });
-
-        testForRuntime("sets NON_INTERACTIVE_ENV_VARS to prevent prompts", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          // Verify GIT_TERMINAL_PROMPT is set to 0 (prevents credential prompts)
-          const result = await execBuffered(
-            runtime,
-            'echo "GIT_TERMINAL_PROMPT=$GIT_TERMINAL_PROMPT GIT_EDITOR=$GIT_EDITOR"',
-            { cwd: workspace.path, timeout: 30 }
-          );
-
-          expect(result.stdout).toContain("GIT_TERMINAL_PROMPT=0");
-          expect(result.stdout).toContain("GIT_EDITOR=true");
-        });
-
-        testForRuntime("handles empty output", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          const result = await execBuffered(runtime, "true", { cwd: workspace.path, timeout: 30 });
-
-          expect(result.stdout).toBe("");
-          expect(result.stderr).toBe("");
-          expect(result.exitCode).toBe(0);
-        });
-
-        testLocalOnly("handles commands with quotes and special characters", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          const result = await execBuffered(runtime, 'echo "hello \\"world\\""', {
-            cwd: workspace.path,
-            timeout: 30,
-          });
-
-          expect(result.stdout.trim()).toBe('hello "world"');
-        });
-
-        testForRuntime("respects working directory", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          const result = await execBuffered(runtime, "pwd", { cwd: workspace.path, timeout: 30 });
-
-          expect(result.stdout.trim()).toContain(workspace.path);
-        });
-        testLocalOnly(
-          "handles timeout correctly",
-          async () => {
-            const runtime = createRuntime();
-            await using workspace = await TestWorkspace.create(runtime, type);
-
-            // Command that sleeps longer than timeout
-            const startTime = performance.now();
-            const result = await execBuffered(runtime, "sleep 10", {
-              cwd: workspace.path,
-              timeout: 1, // 1 second timeout
-            });
-            const duration = performance.now() - startTime;
-
-            // Exit code should be EXIT_CODE_TIMEOUT (-998)
-            expect(result.exitCode).toBe(-998);
-            // Should complete in around 1 second, not 10 seconds
-            // Allow some margin for overhead (especially on SSH)
-            expect(duration).toBeLessThan(3000); // 3 seconds max
-            expect(duration).toBeGreaterThan(500); // At least 0.5 seconds
-          },
-          15000
-        ); // 15 second timeout for test (includes workspace creation overhead)
-      });
-
-      describe("ensureReady() - Runtime readiness", () => {
-        testForRuntime("returns ready for running runtime", async () => {
-          const runtime = createRuntime();
-          const result = await runtime.ensureReady();
-          expect(result).toEqual({ ready: true });
-        });
-
-        testDockerOnly(
-          "starts stopped container and returns ready",
-          async () => {
-            // Use the shared SSH container which DockerRuntime is configured with
-            const containerName = sshConfig!.containerId;
-
-            // Stop the container
-            const { execSync } = await import("child_process");
-            execSync(`docker stop ${containerName}`, { timeout: 30000 });
-
-            try {
-              const runtime = createRuntime();
-              const result = await runtime.ensureReady();
-              expect(result).toEqual({ ready: true });
-
-              // Verify container is running again
-              const inspectOutput = execSync(
-                `docker inspect --format='{{.State.Running}}' ${containerName}`,
-                { encoding: "utf-8", timeout: 10000 }
-              );
-              expect(inspectOutput.trim()).toBe("true");
-            } finally {
-              // Ensure container is running for subsequent tests
-              execSync(`docker start ${containerName}`, { timeout: 30000 });
-            }
-          },
-          60000
-        );
-
-        testDockerOnly("returns error for non-existent container", async () => {
-          // Create a DockerRuntime pointing to a container that doesn't exist
-          const { DockerRuntime } = await import("@/node/runtime/DockerRuntime");
-          const runtime = new DockerRuntime({
-            image: "ubuntu:22.04",
-            containerName: "mux-nonexistent-container-12345",
-          });
-
-          const result = await runtime.ensureReady();
-          expect(result.ready).toBe(false);
-          expect(result.error).toBeDefined();
-        });
-      });
-
-      describe("resolvePath() - Path resolution", () => {
-        testForRuntime("expands ~ to the home directory", async () => {
-          const runtime = createRuntime();
-
-          const resolved = await runtime.resolvePath("~");
-
-          if (type === "ssh") {
-            expect(resolved).toBe("/home/testuser");
-          } else if (type === "docker") {
-            expect(resolved).toBe("/root");
-          } else {
-            expect(resolved).toBe(os.homedir());
-          }
-        });
-
-        testForRuntime("expands ~/path by prefixing the home directory", async () => {
-          const runtime = createRuntime();
-
-          const home = await runtime.resolvePath("~");
-          const resolved = await runtime.resolvePath("~/mux");
-
-          expect(resolved).toBe(`${home}/mux`);
-        });
-      });
-
-      describe("readFile() - File reading", () => {
-        testForRuntime("reads file contents", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          // Write test file
-          const testContent = "Hello, World!\nLine 2\nLine 3";
-          await writeFileString(runtime, `${workspace.path}/test.txt`, testContent);
-
-          // Read it back
-          const content = await readFileString(runtime, `${workspace.path}/test.txt`);
-
-          expect(content).toBe(testContent);
-        });
-
-        testForRuntime("reads empty file", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          // Write empty file
-          await writeFileString(runtime, `${workspace.path}/empty.txt`, "");
-
-          // Read it back
-          const content = await readFileString(runtime, `${workspace.path}/empty.txt`);
-
-          expect(content).toBe("");
-        });
-
-        testLocalOnly("reads binary data correctly", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          // Create binary file with specific bytes
-          const binaryData = new Uint8Array([0, 1, 2, 255, 254, 253]);
-          const writer = runtime.writeFile(`${workspace.path}/binary.dat`).getWriter();
-          await writer.write(binaryData);
-          await writer.close();
-
-          // Read it back
-          const stream = runtime.readFile(`${workspace.path}/binary.dat`);
-          const reader = stream.getReader();
-          const chunks: Uint8Array[] = [];
-
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            chunks.push(value);
-          }
-
-          // Concatenate chunks
-          const readData = new Uint8Array(chunks.reduce((acc, chunk) => acc + chunk.length, 0));
-          let offset = 0;
-          for (const chunk of chunks) {
-            readData.set(chunk, offset);
-            offset += chunk.length;
-          }
-
-          expect(readData).toEqual(binaryData);
-        });
-
-        testForRuntime("throws RuntimeError for non-existent file", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          await expect(
-            readFileString(runtime, `${workspace.path}/does-not-exist.txt`)
-          ).rejects.toThrow(RuntimeError);
-        });
-
-        testForRuntime("throws RuntimeError when reading a directory", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          // Create subdirectory
-          await execBuffered(runtime, `mkdir -p subdir`, { cwd: workspace.path, timeout: 30 });
-
-          await expect(readFileString(runtime, `${workspace.path}/subdir`)).rejects.toThrow();
-        });
-      });
-
-      describe("writeFile() - File writing", () => {
-        testForRuntime("writes file contents", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          const content = "Test content\nLine 2";
-          await writeFileString(runtime, `${workspace.path}/output.txt`, content);
-
-          // Verify by reading back
-          const result = await execBuffered(runtime, "cat output.txt", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
-
-          expect(result.stdout).toBe(content);
-        });
-
-        testForRuntime("overwrites existing file", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          const path = `${workspace.path}/overwrite.txt`;
-
-          // Write initial content
-          await writeFileString(runtime, path, "original");
-
-          // Overwrite
-          await writeFileString(runtime, path, "new content");
-
-          // Verify
-          const content = await readFileString(runtime, path);
-          expect(content).toBe("new content");
-        });
-
-        testForRuntime("writes empty file", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          await writeFileString(runtime, `${workspace.path}/empty.txt`, "");
-
-          const content = await readFileString(runtime, `${workspace.path}/empty.txt`);
-          expect(content).toBe("");
-        });
-
-        testLocalOnly("writes binary data", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          const binaryData = new Uint8Array([0, 1, 2, 255, 254, 253]);
-          const writer = runtime.writeFile(`${workspace.path}/binary.dat`).getWriter();
-          await writer.write(binaryData);
-          await writer.close();
-
-          // Verify with wc -c (byte count)
-          const result = await execBuffered(runtime, "wc -c < binary.dat", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
-
-          expect(result.stdout.trim()).toBe("6");
-        });
-
-        testForRuntime("creates parent directories if needed", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          await writeFileString(runtime, `${workspace.path}/nested/dir/file.txt`, "content");
-
-          const content = await readFileString(runtime, `${workspace.path}/nested/dir/file.txt`);
-          expect(content).toBe("content");
-        });
-
-        testForRuntime("handles special characters in content", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          const specialContent = 'Special chars: \n\t"quotes"\'\r\n$VAR`cmd`';
-          await writeFileString(runtime, `${workspace.path}/special.txt`, specialContent);
-
-          const content = await readFileString(runtime, `${workspace.path}/special.txt`);
-          expect(content).toBe(specialContent);
-        });
-
-        testDockerOnly("preserves symlinks when editing target file", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          // Create a target file
-          const targetPath = `${workspace.path}/target.txt`;
-          await writeFileString(runtime, targetPath, "original content");
-
-          // Create a symlink to the target
-          const linkPath = `${workspace.path}/link.txt`;
-          const result = await execBuffered(runtime, `ln -s target.txt link.txt`, {
-            cwd: workspace.path,
-            timeout: 30,
-          });
-          expect(result.exitCode).toBe(0);
-
-          // Verify symlink was created
-          const lsResult = await execBuffered(runtime, "ls -la link.txt", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
-          expect(lsResult.stdout).toContain("->");
-          expect(lsResult.stdout).toContain("target.txt");
-
-          // Edit the file via the symlink
-          await writeFileString(runtime, linkPath, "new content");
-
-          // Verify the symlink is still a symlink (not replaced with a file)
-          const lsAfter = await execBuffered(runtime, "ls -la link.txt", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
-          expect(lsAfter.stdout).toContain("->");
-          expect(lsAfter.stdout).toContain("target.txt");
-
-          // Verify both the symlink and target have the new content
-          const linkContent = await readFileString(runtime, linkPath);
-          expect(linkContent).toBe("new content");
-
-          const targetContent = await readFileString(runtime, targetPath);
-          expect(targetContent).toBe("new content");
-        });
-
-        testDockerOnly("preserves file permissions when editing through symlink", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          // Create a target file with specific permissions (755)
-          const targetPath = `${workspace.path}/target.txt`;
-          await writeFileString(runtime, targetPath, "original content");
-
-          // Set permissions to 755
-          const chmodResult = await execBuffered(runtime, "chmod 755 target.txt", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
-          expect(chmodResult.exitCode).toBe(0);
-
-          // Verify initial permissions
-          const statBefore = await execBuffered(runtime, "stat -c '%a' target.txt", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
-          expect(statBefore.stdout.trim()).toBe("755");
-
-          // Create a symlink to the target
-          const linkPath = `${workspace.path}/link.txt`;
-          const lnResult = await execBuffered(runtime, "ln -s target.txt link.txt", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
-          expect(lnResult.exitCode).toBe(0);
-
-          // Edit the file via the symlink
-          await writeFileString(runtime, linkPath, "new content");
-
-          // Verify permissions are preserved
-          const statAfter = await execBuffered(runtime, "stat -c '%a' target.txt", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
-          expect(statAfter.stdout.trim()).toBe("755");
-
-          // Verify content was updated
-          const content = await readFileString(runtime, targetPath);
-          expect(content).toBe("new content");
-        });
-      });
-
-      describe("stat() - File metadata", () => {
-        testForRuntime("returns file metadata", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          const content = "Test content";
-          await writeFileString(runtime, `${workspace.path}/test.txt`, content);
-
-          const stat = await runtime.stat(`${workspace.path}/test.txt`);
-
-          expect(stat.size).toBe(content.length);
-          expect(stat.isDirectory).toBe(false);
-          // Check modifiedTime is a valid date (use getTime() to avoid Jest Date issues)
-          expect(typeof stat.modifiedTime.getTime).toBe("function");
-          expect(stat.modifiedTime.getTime()).toBeGreaterThan(0);
-          expect(stat.modifiedTime.getTime()).toBeLessThanOrEqual(Date.now());
-        });
-
-        testForRuntime("returns directory metadata", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          await execBuffered(runtime, "mkdir subdir", { cwd: workspace.path, timeout: 30 });
-
-          const stat = await runtime.stat(`${workspace.path}/subdir`);
-
-          expect(stat.isDirectory).toBe(true);
-        });
-
-        testForRuntime("throws RuntimeError for non-existent path", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          await expect(runtime.stat(`${workspace.path}/does-not-exist`)).rejects.toThrow(
-            RuntimeError
-          );
-        });
-
-        testForRuntime("returns correct size for empty file", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          await writeFileString(runtime, `${workspace.path}/empty.txt`, "");
-
-          const stat = await runtime.stat(`${workspace.path}/empty.txt`);
-
-          expect(stat.size).toBe(0);
-          expect(stat.isDirectory).toBe(false);
-        });
-      });
-
-      describeLocalOnly("Edge cases", () => {
-        testForRuntime(
-          "handles large files efficiently",
-          async () => {
-            const runtime = createRuntime();
-            await using workspace = await TestWorkspace.create(runtime, type);
-
-            // Create 1MB file
-            const largeContent = "x".repeat(1024 * 1024);
-            await writeFileString(runtime, `${workspace.path}/large.txt`, largeContent);
-
-            const content = await readFileString(runtime, `${workspace.path}/large.txt`);
-
-            expect(content.length).toBe(1024 * 1024);
-            expect(content).toBe(largeContent);
-          },
-          30000
-        );
-
-        testLocalOnly("handles concurrent operations", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          // Run multiple file operations concurrently
-          const operations = Array.from({ length: 10 }, async (_, i) => {
-            const path = `${workspace.path}/concurrent-${i}.txt`;
-            await writeFileString(runtime, path, `content-${i}`);
-            const content = await readFileString(runtime, path);
-            expect(content).toBe(`content-${i}`);
-          });
-
-          await Promise.all(operations);
-        });
-
-        testForRuntime("handles paths with spaces", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          const path = `${workspace.path}/file with spaces.txt`;
-          await writeFileString(runtime, path, "content");
-
-          const content = await readFileString(runtime, path);
-          expect(content).toBe("content");
-        });
-
-        testForRuntime("handles very long file paths", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          // Create nested directories
-          const longPath = `${workspace.path}/a/b/c/d/e/f/g/h/i/j/file.txt`;
-          await writeFileString(runtime, longPath, "nested");
-
-          const content = await readFileString(runtime, longPath);
-          expect(content).toBe("nested");
-        });
-      });
-
-      describeNonDocker("Git operations", () => {
-        testForRuntime("can initialize a git repository", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          // Initialize git repo
-          const result = await execBuffered(runtime, "git init", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
-
-          expect(result.exitCode).toBe(0);
-
-          // Verify .git directory exists
-          const stat = await runtime.stat(`${workspace.path}/.git`);
-          expect(stat.isDirectory).toBe(true);
-        });
-
-        testForRuntime("can create commits", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          // Initialize git and configure user
-          await execBuffered(
-            runtime,
-            `git init && git config user.email "test@example.com" && git config user.name "Test User"`,
-            { cwd: workspace.path, timeout: 30 }
-          );
-
-          // Create a file and commit
-          await writeFileString(runtime, `${workspace.path}/test.txt`, "initial content");
-          await execBuffered(runtime, `git add test.txt && git commit -m "Initial commit"`, {
-            cwd: workspace.path,
-            timeout: 30,
-          });
-
-          // Verify commit exists
-          const logResult = await execBuffered(runtime, "git log --oneline", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
-
-          expect(logResult.stdout).toContain("Initial commit");
-        });
-
-        testForRuntime("can create and checkout branches", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          // Setup git repo
-          await execBuffered(
-            runtime,
-            `git init && git config user.email "test@example.com" && git config user.name "Test"`,
-            { cwd: workspace.path, timeout: 30 }
-          );
-
-          // Create initial commit
-          await writeFileString(runtime, `${workspace.path}/file.txt`, "content");
-          await execBuffered(runtime, `git add file.txt && git commit -m "init"`, {
-            cwd: workspace.path,
-            timeout: 30,
-          });
-
-          // Create and checkout new branch
-          await execBuffered(runtime, "git checkout -b feature-branch", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
-
-          // Verify branch
-          const branchResult = await execBuffered(runtime, "git branch --show-current", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
-
-          expect(branchResult.stdout.trim()).toBe("feature-branch");
-        });
-
-        testForRuntime("can handle git status in dirty workspace", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          // Setup git repo with commit
-          await execBuffered(
-            runtime,
-            `git init && git config user.email "test@example.com" && git config user.name "Test"`,
-            { cwd: workspace.path, timeout: 30 }
-          );
-          await writeFileString(runtime, `${workspace.path}/file.txt`, "original");
-          await execBuffered(runtime, `git add file.txt && git commit -m "init"`, {
-            cwd: workspace.path,
-            timeout: 30,
-          });
-
-          // Make changes
-          await writeFileString(runtime, `${workspace.path}/file.txt`, "modified");
-
-          // Check status
-          const statusResult = await execBuffered(runtime, "git status --short", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
-
-          expect(statusResult.stdout).toContain("M file.txt");
-        });
-      });
-
-      describeNonDocker("Environment and shell behavior", () => {
-        testForRuntime("preserves multi-line output formatting", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          const result = await execBuffered(runtime, 'echo "line1\nline2\nline3"', {
-            cwd: workspace.path,
-            timeout: 30,
-          });
-
-          expect(result.stdout).toContain("line1");
-          expect(result.stdout).toContain("line2");
-          expect(result.stdout).toContain("line3");
-        });
-
-        testForRuntime("handles commands with pipes", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          await writeFileString(runtime, `${workspace.path}/test.txt`, "line1\nline2\nline3");
-
-          const result = await execBuffered(runtime, "cat test.txt | grep line2", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
-
-          expect(result.stdout.trim()).toBe("line2");
-        });
-
-        testForRuntime("handles command substitution", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          const result = await execBuffered(runtime, 'echo "Current dir: $(basename $(pwd))"', {
-            cwd: workspace.path,
-            timeout: 30,
-          });
-
-          expect(result.stdout).toContain("Current dir:");
-        });
-
-        testForRuntime("handles large stdout output", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          // Generate large output (1000 lines)
-          const result = await execBuffered(runtime, "seq 1 1000", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
-
-          const lines = result.stdout.trim().split("\n");
-          expect(lines.length).toBe(1000);
-          expect(lines[0]).toBe("1");
-          expect(lines[999]).toBe("1000");
-        });
-
-        testForRuntime("handles commands that produce no output but take time", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          const result = await execBuffered(runtime, "sleep 0.1", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
-
-          expect(result.exitCode).toBe(0);
-          expect(result.stdout).toBe("");
-          expect(result.duration).toBeGreaterThanOrEqual(100);
-        });
-      });
-
-      describeLocalOnly("Error handling", () => {
-        testForRuntime("handles command not found", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          const result = await execBuffered(runtime, "nonexistentcommand", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
-
-          expect(result.exitCode).not.toBe(0);
-          expect(result.stderr.toLowerCase()).toContain("not found");
-        });
-
-        testForRuntime("handles syntax errors in bash", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          const result = await execBuffered(runtime, "if true; then echo 'missing fi'", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
-
-          expect(result.exitCode).not.toBe(0);
-        });
-
-        testForRuntime("handles permission denied errors", async () => {
-          const runtime = createRuntime();
-          await using workspace = await TestWorkspace.create(runtime, type);
-
-          // Create file without execute permission and try to execute it
-          await writeFileString(runtime, `${workspace.path}/script.sh`, "#!/bin/sh\necho test");
-          await execBuffered(runtime, "chmod 644 script.sh", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
-
-          const result = await execBuffered(runtime, "./script.sh", {
-            cwd: workspace.path,
-            timeout: 30,
-          });
-
-          expect(result.exitCode).not.toBe(0);
-          expect(result.stderr.toLowerCase()).toContain("permission denied");
-        });
-      });
     }
-  );
+
+    // Running these runtime contract tests with test.concurrent can easily overwhelm
+    // the docker/ssh fixtures in CI and cause the overall integration job to hit its
+    // 10-minute timeout. Keep runtime tests deterministic by running them sequentially
+    // for remote runtimes.
+    const testForRuntime = type === "local" ? test.concurrent : test;
+    function testIf(shouldRun: boolean) {
+      return (...args: Parameters<typeof test>) => {
+        if (shouldRun) {
+          testForRuntime(...args);
+        } else {
+          test.skip(...args);
+        }
+      };
+    }
+
+    const isRemote = type !== "local";
+
+    const describeLocalOnly = describeIf(type === "local");
+    const describeNonDocker = describeIf(type !== "docker");
+    const testLocalOnly = testIf(!isRemote);
+    const testDockerOnly = testIf(type === "docker");
+    const createRuntime = (): Runtime =>
+      createTestRuntime(
+        type,
+        getBaseWorkdir(),
+        sshConfig,
+        type === "docker"
+          ? { image: "mux-ssh-test", containerName: sshConfig!.containerId }
+          : undefined
+      );
+
+    describe("exec() - Command execution", () => {
+      testForRuntime("captures stdout and stderr separately", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        const result = await execBuffered(runtime, 'echo "output" && echo "error" >&2', {
+          cwd: workspace.path,
+          timeout: 30,
+        });
+
+        expect(result.stdout.trim()).toBe("output");
+        expect(result.stderr.trim()).toBe("error");
+        expect(result.exitCode).toBe(0);
+        expect(result.duration).toBeGreaterThan(0);
+      });
+
+      testForRuntime("returns correct exit code for failed commands", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        const result = await execBuffered(runtime, "exit 42", {
+          cwd: workspace.path,
+          timeout: 30,
+        });
+
+        expect(result.exitCode).toBe(42);
+      });
+
+      testLocalOnly("handles stdin input", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        const result = await execBuffered(runtime, "cat", {
+          cwd: workspace.path,
+          timeout: 30,
+          stdin: "hello from stdin",
+        });
+
+        expect(result.stdout).toBe("hello from stdin");
+        expect(result.exitCode).toBe(0);
+      });
+
+      testForRuntime("passes environment variables", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        const result = await execBuffered(runtime, 'echo "$TEST_VAR"', {
+          cwd: workspace.path,
+          timeout: 30,
+          env: { TEST_VAR: "test-value" },
+        });
+
+        expect(result.stdout.trim()).toBe("test-value");
+      });
+
+      testForRuntime("sets NON_INTERACTIVE_ENV_VARS to prevent prompts", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        // Verify GIT_TERMINAL_PROMPT is set to 0 (prevents credential prompts)
+        const result = await execBuffered(
+          runtime,
+          'echo "GIT_TERMINAL_PROMPT=$GIT_TERMINAL_PROMPT GIT_EDITOR=$GIT_EDITOR"',
+          { cwd: workspace.path, timeout: 30 }
+        );
+
+        expect(result.stdout).toContain("GIT_TERMINAL_PROMPT=0");
+        expect(result.stdout).toContain("GIT_EDITOR=true");
+      });
+
+      testForRuntime("handles empty output", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        const result = await execBuffered(runtime, "true", { cwd: workspace.path, timeout: 30 });
+
+        expect(result.stdout).toBe("");
+        expect(result.stderr).toBe("");
+        expect(result.exitCode).toBe(0);
+      });
+
+      testLocalOnly("handles commands with quotes and special characters", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        const result = await execBuffered(runtime, 'echo "hello \\"world\\""', {
+          cwd: workspace.path,
+          timeout: 30,
+        });
+
+        expect(result.stdout.trim()).toBe('hello "world"');
+      });
+
+      testForRuntime("respects working directory", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        const result = await execBuffered(runtime, "pwd", { cwd: workspace.path, timeout: 30 });
+
+        expect(result.stdout.trim()).toContain(workspace.path);
+      });
+      testLocalOnly(
+        "handles timeout correctly",
+        async () => {
+          const runtime = createRuntime();
+          await using workspace = await TestWorkspace.create(runtime, type);
+
+          // Command that sleeps longer than timeout
+          const startTime = performance.now();
+          const result = await execBuffered(runtime, "sleep 10", {
+            cwd: workspace.path,
+            timeout: 1, // 1 second timeout
+          });
+          const duration = performance.now() - startTime;
+
+          // Exit code should be EXIT_CODE_TIMEOUT (-998)
+          expect(result.exitCode).toBe(-998);
+          // Should complete in around 1 second, not 10 seconds
+          // Allow some margin for overhead (especially on SSH)
+          expect(duration).toBeLessThan(3000); // 3 seconds max
+          expect(duration).toBeGreaterThan(500); // At least 0.5 seconds
+        },
+        15000
+      ); // 15 second timeout for test (includes workspace creation overhead)
+    });
+
+    describe("ensureReady() - Runtime readiness", () => {
+      testForRuntime("returns ready for running runtime", async () => {
+        const runtime = createRuntime();
+        const result = await runtime.ensureReady();
+        expect(result).toEqual({ ready: true });
+      });
+
+      testDockerOnly(
+        "starts stopped container and returns ready",
+        async () => {
+          // Use the shared SSH container which DockerRuntime is configured with
+          const containerName = sshConfig!.containerId;
+
+          // Stop the container
+          const { execSync } = await import("child_process");
+          execSync(`docker stop ${containerName}`, { timeout: 30000 });
+
+          try {
+            const runtime = createRuntime();
+            const result = await runtime.ensureReady();
+            expect(result).toEqual({ ready: true });
+
+            // Verify container is running again
+            const inspectOutput = execSync(
+              `docker inspect --format='{{.State.Running}}' ${containerName}`,
+              { encoding: "utf-8", timeout: 10000 }
+            );
+            expect(inspectOutput.trim()).toBe("true");
+          } finally {
+            // Ensure container is running for subsequent tests
+            execSync(`docker start ${containerName}`, { timeout: 30000 });
+          }
+        },
+        60000
+      );
+
+      testDockerOnly("returns error for non-existent container", async () => {
+        // Create a DockerRuntime pointing to a container that doesn't exist
+        const { DockerRuntime } = await import("@/node/runtime/DockerRuntime");
+        const runtime = new DockerRuntime({
+          image: "ubuntu:22.04",
+          containerName: "mux-nonexistent-container-12345",
+        });
+
+        const result = await runtime.ensureReady();
+        expect(result.ready).toBe(false);
+        expect(result.error).toBeDefined();
+      });
+    });
+
+    describe("resolvePath() - Path resolution", () => {
+      testForRuntime("expands ~ to the home directory", async () => {
+        const runtime = createRuntime();
+
+        const resolved = await runtime.resolvePath("~");
+
+        if (type === "ssh") {
+          expect(resolved).toBe("/home/testuser");
+        } else if (type === "docker") {
+          expect(resolved).toBe("/root");
+        } else {
+          expect(resolved).toBe(os.homedir());
+        }
+      });
+
+      testForRuntime("expands ~/path by prefixing the home directory", async () => {
+        const runtime = createRuntime();
+
+        const home = await runtime.resolvePath("~");
+        const resolved = await runtime.resolvePath("~/mux");
+
+        expect(resolved).toBe(`${home}/mux`);
+      });
+    });
+
+    describe("readFile() - File reading", () => {
+      testForRuntime("reads file contents", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        // Write test file
+        const testContent = "Hello, World!\nLine 2\nLine 3";
+        await writeFileString(runtime, `${workspace.path}/test.txt`, testContent);
+
+        // Read it back
+        const content = await readFileString(runtime, `${workspace.path}/test.txt`);
+
+        expect(content).toBe(testContent);
+      });
+
+      testForRuntime("reads empty file", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        // Write empty file
+        await writeFileString(runtime, `${workspace.path}/empty.txt`, "");
+
+        // Read it back
+        const content = await readFileString(runtime, `${workspace.path}/empty.txt`);
+
+        expect(content).toBe("");
+      });
+
+      testLocalOnly("reads binary data correctly", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        // Create binary file with specific bytes
+        const binaryData = new Uint8Array([0, 1, 2, 255, 254, 253]);
+        const writer = runtime.writeFile(`${workspace.path}/binary.dat`).getWriter();
+        await writer.write(binaryData);
+        await writer.close();
+
+        // Read it back
+        const stream = runtime.readFile(`${workspace.path}/binary.dat`);
+        const reader = stream.getReader();
+        const chunks: Uint8Array[] = [];
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+        }
+
+        // Concatenate chunks
+        const readData = new Uint8Array(chunks.reduce((acc, chunk) => acc + chunk.length, 0));
+        let offset = 0;
+        for (const chunk of chunks) {
+          readData.set(chunk, offset);
+          offset += chunk.length;
+        }
+
+        expect(readData).toEqual(binaryData);
+      });
+
+      testForRuntime("throws RuntimeError for non-existent file", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        await expect(
+          readFileString(runtime, `${workspace.path}/does-not-exist.txt`)
+        ).rejects.toThrow(RuntimeError);
+      });
+
+      testForRuntime("throws RuntimeError when reading a directory", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        // Create subdirectory
+        await execBuffered(runtime, `mkdir -p subdir`, { cwd: workspace.path, timeout: 30 });
+
+        await expect(readFileString(runtime, `${workspace.path}/subdir`)).rejects.toThrow();
+      });
+    });
+
+    describe("writeFile() - File writing", () => {
+      testForRuntime("writes file contents", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        const content = "Test content\nLine 2";
+        await writeFileString(runtime, `${workspace.path}/output.txt`, content);
+
+        // Verify by reading back
+        const result = await execBuffered(runtime, "cat output.txt", {
+          cwd: workspace.path,
+          timeout: 30,
+        });
+
+        expect(result.stdout).toBe(content);
+      });
+
+      testForRuntime("overwrites existing file", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        const path = `${workspace.path}/overwrite.txt`;
+
+        // Write initial content
+        await writeFileString(runtime, path, "original");
+
+        // Overwrite
+        await writeFileString(runtime, path, "new content");
+
+        // Verify
+        const content = await readFileString(runtime, path);
+        expect(content).toBe("new content");
+      });
+
+      testForRuntime("writes empty file", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        await writeFileString(runtime, `${workspace.path}/empty.txt`, "");
+
+        const content = await readFileString(runtime, `${workspace.path}/empty.txt`);
+        expect(content).toBe("");
+      });
+
+      testLocalOnly("writes binary data", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        const binaryData = new Uint8Array([0, 1, 2, 255, 254, 253]);
+        const writer = runtime.writeFile(`${workspace.path}/binary.dat`).getWriter();
+        await writer.write(binaryData);
+        await writer.close();
+
+        // Verify with wc -c (byte count)
+        const result = await execBuffered(runtime, "wc -c < binary.dat", {
+          cwd: workspace.path,
+          timeout: 30,
+        });
+
+        expect(result.stdout.trim()).toBe("6");
+      });
+
+      testForRuntime("creates parent directories if needed", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        await writeFileString(runtime, `${workspace.path}/nested/dir/file.txt`, "content");
+
+        const content = await readFileString(runtime, `${workspace.path}/nested/dir/file.txt`);
+        expect(content).toBe("content");
+      });
+
+      testForRuntime("handles special characters in content", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        const specialContent = 'Special chars: \n\t"quotes"\'\r\n$VAR`cmd`';
+        await writeFileString(runtime, `${workspace.path}/special.txt`, specialContent);
+
+        const content = await readFileString(runtime, `${workspace.path}/special.txt`);
+        expect(content).toBe(specialContent);
+      });
+
+      testDockerOnly("preserves symlinks when editing target file", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        // Create a target file
+        const targetPath = `${workspace.path}/target.txt`;
+        await writeFileString(runtime, targetPath, "original content");
+
+        // Create a symlink to the target
+        const linkPath = `${workspace.path}/link.txt`;
+        const result = await execBuffered(runtime, `ln -s target.txt link.txt`, {
+          cwd: workspace.path,
+          timeout: 30,
+        });
+        expect(result.exitCode).toBe(0);
+
+        // Verify symlink was created
+        const lsResult = await execBuffered(runtime, "ls -la link.txt", {
+          cwd: workspace.path,
+          timeout: 30,
+        });
+        expect(lsResult.stdout).toContain("->");
+        expect(lsResult.stdout).toContain("target.txt");
+
+        // Edit the file via the symlink
+        await writeFileString(runtime, linkPath, "new content");
+
+        // Verify the symlink is still a symlink (not replaced with a file)
+        const lsAfter = await execBuffered(runtime, "ls -la link.txt", {
+          cwd: workspace.path,
+          timeout: 30,
+        });
+        expect(lsAfter.stdout).toContain("->");
+        expect(lsAfter.stdout).toContain("target.txt");
+
+        // Verify both the symlink and target have the new content
+        const linkContent = await readFileString(runtime, linkPath);
+        expect(linkContent).toBe("new content");
+
+        const targetContent = await readFileString(runtime, targetPath);
+        expect(targetContent).toBe("new content");
+      });
+
+      testDockerOnly("preserves file permissions when editing through symlink", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        // Create a target file with specific permissions (755)
+        const targetPath = `${workspace.path}/target.txt`;
+        await writeFileString(runtime, targetPath, "original content");
+
+        // Set permissions to 755
+        const chmodResult = await execBuffered(runtime, "chmod 755 target.txt", {
+          cwd: workspace.path,
+          timeout: 30,
+        });
+        expect(chmodResult.exitCode).toBe(0);
+
+        // Verify initial permissions
+        const statBefore = await execBuffered(runtime, "stat -c '%a' target.txt", {
+          cwd: workspace.path,
+          timeout: 30,
+        });
+        expect(statBefore.stdout.trim()).toBe("755");
+
+        // Create a symlink to the target
+        const linkPath = `${workspace.path}/link.txt`;
+        const lnResult = await execBuffered(runtime, "ln -s target.txt link.txt", {
+          cwd: workspace.path,
+          timeout: 30,
+        });
+        expect(lnResult.exitCode).toBe(0);
+
+        // Edit the file via the symlink
+        await writeFileString(runtime, linkPath, "new content");
+
+        // Verify permissions are preserved
+        const statAfter = await execBuffered(runtime, "stat -c '%a' target.txt", {
+          cwd: workspace.path,
+          timeout: 30,
+        });
+        expect(statAfter.stdout.trim()).toBe("755");
+
+        // Verify content was updated
+        const content = await readFileString(runtime, targetPath);
+        expect(content).toBe("new content");
+      });
+    });
+
+    describe("stat() - File metadata", () => {
+      testForRuntime("returns file metadata", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        const content = "Test content";
+        await writeFileString(runtime, `${workspace.path}/test.txt`, content);
+
+        const stat = await runtime.stat(`${workspace.path}/test.txt`);
+
+        expect(stat.size).toBe(content.length);
+        expect(stat.isDirectory).toBe(false);
+        // Check modifiedTime is a valid date (use getTime() to avoid Jest Date issues)
+        expect(typeof stat.modifiedTime.getTime).toBe("function");
+        expect(stat.modifiedTime.getTime()).toBeGreaterThan(0);
+        expect(stat.modifiedTime.getTime()).toBeLessThanOrEqual(Date.now());
+      });
+
+      testForRuntime("returns directory metadata", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        await execBuffered(runtime, "mkdir subdir", { cwd: workspace.path, timeout: 30 });
+
+        const stat = await runtime.stat(`${workspace.path}/subdir`);
+
+        expect(stat.isDirectory).toBe(true);
+      });
+
+      testForRuntime("throws RuntimeError for non-existent path", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        await expect(runtime.stat(`${workspace.path}/does-not-exist`)).rejects.toThrow(
+          RuntimeError
+        );
+      });
+
+      testForRuntime("returns correct size for empty file", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        await writeFileString(runtime, `${workspace.path}/empty.txt`, "");
+
+        const stat = await runtime.stat(`${workspace.path}/empty.txt`);
+
+        expect(stat.size).toBe(0);
+        expect(stat.isDirectory).toBe(false);
+      });
+    });
+
+    describeLocalOnly("Edge cases", () => {
+      testForRuntime(
+        "handles large files efficiently",
+        async () => {
+          const runtime = createRuntime();
+          await using workspace = await TestWorkspace.create(runtime, type);
+
+          // Create 1MB file
+          const largeContent = "x".repeat(1024 * 1024);
+          await writeFileString(runtime, `${workspace.path}/large.txt`, largeContent);
+
+          const content = await readFileString(runtime, `${workspace.path}/large.txt`);
+
+          expect(content.length).toBe(1024 * 1024);
+          expect(content).toBe(largeContent);
+        },
+        30000
+      );
+
+      testLocalOnly("handles concurrent operations", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        // Run multiple file operations concurrently
+        const operations = Array.from({ length: 10 }, async (_, i) => {
+          const path = `${workspace.path}/concurrent-${i}.txt`;
+          await writeFileString(runtime, path, `content-${i}`);
+          const content = await readFileString(runtime, path);
+          expect(content).toBe(`content-${i}`);
+        });
+
+        await Promise.all(operations);
+      });
+
+      testForRuntime("handles paths with spaces", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        const path = `${workspace.path}/file with spaces.txt`;
+        await writeFileString(runtime, path, "content");
+
+        const content = await readFileString(runtime, path);
+        expect(content).toBe("content");
+      });
+
+      testForRuntime("handles very long file paths", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        // Create nested directories
+        const longPath = `${workspace.path}/a/b/c/d/e/f/g/h/i/j/file.txt`;
+        await writeFileString(runtime, longPath, "nested");
+
+        const content = await readFileString(runtime, longPath);
+        expect(content).toBe("nested");
+      });
+    });
+
+    describeNonDocker("Git operations", () => {
+      testForRuntime("can initialize a git repository", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        // Initialize git repo
+        const result = await execBuffered(runtime, "git init", {
+          cwd: workspace.path,
+          timeout: 30,
+        });
+
+        expect(result.exitCode).toBe(0);
+
+        // Verify .git directory exists
+        const stat = await runtime.stat(`${workspace.path}/.git`);
+        expect(stat.isDirectory).toBe(true);
+      });
+
+      testForRuntime("can create commits", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        // Initialize git and configure user
+        await execBuffered(
+          runtime,
+          `git init && git config user.email "test@example.com" && git config user.name "Test User"`,
+          { cwd: workspace.path, timeout: 30 }
+        );
+
+        // Create a file and commit
+        await writeFileString(runtime, `${workspace.path}/test.txt`, "initial content");
+        await execBuffered(runtime, `git add test.txt && git commit -m "Initial commit"`, {
+          cwd: workspace.path,
+          timeout: 30,
+        });
+
+        // Verify commit exists
+        const logResult = await execBuffered(runtime, "git log --oneline", {
+          cwd: workspace.path,
+          timeout: 30,
+        });
+
+        expect(logResult.stdout).toContain("Initial commit");
+      });
+
+      testForRuntime("can create and checkout branches", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        // Setup git repo
+        await execBuffered(
+          runtime,
+          `git init && git config user.email "test@example.com" && git config user.name "Test"`,
+          { cwd: workspace.path, timeout: 30 }
+        );
+
+        // Create initial commit
+        await writeFileString(runtime, `${workspace.path}/file.txt`, "content");
+        await execBuffered(runtime, `git add file.txt && git commit -m "init"`, {
+          cwd: workspace.path,
+          timeout: 30,
+        });
+
+        // Create and checkout new branch
+        await execBuffered(runtime, "git checkout -b feature-branch", {
+          cwd: workspace.path,
+          timeout: 30,
+        });
+
+        // Verify branch
+        const branchResult = await execBuffered(runtime, "git branch --show-current", {
+          cwd: workspace.path,
+          timeout: 30,
+        });
+
+        expect(branchResult.stdout.trim()).toBe("feature-branch");
+      });
+
+      testForRuntime("can handle git status in dirty workspace", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        // Setup git repo with commit
+        await execBuffered(
+          runtime,
+          `git init && git config user.email "test@example.com" && git config user.name "Test"`,
+          { cwd: workspace.path, timeout: 30 }
+        );
+        await writeFileString(runtime, `${workspace.path}/file.txt`, "original");
+        await execBuffered(runtime, `git add file.txt && git commit -m "init"`, {
+          cwd: workspace.path,
+          timeout: 30,
+        });
+
+        // Make changes
+        await writeFileString(runtime, `${workspace.path}/file.txt`, "modified");
+
+        // Check status
+        const statusResult = await execBuffered(runtime, "git status --short", {
+          cwd: workspace.path,
+          timeout: 30,
+        });
+
+        expect(statusResult.stdout).toContain("M file.txt");
+      });
+    });
+
+    describeNonDocker("Environment and shell behavior", () => {
+      testForRuntime("preserves multi-line output formatting", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        const result = await execBuffered(runtime, 'echo "line1\nline2\nline3"', {
+          cwd: workspace.path,
+          timeout: 30,
+        });
+
+        expect(result.stdout).toContain("line1");
+        expect(result.stdout).toContain("line2");
+        expect(result.stdout).toContain("line3");
+      });
+
+      testForRuntime("handles commands with pipes", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        await writeFileString(runtime, `${workspace.path}/test.txt`, "line1\nline2\nline3");
+
+        const result = await execBuffered(runtime, "cat test.txt | grep line2", {
+          cwd: workspace.path,
+          timeout: 30,
+        });
+
+        expect(result.stdout.trim()).toBe("line2");
+      });
+
+      testForRuntime("handles command substitution", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        const result = await execBuffered(runtime, 'echo "Current dir: $(basename $(pwd))"', {
+          cwd: workspace.path,
+          timeout: 30,
+        });
+
+        expect(result.stdout).toContain("Current dir:");
+      });
+
+      testForRuntime("handles large stdout output", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        // Generate large output (1000 lines)
+        const result = await execBuffered(runtime, "seq 1 1000", {
+          cwd: workspace.path,
+          timeout: 30,
+        });
+
+        const lines = result.stdout.trim().split("\n");
+        expect(lines.length).toBe(1000);
+        expect(lines[0]).toBe("1");
+        expect(lines[999]).toBe("1000");
+      });
+
+      testForRuntime("handles commands that produce no output but take time", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        const result = await execBuffered(runtime, "sleep 0.1", {
+          cwd: workspace.path,
+          timeout: 30,
+        });
+
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout).toBe("");
+        expect(result.duration).toBeGreaterThanOrEqual(100);
+      });
+    });
+
+    describeLocalOnly("Error handling", () => {
+      testForRuntime("handles command not found", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        const result = await execBuffered(runtime, "nonexistentcommand", {
+          cwd: workspace.path,
+          timeout: 30,
+        });
+
+        expect(result.exitCode).not.toBe(0);
+        expect(result.stderr.toLowerCase()).toContain("not found");
+      });
+
+      testForRuntime("handles syntax errors in bash", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        const result = await execBuffered(runtime, "if true; then echo 'missing fi'", {
+          cwd: workspace.path,
+          timeout: 30,
+        });
+
+        expect(result.exitCode).not.toBe(0);
+      });
+
+      testForRuntime("handles permission denied errors", async () => {
+        const runtime = createRuntime();
+        await using workspace = await TestWorkspace.create(runtime, type);
+
+        // Create file without execute permission and try to execute it
+        await writeFileString(runtime, `${workspace.path}/script.sh`, "#!/bin/sh\necho test");
+        await execBuffered(runtime, "chmod 644 script.sh", {
+          cwd: workspace.path,
+          timeout: 30,
+        });
+
+        const result = await execBuffered(runtime, "./script.sh", {
+          cwd: workspace.path,
+          timeout: 30,
+        });
+
+        expect(result.exitCode).not.toBe(0);
+        expect(result.stderr.toLowerCase()).toContain("permission denied");
+      });
+    });
+  });
 
   /**
    * SSHRuntime-specific workspace operation tests
