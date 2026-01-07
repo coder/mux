@@ -398,15 +398,26 @@ export function addToolToFocusedTabset(
  */
 export function addTabToFocusedTabset(
   state: RightSidebarLayoutState,
-  tab: TabType
+  tab: TabType,
+  /** Whether to make the new tab active (default: true) */
+  activate = true
 ): RightSidebarLayoutState {
   const focused = findTabset(state.root, state.focusedTabsetId);
   if (focused?.type !== "tabset") {
     return state;
   }
 
-  // Already has the tab
+  // Already has the tab - just activate if requested
   if (focused.tabs.includes(tab)) {
+    if (activate && focused.activeTab !== tab) {
+      return {
+        ...state,
+        root: updateNode(state.root, focused.id, (ts) => ({
+          ...ts,
+          activeTab: tab,
+        })),
+      };
+    }
     return state;
   }
 
@@ -415,6 +426,7 @@ export function addTabToFocusedTabset(
     root: updateNode(state.root, focused.id, (ts) => ({
       ...ts,
       tabs: [...ts.tabs, tab],
+      activeTab: activate ? tab : ts.activeTab,
     })),
   };
 }

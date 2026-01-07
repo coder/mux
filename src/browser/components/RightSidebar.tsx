@@ -737,11 +737,12 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       const missingSessions = sessionIds.filter((sid) => !currentTerminalSessionIds.has(sid));
 
       if (missingSessions.length > 0) {
-        // Add tabs for backend sessions that don't have tabs
+        // Add tabs for backend sessions that don't have tabs.
+        // Don't activate - don't jump user to restored terminals on reload.
         setLayout((prev) => {
           let next = prev;
           for (const sessionId of missingSessions) {
-            next = addTabToFocusedTabset(next, makeTerminalTabType(sessionId));
+            next = addTabToFocusedTabset(next, makeTerminalTabType(sessionId), false);
           }
           return next;
         });
