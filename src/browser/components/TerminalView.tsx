@@ -188,7 +188,8 @@ export function TerminalView({
         fitAddon.fit();
 
         // ghostty-web calls focus() internally in open(), which steals focus.
-        // If autoFocus is disabled, blur immediately to prevent input capture.
+        // It also schedules a delayed focus with setTimeout(0) as "backup".
+        // If autoFocus is disabled, blur immediately AND with a delayed blur to counteract.
         // If autoFocus is enabled, focus the hidden textarea to avoid browser caret.
         if (autoFocus) {
           const textarea = containerEl.querySelector("textarea");
@@ -196,7 +197,13 @@ export function TerminalView({
             textarea.focus();
           }
         } else {
+          // Blur immediately
           terminal.blur();
+          // Counter the delayed focus() in ghostty-web
+          const termToBlur = terminal;
+          setTimeout(() => {
+            termToBlur.blur();
+          }, 0);
         }
 
         // User input → router

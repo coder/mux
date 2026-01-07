@@ -161,18 +161,11 @@ export class PTYService {
     onData: (data: string) => void,
     onExit: (exitCode: number) => void
   ): Promise<TerminalSession> {
-<<<<<<< HEAD
-    const sessionId = `${params.workspaceId}-${Date.now()}`;
+    // Include a random suffix to avoid collisions when creating multiple sessions quickly.
+    // Collisions can cause two PTYs to appear "merged" under one sessionId.
+    const sessionId = `${params.workspaceId}-${Date.now()}-${randomUUID().slice(0, 8)}`;
     const runtimeType =
       runtime instanceof SSHRuntime ? "SSH" : runtime instanceof DockerRuntime ? "Docker" : "Local";
-||||||| parent of d3b392be2 (🤖 fix: stop terminal output bleed across tabs)
-    const sessionId = `${params.workspaceId}-${Date.now()}`;
-=======
-    // Include a random suffix to avoid collisions when creating multiple sessions quickly.
-    // Collisions can cause two PTYs to appear “merged” under one sessionId.
-    const sessionId = `${params.workspaceId}-${Date.now()}-${randomUUID().slice(0, 8)}`;
->>>>>>> d3b392be2 (🤖 fix: stop terminal output bleed across tabs)
-
     log.info(
       `Creating terminal session ${sessionId} for workspace ${params.workspaceId} (${runtimeType})`
     );
