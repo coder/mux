@@ -6,6 +6,7 @@ import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
 import { convertToModelMessages, type LanguageModel, type Tool } from "ai";
 import { applyToolOutputRedaction } from "@/browser/utils/messages/applyToolOutputRedaction";
 import { sanitizeToolInputs } from "@/browser/utils/messages/sanitizeToolInput";
+import { inlineSvgAsTextForProvider } from "@/node/utils/messages/inlineSvgAsTextForProvider";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
@@ -1297,10 +1298,14 @@ export class AIService extends EventEmitter {
       const sanitizedMessages = sanitizeToolInputs(redactedForProvider);
       log.debug_obj(`${workspaceId}/2b_sanitized_messages.json`, sanitizedMessages);
 
+      // Inline SVG user attachments as text for providers that don't accept image/svg+xml.
+      // This is request-only (does not mutate persisted history).
+      const messagesWithInlinedSvg = inlineSvgAsTextForProvider(sanitizedMessages, providerName);
+
       // Convert MuxMessage to ModelMessage format using Vercel AI SDK utility
       // Type assertion needed because MuxMessage has custom tool parts for interrupted tools
       // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument
-      const rawModelMessages = convertToModelMessages(sanitizedMessages as any, {
+      const rawModelMessages = convertToModelMessages(messagesWithInlinedSvg as any, {
         // Drop unfinished tool calls (input-streaming/input-available) so downstream
         // transforms only see tool calls that actually produced outputs.
         ignoreIncompleteToolCalls: true,
