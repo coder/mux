@@ -1298,9 +1298,9 @@ export class AIService extends EventEmitter {
       const sanitizedMessages = sanitizeToolInputs(redactedForProvider);
       log.debug_obj(`${workspaceId}/2b_sanitized_messages.json`, sanitizedMessages);
 
-      // Inline SVG user attachments as text for providers that don't accept image/svg+xml.
+      // Inline SVG user attachments as text (providers generally don't accept image/svg+xml as an image input).
       // This is request-only (does not mutate persisted history).
-      const messagesWithInlinedSvg = inlineSvgAsTextForProvider(sanitizedMessages, providerName);
+      const messagesWithInlinedSvg = inlineSvgAsTextForProvider(sanitizedMessages);
 
       // Convert MuxMessage to ModelMessage format using Vercel AI SDK utility
       // Type assertion needed because MuxMessage has custom tool parts for interrupted tools

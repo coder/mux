@@ -19,7 +19,7 @@ describe("inlineSvgAsTextForProvider", () => {
       },
     ];
 
-    const result = inlineSvgAsTextForProvider(messages, "openai");
+    const result = inlineSvgAsTextForProvider(messages);
 
     expect(result[0].parts.some((p) => p.type === "file")).toBe(false);
 
@@ -45,7 +45,7 @@ describe("inlineSvgAsTextForProvider", () => {
       },
     ];
 
-    const result = inlineSvgAsTextForProvider(messages, "openai");
+    const result = inlineSvgAsTextForProvider(messages);
 
     const inlined = result[0].parts.filter((p) => p.type === "text")[1];
     expect(inlined.text).toContain(svg);
@@ -67,7 +67,7 @@ describe("inlineSvgAsTextForProvider", () => {
       },
     ];
 
-    expect(() => inlineSvgAsTextForProvider(messages, "openai", { maxSvgTextBytes: 10 })).toThrow(
+    expect(() => inlineSvgAsTextForProvider(messages, { maxSvgTextBytes: 10 })).toThrow(
       "too large"
     );
   });
@@ -82,7 +82,7 @@ describe("inlineSvgAsTextForProvider", () => {
       },
     ];
 
-    const result = inlineSvgAsTextForProvider(messages, "openai");
+    const result = inlineSvgAsTextForProvider(messages);
     expect(result).toBe(messages);
   });
 });

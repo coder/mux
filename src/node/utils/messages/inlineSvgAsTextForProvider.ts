@@ -5,14 +5,8 @@ const SVG_MEDIA_TYPE = "image/svg+xml";
 // Guardrail: prevent accidentally injecting a multi‑MB SVG into the prompt.
 const DEFAULT_MAX_SVG_TEXT_BYTES = 200 * 1024; // 200 KiB
 
-// Provider image support is not uniform. For now, we assume common vision endpoints accept
-// only raster formats. SVG (vector markup) is handled by inlining the SVG XML as text.
-const PROVIDER_SUPPORTED_IMAGE_TYPES: Partial<Record<string, ReadonlySet<string>>> = {
-  openai: new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]),
-  anthropic: new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]),
-  // OpenRouter models generally proxy the same image constraints.
-  openrouter: new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]),
-};
+// Most provider image endpoints only accept raster formats. SVG is vector markup, and sending it as an
+// image frequently fails validation. We inline the SVG XML as text in provider requests instead.
 
 function normalizeMediaType(mediaType: string): string {
   return mediaType.toLowerCase().trim();
@@ -73,15 +67,6 @@ function decodeSvgDataUrlToUtf8(svgDataUrl: string, maxBytes: number): string {
   return decoded;
 }
 
-function providerSupportsImageType(providerName: string, mediaType: string): boolean {
-  const supported = PROVIDER_SUPPORTED_IMAGE_TYPES[providerName];
-  if (!supported) {
-    // Unknown provider: be conservative and assume SVG is NOT supported.
-    return false;
-  }
-  return supported.has(normalizeMediaType(mediaType));
-}
-
 /**
  * Convert SVG user attachments into SVG source text in the provider request.
  *
@@ -94,14 +79,8 @@ function providerSupportsImageType(providerName: string, mediaType: string): boo
  */
 export function inlineSvgAsTextForProvider(
   messages: MuxMessage[],
-  providerName: string,
   options?: { maxSvgTextBytes?: number }
 ): MuxMessage[] {
-  // If the provider explicitly supports SVG images, we can pass them through.
-  if (providerSupportsImageType(providerName, SVG_MEDIA_TYPE)) {
-    return messages;
-  }
-
   const maxSvgTextBytes = options?.maxSvgTextBytes ?? DEFAULT_MAX_SVG_TEXT_BYTES;
 
   let didChange = false;
@@ -128,7 +107,7 @@ export function inlineSvgAsTextForProvider(
         const textPart: MuxTextPart = {
           type: "text",
           text:
-            `[SVG attachment converted to text because the provider doesn't accept ${SVG_MEDIA_TYPE}.]\n\n` +
+            `[SVG attachment converted to text (providers generally don't accept ${SVG_MEDIA_TYPE} as an image input).]\n\n` +
             `\`\`\`svg\n${svgText}\n\`\`\``,
         };
         newParts.push(textPart);
