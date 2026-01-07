@@ -70,6 +70,13 @@ export class TerminalService {
 
       // Validate required fields before proceeding - projectPath is required for project-dir runtimes
       if (!workspaceMetadata.projectPath) {
+        log.error("Workspace metadata missing projectPath", {
+          workspaceId: params.workspaceId,
+          name: workspaceMetadata.name,
+          runtimeConfig: workspaceMetadata.runtimeConfig,
+          projectName: workspaceMetadata.projectName,
+          metadata: JSON.stringify(workspaceMetadata),
+        });
         throw new Error(
           `Workspace "${workspaceMetadata.name}" (${params.workspaceId}) is missing projectPath. ` +
             `This may indicate a corrupted config or a workspace that was not properly associated with a project.`

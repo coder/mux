@@ -131,9 +131,18 @@ export class Config {
           const rawPairs = parsed.projects as Array<[string, ProjectConfig]>;
           // Migrate: normalize project paths by stripping trailing slashes
           // This fixes configs created with paths like "/home/user/project/"
-          const normalizedPairs = rawPairs.map(([projectPath, projectConfig]) => {
-            return [stripTrailingSlashes(projectPath), projectConfig] as [string, ProjectConfig];
-          });
+          // Also filter out any malformed entries (null/undefined paths)
+          const normalizedPairs = rawPairs
+            .filter(([projectPath]) => {
+              if (!projectPath || typeof projectPath !== "string") {
+                log.warn("Filtering out project with invalid path", { projectPath });
+                return false;
+              }
+              return true;
+            })
+            .map(([projectPath, projectConfig]) => {
+              return [stripTrailingSlashes(projectPath), projectConfig] as [string, ProjectConfig];
+            });
           const projectsMap = new Map<string, ProjectConfig>(normalizedPairs);
 
           const taskSettings = normalizeTaskSettings(parsed.taskSettings);
@@ -504,6 +513,14 @@ export class Config {
     let configModified = false;
 
     for (const [projectPath, projectConfig] of config.projects) {
+      // Validate project path is not empty (defensive check for corrupted config)
+      if (!projectPath) {
+        log.warn("Skipping project with empty path in config", {
+          workspaceCount: projectConfig.workspaces?.length ?? 0,
+        });
+        continue;
+      }
+
       const projectName = this.getProjectName(projectPath);
 
       for (const workspace of projectConfig.workspaces) {
