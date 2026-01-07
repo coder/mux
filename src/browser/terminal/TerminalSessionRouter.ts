@@ -65,9 +65,12 @@ export class TerminalSessionRouter {
   subscribe(sessionId: string, callbacks: TerminalSubscriberCallbacks): () => void {
     const subscriberId = nextSubscriberId++;
 
+    console.debug(`[TerminalRouter] Subscribe: session=${sessionId}, subscriberId=${subscriberId}`);
+
     let session = this.sessions.get(sessionId);
     if (!session) {
       // First subscriber - create session state and start stream
+      console.debug(`[TerminalRouter] First subscriber for ${sessionId}, starting stream`);
       session = {
         subscribers: new Map(),
         screenState: null,
@@ -80,6 +83,7 @@ export class TerminalSessionRouter {
 
     // Add subscriber
     session.subscribers.set(subscriberId, callbacks);
+    console.debug(`[TerminalRouter] Session ${sessionId} now has ${session.subscribers.size} subscribers`);
 
     // Deliver cached screenState if available (for late subscribers)
     if (session.screenState !== null) {
@@ -106,13 +110,19 @@ export class TerminalSessionRouter {
 
     // Return unsubscribe function
     return () => {
+      console.debug(`[TerminalRouter] Unsubscribe: session=${sessionId}, subscriberId=${subscriberId}`);
       const currentSession = this.sessions.get(sessionId);
-      if (!currentSession) return;
+      if (!currentSession) {
+        console.debug(`[TerminalRouter] Session ${sessionId} already removed`);
+        return;
+      }
 
       currentSession.subscribers.delete(subscriberId);
+      console.debug(`[TerminalRouter] Session ${sessionId} now has ${currentSession.subscribers.size} subscribers`);
 
       // If no more subscribers, tear down the stream
       if (currentSession.subscribers.size === 0) {
+        console.debug(`[TerminalRouter] No more subscribers for ${sessionId}, tearing down stream`);
         currentSession.abortController.abort();
         this.sessions.delete(sessionId);
       }
@@ -158,6 +168,8 @@ export class TerminalSessionRouter {
   private startStream(sessionId: string, session: SessionState): void {
     const { signal } = session.abortController;
 
+    console.debug(`[TerminalRouter] Starting stream for session ${sessionId}`);
+
     // Start attach stream (fire-and-forget, but managed by abort controller)
     void (async () => {
       try {
@@ -165,11 +177,17 @@ export class TerminalSessionRouter {
         for await (const msg of iterator) {
           // Check if session was removed (unsubscribed)
           const currentSession = this.sessions.get(sessionId);
-          if (!currentSession) break;
+          if (!currentSession) {
+            console.debug(`[TerminalRouter] Session ${sessionId} removed, stopping stream`);
+            break;
+          }
 
           if (msg.type === "screenState") {
             // Cache and broadcast
             currentSession.screenState = msg.data;
+            console.debug(
+              `[TerminalRouter] Broadcasting screenState for ${sessionId} to ${currentSession.subscribers.size} subscribers`
+            );
             for (const callbacks of currentSession.subscribers.values()) {
               callbacks.onScreenState(msg.data);
             }
