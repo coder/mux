@@ -43,6 +43,9 @@ import { parseRuntimeModeAndHost, RUNTIME_MODE } from "@/common/types/runtime";
 import assert from "@/common/utils/assert";
 import parseDuration from "parse-duration";
 import { log, type LogLevel } from "@/node/services/log";
+import type { InitLogger } from "@/node/runtime/Runtime";
+import { DockerRuntime } from "@/node/runtime/DockerRuntime";
+import { execSync } from "child_process";
 import { getParseOptions } from "./argv";
 
 type CLIMode = "plan" | "exec";
@@ -125,6 +128,17 @@ function generateWorkspaceId(): string {
   const timestamp = Date.now();
   const random = Math.random().toString(36).substring(2, 8);
   return `run-${timestamp}-${random}`;
+}
+
+function makeCliInitLogger(writeHumanLine: (text?: string) => void): InitLogger {
+  return {
+    logStep: (msg) => writeHumanLine(`  ${msg}`),
+    logStdout: (line) => writeHumanLine(`  ${line}`),
+    logStderr: (line) => writeHumanLine(`  [stderr] ${line}`),
+    logComplete: (exitCode) => {
+      if (exitCode !== 0) writeHumanLine(`  Init completed with exit code ${exitCode}`);
+    },
+  };
 }
 
 async function ensureDirectory(dirPath: string): Promise<void> {
@@ -370,9 +384,66 @@ async function main(): Promise<void> {
   // For continuing workspace, metadata should already exist
   // For new workspace, create it
   if (!continueWorkspace) {
+    let workspacePath = projectDir;
+    const projectName = path.basename(projectDir);
+
+    // For Docker runtime, create and initialize the container first
+    if (runtimeConfig.type === "docker") {
+      const runtime = new DockerRuntime(runtimeConfig);
+      // Use a sanitized branch name (CLI runs are typically one-off, no real branch needed)
+      const branchName = `cli-${workspaceId.replace(/[^a-zA-Z0-9-]/g, "-")}`;
+
+      // Detect trunk branch from repo
+      let trunkBranch = "main";
+      try {
+        const symbolic = execSync("git symbolic-ref refs/remotes/origin/HEAD", {
+          cwd: projectDir,
+          encoding: "utf-8",
+        }).trim();
+        trunkBranch = symbolic.replace("refs/remotes/origin/", "");
+      } catch {
+        // Fallback to main
+      }
+
+      const initLogger = makeCliInitLogger(writeHumanLine);
+      const createResult = await runtime.createWorkspace({
+        projectPath: projectDir,
+        branchName,
+        trunkBranch,
+        directoryName: branchName,
+        initLogger,
+      });
+      if (!createResult.success) {
+        console.error(
+          `Failed to create Docker workspace: ${createResult.error ?? "unknown error"}`
+        );
+        process.exit(1);
+      }
+
+      const initResult = await runtime.initWorkspace({
+        projectPath: projectDir,
+        branchName,
+        trunkBranch,
+        workspacePath: createResult.workspacePath!,
+        initLogger,
+      });
+      if (!initResult.success) {
+        // Clean up orphaned container
+        // eslint-disable-next-line @typescript-eslint/no-empty-function
+        await runtime.deleteWorkspace(projectDir, branchName, true).catch(() => {});
+        console.error(
+          `Failed to initialize Docker workspace: ${initResult.error ?? "unknown error"}`
+        );
+        process.exit(1);
+      }
+
+      // Docker workspacePath is /src; projectName stays as original
+      workspacePath = createResult.workspacePath!;
+    }
+
     await session.ensureMetadata({
-      workspacePath: projectDir,
-      projectName: path.basename(projectDir),
+      workspacePath,
+      projectName,
       runtimeConfig,
     });
   } else {

@@ -945,6 +945,8 @@ export class DockerRuntime extends RemoteRuntime {
 
       initLogger.logStep("Fork completed successfully");
       forkSucceeded = true;
+      // Update containerName so subsequent initWorkspace() targets the forked container
+      this.containerName = destContainerName;
       return { success: true, workspacePath: CONTAINER_SRC_DIR, sourceBranch };
     } catch (error) {
       return { success: false, error: getErrorMessage(error) };
