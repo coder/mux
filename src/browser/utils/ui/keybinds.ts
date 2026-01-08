@@ -267,8 +267,8 @@ export const KEYBINDS = {
   FOCUS_CHAT: { key: "I", ctrl: true },
 
   /** Close current tab in right sidebar (if closeable - currently only terminal tabs) */
-  // macOS: Cmd+W, Win/Linux: Ctrl+W
-  CLOSE_TAB: { key: "w", ctrl: true },
+  // macOS: Cmd+W (matches Ghostty), Win/Linux: Ctrl+W
+  CLOSE_TAB: { key: "w", ctrl: true, macCtrlBehavior: "command" },
 
   /** Switch to tab by position in right sidebar (1-9) */
   // macOS: Cmd+N, Win/Linux: Ctrl+N

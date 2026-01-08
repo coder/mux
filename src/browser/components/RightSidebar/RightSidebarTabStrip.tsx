@@ -140,7 +140,7 @@ export const RightSidebarTabStrip: React.FC<RightSidebarTabStripProps> = ({
           <TooltipTrigger asChild>
             <button
               type="button"
-              className="text-muted hover:bg-hover hover:text-foreground ml-auto rounded-md p-1 transition-colors"
+              className="text-muted hover:bg-hover hover:text-foreground rounded-md p-1 transition-colors"
               onClick={onAddTerminal}
               aria-label="New terminal"
             >

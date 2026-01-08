@@ -8,6 +8,7 @@ import React from "react";
 import { ExternalLink, Terminal as TerminalIcon, X } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/tooltip";
 import { formatTabDuration, type ReviewStats } from "./registry";
+import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { cn } from "@/common/lib/utils";
 
 interface CostsTabLabelProps {
@@ -116,7 +117,9 @@ export const TerminalTabLabel: React.FC<TerminalTabLabelProps> = ({
             <X className="h-3 w-3" />
           </button>
         </TooltipTrigger>
-        <TooltipContent side="bottom">Close terminal</TooltipContent>
+        <TooltipContent side="bottom">
+          Close terminal ({formatKeybind(KEYBINDS.CLOSE_TAB)})
+        </TooltipContent>
       </Tooltip>
     </span>
   );
