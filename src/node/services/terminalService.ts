@@ -171,7 +171,7 @@ export class TerminalService {
     }
   }
 
-  async openWindow(workspaceId: string): Promise<void> {
+  async openWindow(workspaceId: string, sessionId?: string): Promise<void> {
     try {
       const allMetadata = await this.config.getAllWorkspaceMetadata();
       const workspace = allMetadata.find((w) => w.id === workspaceId);
@@ -185,8 +185,10 @@ export class TerminalService {
       const isDesktop = !!this.terminalWindowManager;
 
       if (isDesktop) {
-        log.info(`Opening terminal window for workspace: ${workspaceId}`);
-        await this.terminalWindowManager!.openTerminalWindow(workspaceId);
+        log.info(
+          `Opening terminal window for workspace: ${workspaceId}${sessionId ? ` (session: ${sessionId})` : ""}`
+        );
+        await this.terminalWindowManager!.openTerminalWindow(workspaceId, sessionId);
       } else {
         log.info(
           `Browser mode: terminal UI handled by browser for ${isSSH ? "SSH" : "local"} workspace: ${workspaceId}`

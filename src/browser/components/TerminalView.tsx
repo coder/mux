@@ -5,15 +5,87 @@ import { useAPI } from "@/browser/contexts/API";
 
 interface TerminalViewProps {
   workspaceId: string;
+  /** Optional existing session id to reattach to (e.g. keep-alive terminals) */
   sessionId?: string;
   visible: boolean;
+  /**
+   * Whether to set document.title based on workspace name.
+   *
+   * Default: true (used by the dedicated terminal window).
+   * Set to false when embedding inside the app (e.g. RightSidebar).
+   */
+  setDocumentTitle?: boolean;
+  /**
+   * Whether to close sessions created by this view when it cleans up.
+   * Default: true.
+   */
+  closeOnCleanup?: boolean;
+  /** Called when the terminal session id becomes available (created or reattached). */
+  onSessionId?: (sessionId: string) => void;
+  /** Called when the terminal title changes (via OSC escape sequences from running processes) */
+  onTitleChange?: (title: string) => void;
 }
 
-export function TerminalView({ workspaceId, sessionId, visible }: TerminalViewProps) {
+export function TerminalView({
+  workspaceId,
+  sessionId,
+  visible,
+  setDocumentTitle = true,
+  closeOnCleanup = true,
+  onSessionId,
+  onTitleChange,
+}: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const [terminalError, setTerminalError] = useState<string | null>(null);
+
+  // Buffer output while the terminal UI is not mounted (e.g., tab hidden).
+  // This preserves output for keep-alive sessions without keeping the WASM terminal instance alive.
+  const outputBufferRef = useRef<string[]>([]);
+  const outputBufferBytesRef = useRef(0);
+  const MAX_BUFFER_BYTES = 512 * 1024; // 512KiB cap to prevent runaway memory
+
+  const bufferOutput = (data: string) => {
+    outputBufferRef.current.push(data);
+    outputBufferBytesRef.current += data.length;
+
+    // Trim from the front until we are within the limit.
+    while (outputBufferBytesRef.current > MAX_BUFFER_BYTES && outputBufferRef.current.length > 0) {
+      const removed = outputBufferRef.current.shift();
+      if (removed) {
+        outputBufferBytesRef.current -= removed.length;
+      }
+    }
+  };
+
+  const flushOutputBuffer = () => {
+    const term = termRef.current;
+    if (!term) return;
+
+    const chunks = outputBufferRef.current;
+    if (chunks.length === 0) return;
+
+    term.write(chunks.join(""));
+    outputBufferRef.current = [];
+    outputBufferBytesRef.current = 0;
+  };
+
+  const clearOutputBuffer = () => {
+    outputBufferRef.current = [];
+    outputBufferBytesRef.current = 0;
+  };
+
+  // Clear output buffer when workspaceId changes to prevent cross-workspace contamination.
+  // The buffer is meant for keep-alive sessions within a single workspace, not across workspaces.
+  const prevWorkspaceIdRef = useRef(workspaceId);
+  useEffect(() => {
+    if (prevWorkspaceIdRef.current !== workspaceId) {
+      clearOutputBuffer();
+      prevWorkspaceIdRef.current = workspaceId;
+    }
+  }, [workspaceId]);
+
   const [terminalReady, setTerminalReady] = useState(false);
   const [terminalSize, setTerminalSize] = useState<{ cols: number; rows: number } | null>(null);
 
@@ -22,22 +94,27 @@ export function TerminalView({ workspaceId, sessionId, visible }: TerminalViewPr
     const term = termRef.current;
     if (term) {
       term.write(data);
+    } else {
+      bufferOutput(data);
     }
   };
 
   // Handler for terminal exit
   const handleExit = (exitCode: number) => {
+    const msg = `\r\n[Process exited with code ${exitCode}]\r\n`;
     const term = termRef.current;
     if (term) {
-      term.write(`\r\n[Process exited with code ${exitCode}]\r\n`);
+      term.write(msg);
+    } else {
+      bufferOutput(msg);
     }
   };
 
   const { api } = useAPI();
 
-  // Set window title
+  // Set window title (dedicated terminal window only)
   useEffect(() => {
-    if (!api) return;
+    if (!api || !setDocumentTitle) return;
     const setWindowDetails = async () => {
       try {
         const workspaces = await api.workspace.list();
@@ -52,34 +129,63 @@ export function TerminalView({ workspaceId, sessionId, visible }: TerminalViewPr
       }
     };
     void setWindowDetails();
-  }, [api, workspaceId]);
+  }, [api, workspaceId, setDocumentTitle]);
   const {
     sendInput,
     resize,
+    sessionId: activeSessionId,
     error: sessionError,
-  } = useTerminalSession(workspaceId, sessionId, visible, terminalSize, handleOutput, handleExit);
+  } = useTerminalSession(workspaceId, sessionId, visible, terminalSize, handleOutput, handleExit, {
+    closeOnCleanup,
+  });
+
+  useEffect(() => {
+    if (!activeSessionId) return;
+    onSessionId?.(activeSessionId);
+  }, [activeSessionId, onSessionId]);
 
   // Keep refs to latest functions so callbacks always use current version
   const sendInputRef = useRef(sendInput);
   const resizeRef = useRef(resize);
+  const onTitleChangeRef = useRef(onTitleChange);
 
   useEffect(() => {
     sendInputRef.current = sendInput;
     resizeRef.current = resize;
-  }, [sendInput, resize]);
+    onTitleChangeRef.current = onTitleChange;
+  }, [sendInput, resize, onTitleChange]);
 
   // Initialize terminal when visible
   useEffect(() => {
-    if (!containerRef.current || !visible) {
+    const containerEl = containerRef.current;
+    if (!containerEl || !visible) {
       return;
     }
 
+    // StrictMode will run this effect twice in dev (setup → cleanup → setup).
+    // If the first async init completes after cleanup, we can end up with two ghostty-web
+    // terminals wired to the same DOM node (double cursor + duplicated input). Make the
+    // init path explicitly cancelable.
+    let cancelled = false;
+
     let terminal: Terminal | null = null;
+    let disposeOnData: { dispose: () => void } | null = null;
+    let disposeOnTitleChange: { dispose: () => void } | null = null;
+
+    setTerminalError(null);
 
     const initTerminal = async () => {
       try {
         // Initialize ghostty-web WASM module (idempotent, safe to call multiple times)
         await init();
+
+        if (cancelled) {
+          return;
+        }
+
+        // Be defensive: if anything previously mounted into this container (e.g. from an
+        // interrupted init), clear it before opening a new terminal.
+        containerEl.replaceChildren();
 
         // Resolve CSS variables for xterm.js (canvas rendering doesn't support CSS vars)
         const styles = getComputedStyle(document.documentElement);
@@ -87,7 +193,7 @@ export function TerminalView({ workspaceId, sessionId, visible }: TerminalViewPr
         const terminalFg = styles.getPropertyValue("--color-terminal-fg").trim() || "#d4d4d4";
 
         terminal = new Terminal({
-          fontSize: 14,
+          fontSize: 13,
           fontFamily: "JetBrains Mono, Menlo, Monaco, monospace",
           cursorBlink: true,
           theme: {
@@ -99,8 +205,15 @@ export function TerminalView({ workspaceId, sessionId, visible }: TerminalViewPr
         const fitAddon = new FitAddon();
         terminal.loadAddon(fitAddon);
 
-        terminal.open(containerRef.current!);
+        terminal.open(containerEl);
         fitAddon.fit();
+
+        // ghostty-web focuses the container (contenteditable) on open(), which can show a
+        // browser caret in addition to the terminal cursor. Focus the hidden textarea instead.
+        const textarea = containerEl.querySelector("textarea");
+        if (textarea instanceof HTMLTextAreaElement) {
+          textarea.focus();
+        }
 
         const { cols, rows } = terminal;
 
@@ -114,14 +227,28 @@ export function TerminalView({ workspaceId, sessionId, visible }: TerminalViewPr
         });
 
         // User input → IPC (use ref to always get latest sendInput)
-        terminal.onData((data: string) => {
+        disposeOnData = terminal.onData((data: string) => {
           sendInputRef.current(data);
+        });
+
+        // Terminal title changes (from OSC escape sequences like "echo -ne '\033]0;Title\007'")
+        // Use ref to always get latest callback
+        disposeOnTitleChange = terminal.onTitleChange((title: string) => {
+          onTitleChangeRef.current?.(title);
         });
 
         termRef.current = terminal;
         fitAddonRef.current = fitAddon;
+
+        // Flush any buffered output collected while this view was hidden.
+        flushOutputBuffer();
+
         setTerminalReady(true);
       } catch (err) {
+        if (cancelled) {
+          return;
+        }
+
         console.error("Failed to initialize terminal:", err);
         setTerminalError(err instanceof Error ? err.message : "Failed to initialize terminal");
       }
@@ -130,9 +257,18 @@ export function TerminalView({ workspaceId, sessionId, visible }: TerminalViewPr
     void initTerminal();
 
     return () => {
+      cancelled = true;
+
+      disposeOnData?.dispose();
+      disposeOnTitleChange?.dispose();
+
       if (terminal) {
         terminal.dispose();
       }
+
+      // Ensure the DOM is clean even if the terminal init was interrupted.
+      containerEl.replaceChildren();
+
       termRef.current = null;
       fitAddonRef.current = null;
       setTerminalReady(false);
@@ -234,8 +370,11 @@ export function TerminalView({ workspaceId, sessionId, visible }: TerminalViewPr
     <div
       className="terminal-view"
       style={{
+        display: "flex",
+        flexDirection: "column",
         width: "100%",
         height: "100%",
+        minHeight: 0,
         backgroundColor: "var(--color-terminal-bg)",
       }}
     >
@@ -248,9 +387,13 @@ export function TerminalView({ workspaceId, sessionId, visible }: TerminalViewPr
         ref={containerRef}
         className="terminal-container"
         style={{
+          flex: 1,
+          minHeight: 0,
           width: "100%",
-          height: "100%",
           overflow: "hidden",
+          // ghostty-web uses a contenteditable root for input; hide the browser caret
+          // so we don't show a "second cursor".
+          caretColor: "transparent",
         }}
       />
     </div>

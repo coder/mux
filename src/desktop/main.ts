@@ -91,15 +91,19 @@ if (process.env.MUX_DEBUG_START_TIME === "1") {
 }
 
 // Global error handlers for better error reporting
-process.on("uncaughtException", (error) => {
+process.on("uncaughtException", (error: unknown) => {
   console.error("Uncaught Exception:", error);
-  console.error("Stack:", error.stack);
+
+  const message = error instanceof Error ? error.message : String(error);
+  const stack = error instanceof Error ? error.stack : undefined;
+
+  console.error("Stack:", stack);
 
   // Show error dialog in production
   if (app.isPackaged) {
     dialog.showErrorBox(
       "Application Error",
-      `An unexpected error occurred:\n\n${error.message}\n\nStack trace:\n${error.stack ?? "No stack trace available"}`
+      `An unexpected error occurred:\n\n${message}\n\nStack trace:\n${stack ?? "No stack trace available"}`
     );
   }
 });

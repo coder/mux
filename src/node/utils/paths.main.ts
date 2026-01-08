@@ -204,6 +204,30 @@ export class PlatformPaths {
       return filePath;
     }
 
+    // In tests and other isolated environments, mux can be configured to store all
+    // state under a custom root via MUX_ROOT. We also allow runtime config paths
+    // like "~/.mux/src" (portable, works for both local + SSH) to resolve to that
+    // root when MUX_ROOT is set.
+    const muxRoot = env.MUX_ROOT;
+    if (muxRoot) {
+      const normalizedMuxRoot = muxRoot.replace(/[\\/]+$/g, "");
+      const sep = getSeparator();
+      const prefixes = ["~/.mux", "~\\.mux"] as const;
+      for (const prefix of prefixes) {
+        if (filePath === prefix) {
+          return normalizedMuxRoot;
+        }
+
+        const slashPrefix = `${prefix}/`;
+        const backslashPrefix = `${prefix}\\`;
+        if (filePath.startsWith(slashPrefix) || filePath.startsWith(backslashPrefix)) {
+          const rest = filePath.slice(prefix.length + 1);
+          const normalizedRest = rest.replace(/[\\/]+/g, sep);
+          return normalizedMuxRoot + (normalizedRest ? sep + normalizedRest : "");
+        }
+      }
+    }
+
     if (filePath === "~") {
       return getHomeDir() || filePath;
     }

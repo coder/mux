@@ -15,6 +15,11 @@ export function generateGitStatusScript(baseRef?: string): string {
   const preferredBranch = baseRef?.startsWith("origin/") ? baseRef.replace(/^origin\//, "") : "";
 
   return `
+# NOTE: This runs frequently in the background (UI git status polling).
+# Disable optional locks so we don't contend with foreground git commands
+# (e.g., user running git commit/checkout in a terminal).
+export GIT_OPTIONAL_LOCKS=0
+
 # Determine primary branch to compare against
 PRIMARY_BRANCH=""
 PREFERRED_BRANCH="${preferredBranch}"

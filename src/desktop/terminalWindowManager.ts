@@ -22,8 +22,9 @@ export class TerminalWindowManager {
   /**
    * Open a new terminal window for a workspace
    * Multiple windows can be open for the same workspace
+   * @param sessionId Optional session ID to reattach to (for pop-out handoff from embedded terminal)
    */
-  async openTerminalWindow(workspaceId: string): Promise<void> {
+  async openTerminalWindow(workspaceId: string, sessionId?: string): Promise<void> {
     this.windowCount++;
     const windowId = this.windowCount;
 
@@ -75,16 +76,21 @@ export class TerminalWindowManager {
     const forceDistLoad = process.env.MUX_E2E_LOAD_DIST === "1";
     const useDevServer = !app.isPackaged && !forceDistLoad;
 
+    // Build query params including optional sessionId for session handoff
+    const queryParams: Record<string, string> = { workspaceId };
+    if (sessionId) {
+      queryParams.sessionId = sessionId;
+    }
+
     if (useDevServer) {
       // Development mode - load from Vite dev server
-      await terminalWindow.loadURL(
-        `http://localhost:5173/terminal.html?workspaceId=${encodeURIComponent(workspaceId)}`
-      );
+      const params = new URLSearchParams(queryParams);
+      await terminalWindow.loadURL(`http://localhost:5173/terminal.html?${params.toString()}`);
       terminalWindow.webContents.openDevTools();
     } else {
       // Production mode (or E2E dist mode) - load from built files
       await terminalWindow.loadFile(path.join(__dirname, "../terminal.html"), {
-        query: { workspaceId },
+        query: queryParams,
       });
     }
 

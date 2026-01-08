@@ -31,7 +31,7 @@ export const createBashOutputTool: ToolFactory = (config: ToolConfiguration) => 
 
       // Verify process belongs to this workspace
       const proc = await config.backgroundProcessManager.getProcess(process_id);
-      if (!proc || proc.workspaceId !== config.workspaceId) {
+      if (proc?.workspaceId !== config.workspaceId) {
         return {
           success: false,
           error: `Process not found: ${process_id}. The process may have exited or the app was restarted. Do not retry - use bash_background_list to see active processes.`,

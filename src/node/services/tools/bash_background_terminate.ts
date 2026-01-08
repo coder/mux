@@ -27,7 +27,7 @@ export const createBashBackgroundTerminateTool: ToolFactory = (config: ToolConfi
 
       // Verify process belongs to this workspace before terminating
       const process = await config.backgroundProcessManager.getProcess(process_id);
-      if (!process || process.workspaceId !== config.workspaceId) {
+      if (process?.workspaceId !== config.workspaceId) {
         return {
           success: false,
           error: `Process not found: ${process_id}`,

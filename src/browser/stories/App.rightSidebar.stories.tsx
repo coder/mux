@@ -16,8 +16,8 @@ import { createUserMessage, createAssistantMessage } from "./mockFactory";
 import { within, userEvent, waitFor, expect } from "@storybook/test";
 import {
   RIGHT_SIDEBAR_TAB_KEY,
-  RIGHT_SIDEBAR_COSTS_WIDTH_KEY,
-  RIGHT_SIDEBAR_REVIEW_WIDTH_KEY,
+  RIGHT_SIDEBAR_WIDTH_KEY,
+  getRightSidebarLayoutKey,
 } from "@/common/constants/storage";
 import type { ComponentType } from "react";
 import type { MockSessionUsage } from "@/browser/stories/mocks/orpc";
@@ -76,9 +76,8 @@ export const CostsTab: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("costs"));
-        // Set per-tab widths: costs at 350px, review at 700px
-        localStorage.setItem(RIGHT_SIDEBAR_COSTS_WIDTH_KEY, "350");
-        localStorage.setItem(RIGHT_SIDEBAR_REVIEW_WIDTH_KEY, "700");
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "400");
+        localStorage.removeItem(getRightSidebarLayoutKey("ws-costs"));
 
         const client = setupSimpleChatStory({
           workspaceId: "ws-costs",
@@ -120,7 +119,8 @@ export const CostsTabWithCacheCreate: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("costs"));
-        localStorage.setItem(RIGHT_SIDEBAR_COSTS_WIDTH_KEY, "350");
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "350");
+        localStorage.removeItem(getRightSidebarLayoutKey("ws-cache-create"));
 
         const client = setupSimpleChatStory({
           workspaceId: "ws-cache-create",
@@ -175,9 +175,8 @@ export const ReviewTab: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("costs"));
-        // Set distinct widths per tab to verify switching behavior
-        localStorage.setItem(RIGHT_SIDEBAR_COSTS_WIDTH_KEY, "350");
-        localStorage.setItem(RIGHT_SIDEBAR_REVIEW_WIDTH_KEY, "700");
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "700");
+        localStorage.removeItem(getRightSidebarLayoutKey("ws-review"));
 
         const client = setupSimpleChatStory({
           workspaceId: "ws-review",
@@ -222,11 +221,14 @@ export const StatsTabIdle: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("stats"));
+        // Clear persisted layout to ensure stats tab appears in fresh default layout
+        localStorage.removeItem(getRightSidebarLayoutKey("ws-stats-idle"));
 
         const client = setupSimpleChatStory({
           workspaceId: "ws-stats-idle",
           workspaceName: "feature/stats",
           projectName: "my-app",
+          statsTabEnabled: true,
           messages: [
             createUserMessage("msg-1", "Help me with something", { historySequence: 1 }),
             createAssistantMessage("msg-2", "Sure, I can help with that.", { historySequence: 2 }),
@@ -259,6 +261,8 @@ export const StatsTabStreaming: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("stats"));
+        // Clear persisted layout to ensure stats tab appears in fresh default layout
+        localStorage.removeItem(getRightSidebarLayoutKey("ws-stats-streaming"));
 
         const client = setupStreamingChatStory({
           workspaceId: "ws-stats-streaming",
@@ -384,9 +388,10 @@ export const ReviewTabSortByLastEdit: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
-        localStorage.setItem(RIGHT_SIDEBAR_REVIEW_WIDTH_KEY, "700");
-
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "700");
+        // Clear persisted layout to ensure review tab appears in fresh default layout
         const workspaceId = "ws-review-sort";
+        localStorage.removeItem(getRightSidebarLayoutKey(workspaceId));
         const now = Date.now();
 
         // Set up first-seen timestamps for hunks (oldest to newest: format -> button -> client)
@@ -476,9 +481,9 @@ export const ReviewTabSortByFileOrder: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
-        localStorage.setItem(RIGHT_SIDEBAR_REVIEW_WIDTH_KEY, "700");
-
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "700");
         const workspaceId = "ws-review-file-order";
+        localStorage.removeItem(getRightSidebarLayoutKey(workspaceId));
 
         // Set sort order to "file-order" (default)
         setReviewSortOrder("file-order");
@@ -580,7 +585,8 @@ export const DiffPaddingAlignment: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
-        localStorage.setItem(RIGHT_SIDEBAR_REVIEW_WIDTH_KEY, "700");
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "700");
+        localStorage.removeItem(getRightSidebarLayoutKey("ws-diff-alignment"));
 
         const client = setupSimpleChatStory({
           workspaceId: "ws-diff-alignment",
@@ -657,7 +663,8 @@ export const DiffPaddingAlignmentModification: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
-        localStorage.setItem(RIGHT_SIDEBAR_REVIEW_WIDTH_KEY, "700");
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "700");
+        localStorage.removeItem(getRightSidebarLayoutKey("ws-diff-modification"));
 
         const client = setupSimpleChatStory({
           workspaceId: "ws-diff-modification",
@@ -765,9 +772,9 @@ export const ReviewTabReadMore: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
-        localStorage.setItem(RIGHT_SIDEBAR_REVIEW_WIDTH_KEY, "700");
-
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "700");
         const workspaceId = "ws-read-more";
+        localStorage.removeItem(getRightSidebarLayoutKey(workspaceId));
 
         const client = setupSimpleChatStory({
           workspaceId,
@@ -824,7 +831,7 @@ export const ReviewTabWithFileFilter: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
-        localStorage.setItem(RIGHT_SIDEBAR_REVIEW_WIDTH_KEY, "700");
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "700");
 
         const workspaceId = "ws-review-file-filter";
 
@@ -891,9 +898,9 @@ export const ReviewTabReadMoreBoundaries: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
-        localStorage.setItem(RIGHT_SIDEBAR_REVIEW_WIDTH_KEY, "700");
-
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "700");
         const workspaceId = "ws-read-more-boundaries";
+        localStorage.removeItem(getRightSidebarLayoutKey(workspaceId));
 
         const client = setupSimpleChatStory({
           workspaceId,
