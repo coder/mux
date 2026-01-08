@@ -233,10 +233,13 @@ export function useDraftWorkspaceSettings(
       }
 
       if (selectedRuntime.mode === RUNTIME_MODE.DOCKER) {
-        if (!selectedRuntime.image.trim() && lastDockerImage.trim()) {
+        const needsImageRestore = !selectedRuntime.image.trim() && lastDockerImage.trim();
+        const needsCredentialsRestore =
+          selectedRuntime.shareCredentials === undefined && lastShareCredentials;
+        if (needsImageRestore || needsCredentialsRestore) {
           setSelectedRuntimeState({
             mode: RUNTIME_MODE.DOCKER,
-            image: lastDockerImage,
+            image: needsImageRestore ? lastDockerImage : selectedRuntime.image,
             shareCredentials: lastShareCredentials,
           });
         }
