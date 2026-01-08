@@ -46,7 +46,7 @@ MAKEFLAGS += -j
 endif
 
 # Common esbuild flags for CLI API bundle (ESM format for trpc-cli)
-ESBUILD_CLI_FLAGS := --bundle --format=esm --platform=node --target=node20 --outfile=dist/cli/api.mjs --external:zod --external:commander --external:@trpc/server --banner:js="import{createRequire}from'module';const require=createRequire(import.meta.url);"
+ESBUILD_CLI_FLAGS := --bundle --format=esm --platform=node --target=node20 --outfile=dist/cli/api.mjs --external:zod --external:commander --external:@trpc/server --banner:js="import{createRequire}from'module';globalThis.require=createRequire(import.meta.url);"
 
 # Include formatting rules
 include fmt.mk
