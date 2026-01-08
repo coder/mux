@@ -3,8 +3,13 @@ import {
   RIGHT_SIDEBAR_COLLAPSED_KEY,
   RIGHT_SIDEBAR_TAB_KEY,
   getRightSidebarLayoutKey,
+  getTerminalTitlesKey,
 } from "@/common/constants/storage";
-import { readPersistedState, usePersistedState } from "@/browser/hooks/usePersistedState";
+import {
+  readPersistedState,
+  updatePersistedState,
+  usePersistedState,
+} from "@/browser/hooks/usePersistedState";
 import { useWorkspaceUsage, useWorkspaceStatsSnapshot } from "@/browser/stores/WorkspaceStore";
 import { useFeatureFlags } from "@/browser/contexts/FeatureFlagsContext";
 import { useAPI } from "@/browser/contexts/API";
@@ -657,7 +662,12 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   const [activeDragData, setActiveDragData] = React.useState<TabDragData | null>(null);
 
   // Terminal titles from OSC sequences (e.g., shell setting window title)
-  const [terminalTitles, setTerminalTitles] = React.useState<Map<TabType, string>>(new Map());
+  // Persisted to localStorage so they survive reload
+  const terminalTitlesKey = getTerminalTitlesKey(workspaceId);
+  const [terminalTitles, setTerminalTitles] = React.useState<Map<TabType, string>>(() => {
+    const stored = readPersistedState<Record<string, string>>(terminalTitlesKey, {});
+    return new Map(Object.entries(stored) as Array<[TabType, string]>);
+  });
 
   // API for opening terminal windows and managing sessions
   const { api } = useAPI();
@@ -685,17 +695,18 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       // Remove the tab from layout
       setLayout((prev) => removeTabEverywhere(prev, activeTab));
 
-      // Clean up title
+      // Clean up title (and persist)
       setTerminalTitles((prev) => {
         const next = new Map(prev);
         next.delete(activeTab);
+        updatePersistedState(terminalTitlesKey, Object.fromEntries(next));
         return next;
       });
     };
 
     window.addEventListener("keydown", handleKeyDown, { capture: true });
     return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
-  }, [api, layout.root, layout.focusedTabsetId, setLayout]);
+  }, [api, layout.root, layout.focusedTabsetId, setLayout, terminalTitlesKey]);
 
   // Sync terminal tabs with backend sessions on workspace mount.
   // - Adds tabs for backend sessions that don't have tabs (restore after reload)
@@ -754,13 +765,19 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   }, [api, workspaceId, setLayout]);
 
   // Handler to update a terminal's title (from OSC sequences)
-  const handleTerminalTitleChange = React.useCallback((tab: TabType, title: string) => {
-    setTerminalTitles((prev) => {
-      const next = new Map(prev);
-      next.set(tab, title);
-      return next;
-    });
-  }, []);
+  // Also persists to localStorage for reload survival
+  const handleTerminalTitleChange = React.useCallback(
+    (tab: TabType, title: string) => {
+      setTerminalTitles((prev) => {
+        const next = new Map(prev);
+        next.set(tab, title);
+        // Persist to localStorage
+        updatePersistedState(terminalTitlesKey, Object.fromEntries(next));
+        return next;
+      });
+    },
+    [terminalTitlesKey]
+  );
 
   // Handler to add a new terminal tab.
   // Creates the backend session first, then adds the tab with the real sessionId.
@@ -801,14 +818,15 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       // Remove the tab from layout
       setLayout((prev) => removeTabEverywhere(prev, tab));
 
-      // Clean up title
+      // Clean up title (and persist)
       setTerminalTitles((prev) => {
         const next = new Map(prev);
         next.delete(tab);
+        updatePersistedState(terminalTitlesKey, Object.fromEntries(next));
         return next;
       });
     },
-    [api, setLayout]
+    [api, setLayout, terminalTitlesKey]
   );
 
   // Handler to pop out a terminal to a separate window, then remove the tab
@@ -827,14 +845,15 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       // Don't close the session - the pop-out window takes over
       setLayout((prev) => removeTabEverywhere(prev, tab));
 
-      // Clean up title
+      // Clean up title (and persist)
       setTerminalTitles((prev) => {
         const next = new Map(prev);
         next.delete(tab);
+        updatePersistedState(terminalTitlesKey, Object.fromEntries(next));
         return next;
       });
     },
-    [workspaceId, api, setLayout]
+    [workspaceId, api, setLayout, terminalTitlesKey]
   );
 
   // Configure sensors with distance threshold for click vs drag disambiguation

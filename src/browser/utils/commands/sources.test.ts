@@ -77,8 +77,8 @@ test("buildCoreSources includes create/switch workspace actions", () => {
   expect(titles.includes("Right Sidebar: Split Vertically")).toBe(true);
   expect(titles.includes("Right Sidebar: Add Tool…")).toBe(true);
   expect(titles.includes("Right Sidebar: Focus Terminal")).toBe(true);
-  expect(titles.includes("Open Current Workspace in Terminal")).toBe(true);
-  expect(titles.includes("Open Workspace in Terminal…")).toBe(true);
+  expect(titles.includes("New Terminal Window")).toBe(true);
+  expect(titles.includes("Open Terminal Window for Workspace…")).toBe(true);
 });
 
 test("buildCoreSources adds thinking effort command", () => {

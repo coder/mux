@@ -363,6 +363,15 @@ export function getRightSidebarLayoutKey(workspaceId: string): string {
 }
 
 /**
+ * Get the localStorage key for terminal titles per workspace.
+ * Maps sessionId -> title for persisting OSC-set terminal titles.
+ * Format: "right-sidebar:terminal-titles:{workspaceId}"
+ */
+export function getTerminalTitlesKey(workspaceId: string): string {
+  return `right-sidebar:terminal-titles:${workspaceId}`;
+}
+
+/**
  * Get the localStorage key for unified Review search state per workspace
  * Stores: { input: string, useRegex: boolean, matchCase: boolean }
  * Format: "reviewSearchState:{workspaceId}"

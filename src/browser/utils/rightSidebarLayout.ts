@@ -110,10 +110,16 @@ function removeTabFromNode(
   tab: TabType
 ): RightSidebarLayoutNode | null {
   if (node.type === "tabset") {
+    const oldIndex = node.tabs.indexOf(tab);
     const tabs = node.tabs.filter((t) => t !== tab);
     if (tabs.length === 0) return null;
 
-    const activeTab = node.activeTab === tab ? tabs[0] : node.activeTab;
+    // When removing the active tab, focus next tab (or previous if no next)
+    let activeTab = node.activeTab;
+    if (node.activeTab === tab) {
+      // Prefer next tab, fall back to previous
+      activeTab = tabs[Math.min(oldIndex, tabs.length - 1)];
+    }
     return {
       ...node,
       tabs,
