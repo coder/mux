@@ -589,9 +589,10 @@ async function main(): Promise<void> {
   const handleToolDelta = (payload: WorkspaceChatMessage): boolean => {
     if (!isToolCallDelta(payload)) return false;
     // Tool deltas (e.g., bash streaming output) - write inline
+    // Preserve whitespace-only chunks (e.g., newlines) to avoid merging lines
     const deltaStr =
       typeof payload.delta === "string" ? payload.delta : renderUnknown(payload.delta);
-    if (deltaStr.trim()) {
+    if (deltaStr.length > 0) {
       writeHuman(deltaStr);
       streamLineOpen = !deltaStr.endsWith("\n");
     }
