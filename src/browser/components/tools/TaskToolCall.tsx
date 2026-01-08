@@ -183,7 +183,7 @@ interface TaskToolCallProps {
 export const TaskToolCall: React.FC<TaskToolCallProps> = ({ args, result, status = "pending" }) => {
   // Narrow result to error or success shape
   const errorResult = isToolErrorResult(result) ? result : null;
-  const successResult = result && "status" in result ? result : null;
+  const successResult = result && typeof result === "object" && "status" in result ? result : null;
 
   // Derive expansion: auto-expand for reports or errors, but respect user's explicit toggle
   const hasReport = successResult?.status === "completed" && !!successResult.reportMarkdown;
