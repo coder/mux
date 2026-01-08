@@ -79,22 +79,40 @@ export function TerminalView({
     const term = termRef.current;
 
     // Clear terminal before subscribing to prevent any stale content flash
-    term.clear();
+    try {
+      term.clear();
+    } catch (err) {
+      console.warn("[TerminalView] Error clearing terminal:", err);
+    }
 
     const unsubscribe = router.subscribe(sessionId, {
       onOutput: (data) => {
-        term.write(data);
+        try {
+          term.write(data);
+        } catch (err) {
+          // xterm WASM can throw "memory access out of bounds" intermittently
+          console.warn("[TerminalView] Error writing output:", err);
+        }
       },
       onScreenState: (state) => {
         // Write screen state (may be empty for new sessions)
         if (state) {
-          term.write(state);
+          try {
+            term.write(state);
+          } catch (err) {
+            // xterm WASM can throw "memory access out of bounds" intermittently
+            console.warn("[TerminalView] Error writing screenState:", err);
+          }
         }
         // Mark loading complete - we now have valid content to show
         setIsLoading(false);
       },
       onExit: (code) => {
-        term.write(`\r\n[Process exited with code ${code}]\r\n`);
+        try {
+          term.write(`\r\n[Process exited with code ${code}]\r\n`);
+        } catch (err) {
+          console.warn("[TerminalView] Error writing exit message:", err);
+        }
       },
     });
 
