@@ -11,6 +11,7 @@ import {
   createAssistantMessage,
   createTaskTool,
   createCompletedTaskTool,
+  createFailedTaskTool,
   createTaskAwaitTool,
   createTaskListTool,
   createTaskTerminateTool,
@@ -176,7 +177,7 @@ Found **47 test files** across the project:
 
 /**
  * Task termination and error states.
- * Shows task_terminate with mixed success/error results and task_await errors.
+ * Shows task_terminate with mixed success/error results, task_await errors, and task spawn failures.
  */
 export const TaskErrorStates: AppStory = {
   render: () => (
@@ -184,10 +185,24 @@ export const TaskErrorStates: AppStory = {
       setup={() =>
         setupSimpleChatStory({
           messages: [
-            // Check tasks with various error states
-            createUserMessage("u1", "Check on my background tasks", { historySequence: 1 }),
-            createAssistantMessage("a1", "Here's the status of your tasks:", {
+            // Failed task spawn (invalid agentId)
+            createUserMessage("u0", "Run a bash task to check the system", { historySequence: 1 }),
+            createAssistantMessage("a0", "I'll spawn a task to check the system.", {
               historySequence: 2,
+              toolCalls: [
+                createFailedTaskTool("tc0", {
+                  subagent_type: "bash",
+                  prompt: "Check system status and report back",
+                  title: "System check",
+                  error:
+                    "Task.create: unknown agentId (bash). Built-in runnable agentIds: explore, exec",
+                }),
+              ],
+            }),
+            // Check tasks with various error states
+            createUserMessage("u1", "Check on my background tasks", { historySequence: 3 }),
+            createAssistantMessage("a1", "Here's the status of your tasks:", {
+              historySequence: 4,
               toolCalls: [
                 createTaskAwaitTool("tc1", {
                   timeout_secs: 30,
@@ -216,9 +231,9 @@ export const TaskErrorStates: AppStory = {
               ],
             }),
             // Terminate tasks with mixed results
-            createUserMessage("u2", "Stop all tasks", { historySequence: 3 }),
+            createUserMessage("u2", "Stop all tasks", { historySequence: 5 }),
             createAssistantMessage("a2", "Some tasks could not be terminated:", {
-              historySequence: 4,
+              historySequence: 6,
               toolCalls: [
                 createTaskTerminateTool("tc2", {
                   task_ids: ["task-001", "task-002", "task-invalid"],

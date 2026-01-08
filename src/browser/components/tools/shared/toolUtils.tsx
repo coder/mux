@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { LoadingDots } from "./ToolPrimitives";
+import type { ToolErrorResult } from "@/common/types/tools";
 
 /**
  * Shared utilities and hooks for tool components
@@ -88,8 +89,19 @@ export function formatDuration(ms: number): string {
 }
 
 /**
+ * Type guard for ToolErrorResult shape: { success: false, error: string }.
+ * Use this when you need type narrowing to access error.
+ */
+export function isToolErrorResult(val: unknown): val is ToolErrorResult {
+  if (!val || typeof val !== "object") return false;
+  const record = val as Record<string, unknown>;
+  return record.success === false && typeof record.error === "string";
+}
+
+/**
  * Determine if a tool output indicates failure.
  * Handles both `{ success: false }` and `{ error: "..." }` shapes.
+ * Note: Use isToolErrorResult() when you need type narrowing.
  */
 export function isFailedToolOutput(output: unknown): boolean {
   if (!output || typeof output !== "object") return false;

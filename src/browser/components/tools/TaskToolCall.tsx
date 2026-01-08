@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import {
   ToolContainer,
   ToolHeader,
@@ -7,8 +7,14 @@ import {
   StatusIndicator,
   ToolDetails,
   LoadingDots,
+  ErrorBox,
 } from "./shared/ToolPrimitives";
-import { useToolExpansion, getStatusDisplay, type ToolStatus } from "./shared/toolUtils";
+import {
+  useToolExpansion,
+  getStatusDisplay,
+  isToolErrorResult,
+  type ToolStatus,
+} from "./shared/toolUtils";
 import { MarkdownRenderer } from "../Messages/MarkdownRenderer";
 import { cn } from "@/common/lib/utils";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
@@ -19,7 +25,7 @@ import {
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import type {
   TaskToolArgs,
-  TaskToolSuccessResult,
+  TaskToolResult,
   TaskAwaitToolArgs,
   TaskAwaitToolSuccessResult,
   TaskListToolArgs,
@@ -170,14 +176,21 @@ const TaskId: React.FC<{ id: string; className?: string }> = ({ id, className })
 
 interface TaskToolCallProps {
   args: TaskToolArgs;
-  result?: TaskToolSuccessResult;
+  result?: TaskToolResult;
   status?: ToolStatus;
 }
 
 export const TaskToolCall: React.FC<TaskToolCallProps> = ({ args, result, status = "pending" }) => {
-  // Default expand for completed tasks with reports
-  const hasReport = result?.status === "completed" && !!result.reportMarkdown;
-  const { expanded, toggleExpanded } = useToolExpansion(hasReport);
+  // Narrow result to error or success shape
+  const errorResult = isToolErrorResult(result) ? result : null;
+  const successResult = result && "status" in result ? result : null;
+
+  // Derive expansion: auto-expand for reports or errors, but respect user's explicit toggle
+  const hasReport = successResult?.status === "completed" && !!successResult.reportMarkdown;
+  const shouldAutoExpand = hasReport || !!errorResult;
+  const [userExpandedChoice, setUserExpandedChoice] = useState<boolean | null>(null);
+  const expanded = userExpandedChoice ?? shouldAutoExpand;
+  const toggleExpanded = () => setUserExpandedChoice(!expanded);
 
   const isBackground = args.run_in_background;
 
@@ -186,11 +199,12 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({ args, result, status
   const agentType = args.agentId ?? args.subagent_type ?? "unknown";
   const kindBadge = <AgentTypeBadge type={agentType} />;
 
-  // Derive task state from result
-  const taskId = result?.taskId;
-  const taskStatus = result?.status;
-  const reportMarkdown = result?.status === "completed" ? result.reportMarkdown : undefined;
-  const reportTitle = result?.status === "completed" ? result.title : undefined;
+  // Derive task state from success result
+  const taskId = successResult?.taskId;
+  const taskStatus = successResult?.status;
+  const reportMarkdown =
+    successResult?.status === "completed" ? successResult.reportMarkdown : undefined;
+  const reportTitle = successResult?.status === "completed" ? successResult.title : undefined;
 
   // Show preview (first line or truncated)
   const preview = prompt.length > 60 ? prompt.slice(0, 60).trim() + "…" : prompt.split("\n")[0];
@@ -245,6 +259,9 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({ args, result, status
                 <LoadingDots />
               </div>
             )}
+
+            {/* Error state */}
+            {errorResult && <ErrorBox className="mt-2">{errorResult.error}</ErrorBox>}
           </div>
         </ToolDetails>
       )}

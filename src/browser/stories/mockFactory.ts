@@ -847,6 +847,35 @@ export function createPendingTaskTool(
   };
 }
 
+/** Create a failed task tool call (e.g., invalid agentId) */
+export function createFailedTaskTool(
+  toolCallId: string,
+  opts: {
+    subagent_type: string; // Allow invalid values for error testing
+    prompt: string;
+    title: string;
+    run_in_background?: boolean;
+    error: string;
+  }
+): MuxPart {
+  return {
+    type: "dynamic-tool",
+    toolCallId,
+    toolName: "task",
+    state: "output-available",
+    input: {
+      subagent_type: opts.subagent_type,
+      prompt: opts.prompt,
+      title: opts.title,
+      run_in_background: opts.run_in_background ?? false,
+    },
+    output: {
+      success: false,
+      error: opts.error,
+    },
+  };
+}
+
 /** Create a task_await tool call */
 export function createTaskAwaitTool(
   toolCallId: string,

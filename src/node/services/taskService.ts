@@ -11,13 +11,17 @@ import type { PartialService } from "@/node/services/partialService";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import { log } from "@/node/services/log";
 import { detectDefaultTrunkBranch, listLocalBranches } from "@/node/git";
-import { readAgentDefinition } from "@/node/services/agentDefinitions/agentDefinitionsService";
+import {
+  readAgentDefinition,
+  discoverAgentDefinitions,
+} from "@/node/services/agentDefinitions/agentDefinitionsService";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import type { InitLogger, WorkspaceCreationResult } from "@/node/runtime/Runtime";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
 import { Ok, Err, type Result } from "@/common/types/result";
 import type { TaskSettings } from "@/common/types/tasks";
 import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
+
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import { defaultModel, normalizeGatewayModel } from "@/common/utils/ai/models";
 import type { RuntimeConfig } from "@/common/types/runtime";
@@ -436,13 +440,28 @@ export class TaskService {
       ? parentMeta.projectPath
       : runtime.getWorkspacePath(parentMeta.projectPath, parentMeta.name);
 
+    // Helper to build error hint with all available runnable agents
+    const getRunnableHint = async (): Promise<string> => {
+      try {
+        const allAgents = await discoverAgentDefinitions(runtime, parentWorkspacePath);
+        const runnableIds = allAgents.filter((a) => a.subagentRunnable).map((a) => a.id);
+        return runnableIds.length > 0
+          ? `Runnable agentIds: ${runnableIds.join(", ")}`
+          : "No runnable agents available";
+      } catch {
+        return "Could not discover available agents";
+      }
+    };
+
     try {
       const definition = await readAgentDefinition(runtime, parentWorkspacePath, agentId);
       if (definition.frontmatter.subagent?.runnable !== true) {
-        return Err(`Task.create: agentId is not runnable as a sub-agent (${agentId})`);
+        const hint = await getRunnableHint();
+        return Err(`Task.create: agentId is not runnable as a sub-agent (${agentId}). ${hint}`);
       }
     } catch {
-      return Err(`Task.create: unknown agentId (${agentId})`);
+      const hint = await getRunnableHint();
+      return Err(`Task.create: unknown agentId (${agentId}). ${hint}`);
     }
 
     const createdAt = getIsoNow();
