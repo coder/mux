@@ -30,7 +30,7 @@ import type {
 import { RuntimeError as RuntimeErrorClass } from "./Runtime";
 import { RemoteRuntime, type SpawnResult } from "./RemoteRuntime";
 import { log } from "@/node/services/log";
-import { checkInitHookExists, getMuxEnv, runInitHookOnRuntime, InitHookError } from "./initHook";
+import { checkInitHookExists, getMuxEnv, runInitHookOnRuntime } from "./initHook";
 import { expandTildeForSSH as expandHookPath } from "./tildeExpansion";
 import { streamProcessToLogger } from "./streamProcess";
 import { expandTildeForSSH, cdCommandForSSH } from "./tildeExpansion";
@@ -654,10 +654,7 @@ export class SSHRuntime extends RemoteRuntime {
     } catch (error) {
       const errorMsg = getErrorMessage(error);
       initLogger.logStderr(`Initialization failed: ${errorMsg}`);
-      // Init hook errors already logged completion with real exit code - avoid double-logging
-      if (!(error instanceof InitHookError)) {
-        initLogger.logComplete(-1);
-      }
+      initLogger.logComplete(-1);
       return {
         success: false,
         error: errorMsg,

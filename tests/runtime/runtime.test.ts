@@ -1373,7 +1373,8 @@ describeIntegration("Runtime integration tests", () => {
               `docker exec ${containerName} bash -c "cd /src && git add . && git commit -m init"`
             );
 
-            // Call initWorkspace - init hook will fail
+            // Call initWorkspace - init hook will fail but init should still succeed
+            // (hook failures are non-fatal per docs/hooks/init.mdx)
             const initResult = await runtime.initWorkspace({
               projectPath,
               branchName: workspaceName,
@@ -1382,10 +1383,10 @@ describeIntegration("Runtime integration tests", () => {
               initLogger: noopInitLogger,
             });
 
-            // Init should fail due to hook failure
-            expect(initResult.success).toBe(false);
+            // Init should succeed even though hook failed (non-fatal)
+            expect(initResult.success).toBe(true);
 
-            // BUT the container should still exist (not deleted)
+            // Container should still exist
             const inspectResult = await dockerCommand(
               `docker inspect ${containerName} --format='{{.State.Running}}'`
             );

@@ -29,7 +29,7 @@ import type {
 } from "./Runtime";
 import { RuntimeError } from "./Runtime";
 import { RemoteRuntime, type SpawnResult } from "./RemoteRuntime";
-import { checkInitHookExists, getMuxEnv, runInitHookOnRuntime, InitHookError } from "./initHook";
+import { checkInitHookExists, getMuxEnv, runInitHookOnRuntime } from "./initHook";
 import { getProjectName } from "@/node/utils/runtime/helpers";
 import { getErrorMessage } from "@/common/utils/errors";
 import { syncProjectViaGitBundle } from "./gitBundleSync";
@@ -489,10 +489,7 @@ export class DockerRuntime extends RemoteRuntime {
     } catch (error) {
       const errorMsg = getErrorMessage(error);
       initLogger.logStderr(`Initialization failed: ${errorMsg}`);
-      // Init hook errors already logged completion with real exit code - avoid double-logging
-      if (!(error instanceof InitHookError)) {
-        initLogger.logComplete(-1);
-      }
+      initLogger.logComplete(-1);
       // Only clean up container if we created it (preserve forked containers on init hook failure)
       if (this.containerName && !skipContainerSetup) {
         await runDockerCommand(`docker rm -f ${this.containerName}`, 10000);
