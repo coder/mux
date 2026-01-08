@@ -110,11 +110,23 @@ export function useDraftWorkspaceSettings(
     return typeof fieldValue === "string" ? fieldValue : "";
   };
 
+  const readLastRuntimeConfigBoolean = (mode: RuntimeMode, field: string): boolean => {
+    const value = lastRuntimeConfigs[mode];
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return false;
+    }
+    return (value as Record<string, unknown>)[field] === true;
+  };
+
   const lastSshHost = readLastRuntimeConfigString(RUNTIME_MODE.SSH, "host");
   const lastDockerImage = readLastRuntimeConfigString(RUNTIME_MODE.DOCKER, "image");
+  const lastShareCredentials = readLastRuntimeConfigBoolean(
+    RUNTIME_MODE.DOCKER,
+    "shareCredentials"
+  );
 
-  const setLastRuntimeConfigString = useCallback(
-    (mode: RuntimeMode, field: string, value: string) => {
+  const setLastRuntimeConfig = useCallback(
+    (mode: RuntimeMode, field: string, value: string | boolean) => {
       setLastRuntimeConfigs((prev) => {
         const existing = prev[mode];
         const existingObj =
@@ -136,28 +148,29 @@ export function useDraftWorkspaceSettings(
       !lastSshHost.trim() &&
       parsedDefault.host.trim()
     ) {
-      setLastRuntimeConfigString(RUNTIME_MODE.SSH, "host", parsedDefault.host);
+      setLastRuntimeConfig(RUNTIME_MODE.SSH, "host", parsedDefault.host);
     }
     if (
       parsedDefault?.mode === RUNTIME_MODE.DOCKER &&
       !lastDockerImage.trim() &&
       parsedDefault.image.trim()
     ) {
-      setLastRuntimeConfigString(RUNTIME_MODE.DOCKER, "image", parsedDefault.image);
+      setLastRuntimeConfig(RUNTIME_MODE.DOCKER, "image", parsedDefault.image);
     }
-  }, [projectPath, parsedDefault, lastSshHost, lastDockerImage, setLastRuntimeConfigString]);
+  }, [projectPath, parsedDefault, lastSshHost, lastDockerImage, setLastRuntimeConfig]);
 
   const defaultSshHost =
     parsedDefault?.mode === RUNTIME_MODE.SSH ? parsedDefault.host : lastSshHost;
   const defaultDockerImage =
     parsedDefault?.mode === RUNTIME_MODE.DOCKER ? parsedDefault.image : lastDockerImage;
 
-  // Build ParsedRuntime from mode + stored host/image
+  // Build ParsedRuntime from mode + stored host/image/shareCredentials
   // Defined as a function so it can be used in both useState init and useEffect
   const buildRuntimeForMode = (
     mode: RuntimeMode,
     sshHost: string,
-    dockerImage: string
+    dockerImage: string,
+    shareCredentials: boolean
   ): ParsedRuntime => {
     switch (mode) {
       case RUNTIME_MODE.LOCAL:
@@ -165,7 +178,7 @@ export function useDraftWorkspaceSettings(
       case RUNTIME_MODE.SSH:
         return { mode: "ssh", host: sshHost };
       case RUNTIME_MODE.DOCKER:
-        return { mode: "docker", image: dockerImage };
+        return { mode: "docker", image: dockerImage, shareCredentials };
       case RUNTIME_MODE.WORKTREE:
       default:
         return { mode: "worktree" };
@@ -175,7 +188,12 @@ export function useDraftWorkspaceSettings(
   // Currently selected runtime for this session (initialized from default)
   // Uses discriminated union: SSH has host, Docker has image
   const [selectedRuntime, setSelectedRuntimeState] = useState<ParsedRuntime>(() =>
-    buildRuntimeForMode(defaultRuntimeMode, defaultSshHost, defaultDockerImage)
+    buildRuntimeForMode(
+      defaultRuntimeMode,
+      defaultSshHost,
+      defaultDockerImage,
+      lastShareCredentials
+    )
   );
 
   const prevProjectPathRef = useRef<string | null>(null);
@@ -189,13 +207,18 @@ export function useDraftWorkspaceSettings(
 
     if (projectChanged || defaultModeChanged) {
       setSelectedRuntimeState(
-        buildRuntimeForMode(defaultRuntimeMode, defaultSshHost, defaultDockerImage)
+        buildRuntimeForMode(
+          defaultRuntimeMode,
+          defaultSshHost,
+          defaultDockerImage,
+          lastShareCredentials
+        )
       );
     }
 
     prevProjectPathRef.current = projectPath;
     prevDefaultRuntimeModeRef.current = defaultRuntimeMode;
-  }, [projectPath, defaultRuntimeMode, defaultSshHost, defaultDockerImage]);
+  }, [projectPath, defaultRuntimeMode, defaultSshHost, defaultDockerImage, lastShareCredentials]);
 
   // When the user switches into SSH/Docker mode, seed the field with the remembered host/image.
   // This avoids clearing the last host/image when the UI switches modes with an empty field.
@@ -211,13 +234,17 @@ export function useDraftWorkspaceSettings(
 
       if (selectedRuntime.mode === RUNTIME_MODE.DOCKER) {
         if (!selectedRuntime.image.trim() && lastDockerImage.trim()) {
-          setSelectedRuntimeState({ mode: RUNTIME_MODE.DOCKER, image: lastDockerImage });
+          setSelectedRuntimeState({
+            mode: RUNTIME_MODE.DOCKER,
+            image: lastDockerImage,
+            shareCredentials: lastShareCredentials,
+          });
         }
       }
     }
 
     prevSelectedRuntimeModeRef.current = selectedRuntime.mode;
-  }, [selectedRuntime, lastSshHost, lastDockerImage]);
+  }, [selectedRuntime, lastSshHost, lastDockerImage, lastShareCredentials]);
 
   // Initialize trunk branch from backend recommendation or first branch
   useEffect(() => {
@@ -235,18 +262,26 @@ export function useDraftWorkspaceSettings(
     // Avoid wiping the remembered value when the UI switches modes with an empty field.
     if (runtime.mode === RUNTIME_MODE.SSH) {
       if (runtime.host.trim()) {
-        setLastRuntimeConfigString(RUNTIME_MODE.SSH, "host", runtime.host);
+        setLastRuntimeConfig(RUNTIME_MODE.SSH, "host", runtime.host);
       }
     } else if (runtime.mode === RUNTIME_MODE.DOCKER) {
       if (runtime.image.trim()) {
-        setLastRuntimeConfigString(RUNTIME_MODE.DOCKER, "image", runtime.image);
+        setLastRuntimeConfig(RUNTIME_MODE.DOCKER, "image", runtime.image);
+      }
+      if (runtime.shareCredentials !== undefined) {
+        setLastRuntimeConfig(RUNTIME_MODE.DOCKER, "shareCredentials", runtime.shareCredentials);
       }
     }
   };
 
   // Setter for default runtime mode (persists via checkbox in tooltip)
   const setDefaultRuntimeMode = (newMode: RuntimeMode) => {
-    const newRuntime = buildRuntimeForMode(newMode, lastSshHost, lastDockerImage);
+    const newRuntime = buildRuntimeForMode(
+      newMode,
+      lastSshHost,
+      lastDockerImage,
+      lastShareCredentials
+    );
     const newRuntimeString = buildRuntimeString(newRuntime);
     setDefaultRuntimeString(newRuntimeString);
     // Also update selection to match new default
