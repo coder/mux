@@ -98,7 +98,7 @@ describe("useDraftWorkspaceSettings", () => {
     const projectPath = "/tmp/project";
 
     updatePersistedState(getLastRuntimeConfigKey(projectPath), {
-      docker: { image: "ubuntu:22.04" },
+      docker: { image: "ubuntu:22.04", shareCredentials: true },
     });
 
     const wrapper: React.FC<{ children: React.ReactNode }> = (props) => (
@@ -122,6 +122,7 @@ describe("useDraftWorkspaceSettings", () => {
       expect(result.current.settings.selectedRuntime).toEqual({
         mode: "docker",
         image: "ubuntu:22.04",
+        shareCredentials: true,
       });
     });
   });
