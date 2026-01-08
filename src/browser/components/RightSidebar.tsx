@@ -690,8 +690,8 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       });
     };
 
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    window.addEventListener("keydown", handleKeyDown, { capture: true });
+    return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
   }, [api, layout.root, layout.focusedTabsetId, setLayout]);
 
   // Sync terminal tabs with backend sessions on workspace mount.
