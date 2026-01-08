@@ -35,7 +35,7 @@ import {
   type WorkspaceChatMessage,
 } from "@/common/orpc/types";
 import { defaultModel } from "@/common/utils/ai/models";
-import { ensureProvidersConfig } from "@/common/utils/providers/ensureProvidersConfig";
+import { buildProvidersFromEnv, hasAnyConfiguredProvider } from "@/node/utils/providerRequirements";
 
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { RuntimeConfig } from "@/common/types/runtime";
@@ -357,7 +357,18 @@ async function main(): Promise<void> {
     initStateManager,
     backgroundProcessManager
   );
-  ensureProvidersConfig(config);
+  // Bootstrap providers from env vars if no providers.jsonc exists
+  const existingProviders = config.loadProvidersConfig();
+  if (!hasAnyConfiguredProvider(existingProviders)) {
+    const providersFromEnv = buildProvidersFromEnv();
+    if (hasAnyConfiguredProvider(providersFromEnv)) {
+      config.saveProvidersConfig(providersFromEnv);
+    } else {
+      throw new Error(
+        "No provider credentials found. Configure providers.jsonc or set ANTHROPIC_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY / GOOGLE_GENERATIVE_AI_API_KEY."
+      );
+    }
+  }
 
   // Initialize MCP support
   const mcpConfigService = new MCPConfigService();
