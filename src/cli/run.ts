@@ -469,10 +469,34 @@ async function main(): Promise<void> {
 
   const liveEvents: WorkspaceChatMessage[] = [];
   let readyForLive = false;
+
+  /**
+   * Tracks whether stdout currently has an unfinished line (i.e. the last write was
+   * via `writeHuman(...)` without a trailing newline).
+   *
+   * This is used to prevent concatenating multi-line blocks (like tool results) onto
+   * the end of an inline prefix.
+   */
   let streamLineOpen = false;
   let activeMessageId: string | null = null;
   let planProposed = false;
   let streamEnded = false;
+
+  const writeHumanChunk = (text: string) => {
+    if (text.length === 0) return;
+    writeHuman(text);
+    streamLineOpen = !text.endsWith("\n");
+  };
+
+  const writeHumanLineClosed = (text = "") => {
+    writeHumanLine(text);
+    streamLineOpen = false;
+  };
+
+  const closeHumanLine = () => {
+    if (!streamLineOpen) return;
+    writeHumanLineClosed("");
+  };
 
   // Track tool call args by toolCallId for use in end formatting
   const toolCallArgs = new Map<string, unknown>();
@@ -489,18 +513,17 @@ async function main(): Promise<void> {
     const isTransition = lastOutputType !== nextType;
 
     // Finish any open line when transitioning to a different output type
-    if (streamLineOpen && isTransition) {
-      writeHumanLine("");
-      streamLineOpen = false;
+    if (isTransition) {
+      closeHumanLine();
     }
 
     // Add blank line for transitions (but not at start of output)
     if (lastOutputType !== "none" && isTransition) {
-      writeHumanLine("");
+      writeHumanLineClosed("");
     }
     // Also add blank line between consecutive tool calls
     if (lastOutputType === "tool" && nextType === "tool") {
-      writeHumanLine("");
+      writeHumanLineClosed("");
     }
 
     lastOutputType = nextType;
@@ -543,6 +566,29 @@ async function main(): Promise<void> {
     }
   };
 
+  const resetCompletionHandlers = () => {
+    resolveCompletion = null;
+    rejectCompletion = null;
+  };
+
+  const rejectStream = (error: Error) => {
+    // Keep terminal output readable (error messages should not start mid-line)
+    closeHumanLine();
+    rejectCompletion?.(error);
+    resetCompletionHandlers();
+  };
+
+  const resolveStream = () => {
+    closeHumanLine();
+
+    streamEnded = true;
+    resolveCompletion?.();
+    resetCompletionHandlers();
+
+    activeMessageId = null;
+    toolCallArgs.clear();
+  };
+
   const sendAndAwait = async (msg: string, options: SendMessageOptions): Promise<void> => {
     completionPromise = createCompletionPromise();
     const sendResult = await session.sendMessage(msg, options);
@@ -574,16 +620,15 @@ async function main(): Promise<void> {
     // Try formatted output, fall back to generic
     const formatted = formatToolStart(payload);
     if (formatted) {
-      // For multiline result tools, put result on new line; for inline, no newline yet
+      // For multiline result tools, put result on a new line; for inline, keep the line open
+      // so the end marker (`✓` / `✗`) can land on the same line.
       if (isMultilineResultTool(payload.toolName)) {
-        writeHumanLine(formatted);
+        writeHumanLineClosed(formatted);
       } else {
-        writeHuman(formatted);
-        // Mark line open so generic end formatters know to insert newline first
-        streamLineOpen = true;
+        writeHumanChunk(formatted);
       }
     } else {
-      writeHumanLine(formatGenericToolStart(payload));
+      writeHumanLineClosed(formatGenericToolStart(payload));
     }
     return true;
   };
@@ -594,10 +639,7 @@ async function main(): Promise<void> {
     // Preserve whitespace-only chunks (e.g., newlines) to avoid merging lines
     const deltaStr =
       typeof payload.delta === "string" ? payload.delta : renderUnknown(payload.delta);
-    if (deltaStr.length > 0) {
-      writeHuman(deltaStr);
-      streamLineOpen = !deltaStr.endsWith("\n");
-    }
+    writeHumanChunk(deltaStr);
     return true;
   };
 
@@ -611,19 +653,14 @@ async function main(): Promise<void> {
     // Try formatted output, fall back to generic
     const formatted = formatToolEnd(payload, args);
     if (formatted) {
-      // For multiline tools, ensure newline before result
-      if (isMultilineResultTool(payload.toolName) && streamLineOpen) {
-        writeHumanLine("");
-        streamLineOpen = false;
+      // For multiline tools, ensure we don't concatenate results onto streaming output.
+      if (isMultilineResultTool(payload.toolName)) {
+        closeHumanLine();
       }
-      writeHumanLine(formatted);
-      streamLineOpen = false;
+      writeHumanLineClosed(formatted);
     } else {
-      if (streamLineOpen) {
-        writeHumanLine("");
-        streamLineOpen = false;
-      }
-      writeHumanLine(formatGenericToolEnd(payload));
+      closeHumanLine();
+      writeHumanLineClosed(formatGenericToolEnd(payload));
     }
 
     if (payload.toolName === "propose_plan") {
@@ -652,15 +689,11 @@ async function main(): Promise<void> {
 
     if (isStreamStart(payload)) {
       if (activeMessageId && activeMessageId !== payload.messageId) {
-        if (rejectCompletion) {
-          rejectCompletion(
-            new Error(
-              `Received conflicting stream-start message IDs (${activeMessageId} vs ${payload.messageId})`
-            )
-          );
-          resolveCompletion = null;
-          rejectCompletion = null;
-        }
+        rejectStream(
+          new Error(
+            `Received conflicting stream-start message IDs (${activeMessageId} vs ${payload.messageId})`
+          )
+        );
         return;
       }
       activeMessageId = payload.messageId;
@@ -670,8 +703,7 @@ async function main(): Promise<void> {
     if (isStreamDelta(payload)) {
       assert(typeof payload.delta === "string", "stream delta must include text");
       ensureSpacing("text");
-      writeHuman(payload.delta);
-      streamLineOpen = !payload.delta.endsWith("\n");
+      writeHumanChunk(payload.delta);
       return;
     }
 
@@ -688,47 +720,27 @@ async function main(): Promise<void> {
     }
 
     if (isStreamError(payload)) {
-      if (rejectCompletion) {
-        rejectCompletion(new Error(payload.error));
-        resolveCompletion = null;
-        rejectCompletion = null;
-      }
+      rejectStream(new Error(payload.error));
       return;
     }
 
     if (isStreamAbort(payload)) {
-      if (rejectCompletion) {
-        rejectCompletion(new Error("Stream aborted before completion"));
-        resolveCompletion = null;
-        rejectCompletion = null;
-      }
+      rejectStream(new Error("Stream aborted before completion"));
       return;
     }
 
     if (isStreamEnd(payload)) {
       if (activeMessageId && payload.messageId !== activeMessageId) {
-        if (rejectCompletion) {
-          rejectCompletion(
-            new Error(
-              `Mismatched stream-end message ID. Expected ${activeMessageId}, received ${payload.messageId}`
-            )
-          );
-          resolveCompletion = null;
-          rejectCompletion = null;
-        }
+        rejectStream(
+          new Error(
+            `Mismatched stream-end message ID. Expected ${activeMessageId}, received ${payload.messageId}`
+          )
+        );
         return;
       }
-      if (streamLineOpen) {
-        writeHuman("\n");
-        streamLineOpen = false;
-      }
-      streamEnded = true;
-      if (resolveCompletion) {
-        resolveCompletion();
-        resolveCompletion = null;
-        rejectCompletion = null;
-      }
-      activeMessageId = null;
+
+      resolveStream();
+      return;
     }
   };
 
@@ -743,7 +755,7 @@ async function main(): Promise<void> {
       throw new Error("Plan mode was requested, but the assistant never proposed a plan.");
     }
     if (planWasProposed) {
-      writeHumanLine("\n[auto] Plan received. Approving and switching to execute mode...\n");
+      writeHumanLineClosed("\n[auto] Plan received. Approving and switching to execute mode...\n");
       await sendAndAwait("Plan approved. Execute it.", buildSendOptions("exec"));
     }
 

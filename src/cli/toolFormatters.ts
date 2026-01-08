@@ -41,6 +41,12 @@ const MULTILINE_RESULT_TOOLS = new Set([
 // Utilities
 // ============================================================================
 
+const TOOL_BLOCK_SEPARATOR = chalk.dim("─".repeat(40));
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object";
+}
+
 function formatFilePath(filePath: string): string {
   return chalk.cyan(filePath);
 }
@@ -232,6 +238,7 @@ function formatFileReadEnd(_toolName: string, _args: unknown, result: unknown): 
 }
 
 function formatBashEnd(_toolName: string, _args: unknown, result: unknown): string | null {
+  if (!isRecord(result)) return null;
   const bashResult = result as BashToolResult;
 
   // Background process started
@@ -272,6 +279,7 @@ function formatBashEnd(_toolName: string, _args: unknown, result: unknown): stri
 }
 
 function formatTaskEnd(_toolName: string, _args: unknown, result: unknown): string | null {
+  if (!isRecord(result)) return null;
   const taskResult = result as TaskToolResult;
 
   if ("taskId" in taskResult && taskResult.status) {
@@ -410,11 +418,11 @@ export function formatToolEnd(payload: ToolCallEndEvent, startArgs?: unknown): s
  */
 export function formatGenericToolStart(payload: ToolCallStartEvent): string {
   return [
-    chalk.dim("─".repeat(40)),
+    TOOL_BLOCK_SEPARATOR,
     `${chalk.bold(payload.toolName)} ${chalk.dim(`(${payload.toolCallId})`)}`,
     chalk.dim("Args:"),
     indent(renderUnknown(payload.args)),
-    chalk.dim("─".repeat(40)),
+    TOOL_BLOCK_SEPARATOR,
   ].join("\n");
 }
 
@@ -423,10 +431,10 @@ export function formatGenericToolStart(payload: ToolCallStartEvent): string {
  */
 export function formatGenericToolEnd(payload: ToolCallEndEvent): string {
   return [
-    chalk.dim("─".repeat(40)),
+    TOOL_BLOCK_SEPARATOR,
     `${chalk.bold(payload.toolName)} ${chalk.dim("result")}`,
     indent(renderUnknown(payload.result)),
-    chalk.dim("─".repeat(40)),
+    TOOL_BLOCK_SEPARATOR,
   ].join("\n");
 }
 
