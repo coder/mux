@@ -12,7 +12,9 @@ import { Command } from "commander";
 import * as os from "os";
 import * as path from "path";
 import * as fs from "fs/promises";
+import * as fsSync from "fs";
 import { Config } from "@/node/config";
+import { DisposableTempDir } from "@/node/services/tempDir";
 import { HistoryService } from "@/node/services/historyService";
 import { PartialService } from "@/node/services/partialService";
 import { InitStateManager } from "@/node/services/initStateManager";
@@ -23,6 +25,8 @@ import { MCPConfigService } from "@/node/services/mcpConfigService";
 import { MCPServerManager } from "@/node/services/mcpServerManager";
 import {
   isCaughtUpMessage,
+  isReasoningDelta,
+  isReasoningEnd,
   isStreamAbort,
   isStreamDelta,
   isStreamEnd,
@@ -43,6 +47,7 @@ import { parseRuntimeModeAndHost, RUNTIME_MODE } from "@/common/types/runtime";
 import assert from "@/common/utils/assert";
 import parseDuration from "parse-duration";
 import { log, type LogLevel } from "@/node/services/log";
+import chalk from "chalk";
 import type { InitLogger } from "@/node/runtime/Runtime";
 import { DockerRuntime } from "@/node/runtime/DockerRuntime";
 import { execSync } from "child_process";
@@ -201,7 +206,7 @@ const program = new Command();
 program
   .name("mux run")
   .description("Run an agent session in the current directory")
-  .argument("[message]", "instruction for the agent (can also be piped via stdin)")
+  .argument("[message...]", "instruction for the agent (can also be piped via stdin)")
   .option("-d, --dir <path>", "project directory", process.cwd())
   .option("-m, --model <model>", "model to use", defaultModel)
   .option(
@@ -216,9 +221,6 @@ program
   .option("--log-level <level>", "set log level: error, warn, info, debug")
   .option("--json", "output NDJSON for programmatic consumption")
   .option("-q, --quiet", "only output final result")
-  .option("--workspace-id <id>", "explicit workspace ID (auto-generated if not provided)")
-  .option("--workspace <id>", "continue an existing workspace (loads history, skips init)")
-  .option("--config-root <path>", "mux config directory")
   .option("--mcp <server>", "MCP server as name=command (can be repeated)", collectMcpServers, [])
   .option("--no-mcp-config", "ignore .mux/mcp.jsonc, use only --mcp servers")
   .addHelpText(
@@ -249,15 +251,12 @@ interface CLIOptions {
   logLevel?: string;
   json?: boolean;
   quiet?: boolean;
-  workspaceId?: string;
-  workspace?: string;
-  configRoot?: string;
   mcp: MCPServerEntry[];
   mcpConfig: boolean;
 }
 
 const opts = program.opts<CLIOptions>();
-const messageArg = program.args[0];
+const messageArg = program.args.join(" ");
 
 async function main(): Promise<void> {
   // Configure log level early (before any logging happens)
@@ -284,36 +283,31 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Setup config
-  const config = new Config(opts.configRoot);
+  // Create ephemeral temp dir for session data (auto-cleaned on exit)
+  using tempDir = new DisposableTempDir("mux-run");
 
-  // Determine if continuing an existing workspace
-  const continueWorkspace = opts.workspace;
-  const workspaceId = continueWorkspace ?? opts.workspaceId ?? generateWorkspaceId();
+  // Use real config for providers, but ephemeral temp dir for session data
+  const realConfig = new Config();
+  const config = new Config(tempDir.path);
 
-  // Resolve directory - for continuing workspace, try to get from metadata
-  let projectDir: string;
-  if (continueWorkspace) {
-    const metadataPath = path.join(config.sessionsDir, continueWorkspace, "metadata.json");
-    try {
-      const metadataContent = await fs.readFile(metadataPath, "utf-8");
-      const metadata = JSON.parse(metadataContent) as { projectPath?: string };
-      if (metadata.projectPath) {
-        projectDir = metadata.projectPath;
-        log.info(`Continuing workspace ${continueWorkspace}, using project path: ${projectDir}`);
-      } else {
-        projectDir = path.resolve(opts.dir);
-        log.warn(`No projectPath in metadata, using --dir: ${projectDir}`);
-      }
-    } catch {
-      // Metadata doesn't exist or is invalid, fall back to --dir
-      projectDir = path.resolve(opts.dir);
-      log.warn(`Could not read metadata for ${continueWorkspace}, using --dir: ${projectDir}`);
-    }
-  } else {
-    projectDir = path.resolve(opts.dir);
-    await ensureDirectory(projectDir);
+  // Copy providers and secrets from real config to ephemeral config
+  const existingProviders = realConfig.loadProvidersConfig();
+  if (hasAnyConfiguredProvider(existingProviders)) {
+    // Write providers to temp config so services can find them
+    const providersFile = path.join(config.rootDir, "providers.jsonc");
+    fsSync.writeFileSync(providersFile, JSON.stringify(existingProviders, null, 2));
   }
+
+  // Copy secrets so tools/MCP servers get project secrets (e.g., GH_TOKEN)
+  const existingSecrets = realConfig.loadSecretsConfig();
+  if (Object.keys(existingSecrets).length > 0) {
+    const secretsFile = path.join(config.rootDir, "secrets.json");
+    fsSync.writeFileSync(secretsFile, JSON.stringify(existingSecrets, null, 2));
+  }
+
+  const workspaceId = generateWorkspaceId();
+  const projectDir = path.resolve(opts.dir);
+  await ensureDirectory(projectDir);
 
   const model: string = opts.model;
   const runtimeConfig = parseRuntimeConfig(opts.runtime, config.srcDir);
@@ -324,12 +318,19 @@ async function main(): Promise<void> {
   const quiet = opts.quiet === true;
 
   const suppressHumanOutput = emitJson || quiet;
+  const stderrIsTTY = process.stderr.isTTY === true;
 
   const writeHuman = (text: string) => {
     if (!suppressHumanOutput) process.stdout.write(text);
   };
   const writeHumanLine = (text = "") => {
     if (!suppressHumanOutput) process.stdout.write(`${text}\n`);
+  };
+  const writeThinking = (text: string) => {
+    if (suppressHumanOutput) return;
+    // Purple color matching Mux UI thinking blocks (hsl(271, 76%, 53%) = #A855F7)
+    const colored = stderrIsTTY ? chalk.hex("#A855F7")(text) : text;
+    process.stderr.write(colored);
   };
   const emitJsonLine = (payload: unknown) => {
     if (emitJson) process.stdout.write(`${JSON.stringify(payload)}\n`);
@@ -358,7 +359,6 @@ async function main(): Promise<void> {
     backgroundProcessManager
   );
   // Bootstrap providers from env vars if no providers.jsonc exists
-  const existingProviders = config.loadProvidersConfig();
   if (!hasAnyConfiguredProvider(existingProviders)) {
     const providersFromEnv = buildProvidersFromEnv();
     if (hasAnyConfiguredProvider(providersFromEnv)) {
@@ -392,74 +392,65 @@ async function main(): Promise<void> {
     backgroundProcessManager,
   });
 
-  // For continuing workspace, metadata should already exist
-  // For new workspace, create it
-  if (!continueWorkspace) {
-    let workspacePath = projectDir;
-    const projectName = path.basename(projectDir);
+  // For Docker runtime, create and initialize the container first
+  let workspacePath = projectDir;
+  if (runtimeConfig.type === "docker") {
+    const runtime = new DockerRuntime(runtimeConfig);
+    // Use a sanitized branch name (CLI runs are typically one-off, no real branch needed)
+    const branchName = `cli-${workspaceId.replace(/[^a-zA-Z0-9-]/g, "-")}`;
 
-    // For Docker runtime, create and initialize the container first
-    if (runtimeConfig.type === "docker") {
-      const runtime = new DockerRuntime(runtimeConfig);
-      // Use a sanitized branch name (CLI runs are typically one-off, no real branch needed)
-      const branchName = `cli-${workspaceId.replace(/[^a-zA-Z0-9-]/g, "-")}`;
-
-      // Detect trunk branch from repo
-      let trunkBranch = "main";
-      try {
-        const symbolic = execSync("git symbolic-ref refs/remotes/origin/HEAD", {
-          cwd: projectDir,
-          encoding: "utf-8",
-        }).trim();
-        trunkBranch = symbolic.replace("refs/remotes/origin/", "");
-      } catch {
-        // Fallback to main
-      }
-
-      const initLogger = makeCliInitLogger(writeHumanLine);
-      const createResult = await runtime.createWorkspace({
-        projectPath: projectDir,
-        branchName,
-        trunkBranch,
-        directoryName: branchName,
-        initLogger,
-      });
-      if (!createResult.success) {
-        console.error(
-          `Failed to create Docker workspace: ${createResult.error ?? "unknown error"}`
-        );
-        process.exit(1);
-      }
-
-      const initResult = await runtime.initWorkspace({
-        projectPath: projectDir,
-        branchName,
-        trunkBranch,
-        workspacePath: createResult.workspacePath!,
-        initLogger,
-      });
-      if (!initResult.success) {
-        // Clean up orphaned container
-        // eslint-disable-next-line @typescript-eslint/no-empty-function
-        await runtime.deleteWorkspace(projectDir, branchName, true).catch(() => {});
-        console.error(
-          `Failed to initialize Docker workspace: ${initResult.error ?? "unknown error"}`
-        );
-        process.exit(1);
-      }
-
-      // Docker workspacePath is /src; projectName stays as original
-      workspacePath = createResult.workspacePath!;
+    // Detect trunk branch from repo
+    let trunkBranch = "main";
+    try {
+      const symbolic = execSync("git symbolic-ref refs/remotes/origin/HEAD", {
+        cwd: projectDir,
+        encoding: "utf-8",
+      }).trim();
+      trunkBranch = symbolic.replace("refs/remotes/origin/", "");
+    } catch {
+      // Fallback to main
     }
 
-    await session.ensureMetadata({
-      workspacePath,
-      projectName,
-      runtimeConfig,
+    const initLogger = makeCliInitLogger(writeHumanLine);
+    const createResult = await runtime.createWorkspace({
+      projectPath: projectDir,
+      branchName,
+      trunkBranch,
+      directoryName: branchName,
+      initLogger,
     });
-  } else {
-    log.info(`Continuing workspace ${workspaceId} - using existing metadata`);
+    if (!createResult.success) {
+      console.error(`Failed to create Docker workspace: ${createResult.error ?? "unknown error"}`);
+      process.exit(1);
+    }
+
+    const initResult = await runtime.initWorkspace({
+      projectPath: projectDir,
+      branchName,
+      trunkBranch,
+      workspacePath: createResult.workspacePath!,
+      initLogger,
+    });
+    if (!initResult.success) {
+      // Clean up orphaned container
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      await runtime.deleteWorkspace(projectDir, branchName, true).catch(() => {});
+      console.error(
+        `Failed to initialize Docker workspace: ${initResult.error ?? "unknown error"}`
+      );
+      process.exit(1);
+    }
+
+    // Docker workspacePath is /src; projectName stays as original
+    workspacePath = createResult.workspacePath!;
   }
+
+  // Initialize workspace metadata (ephemeral - stored in temp dir)
+  await session.ensureMetadata({
+    workspacePath,
+    projectName: path.basename(projectDir),
+    runtimeConfig,
+  });
 
   const buildSendOptions = (cliMode: CLIMode): SendMessageOptions => ({
     model,
@@ -606,6 +597,17 @@ async function main(): Promise<void> {
       assert(typeof payload.delta === "string", "stream delta must include text");
       writeHuman(payload.delta);
       streamLineOpen = !payload.delta.endsWith("\n");
+      return;
+    }
+
+    if (isReasoningDelta(payload)) {
+      writeThinking(payload.delta);
+      return;
+    }
+
+    if (isReasoningEnd(payload)) {
+      // Add newline after thinking block ends to separate from main output
+      writeThinking("\n");
       return;
     }
 
