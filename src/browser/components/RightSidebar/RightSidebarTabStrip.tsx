@@ -65,7 +65,7 @@ const SortableTab: React.FC<{
   };
 
   return (
-    <div className="relative" style={style}>
+    <div className="relative shrink-0" style={style}>
       <Tooltip>
         <TooltipTrigger asChild>
           <button
@@ -73,7 +73,7 @@ const SortableTab: React.FC<{
             {...attributes}
             {...listeners}
             className={cn(
-              "flex items-baseline gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-all duration-150",
+              "flex items-baseline gap-1.5 whitespace-nowrap rounded-md px-3 py-1 text-xs font-medium transition-all duration-150",
               "cursor-grab touch-none active:cursor-grabbing",
               item.selected
                 ? "bg-hover text-foreground"
@@ -125,7 +125,7 @@ export const RightSidebarTabStrip: React.FC<RightSidebarTabStripProps> = ({
     <div
       ref={setNodeRef}
       className={cn(
-        "border-border-light flex items-center gap-1 border-b px-2 py-1.5 transition-colors",
+        "border-border-light flex min-w-0 items-center gap-1 overflow-x-auto border-b px-2 py-1.5 transition-colors",
         showDropHighlight && "bg-accent/30",
         isDraggingFromHere && "bg-accent/10"
       )}
@@ -140,7 +140,7 @@ export const RightSidebarTabStrip: React.FC<RightSidebarTabStripProps> = ({
           <TooltipTrigger asChild>
             <button
               type="button"
-              className="text-muted hover:bg-hover hover:text-foreground rounded-md p-1 transition-colors"
+              className="text-muted hover:bg-hover hover:text-foreground shrink-0 rounded-md p-1 transition-colors"
               onClick={onAddTerminal}
               aria-label="New terminal"
             >
