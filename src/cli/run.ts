@@ -579,6 +579,8 @@ async function main(): Promise<void> {
         writeHumanLine(formatted);
       } else {
         writeHuman(formatted);
+        // Mark line open so generic end formatters know to insert newline first
+        streamLineOpen = true;
       }
     } else {
       writeHumanLine(formatGenericToolStart(payload));

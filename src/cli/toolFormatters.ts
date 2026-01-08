@@ -102,7 +102,7 @@ function renderUnknown(value: unknown): string {
 // Tool Start Formatters
 // ============================================================================
 
-function formatFileEditStart(toolName: string, args: unknown): string | null {
+function formatFileEditStart(_toolName: string, args: unknown): string | null {
   const editArgs = args as FileEditReplaceStringToolArgs | FileEditInsertToolArgs;
   if (!editArgs?.file_path) return null;
 
@@ -201,7 +201,7 @@ function formatCodeExecutionStart(_toolName: string, args: unknown): string | nu
 // Tool End Formatters
 // ============================================================================
 
-function formatFileEditEnd(toolName: string, _args: unknown, result: unknown): string | null {
+function formatFileEditEnd(_toolName: string, _args: unknown, result: unknown): string | null {
   const editResult = result as FileEditReplaceStringToolResult | FileEditInsertToolResult;
 
   if (editResult?.success === false) {
@@ -325,6 +325,11 @@ function formatCodeExecutionEnd(_toolName: string, _args: unknown, result: unkno
   return output;
 }
 
+/** Simple success marker for inline tools that don't need detailed result formatting */
+function formatSimpleSuccessEnd(): string | null {
+  return chalk.green("✓");
+}
+
 // ============================================================================
 // Registry and Public API
 // ============================================================================
@@ -356,6 +361,13 @@ const endFormatters: Record<string, ToolEndFormatter> = {
   task_await: formatTaskEnd,
   web_fetch: formatWebFetchEnd,
   code_execution: formatCodeExecutionEnd,
+  // Inline tools with simple success markers (prevents generic fallback)
+  web_search: formatSimpleSuccessEnd,
+  todo_write: formatSimpleSuccessEnd,
+  notify: formatSimpleSuccessEnd,
+  status_set: formatSimpleSuccessEnd,
+  agent_skill_read: formatSimpleSuccessEnd,
+  agent_skill_read_file: formatSimpleSuccessEnd,
 };
 
 /**
