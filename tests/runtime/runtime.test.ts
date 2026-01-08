@@ -1272,5 +1272,132 @@ describeIntegration("Runtime integration tests", () => {
         expect(result.success).toBe(true);
       });
     });
+
+    describe("initWorkspace skips setup for running containers (fork scenario)", () => {
+      testForDocker(
+        "skips container creation when container is already running",
+        async () => {
+          const { DockerRuntime, getContainerName } = await import("@/node/runtime/DockerRuntime");
+          const projectName = `docker-skip-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+          const workspaceName = "test-skip-ws";
+          const projectPath = `/tmp/${projectName}`;
+          const containerName = getContainerName(projectPath, workspaceName);
+
+          // Create a minimal git repo for the project
+          await dockerCommand(`mkdir -p ${projectPath}`);
+          await dockerCommand(
+            `cd ${projectPath} && git init -b main && git config user.email "test@test.com" && git config user.name "Test" && echo "test" > README.md && git add . && git commit -m "init"`
+          );
+
+          // Instantiate runtime with containerName directly (simulates existing forked workspace)
+          const runtime = new DockerRuntime({ image: "mux-ssh-test", containerName });
+          const loggedSteps: string[] = [];
+          const initLogger = {
+            logStep: (msg: string) => loggedSteps.push(msg),
+            logStdout: () => {},
+            logStderr: () => {},
+            logComplete: () => {},
+          };
+
+          try {
+            // Pre-create a running container (simulating successful fork)
+            await dockerCommand(
+              `docker run -d --name ${containerName} mux-ssh-test sleep infinity`
+            );
+            // Also create /src with the git repo inside
+            await dockerCommand(`docker exec ${containerName} mkdir -p /src`);
+            await dockerCommand(
+              `docker exec ${containerName} bash -c "cd /src && git init -b main && git config user.email test@test.com && git config user.name Test && echo test > README.md && git add . && git commit -m init"`
+            );
+
+            // Call initWorkspace - should detect running container and skip setup
+            const initResult = await runtime.initWorkspace({
+              projectPath,
+              branchName: workspaceName,
+              trunkBranch: "main",
+              workspacePath: "/src",
+              initLogger,
+            });
+
+            expect(initResult.success).toBe(true);
+            // Should log the skip message, not "Creating container from..."
+            expect(loggedSteps).toContain(
+              "Container already running (from fork), running init hook..."
+            );
+            expect(loggedSteps).not.toContain(expect.stringContaining("Creating container from"));
+          } finally {
+            await dockerCommand(`rm -rf ${projectPath}`);
+            await dockerCommand(`docker rm -f ${containerName} 2>/dev/null || true`);
+          }
+        },
+        60000
+      );
+
+      testForDocker(
+        "does not delete forked container when init hook fails",
+        async () => {
+          const { DockerRuntime, getContainerName } = await import("@/node/runtime/DockerRuntime");
+          const projectName = `docker-nodel-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+          const workspaceName = "test-nodel-ws";
+          const projectPath = `/tmp/${projectName}`;
+          const containerName = getContainerName(projectPath, workspaceName);
+
+          // Create a minimal git repo with a FAILING init hook
+          await dockerCommand(`mkdir -p ${projectPath}/.mux`);
+          await dockerCommand(
+            `cd ${projectPath} && git init -b main && git config user.email "test@test.com" && git config user.name "Test" && echo "test" > README.md`
+          );
+          await dockerCommand(`echo '#!/bin/bash\nexit 1' > ${projectPath}/.mux/init`);
+          await dockerCommand(`chmod +x ${projectPath}/.mux/init`);
+          await dockerCommand(
+            `cd ${projectPath} && git add . && git commit -m "init with failing hook"`
+          );
+
+          // Instantiate runtime with containerName directly (simulates existing forked workspace)
+          const runtime = new DockerRuntime({ image: "mux-ssh-test", containerName });
+
+          try {
+            // Pre-create a running container (simulating successful fork)
+            await dockerCommand(
+              `docker run -d --name ${containerName} mux-ssh-test sleep infinity`
+            );
+            // Create git repo with the failing init hook inside container
+            await dockerCommand(`docker exec ${containerName} mkdir -p /src/.mux`);
+            await dockerCommand(
+              `docker exec ${containerName} bash -c "cd /src && git init -b main && git config user.email test@test.com && git config user.name Test && echo test > README.md"`
+            );
+            await dockerCommand(
+              `docker exec ${containerName} bash -c "echo '#!/bin/bash\nexit 1' > /src/.mux/init && chmod +x /src/.mux/init"`
+            );
+            await dockerCommand(
+              `docker exec ${containerName} bash -c "cd /src && git add . && git commit -m init"`
+            );
+
+            // Call initWorkspace - init hook will fail
+            const initResult = await runtime.initWorkspace({
+              projectPath,
+              branchName: workspaceName,
+              trunkBranch: "main",
+              workspacePath: "/src",
+              initLogger: noopInitLogger,
+            });
+
+            // Init should fail due to hook failure
+            expect(initResult.success).toBe(false);
+
+            // BUT the container should still exist (not deleted)
+            const inspectResult = await dockerCommand(
+              `docker inspect ${containerName} --format='{{.State.Running}}'`
+            );
+            expect(inspectResult.exitCode).toBe(0);
+            expect(inspectResult.stdout.trim()).toBe("true");
+          } finally {
+            await dockerCommand(`rm -rf ${projectPath}`);
+            await dockerCommand(`docker rm -f ${containerName} 2>/dev/null || true`);
+          }
+        },
+        60000
+      );
+    });
   });
 });

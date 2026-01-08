@@ -113,8 +113,9 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Build a map of project paths to sorted workspace metadata lists.
- * Includes both persisted workspaces (from config) and pending workspaces
- * (status: "creating") that haven't been saved yet.
+ * Includes both persisted workspaces (from config) and workspaces from
+ * metadata that haven't yet appeared in config (handles race condition
+ * where metadata event arrives before config refresh completes).
  *
  * Workspaces are sorted by recency (most recent first).
  */
@@ -140,9 +141,10 @@ export function buildSortedWorkspacesByProject(
     result.set(projectPath, metadataList);
   }
 
-  // Second pass: add pending workspaces (status: "creating") not yet in config
+  // Second pass: add workspaces from metadata not yet in projects config
+  // (handles race condition where metadata event arrives before config refresh completes)
   for (const [id, metadata] of workspaceMetadata) {
-    if (metadata.status === "creating" && !includedIds.has(id)) {
+    if (!includedIds.has(id)) {
       const projectWorkspaces = result.get(metadata.projectPath) ?? [];
       projectWorkspaces.push(metadata);
       result.set(metadata.projectPath, projectWorkspaces);
