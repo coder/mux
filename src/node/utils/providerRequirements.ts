@@ -90,6 +90,7 @@ export interface ProviderConfigRaw {
   secretAccessKey?: string;
   couponCode?: string;
   voucher?: string; // legacy mux-gateway field
+  organization?: string; // OpenAI org ID
 }
 
 /** Result of resolving provider credentials */
@@ -156,7 +157,8 @@ export function resolveProviderCredentials(
   const configKey = config.apiKey || null;
   const apiKey = configKey ?? resolveEnv(envMapping?.apiKey, env);
   const baseUrl = config.baseURL ?? config.baseUrl ?? resolveEnv(envMapping?.baseUrl, env);
-  const organization = resolveEnv(envMapping?.organization, env);
+  // Config organization takes precedence over env var (user's explicit choice)
+  const organization = config.organization ?? resolveEnv(envMapping?.organization, env);
 
   if (apiKey) {
     return { isConfigured: true, apiKey, baseUrl, organization };
