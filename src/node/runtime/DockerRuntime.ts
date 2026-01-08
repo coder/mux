@@ -449,6 +449,7 @@ export class DockerRuntime extends RemoteRuntime {
       switch (containerCheck.action) {
         case "skip":
           initLogger.logStep("Container already running (from fork), running init hook...");
+          await this.setupCredentials(containerName, env);
           skipContainerSetup = true;
           break;
         case "cleanup":
@@ -547,6 +548,33 @@ export class DockerRuntime extends RemoteRuntime {
   }
 
   /**
+   * Copy gitconfig and configure gh CLI credential helper in container.
+   * Called for both new containers and reused forked containers.
+   */
+  private async setupCredentials(
+    containerName: string,
+    env?: Record<string, string>
+  ): Promise<void> {
+    if (!this.config.shareCredentials) return;
+
+    // Copy host gitconfig into container (not mounted, so gh can modify it)
+    const gitconfig = path.join(os.homedir(), ".gitconfig");
+    if (existsSync(gitconfig)) {
+      await runDockerCommand(`docker cp ${gitconfig} ${containerName}:/root/.gitconfig`, 10000);
+    }
+
+    // Configure gh CLI as git credential helper if GH_TOKEN is available
+    // GH_TOKEN can come from project secrets (env) or host environment (buildCredentialArgs)
+    const ghToken = env?.GH_TOKEN ?? process.env.GH_TOKEN;
+    if (ghToken) {
+      await runDockerCommand(
+        `docker exec -e GH_TOKEN=${shescape.quote(ghToken)} ${containerName} sh -c 'command -v gh >/dev/null && gh auth setup-git || true'`,
+        10000
+      );
+    }
+  }
+
+  /**
    * Create container, sync project files, and checkout branch.
    * This is the full setup path for new workspaces (not forked ones).
    */
@@ -610,23 +638,8 @@ export class DockerRuntime extends RemoteRuntime {
 
     initLogger.logStep("Container ready");
 
-    // Copy host gitconfig into container (not mounted, so gh can modify it)
-    if (this.config.shareCredentials) {
-      const gitconfig = path.join(os.homedir(), ".gitconfig");
-      if (existsSync(gitconfig)) {
-        await runDockerCommand(`docker cp ${gitconfig} ${containerName}:/root/.gitconfig`, 10000);
-      }
-    }
-
-    // Configure gh CLI as git credential helper if GH_TOKEN is available
-    // GH_TOKEN can come from project secrets (env) or host environment (buildCredentialArgs)
-    const ghToken = env?.GH_TOKEN ?? process.env.GH_TOKEN;
-    if (this.config.shareCredentials && ghToken) {
-      await runDockerCommand(
-        `docker exec -e GH_TOKEN=${shescape.quote(ghToken)} ${containerName} sh -c 'command -v gh >/dev/null && gh auth setup-git || true'`,
-        10000
-      );
-    }
+    // Setup credentials (gitconfig + gh auth)
+    await this.setupCredentials(containerName, env);
 
     // 2. Sync project to container using git bundle + docker cp
     initLogger.logStep("Syncing project files to container...");
