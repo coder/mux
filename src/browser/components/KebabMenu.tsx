@@ -32,16 +32,17 @@ export const KebabMenu: React.FC<KebabMenuProps> = ({ items, className }) => {
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // Calculate dropdown position when menu opens
-  useEffect(() => {
-    if (isOpen && buttonRef.current) {
+  const handleToggle = () => {
+    if (!isOpen && buttonRef.current) {
+      // Calculate position when opening (not via effect)
       const rect = buttonRef.current.getBoundingClientRect();
       setDropdownPosition({
         top: rect.bottom + 4, // 4px gap below button
         left: rect.right - 160, // Align right edge (160px = min-width)
       });
     }
-  }, [isOpen]);
+    setIsOpen(!isOpen);
+  };
 
   // Close menu when clicking outside
   useEffect(() => {
@@ -76,7 +77,7 @@ export const KebabMenu: React.FC<KebabMenuProps> = ({ items, className }) => {
           <TooltipTrigger asChild>
             <button
               ref={buttonRef}
-              onClick={() => setIsOpen(!isOpen)}
+              onClick={handleToggle}
               className={cn(
                 "border border-white/20 text-foreground text-[10px] py-0.5 px-2 rounded-[3px] cursor-pointer transition-all duration-200 font-primary flex items-center justify-center whitespace-nowrap",
                 isOpen ? "bg-white/10" : "bg-none",
