@@ -35,15 +35,20 @@ interface ExecResult {
  */
 async function runMuxRun(
   args: string[],
-  options: { timeoutMs?: number; cwd?: string } = {}
+  options: { timeoutMs?: number; cwd?: string; muxRoot?: string } = {}
 ): Promise<ExecResult> {
-  const { timeoutMs = 60000, cwd } = options;
+  const { timeoutMs = 60000, cwd, muxRoot } = options;
 
   return new Promise((resolve) => {
     const proc = spawn("bun", [RUN_PATH, ...args], {
       timeout: timeoutMs,
       cwd,
-      env: { ...process.env, NO_COLOR: "1" },
+      env: {
+        ...process.env,
+        NO_COLOR: "1",
+        // Isolate config to avoid reading user's providers.jsonc
+        ...(muxRoot ? { MUX_ROOT: muxRoot } : {}),
+      },
       stdio: ["pipe", "pipe", "pipe"],
     });
 
@@ -73,10 +78,13 @@ async function runMuxRun(
 
 describeIntegration("mux run smoke tests", () => {
   let testDir: string;
+  let muxRoot: string;
 
   beforeAll(async () => {
     // Create a temporary directory for tests
     testDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-run-smoke-"));
+    // Create isolated MUX_ROOT to avoid reading user's providers.jsonc
+    muxRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mux-root-smoke-"));
 
     // Initialize a git repo (mux run requires a git repo)
     const { execSync } = await import("child_process");
@@ -91,9 +99,12 @@ describeIntegration("mux run smoke tests", () => {
   });
 
   afterAll(async () => {
-    // Clean up test directory
+    // Clean up test directories
     if (testDir) {
       await fs.rm(testDir, { recursive: true, force: true });
+    }
+    if (muxRoot) {
+      await fs.rm(muxRoot, { recursive: true, force: true });
     }
   });
 
@@ -109,7 +120,7 @@ describeIntegration("mux run smoke tests", () => {
         "off",
         "Say exactly 'HELLO_MUX_TEST' and nothing else. Do not use any tools.",
       ],
-      { timeoutMs: 45000 }
+      { timeoutMs: 45000, muxRoot }
     );
 
     // Should exit successfully
@@ -133,7 +144,7 @@ describeIntegration("mux run smoke tests", () => {
         "off",
         `Create a file called "${testFileName}" with the content "${testContent}" using the bash tool. Do not explain, just create the file.`,
       ],
-      { timeoutMs: 45000 }
+      { timeoutMs: 45000, muxRoot }
     );
 
     // Should exit successfully
