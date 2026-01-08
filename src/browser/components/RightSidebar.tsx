@@ -34,6 +34,7 @@ import {
   collectAllTabs,
   collectAllTabsWithTabset,
   dockTabToEdge,
+  findTabset,
   getDefaultRightSidebarLayoutState,
   isRightSidebarLayoutState,
   moveTabToTabset,
@@ -657,6 +658,41 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
 
   // API for opening terminal windows and managing sessions
   const { api } = useAPI();
+
+  // Keyboard shortcut for closing active tab (Ctrl/Cmd+W)
+  // Only closeable tabs (terminal) can be closed this way
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!matchesKeybind(e, KEYBINDS.CLOSE_TAB)) return;
+
+      const focusedTabset = findTabset(layout.root, layout.focusedTabsetId);
+      if (focusedTabset?.type !== "tabset") return;
+
+      const activeTab = focusedTabset.activeTab;
+      if (!isTerminalTab(activeTab)) return; // Only terminal tabs are closeable
+
+      e.preventDefault();
+
+      // Close the backend session
+      const sessionId = getTerminalSessionId(activeTab);
+      if (sessionId) {
+        void api?.terminal.close({ sessionId });
+      }
+
+      // Remove the tab from layout
+      setLayout((prev) => removeTabEverywhere(prev, activeTab));
+
+      // Clean up title
+      setTerminalTitles((prev) => {
+        const next = new Map(prev);
+        next.delete(activeTab);
+        return next;
+      });
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [api, layout.root, layout.focusedTabsetId, setLayout]);
 
   // Sync terminal tabs with backend sessions on workspace mount.
   // - Adds tabs for backend sessions that don't have tabs (restore after reload)

@@ -266,6 +266,10 @@ export const KEYBINDS = {
   // macOS: Cmd+I, Win/Linux: Ctrl+I
   FOCUS_CHAT: { key: "I", ctrl: true },
 
+  /** Close current tab in right sidebar (if closeable - currently only terminal tabs) */
+  // macOS: Cmd+W, Win/Linux: Ctrl+W
+  CLOSE_TAB: { key: "w", ctrl: true },
+
   /** Switch to tab by position in right sidebar (1-9) */
   // macOS: Cmd+N, Win/Linux: Ctrl+N
   // NOTE: Both Ctrl and Cmd work for switching tabs on Mac (macOS has no standard Cmd+number behavior)

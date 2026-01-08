@@ -27,6 +27,7 @@ const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
   OPEN_COMMAND_PALETTE: "Command palette",
   TOGGLE_THINKING: "Toggle thinking",
   FOCUS_CHAT: "Focus chat input",
+  CLOSE_TAB: "Close tab",
   SIDEBAR_TAB_1: "Tab 1",
   SIDEBAR_TAB_2: "Tab 2",
   SIDEBAR_TAB_3: "Tab 3",
@@ -95,6 +96,7 @@ const KEYBIND_GROUPS: Array<{ label: string; keys: Array<keyof typeof KEYBINDS> 
       "SIDEBAR_TAB_7",
       "SIDEBAR_TAB_8",
       "SIDEBAR_TAB_9",
+      "CLOSE_TAB",
     ],
   },
   {
