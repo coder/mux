@@ -5,7 +5,7 @@
  * Uses a simple, deterministic prompt with thinking off for fast, reliable tests.
  */
 
-import { describe, test, expect, beforeAll, afterAll } from "bun:test";
+import { describe, test, expect, beforeAll, afterAll } from "@jest/globals";
 import { spawn } from "child_process";
 import * as path from "path";
 import * as fs from "fs/promises";
