@@ -215,4 +215,8 @@ export async function runInitHookOnRuntime(
   const [exitCode] = await Promise.all([hookStream.exitCode, readStdout(), readStderr()]);
 
   initLogger.logComplete(exitCode);
+
+  if (exitCode !== 0) {
+    throw new Error(`Init hook failed with exit code ${exitCode}`);
+  }
 }

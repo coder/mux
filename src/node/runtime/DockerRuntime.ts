@@ -443,9 +443,20 @@ export class DockerRuntime extends RemoteRuntime {
           10000
         );
         if (isRunning.exitCode === 0 && isRunning.stdout.trim() === "true") {
-          // Container already running (from successful fork) - skip to init hook
-          initLogger.logStep("Container already running (from fork), running init hook...");
-          skipContainerSetup = true;
+          // Container running - validate it has an initialized git repo before skipping setup
+          const gitCheck = await runDockerCommand(
+            `docker exec ${containerName} test -d ${workspacePath}/.git`,
+            5000
+          );
+          if (gitCheck.exitCode === 0) {
+            // Container already running with repo (from successful fork) - skip to init hook
+            initLogger.logStep("Container already running (from fork), running init hook...");
+            skipContainerSetup = true;
+          } else {
+            // Container exists but repo not initialized (crash after run but before sync)
+            initLogger.logStep("Container exists but repo not initialized, recreating...");
+            await runDockerCommand(`docker rm -f ${containerName}`, 10000);
+          }
         } else {
           // Stopped/dead container from app crash or unexpected termination - clean up
           initLogger.logStep("Removing stale container from previous attempt...");
