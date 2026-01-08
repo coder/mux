@@ -1304,10 +1304,10 @@ describeIntegration("Runtime integration tests", () => {
             await dockerCommand(
               `docker run -d --name ${containerName} mux-ssh-test sleep infinity`
             );
-            // Also create /src with the git repo inside
+            // Also create /src with the git repo inside, on the correct branch
             await dockerCommand(`docker exec ${containerName} mkdir -p /src`);
             await dockerCommand(
-              `docker exec ${containerName} bash -c "cd /src && git init -b main && git config user.email test@test.com && git config user.name Test && echo test > README.md && git add . && git commit -m init"`
+              `docker exec ${containerName} bash -c "cd /src && git init -b ${workspaceName} && git config user.email test@test.com && git config user.name Test && echo test > README.md && git add . && git commit -m init"`
             );
 
             // Call initWorkspace - should detect running container and skip setup
@@ -1364,7 +1364,7 @@ describeIntegration("Runtime integration tests", () => {
             // Create git repo with the failing init hook inside container
             await dockerCommand(`docker exec ${containerName} mkdir -p /src/.mux`);
             await dockerCommand(
-              `docker exec ${containerName} bash -c "cd /src && git init -b main && git config user.email test@test.com && git config user.name Test && echo test > README.md"`
+              `docker exec ${containerName} bash -c "cd /src && git init -b ${workspaceName} && git config user.email test@test.com && git config user.name Test && echo test > README.md"`
             );
             await dockerCommand(
               `docker exec ${containerName} bash -c "echo '#!/bin/bash\nexit 1' > /src/.mux/init && chmod +x /src/.mux/init"`
