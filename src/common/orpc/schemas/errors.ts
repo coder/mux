@@ -10,6 +10,7 @@ export const SendMessageErrorSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("provider_not_supported"), provider: z.string() }),
   z.object({ type: z.literal("invalid_model_string"), message: z.string() }),
   z.object({ type: z.literal("incompatible_workspace"), message: z.string() }),
+  z.object({ type: z.literal("runtime_not_ready"), message: z.string() }),
   z.object({ type: z.literal("unknown"), raw: z.string() }),
 ]);
 
@@ -28,5 +29,6 @@ export const StreamErrorTypeSchema = z.enum([
   "context_exceeded", // Context length/token limit exceeded
   "quota", // Usage quota/billing limits
   "model_not_found", // Model does not exist
+  "runtime_not_ready", // Container/runtime doesn't exist or failed to start
   "unknown", // Catch-all
 ]);

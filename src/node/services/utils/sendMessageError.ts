@@ -44,6 +44,11 @@ export const formatSendMessageError = (
         message: error.message,
         errorType: "unknown",
       };
+    case "runtime_not_ready":
+      return {
+        message: `Workspace runtime unavailable: ${error.message}. The container may have failed to start or been removed.`,
+        errorType: "unknown",
+      };
     case "unknown":
       return {
         message: error.raw,

@@ -1110,13 +1110,32 @@ export class AIService extends EventEmitter {
         return Err({ type: "unknown", raw: "Aborted during initialization wait" });
       }
 
-      // Verify runtime is reachable (container exists and can be started).
-      // If the container was deleted mid-session, this surfaces a clear error.
+      // Verify runtime is actually reachable after init completes.
+      // For Docker workspaces, this checks the container exists and starts it if stopped.
+      // If init failed during container creation, ensureReady() will return an error.
       const readyResult = await runtime.ensureReady();
       if (!readyResult.ready) {
+        // Generate message ID for the error event (frontend needs this for synthetic message)
+        const errorMessageId = `assistant-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+        const runtimeType = metadata.runtimeConfig?.type ?? "local";
+        const runtimeLabel = runtimeType === "docker" ? "Container" : "Runtime";
+        const errorMessage = `${runtimeLabel} unavailable.`;
+
+        // Emit error event so frontend receives it via stream subscription.
+        // This mirrors the context_exceeded pattern - the fire-and-forget sendMessage
+        // call in useCreationWorkspace.ts won't see the returned Err, but will receive
+        // this event through the workspace chat subscription.
+        this.emit("error", {
+          type: "error",
+          workspaceId,
+          messageId: errorMessageId,
+          error: errorMessage,
+          errorType: "runtime_not_ready",
+        });
+
         return Err({
-          type: "unknown",
-          raw: readyResult.error ?? "Container unavailable. It may have been deleted.",
+          type: "runtime_not_ready",
+          message: errorMessage,
         });
       }
 

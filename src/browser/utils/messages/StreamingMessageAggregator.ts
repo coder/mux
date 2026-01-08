@@ -1098,6 +1098,10 @@ export class StreamingMessageAggregator {
   }
 
   handleStreamError(data: StreamErrorMessage): void {
+    // Clear pending stream start timestamp - error arrived before/instead of stream-start.
+    // This ensures StreamingBarrier exits the "starting..." phase immediately.
+    this.setPendingStreamStartTime(null);
+
     // Direct lookup by messageId
     const activeStream = this.activeStreams.get(data.messageId);
 

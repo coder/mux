@@ -37,6 +37,7 @@ const NON_RETRYABLE_STREAM_ERRORS: StreamErrorType[] = [
   "model_not_found", // Invalid model - user must select different model
   "context_exceeded", // Message too long - user must reduce context
   "aborted", // User cancelled - should not auto-retry
+  "runtime_not_ready", // Container/runtime unavailable - permanent failure
 ];
 
 /**
@@ -53,6 +54,7 @@ export function isNonRetryableSendError(error: SendMessageError): boolean {
     case "provider_not_supported": // Unsupported provider - user must switch
     case "invalid_model_string": // Bad model format - user must fix
     case "incompatible_workspace": // Workspace from newer mux version - user must upgrade
+    case "runtime_not_ready": // Container doesn't exist - user must recreate workspace
       return true;
     case "unknown":
       return false; // Unknown errors might be transient
@@ -90,9 +92,9 @@ export function hasInterruptedStream(
 
   const lastMessage = messages[messages.length - 1];
 
-  // Don't show retry barrier if workspace init is still running AND no stream error yet.
-  // The backend is intentionally waiting for init to complete before starting the stream.
-  // But if a stream error has already occurred (e.g., init timeout), still show the barrier.
+  // Don't show retry barrier if workspace init is still running AND no error has occurred yet.
+  // The backend waits for init to complete before starting the stream.
+  // However, if a stream-error already exists, we should show retry (init timeout or other failure).
   const initMessage = messages.find((m) => m.type === "workspace-init");
   if (
     initMessage?.type === "workspace-init" &&
