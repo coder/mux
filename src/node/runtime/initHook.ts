@@ -9,6 +9,19 @@ import {
   type RuntimeConfig,
   type RuntimeMode,
 } from "@/common/types/runtime";
+
+/**
+ * Error thrown when init hook exits with non-zero code.
+ * Used to distinguish init hook failures from other errors in catch blocks,
+ * allowing callers to skip redundant logComplete() calls since the hook already logged.
+ */
+export class InitHookError extends Error {
+  constructor(public readonly exitCode: number) {
+    super(`Init hook failed with exit code ${exitCode}`);
+    this.name = "InitHookError";
+  }
+}
+
 import type { ThinkingLevel } from "@/common/types/thinking";
 
 /**
@@ -217,6 +230,6 @@ export async function runInitHookOnRuntime(
   initLogger.logComplete(exitCode);
 
   if (exitCode !== 0) {
-    throw new Error(`Init hook failed with exit code ${exitCode}`);
+    throw new InitHookError(exitCode);
   }
 }

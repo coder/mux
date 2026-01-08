@@ -29,7 +29,7 @@ import type {
 } from "./Runtime";
 import { RuntimeError } from "./Runtime";
 import { RemoteRuntime, type SpawnResult } from "./RemoteRuntime";
-import { checkInitHookExists, getMuxEnv, runInitHookOnRuntime } from "./initHook";
+import { checkInitHookExists, getMuxEnv, runInitHookOnRuntime, InitHookError } from "./initHook";
 import { getProjectName } from "@/node/utils/runtime/helpers";
 import { getErrorMessage } from "@/common/utils/errors";
 import { syncProjectViaGitBundle } from "./gitBundleSync";
@@ -46,6 +46,12 @@ interface DockerCommandResult {
   stdout: string;
   stderr: string;
 }
+
+/** Result of checking if a container already exists and is valid for reuse */
+type ContainerCheckResult =
+  | { action: "skip" } // Valid forked container, skip setup
+  | { action: "cleanup"; reason: string } // Exists but invalid, needs removal
+  | { action: "create" }; // Doesn't exist, proceed to create
 
 /**
  * Run a Docker CLI command and return result.
@@ -435,33 +441,22 @@ export class DockerRuntime extends RemoteRuntime {
       const containerName = this.containerName;
 
       // Check if container already exists (e.g., from successful fork or aborted previous attempt)
-      const checkResult = await runDockerCommand(`docker inspect ${containerName}`, 10000);
-      if (checkResult.exitCode === 0) {
-        // Container exists - check if running
-        const isRunning = await runDockerCommand(
-          `docker inspect -f '{{.State.Running}}' ${containerName}`,
-          10000
-        );
-        if (isRunning.exitCode === 0 && isRunning.stdout.trim() === "true") {
-          // Container running - validate it has an initialized git repo before skipping setup
-          const gitCheck = await runDockerCommand(
-            `docker exec ${containerName} test -d ${workspacePath}/.git`,
-            5000
-          );
-          if (gitCheck.exitCode === 0) {
-            // Container already running with repo (from successful fork) - skip to init hook
-            initLogger.logStep("Container already running (from fork), running init hook...");
-            skipContainerSetup = true;
-          } else {
-            // Container exists but repo not initialized (crash after run but before sync)
-            initLogger.logStep("Container exists but repo not initialized, recreating...");
-            await runDockerCommand(`docker rm -f ${containerName}`, 10000);
-          }
-        } else {
-          // Stopped/dead container from app crash or unexpected termination - clean up
-          initLogger.logStep("Removing stale container from previous attempt...");
+      const containerCheck = await this.checkExistingContainer(
+        containerName,
+        workspacePath,
+        branchName
+      );
+      switch (containerCheck.action) {
+        case "skip":
+          initLogger.logStep("Container already running (from fork), running init hook...");
+          skipContainerSetup = true;
+          break;
+        case "cleanup":
+          initLogger.logStep(containerCheck.reason);
           await runDockerCommand(`docker rm -f ${containerName}`, 10000);
-        }
+          break;
+        case "create":
+          break;
       }
 
       if (!skipContainerSetup) {
@@ -494,7 +489,10 @@ export class DockerRuntime extends RemoteRuntime {
     } catch (error) {
       const errorMsg = getErrorMessage(error);
       initLogger.logStderr(`Initialization failed: ${errorMsg}`);
-      initLogger.logComplete(-1);
+      // Init hook errors already logged completion with real exit code - avoid double-logging
+      if (!(error instanceof InitHookError)) {
+        initLogger.logComplete(-1);
+      }
       // Only clean up container if we created it (preserve forked containers on init hook failure)
       if (this.containerName && !skipContainerSetup) {
         await runDockerCommand(`docker rm -f ${this.containerName}`, 10000);
@@ -504,6 +502,51 @@ export class DockerRuntime extends RemoteRuntime {
         error: errorMsg,
       };
     }
+  }
+
+  /**
+   * Check if a container already exists and whether it's valid for reuse.
+   * Returns action to take: skip setup, cleanup invalid container, or create new.
+   */
+  private async checkExistingContainer(
+    containerName: string,
+    workspacePath: string,
+    branchName: string
+  ): Promise<ContainerCheckResult> {
+    const exists = await runDockerCommand(`docker inspect ${containerName}`, 10000);
+    if (exists.exitCode !== 0) return { action: "create" };
+
+    const isRunning = await runDockerCommand(
+      `docker inspect -f '{{.State.Running}}' ${containerName}`,
+      10000
+    );
+    if (isRunning.exitCode !== 0 || isRunning.stdout.trim() !== "true") {
+      return { action: "cleanup", reason: "Removing stale container from previous attempt..." };
+    }
+
+    // Container running - validate it has an initialized git repo
+    const gitCheck = await runDockerCommand(
+      `docker exec ${containerName} test -d ${workspacePath}/.git`,
+      5000
+    );
+    if (gitCheck.exitCode !== 0) {
+      return {
+        action: "cleanup",
+        reason: "Container exists but repo not initialized, recreating...",
+      };
+    }
+
+    // Verify correct branch is checked out
+    // (handles edge case: crash after clone but before checkout left container on wrong branch)
+    const branchCheck = await runDockerCommand(
+      `docker exec ${containerName} git -C ${workspacePath} rev-parse --abbrev-ref HEAD`,
+      5000
+    );
+    if (branchCheck.exitCode !== 0 || branchCheck.stdout.trim() !== branchName) {
+      return { action: "cleanup", reason: "Container exists but wrong branch, recreating..." };
+    }
+
+    return { action: "skip" };
   }
 
   /**
