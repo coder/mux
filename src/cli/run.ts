@@ -38,6 +38,13 @@ import {
   type SendMessageOptions,
   type WorkspaceChatMessage,
 } from "@/common/orpc/types";
+import {
+  formatToolStart,
+  formatToolEnd,
+  formatGenericToolStart,
+  formatGenericToolEnd,
+  isMultilineResultTool,
+} from "./toolFormatters";
 import { defaultModel } from "@/common/utils/ai/models";
 import { buildProvidersFromEnv, hasAnyConfiguredProvider } from "@/node/utils/providerRequirements";
 
@@ -467,6 +474,38 @@ async function main(): Promise<void> {
   let planProposed = false;
   let streamEnded = false;
 
+  // Track tool call args by toolCallId for use in end formatting
+  const toolCallArgs = new Map<string, unknown>();
+
+  // Centralized output type tracking for spacing
+  type OutputType = "none" | "text" | "thinking" | "tool";
+  let lastOutputType: OutputType = "none";
+
+  /**
+   * Ensure proper spacing before starting a new output block.
+   * Call this before writing any output to handle transitions cleanly.
+   */
+  const ensureSpacing = (nextType: OutputType) => {
+    const isTransition = lastOutputType !== nextType;
+
+    // Finish any open line when transitioning to a different output type
+    if (streamLineOpen && isTransition) {
+      writeHumanLine("");
+      streamLineOpen = false;
+    }
+
+    // Add blank line for transitions (but not at start of output)
+    if (lastOutputType !== "none" && isTransition) {
+      writeHumanLine("");
+    }
+    // Also add blank line between consecutive tool calls
+    if (lastOutputType === "tool" && nextType === "tool") {
+      writeHumanLine("");
+    }
+
+    lastOutputType = nextType;
+  };
+
   let resolveCompletion: ((value: void) => void) | null = null;
   let rejectCompletion: ((reason?: unknown) => void) | null = null;
   let completionPromise: Promise<void> = Promise.resolve();
@@ -527,31 +566,63 @@ async function main(): Promise<void> {
 
   const handleToolStart = (payload: WorkspaceChatMessage): boolean => {
     if (!isToolCallStart(payload)) return false;
-    writeHumanLine("\n========== TOOL CALL START ==========");
-    writeHumanLine(`Tool: ${payload.toolName}`);
-    writeHumanLine(`Call ID: ${payload.toolCallId}`);
-    writeHumanLine("Arguments:");
-    writeHumanLine(renderUnknown(payload.args));
-    writeHumanLine("=====================================");
+
+    // Cache args for use in end formatting
+    toolCallArgs.set(payload.toolCallId, payload.args);
+    ensureSpacing("tool");
+
+    // Try formatted output, fall back to generic
+    const formatted = formatToolStart(payload);
+    if (formatted) {
+      // For multiline result tools, put result on new line; for inline, no newline yet
+      if (isMultilineResultTool(payload.toolName)) {
+        writeHumanLine(formatted);
+      } else {
+        writeHuman(formatted);
+      }
+    } else {
+      writeHumanLine(formatGenericToolStart(payload));
+    }
     return true;
   };
 
   const handleToolDelta = (payload: WorkspaceChatMessage): boolean => {
     if (!isToolCallDelta(payload)) return false;
-    writeHumanLine("\n----------- TOOL OUTPUT -------------");
-    writeHumanLine(renderUnknown(payload.delta));
-    writeHumanLine("-------------------------------------");
+    // Tool deltas (e.g., bash streaming output) - write inline
+    const deltaStr =
+      typeof payload.delta === "string" ? payload.delta : renderUnknown(payload.delta);
+    if (deltaStr.trim()) {
+      writeHuman(deltaStr);
+      streamLineOpen = !deltaStr.endsWith("\n");
+    }
     return true;
   };
 
   const handleToolEnd = (payload: WorkspaceChatMessage): boolean => {
     if (!isToolCallEnd(payload)) return false;
-    writeHumanLine("\n=========== TOOL CALL END ===========");
-    writeHumanLine(`Tool: ${payload.toolName}`);
-    writeHumanLine(`Call ID: ${payload.toolCallId}`);
-    writeHumanLine("Result:");
-    writeHumanLine(renderUnknown(payload.result));
-    writeHumanLine("=====================================");
+
+    // Retrieve cached args and clean up
+    const args = toolCallArgs.get(payload.toolCallId);
+    toolCallArgs.delete(payload.toolCallId);
+
+    // Try formatted output, fall back to generic
+    const formatted = formatToolEnd(payload, args);
+    if (formatted) {
+      // For multiline tools, ensure newline before result
+      if (isMultilineResultTool(payload.toolName) && streamLineOpen) {
+        writeHumanLine("");
+        streamLineOpen = false;
+      }
+      writeHumanLine(formatted);
+      streamLineOpen = false;
+    } else {
+      if (streamLineOpen) {
+        writeHumanLine("");
+        streamLineOpen = false;
+      }
+      writeHumanLine(formatGenericToolEnd(payload));
+    }
+
     if (payload.toolName === "propose_plan") {
       planProposed = true;
     }
@@ -595,18 +666,20 @@ async function main(): Promise<void> {
 
     if (isStreamDelta(payload)) {
       assert(typeof payload.delta === "string", "stream delta must include text");
+      ensureSpacing("text");
       writeHuman(payload.delta);
       streamLineOpen = !payload.delta.endsWith("\n");
       return;
     }
 
     if (isReasoningDelta(payload)) {
+      ensureSpacing("thinking");
       writeThinking(payload.delta);
       return;
     }
 
     if (isReasoningEnd(payload)) {
-      // Add newline after thinking block ends to separate from main output
+      // Ensure thinking ends with newline (spacing handled by next ensureSpacing call)
       writeThinking("\n");
       return;
     }
