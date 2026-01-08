@@ -243,7 +243,7 @@ export const KEYBINDS = {
   /** Cycle through configured models */
   CYCLE_MODEL: { key: "/", ctrl: true },
 
-  /** Open workspace in terminal */
+  /** Open new integrated terminal tab in sidebar */
   // macOS: Cmd+T, Win/Linux: Ctrl+T
   OPEN_TERMINAL: { key: "T", ctrl: true },
 

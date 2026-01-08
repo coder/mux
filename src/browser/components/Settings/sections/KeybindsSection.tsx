@@ -22,7 +22,7 @@ const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
   PREV_WORKSPACE: "Previous workspace",
   TOGGLE_SIDEBAR: "Toggle sidebar",
   CYCLE_MODEL: "Cycle model",
-  OPEN_TERMINAL: "Open in terminal",
+  OPEN_TERMINAL: "New terminal",
   OPEN_IN_EDITOR: "Open in editor",
   OPEN_COMMAND_PALETTE: "Command palette",
   TOGGLE_THINKING: "Toggle thinking",

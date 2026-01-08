@@ -38,7 +38,7 @@ import { ProviderOptionsProvider } from "@/browser/contexts/ProviderOptionsConte
 
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useAutoScroll } from "@/browser/hooks/useAutoScroll";
-import { useOpenTerminal } from "@/browser/hooks/useOpenTerminal";
+
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 
@@ -402,10 +402,11 @@ const AIViewInner: React.FC<AIViewProps> = ({
     [api]
   );
 
-  const openTerminal = useOpenTerminal();
+  // Ref to hold addTerminal function from RightSidebar (for Cmd/Ctrl+T keybind)
+  const addTerminalRef = useRef<(() => void) | null>(null);
   const handleOpenTerminal = useCallback(() => {
-    void openTerminal(workspaceId, runtimeConfig);
-  }, [workspaceId, openTerminal, runtimeConfig]);
+    addTerminalRef.current?.();
+  }, []);
 
   const openInEditor = useOpenInEditor();
   const handleOpenInEditor = useCallback(() => {
@@ -573,6 +574,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
           workspaceName={workspaceName}
           namedWorkspacePath={namedWorkspacePath}
           runtimeConfig={runtimeConfig}
+          onOpenTerminal={handleOpenTerminal}
         />
 
         <div className="relative flex-1 overflow-hidden">
@@ -782,6 +784,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
         isResizing={isResizing}
         onReviewNote={handleReviewNote}
         isCreating={status === "creating"}
+        addTerminalRef={addTerminalRef}
       />
 
       <PopoverError

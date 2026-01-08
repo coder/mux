@@ -142,6 +142,8 @@ interface RightSidebarProps {
   onReviewNote?: (data: ReviewNoteData) => void;
   /** Workspace is still being created (git operations in progress) */
   isCreating?: boolean;
+  /** Ref callback to expose addTerminal function to parent */
+  addTerminalRef?: React.MutableRefObject<(() => void) | null>;
 }
 
 /**
@@ -463,6 +465,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   isResizing = false,
   onReviewNote,
   isCreating = false,
+  addTerminalRef,
 }) => {
   // Trigger for focusing Review panel (preserves hunk selection)
   const [focusTrigger, _setFocusTrigger] = React.useState(0);
@@ -765,11 +768,26 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   const handleAddTerminal = React.useCallback(() => {
     if (!api) return;
 
+    // Also expand sidebar if collapsed
+    setCollapsed(false);
+
     void createTerminalSession(api, workspaceId).then((session) => {
       const newTab = makeTerminalTabType(session.sessionId);
       setLayout((prev) => addTabToFocusedTabset(prev, newTab));
     });
-  }, [api, workspaceId, setLayout]);
+  }, [api, workspaceId, setLayout, setCollapsed]);
+
+  // Expose handleAddTerminal to parent via ref (for Cmd/Ctrl+T keybind)
+  React.useEffect(() => {
+    if (addTerminalRef) {
+      addTerminalRef.current = handleAddTerminal;
+    }
+    return () => {
+      if (addTerminalRef) {
+        addTerminalRef.current = null;
+      }
+    };
+  }, [addTerminalRef, handleAddTerminal]);
 
   // Handler to close a terminal tab
   const handleCloseTerminal = React.useCallback(

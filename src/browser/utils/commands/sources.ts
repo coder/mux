@@ -183,10 +183,10 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
       const selectedMeta = p.workspaceMetadata.get(selected.workspaceId);
       list.push({
         id: CommandIds.workspaceOpenTerminalCurrent(),
-        title: "Open Current Workspace in Terminal",
+        title: "New Terminal Window",
         subtitle: workspaceDisplayName,
         section: section.workspaces,
-        shortcutHint: formatKeybind(KEYBINDS.OPEN_TERMINAL),
+        // Note: Cmd/Ctrl+T opens integrated terminal in sidebar (not shown here since this opens a popout)
         run: () => {
           p.onOpenWorkspaceInTerminal(selected.workspaceId, selectedMeta?.runtimeConfig);
         },
@@ -237,11 +237,11 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
     if (p.workspaceMetadata.size > 0) {
       list.push({
         id: CommandIds.workspaceOpenTerminal(),
-        title: "Open Workspace in Terminal…",
+        title: "Open Terminal Window for Workspace…",
         section: section.workspaces,
         run: () => undefined,
         prompt: {
-          title: "Open Workspace in Terminal",
+          title: "Open Terminal Window",
           fields: [
             {
               type: "select",

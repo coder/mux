@@ -21,6 +21,8 @@ interface WorkspaceHeaderProps {
   workspaceName: string;
   namedWorkspacePath: string;
   runtimeConfig?: RuntimeConfig;
+  /** Callback to open integrated terminal in sidebar (optional, falls back to popout) */
+  onOpenTerminal?: () => void;
 }
 
 export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
@@ -30,8 +32,9 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   workspaceName,
   namedWorkspacePath,
   runtimeConfig,
+  onOpenTerminal,
 }) => {
-  const openTerminal = useOpenTerminal();
+  const openTerminalPopout = useOpenTerminal();
   const openInEditor = useOpenInEditor();
   const gitStatus = useGitStatus(workspaceId);
   const { canInterrupt } = useWorkspaceSidebarState(workspaceId);
@@ -40,8 +43,13 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   const [mcpModalOpen, setMcpModalOpen] = useState(false);
 
   const handleOpenTerminal = useCallback(() => {
-    void openTerminal(workspaceId, runtimeConfig);
-  }, [workspaceId, openTerminal, runtimeConfig]);
+    if (onOpenTerminal) {
+      onOpenTerminal();
+    } else {
+      // Fallback to popout if no integrated terminal callback provided
+      void openTerminalPopout(workspaceId, runtimeConfig);
+    }
+  }, [workspaceId, openTerminalPopout, runtimeConfig, onOpenTerminal]);
 
   const handleOpenInEditor = useCallback(async () => {
     setEditorError(null);
@@ -138,7 +146,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
             </Button>
           </TooltipTrigger>
           <TooltipContent side="bottom" align="center">
-            Open terminal window ({formatKeybind(KEYBINDS.OPEN_TERMINAL)})
+            New terminal ({formatKeybind(KEYBINDS.OPEN_TERMINAL)})
           </TooltipContent>
         </Tooltip>
       </div>
