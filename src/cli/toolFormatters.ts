@@ -325,8 +325,13 @@ function formatCodeExecutionEnd(_toolName: string, _args: unknown, result: unkno
   return output;
 }
 
-/** Simple success marker for inline tools that don't need detailed result formatting */
-function formatSimpleSuccessEnd(): string | null {
+/** Simple success/error marker for inline tools that don't need detailed result formatting */
+function formatSimpleSuccessEnd(_toolName: string, _args: unknown, result: unknown): string | null {
+  // Check for error results
+  const resultObj = result as { success?: boolean; error?: string } | null | undefined;
+  if (resultObj?.success === false) {
+    return `${chalk.red("✗")} ${chalk.red(resultObj.error ?? "Failed")}`;
+  }
   return chalk.green("✓");
 }
 
