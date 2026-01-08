@@ -54,3 +54,43 @@ else
 fi
 
 echo "Terminal-bench agent check passed."
+
+# Verify the built CLI includes run.js (prevents regressions like missing tsconfig.main.json entries)
+echo ""
+echo "Checking npm package CLI completeness..."
+
+# Build if dist/cli doesn't exist
+if [[ ! -d "$REPO_ROOT/dist/cli" ]]; then
+  echo "Building CLI (dist/cli not found)..."
+  make -C "$REPO_ROOT" build-main >/dev/null 2>&1
+fi
+
+# Check that all required CLI modules are present in dist/
+REQUIRED_CLI_FILES=("index.js" "run.js" "server.js" "argv.js")
+MISSING_FILES=()
+
+for file in "${REQUIRED_CLI_FILES[@]}"; do
+  if [[ ! -f "$REPO_ROOT/dist/cli/$file" ]]; then
+    MISSING_FILES+=("$file")
+  fi
+done
+
+if [[ ${#MISSING_FILES[@]} -gt 0 ]]; then
+  echo "❌ Error: Missing required CLI files in dist/cli/:"
+  printf "   - %s\n" "${MISSING_FILES[@]}"
+  echo ""
+  echo "This likely means the file is missing from tsconfig.main.json's include array."
+  echo "Add the source file to tsconfig.main.json and rebuild."
+  exit 1
+fi
+
+# Verify the built CLI can actually run (catches missing dependencies/imports)
+if ! output=$(node "$REPO_ROOT/dist/cli/index.js" run --help 2>&1); then
+  if echo "$output" | grep -qE "Cannot find module|MODULE_NOT_FOUND"; then
+    echo "❌ Error: Built CLI has missing module dependencies:"
+    echo "$output"
+    exit 1
+  fi
+fi
+
+echo "✅ npm package CLI is complete (all required files present)"
