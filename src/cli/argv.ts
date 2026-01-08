@@ -105,7 +105,8 @@ export function isElectronLaunchArg(
 
 /**
  * Check if a command is available in the current environment.
- * The "run" command requires bun/node - it's not bundled in Electron.
+ * - "run" requires bun/node - it's not bundled in Electron.
+ * - "desktop" only works when running inside Electron runtime.
  */
 export function isCommandAvailable(
   command: string,
@@ -114,6 +115,12 @@ export function isCommandAvailable(
   if (command === "run") {
     // run.ts is only available in bun/node, not bundled in Electron (dev or packaged)
     return !env.isElectron;
+  }
+  if (command === "desktop") {
+    // Desktop command only works when running inside Electron runtime.
+    // When run via node/bun (npx mux), require("../desktop/main") fails because
+    // the Electron APIs aren't available. Users should download the packaged app.
+    return env.isElectron;
   }
   return true;
 }

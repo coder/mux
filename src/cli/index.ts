@@ -66,6 +66,12 @@ if (subcommand === "run") {
   (env.isElectron && (subcommand === undefined || isElectronLaunchArg(subcommand, env)))
 ) {
   // Explicit `mux desktop`, or Electron runtime with no subcommand / Electron launch args
+  if (!isCommandAvailable("desktop", env)) {
+    console.error("The 'desktop' command requires Electron to be installed.");
+    console.error("When installed via npm, use the packaged desktop app instead.");
+    console.error("Download from: https://github.com/coder/mux/releases");
+    process.exit(1);
+  }
   launchDesktop();
 } else {
   // No subcommand (non-Electron), flags (--help, --version), or unknown commands
@@ -104,11 +110,13 @@ if (subcommand === "run") {
   }
   program.command("server").description("Start the HTTP/WebSocket ORPC server");
   program.command("api").description("Interact with the mux API via a running server");
-  program
-    .command("desktop")
-    .description(
-      env.isElectron ? "Launch the desktop app" : "Launch the desktop app (requires Electron)"
-    );
+  if (isCommandAvailable("desktop", env)) {
+    program
+      .command("desktop")
+      .description(
+        env.isElectron ? "Launch the desktop app" : "Launch the desktop app (requires Electron)"
+      );
+  }
 
   program.parse(process.argv, getParseOptions(env));
 }

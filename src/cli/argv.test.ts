@@ -225,4 +225,23 @@ describe("isCommandAvailable", () => {
       true
     );
   });
+
+  test("desktop is available in electron environments", () => {
+    // In electron dev mode, always available
+    expect(isCommandAvailable("desktop", detectCliEnvironment({ electron: "33.0.0" }, true))).toBe(
+      true
+    );
+    // In packaged electron, always available
+    expect(
+      isCommandAvailable("desktop", detectCliEnvironment({ electron: "33.0.0" }, undefined))
+    ).toBe(true);
+  });
+
+  test("desktop is NOT available in bun/node (requires Electron runtime)", () => {
+    const env = detectCliEnvironment({}, undefined);
+    // Desktop command requires Electron runtime (not just having electron installed).
+    // When run via node/bun, require("../desktop/main") fails because Electron APIs
+    // aren't available. Users should download the packaged app instead.
+    expect(isCommandAvailable("desktop", env)).toBe(false);
+  });
 });
