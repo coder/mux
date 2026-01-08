@@ -1694,9 +1694,6 @@ export class WorkspaceStore {
       applyWorkspaceChatEventToAggregator(aggregator, data);
 
       // Increment retry attempt counter when stream fails.
-      // For runtime_not_ready, also persist lastError to block auto-retry and hide RetryBarrier
-      // across reloads (stream-error messages are ephemeral and not saved to history).
-      // Safe because user can't fix it without recreating workspace (new workspaceId = fresh state).
       updatePersistedState(
         getRetryStateKey(workspaceId),
         (prev) => {
@@ -1704,14 +1701,9 @@ export class WorkspaceStore {
           console.debug(
             `[retry] ${workspaceId} stream-error: incrementing attempt ${prev.attempt} → ${newAttempt}`
           );
-          const lastError =
-            data.errorType === "runtime_not_ready"
-              ? ({ type: "runtime_not_ready", message: data.error } as const)
-              : undefined;
           return {
             attempt: newAttempt,
             retryStartTime: Date.now(),
-            lastError,
           };
         },
         { attempt: 0, retryStartTime: Date.now() }

@@ -72,12 +72,6 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = ({ workspaceId, classNa
     ? workspaceState.messages[workspaceState.messages.length - 1]
     : undefined;
 
-  // runtime_not_ready is a permanent failure - StreamErrorMessage handles display.
-  // Check both lastMessage (ephemeral) and retryState.lastError (persisted) since
-  // the stream-error message isn't saved to history but retryState survives reload.
-  const isRuntimeNotReadyMessage =
-    lastMessage?.type === "stream-error" && lastMessage.errorType === "runtime_not_ready";
-
   const isContextExceeded =
     lastMessage?.type === "stream-error" && lastMessage.errorType === "context_exceeded";
 
@@ -360,14 +354,6 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = ({ workspaceId, classNa
       ? `${formatted.message} Configure with ${formatted.providerCommand}`
       : formatted.message;
   };
-
-  // Don't show retry barrier for runtime_not_ready - it's a permanent failure.
-  // Check both ephemeral message AND persisted lastError since stream-error messages
-  // aren't saved to history. Safe for runtime_not_ready because user can't fix it
-  // without recreating workspace (new workspaceId = fresh retryState).
-  if (isRuntimeNotReadyMessage || lastError?.type === "runtime_not_ready") {
-    return null;
-  }
 
   const details = showCompactionUI ? (
     <div className="font-primary text-foreground/80 pl-8 text-[12px]">
