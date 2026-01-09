@@ -330,15 +330,24 @@ export function ProvidersSection() {
               <div className="border-border-medium space-y-3 border-t px-4 py-3">
                 {/* Quick link to get API key */}
                 {PROVIDER_KEY_URLS[provider] && (
-                  <a
-                    href={PROVIDER_KEY_URLS[provider]}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-muted hover:text-accent inline-flex items-center gap-1 text-xs transition-colors"
-                  >
-                    Get API Key
-                    <ExternalLink className="h-2.5 w-2.5" />
-                  </a>
+                  <div className="space-y-1">
+                    <a
+                      href={PROVIDER_KEY_URLS[provider]}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-muted hover:text-accent inline-flex items-center gap-1 text-xs transition-colors"
+                    >
+                      Get API Key
+                      <ExternalLink className="h-2.5 w-2.5" />
+                    </a>
+                    {provider === "anthropic" &&
+                      configured &&
+                      config?.[provider]?.apiKeySet === false && (
+                        <div className="text-muted text-xs">
+                          Configured via environment variables.
+                        </div>
+                      )}
+                  </div>
                 )}
 
                 {fields.map((fieldConfig) => {
