@@ -16,9 +16,6 @@ import { log } from "./log";
 /** Regex for valid command names: lowercase alphanumeric with hyphens */
 const COMMAND_NAME_REGEX = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
-/** Max lines to keep in memory during streaming */
-const MAX_OUTPUT_LINES = 1000;
-
 export interface SlashCommand {
   name: string;
 }
@@ -124,19 +121,13 @@ export class SlashCommandService extends EventEmitter {
       commandName: name,
     } satisfies WorkspaceInitEvent & { workspaceId: string });
 
-    // Accumulate stdout for return value
-    const stdoutLines: string[] = [];
-    let truncatedLines = 0;
+    // Accumulate raw stdout chunks for return value (preserves empty lines)
+    const stdoutChunks: Uint8Array[] = [];
+    let stdoutByteLength = 0;
+    const MAX_STDOUT_BYTES = 1024 * 1024; // 1MB limit
 
-    // Create line buffers for streaming output
+    // LineBuffer for streaming display (may drop empty lines, that's OK for live display)
     const stdoutBuffer = new LineBuffer((line) => {
-      // Accumulate with truncation
-      if (stdoutLines.length >= MAX_OUTPUT_LINES) {
-        stdoutLines.shift();
-        truncatedLines++;
-      }
-      stdoutLines.push(line);
-
       // Emit for live display
       this.emit("init-output", {
         type: "init-output",
@@ -187,6 +178,12 @@ export class SlashCommandService extends EventEmitter {
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
+            // Accumulate raw bytes for final output (preserves empty lines)
+            if (stdoutByteLength < MAX_STDOUT_BYTES) {
+              stdoutChunks.push(value);
+              stdoutByteLength += value.length;
+            }
+            // Stream decoded text for live display (may drop empty lines)
             stdoutBuffer.append(decoder.decode(value, { stream: true }));
           }
           stdoutBuffer.flush();
@@ -220,15 +217,26 @@ export class SlashCommandService extends EventEmitter {
         workspaceId,
         exitCode,
         timestamp: endTime,
-        ...(truncatedLines ? { truncatedLines } : {}),
+        ...(stdoutByteLength >= MAX_STDOUT_BYTES ? { truncated: true } : {}),
       } satisfies WorkspaceInitEvent & { workspaceId: string });
 
       log.debug(
         `Slash command /${name} completed (exit ${exitCode}, duration ${endTime - startTime}ms)`
       );
 
+      // Combine chunks and decode to string (preserves empty lines)
+      const combinedStdout = new Uint8Array(
+        stdoutChunks.reduce((acc, chunk) => acc + chunk.length, 0)
+      );
+      let offset = 0;
+      for (const chunk of stdoutChunks) {
+        combinedStdout.set(chunk, offset);
+        offset += chunk.length;
+      }
+      const stdout = new TextDecoder().decode(combinedStdout).trimEnd();
+
       return {
-        stdout: stdoutLines.join("\n"),
+        stdout,
         exitCode,
       };
     } catch (error) {
