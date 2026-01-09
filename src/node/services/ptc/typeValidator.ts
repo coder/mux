@@ -117,6 +117,7 @@ ${muxTypes}
   const compilerOptions: ts.CompilerOptions = {
     noEmit: true,
     strict: false, // Don't require explicit types on everything
+    strictNullChecks: true, // Enable discriminated union narrowing (e.g., `if (!result.success) { result.error }`)
     noImplicitAny: false, // Allow any types
     skipLibCheck: true,
     target: ts.ScriptTarget.ES2020,

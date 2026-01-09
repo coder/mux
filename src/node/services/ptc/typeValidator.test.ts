@@ -302,6 +302,37 @@ mux.file_read({ path: "wrong" });`,
     expect(result.valid).toBe(true);
   });
 
+  test("allows discriminated union narrowing with negation (!result.success)", () => {
+    // This is the idiomatic pattern for handling Result types
+    const result = validateTypes(
+      `
+      const result = mux.file_read({ filePath: "test.txt" });
+      if (!result.success) {
+        console.log(result.error);  // Should be allowed after narrowing
+        return { error: result.error };
+      }
+      return { content: result.content };
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  test("allows discriminated union narrowing with === false", () => {
+    const result = validateTypes(
+      `
+      const result = mux.file_read({ filePath: "test.txt" });
+      if (result.success === false) {
+        console.log(result.error);
+        return null;
+      }
+      return result.content;
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
   test("catches syntax error gracefully", () => {
     const result = validateTypes(
       `
