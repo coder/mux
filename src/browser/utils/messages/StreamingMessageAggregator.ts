@@ -1113,6 +1113,10 @@ export class StreamingMessageAggregator {
   }
 
   handleStreamAbort(data: StreamAbortEvent): void {
+    // Clear pending stream start timestamp - abort can arrive before stream-start.
+    // This ensures StreamingBarrier exits the "starting..." phase immediately.
+    this.setPendingStreamStartTime(null);
+
     // Clear "interrupting" state - stream is now fully "interrupted"
     if (this.interruptingMessageId === data.messageId) {
       this.interruptingMessageId = null;

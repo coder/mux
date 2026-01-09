@@ -151,8 +151,14 @@ export class MockAiStreamPlayer {
     workspaceId: string,
     options?: {
       model?: string;
+      abortSignal?: AbortSignal;
     }
   ): Promise<Result<void, SendMessageError>> {
+    const abortSignal = options?.abortSignal;
+    if (abortSignal?.aborted) {
+      return Ok(undefined);
+    }
+
     const latest = messages[messages.length - 1];
     if (!latest || latest.role !== "user") {
       return Err({ type: "unknown", raw: "Mock AI expected a user message" });
@@ -192,6 +198,10 @@ export class MockAiStreamPlayer {
     );
     if (!appendResult.success) {
       return Err({ type: "unknown", raw: appendResult.error });
+    }
+
+    if (abortSignal?.aborted) {
+      return Ok(undefined);
     }
     historySequence = assistantMessage.metadata?.historySequence ?? historySequence;
 
