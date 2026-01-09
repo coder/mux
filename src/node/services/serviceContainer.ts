@@ -135,8 +135,12 @@ export class ServiceContainer {
       this.extensionMetadata,
       (workspaceId) => this.workspaceService.emitIdleCompactionNeeded(workspaceId)
     );
+    this.windowService = new WindowService();
     this.providerService = new ProviderService(config);
-    this.muxGatewayOauthService = new MuxGatewayOauthService(this.providerService);
+    this.muxGatewayOauthService = new MuxGatewayOauthService(
+      this.providerService,
+      this.windowService
+    );
     // Terminal services - PTYService is cross-platform
     this.ptyService = new PTYService();
     this.terminalService = new TerminalService(config, this.ptyService);
@@ -144,7 +148,6 @@ export class ServiceContainer {
     this.workspaceService.setTerminalService(this.terminalService);
     // Editor service for opening workspaces in code editors
     this.editorService = new EditorService(config);
-    this.windowService = new WindowService();
     this.updateService = new UpdateService();
     this.tokenizerService = new TokenizerService();
     this.serverService = new ServerService();

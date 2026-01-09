@@ -8,6 +8,7 @@ import {
   MUX_GATEWAY_EXCHANGE_URL,
 } from "@/common/constants/muxGatewayOAuth";
 import type { ProviderService } from "@/node/services/providerService";
+import type { WindowService } from "@/node/services/windowService";
 import { log } from "@/node/services/log";
 
 const DEFAULT_DESKTOP_TIMEOUT_MS = 5 * 60 * 1000;
@@ -49,7 +50,10 @@ export class MuxGatewayOauthService {
   private readonly desktopFlows = new Map<string, DesktopFlow>();
   private readonly serverFlows = new Map<string, ServerFlow>();
 
-  constructor(private readonly providerService: ProviderService) {}
+  constructor(
+    private readonly providerService: ProviderService,
+    private readonly windowService?: WindowService
+  ) {}
 
   async startDesktopFlow(): Promise<
     Result<{ flowId: string; authorizeUrl: string; redirectUri: string }, string>
@@ -263,17 +267,75 @@ export class MuxGatewayOauthService {
       errorDescription: input.errorDescription,
     });
 
+    const title = result.success ? "Login complete" : "Login failed";
+    const description = result.success
+      ? "You can return to Mux. You may now close this tab."
+      : escapeHtml(result.error);
+
+    const html = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#0e0e0e" />
+    <title>${title}</title>
+    <link rel="stylesheet" href="https://gateway.mux.coder.com/static/css/site.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="site-header">
+        <div class="container">
+          <div class="header-title">mux</div>
+        </div>
+      </header>
+
+      <main class="site-main">
+        <div class="container">
+          <div class="content-surface">
+            <h1>${title}</h1>
+            <p>${description}</p>
+            ${
+              result.success
+                ? '<p class="muted">Mux should now be in the foreground. You can close this tab.</p>'
+                : '<p class="muted">You can close this tab.</p>'
+            }
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <script>
+      (() => {
+        const ok = ${result.success ? "true" : "false"};
+        if (!ok) {
+          return;
+        }
+
+        try {
+          window.close();
+        } catch {
+          // Ignore close failures.
+        }
+
+        setTimeout(() => {
+          try {
+            window.close();
+          } catch {
+            // Ignore close failures.
+          }
+        }, 50);
+      })();
+    </script>
+  </body>
+</html>`;
+
     input.res.setHeader("Content-Type", "text/html");
-    if (result.success) {
-      input.res.end(
-        "<h1>Login complete</h1><p>You can return to Mux. You may now close this tab.</p>"
-      );
-    } else {
+    if (!result.success) {
       input.res.statusCode = 400;
-      input.res.end(
-        `<h1>Login failed</h1><p>${escapeHtml(result.error)}</p><p>You can close this tab.</p>`
-      );
     }
+
+    input.res.end(html);
 
     await this.finishDesktopFlow(input.flowId, result);
   }
@@ -310,6 +372,8 @@ export class MuxGatewayOauthService {
     }
 
     log.debug(`Mux Gateway OAuth exchange completed (state=${input.state})`);
+
+    this.windowService?.focusMainWindow();
 
     return Ok(undefined);
   }

@@ -8,6 +8,42 @@ export class WindowService {
     this.mainWindow = window;
   }
 
+  focusMainWindow(): void {
+    const mainWindow = this.mainWindow;
+    if (!mainWindow) {
+      return;
+    }
+
+    const isDestroyed =
+      typeof (mainWindow as { isDestroyed?: () => boolean }).isDestroyed === "function"
+        ? (mainWindow as { isDestroyed: () => boolean }).isDestroyed()
+        : false;
+
+    if (isDestroyed) {
+      return;
+    }
+
+    try {
+      if (
+        typeof (mainWindow as { isMinimized?: () => boolean }).isMinimized === "function" &&
+        (mainWindow as { isMinimized: () => boolean }).isMinimized() &&
+        typeof (mainWindow as { restore?: () => void }).restore === "function"
+      ) {
+        (mainWindow as { restore: () => void }).restore();
+      }
+
+      if (typeof (mainWindow as { show?: () => void }).show === "function") {
+        (mainWindow as { show: () => void }).show();
+      }
+
+      if (typeof (mainWindow as { focus?: () => void }).focus === "function") {
+        (mainWindow as { focus: () => void }).focus();
+      }
+    } catch (error) {
+      log.debug("WindowService: focusMainWindow failed", error);
+    }
+  }
+
   send(channel: string, ...args: unknown[]): void {
     const isDestroyed =
       this.mainWindow &&

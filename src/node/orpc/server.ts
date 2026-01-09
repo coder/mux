@@ -205,26 +205,82 @@ export async function createOrpcServer({
         : "An unknown error occurred.";
 
     const html = `<!doctype html>
-<html>
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#0e0e0e" />
     <title>${title}</title>
+    <link rel="stylesheet" href="https://gateway.mux.coder.com/static/css/site.css" />
   </head>
   <body>
-    <h1>${title}</h1>
-    <p>${description}</p>
+    <div class="page">
+      <header class="site-header">
+        <div class="container">
+          <div class="header-title">mux</div>
+        </div>
+      </header>
+
+      <main class="site-main">
+        <div class="container">
+          <div class="content-surface">
+            <h1>${title}</h1>
+            <p>${description}</p>
+            ${result.success ? '<p class="muted">This tab should close automatically.</p>' : ""}
+            <p><a class="btn primary" href="/">Return to Mux</a></p>
+          </div>
+        </div>
+      </main>
+    </div>
+
     <script>
       (() => {
-        const payload = ${JSON.stringify(payload)}
+        const payload = ${JSON.stringify(payload)};
+        const ok = payload.ok === true;
+
         try {
-          if (window.opener && typeof window.opener.postMessage === 'function') {
-            window.opener.postMessage(payload, '*')
+          if (window.opener && typeof window.opener.postMessage === "function") {
+            window.opener.postMessage(payload, "*");
           }
         } catch {
           // Ignore postMessage failures.
         }
-      })()
+
+        if (!ok) {
+          return;
+        }
+
+        try {
+          if (window.opener && typeof window.opener.focus === "function") {
+            window.opener.focus();
+          }
+        } catch {
+          // Ignore focus failures.
+        }
+
+        try {
+          window.close();
+        } catch {
+          // Ignore close failures.
+        }
+
+        setTimeout(() => {
+          try {
+            window.close();
+          } catch {
+            // Ignore close failures.
+          }
+        }, 50);
+
+        setTimeout(() => {
+          try {
+            window.location.replace("/");
+          } catch {
+            // Ignore navigation failures.
+          }
+        }, 150);
+      })();
     </script>
   </body>
 </html>`;
