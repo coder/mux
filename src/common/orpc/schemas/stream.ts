@@ -248,10 +248,16 @@ export const UsageDeltaEventSchema = z.object({
 });
 
 // Individual init event schemas for flat discriminated union
+// Used by both init hooks (.mux/init) and custom slash commands (.mux/commands/*)
 export const InitStartEventSchema = z.object({
   type: z.literal("init-start"),
+  /** Path to the script being executed (for display) */
   hookPath: z.string(),
   timestamp: z.number(),
+  /** Source of the init event. "init-hook" for workspace init, "slash-command" for custom commands */
+  source: z.enum(["init-hook", "slash-command"]).optional(),
+  /** Command name for slash commands (e.g., "refinement") */
+  commandName: z.string().optional(),
 });
 
 export const InitOutputEventSchema = z.object({

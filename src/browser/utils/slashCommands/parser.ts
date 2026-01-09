@@ -28,11 +28,23 @@ export function parseCommand(input: string): ParsedCommand {
   const [commandKey, ...restTokens] = parts;
   const definition = SLASH_COMMAND_DEFINITION_MAP.get(commandKey);
 
+  // Calculate rawInput: everything after the command key, preserving newlines
+  // For "/compact -t 5000\nContinue here", rawInput should be "-t 5000\nContinue here"
+  // For "/compact\nContinue here", rawInput should be "\nContinue here"
+  // We trim leading spaces on the first line only, not newlines
+  const commandKeyWithSlash = `/${commandKey}`;
+  let rawInput = trimmed.substring(commandKeyWithSlash.length);
+  // Only trim spaces at the start, not newlines
+  while (rawInput.startsWith(" ")) {
+    rawInput = rawInput.substring(1);
+  }
+
   if (!definition) {
     return {
       type: "unknown-command",
       command: commandKey ?? "",
       subcommand: restTokens[0],
+      rawInput,
     };
   }
 
@@ -60,21 +72,11 @@ export function parseCommand(input: string): ParsedCommand {
       type: "unknown-command",
       command: commandKey ?? "",
       subcommand: remainingTokens[0],
+      rawInput,
     };
   }
 
   const cleanRemainingTokens = remainingTokens.map((token) => token.replace(/^"(.*)"$/, "$1"));
-
-  // Calculate rawInput: everything after the command key, preserving newlines
-  // For "/compact -t 5000\nContinue here", rawInput should be "-t 5000\nContinue here"
-  // For "/compact\nContinue here", rawInput should be "\nContinue here"
-  // We trim leading spaces on the first line only, not newlines
-  const commandKeyWithSlash = `/${commandKey}`;
-  let rawInput = trimmed.substring(commandKeyWithSlash.length);
-  // Only trim spaces at the start, not newlines
-  while (rawInput.startsWith(" ")) {
-    rawInput = rawInput.substring(1);
-  }
 
   return targetDefinition.handler({
     definition: targetDefinition,

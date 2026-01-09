@@ -54,6 +54,7 @@ import { findAtMentionAtCursor } from "@/common/utils/atMentions";
 import {
   getSlashCommandSuggestions,
   type SlashSuggestion,
+  type CustomSlashCommand,
 } from "@/browser/utils/slashCommands/suggestions";
 import { Tooltip, TooltipTrigger, TooltipContent, HelpIndicator } from "../ui/tooltip";
 import { AgentModePicker } from "../AgentModePicker";
@@ -168,6 +169,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
   const [commandSuggestions, setCommandSuggestions] = useState<SlashSuggestion[]>([]);
   const [providerNames, setProviderNames] = useState<string[]>([]);
+  const [customCommands, setCustomCommands] = useState<CustomSlashCommand[]>([]);
   const [toast, setToast] = useState<Toast | null>(null);
   const pushToast = useCallback(
     (nextToast: Omit<Toast, "id">) => {
@@ -870,10 +872,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
   // Watch input for slash commands
   useEffect(() => {
-    const suggestions = getSlashCommandSuggestions(input, { providerNames, variant });
+    const suggestions = getSlashCommandSuggestions(
+      input,
+      { providerNames, variant },
+      customCommands
+    );
     setCommandSuggestions(suggestions);
     setShowCommandSuggestions(suggestions.length > 0);
-  }, [input, providerNames, variant]);
+  }, [input, providerNames, variant, customCommands]);
 
   // Load provider names for suggestions
   useEffect(() => {
@@ -896,6 +902,35 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       isMounted = false;
     };
   }, [api]);
+
+  // Load custom slash commands for the workspace
+  useEffect(() => {
+    if (!api || !workspaceId) {
+      setCustomCommands([]);
+      return;
+    }
+
+    let isMounted = true;
+
+    const loadCustomCommands = async () => {
+      try {
+        const commands = await api.workspace.slashCommands.list({
+          workspaceId,
+        });
+        if (isMounted) {
+          setCustomCommands(commands);
+        }
+      } catch (error) {
+        console.error("Failed to load custom slash commands:", error);
+      }
+    };
+
+    void loadCustomCommands();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [api, workspaceId]);
 
   // Check if OpenAI API key is configured (for voice input)
   // Subscribe to config changes so key status updates immediately when set in Settings
@@ -1333,6 +1368,73 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           setInput(initMessage);
           focusMessageInput();
           return;
+        }
+
+        // Handle unknown commands - check if it's a custom slash command
+        if (parsed.type === "unknown-command" && api && props.workspaceId) {
+          // Check if this is a custom slash command
+          const customCommands = await api.workspace.slashCommands.list({
+            workspaceId: props.workspaceId,
+          });
+          const isCustomCommand = customCommands.some((cmd) => cmd.name === parsed.command);
+
+          if (isCustomCommand) {
+            // Parse rawInput into args and stdin
+            // First line = args, subsequent lines = stdin
+            const rawInput = parsed.rawInput ?? "";
+            const lines = rawInput.split("\n");
+            const firstLine = lines[0] ?? "";
+            const stdinContent = lines.slice(1).join("\n").trim();
+
+            // Parse first line as args (shell-style token splitting)
+            const args =
+              (firstLine.match(/(?:[^\s"]+|"[^"]*")+/g) ?? []).map((token) =>
+                token.replace(/^"(.*)"$/, "$1")
+              ) ?? [];
+
+            setIsSending(true);
+            setInput(""); // Clear input during execution
+            try {
+              const result = await api.workspace.slashCommands.run({
+                workspaceId: props.workspaceId,
+                name: parsed.command,
+                args: args.length > 0 ? args : undefined,
+                stdin: stdinContent || undefined,
+              });
+
+              if (!result.success) {
+                pushToast({ type: "error", message: result.error });
+                setInput(messageText); // Restore on error
+              } else {
+                // Send the stdout as the message
+                const stdout = result.data.stdout;
+                if (stdout.trim()) {
+                  // Send via the workspace API
+                  const sendResult = await api.workspace.sendMessage({
+                    workspaceId: props.workspaceId,
+                    message: stdout,
+                    options: sendMessageOptions,
+                  });
+                  if (!sendResult.success) {
+                    setToast(createErrorToast(sendResult.error));
+                    setInput(messageText); // Restore on error
+                  }
+                } else {
+                  pushToast({
+                    type: "error",
+                    message: `/${parsed.command} produced no output`,
+                  });
+                }
+              }
+            } catch (error) {
+              const message = error instanceof Error ? error.message : "Command failed";
+              pushToast({ type: "error", message });
+              setInput(messageText); // Restore on error
+            } finally {
+              setIsSending(false);
+            }
+            return;
+          }
         }
 
         // Handle other non-API commands (help, invalid args, etc)

@@ -36,7 +36,7 @@ export type ParsedCommand =
   | { type: "plan-show" }
   | { type: "plan-open" }
   | { type: "init" }
-  | { type: "unknown-command"; command: string; subcommand?: string }
+  | { type: "unknown-command"; command: string; subcommand?: string; rawInput?: string }
   | { type: "idle-compaction"; hours: number | null }
   | null;
 

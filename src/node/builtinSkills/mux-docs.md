@@ -71,6 +71,7 @@ Use this index to find a page's:
       - Docker Runtime (`/runtime/docker`) → `references/docs/runtime/docker.mdx` — Run agents in isolated Docker containers
     - **Hooks**
       - Init Hooks (`/hooks/init`) → `references/docs/hooks/init.mdx` — Run setup commands automatically when creating new workspaces
+      - Custom Slash Commands (`/hooks/slash-commands`) → `references/docs/hooks/slash-commands.mdx` — Create custom executable commands that run in your workspace
       - Tool Hooks (`/hooks/tools`) → `references/docs/hooks/tools.mdx` — Block dangerous commands, lint after edits, and set up your environment
       - Environment Variables (`/hooks/environment-variables`) → `references/docs/hooks/environment-variables.mdx` — Environment variables available in agent bash commands and hooks
   - **Agents**
