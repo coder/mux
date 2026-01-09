@@ -67,6 +67,7 @@ jobs:
 
   static-check:
     name: Static Checks
+    if: github.event_name != 'push' || github.actor != 'github-merge-queue[bot]'
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
@@ -105,7 +106,7 @@ jobs:
   test-unit:
     name: Test / Unit
     needs: [changes]
-    if: ${{ needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true' }}
+    if: ${{ (needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true') && (github.event_name != 'push' || github.actor != 'github-merge-queue[bot]') }}
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
@@ -122,7 +123,7 @@ jobs:
   test-integration:
     name: Test / Integration
     needs: [changes]
-    if: ${{ needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true' }}
+    if: ${{ (needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true') && (github.event_name != 'push' || github.actor != 'github-merge-queue[bot]') }}
     timeout-minutes: 10
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
     steps:
@@ -169,7 +170,7 @@ jobs:
   test-storybook:
     name: Test / Storybook
     needs: [changes]
-    if: ${{ (needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true') && github.event.inputs.test_filter == '' }}
+    if: ${{ (needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true') && github.event.inputs.test_filter == '' && (github.event_name != 'push' || github.actor != 'github-merge-queue[bot]') }}
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
@@ -193,7 +194,7 @@ jobs:
   test-e2e:
     name: Test / E2E (${{ matrix.os }})
     needs: [changes]
-    if: ${{ (needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true') && github.event.inputs.test_filter == '' }}
+    if: ${{ (needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true') && github.event.inputs.test_filter == '' && (github.event_name != 'push' || github.actor != 'github-merge-queue[bot]') }}
     strategy:
       fail-fast: false
       matrix:
@@ -224,7 +225,7 @@ jobs:
   smoke-server:
     name: Smoke / Server
     needs: [changes]
-    if: ${{ needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true' }}
+    if: ${{ (needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true') && (github.event_name != 'push' || github.actor != 'github-merge-queue[bot]') }}
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
@@ -250,8 +251,8 @@ jobs:
 
   smoke-docker:
     name: Smoke / Docker
-    # Only run on merge queue and main pushes (not every PR)
-    if: github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    # Only run on merge queue (not every PR, not on merge-queue push to main)
+    if: github.event_name == 'merge_group' || (github.event_name == 'push' && github.actor != 'github-merge-queue[bot]')
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
@@ -283,7 +284,7 @@ jobs:
   build-linux:
     name: Build / Linux
     needs: [changes]
-    if: ${{ needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true' }}
+    if: ${{ (needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true') && (github.event_name != 'push' || github.actor != 'github-merge-queue[bot]') }}
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
@@ -383,7 +384,7 @@ jobs:
   build-vscode:
     name: Build / VS Code
     needs: [changes]
-    if: ${{ needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true' }}
+    if: ${{ (needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true') && (github.event_name != 'push' || github.actor != 'github-merge-queue[bot]') }}
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
@@ -413,7 +414,7 @@ jobs:
   # Single required check - configure branch protection to require only this job
   required:
     name: Required
-    if: always()
+    if: ${{ always() && (github.event_name != 'push' || github.actor != 'github-merge-queue[bot]') }}
     needs:
       - changes
       - static-check
