@@ -9,6 +9,8 @@
  */
 
 import { Command } from "commander";
+import { tool } from "ai";
+import { z } from "zod";
 import * as os from "os";
 import * as path from "path";
 import * as fs from "fs/promises";
@@ -282,7 +284,7 @@ interface CLIOptions {
 const opts = program.opts<CLIOptions>();
 const messageArg = program.args.join(" ");
 
-async function main(): Promise<void> {
+async function main(): Promise<number> {
   // Configure log level early (before any logging happens)
   if (opts.logLevel) {
     const level = opts.logLevel.toLowerCase();
@@ -383,6 +385,32 @@ async function main(): Promise<void> {
     initStateManager,
     backgroundProcessManager
   );
+
+  // CLI-only exit code control: allows agent to set the process exit code
+  // Useful for CI workflows where the agent should block merge on failure
+  let agentExitCode: number | undefined;
+  const setExitCodeSchema = z.object({
+    exit_code: z
+      .number()
+      .int()
+      .min(0)
+      .max(255)
+      .describe("Exit code (0 = success, 1-255 = failure)"),
+  });
+  const setExitCodeTool = tool({
+    description:
+      "Set the process exit code for this CLI session. " +
+      "Use this in CI/automation to signal success (0) or failure (non-zero). " +
+      "For example, exit 1 to block a PR merge when issues are found. " +
+      "Only available in `mux run` CLI mode.",
+    inputSchema: setExitCodeSchema,
+    execute: ({ exit_code }: z.infer<typeof setExitCodeSchema>) => {
+      agentExitCode = exit_code;
+      return { success: true, exit_code };
+    },
+  });
+  aiService.setExtraTools({ set_exit_code: setExitCodeTool });
+
   // Bootstrap providers from env vars if no providers.jsonc exists
   if (!hasAnyConfiguredProvider(existingProviders)) {
     const providersFromEnv = buildProvidersFromEnv();
@@ -841,6 +869,9 @@ async function main(): Promise<void> {
     session.dispose();
     mcpServerManager.dispose();
   }
+
+  // Return agent-specified exit code, or 0 for success
+  return agentExitCode ?? 0;
 }
 
 // Keep process alive - Bun may exit when stdin closes even if async work is pending
@@ -849,9 +880,9 @@ const keepAliveInterval = setInterval(() => {
 }, 1000000);
 
 main()
-  .then(() => {
+  .then((exitCode) => {
     clearInterval(keepAliveInterval);
-    process.exit(0);
+    process.exit(exitCode);
   })
   .catch((error) => {
     clearInterval(keepAliveInterval);

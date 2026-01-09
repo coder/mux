@@ -163,4 +163,22 @@ describeIntegration("mux run smoke tests", () => {
       expect(content.trim()).toBe(testContent);
     }
   }, 60000);
+
+  test("set_exit_code tool sets process exit code", async () => {
+    const result = await runMuxRun(
+      [
+        "--dir",
+        testDir,
+        "--model",
+        "anthropic:claude-haiku-4-5",
+        "--thinking",
+        "off",
+        "Use the set_exit_code tool to set the exit code to 150. Do not explain, just call the tool.",
+      ],
+      { timeoutMs: 45000, muxRoot }
+    );
+
+    // Should exit with the code we specified
+    expect(result.exitCode).toBe(150);
+  }, 60000);
 });

@@ -402,6 +402,7 @@ export class AIService extends EventEmitter {
   private readonly backgroundProcessManager?: BackgroundProcessManager;
   private readonly sessionUsageService?: SessionUsageService;
   private taskService?: TaskService;
+  private extraTools?: Record<string, Tool>;
 
   constructor(
     config: Config,
@@ -444,6 +445,14 @@ export class AIService extends EventEmitter {
 
   setTaskService(taskService: TaskService): void {
     this.taskService = taskService;
+  }
+
+  /**
+   * Set extra tools to include in every tool call.
+   * Used by CLI to inject tools like set_exit_code without modifying core tool definitions.
+   */
+  setExtraTools(tools: Record<string, Tool>): void {
+    this.extraTools = tools;
   }
 
   /**
@@ -1527,12 +1536,16 @@ export class AIService extends EventEmitter {
         mcpTools
       );
 
+      // Merge in extra tools (e.g., CLI-specific tools like set_exit_code)
+      // These bypass policy filtering since they're injected by the runtime, not user config
+      const allToolsWithExtra = this.extraTools ? { ...allTools, ...this.extraTools } : allTools;
+
       // NOTE: effectiveToolPolicy is derived from the selected agent definition (plus hard-denies).
 
       // Apply tool policy FIRST - this must happen before PTC to ensure sandbox
       // respects allow/deny filters. The policy-filtered tools are passed to
       // ToolBridge so the mux.* API only exposes policy-allowed tools.
-      const policyFilteredTools = applyToolPolicy(allTools, effectiveToolPolicy);
+      const policyFilteredTools = applyToolPolicy(allToolsWithExtra, effectiveToolPolicy);
 
       // Handle PTC experiments - add or replace tools with code_execution
       let toolsForModel = policyFilteredTools;
