@@ -120,7 +120,7 @@ export const UntrackedStatus: React.FC<UntrackedStatusProps> = ({
   }
 
   return (
-    <div className="bg-info-yellow/10 border-info-yellow/30 rounded border">
+    <div className="bg-info-yellow/10 border-info-yellow/30 mx-3 mt-3 rounded border">
       {/* Banner header - always visible when there are untracked files */}
       <button
         onClick={() => setIsExpanded(!isExpanded)}

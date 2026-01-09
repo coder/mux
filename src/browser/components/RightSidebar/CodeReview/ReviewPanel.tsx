@@ -1162,14 +1162,12 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
             )}
 
             {/* Untracked files banner - shown above hunks */}
-            <div className="px-3 pt-3">
-              <UntrackedStatus
-                workspaceId={workspaceId}
-                workspacePath={workspacePath}
-                refreshTrigger={refreshTrigger}
-                onRefresh={handleRefresh}
-              />
-            </div>
+            <UntrackedStatus
+              workspaceId={workspaceId}
+              workspacePath={workspacePath}
+              refreshTrigger={refreshTrigger}
+              onRefresh={handleRefresh}
+            />
 
             {/* Hunks below the file tree */}
             <div className="flex flex-[0_0_auto] flex-col p-3">
