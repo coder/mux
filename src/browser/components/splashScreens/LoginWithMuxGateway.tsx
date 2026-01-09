@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { SplashScreen } from "./SplashScreen";
 import { useAPI } from "@/browser/contexts/API";
 import { getStoredAuthToken } from "@/browser/components/AuthTokenModal";
@@ -38,10 +38,14 @@ export function LoginWithMuxGatewaySplash(props: { onDismiss: () => void }) {
 
   const [status, setStatus] = useState<LoginStatus>("idle");
   const [error, setError] = useState<string | null>(null);
+
+  const loginAttemptRef = useRef(0);
   const [desktopFlowId, setDesktopFlowId] = useState<string | null>(null);
   const [serverState, setServerState] = useState<string | null>(null);
 
   const handleDismiss = () => {
+    loginAttemptRef.current++;
+
     if (isDesktop && api && desktopFlowId) {
       void api.muxGatewayOauth.cancelDesktopFlow({ flowId: desktopFlowId });
     }
@@ -49,6 +53,8 @@ export function LoginWithMuxGatewaySplash(props: { onDismiss: () => void }) {
   };
 
   const startLogin = async () => {
+    const attempt = ++loginAttemptRef.current;
+
     try {
       setError(null);
 
@@ -61,6 +67,14 @@ export function LoginWithMuxGatewaySplash(props: { onDismiss: () => void }) {
 
         setStatus("starting");
         const startResult = await api.muxGatewayOauth.startDesktopFlow();
+
+        if (attempt !== loginAttemptRef.current) {
+          if (startResult.success) {
+            void api.muxGatewayOauth.cancelDesktopFlow({ flowId: startResult.data.flowId });
+          }
+          return;
+        }
+
         if (!startResult.success) {
           setStatus("error");
           setError(startResult.error);
@@ -72,9 +86,18 @@ export function LoginWithMuxGatewaySplash(props: { onDismiss: () => void }) {
         setStatus("waiting");
 
         // Desktop main process intercepts external window.open() calls and routes them via shell.openExternal.
+        if (attempt !== loginAttemptRef.current) {
+          return;
+        }
+
         window.open(authorizeUrl, "_blank", "noopener");
 
         const waitResult = await api.muxGatewayOauth.waitForDesktopFlow({ flowId });
+
+        if (attempt !== loginAttemptRef.current) {
+          return;
+        }
+
         if (waitResult.success) {
           setStatus("success");
           return;
@@ -116,11 +139,19 @@ export function LoginWithMuxGatewaySplash(props: { onDismiss: () => void }) {
         throw new Error(message);
       }
 
+      if (attempt !== loginAttemptRef.current) {
+        return;
+      }
+
       if (typeof json.authorizeUrl !== "string" || typeof json.state !== "string") {
         throw new Error(`Invalid response from ${startUrl.pathname}`);
       }
 
       setServerState(json.state);
+      if (attempt !== loginAttemptRef.current) {
+        return;
+      }
+
       const popup = window.open(json.authorizeUrl, "_blank");
       if (!popup) {
         throw new Error("Popup blocked - please allow popups and try again.");
