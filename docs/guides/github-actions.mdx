@@ -7,7 +7,7 @@ description: Automate your workflows with mux run in GitHub Actions
 
 ## Prerequisites
 
-1. **API Key**: Add your `ANTHROPIC_API_KEY` (or other provider key) to your repository's secrets
+1. **API Key**: Add your `ANTHROPIC_API_KEY` (or other provider key) to your repository's secrets. See [Providers](/config/providers) for details on configuring API keys.
 2. **npm/bun**: The workflow will install mux via `bunx` or `npx`
 
 ## Basic Usage
@@ -15,19 +15,19 @@ description: Automate your workflows with mux run in GitHub Actions
 Here's a minimal example that runs mux in a GitHub Action:
 
 ```yaml
-- name: Run mux agent
+- name: Mux Review
   env:
     ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-  run: bunx mux run --timeout 5m "Your prompt here"
+    GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  run: bunx mux run "Review this PR for critical issues. If any are found, exit 1 to block merge."
 ```
 
 ### Key Options for CI
 
-| Option      | Purpose                                          |
-| ----------- | ------------------------------------------------ |
-| `--timeout` | **Always set** - prevents runaway jobs and costs |
-| `--quiet`   | Only output final result (cleaner logs)          |
-| `--json`    | Machine-readable NDJSON output for parsing       |
+| Option    | Purpose                                    |
+| --------- | ------------------------------------------ |
+| `--quiet` | Only output final result (cleaner logs)    |
+| `--json`  | Machine-readable NDJSON output for parsing |
 
 ## Example: Auto-Label Issues and PRs
 
@@ -102,106 +102,11 @@ jobs:
 
 {/* END AUTO_LABEL_WORKFLOW */}
 
-### How It Works
-
-1. **Trigger**: Runs when an issue or PR is opened
-2. **Fetch Labels**: Gets the list of available labels from your repository
-3. **AI Analysis**: Uses `mux run` to analyze the content and select matching labels
-4. **Apply Labels**: Adds the selected labels via GitHub CLI
-
-### Setup
-
-1. Add `ANTHROPIC_API_KEY` to your repository secrets
-2. Copy the workflow to `.github/workflows/auto-label.yml`
-3. Ensure your repository has labels defined
-
-## Best Practices
-
-### Always Set Timeouts
-
-Prevent runaway jobs and unexpected costs:
-
-```yaml
-run: bunx mux run --timeout 5m "Your task"
-```
-
-### Use Quiet Mode for Cleaner Logs
-
-When you only need the final result:
-
-```yaml
-run: bunx mux run --quiet "Generate a summary" > output.txt
-```
-
-### Parse JSON Output Programmatically
-
-For complex integrations, use JSON mode:
-
-```yaml
-- name: Generate with mux
-  run: |
-    bunx mux run --json --quiet "Analyze the code" > result.jsonl
-    # Parse the last line for the final response
-    tail -1 result.jsonl | jq -r '.content'
-```
-
-### Handle Failures Gracefully
-
-mux exits with non-zero status on errors:
-
-```yaml
-- name: Run mux (allow failure)
-  continue-on-error: true
-  run: bunx mux run --timeout 5m "Attempt this task"
-```
-
-## More Examples
-
-### Generate Changelog Entries
-
-```yaml
-- name: Generate changelog
-  env:
-    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-  run: |
-    bunx mux run --quiet --timeout 5m \
-      "Generate a changelog entry for the changes in this PR" \
-      >> CHANGELOG.md
-```
-
-### Code Review Comments
-
-```yaml
-- name: AI code review
-  env:
-    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-    GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-  run: |
-    review=$(bunx mux run --quiet --timeout 10m \
-      "Review the code changes in this PR. Be concise.")
-    gh pr comment ${{ github.event.pull_request.number }} --body "$review"
-```
-
-### Fix Lint Errors Automatically
-
-```yaml
-- name: Auto-fix lint errors
-  env:
-    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-  run: |
-    bunx mux run --timeout 10m "Fix the ESLint errors in this repository"
-    git diff  # Show what changed
-```
-
-## Security Considerations
-
-- **API Keys**: Always use repository secrets, never hardcode keys
-- **Permissions**: Use minimal required permissions in your workflow
-- **Timeouts**: Always set timeouts to prevent cost overruns
-- **Review**: Consider requiring human review for AI-generated changes
-
-## See Also
-
-- [CLI Reference](/reference/cli) - Full CLI documentation
-- [Agentic Git Identity](/config/agentic-git-identity) - Configure separate Git identity for AI commits
-- [Prompting Tips](/agents/prompting-tips) - Get better results from your prompts
+<CardGroup cols={2}>
+  <Card title="CLI Reference" icon="terminal" href="/reference/cli">
+    Full CLI documentation
+  </Card>
+  <Card title="Agentic Git Identity" icon="user-robot" href="/config/agentic-git-identity">
+    Configure separate Git identity for AI commits
+  </Card>
+</CardGroup>
