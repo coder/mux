@@ -34,6 +34,10 @@ on:
         description: "Additional arguments to pass to terminal-bench"
         required: false
         type: string
+      experiments:
+        description: "Experiments to enable (comma-separated)"
+        required: false
+        type: string
     secrets:
       ANTHROPIC_API_KEY:
         required: true
@@ -72,6 +76,10 @@ on:
         description: "Additional arguments to pass to terminal-bench"
         required: false
         type: string
+      experiments:
+        description: "Experiments to enable (comma-separated)"
+        required: false
+        type: string
 
 jobs:
   benchmark:
@@ -108,7 +116,10 @@ jobs:
           TB_CONCURRENCY: ${{ inputs.concurrency }}
           TB_LIVESTREAM: ${{ inputs.livestream && '1' || '' }}
           TB_SAMPLE_SIZE: ${{ inputs.sample_size }}
-          TB_ARGS: ${{ inputs.model_name && format('--agent-kwarg model_name={0} --agent-kwarg thinking_level={1} {2}', inputs.model_name, inputs.thinking_level, inputs.extra_args) || inputs.extra_args }}
+          TB_ARGS: >-
+            ${{ inputs.model_name && format('--agent-kwarg model_name={0} --agent-kwarg thinking_level={1}', inputs.model_name, inputs.thinking_level) || '' }}
+            ${{ inputs.extra_args || '' }}
+          MUX_EXPERIMENTS: ${{ inputs.experiments }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 

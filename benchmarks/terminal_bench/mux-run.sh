@@ -30,6 +30,7 @@ MUX_WORKSPACE_ID="${MUX_WORKSPACE_ID:-mux-bench}"
 MUX_THINKING_LEVEL="${MUX_THINKING_LEVEL:-high}"
 MUX_MODE="${MUX_MODE:-exec}"
 MUX_RUNTIME="${MUX_RUNTIME:-}"
+MUX_EXPERIMENTS="${MUX_EXPERIMENTS:-}"
 
 resolve_project_path() {
   if [[ -n "${MUX_PROJECT_PATH}" ]]; then
@@ -93,6 +94,19 @@ fi
 
 if [[ -n "${MUX_RUNTIME}" ]]; then
   cmd+=(--runtime "${MUX_RUNTIME}")
+fi
+
+# Add experiment flags (comma-separated → repeated --experiment flags)
+if [[ -n "${MUX_EXPERIMENTS}" ]]; then
+  IFS=',' read -r -a experiments <<<"${MUX_EXPERIMENTS}"
+  for exp in "${experiments[@]}"; do
+    # Trim whitespace
+    exp="${exp#"${exp%%[![:space:]]*}"}"
+    exp="${exp%"${exp##*[![:space:]]}"}"
+    if [[ -n "${exp}" ]]; then
+      cmd+=(--experiment "${exp}")
+    fi
+  done
 fi
 
 # Terminal-bench enforces timeouts via --global-agent-timeout-sec

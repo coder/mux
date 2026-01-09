@@ -51,6 +51,7 @@ mux run --json "List all TypeScript files" | jq '.type'
 | `--mode <mode>`        |       | Agent mode: `plan` or `exec`                                    | `exec`            |
 | `--thinking <level>`   | `-t`  | Thinking level: `off`, `low`, `medium`, `high`                  | `medium`          |
 | `--timeout <duration>` |       | Timeout (e.g., `5m`, `300s`, `300000`)                          | No timeout        |
+| `--experiment <id>`    | `-e`  | Enable experiment (repeatable)                                  | None              |
 | `--json`               |       | Output NDJSON for programmatic use                              | Off               |
 | `--quiet`              | `-q`  | Only output final result                                        | Off               |
 | `--workspace-id <id>`  |       | Explicit workspace ID                                           | Auto-generated    |

@@ -62,11 +62,16 @@ The mux agent supports the following kwargs (passed via `--agent-kwarg`):
 - `model_name`: Model to use (e.g., `anthropic:claude-sonnet-4-5`, `openai:gpt-5-codex`)
 - `thinking_level`: Thinking level (`off`, `low`, `medium`, `high`)
 - `mode`: Agent mode (`plan`, `exec`)
+- `experiments`: Experiments to enable, comma-separated (e.g., `programmatic-tool-calling`)
 
 **Example:**
 
 ```bash
+# Run with specific model and thinking level
 make benchmark-terminal TB_ARGS="--agent-kwarg model_name=openai:gpt-5-codex --agent-kwarg thinking_level=high"
+
+# Run with multiple experiments
+make benchmark-terminal TB_ARGS="--agent-kwarg experiments=programmatic-tool-calling-exclusive,post-compaction-context"
 ```
 
 ## Results

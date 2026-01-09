@@ -11,6 +11,10 @@ on:
         required: false
         default: "all"
         type: string
+      experiments:
+        description: "Experiments to enable (comma-separated)"
+        required: false
+        type: string
 
 jobs:
   determine-models:
@@ -45,6 +49,7 @@ jobs:
       dataset: "terminal-bench-core==0.1.1"
       concurrency: "4"
       livestream: false
+      experiments: ${{ inputs.experiments }}
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}

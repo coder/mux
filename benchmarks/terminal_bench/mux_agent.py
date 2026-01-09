@@ -63,6 +63,7 @@ class MuxAgent(AbstractInstalledAgent):
         "MUX_WORKSPACE_ID",
         "MUX_MODE",
         "MUX_RUNTIME",
+        "MUX_EXPERIMENTS",
     )
 
     def __init__(
@@ -70,6 +71,7 @@ class MuxAgent(AbstractInstalledAgent):
         model_name: str = "anthropic:claude-sonnet-4-5",
         mode: str | None = None,
         thinking_level: str | None = None,
+        experiments: str | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -93,6 +95,7 @@ class MuxAgent(AbstractInstalledAgent):
         self._mode = mode.lower() if mode else None
         self._thinking_level = thinking_level.lower() if thinking_level else None
         self._model_name = (model_name or "").strip()
+        self._experiments = (experiments or "").strip() if experiments else None
 
     @staticmethod
     def name() -> str:
@@ -156,6 +159,10 @@ class MuxAgent(AbstractInstalledAgent):
         if project_path := env.get("MUX_PROJECT_PATH"):
             if not project_path.strip():
                 raise ValueError("MUX_PROJECT_PATH must be non-empty when provided")
+
+        # Set experiments from kwarg (takes precedence over env var)
+        if self._experiments:
+            env["MUX_EXPERIMENTS"] = self._experiments
 
         return env
 

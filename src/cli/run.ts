@@ -59,6 +59,7 @@ import type { InitLogger } from "@/node/runtime/Runtime";
 import { DockerRuntime } from "@/node/runtime/DockerRuntime";
 import { execSync } from "child_process";
 import { getParseOptions } from "./argv";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 
 type CLIMode = "plan" | "exec";
 
@@ -187,6 +188,34 @@ function renderUnknown(value: unknown): string {
   }
 }
 
+const VALID_EXPERIMENT_IDS = new Set<string>(Object.values(EXPERIMENT_IDS));
+
+function collectExperiments(value: string, previous: string[]): string[] {
+  const experimentId = value.trim().toLowerCase();
+  if (!VALID_EXPERIMENT_IDS.has(experimentId)) {
+    throw new Error(
+      `Unknown experiment "${value}". Valid experiments: ${[...VALID_EXPERIMENT_IDS].join(", ")}`
+    );
+  }
+  if (previous.includes(experimentId)) {
+    return previous; // Dedupe
+  }
+  return [...previous, experimentId];
+}
+
+/**
+ * Convert experiment ID array to the experiments object expected by SendMessageOptions.
+ */
+function buildExperimentsObject(experimentIds: string[]): SendMessageOptions["experiments"] {
+  if (experimentIds.length === 0) return undefined;
+
+  return {
+    programmaticToolCalling: experimentIds.includes("programmatic-tool-calling"),
+    programmaticToolCallingExclusive: experimentIds.includes("programmatic-tool-calling-exclusive"),
+    postCompactionContext: experimentIds.includes("post-compaction-context"),
+  };
+}
+
 interface MCPServerEntry {
   name: string;
   command: string;
@@ -230,6 +259,7 @@ program
   .option("-q, --quiet", "only output final result")
   .option("--mcp <server>", "MCP server as name=command (can be repeated)", collectMcpServers, [])
   .option("--no-mcp-config", "ignore .mux/mcp.jsonc, use only --mcp servers")
+  .option("-e, --experiment <id>", "enable experiment (can be repeated)", collectExperiments, [])
   .addHelpText(
     "after",
     `
@@ -260,6 +290,7 @@ interface CLIOptions {
   quiet?: boolean;
   mcp: MCPServerEntry[];
   mcpConfig: boolean;
+  experiment: string[];
 }
 
 const opts = program.opts<CLIOptions>();
@@ -459,10 +490,13 @@ async function main(): Promise<void> {
     runtimeConfig,
   });
 
+  const experiments = buildExperimentsObject(opts.experiment);
+
   const buildSendOptions = (cliMode: CLIMode): SendMessageOptions => ({
     model,
     thinkingLevel,
     mode: cliMode,
+    experiments,
     // toolPolicy is computed by backend from agent definitions (resolveToolPolicyForAgent)
     // Plan mode instructions are handled by the backend (has access to plan file path)
   });
