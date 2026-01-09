@@ -48,22 +48,18 @@ export function getRuntimeTypeForTelemetry(
     return "worktree";
   }
 
-  if (runtimeConfig.type === "ssh") {
-    return "ssh";
+  switch (runtimeConfig.type) {
+    case "ssh":
+      return "ssh";
+    case "docker":
+      return "docker";
+    case "worktree":
+      return "worktree";
+    case "local":
+      // Check if it has srcBaseDir (legacy worktree)
+      if ("srcBaseDir" in runtimeConfig && runtimeConfig.srcBaseDir) {
+        return "worktree"; // Legacy worktree config
+      }
+      return "local"; // True project-dir local
   }
-
-  if (runtimeConfig.type === "worktree") {
-    return "worktree";
-  }
-
-  // "local" type - check if it has srcBaseDir (legacy worktree)
-  if (runtimeConfig.type === "local") {
-    if ("srcBaseDir" in runtimeConfig && runtimeConfig.srcBaseDir) {
-      return "worktree"; // Legacy worktree config
-    }
-    return "local"; // True project-dir local
-  }
-
-  // Fallback
-  return "worktree";
 }

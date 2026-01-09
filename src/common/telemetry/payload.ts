@@ -21,6 +21,7 @@
  */
 
 import type { AgentMode } from "@/common/types/mode";
+import type { RuntimeMode } from "@/common/types/runtime";
 
 /**
  * Base properties included with all telemetry events
@@ -50,10 +51,10 @@ export interface AppStartedPayload {
 }
 
 /**
- * Runtime type for telemetry - normalized from RuntimeConfig
- * Values: 'local' (project-dir), 'worktree' (git worktree isolation), 'ssh' (remote execution)
+ * Runtime type for telemetry - derived from RuntimeMode to stay in sync.
+ * Values: 'local' (project-dir), 'worktree' (git worktree isolation), 'ssh' (remote), 'docker' (container)
  */
-export type TelemetryRuntimeType = "local" | "worktree" | "ssh";
+export type TelemetryRuntimeType = RuntimeMode;
 
 /**
  * Frontend platform info - browser/client environment

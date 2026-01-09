@@ -7,6 +7,7 @@
 
 import { z } from "zod";
 import { AgentModeSchema } from "../../types/mode";
+import { RuntimeModeSchema } from "./runtime";
 
 // Error context enum (matches payload.ts)
 const ErrorContextSchema = z.enum([
@@ -20,8 +21,8 @@ const ErrorContextSchema = z.enum([
   "git-operation",
 ]);
 
-// Runtime type enum (matches payload.ts TelemetryRuntimeType)
-const TelemetryRuntimeTypeSchema = z.enum(["local", "worktree", "ssh"]);
+// Runtime type - derived from RuntimeModeSchema to stay in sync
+const TelemetryRuntimeTypeSchema = RuntimeModeSchema;
 
 // Frontend platform info (matches payload.ts FrontendPlatformInfo)
 const FrontendPlatformInfoSchema = z.object({
