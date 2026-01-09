@@ -282,6 +282,56 @@ export const BulkReviewActions: AppStory = {
 };
 
 /**
+ * Shows attached reviews with multi-line comments to verify whitespace preservation.
+ * Comments should preserve newlines and indentation.
+ */
+export const MultiLineComments: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const workspaceId = "ws-multiline-comments";
+
+        const baseTime = 1700000000000;
+        setReviews(workspaceId, [
+          createReview(
+            "review-multiline-1",
+            "src/api/auth.ts",
+            "42-55",
+            "This function has several issues:\n\n1. Missing error handling\n2. Token expiry should be configurable\n3. Consider adding retry logic",
+            "attached",
+            baseTime + 1
+          ),
+          createReview(
+            "review-multiline-2",
+            "src/utils/validation.ts",
+            "10-20",
+            "The validation logic needs work:\n  - Add null checks\n  - Handle edge cases\n  - Add unit tests",
+            "attached",
+            baseTime + 2
+          ),
+        ]);
+
+        return setupSimpleChatStory({
+          workspaceId,
+          workspaceName: "feature/code-review",
+          projectName: "my-app",
+          messages: [
+            createUserMessage("msg-1", "Fix these issues", { historySequence: 1 }),
+            createAssistantMessage("msg-2", "I'll address the review comments.", {
+              historySequence: 2,
+            }),
+          ],
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await waitForChatInputAutofocusDone(canvasElement);
+    blurActiveElement();
+  },
+};
+
+/**
  * Shows reviews in a queued message with nice formatting.
  * The queued message appears when the user sends a message while the assistant is busy.
  * Reviews are displayed with proper formatting (file path, line range, code snippet, comment).
