@@ -45,7 +45,7 @@ import {
   formatGenericToolEnd,
   isMultilineResultTool,
 } from "./toolFormatters";
-import { defaultModel } from "@/common/utils/ai/models";
+import { defaultModel, resolveModelAlias } from "@/common/utils/ai/models";
 import { buildProvidersFromEnv, hasAnyConfiguredProvider } from "@/node/utils/providerRequirements";
 
 import type { ThinkingLevel } from "@/common/types/thinking";
@@ -347,7 +347,7 @@ async function main(): Promise<void> {
   const projectDir = path.resolve(opts.dir);
   await ensureDirectory(projectDir);
 
-  const model: string = opts.model;
+  const model: string = resolveModelAlias(opts.model);
   const runtimeConfig = parseRuntimeConfig(opts.runtime, config.srcDir);
   const thinkingLevel = parseThinkingLevel(opts.thinking);
   const initialMode = parseMode(opts.mode);

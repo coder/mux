@@ -2,9 +2,18 @@
  * Model configuration and constants
  */
 
-import { DEFAULT_MODEL } from "@/common/constants/knownModels";
+import { DEFAULT_MODEL, MODEL_ABBREVIATIONS } from "@/common/constants/knownModels";
 
 export const defaultModel = DEFAULT_MODEL;
+
+/**
+ * Resolve model alias to full model string.
+ * If the input is an alias (e.g., "haiku", "sonnet"), returns the full model string.
+ * Otherwise returns the input unchanged.
+ */
+export function resolveModelAlias(modelInput: string): string {
+  return MODEL_ABBREVIATIONS[modelInput] ?? modelInput;
+}
 
 /**
  * Validate model string format (must be "provider:model-id").

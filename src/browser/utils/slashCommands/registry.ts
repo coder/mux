@@ -10,6 +10,7 @@ import type {
 } from "./types";
 import minimist from "minimist";
 import { MODEL_ABBREVIATIONS } from "@/common/constants/knownModels";
+import { resolveModelAlias } from "@/common/utils/ai/models";
 
 /**
  * Parse multiline command input into first-line tokens and remaining message
@@ -274,9 +275,7 @@ const compactCommandDefinition: SlashCommandDefinition = {
     // Handle -m (model) flag: resolve abbreviation if present, otherwise use as-is
     let model: string | undefined;
     if (parsed.m !== undefined && typeof parsed.m === "string" && parsed.m.trim().length > 0) {
-      const modelInput = parsed.m.trim();
-      // Check if it's an abbreviation
-      model = MODEL_ABBREVIATIONS[modelInput] ?? modelInput;
+      model = resolveModelAlias(parsed.m.trim());
     }
 
     // Reject extra positional arguments UNLESS they're from multiline content
@@ -395,18 +394,10 @@ const modelCommandDefinition: SlashCommandDefinition = {
     if (cleanRemainingTokens.length === 1) {
       const token = cleanRemainingTokens[0];
 
-      // Check if it's an abbreviation
-      if (MODEL_ABBREVIATIONS[token]) {
-        return {
-          type: "model-set",
-          modelString: MODEL_ABBREVIATIONS[token],
-        };
-      }
-
-      // Otherwise treat as full model string (e.g., "anthropic:opus" or "anthropic:claude-opus-4-1")
+      // Resolve abbreviation if present, otherwise use as full model string
       return {
         type: "model-set",
-        modelString: token,
+        modelString: resolveModelAlias(token),
       };
     }
 
