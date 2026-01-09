@@ -590,8 +590,9 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           // Backend has already updated the config - reload projects to get updated state
           await refreshProjects();
 
-          // Reload workspace metadata
-          await loadWorkspaceMetadata();
+          // Workspace metadata subscription handles the removal automatically.
+          // No need to refetch all metadata - this avoids expensive post-compaction
+          // state checks for all workspaces.
 
           // If the removed workspace was selected (URL was on this workspace),
           // navigate to its project page instead of going home
@@ -610,14 +611,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         return { success: false, error: errorMessage };
       }
     },
-    [
-      currentWorkspaceId,
-      loadWorkspaceMetadata,
-      navigateToProject,
-      refreshProjects,
-      selectedWorkspace,
-      api,
-    ]
+    [currentWorkspaceId, navigateToProject, refreshProjects, selectedWorkspace, api]
   );
 
   /**
@@ -638,8 +632,9 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       try {
         const result = await api.workspace.updateTitle({ workspaceId, title: newTitle });
         if (result.success) {
-          // Reload workspace metadata to get the updated title
-          await loadWorkspaceMetadata();
+          // Workspace metadata subscription handles the title update automatically.
+          // No need to refetch all metadata - this avoids expensive post-compaction
+          // state checks for all workspaces (which can be slow for SSH workspaces).
           return { success: true };
         } else {
           console.error("Failed to update workspace title:", result.error);
@@ -651,7 +646,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         return { success: false, error: errorMessage };
       }
     },
-    [loadWorkspaceMetadata, api]
+    [api]
   );
 
   const archiveWorkspace = useCallback(
@@ -682,8 +677,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       try {
         const result = await api.workspace.unarchive({ workspaceId });
         if (result.success) {
-          // Reload workspace metadata to get the updated state
-          await loadWorkspaceMetadata();
+          // Workspace metadata subscription handles the state update automatically.
           return { success: true };
         } else {
           console.error("Failed to unarchive workspace:", result.error);
@@ -695,7 +689,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         return { success: false, error: errorMessage };
       }
     },
-    [loadWorkspaceMetadata, api]
+    [api]
   );
 
   const refreshWorkspaceMetadata = useCallback(async () => {
