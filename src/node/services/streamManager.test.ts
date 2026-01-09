@@ -323,6 +323,93 @@ describe("StreamManager - Concurrent Stream Prevention", () => {
       expect(ensureOperations[i + 1]).toBe("ensure-end");
     }
   });
+
+  test("should honor abortSignal before atomic stream creation", async () => {
+    const workspaceId = "test-workspace-abort-before-create";
+
+    let createCalled = false;
+    let processCalled = false;
+    let streamStartEmitted = false;
+
+    streamManager.on("stream-start", () => {
+      streamStartEmitted = true;
+    });
+
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    let tempDirStartedResolve: (() => void) | undefined;
+    const tempDirStarted = new Promise<void>((resolve) => {
+      tempDirStartedResolve = resolve;
+    });
+
+    const replaceTempDirResult = Reflect.set(
+      streamManager,
+      "createTempDirForStream",
+      async (..._args: unknown[]): Promise<string> => {
+        tempDirStartedResolve?.();
+        await sleep(50);
+        return "/tmp/mock-stream-temp";
+      }
+    );
+
+    if (!replaceTempDirResult) {
+      throw new Error("Failed to mock StreamManager.createTempDirForStream");
+    }
+
+    const replaceCreateResult = Reflect.set(
+      streamManager,
+      "createStreamAtomically",
+      (..._args: unknown[]): never => {
+        createCalled = true;
+        throw new Error("createStreamAtomically should not be called");
+      }
+    );
+
+    if (!replaceCreateResult) {
+      throw new Error("Failed to mock StreamManager.createStreamAtomically");
+    }
+
+    const replaceProcessResult = Reflect.set(
+      streamManager,
+      "processStreamWithCleanup",
+      (..._args: unknown[]): Promise<void> => {
+        processCalled = true;
+        return Promise.resolve();
+      }
+    );
+
+    if (!replaceProcessResult) {
+      throw new Error("Failed to mock StreamManager.processStreamWithCleanup");
+    }
+
+    const abortController = new AbortController();
+
+    const anthropic = createAnthropic({ apiKey: "dummy-key" });
+    const model = anthropic("claude-sonnet-4-5");
+
+    const startPromise = streamManager.startStream(
+      workspaceId,
+      [{ role: "user", content: "test" }],
+      model,
+      KNOWN_MODELS.SONNET.id,
+      1,
+      "system",
+      runtime,
+      "test-msg-abort",
+      abortController.signal,
+      {}
+    );
+
+    await tempDirStarted;
+    abortController.abort();
+
+    const result = await startPromise;
+    expect(result.success).toBe(true);
+    expect(createCalled).toBe(false);
+    expect(processCalled).toBe(false);
+    expect(streamStartEmitted).toBe(false);
+    expect(streamManager.isStreaming(workspaceId)).toBe(false);
+  });
 });
 
 describe("StreamManager - Unavailable Tool Handling", () => {
