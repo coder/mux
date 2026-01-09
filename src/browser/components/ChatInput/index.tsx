@@ -1433,6 +1433,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     type: "error",
                     message: `/${parsed.command} produced no output`,
                   });
+                  setInput(messageText); // Restore so user can edit and retry
                 }
               }
             } catch (error) {
