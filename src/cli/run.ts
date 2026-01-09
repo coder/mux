@@ -825,6 +825,40 @@ async function main(): Promise<number> {
       }
       if (displayUsage) {
         usageHistory.push(displayUsage);
+
+        // Budget enforcement at stream-end for providers that don't emit usage-delta events
+        // Use cumulative cost across all messages in this run (not just the current message)
+        if (budget !== undefined && !budgetExceeded) {
+          const totalUsage = sumUsageHistory(usageHistory);
+          const cost = getTotalCost(totalUsage);
+          const hasTokens = totalUsage
+            ? totalUsage.input.tokens +
+                totalUsage.output.tokens +
+                totalUsage.cached.tokens +
+                totalUsage.cacheCreate.tokens +
+                totalUsage.reasoning.tokens >
+              0
+            : false;
+
+          if (hasTokens && cost === undefined) {
+            const errMsg = `Cannot enforce budget: unknown pricing for model "${payload.metadata.model ?? model}"`;
+            emitJsonLine({
+              type: "budget-error",
+              error: errMsg,
+              model: payload.metadata.model ?? model,
+            });
+            rejectStream(new Error(errMsg));
+            return;
+          }
+
+          if (cost !== undefined && cost > budget) {
+            budgetExceeded = true;
+            const msg = `Budget exceeded ($${cost.toFixed(2)} of $${budget.toFixed(2)}) - stopping`;
+            emitJsonLine({ type: "budget-exceeded", spent: cost, budget });
+            writeHumanLineClosed(`\n${chalk.yellow(msg)}`);
+            // Don't interrupt - stream is already ending
+          }
+        }
       }
       latestUsageDelta.delete(payload.messageId);
 
@@ -886,14 +920,21 @@ async function main(): Promise<number> {
   try {
     await sendAndAwait(message, buildSendOptions(initialMode));
 
-    const planWasProposed = planProposed;
-    planProposed = false;
-    if (initialMode === "plan" && !planWasProposed) {
-      throw new Error("Plan mode was requested, but the assistant never proposed a plan.");
-    }
-    if (planWasProposed) {
-      writeHumanLineClosed("\n[auto] Plan received. Approving and switching to execute mode...\n");
-      await sendAndAwait("Plan approved. Execute it.", buildSendOptions("exec"));
+    // Stop if budget was exceeded during first message
+    if (budgetExceeded) {
+      // Skip plan auto-approval and any follow-up work
+    } else {
+      const planWasProposed = planProposed;
+      planProposed = false;
+      if (initialMode === "plan" && !planWasProposed) {
+        throw new Error("Plan mode was requested, but the assistant never proposed a plan.");
+      }
+      if (planWasProposed) {
+        writeHumanLineClosed(
+          "\n[auto] Plan received. Approving and switching to execute mode...\n"
+        );
+        await sendAndAwait("Plan approved. Execute it.", buildSendOptions("exec"));
+      }
     }
 
     // Output final result for --quiet mode

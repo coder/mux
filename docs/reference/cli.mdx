@@ -62,6 +62,7 @@ mux run --json "List all TypeScript files" | jq '.type'
 | `--mode <mode>`        |       | Agent mode: `plan` or `exec`                                    | `exec`            |
 | `--thinking <level>`   | `-t`  | Thinking level: `off`, `low`, `medium`, `high`                  | `medium`          |
 | `--timeout <duration>` |       | Timeout (e.g., `5m`, `300s`, `300000`)                          | No timeout        |
+| `--budget <usd>`       | `-b`  | Stop when session cost exceeds budget (USD)                     | No limit          |
 | `--experiment <id>`    | `-e`  | Enable experiment (repeatable)                                  | None              |
 | `--json`               |       | Output NDJSON for programmatic use                              | Off               |
 | `--quiet`              | `-q`  | Only output final result                                        | Off               |
@@ -93,6 +94,9 @@ mux run -r "ssh dev@staging.example.com" -d /app "Update dependencies"
 
 # Scripted usage with timeout
 mux run --json --timeout 5m "Generate API documentation" > output.jsonl
+
+# Limit spending to $2.00
+mux run --budget 2.00 "Refactor the authentication module"
 ```
 
 ## `mux server`
