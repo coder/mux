@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { SplashScreen } from "./SplashScreen";
 import { useAPI } from "@/browser/contexts/API";
+import { getStoredAuthToken } from "@/browser/components/AuthTokenModal";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 
 interface OAuthMessage {
@@ -10,6 +11,10 @@ interface OAuthMessage {
   error?: unknown;
 }
 
+function getServerAuthToken(): string | null {
+  const urlToken = new URLSearchParams(window.location.search).get("token")?.trim();
+  return urlToken?.length ? urlToken : getStoredAuthToken();
+}
 function getBackendBaseUrl(): string {
   // eslint-disable-next-line @typescript-eslint/ban-ts-comment, @typescript-eslint/prefer-ts-expect-error
   // @ts-ignore - import.meta is available in Vite
@@ -84,7 +89,10 @@ export function LoginWithMuxGatewaySplash(props: { onDismiss: () => void }) {
       setStatus("starting");
 
       const startUrl = new URL("/auth/mux-gateway/start", backendBaseUrl);
-      const res = await fetch(startUrl);
+      const authToken = getServerAuthToken();
+      const res = await fetch(startUrl, {
+        headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
+      });
 
       const contentType = res.headers.get("content-type") ?? "";
       if (!contentType.includes("application/json")) {

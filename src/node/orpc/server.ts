@@ -19,7 +19,7 @@ import { OpenAPIHandler } from "@orpc/openapi/node";
 import { ZodToJsonSchemaConverter } from "@orpc/zod/zod4";
 import { router, type AppRouter } from "@/node/orpc/router";
 import type { ORPCContext } from "@/node/orpc/context";
-import { extractWsHeaders } from "@/node/orpc/authMiddleware";
+import { extractWsHeaders, safeEq } from "@/node/orpc/authMiddleware";
 import { VERSION } from "@/version";
 import { log } from "@/node/services/log";
 
@@ -84,6 +84,11 @@ function formatHostForUrl(host: string): string {
   return trimmed;
 }
 
+function extractBearerToken(header: string | undefined): string | null {
+  if (!header?.toLowerCase().startsWith("bearer ")) return null;
+  const token = header.slice(7).trim();
+  return token.length ? token : null;
+}
 function injectBaseHref(indexHtml: string, baseHref: string): string {
   // Avoid double-injecting if the HTML already has a base tag.
   if (/<base\b/i.test(indexHtml)) {
@@ -169,6 +174,15 @@ export async function createOrpcServer({
   // These are raw Express routes (not oRPC) because the OAuth provider cannot
   // send a mux Bearer token during the redirect callback.
   app.get("/auth/mux-gateway/start", (req, res) => {
+    if (authToken?.trim()) {
+      const expectedToken = authToken.trim();
+      const presentedToken = extractBearerToken(req.header("authorization"));
+      if (!presentedToken || !safeEq(presentedToken, expectedToken)) {
+        res.status(401).json({ error: "Invalid or missing auth token" });
+        return;
+      }
+    }
+
     const hostHeader = req.get("x-forwarded-host") ?? req.get("host");
     const host = hostHeader?.split(",")[0]?.trim();
     if (!host) {

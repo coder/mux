@@ -9,6 +9,7 @@ import type { ProviderName } from "@/common/constants/providers";
 import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
 import { useAPI } from "@/browser/contexts/API";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { getStoredAuthToken } from "@/browser/components/AuthTokenModal";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { isProviderSupported, useGateway } from "@/browser/hooks/useGatewayModels";
 import { Button } from "@/browser/components/ui/button";
@@ -41,6 +42,10 @@ interface OAuthMessage {
   error?: unknown;
 }
 
+function getServerAuthToken(): string | null {
+  const urlToken = new URLSearchParams(window.location.search).get("token")?.trim();
+  return urlToken?.length ? urlToken : getStoredAuthToken();
+}
 function getBackendBaseUrl(): string {
   // eslint-disable-next-line @typescript-eslint/ban-ts-comment, @typescript-eslint/prefer-ts-expect-error
   // @ts-ignore - import.meta is available in Vite
@@ -267,7 +272,10 @@ export function ProvidersSection() {
       setMuxGatewayLoginStatus("starting");
 
       const startUrl = new URL("/auth/mux-gateway/start", backendBaseUrl);
-      const res = await fetch(startUrl);
+      const authToken = getServerAuthToken();
+      const res = await fetch(startUrl, {
+        headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
+      });
 
       const contentType = res.headers.get("content-type") ?? "";
       if (!contentType.includes("application/json")) {
