@@ -149,9 +149,12 @@ export class TerminalSessionRouter {
 
   /**
    * Resize a terminal session.
+   *
+   * Returns a promise that resolves when the backend handler has completed.
+   * (This is used by TerminalView to keep frontend and PTY dimensions in sync.)
    */
-  resize(sessionId: string, cols: number, rows: number): void {
-    void this.api.terminal.resize({ sessionId, cols, rows });
+  resize(sessionId: string, cols: number, rows: number): Promise<void> {
+    return this.api.terminal.resize({ sessionId, cols, rows });
   }
 
   /**

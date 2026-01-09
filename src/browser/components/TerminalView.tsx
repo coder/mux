@@ -118,7 +118,7 @@ export function TerminalView({
 
     // Send initial resize to sync PTY dimensions
     const { cols, rows } = term;
-    router.resize(sessionId, cols, rows);
+    void router.resize(sessionId, cols, rows);
 
     return unsubscribe;
   }, [visible, terminalReady, sessionId, router]);
@@ -322,54 +322,84 @@ export function TerminalView({
 
     let lastCols = 0;
     let lastRows = 0;
-    let resizeTimeoutId: ReturnType<typeof setTimeout> | null = null;
-    let pendingResize: { cols: number; rows: number } | null = null;
+    let resizeInFlight = false;
+    let pendingResize = false;
+    let rafId: number | null = null;
+    let disposed = false;
 
-    // Use both ResizeObserver (for container changes) and window resize (as backup)
-    const handleResize = () => {
-      if (fitAddonRef.current && termRef.current) {
-        try {
-          // Resize terminal UI to fit container immediately for responsive UX
-          fitAddonRef.current.fit();
+    // PTY-first resize: calculate desired dimensions, resize the PTY, then resize the
+    // frontend terminal to match.
+    //
+    // This eliminates the race that causes output clobbering when the frontend resizes
+    // before the PTY (shell output is formatted for old dimensions but displayed in the
+    // already-resized frontend terminal).
+    const doResize = async () => {
+      if (!fitAddonRef.current) return;
 
-          // Get new dimensions
-          const { cols, rows } = termRef.current;
+      // Calculate what size we want without applying it yet.
+      // (fit() would resize the frontend immediately, reintroducing the race.)
+      const proposed = fitAddonRef.current.proposeDimensions();
+      if (!proposed) return;
 
-          // Only process if dimensions actually changed
-          if (cols === lastCols && rows === lastRows) {
-            return;
-          }
+      const { cols, rows } = proposed;
+      if (cols === lastCols && rows === lastRows) return;
 
-          lastCols = cols;
-          lastRows = rows;
+      // Record the requested dimensions up front so we don't re-request the same resize
+      // if more resize events arrive while awaiting the backend.
+      lastCols = cols;
+      lastRows = rows;
 
-          // Store pending resize
-          pendingResize = { cols, rows };
+      try {
+        // Resize PTY first - wait for backend to confirm.
+        await router.resize(sessionId, cols, rows);
 
-          // Always debounce PTY resize to prevent vim corruption
-          // Clear any pending timeout and set a new one
-          if (resizeTimeoutId !== null) {
-            clearTimeout(resizeTimeoutId);
-          }
-
-          resizeTimeoutId = setTimeout(() => {
-            if (pendingResize) {
-              // Double requestAnimationFrame to ensure vim is ready
-              requestAnimationFrame(() => {
-                requestAnimationFrame(() => {
-                  if (pendingResize) {
-                    router.resize(sessionId, pendingResize.cols, pendingResize.rows);
-                    pendingResize = null;
-                  }
-                });
-              });
-            }
-            resizeTimeoutId = null;
-          }, 300); // 300ms debounce - enough time for vim to stabilize
-        } catch (err) {
-          console.error("[TerminalView] Error fitting terminal:", err);
+        if (disposed) {
+          return;
         }
+
+        // Now resize frontend to match the PTY *exactly*.
+        // We intentionally do NOT call fit() here because it can recompute dimensions
+        // (if the container changed while awaiting) and would resize the frontend without
+        // resizing the PTY, reintroducing the mismatch.
+        termRef.current?.resize(cols, rows);
+      } catch (err) {
+        // Allow future retries if the resize call failed.
+        lastCols = 0;
+        lastRows = 0;
+        console.error("[TerminalView] Error resizing terminal:", err);
       }
+    };
+
+    const handleResize = () => {
+      if (disposed) {
+        return;
+      }
+
+      // If a resize is already in flight, mark that we need another one
+      if (resizeInFlight) {
+        pendingResize = true;
+        return;
+      }
+
+      resizeInFlight = true;
+      pendingResize = false;
+
+      // Use RAF to batch rapid resize events (e.g., window drag)
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+      }
+
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+
+        void doResize().finally(() => {
+          resizeInFlight = false;
+          // If another resize was requested while we were busy, handle it
+          if (pendingResize) {
+            handleResize();
+          }
+        });
+      });
     };
 
     const resizeObserver = new ResizeObserver(handleResize);
@@ -379,8 +409,9 @@ export function TerminalView({
     window.addEventListener("resize", handleResize);
 
     return () => {
-      if (resizeTimeoutId !== null) {
-        clearTimeout(resizeTimeoutId);
+      disposed = true;
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
       }
       resizeObserver.disconnect();
       window.removeEventListener("resize", handleResize);
