@@ -30,7 +30,12 @@ permissions:
 jobs:
   auto-label:
     runs-on: ubuntu-latest
-    if: github.actor != 'dependabot[bot]' && github.actor != 'github-actions[bot]'
+    # SECURITY: Skip bots and fork PRs. Fork PRs with pull_request_target have
+    # access to secrets, so we must explicitly block them to prevent prompt injection.
+    if: |
+      github.actor != 'dependabot[bot]' &&
+      github.actor != 'github-actions[bot]' &&
+      (github.event_name != 'pull_request_target' || github.event.pull_request.head.repo.fork == false)
 
     steps:
       # SECURITY: checkout base branch only (default), never PR code.
