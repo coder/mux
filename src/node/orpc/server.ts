@@ -94,6 +94,10 @@ function injectBaseHref(indexHtml: string, baseHref: string): string {
   return indexHtml.replace(/<head[^>]*>/i, (match) => `${match}\n    <base href="${baseHref}" />`);
 }
 
+function escapeJsonForHtmlScript(value: unknown): string {
+  // Prevent `</script>` injection when embedding untrusted strings in an inline <script>.
+  return JSON.stringify(value).replaceAll("<", "\\u003c");
+}
 function escapeHtml(input: string): string {
   return input
     .replaceAll("&", "&amp;")
@@ -197,6 +201,8 @@ export async function createOrpcServer({
       error: result.success ? null : result.error,
     };
 
+    const payloadJson = escapeJsonForHtmlScript(payload);
+
     const title = result.success ? "Login complete" : "Login failed";
     const description = result.success
       ? "You can return to Mux. You may now close this tab."
@@ -236,7 +242,7 @@ export async function createOrpcServer({
 
     <script>
       (() => {
-        const payload = ${JSON.stringify(payload)};
+        const payload = ${payloadJson};
         const ok = payload.ok === true;
 
         try {

@@ -20,4 +20,4 @@ export const SPLASH_REGISTRY: SplashConfig[] = [
 export const DISABLE_SPLASH_SCREENS =
   // eslint-disable-next-line @typescript-eslint/ban-ts-comment, @typescript-eslint/prefer-ts-expect-error
   // @ts-ignore - import.meta is available in Vite
-  import.meta.env.MODE === "test";
+  import.meta.env.MODE === "test" || (typeof window !== "undefined" && window.api?.isE2E === true);
