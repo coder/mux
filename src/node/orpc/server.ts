@@ -169,13 +169,21 @@ export async function createOrpcServer({
   // These are raw Express routes (not oRPC) because the OAuth provider cannot
   // send a mux Bearer token during the redirect callback.
   app.get("/auth/mux-gateway/start", (req, res) => {
-    const host = req.get("host");
+    const hostHeader = req.get("x-forwarded-host") ?? req.get("host");
+    const host = hostHeader?.split(",")[0]?.trim();
     if (!host) {
       res.status(400).json({ error: "Missing Host header" });
       return;
     }
 
-    const redirectUri = `${req.protocol}://${host}/auth/mux-gateway/callback`;
+    // When mux is running behind a reverse proxy, the terminating proxy may set
+    // X-Forwarded-Proto / X-Forwarded-Host, while the direct connection to mux
+    // is plain HTTP.
+    const protoHeader = req.get("x-forwarded-proto");
+    const forwardedProto = protoHeader?.split(",")[0]?.trim();
+    const proto = forwardedProto?.length ? forwardedProto : req.protocol;
+
+    const redirectUri = `${proto}://${host}/auth/mux-gateway/callback`;
     const { authorizeUrl, state } = context.muxGatewayOauthService.startServerFlow({ redirectUri });
     res.json({ authorizeUrl, state });
   });
