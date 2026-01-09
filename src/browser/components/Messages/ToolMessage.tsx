@@ -3,6 +3,7 @@ import type { DisplayedMessage } from "@/common/types/message";
 import type { ReviewNoteData } from "@/common/types/review";
 import type { BashOutputGroupInfo } from "@/browser/utils/messages/messageUtils";
 import { getToolComponent } from "../tools/shared/getToolComponent";
+import { HookOutputDisplay, extractHookOutput } from "../tools/shared/HookOutputDisplay";
 
 interface ToolMessageProps {
   message: DisplayedMessage & { type: "tool" };
@@ -42,6 +43,9 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
       ? bashOutputGroup.position
       : undefined;
 
+  // Extract hook output if present (only shown when hook produced output)
+  const hookOutput = extractHookOutput(result);
+
   return (
     <div className={className}>
       <ToolComponent
@@ -68,6 +72,7 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
         // CodeExecution-specific
         nestedCalls={message.nestedCalls}
       />
+      {hookOutput && <HookOutputDisplay output={hookOutput} />}
     </div>
   );
 };

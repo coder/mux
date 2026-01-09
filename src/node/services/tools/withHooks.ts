@@ -15,6 +15,7 @@
 import assert from "@/common/utils/assert";
 import type { Tool } from "ai";
 import type { Runtime } from "@/node/runtime/Runtime";
+import type { WithHookOutput, MayHaveHookOutput } from "@/common/types/tools";
 import {
   getHookPath,
   getPreHookPath,
@@ -309,17 +310,17 @@ function isAsyncIterable<T>(value: unknown): value is AsyncIterable<T> {
 function appendHookOutput<T>(
   result: T | AsyncIterable<T> | undefined,
   output: string
-): T | AsyncIterable<T> {
+): MayHaveHookOutput<T> | AsyncIterable<T> {
   if (result === undefined) {
-    const errorResult: { error: string } = { error: output };
-    return errorResult as T;
+    const errorResult: WithHookOutput & { error: string } = { error: output, hook_output: output };
+    return errorResult as unknown as MayHaveHookOutput<T>;
   }
 
   // AsyncIterable (streaming) results: preserve streaming while attaching hook_output.
   if (isAsyncIterable<T>(result)) {
     const iterable = result;
     const iteratorFn = iterable[Symbol.asyncIterator].bind(iterable);
-    const wrappedIterable: AsyncIterable<T> & { hook_output: string } = {
+    const wrappedIterable: AsyncIterable<T> & WithHookOutput = {
       hook_output: output,
       [Symbol.asyncIterator]: iteratorFn,
     };
@@ -328,17 +329,17 @@ function appendHookOutput<T>(
 
   // If result is an object, add hook_output field
   if (typeof result === "object" && result !== null) {
-    const withOutput: T & { hook_output: string } = {
+    const withOutput: MayHaveHookOutput<T> = {
       ...(result as T),
       hook_output: output,
     };
-    return withOutput as T;
+    return withOutput;
   }
 
   // For primitive results, wrap in object
-  const wrapped: { result: T; hook_output: string } = {
+  const wrapped: { result: T } & WithHookOutput = {
     result,
     hook_output: output,
   };
-  return wrapped as unknown as T;
+  return wrapped as unknown as MayHaveHookOutput<T>;
 }

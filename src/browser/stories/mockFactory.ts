@@ -409,6 +409,27 @@ export function createProposePlanTool(
   };
 }
 
+/**
+ * Add hook_output to a tool part's output.
+ * Use this to simulate a tool hook that ran and produced output.
+ * Only works on tool parts with state="output-available".
+ */
+export function withHookOutput(toolPart: MuxPart, hookOutput: string): MuxPart {
+  if (toolPart.type !== "dynamic-tool" || toolPart.state !== "output-available") {
+    return toolPart;
+  }
+  const existingOutput = toolPart.output;
+  return {
+    ...toolPart,
+    output: {
+      ...(typeof existingOutput === "object" && existingOutput !== null
+        ? existingOutput
+        : { result: existingOutput }),
+      hook_output: hookOutput,
+    },
+  };
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // CODE EXECUTION (PTC) TOOL FACTORIES
 // ═══════════════════════════════════════════════════════════════════════════════

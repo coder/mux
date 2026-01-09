@@ -325,3 +325,21 @@ export type NotifyToolResult =
       success: false;
       error: string;
     };
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Hook Output Types
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Tool results may include hook_output when a tool hook (pre/post) produced output.
+ * This is added by withHooks.ts in the backend.
+ */
+export interface WithHookOutput {
+  hook_output?: string;
+}
+
+/**
+ * Type utility to add hook_output to any tool result type.
+ * Use this when you need to represent a result that may have hook output attached.
+ */
+export type MayHaveHookOutput<T> = T & WithHookOutput;
