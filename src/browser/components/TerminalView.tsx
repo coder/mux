@@ -462,6 +462,8 @@ export function TerminalView({
           caretColor: "transparent",
           // Hide terminal content while loading to prevent flash
           visibility: showLoading ? "hidden" : "visible",
+          // Add padding so text doesn't touch edges (FitAddon accounts for this)
+          padding: 4,
         }}
       />
       {/* Loading overlay - shows until we receive screen state from backend */}
