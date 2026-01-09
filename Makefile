@@ -161,10 +161,10 @@ dev-server: node_modules/.installed build-main ## Start server mode with hot rel
 	@echo ""
 	@echo "For remote access: make dev-server VITE_HOST=0.0.0.0 BACKEND_HOST=0.0.0.0"
 	@# On Windows, use npm run because bunx doesn't correctly pass arguments
-	@npmx concurrently -k \
-		"npmx nodemon --watch src --watch tsconfig.main.json --watch tsconfig.json --ext ts,tsx,json --ignore dist --ignore node_modules --exec node scripts/build-main-watch.js" \
+	@npm x concurrently -k \
+		"npm x nodemon --watch src --watch tsconfig.main.json --watch tsconfig.json --ext ts,tsx,json --ignore dist --ignore node_modules --exec node scripts/build-main-watch.js" \
 		'npx esbuild src/cli/api.ts $(ESBUILD_CLI_FLAGS) --watch' \
-		"npmx nodemon --watch dist/cli/index.js --watch dist/cli/server.js --delay 500ms --exec \"node dist/cli/index.js server --host $(or $(BACKEND_HOST),localhost) --port $(or $(BACKEND_PORT),3000)\"" \
+		"npm x nodemon --watch dist/cli/index.js --watch dist/cli/server.js --delay 500ms --exec \"node dist/cli/index.js server --host $(or $(BACKEND_HOST),localhost) --port $(or $(BACKEND_PORT),3000)\"" \
 		"$(SHELL) -lc \"MUX_VITE_HOST=$(or $(VITE_HOST),127.0.0.1) MUX_VITE_PORT=$(or $(VITE_PORT),5173) VITE_BACKEND_URL=http://$(or $(BACKEND_HOST),localhost):$(or $(BACKEND_PORT),3000) vite\""
 else
 dev-server: node_modules/.installed build-main ## Start server mode with hot reload (backend :3000 + frontend :5173). Use VITE_HOST=0.0.0.0 BACKEND_HOST=0.0.0.0 for remote access
@@ -283,7 +283,7 @@ lint-fix: node_modules/.installed src/version.ts $(BUILTIN_SKILLS_GENERATED) ## 
 ifeq ($(OS),Windows_NT)
 typecheck: node_modules/.installed src/version.ts $(BUILTIN_AGENTS_GENERATED) $(BUILTIN_SKILLS_GENERATED) ## Run TypeScript type checking (uses tsgo for 10x speedup)
 	@# On Windows, use npm run because bun x doesn't correctly pass arguments
-	@npmx concurrently -g \
+	@npm x concurrently -g \
 		"$(TSGO) --noEmit" \
 		"$(TSGO) --noEmit -p tsconfig.main.json"
 else
