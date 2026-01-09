@@ -10,7 +10,11 @@ import {
 import { createClient } from "@/common/orpc/client";
 import { RPCLink as WebSocketLink } from "@orpc/client/websocket";
 import { RPCLink as MessagePortLink } from "@orpc/client/message-port";
-import { getStoredAuthToken, clearStoredAuthToken } from "@/browser/components/AuthTokenModal";
+import {
+  getStoredAuthToken,
+  setStoredAuthToken,
+  clearStoredAuthToken,
+} from "@/browser/components/AuthTokenModal";
 
 type APIClient = ReturnType<typeof createClient>;
 
@@ -117,7 +121,13 @@ export const APIProvider = (props: APIProviderProps) => {
   });
   const [authToken, setAuthToken] = useState<string | null>(() => {
     const urlParams = new URLSearchParams(window.location.search);
-    return urlParams.get("token") ?? getStoredAuthToken();
+    const urlToken = urlParams.get("token")?.trim();
+    if (urlToken) {
+      setStoredAuthToken(urlToken);
+      return urlToken;
+    }
+
+    return getStoredAuthToken();
   });
 
   const cleanupRef = useRef<(() => void) | null>(null);
@@ -295,6 +305,7 @@ export const APIProvider = (props: APIProviderProps) => {
 
   const authenticate = useCallback(
     (token: string) => {
+      setStoredAuthToken(token);
       setAuthToken(token);
       connect(token);
     },
