@@ -36,7 +36,6 @@ function applyGatewayTransform(modelId: string, gateway: GatewayState): string {
 
 interface ExperimentValues {
   postCompactionContext: boolean | undefined;
-  programmaticToolCalling: boolean | undefined;
   programmaticToolCallingExclusive: boolean | undefined;
 }
 
@@ -78,7 +77,6 @@ function constructSendMessageOptions(
     providerOptions,
     experiments: {
       postCompactionContext: experimentValues.postCompactionContext,
-      programmaticToolCalling: experimentValues.programmaticToolCalling,
       programmaticToolCallingExclusive: experimentValues.programmaticToolCallingExclusive,
     },
   };
@@ -124,9 +122,6 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
   // Subscribe to local override state so toggles apply immediately.
   // If undefined, the backend will apply the PostHog assignment.
   const postCompactionContext = useExperimentOverrideValue(EXPERIMENT_IDS.POST_COMPACTION_CONTEXT);
-  const programmaticToolCalling = useExperimentOverrideValue(
-    EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING
-  );
   const programmaticToolCallingExclusive = useExperimentOverrideValue(
     EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING_EXCLUSIVE
   );
@@ -144,7 +139,7 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
     providerOptions,
     defaultModel,
     gateway,
-    { postCompactionContext, programmaticToolCalling, programmaticToolCallingExclusive }
+    { postCompactionContext, programmaticToolCallingExclusive }
   );
 
   return {

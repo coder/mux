@@ -81,12 +81,7 @@ ${muxTypes}
 **Security:** The sandbox has no access to \`require\`, \`import\`, \`process\`, \`fetch\`, or filesystem outside of \`mux.*\` tools.`,
 
     inputSchema: z.object({
-      code: z
-        .string()
-        .min(1)
-        .describe(
-          "JavaScript code to execute. All mux.* functions are async. Use 'return' for final result."
-        ),
+      code: z.string().min(1).describe("JavaScript code to execute in the sandbox"),
       timeout_secs: z
         .number()
         .int()

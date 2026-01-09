@@ -75,7 +75,7 @@ export interface ToolConfiguration {
   /** Enable agent_report tool (only valid for child task workspaces) */
   enableAgentReport?: boolean;
   /** PTC experiments inherited from parent (for subagent spawning) */
-  experiments?: { programmaticToolCalling?: boolean; programmaticToolCallingExclusive?: boolean };
+  experiments?: { programmaticToolCallingExclusive?: boolean };
 }
 
 /**

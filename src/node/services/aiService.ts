@@ -133,7 +133,7 @@ type FetchWithBunExtensions = typeof fetch & {
 const globalFetchWithExtras = fetch as FetchWithBunExtensions;
 const defaultFetchWithExtras = defaultFetchWithUnlimitedTimeout as FetchWithBunExtensions;
 
-// Lazy-loaded PTC modules (only loaded when experiment is enabled)
+// Lazy-loaded PTC modules (loaded on first message send, not at startup)
 // This avoids loading typescript/prettier at startup which causes issues:
 // - Integration tests fail without --experimental-vm-modules (prettier uses dynamic imports)
 // - Smoke tests fail if typescript isn't in production bundle
@@ -1015,7 +1015,7 @@ export class AIService extends EventEmitter {
     recordFileState?: (filePath: string, state: FileState) => void,
     changedFileAttachments?: EditedFileAttachment[],
     postCompactionAttachments?: PostCompactionAttachment[] | null,
-    experiments?: { programmaticToolCalling?: boolean; programmaticToolCallingExclusive?: boolean },
+    experiments?: { programmaticToolCallingExclusive?: boolean },
     disableWorkspaceAgents?: boolean,
     hasQueuedMessage?: () => boolean
   ): Promise<Result<void, SendMessageError>> {
@@ -1534,52 +1534,49 @@ export class AIService extends EventEmitter {
       // ToolBridge so the mux.* API only exposes policy-allowed tools.
       const policyFilteredTools = applyToolPolicy(allTools, effectiveToolPolicy);
 
-      // Handle PTC experiments - add or replace tools with code_execution
+      // Add code_execution tool (always available, unless exclusive mode replaces other tools)
       let toolsForModel = policyFilteredTools;
-      if (experiments?.programmaticToolCalling || experiments?.programmaticToolCallingExclusive) {
-        try {
-          // Lazy-load PTC modules only when experiments are enabled
-          const ptc = await getPTCModules();
+      try {
+        const ptc = await getPTCModules();
 
-          // Create emit callback that forwards nested events to stream
-          // Only forward tool-call-start/end events, not console events
-          const emitNestedEvent = (event: PTCEventWithParent): void => {
-            if (event.type === "tool-call-start" || event.type === "tool-call-end") {
-              this.streamManager.emitNestedToolEvent(workspaceId, assistantMessageId, event);
-            }
-            // Console events are not streamed (appear in final result only)
-          };
-
-          // ToolBridge uses policy-filtered tools - sandbox only exposes allowed tools
-          const toolBridge = new ptc.ToolBridge(policyFilteredTools);
-
-          // Singleton runtime factory (WASM module is expensive to load)
-          ptc.runtimeFactory ??= new ptc.QuickJSRuntimeFactory();
-
-          const codeExecutionTool = await ptc.createCodeExecutionTool(
-            ptc.runtimeFactory,
-            toolBridge,
-            emitNestedEvent
-          );
-
-          if (experiments?.programmaticToolCallingExclusive) {
-            // Exclusive mode: code_execution is mandatory — it's the only way to use bridged
-            // tools. The experiment flag is the opt-in; policy cannot disable it here since
-            // that would leave no way to access tools. nonBridgeable is already policy-filtered.
-            const nonBridgeable = toolBridge.getNonBridgeableTools();
-            toolsForModel = { ...nonBridgeable, code_execution: codeExecutionTool };
-          } else {
-            // Supplement mode: add code_execution, then apply policy to determine final set.
-            // This correctly handles all policy combinations (require, enable, disable).
-            toolsForModel = applyToolPolicy(
-              { ...policyFilteredTools, code_execution: codeExecutionTool },
-              effectiveToolPolicy
-            );
+        // Create emit callback that forwards nested events to stream
+        // Only forward tool-call-start/end events, not console events
+        const emitNestedEvent = (event: PTCEventWithParent): void => {
+          if (event.type === "tool-call-start" || event.type === "tool-call-end") {
+            this.streamManager.emitNestedToolEvent(workspaceId, assistantMessageId, event);
           }
-        } catch (error) {
-          // Fall back to policy-filtered tools if PTC creation fails
-          log.error("Failed to create code_execution tool, falling back to base tools", { error });
+          // Console events are not streamed (appear in final result only)
+        };
+
+        // ToolBridge uses policy-filtered tools - sandbox only exposes allowed tools
+        const toolBridge = new ptc.ToolBridge(policyFilteredTools);
+
+        // Singleton runtime factory (WASM module is expensive to load)
+        ptc.runtimeFactory ??= new ptc.QuickJSRuntimeFactory();
+
+        const codeExecutionTool = await ptc.createCodeExecutionTool(
+          ptc.runtimeFactory,
+          toolBridge,
+          emitNestedEvent
+        );
+
+        if (experiments?.programmaticToolCallingExclusive) {
+          // Exclusive mode: code_execution is mandatory — it's the only way to use bridged
+          // tools. The experiment flag is the opt-in; policy cannot disable it here since
+          // that would leave no way to access tools. nonBridgeable is already policy-filtered.
+          const nonBridgeable = toolBridge.getNonBridgeableTools();
+          toolsForModel = { ...nonBridgeable, code_execution: codeExecutionTool };
+        } else {
+          // Default mode: add code_execution alongside other tools, then apply policy.
+          // This correctly handles all policy combinations (require, enable, disable).
+          toolsForModel = applyToolPolicy(
+            { ...policyFilteredTools, code_execution: codeExecutionTool },
+            effectiveToolPolicy
+          );
         }
+      } catch (error) {
+        // Fall back to policy-filtered tools if PTC creation fails
+        log.error("Failed to create code_execution tool, falling back to base tools", { error });
       }
 
       const tools = toolsForModel;

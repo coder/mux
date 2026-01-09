@@ -210,7 +210,6 @@ function buildExperimentsObject(experimentIds: string[]): SendMessageOptions["ex
   if (experimentIds.length === 0) return undefined;
 
   return {
-    programmaticToolCalling: experimentIds.includes("programmatic-tool-calling"),
     programmaticToolCallingExclusive: experimentIds.includes("programmatic-tool-calling-exclusive"),
     postCompactionContext: experimentIds.includes("post-compaction-context"),
   };

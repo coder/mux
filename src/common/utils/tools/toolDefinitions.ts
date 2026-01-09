@@ -761,11 +761,9 @@ export const TOOL_DEFINITIONS = {
     }),
   },
   code_execution: {
-    description:
-      "Execute JavaScript code in a sandboxed environment with access to Mux tools. " +
-      "Available for multi-tool workflows when PTC experiment is enabled.",
+    description: "Execute sandboxed JavaScript to batch tools and transform outputs.",
     schema: z.object({
-      code: z.string().min(1).describe("JavaScript code to execute in the PTC sandbox"),
+      code: z.string().min(1).describe("JavaScript code to execute"),
     }),
   },
   // #region NOTIFY_DOCS

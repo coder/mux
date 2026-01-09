@@ -81,7 +81,6 @@ export const WorkspaceConfigSchema = z.object({
   }),
   taskExperiments: z
     .object({
-      programmaticToolCalling: z.boolean().optional(),
       programmaticToolCallingExclusive: z.boolean().optional(),
     })
     .optional()

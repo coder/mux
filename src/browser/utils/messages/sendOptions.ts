@@ -94,7 +94,6 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
     disableWorkspaceAgents: disableWorkspaceAgents || undefined, // Only include if true
     experiments: {
       postCompactionContext: isExperimentEnabled(EXPERIMENT_IDS.POST_COMPACTION_CONTEXT),
-      programmaticToolCalling: isExperimentEnabled(EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING),
       programmaticToolCallingExclusive: isExperimentEnabled(
         EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING_EXCLUSIVE
       ),
