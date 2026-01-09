@@ -2,9 +2,11 @@ import React, { useState } from "react";
 import { ChevronRight } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import type { WithHookOutput } from "@/common/types/tools";
+import { formatDuration } from "./toolUtils";
 
 interface HookOutputDisplayProps {
   output: string;
+  durationMs?: number;
   className?: string;
 }
 
@@ -30,10 +32,24 @@ export function extractHookOutput(result: unknown): string | null {
 }
 
 /**
+ * Extract hook_duration_ms from a tool result object.
+ * Returns undefined if no duration or if the result is not an object with hook_duration_ms.
+ */
+export function extractHookDuration(result: unknown): number | undefined {
+  if (typeof result !== "object" || result === null) return undefined;
+  const duration = (result as WithHookOutput).hook_duration_ms;
+  return typeof duration === "number" && Number.isFinite(duration) ? duration : undefined;
+}
+
+/**
  * Subtle, expandable display for tool hook output.
  * Only shown when a hook produced output (non-empty).
  */
-export const HookOutputDisplay: React.FC<HookOutputDisplayProps> = ({ output, className }) => {
+export const HookOutputDisplay: React.FC<HookOutputDisplayProps> = ({
+  output,
+  durationMs,
+  className,
+}) => {
   const [expanded, setExpanded] = useState(false);
 
   return (
@@ -51,6 +67,9 @@ export const HookOutputDisplay: React.FC<HookOutputDisplayProps> = ({ output, cl
           className={cn("transition-transform duration-150", expanded && "rotate-90")}
         />
         <span className="font-medium">hook output</span>
+        {durationMs !== undefined && (
+          <span className="text-muted-foreground/50">• {formatDuration(durationMs)}</span>
+        )}
       </button>
       {expanded && (
         <pre

@@ -336,6 +336,8 @@ export type NotifyToolResult =
  */
 export interface WithHookOutput {
   hook_output?: string;
+  /** Total hook execution time (pre + post) in milliseconds */
+  hook_duration_ms?: number;
 }
 
 /**

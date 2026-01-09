@@ -152,9 +152,15 @@ export function withHooks<TParameters, TResult>(
     // Only post hook exists (no pre) - execute tool then run post
     const result = (await executeFn.call(tool, args, options)) as TResult;
     if (postHookPath) {
+      const postStart = Date.now();
       const postResult = await runPostHook(config.runtime, postHookPath, hookContext, result);
+      const hookDurationMs = Date.now() - postStart;
       if (postResult.output) {
-        return appendHookOutput(result, truncateHookOutput(postResult.output)) as TResult;
+        return appendHookOutput(
+          result,
+          truncateHookOutput(postResult.output),
+          hookDurationMs
+        ) as TResult;
       }
     }
     return result;
@@ -186,6 +192,8 @@ async function executeWithNewHooks<TResult>(
     postHookPath,
   });
 
+  const hookStart = Date.now();
+
   // Run pre-hook
   const preResult = await runPreHook(runtime, preHookPath, context);
 
@@ -205,6 +213,7 @@ async function executeWithNewHooks<TResult>(
   // Run post-hook if exists
   if (postHookPath) {
     const postResult = await runPostHook(runtime, postHookPath, context, result);
+    const hookDurationMs = Date.now() - hookStart;
     let hookOutput = postResult.output;
 
     if (!postResult.success && !hookOutput) {
@@ -218,7 +227,7 @@ async function executeWithNewHooks<TResult>(
         success: postResult.success,
         output: hookOutput,
       });
-      return appendHookOutput(result, hookOutput) as TResult;
+      return appendHookOutput(result, hookOutput, hookDurationMs) as TResult;
     }
   }
 
@@ -243,6 +252,7 @@ async function executeWithLegacyHook<TResult>(
 ): Promise<TResult> {
   log.debug("[withHooks] Running tool with legacy hook", { toolName, hookPath });
 
+  const hookStart = Date.now();
   const { result, hook } = await runWithHook<TResult>(
     runtime,
     hookPath,
@@ -257,6 +267,7 @@ async function executeWithLegacyHook<TResult>(
       },
     }
   );
+  const hookDurationMs = Date.now() - hookStart;
 
   // Hook blocked tool execution (exited before $MUX_EXEC)
   if (!hook.toolExecuted) {
@@ -284,7 +295,7 @@ async function executeWithLegacyHook<TResult>(
       success: hook.success,
       output: hookOutput,
     });
-    return appendHookOutput(result, hookOutput) as TResult;
+    return appendHookOutput(result, hookOutput, hookDurationMs) as TResult;
   }
 
   // Note: result could be TResult or AsyncIterable<TResult>
@@ -309,10 +320,15 @@ function isAsyncIterable<T>(value: unknown): value is AsyncIterable<T> {
  */
 function appendHookOutput<T>(
   result: T | AsyncIterable<T> | undefined,
-  output: string
+  output: string,
+  durationMs?: number
 ): MayHaveHookOutput<T> | AsyncIterable<T> {
   if (result === undefined) {
-    const errorResult: WithHookOutput & { error: string } = { error: output, hook_output: output };
+    const errorResult: WithHookOutput & { error: string } = {
+      error: output,
+      hook_output: output,
+      hook_duration_ms: durationMs,
+    };
     return errorResult as unknown as MayHaveHookOutput<T>;
   }
 
@@ -322,6 +338,7 @@ function appendHookOutput<T>(
     const iteratorFn = iterable[Symbol.asyncIterator].bind(iterable);
     const wrappedIterable: AsyncIterable<T> & WithHookOutput = {
       hook_output: output,
+      hook_duration_ms: durationMs,
       [Symbol.asyncIterator]: iteratorFn,
     };
     return wrappedIterable;
@@ -332,6 +349,7 @@ function appendHookOutput<T>(
     const withOutput: MayHaveHookOutput<T> = {
       ...(result as T),
       hook_output: output,
+      hook_duration_ms: durationMs,
     };
     return withOutput;
   }
@@ -340,6 +358,7 @@ function appendHookOutput<T>(
   const wrapped: { result: T } & WithHookOutput = {
     result,
     hook_output: output,
+    hook_duration_ms: durationMs,
   };
   return wrapped as unknown as MayHaveHookOutput<T>;
 }
