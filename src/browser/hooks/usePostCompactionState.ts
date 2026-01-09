@@ -28,14 +28,10 @@ export function usePostCompactionState(workspaceId: string): PostCompactionState
   const { api } = useAPI();
   const experimentEnabled = useExperimentValue(EXPERIMENT_IDS.POST_COMPACTION_CONTEXT);
 
-  // Initialize from cache for instant display
-  const [state, setState] = useState<{
-    planPath: string | null;
-    trackedFilePaths: string[];
-    excludedItems: Set<string>;
-  }>(() => {
+  // Helper to load state from cache for a workspace
+  const loadFromCache = (wsId: string) => {
     const cached = readPersistedState<CachedPostCompactionData | null>(
-      getPostCompactionStateKey(workspaceId),
+      getPostCompactionStateKey(wsId),
       null
     );
     return {
@@ -43,10 +39,16 @@ export function usePostCompactionState(workspaceId: string): PostCompactionState
       trackedFilePaths: cached?.trackedFilePaths ?? [],
       excludedItems: new Set(cached?.excludedItems ?? []),
     };
-  });
+  };
 
-  // Fetch fresh data when workspaceId changes (only if experiment enabled)
+  // Initialize from cache for instant display
+  const [state, setState] = useState(() => loadFromCache(workspaceId));
+
+  // Reset to new workspace's cache when workspaceId changes, then fetch fresh data
   useEffect(() => {
+    // Immediately reset to new workspace's cached state (or empty)
+    setState(loadFromCache(workspaceId));
+
     if (!api || !experimentEnabled) return;
 
     let cancelled = false;
