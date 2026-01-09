@@ -665,6 +665,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       setTitle: () => Promise.resolve(undefined),
     },
     terminal: {
+      listSessions: (_input: { workspaceId: string }) => Promise.resolve([]),
       create: () =>
         Promise.resolve({
           sessionId: "mock-session",
@@ -675,7 +676,8 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       close: () => Promise.resolve(undefined),
       resize: () => Promise.resolve(undefined),
       sendInput: () => undefined,
-      onOutput: async function* () {
+      attach: async function* (_input: { sessionId: string }) {
+        yield { type: "screenState", data: "" };
         yield* [];
         await new Promise<void>(() => undefined);
       },

@@ -4,7 +4,18 @@ import type { APIClient } from "@/browser/contexts/API";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
+import { getRightSidebarLayoutKey, RIGHT_SIDEBAR_TAB_KEY } from "@/common/constants/storage";
+import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { CommandIds } from "@/browser/utils/commandIds";
+import { isTabType, type TabType } from "@/browser/types/rightSidebar";
+import {
+  addToolToFocusedTabset,
+  getDefaultRightSidebarLayoutState,
+  parseRightSidebarLayoutState,
+  selectTabInTabset,
+  setFocusedTabset,
+  splitFocusedTabset,
+} from "@/browser/utils/rightSidebarLayout";
 
 import type { ProjectConfig } from "@/node/config";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
@@ -82,6 +93,39 @@ const section = {
   settings: COMMAND_SECTIONS.SETTINGS,
 };
 
+const getRightSidebarTabFallback = (): TabType => {
+  const raw = readPersistedState<string>(RIGHT_SIDEBAR_TAB_KEY, "costs");
+  return isTabType(raw) ? raw : "costs";
+};
+
+const updateRightSidebarLayout = (
+  workspaceId: string,
+  updater: (
+    state: ReturnType<typeof parseRightSidebarLayoutState>
+  ) => ReturnType<typeof parseRightSidebarLayoutState>
+) => {
+  const fallback = getRightSidebarTabFallback();
+  const defaultLayout = getDefaultRightSidebarLayoutState(fallback);
+
+  updatePersistedState<ReturnType<typeof parseRightSidebarLayoutState>>(
+    getRightSidebarLayoutKey(workspaceId),
+    (prev) => updater(parseRightSidebarLayoutState(prev, fallback)),
+    defaultLayout
+  );
+};
+
+const findFirstTerminalSessionTab = (
+  node: ReturnType<typeof parseRightSidebarLayoutState>["root"]
+): { tabsetId: string; tab: TabType } | null => {
+  if (node.type === "tabset") {
+    const tab = node.tabs.find((t) => t.startsWith("terminal:") && t !== "terminal");
+    return tab ? { tabsetId: node.id, tab } : null;
+  }
+
+  return (
+    findFirstTerminalSessionTab(node.children[0]) ?? findFirstTerminalSessionTab(node.children[1])
+  );
+};
 export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandAction[]> {
   const actions: Array<() => CommandAction[]> = [];
 
@@ -139,10 +183,10 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
       const selectedMeta = p.workspaceMetadata.get(selected.workspaceId);
       list.push({
         id: CommandIds.workspaceOpenTerminalCurrent(),
-        title: "Open Current Workspace in Terminal",
+        title: "New Terminal Window",
         subtitle: workspaceDisplayName,
         section: section.workspaces,
-        shortcutHint: formatKeybind(KEYBINDS.OPEN_TERMINAL),
+        // Note: Cmd/Ctrl+T opens integrated terminal in sidebar (not shown here since this opens a popout)
         run: () => {
           p.onOpenWorkspaceInTerminal(selected.workspaceId, selectedMeta?.runtimeConfig);
         },
@@ -193,11 +237,11 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
     if (p.workspaceMetadata.size > 0) {
       list.push({
         id: CommandIds.workspaceOpenTerminal(),
-        title: "Open Workspace in Terminal…",
+        title: "Open Terminal Window for Workspace…",
         section: section.workspaces,
         run: () => undefined,
         prompt: {
-          title: "Open Workspace in Terminal",
+          title: "Open Terminal Window",
           fields: [
             {
               type: "select",
@@ -327,29 +371,111 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
   });
 
   // Navigation / Interface
-  actions.push(() => [
-    {
-      id: CommandIds.navNext(),
-      title: "Next Workspace",
-      section: section.navigation,
-      shortcutHint: formatKeybind(KEYBINDS.NEXT_WORKSPACE),
-      run: () => p.onNavigateWorkspace("next"),
-    },
-    {
-      id: CommandIds.navPrev(),
-      title: "Previous Workspace",
-      section: section.navigation,
-      shortcutHint: formatKeybind(KEYBINDS.PREV_WORKSPACE),
-      run: () => p.onNavigateWorkspace("prev"),
-    },
-    {
-      id: CommandIds.navToggleSidebar(),
-      title: "Toggle Sidebar",
-      section: section.navigation,
-      shortcutHint: formatKeybind(KEYBINDS.TOGGLE_SIDEBAR),
-      run: () => p.onToggleSidebar(),
-    },
-  ]);
+  actions.push(() => {
+    const list: CommandAction[] = [
+      {
+        id: CommandIds.navNext(),
+        title: "Next Workspace",
+        section: section.navigation,
+        shortcutHint: formatKeybind(KEYBINDS.NEXT_WORKSPACE),
+        run: () => p.onNavigateWorkspace("next"),
+      },
+      {
+        id: CommandIds.navPrev(),
+        title: "Previous Workspace",
+        section: section.navigation,
+        shortcutHint: formatKeybind(KEYBINDS.PREV_WORKSPACE),
+        run: () => p.onNavigateWorkspace("prev"),
+      },
+      {
+        id: CommandIds.navToggleSidebar(),
+        title: "Toggle Sidebar",
+        section: section.navigation,
+        shortcutHint: formatKeybind(KEYBINDS.TOGGLE_SIDEBAR),
+        run: () => p.onToggleSidebar(),
+      },
+    ];
+
+    // Right sidebar layout commands require a selected workspace (layout is per-workspace)
+    const wsId = p.selectedWorkspace?.workspaceId;
+    if (wsId) {
+      list.push(
+        {
+          id: CommandIds.navRightSidebarFocusTerminal(),
+          title: "Right Sidebar: Focus Terminal",
+          section: section.navigation,
+          run: () =>
+            updateRightSidebarLayout(wsId, (s) => {
+              const found = findFirstTerminalSessionTab(s.root);
+              if (!found) return s;
+              return selectTabInTabset(
+                setFocusedTabset(s, found.tabsetId),
+                found.tabsetId,
+                found.tab
+              );
+            }),
+        },
+        {
+          id: CommandIds.navRightSidebarSplitHorizontal(),
+          title: "Right Sidebar: Split Horizontally",
+          section: section.navigation,
+          run: () => updateRightSidebarLayout(wsId, (s) => splitFocusedTabset(s, "horizontal")),
+        },
+        {
+          id: CommandIds.navRightSidebarSplitVertical(),
+          title: "Right Sidebar: Split Vertically",
+          section: section.navigation,
+          run: () => updateRightSidebarLayout(wsId, (s) => splitFocusedTabset(s, "vertical")),
+        },
+        {
+          id: CommandIds.navRightSidebarAddTool(),
+          title: "Right Sidebar: Add Tool…",
+          section: section.navigation,
+          run: () => undefined,
+          prompt: {
+            title: "Add Right Sidebar Tool",
+            fields: [
+              {
+                type: "select",
+                name: "tool",
+                label: "Tool",
+                placeholder: "Select a tool…",
+                getOptions: () =>
+                  (["costs", "review", "terminal"] as TabType[]).map((tab) => ({
+                    id: tab,
+                    label: tab === "costs" ? "Costs" : tab === "review" ? "Review" : "Terminal",
+                    keywords: [tab],
+                  })),
+              },
+            ],
+            onSubmit: (vals) => {
+              const tool = vals.tool;
+              if (!isTabType(tool)) return;
+
+              // "terminal" is now an alias for "focus an existing terminal session tab".
+              // Creating new terminal sessions is handled in the main UI ("+" button).
+              if (tool === "terminal") {
+                updateRightSidebarLayout(wsId, (s) => {
+                  const found = findFirstTerminalSessionTab(s.root);
+                  if (!found) return s;
+                  return selectTabInTabset(
+                    setFocusedTabset(s, found.tabsetId),
+                    found.tabsetId,
+                    found.tab
+                  );
+                });
+                return;
+              }
+
+              updateRightSidebarLayout(wsId, (s) => addToolToFocusedTabset(s, tool));
+            },
+          },
+        }
+      );
+    }
+
+    return list;
+  });
 
   // Appearance
   actions.push(() => {

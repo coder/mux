@@ -347,17 +347,29 @@ export const RIGHT_SIDEBAR_TAB_KEY = "right-sidebar-tab";
 export const RIGHT_SIDEBAR_COLLAPSED_KEY = "right-sidebar:collapsed";
 
 /**
- * Right sidebar width for Costs tab (global)
- * Format: "right-sidebar:width:costs"
+ * Right sidebar width (unified across all tabs)
+ * Format: "right-sidebar:width"
  */
-export const RIGHT_SIDEBAR_COSTS_WIDTH_KEY = "right-sidebar:width:costs";
+export const RIGHT_SIDEBAR_WIDTH_KEY = "right-sidebar:width";
 
 /**
- * Right sidebar width for Review tab (global)
- * Reuses legacy key to preserve existing user preferences
- * Format: "review-sidebar-width"
+ * Get the localStorage key for right sidebar dock-lite layout per workspace.
+ * Each workspace can have its own split/tab configuration (e.g., different
+ * numbers of terminals). Width and collapsed state remain global.
+ * Format: "right-sidebar:layout:{workspaceId}"
  */
-export const RIGHT_SIDEBAR_REVIEW_WIDTH_KEY = "review-sidebar-width";
+export function getRightSidebarLayoutKey(workspaceId: string): string {
+  return `right-sidebar:layout:${workspaceId}`;
+}
+
+/**
+ * Get the localStorage key for terminal titles per workspace.
+ * Maps sessionId -> title for persisting OSC-set terminal titles.
+ * Format: "right-sidebar:terminal-titles:{workspaceId}"
+ */
+export function getTerminalTitlesKey(workspaceId: string): string {
+  return `right-sidebar:terminal-titles:${workspaceId}`;
+}
 
 /**
  * Get the localStorage key for unified Review search state per workspace

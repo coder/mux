@@ -13,6 +13,8 @@ import type { RuntimeConfig } from "@/common/types/runtime";
 import { isSSHRuntime, isDockerRuntime } from "@/common/types/runtime";
 import { log } from "@/node/services/log";
 import { isCommandAvailable, findAvailableCommand } from "@/node/utils/commandDiscovery";
+import { Terminal } from "@xterm/headless";
+import { SerializeAddon } from "@xterm/addon-serialize";
 
 /**
  * Configuration for opening a native terminal
@@ -35,10 +37,10 @@ export class TerminalService {
   private readonly outputEmitters = new Map<string, EventEmitter>();
   private readonly exitEmitters = new Map<string, EventEmitter>();
 
-  // Buffer for initial output to handle race condition between create and subscribe
-  // Map<sessionId, string[]>
-  private readonly outputBuffers = new Map<string, string[]>();
-  private readonly MAX_BUFFER_SIZE = 50; // Keep last 50 chunks
+  // Headless terminals for maintaining parsed terminal state on the backend.
+  // On reconnect, we serialize the screen state (~4KB) instead of replaying raw output (~512KB).
+  private readonly headlessTerminals = new Map<string, Terminal>();
+  private readonly serializeAddons = new Map<string, SerializeAddon>();
 
   constructor(config: Config, ptyService: PTYService) {
     this.config = config;
@@ -64,6 +66,21 @@ export class TerminalService {
 
       if (!workspaceMetadata) {
         throw new Error(`Workspace not found: ${params.workspaceId}`);
+      }
+
+      // Validate required fields before proceeding - projectPath is required for project-dir runtimes
+      if (!workspaceMetadata.projectPath) {
+        log.error("Workspace metadata missing projectPath", {
+          workspaceId: params.workspaceId,
+          name: workspaceMetadata.name,
+          runtimeConfig: workspaceMetadata.runtimeConfig,
+          projectName: workspaceMetadata.projectName,
+          metadata: JSON.stringify(workspaceMetadata),
+        });
+        throw new Error(
+          `Workspace "${workspaceMetadata.name}" (${params.workspaceId}) is missing projectPath. ` +
+            `This may indicate a corrupted config or a workspace that was not properly associated with a project.`
+        );
       }
 
       // 2. Create runtime (pass workspace info for Docker container name derivation)
@@ -121,10 +138,21 @@ export class TerminalService {
 
       tempSessionId = session.sessionId;
 
-      // Initialize emitters
+      // Initialize emitters and headless terminal for state tracking
       this.outputEmitters.set(session.sessionId, new EventEmitter());
       this.exitEmitters.set(session.sessionId, new EventEmitter());
-      this.outputBuffers.set(session.sessionId, []);
+
+      // Create headless terminal to maintain parsed state for reconnection
+      // allowProposedApi is required for SerializeAddon to access the buffer
+      const headless = new Terminal({
+        cols: params.cols,
+        rows: params.rows,
+        allowProposedApi: true,
+      });
+      const serializeAddon = new SerializeAddon();
+      headless.loadAddon(serializeAddon);
+      this.headlessTerminals.set(session.sessionId, headless);
+      this.serializeAddons.set(session.sessionId, serializeAddon);
 
       // Replay local buffer that arrived during creation
       for (const data of localBuffer) {
@@ -156,6 +184,10 @@ export class TerminalService {
   resize(params: TerminalResizeParams): void {
     try {
       this.ptyService.resize(params);
+
+      // Also resize the headless terminal to keep state in sync
+      const headless = this.headlessTerminals.get(params.sessionId);
+      headless?.resize(params.cols, params.rows);
     } catch (err) {
       log.error("Error resizing terminal:", err);
       throw err;
@@ -171,7 +203,7 @@ export class TerminalService {
     }
   }
 
-  async openWindow(workspaceId: string): Promise<void> {
+  async openWindow(workspaceId: string, sessionId?: string): Promise<void> {
     try {
       const allMetadata = await this.config.getAllWorkspaceMetadata();
       const workspace = allMetadata.find((w) => w.id === workspaceId);
@@ -185,8 +217,10 @@ export class TerminalService {
       const isDesktop = !!this.terminalWindowManager;
 
       if (isDesktop) {
-        log.info(`Opening terminal window for workspace: ${workspaceId}`);
-        await this.terminalWindowManager!.openTerminalWindow(workspaceId);
+        log.info(
+          `Opening terminal window for workspace: ${workspaceId}${sessionId ? ` (session: ${sessionId})` : ""}`
+        );
+        await this.terminalWindowManager!.openTerminalWindow(workspaceId, sessionId);
       } else {
         log.info(
           `Browser mode: terminal UI handled by browser for ${isSSH ? "SSH" : "local"} workspace: ${workspaceId}`
@@ -518,11 +552,8 @@ export class TerminalService {
       };
     }
 
-    // Replay buffer
-    const buffer = this.outputBuffers.get(sessionId);
-    if (buffer) {
-      buffer.forEach((data) => callback(data));
-    }
+    // Note: The attach stream yields screenState first, then live output.
+    // This subscription only provides live output from the point of subscription onward.
 
     const handler = (data: string) => callback(data);
     emitter.on("data", handler);
@@ -547,20 +578,36 @@ export class TerminalService {
     };
   }
 
+  /**
+   * Get serialized screen state for a session.
+   * Called by frontend on reconnect to restore terminal view instantly (~4KB vs 512KB raw replay).
+   * Returns VT escape sequences that reconstruct the current screen state.
+   *
+   * Note: @xterm/addon-serialize v0.14+ automatically includes the alternate buffer switch
+   * sequence (\x1b[?1049h) when the terminal is in alternate screen mode (htop, vim, etc.).
+   */
+  getScreenState(sessionId: string): string {
+    const addon = this.serializeAddons.get(sessionId);
+    return addon?.serialize() ?? "";
+  }
+
   private emitOutput(sessionId: string, data: string) {
     const emitter = this.outputEmitters.get(sessionId);
     if (emitter) {
       emitter.emit("data", data);
     }
 
-    // Update buffer
-    const buffer = this.outputBuffers.get(sessionId);
-    if (buffer) {
-      buffer.push(data);
-      if (buffer.length > this.MAX_BUFFER_SIZE) {
-        buffer.shift();
-      }
-    }
+    // Write to headless terminal to maintain parsed state
+    const headless = this.headlessTerminals.get(sessionId);
+    headless?.write(data);
+  }
+
+  /**
+   * Get all session IDs for a workspace.
+   * Used by frontend to discover existing sessions to reattach to after reload.
+   */
+  getWorkspaceSessionIds(workspaceId: string): string[] {
+    return this.ptyService.getWorkspaceSessionIds(workspaceId);
   }
 
   /**
@@ -582,6 +629,11 @@ export class TerminalService {
   private cleanup(sessionId: string) {
     this.outputEmitters.delete(sessionId);
     this.exitEmitters.delete(sessionId);
-    this.outputBuffers.delete(sessionId);
+
+    // Dispose and clean up headless terminal
+    const headless = this.headlessTerminals.get(sessionId);
+    headless?.dispose();
+    this.headlessTerminals.delete(sessionId);
+    this.serializeAddons.delete(sessionId);
   }
 }

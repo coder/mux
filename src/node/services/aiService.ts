@@ -625,12 +625,19 @@ export class AIService extends EventEmitter {
 
       // Handle OpenAI provider (using Responses API)
       if (providerName === "openai") {
-        if (!providerConfig.apiKey) {
-          return Err({
-            type: "api_key_not_found",
-            provider: providerName,
-          });
+        // Resolve credentials from config + env (single source of truth)
+        const creds = resolveProviderCredentials("openai", providerConfig);
+        if (!creds.isConfigured) {
+          return Err({ type: "api_key_not_found", provider: providerName });
         }
+
+        // Merge resolved credentials into config
+        const configWithCreds = {
+          ...providerConfig,
+          apiKey: creds.apiKey,
+          ...(creds.baseUrl && !providerConfig.baseURL && { baseURL: creds.baseUrl }),
+          ...(creds.organization && { organization: creds.organization }),
+        };
 
         // Extract serviceTier from config to pass through to buildProviderOptions
         const configServiceTier = providerConfig.serviceTier as string | undefined;
@@ -706,7 +713,7 @@ export class AIService extends EventEmitter {
         // Lazy-load OpenAI provider to reduce startup time
         const { createOpenAI } = await PROVIDER_REGISTRY.openai();
         const provider = createOpenAI({
-          ...providerConfig,
+          ...configWithCreds,
           // Cast is safe: our fetch implementation is compatible with the SDK's fetch type.
           // The preconnect method is optional in our implementation but required by the SDK type.
           fetch: fetchWithOpenAITruncation as typeof fetch,
@@ -719,15 +726,14 @@ export class AIService extends EventEmitter {
 
       // Handle xAI provider
       if (providerName === "xai") {
-        if (!providerConfig.apiKey) {
-          return Err({
-            type: "api_key_not_found",
-            provider: providerName,
-          });
+        // Resolve credentials from config + env (single source of truth)
+        const creds = resolveProviderCredentials("xai", providerConfig);
+        if (!creds.isConfigured) {
+          return Err({ type: "api_key_not_found", provider: providerName });
         }
 
         const baseFetch = getProviderFetch(providerConfig);
-        const { apiKey, baseURL, headers, ...extraOptions } = providerConfig;
+        const { apiKey: _apiKey, baseURL, headers, ...extraOptions } = providerConfig;
 
         const { searchParameters, ...restOptions } = extraOptions as {
           searchParameters?: Record<string, unknown>;
@@ -745,8 +751,8 @@ export class AIService extends EventEmitter {
 
         const { createXai } = await PROVIDER_REGISTRY.xai();
         const provider = createXai({
-          apiKey,
-          baseURL,
+          apiKey: creds.apiKey,
+          baseURL: creds.baseUrl ?? baseURL,
           headers,
           ...restOptions,
           fetch: baseFetch,
@@ -772,16 +778,21 @@ export class AIService extends EventEmitter {
 
       // Handle OpenRouter provider
       if (providerName === "openrouter") {
-        if (!providerConfig.apiKey) {
-          return Err({
-            type: "api_key_not_found",
-            provider: providerName,
-          });
+        // Resolve credentials from config + env (single source of truth)
+        const creds = resolveProviderCredentials("openrouter", providerConfig);
+        if (!creds.isConfigured) {
+          return Err({ type: "api_key_not_found", provider: providerName });
         }
         const baseFetch = getProviderFetch(providerConfig);
 
         // Extract standard provider settings (apiKey, baseUrl, headers, fetch)
-        const { apiKey, baseUrl, headers, fetch: _fetch, ...extraOptions } = providerConfig;
+        const {
+          apiKey: _apiKey,
+          baseUrl,
+          headers,
+          fetch: _fetch,
+          ...extraOptions
+        } = providerConfig;
 
         // OpenRouter routing options that need to be nested under "provider" in API request
         // See: https://openrouter.ai/docs/features/provider-routing
@@ -819,8 +830,8 @@ export class AIService extends EventEmitter {
         // Lazy-load OpenRouter provider to reduce startup time
         const { createOpenRouter } = await PROVIDER_REGISTRY.openrouter();
         const provider = createOpenRouter({
-          apiKey,
-          baseURL: baseUrl,
+          apiKey: creds.apiKey,
+          baseURL: creds.baseUrl ?? baseUrl,
           headers,
           fetch: baseFetch,
           extraBody,
@@ -928,12 +939,10 @@ export class AIService extends EventEmitter {
       // added to PROVIDER_DEFINITIONS - no code changes required here.
       const providerDef = PROVIDER_DEFINITIONS[providerName as ProviderName];
       if (providerDef) {
-        // Check API key requirement
-        if (providerDef.requiresApiKey && !providerConfig.apiKey) {
-          return Err({
-            type: "api_key_not_found",
-            provider: providerName,
-          });
+        // Resolve credentials from config + env (single source of truth)
+        const creds = resolveProviderCredentials(providerName as ProviderName, providerConfig);
+        if (providerDef.requiresApiKey && !creds.isConfigured) {
+          return Err({ type: "api_key_not_found", provider: providerName });
         }
 
         // Lazy-load and create provider using factoryName from definition
@@ -949,8 +958,15 @@ export class AIService extends EventEmitter {
           });
         }
 
-        const provider = factory({
+        // Merge resolved credentials into config
+        const configWithCreds = {
           ...providerConfig,
+          ...(creds.apiKey && { apiKey: creds.apiKey }),
+          ...(creds.baseUrl && !providerConfig.baseURL && { baseURL: creds.baseUrl }),
+        };
+
+        const provider = factory({
+          ...configWithCreds,
           fetch: getProviderFetch(providerConfig),
         });
         return Ok(provider(modelId));

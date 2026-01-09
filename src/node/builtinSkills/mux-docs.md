@@ -48,6 +48,7 @@ Use this index to find a page's:
   - **Getting Started**
     - Introduction (`/`) → `references/docs/index.mdx` — mux - Coding Agent Multiplexer for AI-assisted development
     - Install (`/install`) → `references/docs/install.mdx` — Download and install mux for macOS, Linux, and Windows
+    - Command Line Interface (`/reference/cli`) → `references/docs/reference/cli.mdx` — Run one-off agent tasks from the command line with mux run
     - **Models**
       - Models (`/config/models`) → `references/docs/config/models.mdx` — Select and configure AI models in mux
       - Providers (`/config/providers`) → `references/docs/config/providers.mdx` — Configure API keys and settings for AI providers

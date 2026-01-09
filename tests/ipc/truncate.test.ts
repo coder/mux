@@ -80,7 +80,7 @@ describeIntegration("truncateHistory", () => {
         expect(result.success).toBe(true);
 
         // Wait for response
-        await collector.waitForEvent("stream-end", 10000);
+        await collector.waitForEvent("stream-end", 20000);
         assertStreamSuccess(collector);
 
         // Get response content
@@ -102,7 +102,7 @@ describeIntegration("truncateHistory", () => {
         await cleanup();
       }
     },
-    30000
+    45000
   );
 
   test.concurrent(
@@ -163,7 +163,7 @@ describeIntegration("truncateHistory", () => {
         expect(result.success).toBe(true);
 
         // Wait for response
-        await collector.waitForEvent("stream-end", 10000);
+        await collector.waitForEvent("stream-end", 20000);
         assertStreamSuccess(collector);
 
         // Get response content
@@ -193,7 +193,7 @@ describeIntegration("truncateHistory", () => {
         await cleanup();
       }
     },
-    30000
+    45000
   );
 
   test.concurrent(

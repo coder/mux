@@ -1669,6 +1669,58 @@ export const router = (authToken?: string) => {
             unsubscribe();
           }
         }),
+      attach: t
+        .input(schemas.terminal.attach.input)
+        .output(schemas.terminal.attach.output)
+        .handler(async function* ({ context, input }) {
+          type AttachMessage =
+            | { type: "screenState"; data: string }
+            | { type: "output"; data: string };
+
+          let resolveNext: ((value: AttachMessage) => void) | null = null;
+          const queue: AttachMessage[] = [];
+          let ended = false;
+
+          const push = (msg: AttachMessage) => {
+            if (ended) return;
+            if (resolveNext) {
+              const resolve = resolveNext;
+              resolveNext = null;
+              resolve(msg);
+            } else {
+              queue.push(msg);
+            }
+          };
+
+          // CRITICAL: Subscribe to output FIRST, BEFORE capturing screen state.
+          // This ensures any output that arrives during/after getScreenState() is queued.
+          const unsubscribe = context.terminalService.onOutput(input.sessionId, (data) => {
+            push({ type: "output", data });
+          });
+
+          try {
+            // Capture screen state AFTER subscription is set up - guarantees no missed output
+            const screenState = context.terminalService.getScreenState(input.sessionId);
+
+            // First message is always the screen state (may be empty for new sessions)
+            yield { type: "screenState" as const, data: screenState };
+
+            // Now yield any queued output and continue with live stream
+            while (!ended) {
+              if (queue.length > 0) {
+                yield queue.shift()!;
+              } else {
+                const msg = await new Promise<AttachMessage>((resolve) => {
+                  resolveNext = resolve;
+                });
+                yield msg;
+              }
+            }
+          } finally {
+            ended = true;
+            unsubscribe();
+          }
+        }),
       onExit: t
         .input(schemas.terminal.onExit.input)
         .output(schemas.terminal.onExit.output)
@@ -1713,13 +1765,19 @@ export const router = (authToken?: string) => {
         .input(schemas.terminal.openWindow.input)
         .output(schemas.terminal.openWindow.output)
         .handler(async ({ context, input }) => {
-          return context.terminalService.openWindow(input.workspaceId);
+          return context.terminalService.openWindow(input.workspaceId, input.sessionId);
         }),
       closeWindow: t
         .input(schemas.terminal.closeWindow.input)
         .output(schemas.terminal.closeWindow.output)
         .handler(({ context, input }) => {
           return context.terminalService.closeWindow(input.workspaceId);
+        }),
+      listSessions: t
+        .input(schemas.terminal.listSessions.input)
+        .output(schemas.terminal.listSessions.output)
+        .handler(({ context, input }) => {
+          return context.terminalService.getWorkspaceSessionIds(input.workspaceId);
         }),
       openNative: t
         .input(schemas.terminal.openNative.input)

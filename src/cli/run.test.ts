@@ -126,8 +126,6 @@ describe("mux CLI", () => {
       expect(result.stdout).toContain("--timeout");
       expect(result.stdout).toContain("--json");
       expect(result.stdout).toContain("--quiet");
-      expect(result.stdout).toContain("--workspace-id");
-      expect(result.stdout).toContain("--config-root");
     });
 
     test("shows default model as opus", async () => {

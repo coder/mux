@@ -12,7 +12,9 @@ import { Command } from "commander";
 import * as os from "os";
 import * as path from "path";
 import * as fs from "fs/promises";
+import * as fsSync from "fs";
 import { Config } from "@/node/config";
+import { DisposableTempDir } from "@/node/services/tempDir";
 import { HistoryService } from "@/node/services/historyService";
 import { PartialService } from "@/node/services/partialService";
 import { InitStateManager } from "@/node/services/initStateManager";
@@ -23,6 +25,8 @@ import { MCPConfigService } from "@/node/services/mcpConfigService";
 import { MCPServerManager } from "@/node/services/mcpServerManager";
 import {
   isCaughtUpMessage,
+  isReasoningDelta,
+  isReasoningEnd,
   isStreamAbort,
   isStreamDelta,
   isStreamEnd,
@@ -34,8 +38,15 @@ import {
   type SendMessageOptions,
   type WorkspaceChatMessage,
 } from "@/common/orpc/types";
+import {
+  formatToolStart,
+  formatToolEnd,
+  formatGenericToolStart,
+  formatGenericToolEnd,
+  isMultilineResultTool,
+} from "./toolFormatters";
 import { defaultModel } from "@/common/utils/ai/models";
-import { ensureProvidersConfig } from "@/common/utils/providers/ensureProvidersConfig";
+import { buildProvidersFromEnv, hasAnyConfiguredProvider } from "@/node/utils/providerRequirements";
 
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { RuntimeConfig } from "@/common/types/runtime";
@@ -43,6 +54,7 @@ import { parseRuntimeModeAndHost, RUNTIME_MODE } from "@/common/types/runtime";
 import assert from "@/common/utils/assert";
 import parseDuration from "parse-duration";
 import { log, type LogLevel } from "@/node/services/log";
+import chalk from "chalk";
 import type { InitLogger } from "@/node/runtime/Runtime";
 import { DockerRuntime } from "@/node/runtime/DockerRuntime";
 import { execSync } from "child_process";
@@ -201,7 +213,7 @@ const program = new Command();
 program
   .name("mux run")
   .description("Run an agent session in the current directory")
-  .argument("[message]", "instruction for the agent (can also be piped via stdin)")
+  .argument("[message...]", "instruction for the agent (can also be piped via stdin)")
   .option("-d, --dir <path>", "project directory", process.cwd())
   .option("-m, --model <model>", "model to use", defaultModel)
   .option(
@@ -216,9 +228,6 @@ program
   .option("--log-level <level>", "set log level: error, warn, info, debug")
   .option("--json", "output NDJSON for programmatic consumption")
   .option("-q, --quiet", "only output final result")
-  .option("--workspace-id <id>", "explicit workspace ID (auto-generated if not provided)")
-  .option("--workspace <id>", "continue an existing workspace (loads history, skips init)")
-  .option("--config-root <path>", "mux config directory")
   .option("--mcp <server>", "MCP server as name=command (can be repeated)", collectMcpServers, [])
   .option("--no-mcp-config", "ignore .mux/mcp.jsonc, use only --mcp servers")
   .addHelpText(
@@ -249,15 +258,12 @@ interface CLIOptions {
   logLevel?: string;
   json?: boolean;
   quiet?: boolean;
-  workspaceId?: string;
-  workspace?: string;
-  configRoot?: string;
   mcp: MCPServerEntry[];
   mcpConfig: boolean;
 }
 
 const opts = program.opts<CLIOptions>();
-const messageArg = program.args[0];
+const messageArg = program.args.join(" ");
 
 async function main(): Promise<void> {
   // Configure log level early (before any logging happens)
@@ -284,36 +290,31 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Setup config
-  const config = new Config(opts.configRoot);
+  // Create ephemeral temp dir for session data (auto-cleaned on exit)
+  using tempDir = new DisposableTempDir("mux-run");
 
-  // Determine if continuing an existing workspace
-  const continueWorkspace = opts.workspace;
-  const workspaceId = continueWorkspace ?? opts.workspaceId ?? generateWorkspaceId();
+  // Use real config for providers, but ephemeral temp dir for session data
+  const realConfig = new Config();
+  const config = new Config(tempDir.path);
 
-  // Resolve directory - for continuing workspace, try to get from metadata
-  let projectDir: string;
-  if (continueWorkspace) {
-    const metadataPath = path.join(config.sessionsDir, continueWorkspace, "metadata.json");
-    try {
-      const metadataContent = await fs.readFile(metadataPath, "utf-8");
-      const metadata = JSON.parse(metadataContent) as { projectPath?: string };
-      if (metadata.projectPath) {
-        projectDir = metadata.projectPath;
-        log.info(`Continuing workspace ${continueWorkspace}, using project path: ${projectDir}`);
-      } else {
-        projectDir = path.resolve(opts.dir);
-        log.warn(`No projectPath in metadata, using --dir: ${projectDir}`);
-      }
-    } catch {
-      // Metadata doesn't exist or is invalid, fall back to --dir
-      projectDir = path.resolve(opts.dir);
-      log.warn(`Could not read metadata for ${continueWorkspace}, using --dir: ${projectDir}`);
-    }
-  } else {
-    projectDir = path.resolve(opts.dir);
-    await ensureDirectory(projectDir);
+  // Copy providers and secrets from real config to ephemeral config
+  const existingProviders = realConfig.loadProvidersConfig();
+  if (hasAnyConfiguredProvider(existingProviders)) {
+    // Write providers to temp config so services can find them
+    const providersFile = path.join(config.rootDir, "providers.jsonc");
+    fsSync.writeFileSync(providersFile, JSON.stringify(existingProviders, null, 2));
   }
+
+  // Copy secrets so tools/MCP servers get project secrets (e.g., GH_TOKEN)
+  const existingSecrets = realConfig.loadSecretsConfig();
+  if (Object.keys(existingSecrets).length > 0) {
+    const secretsFile = path.join(config.rootDir, "secrets.json");
+    fsSync.writeFileSync(secretsFile, JSON.stringify(existingSecrets, null, 2));
+  }
+
+  const workspaceId = generateWorkspaceId();
+  const projectDir = path.resolve(opts.dir);
+  await ensureDirectory(projectDir);
 
   const model: string = opts.model;
   const runtimeConfig = parseRuntimeConfig(opts.runtime, config.srcDir);
@@ -324,12 +325,19 @@ async function main(): Promise<void> {
   const quiet = opts.quiet === true;
 
   const suppressHumanOutput = emitJson || quiet;
+  const stderrIsTTY = process.stderr.isTTY === true;
 
   const writeHuman = (text: string) => {
     if (!suppressHumanOutput) process.stdout.write(text);
   };
   const writeHumanLine = (text = "") => {
     if (!suppressHumanOutput) process.stdout.write(`${text}\n`);
+  };
+  const writeThinking = (text: string) => {
+    if (suppressHumanOutput) return;
+    // Purple color matching Mux UI thinking blocks (hsl(271, 76%, 53%) = #A855F7)
+    const colored = stderrIsTTY ? chalk.hex("#A855F7")(text) : text;
+    process.stderr.write(colored);
   };
   const emitJsonLine = (payload: unknown) => {
     if (emitJson) process.stdout.write(`${JSON.stringify(payload)}\n`);
@@ -357,7 +365,17 @@ async function main(): Promise<void> {
     initStateManager,
     backgroundProcessManager
   );
-  ensureProvidersConfig(config);
+  // Bootstrap providers from env vars if no providers.jsonc exists
+  if (!hasAnyConfiguredProvider(existingProviders)) {
+    const providersFromEnv = buildProvidersFromEnv();
+    if (hasAnyConfiguredProvider(providersFromEnv)) {
+      config.saveProvidersConfig(providersFromEnv);
+    } else {
+      throw new Error(
+        "No provider credentials found. Configure providers.jsonc or set ANTHROPIC_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY / GOOGLE_GENERATIVE_AI_API_KEY."
+      );
+    }
+  }
 
   // Initialize MCP support
   const mcpConfigService = new MCPConfigService();
@@ -381,74 +399,65 @@ async function main(): Promise<void> {
     backgroundProcessManager,
   });
 
-  // For continuing workspace, metadata should already exist
-  // For new workspace, create it
-  if (!continueWorkspace) {
-    let workspacePath = projectDir;
-    const projectName = path.basename(projectDir);
+  // For Docker runtime, create and initialize the container first
+  let workspacePath = projectDir;
+  if (runtimeConfig.type === "docker") {
+    const runtime = new DockerRuntime(runtimeConfig);
+    // Use a sanitized branch name (CLI runs are typically one-off, no real branch needed)
+    const branchName = `cli-${workspaceId.replace(/[^a-zA-Z0-9-]/g, "-")}`;
 
-    // For Docker runtime, create and initialize the container first
-    if (runtimeConfig.type === "docker") {
-      const runtime = new DockerRuntime(runtimeConfig);
-      // Use a sanitized branch name (CLI runs are typically one-off, no real branch needed)
-      const branchName = `cli-${workspaceId.replace(/[^a-zA-Z0-9-]/g, "-")}`;
-
-      // Detect trunk branch from repo
-      let trunkBranch = "main";
-      try {
-        const symbolic = execSync("git symbolic-ref refs/remotes/origin/HEAD", {
-          cwd: projectDir,
-          encoding: "utf-8",
-        }).trim();
-        trunkBranch = symbolic.replace("refs/remotes/origin/", "");
-      } catch {
-        // Fallback to main
-      }
-
-      const initLogger = makeCliInitLogger(writeHumanLine);
-      const createResult = await runtime.createWorkspace({
-        projectPath: projectDir,
-        branchName,
-        trunkBranch,
-        directoryName: branchName,
-        initLogger,
-      });
-      if (!createResult.success) {
-        console.error(
-          `Failed to create Docker workspace: ${createResult.error ?? "unknown error"}`
-        );
-        process.exit(1);
-      }
-
-      const initResult = await runtime.initWorkspace({
-        projectPath: projectDir,
-        branchName,
-        trunkBranch,
-        workspacePath: createResult.workspacePath!,
-        initLogger,
-      });
-      if (!initResult.success) {
-        // Clean up orphaned container
-        // eslint-disable-next-line @typescript-eslint/no-empty-function
-        await runtime.deleteWorkspace(projectDir, branchName, true).catch(() => {});
-        console.error(
-          `Failed to initialize Docker workspace: ${initResult.error ?? "unknown error"}`
-        );
-        process.exit(1);
-      }
-
-      // Docker workspacePath is /src; projectName stays as original
-      workspacePath = createResult.workspacePath!;
+    // Detect trunk branch from repo
+    let trunkBranch = "main";
+    try {
+      const symbolic = execSync("git symbolic-ref refs/remotes/origin/HEAD", {
+        cwd: projectDir,
+        encoding: "utf-8",
+      }).trim();
+      trunkBranch = symbolic.replace("refs/remotes/origin/", "");
+    } catch {
+      // Fallback to main
     }
 
-    await session.ensureMetadata({
-      workspacePath,
-      projectName,
-      runtimeConfig,
+    const initLogger = makeCliInitLogger(writeHumanLine);
+    const createResult = await runtime.createWorkspace({
+      projectPath: projectDir,
+      branchName,
+      trunkBranch,
+      directoryName: branchName,
+      initLogger,
     });
-  } else {
-    log.info(`Continuing workspace ${workspaceId} - using existing metadata`);
+    if (!createResult.success) {
+      console.error(`Failed to create Docker workspace: ${createResult.error ?? "unknown error"}`);
+      process.exit(1);
+    }
+
+    const initResult = await runtime.initWorkspace({
+      projectPath: projectDir,
+      branchName,
+      trunkBranch,
+      workspacePath: createResult.workspacePath!,
+      initLogger,
+    });
+    if (!initResult.success) {
+      // Clean up orphaned container
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      await runtime.deleteWorkspace(projectDir, branchName, true).catch(() => {});
+      console.error(
+        `Failed to initialize Docker workspace: ${initResult.error ?? "unknown error"}`
+      );
+      process.exit(1);
+    }
+
+    // Docker workspacePath is /src; projectName stays as original
+    workspacePath = createResult.workspacePath!;
   }
+
+  // Initialize workspace metadata (ephemeral - stored in temp dir)
+  await session.ensureMetadata({
+    workspacePath,
+    projectName: path.basename(projectDir),
+    runtimeConfig,
+  });
 
   const buildSendOptions = (cliMode: CLIMode): SendMessageOptions => ({
     model,
@@ -460,10 +469,65 @@ async function main(): Promise<void> {
 
   const liveEvents: WorkspaceChatMessage[] = [];
   let readyForLive = false;
+
+  /**
+   * Tracks whether stdout currently has an unfinished line (i.e. the last write was
+   * via `writeHuman(...)` without a trailing newline).
+   *
+   * This is used to prevent concatenating multi-line blocks (like tool results) onto
+   * the end of an inline prefix.
+   */
   let streamLineOpen = false;
   let activeMessageId: string | null = null;
   let planProposed = false;
   let streamEnded = false;
+
+  const writeHumanChunk = (text: string) => {
+    if (text.length === 0) return;
+    writeHuman(text);
+    streamLineOpen = !text.endsWith("\n");
+  };
+
+  const writeHumanLineClosed = (text = "") => {
+    writeHumanLine(text);
+    streamLineOpen = false;
+  };
+
+  const closeHumanLine = () => {
+    if (!streamLineOpen) return;
+    writeHumanLineClosed("");
+  };
+
+  // Track tool call args by toolCallId for use in end formatting
+  const toolCallArgs = new Map<string, unknown>();
+
+  // Centralized output type tracking for spacing
+  type OutputType = "none" | "text" | "thinking" | "tool";
+  let lastOutputType: OutputType = "none";
+
+  /**
+   * Ensure proper spacing before starting a new output block.
+   * Call this before writing any output to handle transitions cleanly.
+   */
+  const ensureSpacing = (nextType: OutputType) => {
+    const isTransition = lastOutputType !== nextType;
+
+    // Finish any open line when transitioning to a different output type
+    if (isTransition) {
+      closeHumanLine();
+    }
+
+    // Add blank line for transitions (but not at start of output)
+    if (lastOutputType !== "none" && isTransition) {
+      writeHumanLineClosed("");
+    }
+    // Also add blank line between consecutive tool calls
+    if (lastOutputType === "tool" && nextType === "tool") {
+      writeHumanLineClosed("");
+    }
+
+    lastOutputType = nextType;
+  };
 
   let resolveCompletion: ((value: void) => void) | null = null;
   let rejectCompletion: ((reason?: unknown) => void) | null = null;
@@ -502,6 +566,29 @@ async function main(): Promise<void> {
     }
   };
 
+  const resetCompletionHandlers = () => {
+    resolveCompletion = null;
+    rejectCompletion = null;
+  };
+
+  const rejectStream = (error: Error) => {
+    // Keep terminal output readable (error messages should not start mid-line)
+    closeHumanLine();
+    rejectCompletion?.(error);
+    resetCompletionHandlers();
+  };
+
+  const resolveStream = () => {
+    closeHumanLine();
+
+    streamEnded = true;
+    resolveCompletion?.();
+    resetCompletionHandlers();
+
+    activeMessageId = null;
+    toolCallArgs.clear();
+  };
+
   const sendAndAwait = async (msg: string, options: SendMessageOptions): Promise<void> => {
     completionPromise = createCompletionPromise();
     const sendResult = await session.sendMessage(msg, options);
@@ -525,31 +612,57 @@ async function main(): Promise<void> {
 
   const handleToolStart = (payload: WorkspaceChatMessage): boolean => {
     if (!isToolCallStart(payload)) return false;
-    writeHumanLine("\n========== TOOL CALL START ==========");
-    writeHumanLine(`Tool: ${payload.toolName}`);
-    writeHumanLine(`Call ID: ${payload.toolCallId}`);
-    writeHumanLine("Arguments:");
-    writeHumanLine(renderUnknown(payload.args));
-    writeHumanLine("=====================================");
+
+    // Cache args for use in end formatting
+    toolCallArgs.set(payload.toolCallId, payload.args);
+    ensureSpacing("tool");
+
+    // Try formatted output, fall back to generic
+    const formatted = formatToolStart(payload);
+    if (formatted) {
+      // For multiline result tools, put result on a new line; for inline, keep the line open
+      // so the end marker (`✓` / `✗`) can land on the same line.
+      if (isMultilineResultTool(payload.toolName)) {
+        writeHumanLineClosed(formatted);
+      } else {
+        writeHumanChunk(formatted);
+      }
+    } else {
+      writeHumanLineClosed(formatGenericToolStart(payload));
+    }
     return true;
   };
 
   const handleToolDelta = (payload: WorkspaceChatMessage): boolean => {
     if (!isToolCallDelta(payload)) return false;
-    writeHumanLine("\n----------- TOOL OUTPUT -------------");
-    writeHumanLine(renderUnknown(payload.delta));
-    writeHumanLine("-------------------------------------");
+    // Tool deltas (e.g., bash streaming output) - write inline
+    // Preserve whitespace-only chunks (e.g., newlines) to avoid merging lines
+    const deltaStr =
+      typeof payload.delta === "string" ? payload.delta : renderUnknown(payload.delta);
+    writeHumanChunk(deltaStr);
     return true;
   };
 
   const handleToolEnd = (payload: WorkspaceChatMessage): boolean => {
     if (!isToolCallEnd(payload)) return false;
-    writeHumanLine("\n=========== TOOL CALL END ===========");
-    writeHumanLine(`Tool: ${payload.toolName}`);
-    writeHumanLine(`Call ID: ${payload.toolCallId}`);
-    writeHumanLine("Result:");
-    writeHumanLine(renderUnknown(payload.result));
-    writeHumanLine("=====================================");
+
+    // Retrieve cached args and clean up
+    const args = toolCallArgs.get(payload.toolCallId);
+    toolCallArgs.delete(payload.toolCallId);
+
+    // Try formatted output, fall back to generic
+    const formatted = formatToolEnd(payload, args);
+    if (formatted) {
+      // For multiline tools, ensure we don't concatenate results onto streaming output.
+      if (isMultilineResultTool(payload.toolName)) {
+        closeHumanLine();
+      }
+      writeHumanLineClosed(formatted);
+    } else {
+      closeHumanLine();
+      writeHumanLineClosed(formatGenericToolEnd(payload));
+    }
+
     if (payload.toolName === "propose_plan") {
       planProposed = true;
     }
@@ -576,15 +689,11 @@ async function main(): Promise<void> {
 
     if (isStreamStart(payload)) {
       if (activeMessageId && activeMessageId !== payload.messageId) {
-        if (rejectCompletion) {
-          rejectCompletion(
-            new Error(
-              `Received conflicting stream-start message IDs (${activeMessageId} vs ${payload.messageId})`
-            )
-          );
-          resolveCompletion = null;
-          rejectCompletion = null;
-        }
+        rejectStream(
+          new Error(
+            `Received conflicting stream-start message IDs (${activeMessageId} vs ${payload.messageId})`
+          )
+        );
         return;
       }
       activeMessageId = payload.messageId;
@@ -593,53 +702,45 @@ async function main(): Promise<void> {
 
     if (isStreamDelta(payload)) {
       assert(typeof payload.delta === "string", "stream delta must include text");
-      writeHuman(payload.delta);
-      streamLineOpen = !payload.delta.endsWith("\n");
+      ensureSpacing("text");
+      writeHumanChunk(payload.delta);
+      return;
+    }
+
+    if (isReasoningDelta(payload)) {
+      ensureSpacing("thinking");
+      writeThinking(payload.delta);
+      return;
+    }
+
+    if (isReasoningEnd(payload)) {
+      // Ensure thinking ends with newline (spacing handled by next ensureSpacing call)
+      writeThinking("\n");
       return;
     }
 
     if (isStreamError(payload)) {
-      if (rejectCompletion) {
-        rejectCompletion(new Error(payload.error));
-        resolveCompletion = null;
-        rejectCompletion = null;
-      }
+      rejectStream(new Error(payload.error));
       return;
     }
 
     if (isStreamAbort(payload)) {
-      if (rejectCompletion) {
-        rejectCompletion(new Error("Stream aborted before completion"));
-        resolveCompletion = null;
-        rejectCompletion = null;
-      }
+      rejectStream(new Error("Stream aborted before completion"));
       return;
     }
 
     if (isStreamEnd(payload)) {
       if (activeMessageId && payload.messageId !== activeMessageId) {
-        if (rejectCompletion) {
-          rejectCompletion(
-            new Error(
-              `Mismatched stream-end message ID. Expected ${activeMessageId}, received ${payload.messageId}`
-            )
-          );
-          resolveCompletion = null;
-          rejectCompletion = null;
-        }
+        rejectStream(
+          new Error(
+            `Mismatched stream-end message ID. Expected ${activeMessageId}, received ${payload.messageId}`
+          )
+        );
         return;
       }
-      if (streamLineOpen) {
-        writeHuman("\n");
-        streamLineOpen = false;
-      }
-      streamEnded = true;
-      if (resolveCompletion) {
-        resolveCompletion();
-        resolveCompletion = null;
-        rejectCompletion = null;
-      }
-      activeMessageId = null;
+
+      resolveStream();
+      return;
     }
   };
 
@@ -654,7 +755,7 @@ async function main(): Promise<void> {
       throw new Error("Plan mode was requested, but the assistant never proposed a plan.");
     }
     if (planWasProposed) {
-      writeHumanLine("\n[auto] Plan received. Approving and switching to execute mode...\n");
+      writeHumanLineClosed("\n[auto] Plan received. Approving and switching to execute mode...\n");
       await sendAndAwait("Plan approved. Execute it.", buildSendOptions("exec"));
     }
 

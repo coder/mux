@@ -72,3 +72,23 @@ The app is code-signed and notarized by Apple, so it will open without security 
 2. Run: `xattr -cr /Applications/Mux.app`
 3. Run: `codesign --force --deep --sign - /Applications/Mux.app`
 4. Now you can open the app normally
+
+## CLI via npm
+
+The mux CLI can also be run directly via `npx` without installing the desktop app:
+
+```bash
+# Run agent tasks
+npx mux run "Fix the failing tests"
+
+# Start the server for remote/mobile access
+npx mux server --port 3000
+```
+
+Or install globally:
+
+```bash
+npm install -g mux
+```
+
+This is ideal for CI/CD pipelines and scripted automation. See the [CLI documentation](/reference/cli) for all available commands and options.

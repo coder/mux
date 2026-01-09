@@ -1,43 +1,53 @@
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect, useState, useCallback } from "react";
 import { init, Terminal, FitAddon } from "ghostty-web";
-import { useTerminalSession } from "@/browser/hooks/useTerminalSession";
 import { useAPI } from "@/browser/contexts/API";
+import { useTerminalRouter } from "@/browser/terminal/TerminalRouterContext";
 
 interface TerminalViewProps {
   workspaceId: string;
-  sessionId?: string;
+  /** Session ID to connect to (required - must be created before mounting) */
+  sessionId: string;
   visible: boolean;
+  /**
+   * Whether to set document.title based on workspace name.
+   *
+   * Default: true (used by the dedicated terminal window).
+   * Set to false when embedding inside the app (e.g. RightSidebar).
+   */
+  setDocumentTitle?: boolean;
+  /** Called when the terminal title changes (via OSC escape sequences from running processes) */
+  onTitleChange?: (title: string) => void;
+  /**
+   * Whether to auto-focus the terminal on mount/visibility change.
+   *
+   * Default: true (used by dedicated terminal window).
+   * Set to false when embedding (e.g. RightSidebar) to avoid stealing focus on workspace switch.
+   */
+  autoFocus?: boolean;
 }
 
-export function TerminalView({ workspaceId, sessionId, visible }: TerminalViewProps) {
+export function TerminalView({
+  workspaceId,
+  sessionId,
+  visible,
+  setDocumentTitle = true,
+  onTitleChange,
+  autoFocus = true,
+}: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const [terminalError, setTerminalError] = useState<string | null>(null);
   const [terminalReady, setTerminalReady] = useState(false);
-  const [terminalSize, setTerminalSize] = useState<{ cols: number; rows: number } | null>(null);
-
-  // Handler for terminal output
-  const handleOutput = (data: string) => {
-    const term = termRef.current;
-    if (term) {
-      term.write(data);
-    }
-  };
-
-  // Handler for terminal exit
-  const handleExit = (exitCode: number) => {
-    const term = termRef.current;
-    if (term) {
-      term.write(`\r\n[Process exited with code ${exitCode}]\r\n`);
-    }
-  };
+  // Track whether we've received the initial screen state from backend
+  const [isLoading, setIsLoading] = useState(true);
 
   const { api } = useAPI();
+  const router = useTerminalRouter();
 
-  // Set window title
+  // Set window title (dedicated terminal window only)
   useEffect(() => {
-    if (!api) return;
+    if (!api || !setDocumentTitle) return;
     const setWindowDetails = async () => {
       try {
         const workspaces = await api.workspace.list();
@@ -52,34 +62,136 @@ export function TerminalView({ workspaceId, sessionId, visible }: TerminalViewPr
       }
     };
     void setWindowDetails();
-  }, [api, workspaceId]);
-  const {
-    sendInput,
-    resize,
-    error: sessionError,
-  } = useTerminalSession(workspaceId, sessionId, visible, terminalSize, handleOutput, handleExit);
+  }, [api, workspaceId, setDocumentTitle]);
 
-  // Keep refs to latest functions so callbacks always use current version
-  const sendInputRef = useRef(sendInput);
-  const resizeRef = useRef(resize);
-
+  // Reset loading state when session changes
   useEffect(() => {
-    sendInputRef.current = sendInput;
-    resizeRef.current = resize;
-  }, [sendInput, resize]);
+    setIsLoading(true);
+  }, [sessionId]);
 
-  // Initialize terminal when visible
+  // Subscribe to router when terminal is ready and visible
   useEffect(() => {
-    if (!containerRef.current || !visible) {
+    if (!visible || !terminalReady || !termRef.current) {
       return;
     }
 
+    // Capture current terminal ref for this subscription's lifetime
+    const term = termRef.current;
+
+    // Clear terminal before subscribing to prevent any stale content flash
+    try {
+      term.clear();
+    } catch (err) {
+      console.warn("[TerminalView] Error clearing terminal:", err);
+    }
+
+    const unsubscribe = router.subscribe(sessionId, {
+      onOutput: (data) => {
+        try {
+          term.write(data);
+        } catch (err) {
+          // xterm WASM can throw "memory access out of bounds" intermittently
+          console.warn("[TerminalView] Error writing output:", err);
+        }
+      },
+      onScreenState: (state) => {
+        // Write screen state (may be empty for new sessions)
+        if (state) {
+          try {
+            term.write(state);
+          } catch (err) {
+            // xterm WASM can throw "memory access out of bounds" intermittently
+            console.warn("[TerminalView] Error writing screenState:", err);
+          }
+        }
+        // Mark loading complete - we now have valid content to show
+        setIsLoading(false);
+      },
+      onExit: (code) => {
+        try {
+          term.write(`\r\n[Process exited with code ${code}]\r\n`);
+        } catch (err) {
+          console.warn("[TerminalView] Error writing exit message:", err);
+        }
+      },
+    });
+
+    // Send initial resize to sync PTY dimensions
+    const { cols, rows } = term;
+    router.resize(sessionId, cols, rows);
+
+    return unsubscribe;
+  }, [visible, terminalReady, sessionId, router]);
+
+  // Keep ref to onTitleChange for use in terminal callback
+  const onTitleChangeRef = useRef(onTitleChange);
+  useEffect(() => {
+    onTitleChangeRef.current = onTitleChange;
+  }, [onTitleChange]);
+
+  const disposeOnDataRef = useRef<{ dispose: () => void } | null>(null);
+  const disposeOnTitleChangeRef = useRef<{ dispose: () => void } | null>(null);
+  const initInProgressRef = useRef(false);
+
+  // Clean up the terminal instance when workspace changes (or component unmounts).
+  useEffect(() => {
+    const containerEl = containerRef.current;
+
+    return () => {
+      disposeOnDataRef.current?.dispose();
+      disposeOnTitleChangeRef.current?.dispose();
+      disposeOnDataRef.current = null;
+      disposeOnTitleChangeRef.current = null;
+
+      termRef.current?.dispose();
+
+      // Ensure the DOM is clean even if the terminal init was interrupted.
+      containerEl?.replaceChildren();
+
+      termRef.current = null;
+      fitAddonRef.current = null;
+      initInProgressRef.current = false;
+      setTerminalReady(false);
+    };
+  }, [workspaceId]);
+
+  // Initialize terminal when it first becomes visible.
+  // We intentionally keep the terminal instance alive when hidden so we don't lose
+  // frontend-only state (like scrollback) and so TUI apps don't thrash on tab switches.
+  useEffect(() => {
+    if (!visible) return;
+    if (termRef.current || initInProgressRef.current) return;
+
+    const containerEl = containerRef.current;
+    if (!containerEl) {
+      return;
+    }
+
+    // StrictMode will run this effect twice in dev (setup → cleanup → setup).
+    // If the first async init completes after cleanup, we can end up with two ghostty-web
+    // terminals wired to the same DOM node (double cursor + duplicated input). Make the
+    // init path explicitly cancelable.
+    let cancelled = false;
+    initInProgressRef.current = true;
+
     let terminal: Terminal | null = null;
+    let disposeOnData: { dispose: () => void } | null = null;
+    let disposeOnTitleChange: { dispose: () => void } | null = null;
+
+    setTerminalError(null);
 
     const initTerminal = async () => {
       try {
         // Initialize ghostty-web WASM module (idempotent, safe to call multiple times)
         await init();
+
+        if (cancelled) {
+          return;
+        }
+
+        // Be defensive: if anything previously mounted into this container (e.g. from an
+        // interrupted init), clear it before opening a new terminal.
+        containerEl.replaceChildren();
 
         // Resolve CSS variables for xterm.js (canvas rendering doesn't support CSS vars)
         const styles = getComputedStyle(document.documentElement);
@@ -87,9 +199,10 @@ export function TerminalView({ workspaceId, sessionId, visible }: TerminalViewPr
         const terminalFg = styles.getPropertyValue("--color-terminal-fg").trim() || "#d4d4d4";
 
         terminal = new Terminal({
-          fontSize: 14,
+          fontSize: 13,
           fontFamily: "JetBrains Mono, Menlo, Monaco, monospace",
-          cursorBlink: true,
+          // Start with no blinking - we enable it on focus
+          cursorBlink: false,
           theme: {
             background: terminalBg,
             foreground: terminalFg,
@@ -99,48 +212,107 @@ export function TerminalView({ workspaceId, sessionId, visible }: TerminalViewPr
         const fitAddon = new FitAddon();
         terminal.loadAddon(fitAddon);
 
-        terminal.open(containerRef.current!);
+        terminal.open(containerEl);
         fitAddon.fit();
 
-        const { cols, rows } = terminal;
-
-        // Set terminal size so PTY session can be created with matching dimensions
-        // Use stable object reference to prevent unnecessary effect re-runs
-        setTerminalSize((prev) => {
-          if (prev?.cols === cols && prev?.rows === rows) {
-            return prev;
+        // ghostty-web calls focus() internally in open(), which steals focus.
+        // It also schedules a delayed focus with setTimeout(0) as "backup".
+        // If autoFocus is disabled, blur immediately AND with a delayed blur to counteract.
+        // If autoFocus is enabled, focus the hidden textarea to avoid browser caret.
+        if (autoFocus) {
+          const textarea = containerEl.querySelector("textarea");
+          if (textarea instanceof HTMLTextAreaElement) {
+            textarea.focus();
           }
-          return { cols, rows };
+        } else {
+          // Blur immediately
+          terminal.blur();
+          // Counter the delayed focus() in ghostty-web
+          const termToBlur = terminal;
+          setTimeout(() => {
+            termToBlur.blur();
+          }, 0);
+        }
+
+        // User input → router
+        disposeOnData = terminal.onData((data: string) => {
+          router.sendInput(sessionId, data);
         });
 
-        // User input → IPC (use ref to always get latest sendInput)
-        terminal.onData((data: string) => {
-          sendInputRef.current(data);
+        // Terminal title changes (from OSC escape sequences like "echo -ne '\033]0;Title\007'")
+        // Use ref to always get latest callback
+        disposeOnTitleChange = terminal.onTitleChange((title: string) => {
+          onTitleChangeRef.current?.(title);
         });
 
         termRef.current = terminal;
         fitAddonRef.current = fitAddon;
+        disposeOnDataRef.current = disposeOnData;
+        disposeOnTitleChangeRef.current = disposeOnTitleChange;
+
         setTerminalReady(true);
       } catch (err) {
+        if (cancelled) {
+          return;
+        }
+
         console.error("Failed to initialize terminal:", err);
         setTerminalError(err instanceof Error ? err.message : "Failed to initialize terminal");
+      } finally {
+        initInProgressRef.current = false;
       }
     };
 
     void initTerminal();
 
     return () => {
-      if (terminal) {
-        terminal.dispose();
+      cancelled = true;
+
+      // If the terminal finished initializing, we keep it alive across visible toggles.
+      if (termRef.current) {
+        return;
       }
-      termRef.current = null;
-      fitAddonRef.current = null;
-      setTerminalReady(false);
-      setTerminalSize(null);
+
+      // Otherwise, clean up any partially created resources so a future attempt can succeed.
+      disposeOnData?.dispose();
+      disposeOnTitleChange?.dispose();
+      terminal?.dispose();
+      containerEl.replaceChildren();
+      initInProgressRef.current = false;
     };
-    // Note: sendInput and resize are intentionally not in deps
-    // They're used in callbacks, not during effect execution
-  }, [visible, workspaceId]);
+  }, [visible, workspaceId, router, sessionId, autoFocus]);
+
+  // Track focus/blur on the terminal container to control cursor blinking
+  useEffect(() => {
+    if (!terminalReady || !containerRef.current) {
+      return;
+    }
+
+    const container = containerRef.current;
+
+    const handleFocusIn = () => {
+      if (termRef.current) {
+        termRef.current.options.cursorBlink = true;
+      }
+    };
+
+    const handleFocusOut = (e: FocusEvent) => {
+      // Only blur if focus is leaving the container entirely
+      if (!container.contains(e.relatedTarget as Node)) {
+        if (termRef.current) {
+          termRef.current.options.cursorBlink = false;
+        }
+      }
+    };
+
+    container.addEventListener("focusin", handleFocusIn);
+    container.addEventListener("focusout", handleFocusOut);
+
+    return () => {
+      container.removeEventListener("focusin", handleFocusIn);
+      container.removeEventListener("focusout", handleFocusOut);
+    };
+  }, [terminalReady]);
 
   // Resize on container size change
   useEffect(() => {
@@ -171,14 +343,6 @@ export function TerminalView({ workspaceId, sessionId, visible }: TerminalViewPr
           lastCols = cols;
           lastRows = rows;
 
-          // Update state (with stable reference to prevent unnecessary re-renders)
-          setTerminalSize((prev) => {
-            if (prev?.cols === cols && prev?.rows === rows) {
-              return prev;
-            }
-            return { cols, rows };
-          });
-
           // Store pending resize
           pendingResize = { cols, rows };
 
@@ -190,14 +354,11 @@ export function TerminalView({ workspaceId, sessionId, visible }: TerminalViewPr
 
           resizeTimeoutId = setTimeout(() => {
             if (pendingResize) {
-              console.log(
-                `[TerminalView] Sending resize to PTY: ${pendingResize.cols}x${pendingResize.rows}`
-              );
               // Double requestAnimationFrame to ensure vim is ready
               requestAnimationFrame(() => {
                 requestAnimationFrame(() => {
                   if (pendingResize) {
-                    resizeRef.current(pendingResize.cols, pendingResize.rows);
+                    router.resize(sessionId, pendingResize.cols, pendingResize.rows);
                     pendingResize = null;
                   }
                 });
@@ -224,20 +385,33 @@ export function TerminalView({ workspaceId, sessionId, visible }: TerminalViewPr
       resizeObserver.disconnect();
       window.removeEventListener("resize", handleResize);
     };
-  }, [visible, terminalReady]); // terminalReady ensures ResizeObserver is set up after terminal is initialized
+  }, [visible, terminalReady, router, sessionId]);
 
-  if (!visible) return null;
+  const errorMessage = terminalError;
 
-  const errorMessage = terminalError ?? sessionError;
+  // Focus the terminal when the container is clicked
+  const handleContainerClick = useCallback(() => {
+    if (termRef.current) {
+      termRef.current.focus();
+    }
+  }, []);
+
+  // Show loading overlay until we receive initial screen state
+  const showLoading = isLoading && terminalReady && visible;
 
   return (
     <div
       className="terminal-view"
       style={{
+        display: visible ? "flex" : "none",
+        flexDirection: "column",
         width: "100%",
         height: "100%",
+        minHeight: 0,
         backgroundColor: "var(--color-terminal-bg)",
+        position: "relative",
       }}
+      onClick={handleContainerClick}
     >
       {errorMessage && (
         <div className="border-b border-red-900/30 bg-red-900/20 p-2 text-sm text-red-400">
@@ -248,11 +422,32 @@ export function TerminalView({ workspaceId, sessionId, visible }: TerminalViewPr
         ref={containerRef}
         className="terminal-container"
         style={{
+          flex: 1,
+          minHeight: 0,
           width: "100%",
-          height: "100%",
           overflow: "hidden",
+          // ghostty-web uses a contenteditable root for input; hide the browser caret
+          // so we don't show a "second cursor".
+          caretColor: "transparent",
+          // Hide terminal content while loading to prevent flash
+          visibility: showLoading ? "hidden" : "visible",
         }}
       />
+      {/* Loading overlay - shows until we receive screen state from backend */}
+      {showLoading && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: "var(--color-terminal-bg)",
+          }}
+        >
+          <span className="text-muted animate-pulse text-sm">Connecting...</span>
+        </div>
+      )}
     </div>
   );
 }

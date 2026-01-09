@@ -343,12 +343,10 @@ test-e2e: ## Run end-to-end tests
 dist: build ## Build distributable packages
 	@bun x electron-builder --publish never
 
-# Parallel macOS builds - notarization happens concurrently
 dist-mac: build ## Build macOS distributables (x64 + arm64)
 	@if [ -n "$$CSC_LINK" ]; then \
-		echo "🔐 Code signing enabled - building sequentially to avoid keychain conflicts..."; \
-		bun x electron-builder --mac --x64 --publish never && \
-		bun x electron-builder --mac --arm64 --publish never; \
+		echo "🔐 Code signing enabled - using unified build for correct yml..."; \
+		bun x electron-builder --mac --x64 --arm64 --publish never; \
 	else \
 		echo "Building macOS architectures in parallel..."; \
 		bun x electron-builder --mac --x64 --publish never & pid1=$$! ; \
@@ -358,16 +356,8 @@ dist-mac: build ## Build macOS distributables (x64 + arm64)
 	@echo "✅ Both architectures built successfully"
 
 dist-mac-release: build ## Build and publish macOS distributables (x64 + arm64)
-	@if [ -n "$$CSC_LINK" ]; then \
-		echo "🔐 Code signing enabled - building sequentially to avoid keychain conflicts..."; \
-		bun x electron-builder --mac --x64 --publish always && \
-		bun x electron-builder --mac --arm64 --publish always; \
-	else \
-		echo "Building and publishing macOS architectures in parallel..."; \
-		bun x electron-builder --mac --x64 --publish always & pid1=$$! ; \
-		bun x electron-builder --mac --arm64 --publish always & pid2=$$! ; \
-		wait $$pid1 && wait $$pid2; \
-	fi
+	@echo "🔐 Building macOS x64 + arm64 (unified for correct yml)..."
+	@bun x electron-builder --mac --x64 --arm64 --publish always
 	@echo "✅ Both architectures built and published successfully"
 
 dist-mac-x64: build ## Build macOS x64 distributable only

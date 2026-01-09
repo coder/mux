@@ -115,8 +115,10 @@ export function useAIViewKeybinds({
       }
     };
 
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    // Use capture phase so keybinds work even when terminal is focused
+    // (terminal components may consume events in bubble phase)
+    window.addEventListener("keydown", handleKeyDown, { capture: true });
+    return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
   }, [
     jumpToBottom,
     handleOpenTerminal,

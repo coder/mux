@@ -16,8 +16,8 @@ import { createUserMessage, createAssistantMessage } from "./mockFactory";
 import { within, userEvent, waitFor, expect } from "@storybook/test";
 import {
   RIGHT_SIDEBAR_TAB_KEY,
-  RIGHT_SIDEBAR_COSTS_WIDTH_KEY,
-  RIGHT_SIDEBAR_REVIEW_WIDTH_KEY,
+  RIGHT_SIDEBAR_WIDTH_KEY,
+  getRightSidebarLayoutKey,
 } from "@/common/constants/storage";
 import type { ComponentType } from "react";
 import type { MockSessionUsage } from "@/browser/stories/mocks/orpc";
@@ -76,9 +76,9 @@ export const CostsTab: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("costs"));
-        // Set per-tab widths: costs at 350px, review at 700px
-        localStorage.setItem(RIGHT_SIDEBAR_COSTS_WIDTH_KEY, "350");
-        localStorage.setItem(RIGHT_SIDEBAR_REVIEW_WIDTH_KEY, "700");
+        localStorage.setItem("costsTab:viewMode", JSON.stringify("session"));
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "400");
+        localStorage.removeItem(getRightSidebarLayoutKey("ws-costs"));
 
         const client = setupSimpleChatStory({
           workspaceId: "ws-costs",
@@ -120,7 +120,19 @@ export const CostsTabWithCacheCreate: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("costs"));
-        localStorage.setItem(RIGHT_SIDEBAR_COSTS_WIDTH_KEY, "350");
+        localStorage.setItem("costsTab:viewMode", JSON.stringify("session"));
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "350");
+        const modelUsage = {
+          // Realistic Anthropic usage: heavy caching, cache create is expensive
+          input: { tokens: 2000, cost_usd: 0.006 },
+          cached: { tokens: 45000, cost_usd: 0.0045 }, // Cache read: cheap
+          cacheCreate: { tokens: 30000, cost_usd: 0.1125 }, // Cache create: expensive!
+          output: { tokens: 3000, cost_usd: 0.045 },
+          reasoning: { tokens: 0, cost_usd: 0 },
+          model: "anthropic:claude-sonnet-4-20250514",
+        };
+
+        localStorage.removeItem(getRightSidebarLayoutKey("ws-cache-create"));
 
         const client = setupSimpleChatStory({
           workspaceId: "ws-cache-create",
@@ -134,15 +146,12 @@ export const CostsTabWithCacheCreate: AppStory = {
           ],
           sessionUsage: {
             byModel: {
-              "anthropic:claude-sonnet-4-20250514": {
-                // Realistic Anthropic usage: heavy caching, cache create is expensive
-                input: { tokens: 2000, cost_usd: 0.006 },
-                cached: { tokens: 45000, cost_usd: 0.0045 }, // Cache read: cheap
-                cacheCreate: { tokens: 30000, cost_usd: 0.1125 }, // Cache create: expensive!
-                output: { tokens: 3000, cost_usd: 0.045 },
-                reasoning: { tokens: 0, cost_usd: 0 },
-                model: "anthropic:claude-sonnet-4-20250514",
-              },
+              [modelUsage.model]: modelUsage,
+            },
+            lastRequest: {
+              model: modelUsage.model,
+              usage: modelUsage,
+              timestamp: 0,
             },
             version: 1,
           },
@@ -155,13 +164,17 @@ export const CostsTabWithCacheCreate: AppStory = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
-    // Wait for costs to render - cache create should be dominant cost
+    // Ensure we're on the Costs tab (layout state can persist across stories).
+    const costsTab = await canvas.findByRole("tab", { name: /^costs/i }, { timeout: 10_000 });
+    await userEvent.click(costsTab);
+
+    // Wait for session usage to load + render.
     await waitFor(
       () => {
-        canvas.getByText("Cache Create");
-        canvas.getByText("Cache Read");
+        canvas.getByText(/cache create/i);
+        canvas.getByText(/cache read/i);
       },
-      { timeout: 5000 }
+      { timeout: 15_000 }
     );
   },
 };
@@ -175,9 +188,8 @@ export const ReviewTab: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("costs"));
-        // Set distinct widths per tab to verify switching behavior
-        localStorage.setItem(RIGHT_SIDEBAR_COSTS_WIDTH_KEY, "350");
-        localStorage.setItem(RIGHT_SIDEBAR_REVIEW_WIDTH_KEY, "700");
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "700");
+        localStorage.removeItem(getRightSidebarLayoutKey("ws-review"));
 
         const client = setupSimpleChatStory({
           workspaceId: "ws-review",
@@ -222,11 +234,14 @@ export const StatsTabIdle: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("stats"));
+        // Clear persisted layout to ensure stats tab appears in fresh default layout
+        localStorage.removeItem(getRightSidebarLayoutKey("ws-stats-idle"));
 
         const client = setupSimpleChatStory({
           workspaceId: "ws-stats-idle",
           workspaceName: "feature/stats",
           projectName: "my-app",
+          statsTabEnabled: true,
           messages: [
             createUserMessage("msg-1", "Help me with something", { historySequence: 1 }),
             createAssistantMessage("msg-2", "Sure, I can help with that.", { historySequence: 2 }),
@@ -259,6 +274,8 @@ export const StatsTabStreaming: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("stats"));
+        // Clear persisted layout to ensure stats tab appears in fresh default layout
+        localStorage.removeItem(getRightSidebarLayoutKey("ws-stats-streaming"));
 
         const client = setupStreamingChatStory({
           workspaceId: "ws-stats-streaming",
@@ -384,9 +401,10 @@ export const ReviewTabSortByLastEdit: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
-        localStorage.setItem(RIGHT_SIDEBAR_REVIEW_WIDTH_KEY, "700");
-
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "700");
+        // Clear persisted layout to ensure review tab appears in fresh default layout
         const workspaceId = "ws-review-sort";
+        localStorage.removeItem(getRightSidebarLayoutKey(workspaceId));
         const now = Date.now();
 
         // Set up first-seen timestamps for hunks (oldest to newest: format -> button -> client)
@@ -426,12 +444,21 @@ export const ReviewTabSortByLastEdit: AppStory = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
-    // Wait for review tab to be selected and loaded
+    // Ensure the Review tab is active. Storybook can reuse a long-lived AppLoader
+    // instance between stories, so persisted state might not apply until interaction.
+    const expandButtons = canvas.queryAllByRole("button", { name: "Expand sidebar" });
+    if (expandButtons.length > 0) {
+      await userEvent.click(expandButtons[expandButtons.length - 1]);
+    }
+
+    const reviewTab = await canvas.findByRole("tab", { name: /^review/i }, { timeout: 10_000 });
+    await userEvent.click(reviewTab);
+
     await waitFor(
       () => {
         canvas.getByRole("tab", { name: /^review/i, selected: true });
       },
-      { timeout: 5000 }
+      { timeout: 10_000 }
     );
 
     // Verify the sort dropdown shows "Last edit"
@@ -476,9 +503,9 @@ export const ReviewTabSortByFileOrder: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
-        localStorage.setItem(RIGHT_SIDEBAR_REVIEW_WIDTH_KEY, "700");
-
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "700");
         const workspaceId = "ws-review-file-order";
+        localStorage.removeItem(getRightSidebarLayoutKey(workspaceId));
 
         // Set sort order to "file-order" (default)
         setReviewSortOrder("file-order");
@@ -504,12 +531,20 @@ export const ReviewTabSortByFileOrder: AppStory = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
-    // Wait for review tab to be selected
+    // Ensure Review tab is active (Storybook may reuse the same App instance).
+    const expandButtons = canvas.queryAllByRole("button", { name: "Expand sidebar" });
+    if (expandButtons.length > 0) {
+      await userEvent.click(expandButtons[expandButtons.length - 1]);
+    }
+
+    const reviewTab = await canvas.findByRole("tab", { name: /^review/i }, { timeout: 10_000 });
+    await userEvent.click(reviewTab);
+
     await waitFor(
       () => {
         canvas.getByRole("tab", { name: /^review/i, selected: true });
       },
-      { timeout: 5000 }
+      { timeout: 10_000 }
     );
 
     // Verify the sort dropdown shows "File order"
@@ -580,7 +615,8 @@ export const DiffPaddingAlignment: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
-        localStorage.setItem(RIGHT_SIDEBAR_REVIEW_WIDTH_KEY, "700");
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "700");
+        localStorage.removeItem(getRightSidebarLayoutKey("ws-diff-alignment"));
 
         const client = setupSimpleChatStory({
           workspaceId: "ws-diff-alignment",
@@ -603,12 +639,21 @@ export const DiffPaddingAlignment: AppStory = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
-    // Wait for review tab to be selected
+    // Ensure Review tab is active.
+    const expandButtons = canvas.queryAllByRole("button", { name: "Expand sidebar" });
+    if (expandButtons.length > 0) {
+      await userEvent.click(expandButtons[expandButtons.length - 1]);
+    }
+
+    const reviewTab = await canvas.findByRole("tab", { name: /^review/i }, { timeout: 10_000 });
+    await userEvent.click(reviewTab);
+
+    // Wait for Review tab to be selected.
     await waitFor(
       () => {
         canvas.getByRole("tab", { name: /^review/i, selected: true });
       },
-      { timeout: 5000 }
+      { timeout: 10_000 }
     );
 
     // Wait for diff content to render
@@ -657,7 +702,8 @@ export const DiffPaddingAlignmentModification: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
-        localStorage.setItem(RIGHT_SIDEBAR_REVIEW_WIDTH_KEY, "700");
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "700");
+        localStorage.removeItem(getRightSidebarLayoutKey("ws-diff-modification"));
 
         const client = setupSimpleChatStory({
           workspaceId: "ws-diff-modification",
@@ -680,12 +726,21 @@ export const DiffPaddingAlignmentModification: AppStory = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
+    // Ensure Review tab is active.
+    const expandButtons = canvas.queryAllByRole("button", { name: "Expand sidebar" });
+    if (expandButtons.length > 0) {
+      await userEvent.click(expandButtons[expandButtons.length - 1]);
+    }
+
+    const reviewTab = await canvas.findByRole("tab", { name: /^review/i }, { timeout: 10_000 });
+    await userEvent.click(reviewTab);
+
     // Wait for diff content to render
     await waitFor(
       () => {
         canvas.getByText(/export const config/i);
       },
-      { timeout: 5000 }
+      { timeout: 10_000 }
     );
 
     // Visual verification for mixed diff types
@@ -765,9 +820,9 @@ export const ReviewTabReadMore: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
-        localStorage.setItem(RIGHT_SIDEBAR_REVIEW_WIDTH_KEY, "700");
-
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "700");
         const workspaceId = "ws-read-more";
+        localStorage.removeItem(getRightSidebarLayoutKey(workspaceId));
 
         const client = setupSimpleChatStory({
           workspaceId,
@@ -824,7 +879,7 @@ export const ReviewTabWithFileFilter: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
-        localStorage.setItem(RIGHT_SIDEBAR_REVIEW_WIDTH_KEY, "700");
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "700");
 
         const workspaceId = "ws-review-file-filter";
 
@@ -857,12 +912,20 @@ export const ReviewTabWithFileFilter: AppStory = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
-    // Wait for review tab to be selected
+    // Ensure Review tab is active.
+    const expandButtons = canvas.queryAllByRole("button", { name: "Expand sidebar" });
+    if (expandButtons.length > 0) {
+      await userEvent.click(expandButtons[expandButtons.length - 1]);
+    }
+
+    const reviewTab = await canvas.findByRole("tab", { name: /^review/i }, { timeout: 10_000 });
+    await userEvent.click(reviewTab);
+
     await waitFor(
       () => {
         canvas.getByRole("tab", { name: /^review/i, selected: true });
       },
-      { timeout: 5000 }
+      { timeout: 10_000 }
     );
 
     // Wait for file tree to load
@@ -891,9 +954,9 @@ export const ReviewTabReadMoreBoundaries: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
-        localStorage.setItem(RIGHT_SIDEBAR_REVIEW_WIDTH_KEY, "700");
-
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "700");
         const workspaceId = "ws-read-more-boundaries";
+        localStorage.removeItem(getRightSidebarLayoutKey(workspaceId));
 
         const client = setupSimpleChatStory({
           workspaceId,

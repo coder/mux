@@ -722,17 +722,45 @@ export const terminal = {
     input: z.object({ sessionId: z.string() }),
     output: eventIterator(z.string()),
   },
+  /**
+   * Attach to a terminal session with race-free state restore.
+   * First yields { type: "screenState", data: string } with serialized screen (~4KB),
+   * then yields { type: "output", data: string } for each live output chunk.
+   * Guarantees no missed output between state snapshot and live stream.
+   */
+  attach: {
+    input: z.object({ sessionId: z.string() }),
+    output: eventIterator(
+      z.discriminatedUnion("type", [
+        z.object({ type: z.literal("screenState"), data: z.string() }),
+        z.object({ type: z.literal("output"), data: z.string() }),
+      ])
+    ),
+  },
+
   onExit: {
     input: z.object({ sessionId: z.string() }),
     output: eventIterator(z.number()),
   },
   openWindow: {
-    input: z.object({ workspaceId: z.string() }),
+    input: z.object({
+      workspaceId: z.string(),
+      /** Optional session ID to reattach to an existing terminal session (for pop-out handoff) */
+      sessionId: z.string().optional(),
+    }),
     output: z.void(),
   },
   closeWindow: {
     input: z.object({ workspaceId: z.string() }),
     output: z.void(),
+  },
+  /**
+   * List active terminal sessions for a workspace.
+   * Used by frontend to discover existing sessions to reattach to after reload.
+   */
+  listSessions: {
+    input: z.object({ workspaceId: z.string() }),
+    output: z.array(z.string()),
   },
   /**
    * Open the native system terminal for a workspace.

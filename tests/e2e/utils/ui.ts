@@ -41,6 +41,9 @@ export interface WorkspaceUI {
   readonly metaSidebar: {
     expectVisible(): Promise<void>;
     selectTab(label: string): Promise<void>;
+    addTerminal(): Promise<void>;
+    expectTerminalNoError(): Promise<void>;
+    expectTerminalError(expectedText?: string): Promise<void>;
   };
   readonly settings: {
     open(): Promise<void>;
@@ -51,6 +54,21 @@ export interface WorkspaceUI {
     expandProvider(providerName: string): Promise<void>;
   };
   readonly context: DemoProjectConfig;
+  /**
+   * Perform a drag-and-drop operation between two elements.
+   * Uses programmatic DragEvent dispatch which works with react-dnd HTML5Backend
+   * even in Xvfb environments where Playwright's mouse.move() hangs.
+   *
+   * @param source - The element to drag from
+   * @param target - The element to drag to
+   * @param options - Optional positioning for drop location
+   *   - targetPosition: 'before' | 'after' | 'center' - where to drop relative to target
+   */
+  dragElement(
+    source: Locator,
+    target: Locator,
+    options?: { targetPosition?: "before" | "after" | "center" }
+  ): Promise<void>;
 }
 
 function sanitizeMode(mode: ChatMode): ChatMode {
@@ -423,6 +441,37 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
         throw new Error(`Tab "${label}" did not enter selected state`);
       }
     },
+
+    async addTerminal(): Promise<void> {
+      // Click the "+" button to add a new terminal tab
+      const addButton = page.getByRole("button", { name: "New terminal" });
+      await expect(addButton).toBeVisible();
+      await addButton.click();
+      // Wait for a terminal tab to appear (name may be "Terminal" or include cwd path)
+      // and be selected. Use a locator that matches tabs containing "Terminal" or terminal icon.
+      const terminalTab = page
+        .locator('[role="tab"]')
+        .filter({ has: page.locator("svg") })
+        .last();
+      await expect(terminalTab).toBeVisible({ timeout: 5000 });
+      await expect(terminalTab).toHaveAttribute("aria-selected", "true");
+    },
+
+    async expectTerminalNoError(): Promise<void> {
+      // Wait a bit for the terminal to initialize
+      await page.waitForTimeout(500);
+      // Check that there's no error message displayed
+      const errorElement = page.locator(".terminal-view").getByText(/Terminal Error:/);
+      await expect(errorElement).not.toBeVisible({ timeout: 2000 });
+    },
+
+    async expectTerminalError(expectedText?: string): Promise<void> {
+      const errorElement = page.locator(".terminal-view").getByText(/Terminal Error:/);
+      await expect(errorElement).toBeVisible({ timeout: 5000 });
+      if (expectedText) {
+        await expect(errorElement).toContainText(expectedText);
+      }
+    },
   };
 
   const settings = {
@@ -465,11 +514,118 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
     },
   };
 
+  /**
+   * Perform a drag-and-drop operation between two elements.
+   * Uses programmatic DragEvent dispatch which works with react-dnd HTML5Backend
+   * even in Xvfb environments where Playwright's mouse.move() hangs.
+   *
+   * @param source - The element to drag from
+   * @param target - The element to drag to
+   * @param options - Optional positioning for drop location
+   *   - targetPosition: 'before' | 'after' | 'center' - where to drop relative to target
+   */
+  async function dragElement(
+    source: Locator,
+    target: Locator,
+    options?: { targetPosition?: "before" | "after" | "center" }
+  ): Promise<void> {
+    const sourceHandle = await source.elementHandle();
+    const targetHandle = await target.elementHandle();
+
+    if (!sourceHandle || !targetHandle) {
+      throw new Error("Could not get element handles for drag");
+    }
+
+    const targetPosition = options?.targetPosition ?? "center";
+
+    await page.evaluate(
+      async ([src, tgt, pos]) => {
+        const sourceRect = src.getBoundingClientRect();
+        const targetRect = tgt.getBoundingClientRect();
+
+        // Calculate target X based on position
+        let targetX: number;
+        if (pos === "before") {
+          targetX = targetRect.x + 5; // Near left edge
+        } else if (pos === "after") {
+          targetX = targetRect.x + targetRect.width - 5; // Near right edge
+        } else {
+          targetX = targetRect.x + targetRect.width / 2; // Center
+        }
+        const targetY = targetRect.y + targetRect.height / 2;
+
+        const dataTransfer = new DataTransfer();
+
+        // Dispatch dragstart on source
+        src.dispatchEvent(
+          new DragEvent("dragstart", {
+            bubbles: true,
+            cancelable: true,
+            dataTransfer,
+            clientX: sourceRect.x + sourceRect.width / 2,
+            clientY: sourceRect.y + sourceRect.height / 2,
+          })
+        );
+
+        await new Promise((r) => setTimeout(r, 50));
+
+        // Dispatch dragenter on target
+        tgt.dispatchEvent(
+          new DragEvent("dragenter", {
+            bubbles: true,
+            cancelable: true,
+            dataTransfer,
+            clientX: targetX,
+            clientY: targetY,
+          })
+        );
+
+        // Dispatch dragover on target (required for drop, and triggers reorder)
+        tgt.dispatchEvent(
+          new DragEvent("dragover", {
+            bubbles: true,
+            cancelable: true,
+            dataTransfer,
+            clientX: targetX,
+            clientY: targetY,
+          })
+        );
+
+        await new Promise((r) => setTimeout(r, 50));
+
+        // Dispatch drop on target
+        tgt.dispatchEvent(
+          new DragEvent("drop", {
+            bubbles: true,
+            cancelable: true,
+            dataTransfer,
+            clientX: targetX,
+            clientY: targetY,
+          })
+        );
+
+        // Dispatch dragend on source
+        src.dispatchEvent(
+          new DragEvent("dragend", {
+            bubbles: true,
+            cancelable: true,
+            dataTransfer,
+          })
+        );
+      },
+      [sourceHandle, targetHandle, targetPosition] as const
+    );
+
+    // Allow React state updates
+    await page.waitForTimeout(100);
+  }
+
   return {
     projects,
     chat,
     metaSidebar,
     settings,
     context,
+    dragElement,
   };
 }

@@ -5,6 +5,8 @@
  * Uses callbacks for output/exit events to avoid circular dependencies.
  */
 
+import { randomUUID } from "crypto";
+
 import { log } from "@/node/services/log";
 import type { Runtime } from "@/node/runtime/Runtime";
 import type {
@@ -159,10 +161,11 @@ export class PTYService {
     onData: (data: string) => void,
     onExit: (exitCode: number) => void
   ): Promise<TerminalSession> {
-    const sessionId = `${params.workspaceId}-${Date.now()}`;
+    // Include a random suffix to avoid collisions when creating multiple sessions quickly.
+    // Collisions can cause two PTYs to appear "merged" under one sessionId.
+    const sessionId = `${params.workspaceId}-${Date.now()}-${randomUUID().slice(0, 8)}`;
     const runtimeType =
       runtime instanceof SSHRuntime ? "SSH" : runtime instanceof DockerRuntime ? "Docker" : "Local";
-
     log.info(
       `Creating terminal session ${sessionId} for workspace ${params.workspaceId} (${runtimeType})`
     );
@@ -314,6 +317,16 @@ export class PTYService {
     }
 
     this.sessions.delete(sessionId);
+  }
+
+  /**
+   * Get all session IDs for a workspace.
+   * Used by frontend to discover existing sessions to reattach to after reload.
+   */
+  getWorkspaceSessionIds(workspaceId: string): string[] {
+    return Array.from(this.sessions.entries())
+      .filter(([, session]) => session.workspaceId === workspaceId)
+      .map(([id]) => id);
   }
 
   /**
