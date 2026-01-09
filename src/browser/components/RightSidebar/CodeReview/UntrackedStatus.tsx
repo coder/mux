@@ -105,6 +105,9 @@ export const UntrackedStatus: React.FC<UntrackedStatusProps> = ({
   };
 
   const count = untrackedFiles.length;
+  const MAX_DISPLAY_FILES = 20;
+  const displayedFiles = untrackedFiles.slice(0, MAX_DISPLAY_FILES);
+  const hiddenCount = count - displayedFiles.length;
 
   // Don't render anything if no untracked files (and not loading on first load)
   if (!isLoading && count === 0) {
@@ -141,7 +144,7 @@ export const UntrackedStatus: React.FC<UntrackedStatusProps> = ({
       {isExpanded && (
         <div className="border-info-yellow/20 border-t px-3 py-2">
           <div className="mb-2 max-h-[200px] overflow-y-auto">
-            {untrackedFiles.map((file) => (
+            {displayedFiles.map((file) => (
               <div
                 key={file}
                 className="text-label hover:bg-bg-subtle truncate py-0.5 font-mono text-[11px]"
@@ -149,6 +152,11 @@ export const UntrackedStatus: React.FC<UntrackedStatusProps> = ({
                 {file}
               </div>
             ))}
+            {hiddenCount > 0 && (
+              <div className="text-muted py-0.5 text-[11px] italic">
+                and {hiddenCount} more {hiddenCount === 1 ? "file" : "files"}...
+              </div>
+            )}
           </div>
           <button
             onClick={() => void handleTrackAll()}
