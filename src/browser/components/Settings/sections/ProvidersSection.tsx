@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Check, X, Eye, EyeOff, ExternalLink } from "lucide-react";
 
 import { createEditKeyHandler } from "@/browser/utils/ui/keybinds";
@@ -28,6 +28,23 @@ import {
   TooltipTrigger,
 } from "@/browser/components/ui/tooltip";
 
+const MUX_GATEWAY_AUTH_MODE_KEY = "mux-gateway-auth-mode";
+
+type MuxGatewayAuthMode = "login" | "coupon";
+type MuxGatewayLoginStatus = "idle" | "starting" | "waiting" | "success" | "error";
+
+interface OAuthMessage {
+  type?: unknown;
+  state?: unknown;
+  ok?: unknown;
+  error?: unknown;
+}
+
+function getBackendBaseUrl(): string {
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment, @typescript-eslint/prefer-ts-expect-error
+  // @ts-ignore - import.meta is available in Vite
+  return import.meta.env.VITE_BACKEND_URL ?? window.location.origin;
+}
 const GATEWAY_MODELS_KEY = "gateway-models";
 
 const BUILT_IN_MODELS: string[] = Object.values(KNOWN_MODELS).map((model) => model.id);
@@ -152,7 +169,194 @@ export function ProvidersSection() {
 
   const gateway = useGateway();
 
-  const wasGatewayCouponCodeSet = config?.["mux-gateway"]?.couponCodeSet ?? false;
+  const [muxGatewayAuthMode, setMuxGatewayAuthMode] = usePersistedState<MuxGatewayAuthMode>(
+    MUX_GATEWAY_AUTH_MODE_KEY,
+    "login",
+    {
+      listener: true,
+    }
+  );
+
+  const backendBaseUrl = getBackendBaseUrl();
+  const backendOrigin = (() => {
+    try {
+      return new URL(backendBaseUrl).origin;
+    } catch {
+      return window.location.origin;
+    }
+  })();
+
+  const isDesktop = !!window.api;
+
+  const [muxGatewayLoginStatus, setMuxGatewayLoginStatus] = useState<MuxGatewayLoginStatus>("idle");
+  const [muxGatewayLoginError, setMuxGatewayLoginError] = useState<string | null>(null);
+  const [muxGatewayDesktopFlowId, setMuxGatewayDesktopFlowId] = useState<string | null>(null);
+  const [muxGatewayServerState, setMuxGatewayServerState] = useState<string | null>(null);
+
+  const cancelMuxGatewayLogin = () => {
+    if (isDesktop && api && muxGatewayDesktopFlowId) {
+      void api.muxGatewayOauth.cancelDesktopFlow({ flowId: muxGatewayDesktopFlowId });
+    }
+
+    setMuxGatewayDesktopFlowId(null);
+    setMuxGatewayServerState(null);
+    setMuxGatewayLoginStatus("idle");
+    setMuxGatewayLoginError(null);
+  };
+
+  const clearMuxGatewayCredentials = () => {
+    if (!api) {
+      return;
+    }
+
+    cancelMuxGatewayLogin();
+    updateOptimistically("mux-gateway", { couponCodeSet: false });
+
+    void api.providers.setProviderConfig({
+      provider: "mux-gateway",
+      keyPath: ["couponCode"],
+      value: "",
+    });
+    void api.providers.setProviderConfig({
+      provider: "mux-gateway",
+      keyPath: ["voucher"],
+      value: "",
+    });
+  };
+
+  const startMuxGatewayLogin = async () => {
+    try {
+      setMuxGatewayLoginError(null);
+      setMuxGatewayDesktopFlowId(null);
+      setMuxGatewayServerState(null);
+
+      if (isDesktop) {
+        if (!api) {
+          setMuxGatewayLoginStatus("error");
+          setMuxGatewayLoginError("Mux API not connected.");
+          return;
+        }
+
+        setMuxGatewayLoginStatus("starting");
+        const startResult = await api.muxGatewayOauth.startDesktopFlow();
+        if (!startResult.success) {
+          setMuxGatewayLoginStatus("error");
+          setMuxGatewayLoginError(startResult.error);
+          return;
+        }
+
+        const { flowId, authorizeUrl } = startResult.data;
+        setMuxGatewayDesktopFlowId(flowId);
+        setMuxGatewayLoginStatus("waiting");
+
+        // Desktop main process intercepts external window.open() calls and routes them via shell.openExternal.
+        window.open(authorizeUrl, "_blank", "noopener");
+
+        const waitResult = await api.muxGatewayOauth.waitForDesktopFlow({ flowId });
+        if (waitResult.success) {
+          setMuxGatewayLoginStatus("success");
+          return;
+        }
+
+        setMuxGatewayLoginStatus("error");
+        setMuxGatewayLoginError(waitResult.error);
+        return;
+      }
+
+      // Browser/server mode: use unauthenticated bootstrap route.
+      setMuxGatewayLoginStatus("starting");
+
+      const startUrl = new URL("/auth/mux-gateway/start", backendBaseUrl);
+      const res = await fetch(startUrl);
+
+      const contentType = res.headers.get("content-type") ?? "";
+      if (!contentType.includes("application/json")) {
+        const body = await res.text();
+        const prefix = body.trim().slice(0, 80);
+        throw new Error(
+          `Unexpected response from ${startUrl.toString()} (expected JSON, got ${
+            contentType || "unknown"
+          }): ${prefix}`
+        );
+      }
+
+      const json = (await res.json()) as {
+        authorizeUrl?: unknown;
+        state?: unknown;
+        error?: unknown;
+      };
+
+      if (!res.ok) {
+        const message = typeof json.error === "string" ? json.error : `HTTP ${res.status}`;
+        throw new Error(message);
+      }
+
+      if (typeof json.authorizeUrl !== "string" || typeof json.state !== "string") {
+        throw new Error(`Invalid response from ${startUrl.pathname}`);
+      }
+
+      setMuxGatewayServerState(json.state);
+      const popup = window.open(json.authorizeUrl, "_blank");
+      if (!popup) {
+        throw new Error("Popup blocked - please allow popups and try again.");
+      }
+      setMuxGatewayLoginStatus("waiting");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setMuxGatewayLoginStatus("error");
+      setMuxGatewayLoginError(message);
+    }
+  };
+
+  useEffect(() => {
+    if (isDesktop || muxGatewayLoginStatus !== "waiting" || !muxGatewayServerState) {
+      return;
+    }
+
+    const handleMessage = (event: MessageEvent<OAuthMessage>) => {
+      if (event.origin !== backendOrigin) return;
+
+      const data = event.data;
+      if (!data || typeof data !== "object") return;
+      if (data.type !== "mux-gateway-oauth") return;
+      if (data.state !== muxGatewayServerState) return;
+
+      if (data.ok === true) {
+        setMuxGatewayLoginStatus("success");
+        return;
+      }
+
+      const msg = typeof data.error === "string" ? data.error : "Login failed";
+      setMuxGatewayLoginStatus("error");
+      setMuxGatewayLoginError(msg);
+    };
+
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [isDesktop, muxGatewayLoginStatus, muxGatewayServerState, backendOrigin]);
+  const muxGatewayCouponCodeSet = config?.["mux-gateway"]?.couponCodeSet ?? false;
+  const muxGatewayLoginInProgress =
+    muxGatewayLoginStatus === "waiting" || muxGatewayLoginStatus === "starting";
+  const muxGatewayIsLoggedIn = muxGatewayCouponCodeSet || muxGatewayLoginStatus === "success";
+
+  const muxGatewayAuthStatusText =
+    muxGatewayAuthMode === "login"
+      ? muxGatewayIsLoggedIn
+        ? "Logged in"
+        : "Not logged in"
+      : muxGatewayIsLoggedIn
+        ? "Coupon code set"
+        : "Coupon code not set";
+
+  const muxGatewayLoginButtonLabel =
+    muxGatewayLoginStatus === "error"
+      ? "Try again"
+      : muxGatewayLoginInProgress
+        ? "Waiting for login..."
+        : muxGatewayIsLoggedIn
+          ? "Re-login to Mux Gateway"
+          : "Login to Mux Gateway";
+
   const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
   const [editingField, setEditingField] = useState<{
     provider: string;
@@ -162,7 +366,13 @@ export function ProvidersSection() {
   const [showPassword, setShowPassword] = useState(false);
 
   const handleToggleProvider = (provider: string) => {
-    setExpandedProvider((prev) => (prev === provider ? null : provider));
+    setExpandedProvider((prev) => {
+      const next = prev === provider ? null : provider;
+      if (prev === "mux-gateway" && next !== "mux-gateway") {
+        cancelMuxGatewayLogin();
+      }
+      return next;
+    });
     setEditingField(null);
   };
 
@@ -189,7 +399,7 @@ export function ProvidersSection() {
       provider === "mux-gateway" &&
       field === "couponCode" &&
       editValue !== "" &&
-      !wasGatewayCouponCodeSet;
+      !muxGatewayCouponCodeSet;
 
     // Optimistic update for instant feedback
     if (field === "apiKey") {
@@ -216,20 +426,33 @@ export function ProvidersSection() {
     editValue,
     setGatewayDefaultEnabled,
     updateOptimistically,
-    wasGatewayCouponCodeSet,
+    muxGatewayCouponCodeSet,
   ]);
 
   const handleClearField = useCallback(
     (provider: string, field: string) => {
       if (!api) return;
 
+      if (provider === "mux-gateway" && field === "couponCode") {
+        updateOptimistically(provider, { couponCodeSet: false });
+        void api.providers.setProviderConfig({
+          provider,
+          keyPath: ["couponCode"],
+          value: "",
+        });
+        void api.providers.setProviderConfig({
+          provider,
+          keyPath: ["voucher"],
+          value: "",
+        });
+        return;
+      }
+
       // Optimistic update for instant feedback
       if (field === "apiKey") {
         updateOptimistically(provider, { apiKeySet: false });
       } else if (field === "baseUrl") {
         updateOptimistically(provider, { baseUrl: undefined });
-      } else if (field === "couponCode") {
-        updateOptimistically(provider, { couponCodeSet: false });
       }
 
       // Save in background
@@ -294,7 +517,10 @@ export function ProvidersSection() {
       {SUPPORTED_PROVIDERS.map((provider) => {
         const isExpanded = expandedProvider === provider;
         const configured = isConfigured(provider);
-        const fields = getProviderFields(provider);
+        const fields =
+          provider === "mux-gateway" && muxGatewayAuthMode === "login"
+            ? []
+            : getProviderFields(provider);
 
         return (
           <div
@@ -339,6 +565,77 @@ export function ProvidersSection() {
                     Get API Key
                     <ExternalLink className="h-2.5 w-2.5" />
                   </a>
+                )}
+
+                {provider === "mux-gateway" && (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <label className="text-foreground block text-xs font-medium">
+                          Authentication
+                        </label>
+                        <span className="text-muted text-xs">{muxGatewayAuthStatusText}</span>
+                      </div>
+
+                      <Select
+                        value={muxGatewayAuthMode}
+                        onValueChange={(next) => {
+                          if (next !== "login" && next !== "coupon") return;
+                          if (next === muxGatewayAuthMode) return;
+                          cancelMuxGatewayLogin();
+                          setMuxGatewayAuthMode(next);
+                        }}
+                      >
+                        <SelectTrigger className="w-44">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="login">Login</SelectItem>
+                          <SelectItem value="coupon">Legacy coupon</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {muxGatewayAuthMode === "login" && (
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <Button
+                            size="sm"
+                            onClick={() => {
+                              void startMuxGatewayLogin();
+                            }}
+                            disabled={muxGatewayLoginInProgress}
+                          >
+                            {muxGatewayLoginButtonLabel}
+                          </Button>
+
+                          {muxGatewayLoginInProgress && (
+                            <Button variant="secondary" size="sm" onClick={cancelMuxGatewayLogin}>
+                              Cancel
+                            </Button>
+                          )}
+
+                          {muxGatewayIsLoggedIn && (
+                            <Button variant="ghost" size="sm" onClick={clearMuxGatewayCredentials}>
+                              Log out
+                            </Button>
+                          )}
+                        </div>
+
+                        {muxGatewayLoginStatus === "waiting" && (
+                          <p className="text-muted text-xs">
+                            Finish the login flow in your browser, then return here.
+                          </p>
+                        )}
+
+                        {muxGatewayLoginStatus === "error" && muxGatewayLoginError && (
+                          <p className="text-destructive text-xs">
+                            Login failed: {muxGatewayLoginError}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 )}
 
                 {fields.map((fieldConfig) => {

@@ -152,74 +152,92 @@ export function LoginWithMuxGatewaySplash(props: { onDismiss: () => void }) {
     return () => window.removeEventListener("message", handleMessage);
   }, [isDesktop, status, serverState, backendOrigin]);
 
+  const isSuccess = status === "success";
+
   const primaryLabel =
-    status === "success"
-      ? "Done"
-      : status === "error"
-        ? "Try again"
-        : status === "waiting" || status === "starting"
-          ? "Waiting for login..."
-          : "Login with Mux Gateway";
+    status === "error"
+      ? "Try again"
+      : status === "waiting" || status === "starting"
+        ? "Waiting for login..."
+        : "Login with Mux Gateway";
 
   const primaryDisabled = status === "waiting" || status === "starting";
 
-  const dismissLabel = status === "waiting" || status === "starting" ? "Cancel" : "Not now";
+  const dismissLabel = isSuccess
+    ? null
+    : status === "waiting" || status === "starting"
+      ? "Cancel"
+      : "Not now";
 
   return (
     <SplashScreen
       title="Login with Mux Gateway"
       onDismiss={handleDismiss}
-      primaryAction={{
-        label: primaryLabel,
-        onClick: () => {
-          void startLogin();
-        },
-        disabled: primaryDisabled,
-      }}
-      dismissOnPrimaryAction={status === "success"}
+      primaryAction={
+        isSuccess
+          ? { label: "Close", onClick: () => undefined }
+          : {
+              label: primaryLabel,
+              onClick: () => {
+                void startLogin();
+              },
+              disabled: primaryDisabled,
+            }
+      }
+      dismissOnPrimaryAction={isSuccess ? undefined : false}
       dismissLabel={dismissLabel}
     >
-      <div className="text-muted" style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-        <p>
-          Log in to Mux Gateway to automatically configure your token under Settings → Providers →
-          Mux Gateway.
-        </p>
-
-        <p>
-          If you haven&apos;t redeemed your Mux voucher yet,{" "}
-          <a
-            href="https://gateway.mux.coder.com/"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-accent hover:underline"
-          >
-            claim it here
-          </a>
-          .
-        </p>
-
-        {status === "waiting" && <p>Finish the login flow in your browser, then return here.</p>}
-
-        {status === "success" && <p>Logged into Mux Gateway.</p>}
-
-        {status === "error" && error && (
+      {isSuccess ? (
+        <div
+          className="text-muted"
+          style={{ display: "flex", flexDirection: "column", gap: "12px" }}
+        >
+          <p>Login successful.</p>
+        </div>
+      ) : (
+        <div
+          className="text-muted"
+          style={{ display: "flex", flexDirection: "column", gap: "12px" }}
+        >
           <p>
-            <strong className="text-destructive">Login failed:</strong> {error}
+            Log in to Mux Gateway to automatically configure your token under Settings → Providers →
+            Mux Gateway.
           </p>
-        )}
 
-        <p>
-          Prefer manual setup?{" "}
-          <button
-            type="button"
-            className="text-accent hover:underline"
-            onClick={() => openSettings("providers")}
-          >
-            Open Settings
-          </button>
-          .
-        </p>
-      </div>
+          <p>
+            If you haven&apos;t redeemed your Mux voucher yet,{" "}
+            <a
+              href="https://gateway.mux.coder.com/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-accent hover:underline"
+            >
+              claim it here
+            </a>
+            .
+          </p>
+
+          {status === "waiting" && <p>Finish the login flow in your browser, then return here.</p>}
+
+          {status === "error" && error && (
+            <p>
+              <strong className="text-destructive">Login failed:</strong> {error}
+            </p>
+          )}
+
+          <p>
+            Prefer manual setup?{" "}
+            <button
+              type="button"
+              className="text-accent hover:underline"
+              onClick={() => openSettings("providers")}
+            >
+              Open Settings
+            </button>
+            .
+          </p>
+        </div>
+      )}
     </SplashScreen>
   );
 }

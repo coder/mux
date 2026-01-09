@@ -19,7 +19,8 @@ interface SplashScreenProps {
   };
   /** Defaults to true (primary action dismisses the splash). */
   dismissOnPrimaryAction?: boolean;
-  dismissLabel?: string; // defaults to "Got it"
+  /** Defaults to "Got it". Set to null to hide the dismiss button entirely. */
+  dismissLabel?: string | null;
 }
 
 export function SplashScreen(props: SplashScreenProps) {
@@ -48,9 +49,11 @@ export function SplashScreen(props: SplashScreenProps) {
               {props.primaryAction.label}
             </Button>
           )}
-          <Button variant="secondary" onClick={props.onDismiss}>
-            {props.dismissLabel ?? "Got it"}
-          </Button>
+          {props.dismissLabel !== null && (
+            <Button variant="secondary" onClick={props.onDismiss}>
+              {props.dismissLabel ?? "Got it"}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
