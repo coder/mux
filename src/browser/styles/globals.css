@@ -271,6 +271,9 @@
     --color-init-border: hsl(210 27% 25%); /* #2f3f52 */
     --color-init-error-bg: hsl(0 33% 17%); /* #3a1e1e */
     --color-init-error-border: hsl(0 28% 30%); /* #653737 */
+    --color-init-output-bg: hsl(210 20% 12%); /* dark output bg */
+    --color-init-output-text: hsl(0 0% 73%); /* light text */
+    --color-init-output-error-text: hsl(6 93% 71%); /* error text */
 
     /* Toast and notification backgrounds */
     --color-toast-success-bg: hsl(207 100% 37% / 0.13); /* #0e639c with 20% opacity */
@@ -530,6 +533,15 @@
   --color-review-warning-light: hsl(38 100% 88%);
 
   --color-error-bg-dark: hsl(0 65% 86%);
+
+  /* Init message surfaces */
+  --color-init-bg: hsl(210 36% 94%);
+  --color-init-border: hsl(210 28% 82%);
+  --color-init-error-bg: hsl(0 56% 94%);
+  --color-init-error-border: hsl(0 48% 78%);
+  --color-init-output-bg: hsl(210 30% 90%);
+  --color-init-output-text: hsl(210 18% 28%);
+  --color-init-output-error-text: hsl(0 65% 42%);
 
   --radius: 0.5rem;
 }
