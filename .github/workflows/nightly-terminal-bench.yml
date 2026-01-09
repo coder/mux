@@ -17,8 +17,26 @@ on:
         type: string
 
 jobs:
+  # Smoke test: run hello-world task first to catch broken agent setup
+  # If this fails, skip the full suite to save time and API costs
+  smoke-test:
+    name: Smoke test (hello-world)
+    uses: ./.github/workflows/terminal-bench.yml
+    with:
+      model_name: "anthropic:claude-sonnet-4-5"
+      thinking_level: "high"
+      dataset: "terminal-bench-core==0.1.1"
+      concurrency: "1"
+      livestream: false
+      extra_args: "--task-id hello-world"
+      experiments: ${{ inputs.experiments }}
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
   determine-models:
     name: Determine models to test
+    needs: smoke-test
     runs-on: ubuntu-latest
     outputs:
       models: ${{ steps.set-models.outputs.models }}
@@ -37,7 +55,7 @@ jobs:
 
   benchmark:
     name: ${{ matrix.model }}
-    needs: determine-models
+    needs: [smoke-test, determine-models]
     strategy:
       matrix:
         model: ${{ fromJSON(needs.determine-models.outputs.models) }}

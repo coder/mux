@@ -127,13 +127,29 @@ jobs:
         if: always()
         run: |
           echo "=== Terminal-Bench Results Summary ==="
-          if [ -f "$(find runs -name 'results.json' 2>/dev/null | head -1)" ]; then
-            RESULTS_FILE=$(find runs -name 'results.json' | head -1)
+          if [ -f "$(find runs -maxdepth 2 -name 'results.json' 2>/dev/null | head -1)" ]; then
+            RESULTS_FILE=$(find runs -maxdepth 2 -name 'results.json' | head -1)
             cat "$RESULTS_FILE" | jq '{n_resolved, n_unresolved, accuracy}' 2>/dev/null || cat "$RESULTS_FILE"
           else
             echo "❌ No results.json found"
             ls -laR runs/ 2>/dev/null || echo "runs/ directory missing"
           fi
+
+      - name: Verify at least one task resolved
+        run: |
+          RESULTS_FILE=$(find runs -maxdepth 2 -name 'results.json' 2>/dev/null | head -1)
+          if [ -z "$RESULTS_FILE" ]; then
+            echo "❌ No results.json found - benchmark failed to produce results"
+            exit 1
+          fi
+          N_RESOLVED=$(jq -r '.n_resolved' "$RESULTS_FILE")
+          N_TOTAL=$((N_RESOLVED + $(jq -r '.n_unresolved' "$RESULTS_FILE")))
+          echo "Resolved: $N_RESOLVED / $N_TOTAL"
+          if [ "$N_RESOLVED" -eq 0 ]; then
+            echo "❌ No tasks resolved - agent may be broken"
+            exit 1
+          fi
+          echo "✅ At least one task resolved"
 
       - name: Set artifact name
         if: always()

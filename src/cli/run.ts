@@ -301,7 +301,7 @@ async function main(): Promise<number> {
 
   // Get message from arg or stdin
   const stdinMessage = await gatherMessageFromStdin();
-  const message = messageArg?.trim() ?? stdinMessage.trim();
+  const message = messageArg?.trim() || stdinMessage.trim();
 
   if (!message) {
     console.error("Error: No message provided. Pass as argument or pipe via stdin.");

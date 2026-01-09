@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shlex
 from pathlib import Path
@@ -170,6 +171,8 @@ class MuxAgent(AbstractInstalledAgent):
     def _install_agent_script_path(self) -> Path:
         return self._get_templated_script_path("mux_setup.sh.j2")
 
+    _TOKEN_FILE_PATH = "/tmp/mux-tokens.json"
+
     def perform_task(
         self,
         instruction: str,
@@ -179,7 +182,26 @@ class MuxAgent(AbstractInstalledAgent):
         if not instruction.strip():
             raise ValueError("instruction must be a non-empty string")
         self._ensure_payload_staged(session)
-        return super().perform_task(instruction, session, logging_dir)
+
+        # Run agent via parent (returns hardcoded 0 tokens)
+        super().perform_task(instruction, session, logging_dir)
+
+        # Read tokens from file written by mux-run.sh (best-effort)
+        input_tokens = 0
+        output_tokens = 0
+        try:
+            result = session.container.exec_run(f"cat {self._TOKEN_FILE_PATH}")
+            if result.exit_code == 0:
+                data = json.loads(result.output.decode())
+                input_tokens = data.get("input", 0)
+                output_tokens = data.get("output", 0)
+        except Exception:
+            pass  # Token extraction is best-effort
+
+        return AgentResult(
+            total_input_tokens=input_tokens,
+            total_output_tokens=output_tokens,
+        )
 
     def _ensure_payload_staged(self, session: TmuxSession) -> None:
         container_id = getattr(session.container, "id", None)
