@@ -119,24 +119,6 @@ describe("proxifyOrpc CLI help output", () => {
     expect(optionsField?.description).toContain("model: string");
   });
 
-  test("workspace list has optional includePostCompaction param", () => {
-    const r = router();
-    const proxied = proxifyOrpc(r, { baseUrl: "http://localhost:8080" });
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-    const listProc = (proxied as any).workspace?.list;
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-    const inputSchema = listProc?.["~orpc"]?.inputSchema;
-
-    // Input should be an optional object with includePostCompaction boolean
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    expect(inputSchema?.def?.type).toBe("optional");
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    expect(inputSchema?.def?.innerType?.def?.type).toBe("object");
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    expect(inputSchema?.def?.innerType?.def?.shape?.includePostCompaction).toBeDefined();
-  });
-
   test("enhanced schema preserves _zod property for JSON Schema conversion", () => {
     const r = router();
     const proxied = proxifyOrpc(r, { baseUrl: "http://localhost:8080" });

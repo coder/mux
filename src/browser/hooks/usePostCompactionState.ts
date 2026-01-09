@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useAPI } from "@/browser/contexts/API";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getPostCompactionStateKey } from "@/common/constants/storage";
@@ -18,6 +18,19 @@ interface CachedPostCompactionData {
   excludedItems: string[];
 }
 
+/** Load state from localStorage cache for a workspace */
+function loadFromCache(wsId: string) {
+  const cached = readPersistedState<CachedPostCompactionData | null>(
+    getPostCompactionStateKey(wsId),
+    null
+  );
+  return {
+    planPath: cached?.planPath ?? null,
+    trackedFilePaths: cached?.trackedFilePaths ?? [],
+    excludedItems: new Set(cached?.excludedItems ?? []),
+  };
+}
+
 /**
  * Hook to get post-compaction context state for a workspace.
  * Fetches lazily from the backend API and caches in localStorage.
@@ -28,27 +41,18 @@ export function usePostCompactionState(workspaceId: string): PostCompactionState
   const { api } = useAPI();
   const experimentEnabled = useExperimentValue(EXPERIMENT_IDS.POST_COMPACTION_CONTEXT);
 
-  // Helper to load state from cache for a workspace
-  const loadFromCache = (wsId: string) => {
-    const cached = readPersistedState<CachedPostCompactionData | null>(
-      getPostCompactionStateKey(wsId),
-      null
-    );
-    return {
-      planPath: cached?.planPath ?? null,
-      trackedFilePaths: cached?.trackedFilePaths ?? [],
-      excludedItems: new Set(cached?.excludedItems ?? []),
-    };
-  };
-
-  // Initialize from cache for instant display
   const [state, setState] = useState(() => loadFromCache(workspaceId));
 
-  // Reset to new workspace's cache when workspaceId changes, then fetch fresh data
-  useEffect(() => {
-    // Immediately reset to new workspace's cached state (or empty)
+  // Track which workspaceId the current state belongs to.
+  // Reset synchronously during render when workspaceId changes (React-recommended pattern).
+  const prevWorkspaceIdRef = useRef(workspaceId);
+  if (prevWorkspaceIdRef.current !== workspaceId) {
+    prevWorkspaceIdRef.current = workspaceId;
     setState(loadFromCache(workspaceId));
+  }
 
+  // Fetch fresh data when workspaceId changes (only if experiment enabled)
+  useEffect(() => {
     if (!api || !experimentEnabled) return;
 
     let cancelled = false;
