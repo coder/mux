@@ -455,6 +455,31 @@ async function syncProviderEnvVars(): Promise<boolean> {
 }
 
 // ---------------------------------------------------------------------------
+// Auto-label workflow sync
+// ---------------------------------------------------------------------------
+
+function generateAutoLabelWorkflowBlock(): string {
+  const workflowPath = path.join(
+    import.meta.dir,
+    "..",
+    ".github",
+    "workflows",
+    "auto-label.yml"
+  );
+  const content = fs.readFileSync(workflowPath, "utf-8");
+  return "```yaml\n" + content.trim() + "\n```";
+}
+
+async function syncAutoLabelWorkflow(): Promise<boolean> {
+  return syncDoc({
+    docsFile: "guides/github-actions.mdx",
+    sourceLabel: ".github/workflows/auto-label.yml",
+    markerName: "AUTO_LABEL_WORKFLOW",
+    generateBlock: generateAutoLabelWorkflowBlock,
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -466,6 +491,7 @@ async function main(): Promise<void> {
     syncCompactionCustomizationDocs(),
     syncNotifyDocs(),
     syncProviderEnvVars(),
+    syncAutoLabelWorkflow(),
   ]);
 
   if (results.some((r) => !r)) {

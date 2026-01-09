@@ -48,12 +48,12 @@ Use this index to find a page's:
   - **Getting Started**
     - Introduction (`/`) → `references/docs/index.mdx` — mux - Coding Agent Multiplexer for AI-assisted development
     - Install (`/install`) → `references/docs/install.mdx` — Download and install mux for macOS, Linux, and Windows
-    - Command Line Interface (`/reference/cli`) → `references/docs/reference/cli.mdx` — Run one-off agent tasks from the command line with mux run
     - **Models**
       - Models (`/config/models`) → `references/docs/config/models.mdx` — Select and configure AI models in mux
       - Providers (`/config/providers`) → `references/docs/config/providers.mdx` — Configure API keys and settings for AI providers
     - Why Parallelize? (`/getting-started/why-parallelize`) → `references/docs/getting-started/why-parallelize.mdx` — Use cases for running multiple AI agents in parallel
     - Mux Codes (`/getting-started/mux-codes`) → `references/docs/getting-started/mux-codes.mdx` — Redeem free LLM token credits for evaluating Mux
+    - CLI (`/reference/cli`) → `references/docs/reference/cli.mdx` — Run one-off agent tasks from the command line with mux run
   - **Workspaces**
     - Workspaces (`/workspaces`) → `references/docs/workspaces/index.mdx` — Isolated development environments for parallel agent work
     - Forking Workspaces (`/workspaces/fork`) → `references/docs/workspaces/fork.mdx` — Clone workspaces with conversation history to explore alternatives
@@ -87,6 +87,10 @@ Use this index to find a page's:
     - Keyboard Shortcuts (`/config/keybinds`) → `references/docs/config/keybinds.mdx` — Complete keyboard shortcut reference for mux
     - Notifications (`/config/notifications`) → `references/docs/config/notifications.mdx` — Configure how agents notify you about important events
     - Vim Mode (`/config/vim-mode`) → `references/docs/config/vim-mode.mdx` — Vim-style editing in the mux chat input
+  - **Guides**
+    - GitHub Actions (`/guides/github-actions`) → `references/docs/guides/github-actions.mdx` — Automate your workflows with mux run in GitHub Actions
+    - Agentic Git Identity (`/config/agentic-git-identity`) → `references/docs/config/agentic-git-identity.mdx` — Configure a separate Git identity for AI-generated commits
+    - Prompting Tips (`/agents/prompting-tips`) → `references/docs/agents/prompting-tips.mdx` — Tips and tricks for getting the most out of your AI agents
   - **Integrations**
     - VS Code Extension (`/integrations/vscode-extension`) → `references/docs/integrations/vscode-extension.mdx` — Pair mux workspaces with VS Code and Cursor editors
   - **Reference**

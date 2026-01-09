@@ -1,0 +1,321 @@
+---
+title: GitHub Actions
+description: Automate your workflows with mux run in GitHub Actions
+---
+
+`mux run` is designed for automation scenarios like CI/CD pipelines. This guide shows how to integrate mux into your GitHub Actions workflows.
+
+## Prerequisites
+
+1. **API Key**: Add your `ANTHROPIC_API_KEY` (or other provider key) to your repository's secrets
+2. **npm/bun**: The workflow will install mux via `bunx` or `npx`
+
+## Basic Usage
+
+Here's a minimal example that runs mux in a GitHub Action:
+
+```yaml
+- name: Run mux agent
+  env:
+    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+  run: bunx mux run --timeout 5m "Your prompt here"
+```
+
+### Key Options for CI
+
+| Option      | Purpose                                          |
+| ----------- | ------------------------------------------------ |
+| `--timeout` | **Always set** - prevents runaway jobs and costs |
+| `--quiet`   | Only output final result (cleaner logs)          |
+| `--json`    | Machine-readable NDJSON output for parsing       |
+
+## Example: Auto-Label Issues and PRs
+
+This workflow automatically labels new issues and pull requests by having mux analyze the content and select appropriate labels from your repository's label set.
+
+{/* BEGIN AUTO_LABEL_WORKFLOW */}
+
+```yaml
+# =============================================================================
+# Auto-Label Workflow
+# =============================================================================
+#
+# This workflow automatically applies labels to new issues and pull requests
+# using an AI agent (mux run). The agent analyzes the content and selects
+# appropriate labels from the repository's existing label set.
+#
+# SETUP REQUIREMENTS:
+# 1. Add ANTHROPIC_API_KEY to your repository secrets
+# 2. Ensure your repo has labels defined (the agent will use existing labels)
+#
+# HOW IT WORKS:
+# 1. Triggered when an issue or PR is opened
+# 2. Fetches all available labels from the repository
+# 3. Uses mux run to analyze the content and select appropriate labels
+# 4. Applies the selected labels via GitHub CLI
+#
+# =============================================================================
+
+name: Auto-Label Issues and PRs
+
+# -----------------------------------------------------------------------------
+# Triggers: Run on new issues and pull requests
+# -----------------------------------------------------------------------------
+on:
+  issues:
+    types: [opened]
+  pull_request:
+    types: [opened]
+
+# -----------------------------------------------------------------------------
+# Permissions: Need write access to issues/PRs for labeling
+# -----------------------------------------------------------------------------
+permissions:
+  issues: write
+  pull-requests: write
+  contents: read
+
+jobs:
+  auto-label:
+    runs-on: ubuntu-latest
+    # Skip if the author is a bot (prevents infinite loops with other automations)
+    if: github.actor != 'dependabot[bot]' && github.actor != 'github-actions[bot]'
+
+    steps:
+      # -----------------------------------------------------------------------
+      # Step 1: Checkout repository
+      # We need the repo context for mux to understand the project
+      # -----------------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # -----------------------------------------------------------------------
+      # Step 2: Setup Bun runtime
+      # mux is distributed as an npm package, Bun provides fast execution
+      # -----------------------------------------------------------------------
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      # -----------------------------------------------------------------------
+      # Step 3: Fetch available labels
+      # Get the list of labels defined in this repository so the agent
+      # can choose from valid options only
+      # -----------------------------------------------------------------------
+      - name: Fetch repository labels
+        id: labels
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Get all labels as a JSON array of names
+          labels=$(gh label list --json name --jq '[.[].name] | join(", ")')
+          echo "available=$labels" >> "$GITHUB_OUTPUT"
+
+      # -----------------------------------------------------------------------
+      # Step 4: Prepare issue/PR content for analysis
+      # Extract the title and body, handling both issues and PRs
+      # -----------------------------------------------------------------------
+      - name: Prepare content
+        id: content
+        env:
+          # Use GitHub context to get issue/PR details
+          ISSUE_TITLE: ${{ github.event.issue.title || github.event.pull_request.title }}
+          ISSUE_BODY: ${{ github.event.issue.body || github.event.pull_request.body }}
+          ISSUE_NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
+          IS_PR: ${{ github.event_name == 'pull_request' }}
+        run: |
+          # Determine content type
+          if [ "$IS_PR" = "true" ]; then
+            content_type="pull request"
+          else
+            content_type="issue"
+          fi
+          echo "type=$content_type" >> "$GITHUB_OUTPUT"
+          echo "number=$ISSUE_NUMBER" >> "$GITHUB_OUTPUT"
+
+          # Save title and body to files (safer than inline for special chars)
+          echo "$ISSUE_TITLE" > /tmp/title.txt
+          echo "$ISSUE_BODY" > /tmp/body.txt
+
+      # -----------------------------------------------------------------------
+      # Step 5: Run mux to select appropriate labels
+      # The agent analyzes the content and returns a comma-separated list
+      # of labels that best match the issue/PR
+      # -----------------------------------------------------------------------
+      - name: Select labels with mux
+        id: mux
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          # Read the prepared content
+          title=$(cat /tmp/title.txt)
+          body=$(cat /tmp/body.txt)
+
+          # Build the prompt for the agent
+          # We ask for a simple comma-separated output for easy parsing
+          prompt="You are a GitHub issue/PR labeler. Analyze this ${{ steps.content.outputs.type }} and select the most appropriate labels.
+
+          AVAILABLE LABELS: ${{ steps.labels.outputs.available }}
+
+          TITLE: $title
+
+          BODY:
+          $body
+
+          INSTRUCTIONS:
+          - Select 1-3 labels that best categorize this ${{ steps.content.outputs.type }}
+          - Only use labels from the AVAILABLE LABELS list above
+          - If no labels fit well, respond with: none
+          - Respond with ONLY a comma-separated list of label names, nothing else
+          - Example response: bug, documentation
+          - Example response: enhancement
+          - Example response: none"
+
+          # Run mux with a timeout to prevent runaway costs
+          # --quiet: Only output the final result (no streaming)
+          # --timeout: Limit execution time to 2 minutes
+          selected=$(bunx mux run --quiet --timeout 2m "$prompt" 2>/dev/null || echo "none")
+
+          # Clean up the response (trim whitespace, handle newlines)
+          selected=$(echo "$selected" | tr -d '\n' | xargs)
+
+          echo "Selected labels: $selected"
+          echo "labels=$selected" >> "$GITHUB_OUTPUT"
+
+      # -----------------------------------------------------------------------
+      # Step 6: Apply the selected labels
+      # Use GitHub CLI to add labels to the issue/PR
+      # -----------------------------------------------------------------------
+      - name: Apply labels
+        if: steps.mux.outputs.labels != 'none' && steps.mux.outputs.labels != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Parse the comma-separated labels and apply each one
+          labels="${{ steps.mux.outputs.labels }}"
+
+          # Determine if this is an issue or PR for the gh command
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            target="pr"
+          else
+            target="issue"
+          fi
+
+          # Add labels (gh handles comma-separated list)
+          echo "Applying labels to $target #${{ steps.content.outputs.number }}: $labels"
+          gh $target edit ${{ steps.content.outputs.number }} --add-label "$labels" || {
+            echo "Warning: Some labels may not exist. Trying individually..."
+            # If batch fails, try labels one at a time (handles typos gracefully)
+            IFS=',' read -ra LABEL_ARRAY <<< "$labels"
+            for label in "${LABEL_ARRAY[@]}"; do
+              label=$(echo "$label" | xargs)  # Trim whitespace
+              gh $target edit ${{ steps.content.outputs.number }} --add-label "$label" 2>/dev/null || \
+                echo "Skipping invalid label: $label"
+            done
+          }
+```
+
+{/* END AUTO_LABEL_WORKFLOW */}
+
+### How It Works
+
+1. **Trigger**: Runs when an issue or PR is opened
+2. **Fetch Labels**: Gets the list of available labels from your repository
+3. **AI Analysis**: Uses `mux run` to analyze the content and select matching labels
+4. **Apply Labels**: Adds the selected labels via GitHub CLI
+
+### Setup
+
+1. Add `ANTHROPIC_API_KEY` to your repository secrets
+2. Copy the workflow to `.github/workflows/auto-label.yml`
+3. Ensure your repository has labels defined
+
+## Best Practices
+
+### Always Set Timeouts
+
+Prevent runaway jobs and unexpected costs:
+
+```yaml
+run: bunx mux run --timeout 5m "Your task"
+```
+
+### Use Quiet Mode for Cleaner Logs
+
+When you only need the final result:
+
+```yaml
+run: bunx mux run --quiet "Generate a summary" > output.txt
+```
+
+### Parse JSON Output Programmatically
+
+For complex integrations, use JSON mode:
+
+```yaml
+- name: Generate with mux
+  run: |
+    bunx mux run --json --quiet "Analyze the code" > result.jsonl
+    # Parse the last line for the final response
+    tail -1 result.jsonl | jq -r '.content'
+```
+
+### Handle Failures Gracefully
+
+mux exits with non-zero status on errors:
+
+```yaml
+- name: Run mux (allow failure)
+  continue-on-error: true
+  run: bunx mux run --timeout 5m "Attempt this task"
+```
+
+## More Examples
+
+### Generate Changelog Entries
+
+```yaml
+- name: Generate changelog
+  env:
+    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+  run: |
+    bunx mux run --quiet --timeout 5m \
+      "Generate a changelog entry for the changes in this PR" \
+      >> CHANGELOG.md
+```
+
+### Code Review Comments
+
+```yaml
+- name: AI code review
+  env:
+    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  run: |
+    review=$(bunx mux run --quiet --timeout 10m \
+      "Review the code changes in this PR. Be concise.")
+    gh pr comment ${{ github.event.pull_request.number }} --body "$review"
+```
+
+### Fix Lint Errors Automatically
+
+```yaml
+- name: Auto-fix lint errors
+  env:
+    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+  run: |
+    bunx mux run --timeout 10m "Fix the ESLint errors in this repository"
+    git diff  # Show what changed
+```
+
+## Security Considerations
+
+- **API Keys**: Always use repository secrets, never hardcode keys
+- **Permissions**: Use minimal required permissions in your workflow
+- **Timeouts**: Always set timeouts to prevent cost overruns
+- **Review**: Consider requiring human review for AI-generated changes
+
+## See Also
+
+- [CLI Reference](/reference/cli) - Full CLI documentation
+- [Agentic Git Identity](/config/agentic-git-identity) - Configure separate Git identity for AI commits
+- [Prompting Tips](/agents/prompting-tips) - Get better results from your prompts

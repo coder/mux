@@ -1,7 +1,14 @@
 ---
-title: Command Line Interface
+title: CLI
+sidebarTitle: CLI
 description: Run one-off agent tasks from the command line with mux run
 ---
+
+<Note>
+  The CLI is designed for **automation and scripting** (CI/CD pipelines, batch processing,
+  programmatic control). For interactive terminal experiences, consider tools like [Claude
+  Code](https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/overview) or similar TUIs.
+</Note>
 
 mux provides a CLI for running one-off agent tasks without the desktop app. Unlike the interactive desktop experience, `mux run` executes a single request to completion and exits.
 
@@ -54,8 +61,6 @@ mux run --json "List all TypeScript files" | jq '.type'
 | `--experiment <id>`    | `-e`  | Enable experiment (repeatable)                                  | None              |
 | `--json`               |       | Output NDJSON for programmatic use                              | Off               |
 | `--quiet`              | `-q`  | Only output final result                                        | Off               |
-| `--workspace-id <id>`  |       | Explicit workspace ID                                           | Auto-generated    |
-| `--config-root <path>` |       | mux config directory                                            | `~/.mux`          |
 
 ### Runtimes
 

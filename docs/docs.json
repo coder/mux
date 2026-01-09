@@ -32,13 +32,13 @@
             "pages": [
               "index",
               "install",
-              "reference/cli",
               {
                 "group": "Models",
                 "pages": ["config/models", "config/providers"]
               },
               "getting-started/why-parallelize",
-              "getting-started/mux-codes"
+              "getting-started/mux-codes",
+              "reference/cli"
             ]
           },
           {
@@ -99,6 +99,14 @@
             ]
           },
 
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/github-actions",
+              "config/agentic-git-identity",
+              "agents/prompting-tips"
+            ]
+          },
           {
             "group": "Integrations",
             "pages": ["integrations/vscode-extension"]
