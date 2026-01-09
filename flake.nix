@@ -69,7 +69,7 @@
             '';
 
             outputHashMode = "recursive";
-            outputHash = "sha256-1zDIYzRL1AKVnn67Q4iumd2oymE0byAczBI+dbfISgg=";
+            outputHash = "sha256-bYIK3+PIRy/g/orld7q7AasrLc9VyftpayXtwXOWJVw=";
           };
 
           configurePhase = ''
@@ -111,6 +111,7 @@
             makeWrapper ${pkgs.electron}/bin/electron $out/bin/mux \
               --add-flags "$out/lib/mux/dist/cli/index.js" \
               --set MUX_E2E_LOAD_DIST "1" \
+              --prefix LD_LIBRARY_PATH : "${pkgs.stdenv.cc.cc.lib}/lib" \
               --prefix PATH : ${
                 pkgs.lib.makeBinPath [
                   pkgs.git
