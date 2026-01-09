@@ -91,7 +91,8 @@ jobs:
           ISSUE_TITLE: ${{ github.event.issue.title || github.event.pull_request.title }}
           ISSUE_BODY: ${{ github.event.issue.body || github.event.pull_request.body }}
           ISSUE_NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
-          IS_PR: ${{ github.event_name == 'pull_request' }}
+          # Check for PR by presence of pull_request object (works with pull_request_target too)
+          IS_PR: ${{ github.event.pull_request != null }}
         run: |
           # Determine content type
           if [ "$IS_PR" = "true" ]; then
@@ -164,7 +165,8 @@ jobs:
           labels="${{ steps.mux.outputs.labels }}"
 
           # Determine if this is an issue or PR for the gh command
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
+          # Check for PR object presence (works with pull_request_target too)
+          if [ "${{ github.event.pull_request != null }}" = "true" ]; then
             target="pr"
           else
             target="issue"
