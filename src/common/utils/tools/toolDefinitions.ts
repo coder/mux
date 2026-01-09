@@ -540,7 +540,9 @@ export const TOOL_DEFINITIONS = {
       "Insert content into a file using substring guards. " +
       "Provide exactly one of before or after to anchor the operation when editing an existing file. " +
       "When the file does not exist, it is created automatically without guards. " +
-      `Optional before/after substrings must uniquely match surrounding content. ${TOOL_EDIT_WARNING}`,
+      "Optional before/after substrings must uniquely match surrounding content. " +
+      "Avoid short guards like `}` or `}\\n` that match multiple locations — " +
+      `use longer patterns like full function signatures or unique comments. ${TOOL_EDIT_WARNING}`,
     schema: z
       .object({
         file_path: FILE_EDIT_FILE_PATH,
