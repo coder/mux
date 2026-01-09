@@ -142,6 +142,7 @@ export {
   nameGeneration,
   projects,
   ProviderConfigInfoSchema,
+  muxGatewayOauth,
   providers,
   ProvidersConfigMapSchema,
   server,

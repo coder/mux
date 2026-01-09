@@ -1,4 +1,4 @@
-import { MuxGatewaySplash } from "./MuxGateway";
+import { LoginWithMuxGatewaySplash } from "./LoginWithMuxGateway";
 
 export interface SplashConfig {
   id: string;
@@ -12,9 +12,12 @@ export interface SplashConfig {
 // Priority 2 = Medium priority
 // Priority 3+ = Higher priority (shown first)
 export const SPLASH_REGISTRY: SplashConfig[] = [
-  { id: "mux-gateway-intro", priority: 3, component: MuxGatewaySplash },
+  { id: "mux-gateway-login", priority: 4, component: LoginWithMuxGatewaySplash },
   // Future: { id: "new-feature-xyz", priority: 2, component: NewFeatureSplash },
 ];
 
 // Set to true to disable all splash screens (useful for testing)
-export const DISABLE_SPLASH_SCREENS = true;
+export const DISABLE_SPLASH_SCREENS =
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment, @typescript-eslint/prefer-ts-expect-error
+  // @ts-ignore - import.meta is available in Vite
+  import.meta.env.MODE === "test";

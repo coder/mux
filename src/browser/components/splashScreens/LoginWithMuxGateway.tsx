@@ -1,0 +1,196 @@
+import React, { useEffect, useState } from "react";
+import { SplashScreen } from "./SplashScreen";
+import { useAPI } from "@/browser/contexts/API";
+import { useSettings } from "@/browser/contexts/SettingsContext";
+
+interface OAuthMessage {
+  type?: unknown;
+  state?: unknown;
+  ok?: unknown;
+  error?: unknown;
+}
+
+type LoginStatus = "idle" | "starting" | "waiting" | "success" | "error";
+
+export function LoginWithMuxGatewaySplash(props: { onDismiss: () => void }) {
+  const { api } = useAPI();
+  const { open: openSettings } = useSettings();
+
+  const isDesktop = !!window.api;
+
+  const [status, setStatus] = useState<LoginStatus>("idle");
+  const [error, setError] = useState<string | null>(null);
+  const [desktopFlowId, setDesktopFlowId] = useState<string | null>(null);
+  const [serverState, setServerState] = useState<string | null>(null);
+
+  const handleDismiss = () => {
+    if (isDesktop && api && desktopFlowId) {
+      void api.muxGatewayOauth.cancelDesktopFlow({ flowId: desktopFlowId });
+    }
+    props.onDismiss();
+  };
+
+  const startLogin = async () => {
+    try {
+      setError(null);
+
+      if (isDesktop) {
+        if (!api) {
+          setStatus("error");
+          setError("Mux API not connected.");
+          return;
+        }
+
+        setStatus("starting");
+        const startResult = await api.muxGatewayOauth.startDesktopFlow();
+        if (!startResult.success) {
+          setStatus("error");
+          setError(startResult.error);
+          return;
+        }
+
+        const { flowId, authorizeUrl } = startResult.data;
+        setDesktopFlowId(flowId);
+        setStatus("waiting");
+
+        // Desktop main process intercepts external window.open() calls and routes them via shell.openExternal.
+        window.open(authorizeUrl, "_blank", "noopener");
+
+        const waitResult = await api.muxGatewayOauth.waitForDesktopFlow({ flowId });
+        if (waitResult.success) {
+          setStatus("success");
+          return;
+        }
+
+        setStatus("error");
+        setError(waitResult.error);
+        return;
+      }
+
+      // Browser/server mode: use unauthenticated bootstrap route.
+      setStatus("starting");
+
+      const res = await fetch("/auth/mux-gateway/start");
+      const json = (await res.json()) as {
+        authorizeUrl?: unknown;
+        state?: unknown;
+        error?: unknown;
+      };
+
+      if (!res.ok) {
+        const message = typeof json.error === "string" ? json.error : `HTTP ${res.status}`;
+        throw new Error(message);
+      }
+
+      if (typeof json.authorizeUrl !== "string" || typeof json.state !== "string") {
+        throw new Error("Invalid response from /auth/mux-gateway/start");
+      }
+
+      setServerState(json.state);
+      setStatus("waiting");
+      window.open(json.authorizeUrl, "_blank", "noopener");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setStatus("error");
+      setError(message);
+    }
+  };
+
+  useEffect(() => {
+    if (isDesktop || status !== "waiting" || !serverState) {
+      return;
+    }
+
+    const handleMessage = (event: MessageEvent<OAuthMessage>) => {
+      if (event.origin !== window.location.origin) return;
+
+      const data = event.data;
+      if (!data || typeof data !== "object") return;
+      if (data.type !== "mux-gateway-oauth") return;
+      if (data.state !== serverState) return;
+
+      if (data.ok === true) {
+        setStatus("success");
+        return;
+      }
+
+      const msg = typeof data.error === "string" ? data.error : "Login failed";
+      setStatus("error");
+      setError(msg);
+    };
+
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [isDesktop, status, serverState]);
+
+  const primaryLabel =
+    status === "success"
+      ? "Done"
+      : status === "error"
+        ? "Try again"
+        : status === "waiting" || status === "starting"
+          ? "Waiting for login..."
+          : "Login with Mux Gateway";
+
+  const primaryDisabled = status === "waiting" || status === "starting";
+
+  const dismissLabel = status === "waiting" || status === "starting" ? "Cancel" : "Not now";
+
+  return (
+    <SplashScreen
+      title="Login with Mux Gateway"
+      onDismiss={handleDismiss}
+      primaryAction={{
+        label: primaryLabel,
+        onClick: () => {
+          void startLogin();
+        },
+        disabled: primaryDisabled,
+      }}
+      dismissOnPrimaryAction={status === "success"}
+      dismissLabel={dismissLabel}
+    >
+      <div className="text-muted" style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+        <p>
+          Log in to Mux Gateway to automatically configure your token under Settings → Providers →
+          Mux Gateway.
+        </p>
+
+        <p>
+          If you haven&apos;t redeemed your Mux voucher yet,{" "}
+          <a
+            href="https://gateway.mux.coder.com/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-accent hover:underline"
+          >
+            claim it here
+          </a>
+          .
+        </p>
+
+        {status === "waiting" && <p>Finish the login flow in your browser, then return here.</p>}
+
+        {status === "success" && <p>Logged into Mux Gateway.</p>}
+
+        {status === "error" && error && (
+          <p>
+            <strong className="text-destructive">Login failed:</strong> {error}
+          </p>
+        )}
+
+        <p>
+          Prefer manual setup?{" "}
+          <button
+            type="button"
+            className="text-accent hover:underline"
+            onClick={() => openSettings("providers")}
+          >
+            Open Settings
+          </button>
+          .
+        </p>
+      </div>
+    </SplashScreen>
+  );
+}

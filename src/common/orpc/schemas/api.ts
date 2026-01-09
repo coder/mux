@@ -142,6 +142,34 @@ export const providers = {
   },
 };
 
+// Mux Gateway OAuth (desktop login flow)
+export const muxGatewayOauth = {
+  startDesktopFlow: {
+    input: z.void(),
+    output: ResultSchema(
+      z.object({
+        flowId: z.string(),
+        authorizeUrl: z.string(),
+        redirectUri: z.string(),
+      }),
+      z.string()
+    ),
+  },
+  waitForDesktopFlow: {
+    input: z
+      .object({
+        flowId: z.string(),
+        timeoutMs: z.number().int().positive().optional(),
+      })
+      .strict(),
+    output: ResultSchema(z.void(), z.string()),
+  },
+  cancelDesktopFlow: {
+    input: z.object({ flowId: z.string() }).strict(),
+    output: z.void(),
+  },
+};
+
 // Projects
 export const projects = {
   create: {

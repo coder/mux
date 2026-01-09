@@ -551,6 +551,28 @@ export const router = (authToken?: string) => {
           }
         }),
     },
+    muxGatewayOauth: {
+      startDesktopFlow: t
+        .input(schemas.muxGatewayOauth.startDesktopFlow.input)
+        .output(schemas.muxGatewayOauth.startDesktopFlow.output)
+        .handler(({ context }) => {
+          return context.muxGatewayOauthService.startDesktopFlow();
+        }),
+      waitForDesktopFlow: t
+        .input(schemas.muxGatewayOauth.waitForDesktopFlow.input)
+        .output(schemas.muxGatewayOauth.waitForDesktopFlow.output)
+        .handler(({ context, input }) => {
+          return context.muxGatewayOauthService.waitForDesktopFlow(input.flowId, {
+            timeoutMs: input.timeoutMs,
+          });
+        }),
+      cancelDesktopFlow: t
+        .input(schemas.muxGatewayOauth.cancelDesktopFlow.input)
+        .output(schemas.muxGatewayOauth.cancelDesktopFlow.output)
+        .handler(async ({ context, input }) => {
+          await context.muxGatewayOauthService.cancelDesktopFlow(input.flowId);
+        }),
+    },
     general: {
       listDirectory: t
         .input(schemas.general.listDirectory.input)

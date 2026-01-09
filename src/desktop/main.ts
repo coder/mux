@@ -344,6 +344,7 @@ async function loadServices(): Promise<void> {
     projectService: services.projectService,
     workspaceService: services.workspaceService,
     taskService: services.taskService,
+    muxGatewayOauthService: services.muxGatewayOauthService,
     providerService: services.providerService,
     terminalService: services.terminalService,
     editorService: services.editorService,

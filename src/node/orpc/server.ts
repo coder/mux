@@ -94,6 +94,15 @@ function injectBaseHref(indexHtml: string, baseHref: string): string {
   return indexHtml.replace(/<head[^>]*>/i, (match) => `${match}\n    <base href="${baseHref}" />`);
 }
 
+function escapeHtml(input: string): string {
+  return input
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 /**
  * Create an oRPC server with HTTP and WebSocket endpoints.
  *
@@ -150,6 +159,79 @@ export async function createOrpcServer({
   // Version endpoint
   app.get("/version", (_req, res) => {
     res.json({ ...VERSION, mode: "server" });
+  });
+
+  // --- Mux Gateway OAuth (unauthenticated bootstrap routes) ---
+  // These are raw Express routes (not oRPC) because the OAuth provider cannot
+  // send a mux Bearer token during the redirect callback.
+  app.get("/auth/mux-gateway/start", (req, res) => {
+    const host = req.get("host");
+    if (!host) {
+      res.status(400).json({ error: "Missing Host header" });
+      return;
+    }
+
+    const redirectUri = `${req.protocol}://${host}/auth/mux-gateway/callback`;
+    const { authorizeUrl, state } = context.muxGatewayOauthService.startServerFlow({ redirectUri });
+    res.json({ authorizeUrl, state });
+  });
+
+  app.get("/auth/mux-gateway/callback", async (req, res) => {
+    const state = typeof req.query.state === "string" ? req.query.state : null;
+    const code = typeof req.query.code === "string" ? req.query.code : null;
+    const error = typeof req.query.error === "string" ? req.query.error : null;
+    const errorDescription =
+      typeof req.query.error_description === "string" ? req.query.error_description : undefined;
+
+    const result = await context.muxGatewayOauthService.handleServerCallbackAndExchange({
+      state,
+      code,
+      error,
+      errorDescription,
+    });
+
+    const payload = {
+      type: "mux-gateway-oauth",
+      state,
+      ok: result.success,
+      error: result.success ? null : result.error,
+    };
+
+    const title = result.success ? "Login complete" : "Login failed";
+    const description = result.success
+      ? "You can return to Mux. You may now close this tab."
+      : payload.error
+        ? escapeHtml(payload.error)
+        : "An unknown error occurred.";
+
+    const html = `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${title}</title>
+  </head>
+  <body>
+    <h1>${title}</h1>
+    <p>${description}</p>
+    <script>
+      (() => {
+        const payload = ${JSON.stringify(payload)}
+        try {
+          if (window.opener && typeof window.opener.postMessage === 'function') {
+            window.opener.postMessage(payload, window.location.origin)
+          }
+        } catch {
+          // Ignore postMessage failures.
+        }
+      })()
+    </script>
+  </body>
+</html>`;
+
+    res.status(result.success ? 200 : 400);
+    res.setHeader("Content-Type", "text/html");
+    res.send(html);
   });
 
   const orpcRouter = existingRouter ?? router(authToken);
