@@ -31,10 +31,12 @@
             makeWrapper
             gnumake
             git # Needed by scripts/generate-version.sh
+            python3 # Needed by node-gyp for native module builds
           ];
 
           buildInputs = with pkgs; [
             electron
+            stdenv.cc.cc.lib # Provides libstdc++ for native modules like sharp
           ];
 
           # Fetch dependencies in a separate fixed-output derivation
@@ -52,10 +54,13 @@
             dontPatchShebangs = true;
             dontFixup = true;
 
+            # --ignore-scripts: postinstall scripts (e.g., lzma-native's node-gyp-build)
+            # fail in the sandbox because shebangs like #!/usr/bin/env node can't resolve.
+            # Native modules are rebuilt in the main derivation after patchShebangs runs.
             buildPhase = ''
               export HOME=$TMPDIR
               export BUN_INSTALL_CACHE_DIR=$TMPDIR/.bun-cache
-              bun install --frozen-lockfile --no-progress
+              bun install --frozen-lockfile --no-progress --ignore-scripts
             '';
 
             installPhase = ''
@@ -64,7 +69,7 @@
             '';
 
             outputHashMode = "recursive";
-            outputHash = "sha256-doqJkN6tmwc/4ENop2E45EeFNJ2PWw2LdR1w1MgXW7k=";
+            outputHash = "sha256-bYIK3+PIRy/g/orld7q7AasrLc9VyftpayXtwXOWJVw=";
           };
 
           configurePhase = ''
@@ -76,11 +81,14 @@
             # Patch shebangs in node_modules binaries and scripts
             patchShebangs node_modules
             patchShebangs scripts
+            # Touch sentinel to prevent make from re-running bun install
+            touch node_modules/.installed
           '';
 
           buildPhase = ''
             echo "Building mux with make..."
-            make build
+            export LD_LIBRARY_PATH="${pkgs.stdenv.cc.cc.lib}/lib:$LD_LIBRARY_PATH"
+            make SHELL=${pkgs.bash}/bin/bash build
           '';
 
           installPhase = ''
@@ -94,7 +102,7 @@
 
             # Create wrapper script
             makeWrapper ${pkgs.electron}/bin/electron $out/bin/mux \
-              --add-flags "$out/lib/mux/dist/main.js" \
+              --add-flags "$out/lib/mux/dist/cli/index.js" \
               --prefix PATH : ${
                 pkgs.lib.makeBinPath [
                   pkgs.git
