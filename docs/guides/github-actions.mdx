@@ -101,7 +101,7 @@ jobs:
             exit 0
           fi
 
-          bunx mux@next run --timeout 2m "
+          bunx mux@next run --budget 0.50 "
             You are a GitHub issue/PR labeler. Your ONLY allowed actions are:
             1. gh label list --json name,description
             2. gh $TARGET_TYPE view $TARGET_NUMBER
