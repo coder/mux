@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { Server, Loader2 } from "lucide-react";
 import { Button } from "@/browser/components/ui/button";
 import { Switch } from "@/browser/components/ui/switch";
+import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useAPI } from "@/browser/contexts/API";
 import { cn } from "@/common/lib/utils";
 import type { MCPServerInfo, WorkspaceMCPOverrides } from "@/common/types/mcp";
@@ -22,6 +23,7 @@ export const WorkspaceMCPModal: React.FC<WorkspaceMCPModalProps> = ({
   open,
   onOpenChange,
 }) => {
+  const settings = useSettings();
   const { api } = useAPI();
 
   // State for project servers and workspace overrides
@@ -238,6 +240,11 @@ export const WorkspaceMCPModal: React.FC<WorkspaceMCPModalProps> = ({
   }, [api, workspaceId, overrides, onOpenChange]);
 
   const serverEntries = Object.entries(servers);
+
+  const handleOpenProjectSettings = useCallback(() => {
+    onOpenChange(false);
+    settings.open("projects");
+  }, [onOpenChange, settings]);
   const hasServers = serverEntries.length > 0;
 
   return (
@@ -258,7 +265,16 @@ export const WorkspaceMCPModal: React.FC<WorkspaceMCPModalProps> = ({
           <div className="text-muted py-8 text-center">
             <p>No MCP servers configured for this project.</p>
             <p className="mt-2 text-sm">
-              Configure servers in Settings → Projects to use them here.
+              Configure servers in{" "}
+              <Button
+                type="button"
+                variant="link"
+                className="h-auto p-0 align-baseline"
+                onClick={handleOpenProjectSettings}
+              >
+                Settings → Projects
+              </Button>{" "}
+              to use them here.
             </p>
           </div>
         ) : (
