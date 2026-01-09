@@ -4,7 +4,11 @@ import type { APIClient } from "@/browser/contexts/API";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
-import { getRightSidebarLayoutKey, RIGHT_SIDEBAR_TAB_KEY } from "@/common/constants/storage";
+import {
+  getAutoRetryKey,
+  getRightSidebarLayoutKey,
+  RIGHT_SIDEBAR_TAB_KEY,
+} from "@/common/constants/storage";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { CommandIds } from "@/browser/utils/commandIds";
 import { isTabType, type TabType } from "@/browser/types/rightSidebar";
@@ -534,6 +538,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
           if (p.selectedWorkspaceState?.awaitingUserQuestion) {
             return;
           }
+          updatePersistedState(getAutoRetryKey(id), false);
           await p.api?.workspace.interruptStream({ workspaceId: id });
         },
       });
