@@ -209,7 +209,7 @@ const ReviewBlockCore: React.FC<ReviewBlockCoreProps> = ({
             </div>
           ) : (
             <div className="flex items-start gap-1">
-              <blockquote className="text-primary flex-1 border-l-2 border-[var(--color-review-accent)] pl-1.5 text-xs italic">
+              <blockquote className="text-primary flex-1 border-l-2 border-[var(--color-review-accent)] pl-1.5 text-xs whitespace-pre-wrap italic">
                 {comment || <span className="text-muted">No comment</span>}
               </blockquote>
               {onEditComment && (
