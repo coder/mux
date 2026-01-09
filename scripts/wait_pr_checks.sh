@@ -42,6 +42,9 @@ if [[ -z "$REMOTE_BRANCH" ]]; then
   fi
 fi
 
+# Fetch latest remote state before comparing
+git fetch origin "$CURRENT_BRANCH" --quiet 2>/dev/null || true
+
 # Check if local and remote are in sync
 LOCAL_HASH=$(git rev-parse HEAD)
 REMOTE_HASH=$(git rev-parse "$REMOTE_BRANCH")

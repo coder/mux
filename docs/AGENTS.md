@@ -22,12 +22,7 @@ description: Agent instructions for AI assistants working on the mux codebase
 ## PR + Release Workflow
 
 - Reuse existing PRs; never close or recreate without instruction. Force-push updates.
-- After every push run:
-
-```bash
-gh pr view <number> --json mergeable,mergeStateStatus | jq '.'
-./scripts/wait_pr_checks.sh <pr_number>
-```
+- After every push run `./scripts/wait_pr_checks.sh <pr_number>` to ensure CI passes.
 
 - When posting multi-line comments with `gh` (e.g., `@codex review`), **do not** rely on `\n` escapes inside quoted `--body` strings (they will be sent as literal text). Prefer `--body-file -` with a heredoc to preserve real newlines:
 
