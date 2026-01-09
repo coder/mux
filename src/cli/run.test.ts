@@ -123,7 +123,7 @@ describe("mux CLI", () => {
       expect(result.stdout).toContain("--runtime");
       expect(result.stdout).toContain("--mode");
       expect(result.stdout).toContain("--thinking");
-      expect(result.stdout).toContain("--timeout");
+      expect(result.stdout).toContain("--hide-costs");
       expect(result.stdout).toContain("--json");
       expect(result.stdout).toContain("--quiet");
     });
@@ -150,12 +150,6 @@ describe("mux CLI", () => {
       const result = await runRunDirect(["--mode", "chaos", "test message"]);
       expect(result.exitCode).toBe(1);
       expect(result.output).toContain("Invalid mode");
-    });
-
-    test("invalid timeout shows error", async () => {
-      const result = await runRunDirect(["--timeout", "abc", "test message"]);
-      expect(result.exitCode).toBe(1);
-      expect(result.output).toContain("Invalid timeout");
     });
 
     test("nonexistent directory shows error", async () => {

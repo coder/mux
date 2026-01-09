@@ -52,7 +52,15 @@ import type { ThinkingLevel } from "@/common/types/thinking";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { parseRuntimeModeAndHost, RUNTIME_MODE } from "@/common/types/runtime";
 import assert from "@/common/utils/assert";
-import parseDuration from "parse-duration";
+import type { LanguageModelV2Usage } from "@ai-sdk/provider";
+import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
+import {
+  getTotalCost,
+  formatCostWithDollar,
+  sumUsageHistory,
+  type ChatUsageDisplay,
+} from "@/common/utils/tokens/usageAggregator";
+import { isUsageDelta } from "@/common/orpc/types";
 import { log, type LogLevel } from "@/node/services/log";
 import chalk from "chalk";
 import type { InitLogger } from "@/node/runtime/Runtime";
@@ -88,28 +96,6 @@ function parseRuntimeConfig(value: string | undefined, srcBaseDir: string): Runt
     default:
       return { type: "local" };
   }
-}
-
-function parseTimeout(value: string | undefined): number | undefined {
-  if (!value) return undefined;
-
-  const trimmed = value.trim();
-
-  // Try parsing as plain number (milliseconds)
-  const asNumber = Number(trimmed);
-  if (!Number.isNaN(asNumber) && asNumber > 0) {
-    return Math.round(asNumber);
-  }
-
-  // Use parse-duration for human-friendly formats (5m, 300s, 1h30m, etc.)
-  const ms = parseDuration(trimmed);
-  if (ms === null || ms <= 0) {
-    throw new Error(
-      `Invalid timeout format "${value}". Use: 5m, 300s, 1h30m, or milliseconds (e.g., 300000)`
-    );
-  }
-
-  return Math.round(ms);
 }
 
 function parseThinkingLevel(value: string | undefined): ThinkingLevel | undefined {
@@ -252,8 +238,8 @@ program
   )
   .option("--mode <mode>", "agent mode: plan or exec", "exec")
   .option("-t, --thinking <level>", "thinking level: off, low, medium, high", "medium")
-  .option("--timeout <duration>", "timeout (e.g., 5m, 300s, 300000)")
   .option("-v, --verbose", "show info-level logs (default: errors only)")
+  .option("--hide-costs", "hide cost summary at end of run")
   .option("--log-level <level>", "set log level: error, warn, info, debug")
   .option("--json", "output NDJSON for programmatic consumption")
   .option("-q, --quiet", "only output final result")
@@ -283,8 +269,8 @@ interface CLIOptions {
   runtime: string;
   mode: string;
   thinking: string;
-  timeout?: string;
   verbose?: boolean;
+  hideCosts?: boolean;
   logLevel?: string;
   json?: boolean;
   quiet?: boolean;
@@ -351,11 +337,12 @@ async function main(): Promise<void> {
   const runtimeConfig = parseRuntimeConfig(opts.runtime, config.srcDir);
   const thinkingLevel = parseThinkingLevel(opts.thinking);
   const initialMode = parseMode(opts.mode);
-  const timeoutMs = parseTimeout(opts.timeout);
   const emitJson = opts.json === true;
   const quiet = opts.quiet === true;
+  const hideCosts = opts.hideCosts === true;
 
   const suppressHumanOutput = emitJson || quiet;
+  const stdoutIsTTY = process.stdout.isTTY === true;
   const stderrIsTTY = process.stderr.isTTY === true;
 
   const writeHuman = (text: string) => {
@@ -516,6 +503,14 @@ async function main(): Promise<void> {
   let planProposed = false;
   let streamEnded = false;
 
+  // Track usage for cost summary at end of run
+  const usageHistory: ChatUsageDisplay[] = [];
+  // Track latest usage-delta per message as fallback when stream-end lacks usage metadata
+  const latestUsageDelta = new Map<
+    string,
+    { usage: LanguageModelV2Usage; providerMetadata?: Record<string, unknown>; model: string }
+  >();
+
   const writeHumanChunk = (text: string) => {
     if (text.length === 0) return;
     writeHuman(text);
@@ -576,24 +571,7 @@ async function main(): Promise<void> {
   };
 
   const waitForCompletion = async (): Promise<void> => {
-    if (timeoutMs !== undefined) {
-      let timeoutHandle: NodeJS.Timeout | null = null;
-      try {
-        await Promise.race([
-          completionPromise,
-          new Promise<never>((_, reject) => {
-            timeoutHandle = setTimeout(
-              () => reject(new Error(`Timed out after ${timeoutMs}ms`)),
-              timeoutMs
-            );
-          }),
-        ]);
-      } finally {
-        if (timeoutHandle) clearTimeout(timeoutHandle);
-      }
-    } else {
-      await completionPromise;
-    }
+    await completionPromise;
 
     if (!streamEnded) {
       throw new Error("Stream completion promise resolved unexpectedly without stream end");
@@ -773,7 +751,41 @@ async function main(): Promise<void> {
         return;
       }
 
+      // Track usage for cost summary - prefer stream-end metadata, fall back to usage-delta
+      let displayUsage: ChatUsageDisplay | undefined;
+      if (payload.metadata.usage) {
+        displayUsage = createDisplayUsage(
+          payload.metadata.usage,
+          payload.metadata.model,
+          payload.metadata.providerMetadata
+        );
+      } else {
+        // Fallback: use cumulative usage from the last usage-delta event
+        const fallback = latestUsageDelta.get(payload.messageId);
+        if (fallback) {
+          displayUsage = createDisplayUsage(
+            fallback.usage,
+            fallback.model,
+            fallback.providerMetadata
+          );
+        }
+      }
+      if (displayUsage) {
+        usageHistory.push(displayUsage);
+      }
+      latestUsageDelta.delete(payload.messageId);
+
       resolveStream();
+      return;
+    }
+
+    // Capture usage-delta events as fallback when stream-end lacks usage metadata
+    if (isUsageDelta(payload)) {
+      latestUsageDelta.set(payload.messageId, {
+        usage: payload.cumulativeUsage,
+        providerMetadata: payload.cumulativeProviderMetadata,
+        model, // Use the model from CLI options
+      });
       return;
     }
   };
@@ -810,6 +822,18 @@ async function main(): Promise<void> {
             if (text) console.log(text);
           }
         }
+      }
+    }
+
+    // Print cost summary at end of run (unless --hide-costs or --json)
+    if (!hideCosts && !emitJson) {
+      const totalUsage = sumUsageHistory(usageHistory);
+      const totalCost = getTotalCost(totalUsage);
+      // Skip if no cost data or if model pricing is unknown (would show misleading $0.00)
+      if (totalCost !== undefined && !totalUsage?.hasUnknownCosts) {
+        const costLine = `Cost: ${formatCostWithDollar(totalCost)}`;
+        writeHumanLineClosed("");
+        writeHumanLineClosed(stdoutIsTTY ? chalk.gray(costLine) : costLine);
       }
     }
   } finally {
