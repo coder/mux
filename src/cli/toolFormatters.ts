@@ -184,6 +184,15 @@ function formatStatusSetStart(_toolName: string, args: unknown): string | null {
   return `${emoji} ${chalk.dim(statusArgs.message)}`;
 }
 
+function formatSetExitCodeStart(_toolName: string, args: unknown): string | null {
+  const exitArgs = args as { exit_code?: number };
+  if (exitArgs?.exit_code === undefined) return null;
+
+  const code = exitArgs.exit_code;
+  const color = code === 0 ? chalk.green : chalk.red;
+  return `🚪 exit ${color(code)}`;
+}
+
 function formatAgentSkillReadStart(_toolName: string, args: unknown): string | null {
   const skillArgs = args as { name?: string };
   if (!skillArgs?.name) return null;
@@ -359,6 +368,7 @@ const startFormatters: Record<string, ToolStartFormatter> = {
   todo_write: formatTodoStart,
   notify: formatNotifyStart,
   status_set: formatStatusSetStart,
+  set_exit_code: formatSetExitCodeStart,
   agent_skill_read: formatAgentSkillReadStart,
   agent_skill_read_file: formatAgentSkillReadStart,
   code_execution: formatCodeExecutionStart,
@@ -379,6 +389,7 @@ const endFormatters: Record<string, ToolEndFormatter> = {
   todo_write: formatSimpleSuccessEnd,
   notify: formatSimpleSuccessEnd,
   status_set: formatSimpleSuccessEnd,
+  set_exit_code: formatSimpleSuccessEnd,
   agent_skill_read: formatSimpleSuccessEnd,
   agent_skill_read_file: formatSimpleSuccessEnd,
 };
