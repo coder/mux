@@ -1466,7 +1466,8 @@ export const ToolHooksOutput: AppStory = {
                       " export default x;",
                     ].join("\n")
                   ),
-                  "prettier: reformatted src/app.ts\neslint: auto-fixed 2 issues"
+                  "prettier: reformatted src/app.ts\neslint: auto-fixed 2 issues",
+                  145
                 ),
                 // Bash with failing hook (lint check failed)
                 withHookOutput(
@@ -1479,7 +1480,8 @@ export const ToolHooksOutput: AppStory = {
                     1500,
                     "Build"
                   ),
-                  "post-build hook: running type check...\n✗ Found 1 type error:\n  src/utils.ts:42 - Type 'string' is not assignable to type 'number'"
+                  "post-build hook: running type check...\n✗ Found 1 type error:\n  src/utils.ts:42 - Type 'string' is not assignable to type 'number'",
+                  2340
                 ),
               ],
             }),
@@ -1538,7 +1540,8 @@ export const ToolHooksOutputExpanded: AppStory = {
                     800,
                     "Prettier"
                   ),
-                  "post-hook: git status check\nM  src/app.ts\nM  src/utils.ts\nM  src/config.ts\n\n3 files modified by formatter"
+                  "post-hook: git status check\nM  src/app.ts\nM  src/utils.ts\nM  src/config.ts\n\n3 files modified by formatter",
+                  85
                 ),
               ],
             }),

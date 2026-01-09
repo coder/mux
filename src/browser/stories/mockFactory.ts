@@ -414,7 +414,11 @@ export function createProposePlanTool(
  * Use this to simulate a tool hook that ran and produced output.
  * Only works on tool parts with state="output-available".
  */
-export function withHookOutput(toolPart: MuxPart, hookOutput: string): MuxPart {
+export function withHookOutput(
+  toolPart: MuxPart,
+  hookOutput: string,
+  hookDurationMs?: number
+): MuxPart {
   if (toolPart.type !== "dynamic-tool" || toolPart.state !== "output-available") {
     return toolPart;
   }
@@ -426,6 +430,7 @@ export function withHookOutput(toolPart: MuxPart, hookOutput: string): MuxPart {
         ? existingOutput
         : { result: existingOutput }),
       hook_output: hookOutput,
+      hook_duration_ms: hookDurationMs,
     },
   };
 }
