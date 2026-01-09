@@ -193,17 +193,6 @@ export function LoginWithMuxGatewaySplash(props: { onDismiss: () => void }) {
           style={{ display: "flex", flexDirection: "column", gap: "12px" }}
         >
           <p>Login successful.</p>
-          <p>
-            Early adopters can request some credits on their GH logins on our Discord Join here{" "}
-            <a
-              href="https://discord.gg/VfZXvtnR"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-accent hover:underline"
-            >
-              https://discord.gg/VfZXvtnR
-            </a>
-          </p>
         </div>
       ) : (
         <div
@@ -211,33 +200,55 @@ export function LoginWithMuxGatewaySplash(props: { onDismiss: () => void }) {
           style={{ display: "flex", flexDirection: "column", gap: "12px" }}
         >
           <p>
-            Log in to Mux Gateway to automatically configure your token under Settings → Providers →
-            Mux Gateway.
-          </p>
-
-          <p>
-            If you haven&apos;t redeemed your Mux voucher yet,{" "}
+            Mux Gateway enables you to use free AI tokens from{" "}
             <a
-              href="https://gateway.mux.coder.com/"
+              href="https://coder.com"
               target="_blank"
               rel="noopener noreferrer"
               className="text-accent hover:underline"
             >
-              claim it here
+              Coder
             </a>
             .
           </p>
 
+          <p>You can receive those credits through:</p>
+
+          <ul className="ml-4 list-disc space-y-1">
+            <li>
+              early adopters can request some credits tied to their GH logins on our{" "}
+              <a
+                href="https://discord.gg/VfZXvtnR"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-accent hover:underline"
+              >
+                Discord
+              </a>
+            </li>
+            <li>
+              vouchers which you can{" "}
+              <a
+                href="https://gateway.mux.coder.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-accent hover:underline"
+              >
+                claim here
+              </a>
+            </li>
+          </ul>
+
           <p>
-            Early adopters can request some credits on their GH logins on our Discord Join here{" "}
-            <a
-              href="https://discord.gg/VfZXvtnR"
-              target="_blank"
-              rel="noopener noreferrer"
+            You will be able to login through{" "}
+            <button
+              type="button"
               className="text-accent hover:underline"
+              onClick={() => openSettings("providers")}
             >
-              https://discord.gg/VfZXvtnR
-            </a>
+              Settings
+            </button>{" "}
+            at any point.
           </p>
 
           {status === "waiting" && <p>Finish the login flow in your browser, then return here.</p>}
@@ -247,18 +258,6 @@ export function LoginWithMuxGatewaySplash(props: { onDismiss: () => void }) {
               <strong className="text-destructive">Login failed:</strong> {error}
             </p>
           )}
-
-          <p>
-            Prefer manual setup?{" "}
-            <button
-              type="button"
-              className="text-accent hover:underline"
-              onClick={() => openSettings("providers")}
-            >
-              Open Settings
-            </button>
-            .
-          </p>
         </div>
       )}
     </SplashScreen>
