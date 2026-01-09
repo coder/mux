@@ -3,37 +3,22 @@ title: Custom Slash Commands
 description: Create custom executable commands that run in your workspace
 ---
 
-Add executable scripts to `.mux/commands/` to define custom slash commands that run in your workspace context.
+Add executable scripts to `.mux/commands/` to define custom slash commands that run in your workspace context. The command's stdout becomes your message to the model.
 
-## Example
+## Quick Start
 
-Create a script at `.mux/commands/refinement`:
+Create an executable script in your workspace:
 
 ```bash
+mkdir -p .mux/commands
+cat > .mux/commands/dry << 'EOF'
 #!/usr/bin/env bash
-# Wraps stdin with a refinement prompt
-
-echo "Please refine the following text for clarity and conciseness:"
-echo ""
-cat  # pass through stdin
+echo "Refactor the code to follow DRY (Don't Repeat Yourself) principles."
+EOF
+chmod +x .mux/commands/dry
 ```
 
-Make it executable:
-
-```bash
-chmod +x .mux/commands/refinement
-```
-
-Then use it in chat:
-
-```
-/refinement
-
-Here is some text that needs
-to be made clearer.
-```
-
-The command output becomes your message to the model.
+Now type `/dry` in chat - the output becomes your message.
 
 ## File Convention
 
@@ -41,53 +26,114 @@ The command output becomes your message to the model.
 - **Name format**: lowercase letters, numbers, and hyphens (e.g., `my-command`)
 - **Interpreter**: via shebang (`#!/bin/bash`, `#!/usr/bin/env node`, etc.)
 
-## Invocation
+## Progressive Examples
 
-Commands support arguments and multi-line input:
+### Level 1: Static Message
 
-```
-/<name> [args...]
-[stdin content]
-```
+The simplest command outputs a fixed prompt:
 
-- **Arguments**: tokens on the same line as the command become argv
-- **stdin**: content after the first newline becomes stdin
+```bash
+#!/usr/bin/env bash
+# .mux/commands/dry
+# Usage: /dry
 
-**Example with arguments:**
-
-```
-/refinement --audience developers
+echo "Refactor the code to follow DRY (Don't Repeat Yourself) principles."
+echo "Identify repeated patterns and extract them into reusable functions or modules."
 ```
 
-→ argv: `["--audience", "developers"]`, stdin: empty
+**Usage:** `/dry`
 
-**Example with stdin:**
+### Level 2: Using Arguments
+
+Commands receive arguments from the same line:
+
+```bash
+#!/usr/bin/env bash
+# .mux/commands/pr-review
+# Usage: /pr-review <PR-NUM>
+
+pr_num="$1"
+if [ -z "$pr_num" ]; then
+  echo "Usage: /pr-review <PR-NUM>" >&2
+  exit 1
+fi
+
+# Fetch PR diff and format as prompt
+echo "Review this pull request (#$pr_num):"
+echo ""
+gh pr diff "$pr_num" 2>/dev/null || {
+  echo "Failed to fetch PR #$pr_num" >&2
+  exit 1
+}
+```
+
+**Usage:** `/pr-review 123`
+
+→ argv: `["123"]`
+
+### Level 3: Using stdin
+
+Content after the first newline becomes stdin:
+
+```bash
+#!/usr/bin/env bash
+# .mux/commands/refine
+# Usage: /refine [--audience <name>]
+# Wraps stdin with a refinement prompt
+
+audience="general"
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --audience) audience="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+
+echo "Please refine the following text for a $audience audience:"
+echo ""
+cat  # pass through stdin
+```
+
+**Usage:**
 
 ```
-/refinement
+/refine --audience developers
 
-Fix this code:
-function foo() { return bar }
+Here is some text that needs
+to be made clearer.
 ```
 
-→ argv: `[]`, stdin: `"Fix this code:\nfunction foo() { return bar }"`
-
-**Example with both:**
-
-```
-/refinement --verbose
-
-Improve this text.
-```
-
-→ argv: `["--verbose"]`, stdin: `"Improve this text."`
+→ argv: `["--audience", "developers"]`, stdin: the text after the blank line
 
 ## Result Protocol
 
+| Exit Code | Behavior                                                |
+| --------- | ------------------------------------------------------- |
+| 0         | Success - stdout sent as your message to the model      |
+| 2         | User abort - output shown but NOT sent (edit and retry) |
+| Other     | Error - shows error message, returns to editing         |
+
 - **stdout**: becomes the message text sent to the model
 - **stderr**: shown in the progress UI (for debugging), not sent to model
-- **exit code 0**: success - stdout is sent as your user message
-- **non-zero exit**: failure - shows error, returns you to editing
+
+Use exit code 2 when a command wants to show output but let the user decide whether to send it:
+
+```bash
+#!/usr/bin/env bash
+# .mux/commands/confirm
+# Shows preview and asks for confirmation
+
+echo "This will generate the following prompt:"
+echo "---"
+cat
+echo "---"
+echo ""
+read -p "Send to model? [y/N] " confirm
+if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+  exit 2  # User abort - don't send
+fi
+cat  # Send original stdin
+```
 
 ## Real-time Output
 
@@ -106,25 +152,14 @@ Custom commands receive the same [environment variables](/hooks/environment-vari
 - `MUX_WORKSPACE_NAME` - name of the current workspace
 - `MUX_WORKSPACE_PATH` - absolute path to the workspace
 
-## Examples
+## More Examples
 
-### Simple question wrapper
-
-```bash
-#!/usr/bin/env bash
-# .mux/commands/ask
-# Usage: /ask <question>
-
-echo "$@"
-```
-
-### Context-aware prompt
+### Context-aware review
 
 ````bash
 #!/usr/bin/env bash
 # .mux/commands/review
 # Usage: /review [file]
-# Generates a code review request
 
 file="${1:-}"
 if [ -n "$file" ]; then
@@ -145,8 +180,7 @@ fi
 ```javascript
 #!/usr/bin/env node
 // .mux/commands/format-json
-// Usage: /format-json
-// Pretty prints JSON from stdin
+// Usage: /format-json (pipe JSON via stdin)
 
 let input = "";
 process.stdin.on("data", (chunk) => (input += chunk));
