@@ -193,6 +193,17 @@ export function LoginWithMuxGatewaySplash(props: { onDismiss: () => void }) {
           style={{ display: "flex", flexDirection: "column", gap: "12px" }}
         >
           <p>Login successful.</p>
+          <p>
+            Early adopters can request some credits on their GH logins on our Discord Join here{" "}
+            <a
+              href="https://discord.gg/VfZXvtnR"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-accent hover:underline"
+            >
+              https://discord.gg/VfZXvtnR
+            </a>
+          </p>
         </div>
       ) : (
         <div
@@ -215,6 +226,18 @@ export function LoginWithMuxGatewaySplash(props: { onDismiss: () => void }) {
               claim it here
             </a>
             .
+          </p>
+
+          <p>
+            Early adopters can request some credits on their GH logins on our Discord Join here{" "}
+            <a
+              href="https://discord.gg/VfZXvtnR"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-accent hover:underline"
+            >
+              https://discord.gg/VfZXvtnR
+            </a>
           </p>
 
           {status === "waiting" && <p>Finish the login flow in your browser, then return here.</p>}
