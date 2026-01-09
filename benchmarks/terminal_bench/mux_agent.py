@@ -221,11 +221,11 @@ class MuxAgent(AbstractInstalledAgent):
     def _run_agent_commands(self, instruction: str) -> list[TerminalCommand]:
         escaped = shlex.quote(instruction)
         command = f"bash /installed-agent/{self._RUNNER_NAME} {escaped}"
-        # Don't set max_timeout_sec - terminal-bench enforces global timeout
         return [
             TerminalCommand(
                 command=command,
                 min_timeout_sec=0.0,
+                max_timeout_sec=float("inf"),  # Let global timeout handle this
                 block=True,
                 append_enter=True,
             )
