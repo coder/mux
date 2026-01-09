@@ -1317,7 +1317,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
         if (parsed.type === "mcp-open") {
           setInput("");
-          open("project");
+          open("projects");
           return;
         }
 
