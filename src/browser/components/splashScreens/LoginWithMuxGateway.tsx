@@ -10,12 +10,25 @@ interface OAuthMessage {
   error?: unknown;
 }
 
+function getBackendBaseUrl(): string {
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment, @typescript-eslint/prefer-ts-expect-error
+  // @ts-ignore - import.meta is available in Vite
+  return import.meta.env.VITE_BACKEND_URL ?? window.location.origin;
+}
 type LoginStatus = "idle" | "starting" | "waiting" | "success" | "error";
 
 export function LoginWithMuxGatewaySplash(props: { onDismiss: () => void }) {
   const { api } = useAPI();
   const { open: openSettings } = useSettings();
 
+  const backendBaseUrl = getBackendBaseUrl();
+  const backendOrigin = (() => {
+    try {
+      return new URL(backendBaseUrl).origin;
+    } catch {
+      return window.location.origin;
+    }
+  })();
   const isDesktop = !!window.api;
 
   const [status, setStatus] = useState<LoginStatus>("idle");
@@ -70,7 +83,20 @@ export function LoginWithMuxGatewaySplash(props: { onDismiss: () => void }) {
       // Browser/server mode: use unauthenticated bootstrap route.
       setStatus("starting");
 
-      const res = await fetch("/auth/mux-gateway/start");
+      const startUrl = new URL("/auth/mux-gateway/start", backendBaseUrl);
+      const res = await fetch(startUrl);
+
+      const contentType = res.headers.get("content-type") ?? "";
+      if (!contentType.includes("application/json")) {
+        const body = await res.text();
+        const prefix = body.trim().slice(0, 80);
+        throw new Error(
+          `Unexpected response from ${startUrl.toString()} (expected JSON, got ${
+            contentType || "unknown"
+          }): ${prefix}`
+        );
+      }
+
       const json = (await res.json()) as {
         authorizeUrl?: unknown;
         state?: unknown;
@@ -83,12 +109,15 @@ export function LoginWithMuxGatewaySplash(props: { onDismiss: () => void }) {
       }
 
       if (typeof json.authorizeUrl !== "string" || typeof json.state !== "string") {
-        throw new Error("Invalid response from /auth/mux-gateway/start");
+        throw new Error(`Invalid response from ${startUrl.pathname}`);
       }
 
       setServerState(json.state);
+      const popup = window.open(json.authorizeUrl, "_blank");
+      if (!popup) {
+        throw new Error("Popup blocked - please allow popups and try again.");
+      }
       setStatus("waiting");
-      window.open(json.authorizeUrl, "_blank", "noopener");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setStatus("error");
@@ -102,7 +131,7 @@ export function LoginWithMuxGatewaySplash(props: { onDismiss: () => void }) {
     }
 
     const handleMessage = (event: MessageEvent<OAuthMessage>) => {
-      if (event.origin !== window.location.origin) return;
+      if (event.origin !== backendOrigin) return;
 
       const data = event.data;
       if (!data || typeof data !== "object") return;
@@ -121,7 +150,7 @@ export function LoginWithMuxGatewaySplash(props: { onDismiss: () => void }) {
 
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [isDesktop, status, serverState]);
+  }, [isDesktop, status, serverState, backendOrigin]);
 
   const primaryLabel =
     status === "success"

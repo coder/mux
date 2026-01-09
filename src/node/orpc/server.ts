@@ -219,7 +219,7 @@ export async function createOrpcServer({
         const payload = ${JSON.stringify(payload)}
         try {
           if (window.opener && typeof window.opener.postMessage === 'function') {
-            window.opener.postMessage(payload, window.location.origin)
+            window.opener.postMessage(payload, '*')
           }
         } catch {
           // Ignore postMessage failures.
