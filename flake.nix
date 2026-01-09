@@ -100,9 +100,12 @@
             cp -r node_modules $out/lib/mux/
             cp package.json $out/lib/mux/
 
-            # Create wrapper script
+            # Create wrapper script. When running in Nix, mux doesn't know that
+            # it's packaged. Use MUX_E2E_LOAD_DIST to force using compiled
+            # assets instead of a dev server.
             makeWrapper ${pkgs.electron}/bin/electron $out/bin/mux \
               --add-flags "$out/lib/mux/dist/cli/index.js" \
+              --set MUX_E2E_LOAD_DIST "1" \
               --prefix PATH : ${
                 pkgs.lib.makeBinPath [
                   pkgs.git
