@@ -54,18 +54,17 @@ mux run --json "List all TypeScript files" | jq '.type'
 
 ### Options
 
-| Option                 | Short | Description                                                     | Default           |
-| ---------------------- | ----- | --------------------------------------------------------------- | ----------------- |
-| `--dir <path>`         | `-d`  | Project directory                                               | Current directory |
-| `--model <model>`      | `-m`  | Model to use (e.g., `anthropic:claude-sonnet-4-5`)              | Default model     |
-| `--runtime <runtime>`  | `-r`  | Runtime: `local`, `worktree`, `ssh <host>`, or `docker <image>` | `local`           |
-| `--mode <mode>`        |       | Agent mode: `plan` or `exec`                                    | `exec`            |
-| `--thinking <level>`   | `-t`  | Thinking level: `off`, `low`, `medium`, `high`                  | `medium`          |
-| `--timeout <duration>` |       | Timeout (e.g., `5m`, `300s`, `300000`)                          | No timeout        |
-| `--budget <usd>`       | `-b`  | Stop when session cost exceeds budget (USD)                     | No limit          |
-| `--experiment <id>`    | `-e`  | Enable experiment (repeatable)                                  | None              |
-| `--json`               |       | Output NDJSON for programmatic use                              | Off               |
-| `--quiet`              | `-q`  | Only output final result                                        | Off               |
+| Option                | Short | Description                                                     | Default           |
+| --------------------- | ----- | --------------------------------------------------------------- | ----------------- |
+| `--dir <path>`        | `-d`  | Project directory                                               | Current directory |
+| `--model <model>`     | `-m`  | Model to use (e.g., `anthropic:claude-sonnet-4-5`)              | Default model     |
+| `--runtime <runtime>` | `-r`  | Runtime: `local`, `worktree`, `ssh <host>`, or `docker <image>` | `local`           |
+| `--mode <mode>`       |       | Agent mode: `plan` or `exec`                                    | `exec`            |
+| `--thinking <level>`  | `-t`  | Thinking level: `off`, `low`, `medium`, `high`                  | `medium`          |
+| `--budget <usd>`      | `-b`  | Stop when session cost exceeds budget (USD)                     | No limit          |
+| `--experiment <id>`   | `-e`  | Enable experiment (repeatable)                                  | None              |
+| `--json`              |       | Output NDJSON for programmatic use                              | Off               |
+| `--quiet`             | `-q`  | Only output final result                                        | Off               |
 
 ### Runtimes
 
@@ -92,8 +91,8 @@ mux run -m anthropic:claude-sonnet-4-5 -t high "Optimize database queries"
 # Run on remote server
 mux run -r "ssh dev@staging.example.com" -d /app "Update dependencies"
 
-# Scripted usage with timeout
-mux run --json --timeout 5m "Generate API documentation" > output.jsonl
+# Scripted usage with JSON output
+mux run --json "Generate API documentation" > output.jsonl
 
 # Limit spending to $2.00
 mux run --budget 2.00 "Refactor the authentication module"
