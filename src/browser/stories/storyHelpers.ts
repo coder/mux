@@ -140,11 +140,14 @@ export interface GitDiffFixture {
   numstatOutput?: string;
   /** File contents for read-more feature (path -> full file content as lines) */
   fileContents?: Map<string, string[]>;
+  /** List of untracked files (for UntrackedStatus banner) */
+  untrackedFiles?: string[];
 }
 
 /**
  * Creates an executeBash function that returns git status and diff output for workspaces.
- * Handles: git status, git show-branch, git diff, git diff --numstat, git show (for read-more)
+ * Handles: git status, git show-branch, git diff, git diff --numstat, git show (for read-more),
+ * git ls-files --others (for untracked files)
  */
 export function createGitStatusExecutor(
   gitStatus?: Map<string, GitStatusFixture>,
@@ -154,6 +157,13 @@ export function createGitStatusExecutor(
     if (script.includes("git status") || script.includes("git show-branch")) {
       const status = gitStatus?.get(workspaceId) ?? {};
       const output = createGitStatusOutput(status);
+      return Promise.resolve({ success: true as const, output, exitCode: 0, wall_duration_ms: 50 });
+    }
+
+    // Handle git ls-files --others (untracked files)
+    if (script.includes("git ls-files --others")) {
+      const diff = gitDiff?.get(workspaceId);
+      const output = diff?.untrackedFiles?.join("\n") ?? "";
       return Promise.resolve({ success: true as const, output, exitCode: 0, wall_duration_ms: 50 });
     }
 

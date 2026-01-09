@@ -27,6 +27,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { HunkViewer } from "./HunkViewer";
 import { ReviewControls } from "./ReviewControls";
 import { FileTree } from "./FileTree";
+import { UntrackedStatus } from "./UntrackedStatus";
 import { shellQuote } from "@/common/utils/shell";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { STORAGE_KEYS, WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
@@ -1066,10 +1067,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
           diffState.status === "loading" || diffState.status === "refreshing" || isLoadingTree
         }
         isRefreshBlocked={isRefreshBlocked}
-        workspaceId={workspaceId}
-        workspacePath={workspacePath}
         projectPath={projectPath}
-        refreshTrigger={refreshTrigger}
         lastRefreshInfo={lastRefreshInfo}
       />
 
@@ -1162,6 +1160,16 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
                 />
               </div>
             )}
+
+            {/* Untracked files banner - shown above hunks */}
+            <div className="px-3 pt-3">
+              <UntrackedStatus
+                workspaceId={workspaceId}
+                workspacePath={workspacePath}
+                refreshTrigger={refreshTrigger}
+                onRefresh={handleRefresh}
+              />
+            </div>
 
             {/* Hunks below the file tree */}
             <div className="flex flex-[0_0_auto] flex-col p-3">

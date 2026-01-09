@@ -14,6 +14,7 @@ import {
 } from "./storyHelpers";
 import { createUserMessage, createAssistantMessage } from "./mockFactory";
 import { within, userEvent, waitFor, expect } from "@storybook/test";
+import { blurActiveElement } from "./storyPlayHelpers.js";
 import {
   RIGHT_SIDEBAR_TAB_KEY,
   RIGHT_SIDEBAR_WIDTH_KEY,
@@ -980,4 +981,84 @@ export const ReviewTabReadMoreBoundaries: AppStory = {
     />
   ),
   // No play function - interaction testing covered by tests/ui/readMore.integration.test.ts
+};
+
+/**
+ * Review tab with untracked files banner shown prominently above hunks.
+ * The banner is collapsible and shows a "Track All Files" button when expanded.
+ */
+export const ReviewTabWithUntrackedFiles: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "700");
+        const workspaceId = "ws-untracked";
+        localStorage.removeItem(getRightSidebarLayoutKey(workspaceId));
+
+        const client = setupSimpleChatStory({
+          workspaceId,
+          workspaceName: "feature/new-feature",
+          projectName: "my-app",
+          messages: [
+            createUserMessage("msg-1", "Add new utilities", { historySequence: 1 }),
+            createAssistantMessage("msg-2", "Added new files and utilities.", {
+              historySequence: 2,
+            }),
+          ],
+          gitDiff: {
+            diffOutput: SAMPLE_DIFF_OUTPUT,
+            numstatOutput: SAMPLE_NUMSTAT_OUTPUT,
+            untrackedFiles: [
+              "src/utils/newHelper.ts",
+              "src/components/NewComponent.tsx",
+              "tests/newHelper.test.ts",
+            ],
+          },
+        });
+        expandRightSidebar();
+        return client;
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Ensure Review tab is active
+    const expandButtons = canvas.queryAllByRole("button", { name: "Expand sidebar" });
+    if (expandButtons.length > 0) {
+      await userEvent.click(expandButtons[expandButtons.length - 1]);
+    }
+
+    const reviewTab = await canvas.findByRole("tab", { name: /^review/i }, { timeout: 10_000 });
+    await userEvent.click(reviewTab);
+
+    await waitFor(
+      () => {
+        canvas.getByRole("tab", { name: /^review/i, selected: true });
+      },
+      { timeout: 10_000 }
+    );
+
+    // Wait for the untracked files banner to appear
+    await waitFor(
+      () => {
+        canvas.getByText(/3 untracked files/i);
+      },
+      { timeout: 5000 }
+    );
+
+    // Expand the banner to show file list and Track All button
+    const bannerButton = canvas.getByText(/untracked files/i);
+    await userEvent.click(bannerButton);
+
+    // Wait for expanded content
+    await waitFor(() => {
+      canvas.getByText("src/utils/newHelper.ts");
+      canvas.getByText("Track All Files");
+    });
+
+    // Blur focus for clean screenshot
+    blurActiveElement();
+  },
 };

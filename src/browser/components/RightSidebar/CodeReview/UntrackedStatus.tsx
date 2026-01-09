@@ -1,9 +1,8 @@
 /**
- * UntrackedStatus - Shows untracked files count with interactive tooltip
+ * UntrackedStatus - Shows untracked files as a prominent banner in the hunk viewer area
  */
 
-import React, { useState, useEffect, useRef, useLayoutEffect } from "react";
-import { createPortal } from "react-dom";
+import React, { useState, useEffect, useRef } from "react";
 import { cn } from "@/common/lib/utils";
 import { useAPI } from "@/browser/contexts/API";
 
@@ -23,41 +22,10 @@ export const UntrackedStatus: React.FC<UntrackedStatusProps> = ({
   const { api } = useAPI();
   const [untrackedFiles, setUntrackedFiles] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [showTooltip, setShowTooltip] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(false);
   const [isTracking, setIsTracking] = useState(false);
-  const [popupPosition, setPopupPosition] = useState<{ top: number; right: number } | null>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const popupRef = useRef<HTMLDivElement>(null);
   const hasLoadedOnce = useRef(false);
   const loadingRef = useRef(false); // Prevent concurrent loads
-
-  // Calculate popup position when shown
-  useLayoutEffect(() => {
-    if (!showTooltip || !containerRef.current) {
-      setPopupPosition(null);
-      return;
-    }
-
-    const updatePosition = () => {
-      const container = containerRef.current;
-      if (!container) return;
-
-      const rect = container.getBoundingClientRect();
-      setPopupPosition({
-        top: rect.bottom + 8, // 8px gap below anchor
-        right: window.innerWidth - rect.right,
-      });
-    };
-
-    updatePosition();
-
-    window.addEventListener("resize", updatePosition);
-    window.addEventListener("scroll", updatePosition, true);
-    return () => {
-      window.removeEventListener("resize", updatePosition);
-      window.removeEventListener("scroll", updatePosition, true);
-    };
-  }, [showTooltip]);
 
   // Load untracked files
   useEffect(() => {
@@ -108,23 +76,6 @@ export const UntrackedStatus: React.FC<UntrackedStatusProps> = ({
     };
   }, [api, workspaceId, workspacePath, refreshTrigger]);
 
-  // Close tooltip when clicking outside
-  useEffect(() => {
-    if (!showTooltip) return;
-
-    const handleClickOutside = (e: MouseEvent) => {
-      const target = e.target as Node;
-      const clickedContainer = containerRef.current?.contains(target);
-      const clickedPopup = popupRef.current?.contains(target);
-      if (!clickedContainer && !clickedPopup) {
-        setShowTooltip(false);
-      }
-    };
-
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [showTooltip]);
-
   const handleTrackAll = async () => {
     if (untrackedFiles.length === 0 || isTracking) return;
 
@@ -140,10 +91,8 @@ export const UntrackedStatus: React.FC<UntrackedStatusProps> = ({
       });
 
       if (result?.success) {
-        // Close tooltip first
-        setShowTooltip(false);
-        // Trigger refresh - this will reload untracked files from git
-        // Don't clear untrackedFiles optimistically to avoid flicker
+        // Collapse and trigger refresh
+        setIsExpanded(false);
         onRefresh?.();
       } else if (result) {
         console.error("Failed to track files:", result.error);
@@ -156,59 +105,65 @@ export const UntrackedStatus: React.FC<UntrackedStatusProps> = ({
   };
 
   const count = untrackedFiles.length;
-  const hasUntracked = count > 0;
+
+  // Don't render anything if no untracked files (and not loading on first load)
+  if (!isLoading && count === 0) {
+    return null;
+  }
+
+  // Show loading state only on first load
+  if (isLoading && !hasLoadedOnce.current) {
+    return null;
+  }
 
   return (
-    <div ref={containerRef} className="inline-block">
-      <div
+    <div className="bg-info-yellow/10 border-info-yellow/30 rounded border">
+      {/* Banner header - always visible when there are untracked files */}
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
         className={cn(
-          "py-0.5 px-1.5 rounded text-[11px] whitespace-nowrap transition-colors duration-150",
-          hasUntracked
-            ? "text-info-yellow cursor-pointer hover:text-[hsl(38,100%,65%)]"
-            : "text-dim cursor-default"
+          "flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left",
+          "hover:bg-info-yellow/5 transition-colors duration-150"
         )}
-        onClick={() => hasUntracked && setShowTooltip(!showTooltip)}
       >
-        {isLoading ? "…" : hasUntracked ? `+${count}` : ""}
-      </div>
+        <span
+          className={cn("text-[10px] transition-transform duration-200", isExpanded && "rotate-90")}
+        >
+          ▶
+        </span>
+        <span className="text-info-yellow text-xs font-medium">
+          {count} untracked {count === 1 ? "file" : "files"}
+        </span>
+        <span className="text-muted text-[11px]">not included in diff</span>
+      </button>
 
-      {showTooltip &&
-        hasUntracked &&
-        popupPosition &&
-        createPortal(
-          <div
-            ref={popupRef}
-            className="bg-modal-bg border-bg-medium animate-in fade-in slide-in-from-top-1 fixed z-[1000] max-w-96 min-w-48 rounded border p-2 shadow-[0_4px_12px_rgba(0,0,0,0.3)] duration-150"
-            style={{ top: popupPosition.top, right: popupPosition.right }}
+      {/* Expandable file list */}
+      {isExpanded && (
+        <div className="border-info-yellow/20 border-t px-3 py-2">
+          <div className="mb-2 max-h-[200px] overflow-y-auto">
+            {untrackedFiles.map((file) => (
+              <div
+                key={file}
+                className="text-label hover:bg-bg-subtle truncate py-0.5 font-mono text-[11px]"
+              >
+                {file}
+              </div>
+            ))}
+          </div>
+          <button
+            onClick={() => void handleTrackAll()}
+            disabled={isTracking}
+            className={cn(
+              "w-full py-1.5 px-2 bg-info-yellow/20 text-info-yellow border border-info-yellow/30 rounded text-[11px] cursor-pointer transition-all duration-200 font-medium",
+              "hover:bg-info-yellow/30 hover:border-info-yellow/50",
+              "active:bg-info-yellow/40",
+              "disabled:opacity-50 disabled:cursor-not-allowed"
+            )}
           >
-            <div className="text-foreground border-border-light mb-2 border-b pb-1.5 text-[11px] font-semibold">
-              Untracked Files ({count})
-            </div>
-            <div className="mb-2 max-h-[200px] overflow-y-auto">
-              {untrackedFiles.map((file) => (
-                <div
-                  key={file}
-                  className="text-label hover:bg-bg-subtle truncate px-1 py-0.5 font-mono text-[11px]"
-                >
-                  {file}
-                </div>
-              ))}
-            </div>
-            <button
-              onClick={() => void handleTrackAll()}
-              disabled={isTracking}
-              className={cn(
-                "w-full py-1 px-2 bg-transparent text-muted border border-border-medium rounded text-[11px] cursor-pointer transition-all duration-200 font-primary",
-                "hover:bg-white-overlay-light hover:text-foreground hover:border-border-subtle",
-                "active:bg-white-overlay",
-                "disabled:text-border-darker disabled:border-border disabled:cursor-not-allowed disabled:bg-transparent"
-              )}
-            >
-              {isTracking ? "Tracking..." : "Track All"}
-            </button>
-          </div>,
-          document.body
-        )}
+            {isTracking ? "Tracking..." : "Track All Files"}
+          </button>
+        </div>
+      )}
     </div>
   );
 };

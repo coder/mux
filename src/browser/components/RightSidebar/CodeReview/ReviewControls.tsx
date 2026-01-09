@@ -8,7 +8,6 @@ import { STORAGE_KEYS, WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults"
 import type { ReviewFilters, ReviewStats, ReviewSortOrder } from "@/common/types/review";
 import type { LastRefreshInfo } from "@/browser/utils/RefreshController";
 import { RefreshButton } from "./RefreshButton";
-import { UntrackedStatus } from "./UntrackedStatus";
 import { BaseSelectorPopover } from "./BaseSelectorPopover";
 
 const SORT_OPTIONS: Array<{ value: ReviewSortOrder; label: string }> = [
@@ -24,10 +23,7 @@ interface ReviewControlsProps {
   isLoading?: boolean;
   /** Whether refresh is blocked (e.g., user composing review note) */
   isRefreshBlocked?: boolean;
-  workspaceId: string;
-  workspacePath: string;
   projectPath: string;
-  refreshTrigger?: number;
   /** Debug info about last refresh */
   lastRefreshInfo?: LastRefreshInfo | null;
 }
@@ -39,10 +35,7 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
   onRefresh,
   isLoading = false,
   isRefreshBlocked = false,
-  workspaceId,
-  workspacePath,
   projectPath,
-  refreshTrigger,
   lastRefreshInfo,
 }) => {
   // Per-project default base (used for new workspaces in this project)
@@ -142,18 +135,9 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
         </select>
       </label>
 
-      <div className="ml-auto flex items-center gap-2">
-        <UntrackedStatus
-          workspaceId={workspaceId}
-          workspacePath={workspacePath}
-          refreshTrigger={refreshTrigger}
-          onRefresh={onRefresh}
-        />
-
-        <span className="text-dim whitespace-nowrap">
-          {stats.read}/{stats.total}
-        </span>
-      </div>
+      <span className="text-dim ml-auto whitespace-nowrap">
+        {stats.read}/{stats.total}
+      </span>
     </div>
   );
 };
