@@ -54,12 +54,9 @@ This workflow automatically labels new issues and pull requests by having mux an
 # 3. Uses mux run to analyze the content and select appropriate labels
 # 4. Applies the selected labels via GitHub CLI
 #
-# SECURITY NOTE:
-# We use pull_request_target instead of pull_request so that secrets are
-# available even for PRs from forks. This is safe because:
-# - We only read PR metadata (title/body), not fork code
-# - We don't checkout the PR head, only the base branch
-# - The mux prompt only sees the title/body text, not executable code
+# LIMITATIONS:
+# - PRs from forks won't be labeled (no access to secrets for security)
+# - Only issues and PRs from collaborators/the repo itself are labeled
 #
 # =============================================================================
 
@@ -67,12 +64,13 @@ name: Auto-Label Issues and PRs
 
 # -----------------------------------------------------------------------------
 # Triggers: Run on new issues and pull requests
-# Note: pull_request_target runs in base repo context, enabling secrets for forks
+# Note: Using pull_request (not pull_request_target) for security - secrets
+# are not exposed to fork PR content. Fork PRs will be skipped gracefully.
 # -----------------------------------------------------------------------------
 on:
   issues:
     types: [opened]
-  pull_request_target:
+  pull_request:
     types: [opened]
 
 # -----------------------------------------------------------------------------
@@ -129,8 +127,7 @@ jobs:
           ISSUE_TITLE: ${{ github.event.issue.title || github.event.pull_request.title }}
           ISSUE_BODY: ${{ github.event.issue.body || github.event.pull_request.body }}
           ISSUE_NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
-          # Check for PR by presence of pull_request object (works with pull_request_target too)
-          IS_PR: ${{ github.event.pull_request != null }}
+          IS_PR: ${{ github.event_name == 'pull_request' }}
         run: |
           # Determine content type
           if [ "$IS_PR" = "true" ]; then
@@ -155,6 +152,13 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
+          # Skip if API key is not available (e.g., fork PRs)
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "⚠️ ANTHROPIC_API_KEY not available (fork PR?) - skipping auto-label"
+            echo "labels=none" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           # Read the prepared content
           title=$(cat /tmp/title.txt)
           body=$(cat /tmp/body.txt)
@@ -203,8 +207,7 @@ jobs:
           labels="${{ steps.mux.outputs.labels }}"
 
           # Determine if this is an issue or PR for the gh command
-          # Check for PR object presence (works with pull_request_target too)
-          if [ "${{ github.event.pull_request != null }}" = "true" ]; then
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
             target="pr"
           else
             target="issue"
