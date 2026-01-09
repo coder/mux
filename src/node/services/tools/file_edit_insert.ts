@@ -183,7 +183,7 @@ function findUniqueSubstringIndex(
   const secondIndex = haystack.indexOf(needle, firstIndex + needle.length);
   if (secondIndex !== -1) {
     return guardFailure(
-      `Guard mismatch: ${label} substring matched multiple times. Provide a more specific string.`
+      `Guard mismatch: ${label} substring matched multiple times. Include more surrounding context (e.g., full signature, adjacent lines) to make it unique.`
     );
   }
 
