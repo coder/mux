@@ -1058,6 +1058,9 @@ export const ReviewTabWithUntrackedFiles: AppStory = {
       canvas.getByText("Track All Files");
     });
 
+    // Double-RAF for scroll stabilization after banner expansion changes layout
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
     // Blur focus for clean screenshot
     blurActiveElement();
   },
