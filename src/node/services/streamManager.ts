@@ -680,7 +680,13 @@ export class StreamManager extends EventEmitter {
 
     // Link external abort signal
     if (abortSignal) {
-      abortSignal.addEventListener("abort", () => abortController.abort());
+      abortSignal.addEventListener("abort", () => abortController.abort(), { once: true });
+
+      // If the abort already happened before we attached the listener, we won't see
+      // an "abort" event. Ensure we still propagate cancellation.
+      if (abortSignal.aborted) {
+        abortController.abort();
+      }
     }
 
     // Determine toolChoice based on toolPolicy.
@@ -1707,9 +1713,22 @@ export class StreamManager extends EventEmitter {
       // Step 2: Use provided stream token or generate a new one
       const streamToken = providedStreamToken ?? this.generateStreamToken();
 
+      // If the stream was interrupted while we were waiting on async setup (mutex,
+      // temp dir creation, etc), avoid starting the stream entirely.
+      //
+      // This prevents a race where an already-aborted signal is missed (abort event
+      // fired before createStreamAtomically attaches its listener).
+      if (abortSignal?.aborted) {
+        return Ok(streamToken);
+      }
+
       // Step 3: Create temp directory for this stream using runtime
       // If token was provided, temp dir might already exist - mkdir -p handles this
       const runtimeTempDir = await this.createTempDirForStream(streamToken, runtime);
+
+      if (abortSignal?.aborted) {
+        return Ok(streamToken);
+      }
 
       // Step 4: Atomic stream creation and registration
       const streamInfo = this.createStreamAtomically(
