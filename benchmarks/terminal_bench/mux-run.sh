@@ -84,8 +84,6 @@ cmd=(bun src/cli/run.ts
   --model "${MUX_MODEL}"
   --mode "${MUX_MODE}"
   --thinking "${MUX_THINKING_LEVEL}"
-  --config-root "${MUX_CONFIG_ROOT}"
-  --workspace-id "${MUX_WORKSPACE_ID}"
   --json)
 
 if [[ -n "${MUX_TIMEOUT_MS}" ]]; then
@@ -109,7 +107,28 @@ if [[ -n "${MUX_EXPERIMENTS}" ]]; then
   done
 fi
 
+MUX_OUTPUT_FILE="/tmp/mux-output.jsonl"
+MUX_TOKEN_FILE="/tmp/mux-tokens.json"
+
 # Terminal-bench enforces timeouts via --global-agent-timeout-sec
-if ! printf '%s' "${instruction}" | "${cmd[@]}"; then
+# Capture output to file while streaming to terminal for token extraction
+if ! printf '%s' "${instruction}" | "${cmd[@]}" | tee "${MUX_OUTPUT_FILE}"; then
   fatal "mux agent session failed"
 fi
+
+# Extract tokens from stream-end events (best-effort, sums all events)
+python3 -c '
+import json, sys
+total_input = total_output = 0
+for line in open(sys.argv[1]):
+    try:
+        obj = json.loads(line)
+        if obj.get("type") == "event":
+            p = obj.get("payload", {})
+            if p.get("type") == "stream-end":
+                u = p.get("metadata", {}).get("usage", {})
+                total_input += u.get("inputTokens", 0) or 0
+                total_output += u.get("outputTokens", 0) or 0
+    except: pass
+print(json.dumps({"input": total_input, "output": total_output}))
+' "${MUX_OUTPUT_FILE}" > "${MUX_TOKEN_FILE}" 2>/dev/null || true
