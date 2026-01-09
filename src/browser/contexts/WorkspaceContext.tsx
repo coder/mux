@@ -27,8 +27,6 @@ import { useAPI } from "@/browser/contexts/API";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
-import { isExperimentEnabled } from "@/browser/hooks/useExperiments";
-import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { normalizeModeAiDefaults } from "@/common/types/modeAiDefaults";
 import { isWorkspaceArchived } from "@/common/utils/archive";
@@ -298,8 +296,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   const loadWorkspaceMetadata = useCallback(async () => {
     if (!api) return false; // Return false to indicate metadata wasn't loaded
     try {
-      const includePostCompaction = isExperimentEnabled(EXPERIMENT_IDS.POST_COMPACTION_CONTEXT);
-      const metadataList = await api.workspace.list({ includePostCompaction });
+      const metadataList = await api.workspace.list();
       console.log(
         "[WorkspaceContext] Loaded metadata list:",
         metadataList.map((m) => ({ id: m.id, name: m.name, title: m.title }))

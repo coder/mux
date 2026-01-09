@@ -40,7 +40,7 @@ describe("workspace.updateAISettings", () => {
       const info = await client.workspace.getInfo({ workspaceId: workspaceId! });
       expect(info?.aiSettings).toEqual({ model: "openai:gpt-5.2", thinkingLevel: "xhigh" });
 
-      const list = await client.workspace.list({ includePostCompaction: false });
+      const list = await client.workspace.list();
       const fromList = list.find((m) => m.id === workspaceId);
       expect(fromList?.aiSettings).toEqual({ model: "openai:gpt-5.2", thinkingLevel: "xhigh" });
     } finally {

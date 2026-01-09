@@ -92,17 +92,6 @@ export const FrontendWorkspaceMetadataSchema = WorkspaceMetadataSchema.extend({
     description:
       "If set, this workspace has an incompatible runtime configuration (e.g., from a newer version of mux). The workspace should be displayed but interactions should show this error message.",
   }),
-  postCompaction: z
-    .object({
-      planPath: z.string().nullable(),
-      trackedFilePaths: z.array(z.string()),
-      excludedItems: z.array(z.string()),
-    })
-    .optional()
-    .meta({
-      description:
-        "Post-compaction context state. Only included when requested via includePostCompaction param.",
-    }),
 });
 
 export const WorkspaceActivitySnapshotSchema = z.object({

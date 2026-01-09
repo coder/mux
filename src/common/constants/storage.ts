@@ -441,11 +441,21 @@ export function getPlanContentKey(workspaceId: string): string {
 }
 
 /**
+ * Get the localStorage key for cached post-compaction state for a workspace
+ * Stores: { planPath: string | null; trackedFilePaths: string[]; excludedItems: string[] }
+ * Format: "postCompactionState:{workspaceId}"
+ */
+export function getPostCompactionStateKey(workspaceId: string): string {
+  return `postCompactionState:${workspaceId}`;
+}
+
+/**
  * Additional ephemeral keys to delete on workspace removal (not copied on fork)
  */
 const EPHEMERAL_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string> = [
   getCancelledCompactionKey,
   getPlanContentKey, // Cache only, no need to preserve on fork
+  getPostCompactionStateKey, // Cache only, no need to preserve on fork
 ];
 
 /**

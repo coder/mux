@@ -32,7 +32,7 @@ import type {
   ImagePart,
   WorkspaceChatMessage,
 } from "@/common/orpc/types";
-import type { workspace as workspaceSchemas } from "@/common/orpc/schemas/api";
+
 import type { z } from "zod";
 import type { SendMessageError } from "@/common/types/errors";
 import type {
@@ -799,55 +799,9 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
-  async list(
-    options?: z.infer<typeof workspaceSchemas.list.input>
-  ): Promise<FrontendWorkspaceMetadata[]> {
+  async list(): Promise<FrontendWorkspaceMetadata[]> {
     try {
-      const metadata = await this.config.getAllWorkspaceMetadata();
-
-      // For list(), treat includePostCompaction as an explicit frontend override when provided.
-      // If it's undefined (e.g., user hasn't overridden), fall back to PostHog assignment.
-      const postCompactionExperiment = EXPERIMENTS[EXPERIMENT_IDS.POST_COMPACTION_CONTEXT];
-      let includePostCompaction: boolean;
-      if (
-        postCompactionExperiment.userOverridable &&
-        options?.includePostCompaction !== undefined
-      ) {
-        // User-overridable: trust frontend value
-        includePostCompaction = options.includePostCompaction;
-      } else if (this.experimentsService?.isRemoteEvaluationEnabled() === true) {
-        // Remote evaluation: use PostHog assignment
-        includePostCompaction = this.experimentsService.isExperimentEnabled(
-          EXPERIMENT_IDS.POST_COMPACTION_CONTEXT
-        );
-      } else {
-        // Fallback to frontend value or false
-        includePostCompaction = options?.includePostCompaction === true;
-      }
-
-      if (!includePostCompaction) {
-        return metadata;
-      }
-
-      // Fetch post-compaction state for all workspaces in parallel
-      // Use a short timeout per workspace to avoid blocking app startup if SSH is unreachable
-      const POST_COMPACTION_TIMEOUT_MS = 3000;
-      return Promise.all(
-        metadata.map(async (ws) => {
-          try {
-            const postCompaction = await Promise.race([
-              this.getPostCompactionState(ws.id),
-              new Promise<null>((resolve) =>
-                setTimeout(() => resolve(null), POST_COMPACTION_TIMEOUT_MS)
-              ),
-            ]);
-            return postCompaction ? { ...ws, postCompaction } : ws;
-          } catch {
-            // Workspace runtime unavailable (e.g., SSH unreachable) - return without post-compaction state
-            return ws;
-          }
-        })
-      );
+      return await this.config.getAllWorkspaceMetadata();
     } catch (error) {
       log.error("Failed to list workspaces:", error);
       return [];

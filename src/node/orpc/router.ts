@@ -998,9 +998,7 @@ export const router = (authToken?: string) => {
         .input(schemas.workspace.list.input)
         .output(schemas.workspace.list.output)
         .handler(async ({ context, input }) => {
-          const allWorkspaces = await context.workspaceService.list({
-            includePostCompaction: input?.includePostCompaction,
-          });
+          const allWorkspaces = await context.workspaceService.list();
           // Filter by archived status (derived from timestamps via shared utility)
           if (input?.archived) {
             return allWorkspaces.filter((w) => isWorkspaceArchived(w.archivedAt, w.unarchivedAt));
