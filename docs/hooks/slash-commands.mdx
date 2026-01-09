@@ -1,0 +1,175 @@
+---
+title: Custom Slash Commands
+description: Create custom executable commands that run in your workspace
+---
+
+Add executable scripts to `.mux/commands/` to define custom slash commands that run in your workspace context.
+
+## Example
+
+Create a script at `.mux/commands/refinement`:
+
+```bash
+#!/usr/bin/env bash
+# Wraps stdin with a refinement prompt
+
+echo "Please refine the following text for clarity and conciseness:"
+echo ""
+cat  # pass through stdin
+```
+
+Make it executable:
+
+```bash
+chmod +x .mux/commands/refinement
+```
+
+Then use it in chat:
+
+```
+/refinement
+
+Here is some text that needs
+to be made clearer.
+```
+
+The command output becomes your message to the model.
+
+## File Convention
+
+- **Location**: `<workspacePath>/.mux/commands/<name>`
+- **Name format**: lowercase letters, numbers, and hyphens (e.g., `my-command`)
+- **Interpreter**: via shebang (`#!/bin/bash`, `#!/usr/bin/env node`, etc.)
+
+## Invocation
+
+Commands support arguments and multi-line input:
+
+```
+/<name> [args...]
+[stdin content]
+```
+
+- **Arguments**: tokens on the same line as the command become argv
+- **stdin**: content after the first newline becomes stdin
+
+**Example with arguments:**
+
+```
+/refinement --audience developers
+```
+
+→ argv: `["--audience", "developers"]`, stdin: empty
+
+**Example with stdin:**
+
+```
+/refinement
+
+Fix this code:
+function foo() { return bar }
+```
+
+→ argv: `[]`, stdin: `"Fix this code:\nfunction foo() { return bar }"`
+
+**Example with both:**
+
+```
+/refinement --verbose
+
+Improve this text.
+```
+
+→ argv: `["--verbose"]`, stdin: `"Improve this text."`
+
+## Result Protocol
+
+- **stdout**: becomes the message text sent to the model
+- **stderr**: shown in the progress UI (for debugging), not sent to model
+- **exit code 0**: success - stdout is sent as your user message
+- **non-zero exit**: failure - shows error, returns you to editing
+
+## Real-time Output
+
+While your command runs, output streams in real-time below the chat input. You can:
+
+- Watch progress as lines arrive
+- Cancel mid-execution (Escape key or cancel button)
+- On cancel: returns to editing with original message preserved
+
+## Environment Variables
+
+Custom commands receive the same [environment variables](/hooks/environment-variables) as init hooks:
+
+- `MUX_PROJECT_PATH` - absolute path to your project
+- `MUX_RUNTIME` - runtime type (local, ssh, docker)
+- `MUX_WORKSPACE_NAME` - name of the current workspace
+- `MUX_WORKSPACE_PATH` - absolute path to the workspace
+
+## Examples
+
+### Simple question wrapper
+
+```bash
+#!/usr/bin/env bash
+# .mux/commands/ask
+# Usage: /ask <question>
+
+echo "$@"
+```
+
+### Context-aware prompt
+
+````bash
+#!/usr/bin/env bash
+# .mux/commands/review
+# Usage: /review [file]
+# Generates a code review request
+
+file="${1:-}"
+if [ -n "$file" ]; then
+  echo "Please review this file: $file"
+  echo ""
+  echo '```'
+  cat "$file"
+  echo '```'
+else
+  echo "Please review the following code:"
+  echo ""
+  cat
+fi
+````
+
+### Node.js command
+
+```javascript
+#!/usr/bin/env node
+// .mux/commands/format-json
+// Usage: /format-json
+// Pretty prints JSON from stdin
+
+let input = "";
+process.stdin.on("data", (chunk) => (input += chunk));
+process.stdin.on("end", () => {
+  try {
+    const parsed = JSON.parse(input);
+    console.log(JSON.stringify(parsed, null, 2));
+  } catch (e) {
+    console.error("Invalid JSON:", e.message);
+    process.exit(1);
+  }
+});
+```
+
+## Autocomplete
+
+Custom commands appear in slash command suggestions after built-in commands. Type `/` to see available commands.
+
+## Comparison with Built-in Commands
+
+| Feature      | Built-in (`/compact`, `/model`) | Custom (`.mux/commands/*`) |
+| ------------ | ------------------------------- | -------------------------- |
+| Execution    | In-process                      | Subprocess                 |
+| Output       | Immediate action                | Becomes user message       |
+| Customizable | No                              | Yes                        |
+| Streaming    | N/A                             | Real-time                  |
