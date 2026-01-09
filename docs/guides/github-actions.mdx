@@ -73,11 +73,12 @@ jobs:
           [ -z "$ANTHROPIC_API_KEY" ] && echo "Skipping (no API key)" && exit 0
 
           bunx mux@next run --budget 0.50 "
-            Label this GitHub $TYPE. Steps:
+            Label this GitHub $TYPE using ONLY existing labels. Steps:
             1. gh label list --json name,description
             2. gh $TYPE view $NUMBER
             3. gh $TYPE edit $NUMBER --add-label <labels>
-            Pick 1-3 fitting labels. If none fit, skip step 3.
+            Pick 1-3 labels from the list in step 1. Do NOT create new labels.
+            If no existing labels fit well, skip step 3.
           "
 ```
 
