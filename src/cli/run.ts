@@ -849,15 +849,26 @@ async function main(): Promise<number> {
           payload.cumulativeProviderMetadata
         );
 
-        // Reject if model has unknown pricing
-        if (displayUsage?.hasUnknownCosts) {
+        const cost = getTotalCost(displayUsage);
+
+        // Reject if model has unknown pricing: displayUsage exists with tokens but cost is undefined
+        // (createDisplayUsage doesn't set hasUnknownCosts; that's only set by sumUsageHistory)
+        // Include all token types: input, output, cached, cacheCreate, and reasoning
+        const hasTokens =
+          displayUsage &&
+          displayUsage.input.tokens +
+            displayUsage.output.tokens +
+            displayUsage.cached.tokens +
+            displayUsage.cacheCreate.tokens +
+            displayUsage.reasoning.tokens >
+            0;
+        if (hasTokens && cost === undefined) {
           const errMsg = `Cannot enforce budget: unknown pricing for model "${model}"`;
           emitJsonLine({ type: "budget-error", error: errMsg, model });
           rejectStream(new Error(errMsg));
           return;
         }
 
-        const cost = getTotalCost(displayUsage);
         if (cost !== undefined && cost > budget) {
           budgetExceeded = true;
           const msg = `Budget exceeded ($${cost.toFixed(2)} of $${budget.toFixed(2)}) - stopping`;
