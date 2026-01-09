@@ -156,6 +156,8 @@ jobs:
             TEST_INTEGRATION=1 bun x jest --coverage --maxWorkers=100% --silent tests/ui/
           fi
         env:
+          # Required for PTC type generation (prettier uses dynamic imports)
+          NODE_OPTIONS: --experimental-vm-modules
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       - uses: codecov/codecov-action@v5
