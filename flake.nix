@@ -81,6 +81,11 @@
             # Patch shebangs in node_modules binaries and scripts
             patchShebangs node_modules
             patchShebangs scripts
+
+            # Run postinstall to rebuild node-pty for Electron
+            # (skipped in offlineCache due to --ignore-scripts)
+            ./scripts/postinstall.sh
+
             # Touch sentinel to prevent make from re-running bun install
             touch node_modules/.installed
           '';
