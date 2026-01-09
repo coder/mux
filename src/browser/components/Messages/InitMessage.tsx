@@ -77,8 +77,8 @@ export const InitMessage = React.memo<InitMessageProps>(({ message, className })
           ref={preRef}
           className={cn(
             "m-0 mt-2.5 max-h-[120px] overflow-auto rounded-sm",
-            "bg-black/30 px-2 py-1.5 font-mono text-[11px] leading-relaxed whitespace-pre-wrap",
-            isError ? "text-danger-soft" : "text-light"
+            "bg-init-output-bg px-2 py-1.5 font-mono text-[11px] leading-relaxed whitespace-pre-wrap",
+            isError ? "text-init-output-error-text" : "text-init-output-text"
           )}
         >
           {message.truncatedLines && (
@@ -88,7 +88,7 @@ export const InitMessage = React.memo<InitMessageProps>(({ message, className })
             </span>
           )}
           {message.lines.map((line, idx) => (
-            <span key={idx} className={line.isError ? "text-danger-soft" : undefined}>
+            <span key={idx} className={line.isError ? "text-init-output-error-text" : undefined}>
               {line.line}
               {idx < message.lines.length - 1 ? "\n" : ""}
             </span>
