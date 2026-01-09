@@ -279,53 +279,57 @@ export function ProvidersSection() {
       }
 
       // Browser/server mode: use unauthenticated bootstrap route.
+      // Open popup synchronously to preserve user gesture context (avoids popup blockers).
+      const popup = window.open("about:blank", "_blank");
+      if (!popup) {
+        throw new Error("Popup blocked - please allow popups and try again.");
+      }
+
       setMuxGatewayLoginStatus("starting");
 
       const startUrl = new URL("/auth/mux-gateway/start", backendBaseUrl);
       const authToken = getServerAuthToken();
-      const res = await fetch(startUrl, {
-        headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
-      });
 
-      const contentType = res.headers.get("content-type") ?? "";
-      if (!contentType.includes("application/json")) {
-        const body = await res.text();
-        const prefix = body.trim().slice(0, 80);
-        throw new Error(
-          `Unexpected response from ${startUrl.toString()} (expected JSON, got ${
-            contentType || "unknown"
-          }): ${prefix}`
-        );
-      }
+      let json: { authorizeUrl?: unknown; state?: unknown; error?: unknown };
+      try {
+        const res = await fetch(startUrl, {
+          headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
+        });
 
-      const json = (await res.json()) as {
-        authorizeUrl?: unknown;
-        state?: unknown;
-        error?: unknown;
-      };
+        const contentType = res.headers.get("content-type") ?? "";
+        if (!contentType.includes("application/json")) {
+          const body = await res.text();
+          const prefix = body.trim().slice(0, 80);
+          throw new Error(
+            `Unexpected response from ${startUrl.toString()} (expected JSON, got ${
+              contentType || "unknown"
+            }): ${prefix}`
+          );
+        }
 
-      if (!res.ok) {
-        const message = typeof json.error === "string" ? json.error : `HTTP ${res.status}`;
-        throw new Error(message);
+        json = (await res.json()) as typeof json;
+
+        if (!res.ok) {
+          const message = typeof json.error === "string" ? json.error : `HTTP ${res.status}`;
+          throw new Error(message);
+        }
+      } catch (err) {
+        popup.close();
+        throw err;
       }
 
       if (attempt !== muxGatewayLoginAttemptRef.current) {
+        popup.close();
         return;
       }
 
       if (typeof json.authorizeUrl !== "string" || typeof json.state !== "string") {
+        popup.close();
         throw new Error(`Invalid response from ${startUrl.pathname}`);
       }
 
-      if (attempt !== muxGatewayLoginAttemptRef.current) {
-        return;
-      }
-
       setMuxGatewayServerState(json.state);
-      const popup = window.open(json.authorizeUrl, "_blank");
-      if (!popup) {
-        throw new Error("Popup blocked - please allow popups and try again.");
-      }
+      popup.location.href = json.authorizeUrl;
       setMuxGatewayLoginStatus("waiting");
     } catch (err) {
       if (attempt !== muxGatewayLoginAttemptRef.current) {
