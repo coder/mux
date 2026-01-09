@@ -169,10 +169,9 @@ export class SlashCommandService extends EventEmitter {
         await writer.close();
       }
 
-      // Read stdout and stderr in parallel
-      const decoder = new TextDecoder();
-
+      // Read stdout and stderr in parallel (separate decoders to avoid cross-stream corruption)
       const readStdout = async () => {
+        const decoder = new TextDecoder();
         const reader = stream.stdout.getReader();
         try {
           while (true) {
@@ -193,6 +192,7 @@ export class SlashCommandService extends EventEmitter {
       };
 
       const readStderr = async () => {
+        const decoder = new TextDecoder();
         const reader = stream.stderr.getReader();
         try {
           while (true) {
