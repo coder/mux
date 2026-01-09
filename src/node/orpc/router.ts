@@ -1612,7 +1612,10 @@ export const router = (authToken?: string) => {
             if (!result.success) {
               return { success: false, error: result.error };
             }
-            return { success: true, data: { stdout: result.data.stdout } };
+            return {
+              success: true,
+              data: { stdout: result.data.stdout, exitCode: result.data.exitCode },
+            };
           }),
       },
     },

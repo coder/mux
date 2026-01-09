@@ -2545,7 +2545,9 @@ export class WorkspaceService extends EventEmitter {
         abortSignal
       );
 
-      if (result.exitCode !== 0) {
+      // Exit code 2 is a special "user abort" signal - return result so frontend
+      // can show output but not send to model. Other non-zero exits are errors.
+      if (result.exitCode !== 0 && result.exitCode !== 2) {
         return Err(`Command /${name} failed with exit code ${result.exitCode}`);
       }
 

@@ -106,9 +106,11 @@ export class SlashCommandService extends EventEmitter {
 
     const commandPath = path.posix.join(workspacePath, ".mux", "commands", name);
 
-    // Build command with args (quote each arg for shell safety)
+    // Build command with args (quote path and args for shell safety)
+    // This ensures paths with spaces or shell metacharacters work correctly
+    const quotedPath = `'${commandPath.replace(/'/g, "'\\''")}'`;
     const quotedArgs = args.map((arg) => `'${arg.replace(/'/g, "'\\''")}'`).join(" ");
-    const fullCommand = quotedArgs ? `${commandPath} ${quotedArgs}` : commandPath;
+    const fullCommand = quotedArgs ? `${quotedPath} ${quotedArgs}` : quotedPath;
 
     const startTime = Date.now();
 

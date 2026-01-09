@@ -645,6 +645,8 @@ export const workspace = {
         z.object({
           /** Stdout from the command - becomes the user message */
           stdout: z.string(),
+          /** Exit code from the command. 0 = success, 2 = user-abort (don't send to model) */
+          exitCode: z.number(),
         }),
         z.string()
       ),

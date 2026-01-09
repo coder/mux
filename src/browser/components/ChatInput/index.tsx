@@ -1384,7 +1384,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             const rawInput = parsed.rawInput ?? "";
             const lines = rawInput.split("\n");
             const firstLine = lines[0] ?? "";
-            const stdinContent = lines.slice(1).join("\n").trim();
+            // Preserve stdin exactly as provided - only strip the first (args) line
+            const stdinContent = lines.slice(1).join("\n");
 
             // Parse first line as args (shell-style token splitting)
             const args =
@@ -1405,6 +1406,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
               if (!result.success) {
                 pushToast({ type: "error", message: result.error });
                 setInput(messageText); // Restore on error
+              } else if (result.data.exitCode === 2) {
+                // Exit code 2 = user abort - show output but don't send to model
+                // Restore original input so user can edit and retry
+                pushToast({
+                  type: "error",
+                  message: `/${parsed.command} aborted (exit 2)`,
+                });
+                setInput(messageText);
               } else {
                 // Send the stdout as the message
                 const stdout = result.data.stdout;
