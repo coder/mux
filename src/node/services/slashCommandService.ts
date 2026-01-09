@@ -51,7 +51,9 @@ export class SlashCommandService extends EventEmitter {
    * Discovers executables at <workspacePath>/.mux/commands/<name>
    */
   async listCommands(runtime: Runtime, workspacePath: string): Promise<SlashCommand[]> {
-    const commandsDir = path.posix.join(workspacePath, ".mux", "commands");
+    // Build paths relative to cwd to avoid mixing Windows vs POSIX separators.
+    // (workspacePath can be a native Windows path even though we execute via bash.)
+    const commandsDir = path.posix.join(".mux", "commands");
 
     try {
       // Use find to list executable files (works for both local and SSH runtimes)
@@ -101,11 +103,12 @@ export class SlashCommandService extends EventEmitter {
       throw new Error(`Invalid command name: ${name}`);
     }
 
-    const commandPath = path.posix.join(workspacePath, ".mux", "commands", name);
+    const commandPath = path.join(workspacePath, ".mux", "commands", name);
+    const commandExecPath = `./.mux/commands/${name}`;
 
     // Build command with args (quote path and args for shell safety)
-    // This ensures paths with spaces or shell metacharacters work correctly
-    const quotedPath = `'${commandPath.replace(/'/g, "'\\''")}'`;
+    // Note: Execute via relative path so workspacePath separators don't matter (Windows vs POSIX).
+    const quotedPath = `'${commandExecPath.replace(/'/g, "'\\''")}'`;
     const quotedArgs = args.map((arg) => `'${arg.replace(/'/g, "'\\''")}'`).join(" ");
     const fullCommand = quotedArgs ? `${quotedPath} ${quotedArgs}` : quotedPath;
 
