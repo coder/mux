@@ -14,10 +14,12 @@
 
 name: Auto-Label Issues and PRs
 
+# Uses pull_request_target instead of pull_request so the workflow doesn't
+# appear as a check on the PR (it runs in the base branch context).
 on:
   issues:
     types: [opened]
-  pull_request:
+  pull_request_target:
     types: [opened]
 
 permissions:
@@ -41,7 +43,7 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TARGET_TYPE: ${{ github.event_name == 'pull_request' && 'pr' || 'issue' }}
+          TARGET_TYPE: ${{ github.event_name == 'pull_request_target' && 'pr' || 'issue' }}
           TARGET_NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
         run: |
           # Skip if API key is not available (e.g., fork PRs)
@@ -50,7 +52,7 @@ jobs:
             exit 0
           fi
 
-          bunx mux run --timeout 2m "
+          bunx mux@next run --timeout 2m "
             You are a GitHub issue/PR labeler for this repository.
 
             1. Run: gh label list --json name,description
