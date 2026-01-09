@@ -12,6 +12,10 @@ description: Run one-off agent tasks from the command line with mux run
 
 mux provides a CLI for running one-off agent tasks without the desktop app. Unlike the interactive desktop experience, `mux run` executes a single request to completion and exits.
 
+<Card title="GitHub Actions Guide" icon="github" href="/guides/github-actions">
+  Learn how to use `mux run` in CI/CD pipelines
+</Card>
+
 ## Installation
 
 The CLI is available via npm and can be run directly with `npx`:
@@ -90,31 +94,6 @@ mux run -r "ssh dev@staging.example.com" -d /app "Update dependencies"
 # Scripted usage with timeout
 mux run --json --timeout 5m "Generate API documentation" > output.jsonl
 ```
-
-### CI/CD Automation
-
-`npx mux run` works well in CI pipelines. Here's a GitHub Actions example:
-
-```yaml
-- name: Fix lint errors with mux
-  env:
-    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-  run: npx mux run --timeout 5m "Fix the ESLint errors in this PR"
-
-- name: Generate changelog
-  env:
-    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-  run: |
-    npx mux run --json --quiet "Generate a changelog entry for this PR" \
-      > changelog.json
-```
-
-Key considerations for CI:
-
-- **Always set `--timeout`** to prevent runaway jobs
-- **Use `--json`** for machine-readable output you can parse downstream
-- **Use `--quiet`** when you only need the final result
-- **Provide API keys** via environment variables (e.g., `ANTHROPIC_API_KEY`)
 
 ## `mux server`
 
