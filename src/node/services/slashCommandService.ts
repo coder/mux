@@ -122,9 +122,30 @@ export class SlashCommandService extends EventEmitter {
     } satisfies WorkspaceInitEvent & { workspaceId: string });
 
     // Accumulate raw stdout chunks for return value (preserves empty lines)
+    //
+    // Note: We intentionally cap stdout to avoid holding arbitrarily large command output in memory.
     const stdoutChunks: Uint8Array[] = [];
     let stdoutByteLength = 0;
+    let stdoutTruncated = false;
     const MAX_STDOUT_BYTES = 1024 * 1024; // 1MB limit
+
+    const appendStdoutChunk = (chunk: Uint8Array) => {
+      if (stdoutTruncated) return;
+
+      const remaining = MAX_STDOUT_BYTES - stdoutByteLength;
+      if (remaining <= 0) {
+        stdoutTruncated = true;
+        return;
+      }
+
+      const slice = chunk.length <= remaining ? chunk : chunk.subarray(0, remaining);
+      stdoutChunks.push(slice);
+      stdoutByteLength += slice.length;
+
+      if (chunk.length > remaining) {
+        stdoutTruncated = true;
+      }
+    };
 
     // LineBuffer for streaming display (may drop empty lines, that's OK for live display)
     const stdoutBuffer = new LineBuffer((line) => {
@@ -178,13 +199,11 @@ export class SlashCommandService extends EventEmitter {
             const { done, value } = await reader.read();
             if (done) break;
             // Accumulate raw bytes for final output (preserves empty lines)
-            if (stdoutByteLength < MAX_STDOUT_BYTES) {
-              stdoutChunks.push(value);
-              stdoutByteLength += value.length;
-            }
+            appendStdoutChunk(value);
             // Stream decoded text for live display (may drop empty lines)
             stdoutBuffer.append(decoder.decode(value, { stream: true }));
           }
+          stdoutBuffer.append(decoder.decode());
           stdoutBuffer.flush();
         } finally {
           reader.releaseLock();
@@ -200,6 +219,7 @@ export class SlashCommandService extends EventEmitter {
             if (done) break;
             stderrBuffer.append(decoder.decode(value, { stream: true }));
           }
+          stderrBuffer.append(decoder.decode());
           stderrBuffer.flush();
         } finally {
           reader.releaseLock();
@@ -217,7 +237,6 @@ export class SlashCommandService extends EventEmitter {
         workspaceId,
         exitCode,
         timestamp: endTime,
-        ...(stdoutByteLength >= MAX_STDOUT_BYTES ? { truncated: true } : {}),
       } satisfies WorkspaceInitEvent & { workspaceId: string });
 
       log.debug(
@@ -225,9 +244,7 @@ export class SlashCommandService extends EventEmitter {
       );
 
       // Combine chunks and decode to string (preserves empty lines)
-      const combinedStdout = new Uint8Array(
-        stdoutChunks.reduce((acc, chunk) => acc + chunk.length, 0)
-      );
+      const combinedStdout = new Uint8Array(stdoutByteLength);
       let offset = 0;
       for (const chunk of stdoutChunks) {
         combinedStdout.set(chunk, offset);
