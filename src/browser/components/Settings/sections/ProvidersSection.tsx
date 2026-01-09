@@ -28,9 +28,6 @@ import {
   TooltipTrigger,
 } from "@/browser/components/ui/tooltip";
 
-const MUX_GATEWAY_AUTH_MODE_KEY = "mux-gateway-auth-mode";
-
-type MuxGatewayAuthMode = "login" | "coupon";
 type MuxGatewayLoginStatus = "idle" | "starting" | "waiting" | "success" | "error";
 
 interface OAuthMessage {
@@ -110,11 +107,9 @@ function getProviderFields(provider: ProviderName): FieldConfig[] {
     ];
   }
 
-  // Mux Gateway only needs couponCode
+  // Mux Gateway credentials are managed via "Login to Mux Gateway" (OAuth).
   if (provider === "mux-gateway") {
-    return [
-      { key: "couponCode", label: "Coupon Code", placeholder: "Enter coupon code", type: "secret" },
-    ];
+    return [];
   }
 
   // Default for most providers
@@ -168,14 +163,6 @@ export function ProvidersSection() {
   );
 
   const gateway = useGateway();
-
-  const [muxGatewayAuthMode, setMuxGatewayAuthMode] = usePersistedState<MuxGatewayAuthMode>(
-    MUX_GATEWAY_AUTH_MODE_KEY,
-    "login",
-    {
-      listener: true,
-    }
-  );
 
   const backendBaseUrl = getBackendBaseUrl();
   const backendOrigin = (() => {
@@ -339,14 +326,7 @@ export function ProvidersSection() {
     muxGatewayLoginStatus === "waiting" || muxGatewayLoginStatus === "starting";
   const muxGatewayIsLoggedIn = muxGatewayCouponCodeSet || muxGatewayLoginStatus === "success";
 
-  const muxGatewayAuthStatusText =
-    muxGatewayAuthMode === "login"
-      ? muxGatewayIsLoggedIn
-        ? "Logged in"
-        : "Not logged in"
-      : muxGatewayIsLoggedIn
-        ? "Coupon code set"
-        : "Coupon code not set";
+  const muxGatewayAuthStatusText = muxGatewayIsLoggedIn ? "Logged in" : "Not logged in";
 
   const muxGatewayLoginButtonLabel =
     muxGatewayLoginStatus === "error"
@@ -517,10 +497,7 @@ export function ProvidersSection() {
       {SUPPORTED_PROVIDERS.map((provider) => {
         const isExpanded = expandedProvider === provider;
         const configured = isConfigured(provider);
-        const fields =
-          provider === "mux-gateway" && muxGatewayAuthMode === "login"
-            ? []
-            : getProviderFields(provider);
+        const fields = getProviderFields(provider);
 
         return (
           <div
@@ -569,72 +546,63 @@ export function ProvidersSection() {
 
                 {provider === "mux-gateway" && (
                   <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <label className="text-foreground block text-xs font-medium">
-                          Authentication
-                        </label>
-                        <span className="text-muted text-xs">{muxGatewayAuthStatusText}</span>
-                      </div>
-
-                      <Select
-                        value={muxGatewayAuthMode}
-                        onValueChange={(next) => {
-                          if (next !== "login" && next !== "coupon") return;
-                          if (next === muxGatewayAuthMode) return;
-                          cancelMuxGatewayLogin();
-                          setMuxGatewayAuthMode(next);
-                        }}
-                      >
-                        <SelectTrigger className="w-44">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="login">Login</SelectItem>
-                          <SelectItem value="coupon">Legacy coupon</SelectItem>
-                        </SelectContent>
-                      </Select>
+                    <div>
+                      <label className="text-foreground block text-xs font-medium">
+                        Authentication
+                      </label>
+                      <span className="text-muted text-xs">{muxGatewayAuthStatusText}</span>
                     </div>
 
-                    {muxGatewayAuthMode === "login" && (
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-2">
-                          <Button
-                            size="sm"
-                            onClick={() => {
-                              void startMuxGatewayLogin();
-                            }}
-                            disabled={muxGatewayLoginInProgress}
-                          >
-                            {muxGatewayLoginButtonLabel}
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            void startMuxGatewayLogin();
+                          }}
+                          disabled={muxGatewayLoginInProgress}
+                        >
+                          {muxGatewayLoginButtonLabel}
+                        </Button>
+
+                        {muxGatewayLoginInProgress && (
+                          <Button variant="secondary" size="sm" onClick={cancelMuxGatewayLogin}>
+                            Cancel
                           </Button>
-
-                          {muxGatewayLoginInProgress && (
-                            <Button variant="secondary" size="sm" onClick={cancelMuxGatewayLogin}>
-                              Cancel
-                            </Button>
-                          )}
-
-                          {muxGatewayIsLoggedIn && (
-                            <Button variant="ghost" size="sm" onClick={clearMuxGatewayCredentials}>
-                              Log out
-                            </Button>
-                          )}
-                        </div>
-
-                        {muxGatewayLoginStatus === "waiting" && (
-                          <p className="text-muted text-xs">
-                            Finish the login flow in your browser, then return here.
-                          </p>
                         )}
 
-                        {muxGatewayLoginStatus === "error" && muxGatewayLoginError && (
-                          <p className="text-destructive text-xs">
-                            Login failed: {muxGatewayLoginError}
-                          </p>
+                        {muxGatewayIsLoggedIn && (
+                          <Button variant="ghost" size="sm" onClick={clearMuxGatewayCredentials}>
+                            Log out
+                          </Button>
                         )}
                       </div>
-                    )}
+
+                      <p className="text-muted text-xs">
+                        Have a coupon code? Redeem it{" "}
+                        <a
+                          href="https://gateway.mux.coder.com/"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-accent hover:underline"
+                        >
+                          here
+                        </a>{" "}
+                        first.
+                      </p>
+
+                      {muxGatewayLoginStatus === "waiting" && (
+                        <p className="text-muted text-xs">
+                          Finish the login flow in your browser, then return here.
+                        </p>
+                      )}
+
+                      {muxGatewayLoginStatus === "error" && muxGatewayLoginError && (
+                        <p className="text-destructive text-xs">
+                          Login failed: {muxGatewayLoginError}
+                        </p>
+                      )}
+                    </div>
                   </div>
                 )}
 
