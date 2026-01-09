@@ -2,6 +2,8 @@ import { useEffect, useState, useCallback } from "react";
 import { useAPI } from "@/browser/contexts/API";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getPostCompactionStateKey } from "@/common/constants/storage";
+import { useExperimentValue } from "@/browser/hooks/useExperiments";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 
 interface PostCompactionState {
   planPath: string | null;
@@ -20,9 +22,11 @@ interface CachedPostCompactionData {
  * Hook to get post-compaction context state for a workspace.
  * Fetches lazily from the backend API and caches in localStorage.
  * This avoids the expensive runtime.stat calls during workspace.list().
+ * Only fetches when the POST_COMPACTION_CONTEXT experiment is enabled.
  */
 export function usePostCompactionState(workspaceId: string): PostCompactionState {
   const { api } = useAPI();
+  const experimentEnabled = useExperimentValue(EXPERIMENT_IDS.POST_COMPACTION_CONTEXT);
 
   // Initialize from cache for instant display
   const [state, setState] = useState<{
@@ -41,9 +45,9 @@ export function usePostCompactionState(workspaceId: string): PostCompactionState
     };
   });
 
-  // Fetch fresh data when workspaceId changes
+  // Fetch fresh data when workspaceId changes (only if experiment enabled)
   useEffect(() => {
-    if (!api) return;
+    if (!api || !experimentEnabled) return;
 
     let cancelled = false;
     const fetchState = async () => {
@@ -74,11 +78,11 @@ export function usePostCompactionState(workspaceId: string): PostCompactionState
     return () => {
       cancelled = true;
     };
-  }, [api, workspaceId]);
+  }, [api, workspaceId, experimentEnabled]);
 
   const toggleExclusion = useCallback(
     async (itemId: string) => {
-      if (!api) return;
+      if (!api || !experimentEnabled) return;
       const isCurrentlyExcluded = state.excludedItems.has(itemId);
       const result = await api.workspace.setPostCompactionExclusion({
         workspaceId,
@@ -107,7 +111,7 @@ export function usePostCompactionState(workspaceId: string): PostCompactionState
         });
       }
     },
-    [api, workspaceId, state.excludedItems]
+    [api, workspaceId, state.excludedItems, experimentEnabled]
   );
 
   return { ...state, toggleExclusion };
