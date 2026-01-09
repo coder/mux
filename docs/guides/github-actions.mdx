@@ -54,17 +54,25 @@ This workflow automatically labels new issues and pull requests by having mux an
 # 3. Uses mux run to analyze the content and select appropriate labels
 # 4. Applies the selected labels via GitHub CLI
 #
+# SECURITY NOTE:
+# We use pull_request_target instead of pull_request so that secrets are
+# available even for PRs from forks. This is safe because:
+# - We only read PR metadata (title/body), not fork code
+# - We don't checkout the PR head, only the base branch
+# - The mux prompt only sees the title/body text, not executable code
+#
 # =============================================================================
 
 name: Auto-Label Issues and PRs
 
 # -----------------------------------------------------------------------------
 # Triggers: Run on new issues and pull requests
+# Note: pull_request_target runs in base repo context, enabling secrets for forks
 # -----------------------------------------------------------------------------
 on:
   issues:
     types: [opened]
-  pull_request:
+  pull_request_target:
     types: [opened]
 
 # -----------------------------------------------------------------------------
