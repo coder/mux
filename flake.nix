@@ -40,10 +40,16 @@
           ];
 
           # Fetch dependencies in a separate fixed-output derivation
+          # Use only package.json and bun.lock to ensure consistent hashing
+          # regardless of how the flake is evaluated (local vs remote)
           offlineCache = pkgs.stdenvNoCC.mkDerivation {
             name = "mux-deps-${version}";
 
-            inherit src;
+            src = pkgs.runCommand "mux-lock-files" { } ''
+              mkdir -p $out
+              cp ${./package.json} $out/package.json
+              cp ${./bun.lock} $out/bun.lock
+            '';
 
             nativeBuildInputs = [
               pkgs.bun
