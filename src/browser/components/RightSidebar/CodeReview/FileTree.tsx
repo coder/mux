@@ -8,6 +8,7 @@ import type { FileChangeType } from "@/common/types/review";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { getFileTreeExpandStateKey } from "@/common/constants/storage";
 import { cn } from "@/common/lib/utils";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/ui/tooltip";
 import { FileIcon } from "@/browser/components/FileIcon";
 
 /**
@@ -240,13 +241,19 @@ const TreeNodeContent: React.FC<{
                 <span className="text-warning-light">-{node.stats.deletions}</span>
               ) : null}
               {fileChangeBadge ? (
-                <span
-                  className={cn("shrink-0 font-semibold", fileChangeBadge.className)}
-                  title={fileChangeBadge.title}
-                  style={{ opacity: iconOpacity }}
-                >
-                  {fileChangeBadge.label}
-                </span>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span
+                      className={cn("shrink-0 font-semibold", fileChangeBadge.className)}
+                      style={{ opacity: iconOpacity }}
+                    >
+                      {fileChangeBadge.label}
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent side="left" align="center">
+                    {fileChangeBadge.title}
+                  </TooltipContent>
+                </Tooltip>
               ) : null}
             </span>
           </>
