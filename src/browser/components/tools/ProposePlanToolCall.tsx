@@ -25,9 +25,10 @@ import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
 import { useOptionalWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { usePopoverError } from "@/browser/hooks/usePopoverError";
 import { PopoverError } from "../PopoverError";
-import { getPlanContentKey } from "@/common/constants/storage";
+import { getAgentIdKey, getPlanContentKey } from "@/common/constants/storage";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
-import { Clipboard, ClipboardCheck, FileText, ListStart, Pencil, X } from "lucide-react";
+import { buildSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
+import { Clipboard, ClipboardCheck, FileText, ListStart, Pencil, Play, X } from "lucide-react";
 import { ShareMessagePopover } from "../ShareMessagePopover";
 
 /**
@@ -119,6 +120,8 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   } = props;
   const { expanded, toggleExpanded } = useToolExpansion(true); // Expand by default
   const [showRaw, setShowRaw] = useState(false);
+  const [isImplementing, setIsImplementing] = useState(false);
+  const isImplementingRef = useRef(false);
   const { api } = useAPI();
   const openInEditor = useOpenInEditor();
   const workspaceContext = useOptionalWorkspaceContext();
@@ -243,6 +246,30 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     sourceMode: "plan",
   });
 
+  const handleImplement = () => {
+    if (!workspaceId || !api) return;
+    if (isImplementingRef.current) return;
+
+    isImplementingRef.current = true;
+    setIsImplementing(true);
+
+    // Switch to exec before sending so send options (agentId/mode) match.
+    updatePersistedState(getAgentIdKey(workspaceId), "exec");
+
+    api.workspace
+      .sendMessage({
+        workspaceId,
+        message: "Implement the plan",
+        options: buildSendMessageOptions(workspaceId),
+      })
+      .catch(() => {
+        // Best-effort: user can retry manually if sending fails.
+      })
+      .finally(() => {
+        isImplementingRef.current = false;
+        setIsImplementing(false);
+      });
+  };
   // Copy to clipboard with feedback
   const { copied, copyToClipboard } = useCopyToClipboard();
 
@@ -309,6 +336,16 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
       icon: <ListStart />,
       tooltip: "Replace all chat history with this plan",
     });
+
+    if (status === "completed" && !errorMessage && isLatest) {
+      actionButtons.push({
+        label: "Implement",
+        onClick: handleImplement,
+        disabled: !api || isImplementing,
+        icon: <Play />,
+        tooltip: "Switch to Exec and start implementing",
+      });
+    }
   }
 
   // Show raw toggle
@@ -357,9 +394,10 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
       {/* Completion guidance: only for completed tool calls without errors, not ephemeral previews */}
       {!isEphemeralPreview && status === "completed" && !errorMessage && (
         <div className="plan-divider text-muted mt-3 border-t pt-3 text-[11px] leading-normal italic">
-          Respond with revisions or switch to the Exec agent (
+          Respond with revisions, or click Implement to switch to the Exec agent and start
+          implementing. You can also press{" "}
           <span className="font-primary not-italic">{formatKeybind(KEYBINDS.CYCLE_AGENT)}</span> to
-          cycle) and ask to implement.
+          cycle agents.
         </div>
       )}
 
