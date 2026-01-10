@@ -37,6 +37,12 @@ export const GLOBAL_SCOPE_ID = "__global__";
 export const UI_THEME_KEY = "uiTheme";
 
 /**
+ * Get the localStorage key for the last selected provider when adding custom models (global)
+ * Format: "lastCustomModelProvider"
+ */
+export const LAST_CUSTOM_MODEL_PROVIDER_KEY = "lastCustomModelProvider";
+
+/**
  * Get the localStorage key for the currently selected workspace (global)
  * Format: "selectedWorkspace"
  */

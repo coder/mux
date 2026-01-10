@@ -2,8 +2,10 @@ import React, { useState, useCallback } from "react";
 import { Plus, Loader2 } from "lucide-react";
 import { SUPPORTED_PROVIDERS, PROVIDER_DISPLAY_NAMES } from "@/common/constants/providers";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
+import { LAST_CUSTOM_MODEL_PROVIDER_KEY } from "@/common/constants/storage";
 import { useModelsFromSettings } from "@/browser/hooks/useModelsFromSettings";
 import { useGateway } from "@/browser/hooks/useGatewayModels";
+import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { ModelRow } from "./ModelRow";
 import { useAPI } from "@/browser/contexts/API";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
@@ -19,11 +21,6 @@ import { Button } from "@/browser/components/ui/button";
 // Providers to exclude from the custom models UI (handled specially or internal)
 const HIDDEN_PROVIDERS = new Set(["mux-gateway"]);
 
-interface NewModelForm {
-  provider: string;
-  modelId: string;
-}
-
 interface EditingState {
   provider: string;
   originalModelId: string;
@@ -33,7 +30,8 @@ interface EditingState {
 export function ModelsSection() {
   const { api } = useAPI();
   const { config, loading, updateModelsOptimistically } = useProvidersConfig();
-  const [newModel, setNewModel] = useState<NewModelForm>({ provider: "", modelId: "" });
+  const [lastProvider, setLastProvider] = usePersistedState(LAST_CUSTOM_MODEL_PROVIDER_KEY, "");
+  const [newModelId, setNewModelId] = useState("");
   const [editing, setEditing] = useState<EditingState | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -55,17 +53,17 @@ export function ModelsSection() {
   );
 
   const handleAddModel = useCallback(() => {
-    if (!config || !newModel.provider || !newModel.modelId.trim()) return;
+    if (!config || !lastProvider || !newModelId.trim()) return;
 
     // mux-gateway is a routing layer, not a provider users should add models under.
-    if (HIDDEN_PROVIDERS.has(newModel.provider)) {
+    if (HIDDEN_PROVIDERS.has(lastProvider)) {
       setError("Mux Gateway models can't be added directly. Enable Gateway per-model instead.");
       return;
     }
-    const trimmedModelId = newModel.modelId.trim();
+    const trimmedModelId = newModelId.trim();
 
     // Check for duplicates
-    if (modelExists(newModel.provider, trimmedModelId)) {
+    if (modelExists(lastProvider, trimmedModelId)) {
       setError(`Model "${trimmedModelId}" already exists for this provider`);
       return;
     }
@@ -74,15 +72,15 @@ export function ModelsSection() {
     setError(null);
 
     // Optimistic update - returns new models array for API call
-    const updatedModels = updateModelsOptimistically(newModel.provider, (models) => [
+    const updatedModels = updateModelsOptimistically(lastProvider, (models) => [
       ...models,
       trimmedModelId,
     ]);
-    setNewModel({ provider: "", modelId: "" });
+    setNewModelId("");
 
     // Save in background
-    void api.providers.setModels({ provider: newModel.provider, models: updatedModels });
-  }, [api, newModel, config, modelExists, updateModelsOptimistically]);
+    void api.providers.setModels({ provider: lastProvider, models: updatedModels });
+  }, [api, lastProvider, newModelId, config, modelExists, updateModelsOptimistically]);
 
   const handleRemoveModel = useCallback(
     (provider: string, modelId: string) => {
@@ -186,10 +184,7 @@ export function ModelsSection() {
         {/* Add new model form */}
         <div className="border-border-medium bg-background-secondary rounded-md border p-2">
           <div className="flex flex-wrap items-center gap-1.5">
-            <Select
-              value={newModel.provider}
-              onValueChange={(value) => setNewModel((prev) => ({ ...prev, provider: value }))}
-            >
+            <Select value={lastProvider} onValueChange={setLastProvider}>
               <SelectTrigger className="bg-modal-bg border-border-medium focus:border-accent h-7 w-auto shrink-0 rounded border px-2 text-xs">
                 <SelectValue placeholder="Provider" />
               </SelectTrigger>
@@ -203,8 +198,8 @@ export function ModelsSection() {
             </Select>
             <input
               type="text"
-              value={newModel.modelId}
-              onChange={(e) => setNewModel((prev) => ({ ...prev, modelId: e.target.value }))}
+              value={newModelId}
+              onChange={(e) => setNewModelId(e.target.value)}
               placeholder="model-id"
               className="bg-modal-bg border-border-medium focus:border-accent min-w-0 flex-1 rounded border px-2 py-1 font-mono text-xs focus:outline-none"
               onKeyDown={(e) => {
@@ -215,7 +210,7 @@ export function ModelsSection() {
               type="button"
               size="sm"
               onClick={handleAddModel}
-              disabled={!newModel.provider || !newModel.modelId.trim()}
+              disabled={!lastProvider || !newModelId.trim()}
               className="h-7 shrink-0 gap-1 px-2 text-xs"
             >
               <Plus className="h-3.5 w-3.5" />
