@@ -55,6 +55,13 @@ export function extractNewPath(filePath: string): string {
     const [, prefix = "", newName, suffix = ""] = renameMatch;
     return `${prefix}${newName}${suffix}`;
   }
+
+  // Match rename syntax without braces: "old => new"
+  const arrowSeparator = " => ";
+  if (filePath.includes(arrowSeparator)) {
+    return filePath.split(arrowSeparator).pop() ?? filePath;
+  }
+
   return filePath;
 }
 

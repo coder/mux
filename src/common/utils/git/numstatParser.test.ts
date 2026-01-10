@@ -8,6 +8,12 @@ describe("extractNewPath", () => {
     expect(extractNewPath("dir/subdir/file.js")).toBe("dir/subdir/file.js");
   });
 
+  test("extracts new path from plain arrow syntax", () => {
+    expect(extractNewPath("helpers.ts => helpers-renamed.ts")).toBe("helpers-renamed.ts");
+    expect(extractNewPath("src/helpers.ts => src/helpers-renamed.ts")).toBe(
+      "src/helpers-renamed.ts"
+    );
+  });
   test("extracts new path from rename syntax", () => {
     expect(extractNewPath("{old.ts => new.ts}")).toBe("new.ts");
     expect(extractNewPath("src/{old.ts => new.ts}")).toBe("src/new.ts");
