@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useMemo } from "react";
-import type { DiffHunk, ReviewNoteData } from "@/common/types/review";
+import type { DiffHunk, Review, ReviewNoteData } from "@/common/types/review";
 import { SelectableDiffRenderer } from "../../shared/DiffRenderer";
 import {
   type SearchHighlightConfig,
@@ -23,6 +23,8 @@ interface HunkViewerProps {
   hunk: DiffHunk;
   hunkId: string;
   workspaceId: string;
+  /** Reviews for this file to render inline next to matching lines */
+  inlineReviews?: Review[];
   isSelected?: boolean;
   isRead?: boolean;
   /** Timestamp when this hunk content was first seen (for "Last edit at" display) */
@@ -45,6 +47,7 @@ export const HunkViewer = React.memo<HunkViewerProps>(
     hunk,
     hunkId,
     workspaceId,
+    inlineReviews,
     isSelected,
     isRead = false,
     firstSeenAt,
@@ -311,6 +314,7 @@ export const HunkViewer = React.memo<HunkViewerProps>(
                 <SelectableDiffRenderer
                   content={upContent}
                   filePath={hunk.filePath}
+                  inlineReviews={inlineReviews}
                   oldStart={Math.max(1, hunk.oldStart - readMore.up)}
                   newStart={Math.max(1, hunk.newStart - readMore.up)}
                   fontSize="11px"
@@ -331,6 +335,7 @@ export const HunkViewer = React.memo<HunkViewerProps>(
             <SelectableDiffRenderer
               content={hunk.content}
               filePath={hunk.filePath}
+              inlineReviews={inlineReviews}
               oldStart={hunk.oldStart}
               newStart={hunk.newStart}
               fontSize="11px"
@@ -360,6 +365,7 @@ export const HunkViewer = React.memo<HunkViewerProps>(
                 <SelectableDiffRenderer
                   content={downContent}
                   filePath={hunk.filePath}
+                  inlineReviews={inlineReviews}
                   oldStart={hunk.oldStart + hunk.oldLines}
                   newStart={hunk.newStart + hunk.newLines}
                   fontSize="11px"

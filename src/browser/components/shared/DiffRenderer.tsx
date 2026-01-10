@@ -22,7 +22,7 @@ import {
   highlightSearchMatches,
   type SearchHighlightConfig,
 } from "@/browser/utils/highlighting/highlightSearchTerms";
-import type { ReviewNoteData } from "@/common/types/review";
+import { parseReviewLineRange, type Review, type ReviewNoteData } from "@/common/types/review";
 
 // Shared type for diff line types
 export type DiffLineType = "add" | "remove" | "context" | "header";
@@ -566,6 +566,8 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
 interface SelectableDiffRendererProps extends Omit<DiffRendererProps, "filePath"> {
   /** File path for generating review notes */
   filePath: string;
+  /** Reviews for this file to render inline next to matching lines */
+  inlineReviews?: Review[];
   /** Callback when user submits a review note with structured data */
   onReviewNote?: (data: ReviewNoteData) => void;
   /** Callback when user clicks on a line (to activate parent hunk) */
@@ -623,7 +625,8 @@ const ReviewNoteInput: React.FC<ReviewNoteInputProps> = React.memo(
     }, [noteText]);
 
     const handleSubmit = () => {
-      if (!noteText.trim()) return;
+      const text = textareaRef.current?.value ?? noteText;
+      if (!text.trim()) return;
 
       const [start, end] = [selection.startIndex, selection.endIndex].sort((a, b) => a - b);
       const selectedLineData = lineData.slice(start, end + 1);
@@ -688,7 +691,7 @@ const ReviewNoteInput: React.FC<ReviewNoteInputProps> = React.memo(
         selectedDiff,
         oldStart,
         newStart,
-        userNote: noteText.trim(),
+        userNote: text.trim(),
       });
     };
 
@@ -743,7 +746,10 @@ const ReviewNoteInput: React.FC<ReviewNoteInputProps> = React.memo(
               onKeyDown={(e) => {
                 e.stopPropagation();
 
-                if (e.key === "Enter") {
+                const isEnter = e.key === "Enter" || e.keyCode === 13;
+                const isEscape = e.key === "Escape" || e.keyCode === 27;
+
+                if (isEnter) {
                   if (e.shiftKey) {
                     // Shift+Enter: allow newline (default behavior)
                     return;
@@ -751,12 +757,23 @@ const ReviewNoteInput: React.FC<ReviewNoteInputProps> = React.memo(
                   // Enter: submit
                   e.preventDefault();
                   handleSubmit();
-                } else if (e.key === "Escape") {
+                } else if (isEscape) {
                   e.preventDefault();
                   onCancel();
                 }
               }}
             />
+            <button
+              type="button"
+              className="text-muted hover:text-primary shrink-0 px-2"
+              aria-label="Submit review note"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleSubmit();
+              }}
+            >
+              ↵
+            </button>
           </div>
         </div>
       </div>
@@ -766,6 +783,84 @@ const ReviewNoteInput: React.FC<ReviewNoteInputProps> = React.memo(
 
 ReviewNoteInput.displayName = "ReviewNoteInput";
 
+interface InlineReviewNoteRowProps {
+  review: Review;
+  lineType: DiffLineType;
+  showLineNumbers: boolean;
+  lineNumberWidths: LineNumberWidths;
+}
+
+const InlineReviewNoteRow: React.FC<InlineReviewNoteRowProps> = React.memo(
+  ({ review, lineType, showLineNumbers, lineNumberWidths }) => {
+    const codeBg = getDiffLineBackground(lineType);
+
+    const tintColor =
+      review.status === "checked" ? "var(--color-success)" : "var(--color-review-accent)";
+
+    const containerBg =
+      review.status === "checked"
+        ? "hsl(from var(--color-success) h s l / 0.06)"
+        : "hsl(from var(--color-review-accent) h s l / 0.08)";
+
+    return (
+      <div
+        className="col-span-3 grid grid-cols-subgrid"
+        data-inline-review-note={true}
+        data-review-id={review.id}
+      >
+        {/* Gutter spacer to align with diff lines */}
+        <span
+          className="flex shrink-0 items-center gap-0.5 px-1 tabular-nums select-none"
+          style={{ background: getDiffLineGutterBackground(lineType) }}
+        >
+          {showLineNumbers && (
+            <>
+              <span style={{ width: `${lineNumberWidths.oldWidthCh}ch` }} />
+              <span className="ml-3" style={{ width: `${lineNumberWidths.newWidthCh}ch` }} />
+            </>
+          )}
+        </span>
+        {/* Indicator spacer */}
+        <span style={{ background: codeBg }} />
+        {/* Inline note */}
+        <div className="min-w-0 py-1 pr-3" style={{ background: codeBg }}>
+          <div
+            className="flex w-full max-w-[560px] overflow-hidden rounded border border-[var(--color-review-accent)]/30 shadow-sm"
+            style={{ background: containerBg }}
+          >
+            {/* Left accent bar */}
+            <div className="w-[3px] shrink-0" style={{ background: tintColor }} />
+            <div className="min-w-0 flex-1 px-2 py-1">
+              <div className="flex items-center gap-1 text-[10px]">
+                <MessageSquare className="size-3 shrink-0" style={{ color: tintColor }} />
+                <span className="text-primary min-w-0 flex-1 truncate font-mono">
+                  {review.data.filePath}:{review.data.lineRange}
+                </span>
+                <span
+                  className={cn(
+                    "shrink-0 uppercase tracking-wide",
+                    review.status === "checked" ? "text-success" : "text-muted"
+                  )}
+                  style={{ fontSize: "9px" }}
+                >
+                  {review.status}
+                </span>
+              </div>
+              {review.data.userNote && (
+                <div className="text-primary mt-0.5 text-[11px] leading-[1.4] whitespace-pre-wrap">
+                  {review.data.userNote}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+);
+
+InlineReviewNoteRow.displayName = "InlineReviewNoteRow";
+
 export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
   ({
     content,
@@ -773,6 +868,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     oldStart = 1,
     newStart = 1,
     filePath,
+    inlineReviews,
     fontSize,
     maxHeight,
     className,
@@ -879,6 +975,51 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
       [lineData, showLineNumbers]
     );
 
+    const inlineReviewsByAnchor = React.useMemo(() => {
+      if (!inlineReviews?.length) return new Map<number, Review[]>();
+
+      const anchored = new Map<number, Review[]>();
+
+      for (const review of inlineReviews) {
+        if (review.data?.filePath !== filePath) continue;
+
+        const parsedRange = parseReviewLineRange(review.data?.lineRange ?? "");
+        if (!parsedRange) continue;
+
+        let anchorIndex: number | null = null;
+
+        for (let i = 0; i < lineData.length; i++) {
+          const line = lineData[i];
+
+          const matchesOld =
+            parsedRange.old &&
+            line.oldLineNum !== null &&
+            line.oldLineNum >= parsedRange.old.start &&
+            line.oldLineNum <= parsedRange.old.end;
+
+          const matchesNew =
+            parsedRange.new &&
+            line.newLineNum !== null &&
+            line.newLineNum >= parsedRange.new.start &&
+            line.newLineNum <= parsedRange.new.end;
+
+          if (matchesOld || matchesNew) {
+            anchorIndex = i;
+          }
+        }
+
+        if (anchorIndex === null) continue;
+
+        const existing = anchored.get(anchorIndex);
+        if (existing) {
+          existing.push(review);
+        } else {
+          anchored.set(anchorIndex, [review]);
+        }
+      }
+
+      return anchored;
+    }, [filePath, inlineReviews, lineData]);
     const startDragSelection = React.useCallback(
       (lineIndex: number, shiftKey: boolean) => {
         if (!onReviewNote) {
@@ -963,6 +1104,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
         {highlightedLineData.map((lineInfo, displayIndex) => {
           const isSelected = isLineSelected(displayIndex);
           const codeBg = getDiffLineBackground(lineInfo.type);
+          const anchoredReviews = inlineReviewsByAnchor.get(displayIndex);
 
           // Each line renders as 3 CSS Grid cells: gutter | indicator | code
           // Use display:contents wrapper for selection state + group hover behavior
@@ -1047,6 +1189,16 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
                     onCancel={handleCancelNote}
                   />
                 )}
+
+              {anchoredReviews?.map((review) => (
+                <InlineReviewNoteRow
+                  key={review.id}
+                  review={review}
+                  lineType={lineInfo.type}
+                  showLineNumbers={showLineNumbers}
+                  lineNumberWidths={lineNumberWidths}
+                />
+              ))}
             </React.Fragment>
           );
         })}

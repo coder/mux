@@ -32,6 +32,7 @@ import { shellQuote } from "@/common/utils/shell";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { STORAGE_KEYS, WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { useReviewState } from "@/browser/hooks/useReviewState";
+import { useReviews } from "@/browser/hooks/useReviews";
 import { useHunkFirstSeen } from "@/browser/hooks/useHunkFirstSeen";
 import { RefreshController, type LastRefreshInfo } from "@/browser/utils/RefreshController";
 import { parseDiff, extractAllHunks, buildGitDiffCommand } from "@/common/utils/git/diffParser";
@@ -336,6 +337,26 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
 
   // Track hunk first-seen timestamps for LIFO sorting
   const { recordFirstSeen, firstSeenMap } = useHunkFirstSeen(workspaceId);
+
+  const { reviews } = useReviews(workspaceId);
+
+  const reviewsByFilePath = useMemo(() => {
+    const grouped = new Map<string, typeof reviews>();
+
+    for (const review of reviews) {
+      const filePath = review.data?.filePath;
+      if (!filePath) continue;
+
+      const existing = grouped.get(filePath);
+      if (existing) {
+        existing.push(review);
+      } else {
+        grouped.set(filePath, [review]);
+      }
+    }
+
+    return grouped;
+  }, [reviews]);
 
   // Derive hunks from diffState for use in filters and rendering
   const hunks = useMemo(
@@ -1234,6 +1255,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
                       hunk={hunk}
                       hunkId={hunk.id}
                       workspaceId={workspaceId}
+                      inlineReviews={reviewsByFilePath.get(hunk.filePath)}
                       isSelected={isSelected}
                       isRead={hunkIsRead}
                       firstSeenAt={hunkFirstSeenAt}

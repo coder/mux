@@ -2,6 +2,7 @@ import { fireEvent, waitFor } from "@testing-library/react";
 
 import { shouldRunIntegrationTests, validateApiKeys } from "../testUtils";
 import { STORAGE_KEYS } from "@/constants/workspaceDefaults";
+import { getReviewsKey } from "@/common/constants/storage";
 import {
   cleanupSharedRepo,
   configureTestRetries,
@@ -503,6 +504,12 @@ describeIntegration("ReviewPanel auto refresh (UI + ORPC + live LLM)", () => {
         fireEvent.mouseDown(diffIndicator, { button: 0 });
         fireEvent.mouseUp(window);
 
+        const textarea = (await view.findByPlaceholderText(
+          /Add a review note/i,
+          {},
+          { timeout: 10_000 }
+        )) as HTMLTextAreaElement;
+
         // Wait for React state update
         await waitFor(
           () => {
@@ -526,10 +533,70 @@ describeIntegration("ReviewPanel auto refresh (UI + ORPC + live LLM)", () => {
         const duringTimestamp = refreshButton.getAttribute("data-last-refresh-timestamp");
         expect(duringTimestamp).toBe(initialTimestamp);
 
+        // Submit a review note and ensure the refresh button is re-enabled.
+        const NOTE_TEXT = "INLINE_REVIEW_NOTE_TEST_MARKER";
+
+        textarea.focus();
+        fireEvent.focus(textarea);
+
+        const valueSetter = Object.getOwnPropertyDescriptor(
+          Object.getPrototypeOf(textarea),
+          "value"
+        )?.set;
+        valueSetter?.call(textarea, NOTE_TEXT);
+        textarea.dispatchEvent(new Event("input", { bubbles: true }));
+
+        // Allow React to commit the onChange update before submitting.
+        await waitFor(() => {
+          expect(textarea.value).toBe(NOTE_TEXT);
+        });
+
+        const submitButton = await view.findByLabelText(
+          /Submit review note/i,
+          {},
+          { timeout: 5000 }
+        );
+        fireEvent.click(submitButton);
+
+        // Ensure the review input was dismissed (submit cleared selection)
+        await waitFor(() => {
+          const stillThere = view.queryByPlaceholderText(/Add a review note/i);
+          if (stillThere) throw new Error("Review note input still visible after submit");
+        });
+
+        // Ensure the review was persisted before asserting UI updates.
+        await waitFor(
+          () => {
+            const raw = window.localStorage.getItem(getReviewsKey(workspaceId));
+            if (!raw) throw new Error("Review not persisted");
+            expect(raw).toContain(NOTE_TEXT);
+          },
+          { timeout: 10_000 }
+        );
+
+        await waitFor(
+          () => {
+            expect(refreshButton.hasAttribute("disabled")).toBe(false);
+          },
+          { timeout: 5_000 }
+        );
+
+        await waitFor(
+          () => {
+            const inlineNotes = Array.from(
+              view.container.querySelectorAll<HTMLElement>("[data-inline-review-note]")
+            );
+            if (inlineNotes.length === 0) throw new Error("No inline review notes rendered");
+            expect(inlineNotes.some((el) => el.textContent?.includes(NOTE_TEXT))).toBe(true);
+          },
+          { timeout: 5_000 }
+        );
+
         // Note: Testing escape/cancel would require complex DOM simulation.
         // The key behaviors verified by this test:
         // 1. Button becomes disabled when composing review note
         // 2. Clicking disabled button does not trigger refresh
+        // 3. Submitting a note re-enables refresh and renders the note inline
         // Unit tests in RefreshController.test.ts verify that notifyUnpaused()
         // correctly flushes pending refreshes when composition ends.
       } finally {
