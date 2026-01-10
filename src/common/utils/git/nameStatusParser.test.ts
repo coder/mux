@@ -12,6 +12,13 @@ describe("parseNameStatus", () => {
     ]);
   });
 
+  it("parses copied entries", () => {
+    const output = "C100\tsrc/orig.ts\tsrc/copy.ts\n";
+
+    expect(parseNameStatus(output)).toEqual([
+      { filePath: "src/copy.ts", oldPath: "src/orig.ts", changeType: "added" },
+    ]);
+  });
   it("parses renamed entries", () => {
     const output = "R100\tsrc/old.ts\tsrc/new.ts\n";
 

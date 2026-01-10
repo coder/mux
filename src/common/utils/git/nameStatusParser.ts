@@ -6,6 +6,7 @@
  *   A\tpath/to/new.ts
  *   D\tpath/to/deleted.ts
  *   R100\told/path.ts\tnew/path.ts
+ *   C100\told/path.ts\tnew/path.ts
  */
 
 import type { FileChangeType } from "@/common/types/review";
@@ -50,8 +51,10 @@ export function parseNameStatus(output: string): NameStatusEntry[] {
     const statusCode = parts[0];
     const changeType = toFileChangeType(statusCode);
 
+    const isCopy = statusCode.startsWith("C");
+
     const entry: NameStatusEntry | null =
-      changeType === "renamed"
+      changeType === "renamed" || isCopy
         ? parts.length >= 3
           ? { filePath: parts[2], oldPath: parts[1], changeType }
           : null
@@ -73,7 +76,7 @@ export function parseNameStatus(output: string): NameStatusEntry[] {
     }
 
     // Preserve oldPath if we already have the strongest entry but are missing the old path.
-    if (existing.changeType === "renamed" && !existing.oldPath && entry.oldPath) {
+    if (existing.changeType === entry.changeType && !existing.oldPath && entry.oldPath) {
       byPath.set(entry.filePath, { ...existing, oldPath: entry.oldPath });
     }
   }
