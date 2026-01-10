@@ -202,6 +202,10 @@ interface RightSidebarTabsetNodeProps {
   onTerminalTitleChange: (tab: TabType, title: string) => void;
   /** Map of tab → global position index (0-based) for keybind tooltips */
   tabPositions: Map<TabType, number>;
+  /** Terminal session ID that should be auto-focused (consumed and cleared on mount) */
+  autoFocusTerminalSession: string | null;
+  /** Callback to clear the auto-focus state after it's been consumed */
+  onAutoFocusConsumed: () => void;
 }
 
 const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) => {
@@ -409,6 +413,9 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
           const terminalTabId = `${tabsetBaseId}-tab-${terminalTab}`;
           const terminalPanelId = `${tabsetBaseId}-panel-${terminalTab}`;
           const isActive = props.node.activeTab === terminalTab;
+          // Check if this terminal should be auto-focused (was just opened via keybind)
+          const terminalSessionId = getTerminalSessionId(terminalTab);
+          const shouldAutoFocus = isActive && terminalSessionId === props.autoFocusTerminalSession;
 
           return (
             <div
@@ -424,6 +431,8 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
                 tabType={terminalTab}
                 visible={isActive}
                 onTitleChange={(title) => props.onTerminalTitleChange(terminalTab, title)}
+                autoFocus={shouldAutoFocus}
+                onAutoFocusConsumed={shouldAutoFocus ? props.onAutoFocusConsumed : undefined}
               />
             </div>
           );
@@ -477,6 +486,11 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
 
   // Review stats reported by ReviewPanel
   const [reviewStats, setReviewStats] = React.useState<ReviewStats | null>(null);
+
+  // Terminal session ID that should be auto-focused (set when opened via keybind like Cmd+T)
+  const [autoFocusTerminalSession, setAutoFocusTerminalSession] = React.useState<string | null>(
+    null
+  );
 
   // Manual collapse state (persisted globally)
   const [collapsed, setCollapsed] = usePersistedState<boolean>(RIGHT_SIDEBAR_COLLAPSED_KEY, false);
@@ -791,6 +805,8 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     void createTerminalSession(api, workspaceId).then((session) => {
       const newTab = makeTerminalTabType(session.sessionId);
       setLayout((prev) => addTabToFocusedTabset(prev, newTab));
+      // Schedule focus for this terminal (will be consumed when the tab mounts)
+      setAutoFocusTerminalSession(session.sessionId);
     });
   }, [api, workspaceId, setLayout, setCollapsed]);
 
@@ -1007,6 +1023,8 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         terminalTitles={terminalTitles}
         onTerminalTitleChange={handleTerminalTitleChange}
         tabPositions={tabPositions}
+        autoFocusTerminalSession={autoFocusTerminalSession}
+        onAutoFocusConsumed={() => setAutoFocusTerminalSession(null)}
       />
     );
   };
