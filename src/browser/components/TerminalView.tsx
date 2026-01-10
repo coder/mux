@@ -215,6 +215,63 @@ export function TerminalView({
         terminal.open(containerEl);
         fitAddon.fit();
 
+        // Platform-aware clipboard shortcuts matching VS Code's integrated terminal:
+        // https://code.visualstudio.com/docs/terminal/basics#_copy-paste
+        //
+        // - macOS: Cmd+C/V (standard Mac shortcuts, Cmd is distinct from Ctrl)
+        // - Linux: Ctrl+Shift+C/V (Ctrl+C reserved for SIGINT, so terminals use Shift)
+        // - Windows: Ctrl+C/V (copy only when selection exists, otherwise SIGINT)
+        //
+        // Copy only triggers when there's a selection. Without selection, Ctrl+C falls
+        // through to ghostty-web which sends SIGINT to the running process.
+        const isMac = navigator.platform.includes("Mac");
+        const isWindows = navigator.platform.includes("Win");
+
+        // Capture terminal reference for the closure
+        const term = terminal;
+        term.attachCustomKeyEventHandler((ev: KeyboardEvent) => {
+          if (ev.type !== "keydown") return true;
+
+          // Use ev.key.toLowerCase() for layout-aware detection that handles Caps Lock.
+          // This ensures Dvorak/Colemak users get shortcuts on their layout's C/V keys.
+          const key = ev.key.toLowerCase();
+
+          // Paste shortcuts
+          const isPaste =
+            (isMac && ev.metaKey && key === "v") ||
+            (!isMac && !isWindows && ev.ctrlKey && ev.shiftKey && key === "v") ||
+            (isWindows && ev.ctrlKey && !ev.shiftKey && key === "v");
+
+          if (isPaste) {
+            void navigator.clipboard.readText().then((text) => {
+              if (text) term.paste(text);
+            });
+            return false;
+          }
+
+          // Copy shortcuts
+          const isMacCopy = isMac && ev.metaKey && key === "c";
+          const isLinuxCopy = !isMac && !isWindows && ev.ctrlKey && ev.shiftKey && key === "c";
+          const isWindowsCopy = isWindows && ev.ctrlKey && !ev.shiftKey && key === "c";
+
+          // Linux: Always swallow Ctrl+Shift+C to prevent it becoming SIGINT (no-op if no selection)
+          // Mac/Windows: Only intercept when there's a selection (Cmd+C/Ctrl+C without selection is harmless)
+          if (isLinuxCopy) {
+            if (term.hasSelection()) {
+              void navigator.clipboard.writeText(term.getSelection());
+            }
+            return false; // Always swallow on Linux to prevent SIGINT
+          }
+
+          if ((isMacCopy || isWindowsCopy) && term.hasSelection()) {
+            void navigator.clipboard.writeText(term.getSelection());
+            return false;
+          }
+
+          // Let ghostty handle everything else (including Ctrl+C → SIGINT on Linux when no selection)
+          return true;
+        });
+
         // ghostty-web calls focus() internally in open(), which steals focus.
         // It also schedules a delayed focus with setTimeout(0) as "backup".
         // If autoFocus is disabled, blur immediately AND with a delayed blur to counteract.
