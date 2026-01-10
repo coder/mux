@@ -6,6 +6,7 @@ import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
 import { convertToModelMessages, type LanguageModel, type Tool } from "ai";
 import { applyToolOutputRedaction } from "@/browser/utils/messages/applyToolOutputRedaction";
 import { sanitizeToolInputs } from "@/browser/utils/messages/sanitizeToolInput";
+import { linkAbortSignal } from "@/node/utils/abort";
 import { inlineSvgAsTextForProvider } from "@/node/utils/messages/inlineSvgAsTextForProvider";
 import { extractToolMediaAsUserMessages } from "@/node/utils/messages/extractToolMediaAsUserMessages";
 import type { Result } from "@/common/types/result";
@@ -1043,13 +1044,7 @@ export class AIService extends EventEmitter {
     const syntheticMessageId = `starting-${startTime}-${Math.random().toString(36).substring(2, 11)}`;
 
     // Link external abort signal (if provided).
-    if (abortSignal) {
-      if (abortSignal.aborted) {
-        pendingAbortController.abort();
-      } else {
-        abortSignal.addEventListener("abort", () => pendingAbortController.abort(), { once: true });
-      }
-    }
+    const unlinkAbortSignal = linkAbortSignal(abortSignal, pendingAbortController);
 
     this.pendingStreamStarts.set(workspaceId, {
       abortController: pendingAbortController,
@@ -1917,6 +1912,7 @@ export class AIService extends EventEmitter {
       // Return as unknown error type
       return Err({ type: "unknown", raw: `Failed to stream message: ${errorMessage}` });
     } finally {
+      unlinkAbortSignal();
       const pending = this.pendingStreamStarts.get(workspaceId);
       if (pending?.abortController === pendingAbortController) {
         this.pendingStreamStarts.delete(workspaceId);

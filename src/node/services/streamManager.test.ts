@@ -165,27 +165,28 @@ describe("StreamManager - Concurrent Stream Prevention", () => {
       processingPromise: Promise<void>;
     }
 
-    const ensureStreamSafetyValue = Reflect.get(streamManager, "ensureStreamSafety") as unknown;
-    if (typeof ensureStreamSafetyValue !== "function") {
-      throw new Error("StreamManager.ensureStreamSafety is unavailable for testing");
-    }
-
-    const originalEnsure = (
-      ensureStreamSafetyValue as (workspaceId: string) => Promise<string>
-    ).bind(streamManager);
-
     const replaceEnsureResult = Reflect.set(
       streamManager,
       "ensureStreamSafety",
-      async (wsId: string): Promise<string> => {
+      async (_wsId: string): Promise<string> => {
         operations.push("ensure-start");
         await new Promise((resolve) => setTimeout(resolve, 50));
-        const result = await originalEnsure(wsId);
         operations.push("ensure-end");
-        return result;
+        return "test-token";
       }
     );
 
+    const replaceTempDirResult = Reflect.set(
+      streamManager,
+      "createTempDirForStream",
+      (_streamToken: string, _runtime: unknown): Promise<string> => {
+        return Promise.resolve("/tmp/mock-stream-temp");
+      }
+    );
+
+    if (!replaceTempDirResult) {
+      throw new Error("Failed to mock StreamManager.createTempDirForStream");
+    }
     if (!replaceEnsureResult) {
       throw new Error("Failed to mock StreamManager.ensureStreamSafety");
     }
@@ -202,23 +203,22 @@ describe("StreamManager - Concurrent Stream Prevention", () => {
       (
         wsId: string,
         streamToken: string,
-        messages: unknown,
-        modelArg: unknown,
+        _runtimeTempDir: string,
+        _runtime: unknown,
+        _messages: unknown,
+        _modelArg: unknown,
         modelString: string,
-        abortSignal: AbortSignal | undefined,
-        system: string,
+        abortController: AbortController,
+        _system: string,
         historySequence: number,
-        tools?: Record<string, unknown>,
+        _messageId: string,
+        _tools?: Record<string, unknown>,
         initialMetadata?: Record<string, unknown>,
         _providerOptions?: Record<string, unknown>,
         _maxOutputTokens?: number,
         _toolPolicy?: unknown
       ): WorkspaceStreamInfoStub => {
         operations.push("create");
-        const abortController = new AbortController();
-        if (abortSignal) {
-          abortSignal.addEventListener("abort", () => abortController.abort());
-        }
 
         const streamInfo: WorkspaceStreamInfoStub = {
           state: "starting",
@@ -335,7 +335,7 @@ describe("StreamManager - Concurrent Stream Prevention", () => {
       streamStartEmitted = true;
     });
 
-    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    const abortController = new AbortController();
 
     let tempDirStartedResolve: (() => void) | undefined;
     const tempDirStarted = new Promise<void>((resolve) => {
@@ -345,15 +345,31 @@ describe("StreamManager - Concurrent Stream Prevention", () => {
     const replaceTempDirResult = Reflect.set(
       streamManager,
       "createTempDirForStream",
-      async (..._args: unknown[]): Promise<string> => {
+      (_streamToken: string, _runtime: unknown): Promise<string> => {
         tempDirStartedResolve?.();
-        await sleep(50);
-        return "/tmp/mock-stream-temp";
+        return new Promise((resolve) => {
+          abortController.signal.addEventListener("abort", () => resolve("/tmp/mock-stream-temp"), {
+            once: true,
+          });
+        });
       }
     );
 
     if (!replaceTempDirResult) {
       throw new Error("Failed to mock StreamManager.createTempDirForStream");
+    }
+
+    let cleanupCalled = false;
+    const replaceCleanupResult = Reflect.set(
+      streamManager,
+      "cleanupStreamTempDir",
+      (..._args: unknown[]): void => {
+        cleanupCalled = true;
+      }
+    );
+
+    if (!replaceCleanupResult) {
+      throw new Error("Failed to mock StreamManager.cleanupStreamTempDir");
     }
 
     const replaceCreateResult = Reflect.set(
@@ -382,8 +398,6 @@ describe("StreamManager - Concurrent Stream Prevention", () => {
       throw new Error("Failed to mock StreamManager.processStreamWithCleanup");
     }
 
-    const abortController = new AbortController();
-
     const anthropic = createAnthropic({ apiKey: "dummy-key" });
     const model = anthropic("claude-sonnet-4-5");
 
@@ -406,6 +420,7 @@ describe("StreamManager - Concurrent Stream Prevention", () => {
     const result = await startPromise;
     expect(result.success).toBe(true);
     expect(createCalled).toBe(false);
+    expect(cleanupCalled).toBe(true);
     expect(processCalled).toBe(false);
     expect(streamStartEmitted).toBe(false);
     expect(streamManager.isStreaming(workspaceId)).toBe(false);

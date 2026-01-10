@@ -30,6 +30,7 @@ import type { NestedToolCall } from "@/common/orpc/schemas/message";
 import type { PartialService } from "./partialService";
 import type { HistoryService } from "./historyService";
 import { addUsage, accumulateProviderMetadata } from "@/common/utils/tokens/usageHelpers";
+import { linkAbortSignal } from "@/node/utils/abort";
 import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
 import { stripInternalToolResultFields } from "@/common/utils/tools/internalToolResultFields";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
@@ -114,6 +115,7 @@ function stripEncryptedContent(output: unknown): unknown {
 interface WorkspaceStreamInfo {
   state: StreamState;
   streamResult: Awaited<ReturnType<typeof streamText>>;
+  unlinkAbortSignal?: () => void;
   abortController: AbortController;
   messageId: string;
   token: StreamToken;
@@ -320,6 +322,28 @@ export class StreamManager extends EventEmitter {
     }
 
     return resolvedPath;
+  }
+
+  private cleanupStreamTempDir(runtime: Runtime, runtimeTempDir: string): void {
+    // Use parent directory as cwd for safety - if runtimeTempDir is malformed,
+    // we won't accidentally run rm -rf from root.
+    const tempDirBasename = PlatformPaths.basename(runtimeTempDir);
+    const tempDirParent = path.dirname(runtimeTempDir);
+
+    // Fire-and-forget: don't block stream completion waiting for directory deletion.
+    // This is especially important for SSH where rm -rf can take 500ms-2s.
+    void runtime
+      .exec(`rm -rf "${tempDirBasename}"`, {
+        cwd: tempDirParent,
+        timeout: 10,
+      })
+      .then(async (result) => {
+        await result.exitCode;
+        log.debug(`Cleaned up temp dir: ${runtimeTempDir}`);
+      })
+      .catch((error) => {
+        log.error(`Failed to cleanup temp dir ${runtimeTempDir}:`, error);
+      });
   }
 
   /**
@@ -664,7 +688,7 @@ export class StreamManager extends EventEmitter {
     messages: ModelMessage[],
     model: LanguageModel,
     modelString: string,
-    abortSignal: AbortSignal | undefined,
+    abortController: AbortController,
     system: string,
     historySequence: number,
     messageId: string,
@@ -675,19 +699,7 @@ export class StreamManager extends EventEmitter {
     toolPolicy?: ToolPolicy,
     hasQueuedMessage?: () => boolean
   ): WorkspaceStreamInfo {
-    // Create abort controller for this specific stream
-    const abortController = new AbortController();
-
-    // Link external abort signal
-    if (abortSignal) {
-      abortSignal.addEventListener("abort", () => abortController.abort(), { once: true });
-
-      // If the abort already happened before we attached the listener, we won't see
-      // an "abort" event. Ensure we still propagate cancellation.
-      if (abortSignal.aborted) {
-        abortController.abort();
-      }
-    }
+    // abortController is created and linked to the caller-provided abortSignal in startStream().
 
     // Determine toolChoice based on toolPolicy.
     //
@@ -1468,6 +1480,9 @@ export class StreamManager extends EventEmitter {
         streamInfo.partialWriteTimer = undefined;
       }
 
+      streamInfo.unlinkAbortSignal?.();
+      streamInfo.unlinkAbortSignal = undefined;
+
       // Clean up stream temp directory using runtime (fire-and-forget)
       // Don't block stream completion waiting for directory deletion
       // This is especially important for SSH where rm -rf can take 500ms-2s
@@ -1706,62 +1721,76 @@ export class StreamManager extends EventEmitter {
         `[STREAM START] workspaceId=${workspaceId} historySequence=${historySequence} model=${modelString}`
       );
 
-      // Step 1: Cancel any existing stream before proceeding
-      // This must happen regardless of whether a token was provided
-      await this.ensureStreamSafety(typedWorkspaceId);
+      const streamAbortController = new AbortController();
+      const unlinkAbortSignal = linkAbortSignal(abortSignal, streamAbortController);
 
-      // Step 2: Use provided stream token or generate a new one
-      const streamToken = providedStreamToken ?? this.generateStreamToken();
+      let runtimeTempDir: string | undefined;
+      let streamRegistered = false;
 
-      // If the stream was interrupted while we were waiting on async setup (mutex,
-      // temp dir creation, etc), avoid starting the stream entirely.
-      //
-      // This prevents a race where an already-aborted signal is missed (abort event
-      // fired before createStreamAtomically attaches its listener).
-      if (abortSignal?.aborted) {
+      try {
+        // Step 1: Cancel any existing stream before proceeding
+        // This must happen regardless of whether a token was provided
+        const generatedStreamToken = await this.ensureStreamSafety(typedWorkspaceId);
+
+        // Step 2: Use provided stream token or the generated one
+        const streamToken = providedStreamToken ?? generatedStreamToken;
+
+        // If the stream was interrupted while we were waiting on async setup (mutex,
+        // temp dir creation, etc), avoid starting the stream entirely.
+        if (streamAbortController.signal.aborted) {
+          return Ok(streamToken);
+        }
+
+        // Step 3: Create temp directory for this stream using runtime
+        // If token was provided, temp dir might already exist - mkdir -p handles this
+        runtimeTempDir = await this.createTempDirForStream(streamToken, runtime);
+
+        if (streamAbortController.signal.aborted) {
+          return Ok(streamToken);
+        }
+
+        // Step 4: Atomic stream creation and registration
+        const streamInfo = this.createStreamAtomically(
+          typedWorkspaceId,
+          streamToken,
+          runtimeTempDir,
+          runtime,
+          messages,
+          model,
+          modelString,
+          streamAbortController,
+          system,
+          historySequence,
+          messageId,
+          tools,
+          initialMetadata,
+          providerOptions,
+          maxOutputTokens,
+          toolPolicy,
+          hasQueuedMessage
+        );
+        streamInfo.unlinkAbortSignal = unlinkAbortSignal;
+        streamRegistered = true;
+
+        // Step 5: Track the processing promise for guaranteed cleanup
+        // This allows cancelStreamSafely to wait for full exit
+        streamInfo.processingPromise = this.processStreamWithCleanup(
+          typedWorkspaceId,
+          streamInfo,
+          historySequence
+        ).catch((error) => {
+          log.error("Unexpected error in stream processing:", error);
+        });
+
         return Ok(streamToken);
+      } finally {
+        if (!streamRegistered) {
+          unlinkAbortSignal();
+          if (runtimeTempDir) {
+            this.cleanupStreamTempDir(runtime, runtimeTempDir);
+          }
+        }
       }
-
-      // Step 3: Create temp directory for this stream using runtime
-      // If token was provided, temp dir might already exist - mkdir -p handles this
-      const runtimeTempDir = await this.createTempDirForStream(streamToken, runtime);
-
-      if (abortSignal?.aborted) {
-        return Ok(streamToken);
-      }
-
-      // Step 4: Atomic stream creation and registration
-      const streamInfo = this.createStreamAtomically(
-        typedWorkspaceId,
-        streamToken,
-        runtimeTempDir,
-        runtime,
-        messages,
-        model,
-        modelString,
-        abortSignal,
-        system,
-        historySequence,
-        messageId,
-        tools,
-        initialMetadata,
-        providerOptions,
-        maxOutputTokens,
-        toolPolicy,
-        hasQueuedMessage
-      );
-
-      // Step 5: Track the processing promise for guaranteed cleanup
-      // This allows cancelStreamSafely to wait for full exit
-      streamInfo.processingPromise = this.processStreamWithCleanup(
-        typedWorkspaceId,
-        streamInfo,
-        historySequence
-      ).catch((error) => {
-        log.error("Unexpected error in stream processing:", error);
-      });
-
-      return Ok(streamToken);
     } catch (error) {
       // Guaranteed cleanup on any failure
       this.workspaceStreams.delete(typedWorkspaceId);
