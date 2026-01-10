@@ -13,9 +13,8 @@ import { buildCompactionEditText } from "./format";
  * Check if the workspace is currently in a compaction stream
  */
 export function isCompactingStream(aggregator: StreamingMessageAggregator): boolean {
-  const messages = aggregator.getAllMessages();
-  const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
-  return lastUserMsg?.metadata?.muxMetadata?.type === "compaction-request";
+  // Prefer active stream state (derived from stream-start mode) over scanning history.
+  return aggregator.isCompacting();
 }
 
 /**

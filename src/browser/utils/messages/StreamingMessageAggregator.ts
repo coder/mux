@@ -4,6 +4,7 @@ import type {
   MuxImagePart,
   DisplayedMessage,
   CompactionRequestData,
+  MuxFrontendMetadata,
 } from "@/common/types/message";
 import { createMuxMessage } from "@/common/types/message";
 import type {
@@ -220,6 +221,10 @@ export class StreamingMessageAggregator {
   // IMPORTANT: We intentionally keep this timestamp until a stream actually starts
   // (or the user retries) so retry UI/backoff logic doesn't misfire on send failures.
   private pendingStreamStartTime: number | null = null;
+
+  // Pending compaction request metadata for the next stream (set when user message arrives).
+  // This is used for UI before we receive stream-start (e.g., show compaction model while "starting").
+  private pendingCompactionRequest: CompactionRequestData | null = null;
 
   // Last completed stream timing stats (preserved after stream ends for display)
   // Unlike activeStreams, this persists until the next stream starts
@@ -655,8 +660,24 @@ export class StreamingMessageAggregator {
     return this.pendingStreamStartTime;
   }
 
+  /**
+   * Get the model override for a pending compaction request (before stream-start).
+   *
+   * Returns null if there's no pending stream or the pending request is not a compaction.
+   *
+   * Note: This returns the *override* model from the /compact command. If the user didn't
+   * specify a model, compaction uses the workspace default model and we intentionally return null.
+   */
+  getPendingCompactionModel(): string | null {
+    if (this.pendingStreamStartTime === null) return null;
+    return this.pendingCompactionRequest?.model ?? null;
+  }
+
   private setPendingStreamStartTime(time: number | null): void {
     this.pendingStreamStartTime = time;
+    if (time === null) {
+      this.pendingCompactionRequest = null;
+    }
   }
 
   /**
@@ -928,17 +949,16 @@ export class StreamingMessageAggregator {
 
   // Unified event handlers that encapsulate all complex logic
   handleStreamStart(data: StreamStartEvent): void {
+    // Detect compaction via stream mode (most authoritative).
+    // Fall back to pending compaction request metadata for older stream-start events without mode.
+    const isCompacting = data.mode === "compact" || this.pendingCompactionRequest !== null;
+
     // Clear pending stream start timestamp - stream has started
     this.setPendingStreamStartTime(null);
 
     // NOTE: We do NOT clear agentStatus or currentTodos here.
     // They are cleared when a new user message arrives (see handleMessage),
     // ensuring consistent behavior whether loading from history or processing live events.
-
-    // Detect if this stream is compacting by checking if last user message is a compaction-request
-    const messages = this.getAllMessages();
-    const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
-    const isCompacting = lastUserMsg?.metadata?.muxMetadata?.type === "compaction-request";
 
     const now = Date.now();
     const context: StreamingContext = {
@@ -1495,6 +1515,13 @@ export class StreamingMessageAggregator {
 
         // Always clear todos (stream-scoped state)
         this.currentTodos = [];
+
+        // Capture pending compaction metadata for pre-stream UI ("starting" phase).
+        const muxMetadata = incomingMessage.metadata?.muxMetadata as
+          | MuxFrontendMetadata
+          | undefined;
+        this.pendingCompactionRequest =
+          muxMetadata?.type === "compaction-request" ? muxMetadata.parsed : null;
 
         if (muxMeta?.displayStatus) {
           // Background operation - show requested status (don't persist)

@@ -54,6 +54,8 @@ export interface WorkspaceState {
   todos: TodoItem[];
   agentStatus: { emoji: string; message: string; url?: string } | undefined;
   pendingStreamStartTime: number | null;
+  // Model override from pending compaction request (used during "starting" phase)
+  pendingCompactionModel: string | null;
   // Live streaming stats (updated on each stream-delta)
   streamingTokenCount: number | undefined;
   streamingTPS: number | undefined;
@@ -863,6 +865,7 @@ export class WorkspaceStore {
         todos: aggregator.getCurrentTodos(),
         agentStatus: aggregator.getAgentStatus(),
         pendingStreamStartTime: aggregator.getPendingStreamStartTime(),
+        pendingCompactionModel: aggregator.getPendingCompactionModel(),
         streamingTokenCount,
         streamingTPS,
       };
