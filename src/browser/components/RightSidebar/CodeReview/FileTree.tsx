@@ -3,7 +3,7 @@
  */
 
 import React from "react";
-import type { FileTreeNode } from "@/common/utils/git/numstatParser";
+import { extractNewPath, type FileTreeNode } from "@/common/utils/git/numstatParser";
 import type { FileChangeType } from "@/common/types/review";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { getFileTreeExpandStateKey } from "@/common/constants/storage";
@@ -32,7 +32,7 @@ function computeDirectoryReadStatus(
     } else {
       // Check file status
       fileCount++;
-      const status = getFileReadStatus(n.path);
+      const status = getFileReadStatus(extractNewPath(n.path));
       if (status === null) {
         hasUnknown = true;
       } else if (status.read === status.total && status.total > 0) {
@@ -137,9 +137,15 @@ const TreeNodeContent: React.FC<{
     setIsOpen(!isOpen);
   };
 
-  const fallbackFileName = node.path.split("/").pop() ?? "";
-  const fileNameForIcon = node.name && node.name.length > 0 ? node.name : fallbackFileName;
+  const canonicalFilePath = node.isDirectory ? node.path : extractNewPath(node.path);
+  const fallbackFileName = canonicalFilePath.split("/").pop() ?? "";
+  const fileNameForIcon = fallbackFileName;
   const isSelected = selectedPath === node.path;
+
+  const changeType = !node.isDirectory ? (node.stats?.changeType ?? "modified") : null;
+  const isDeletedFile = changeType === "deleted";
+  const isRenamedFile = changeType === "renamed" && !!node.stats?.oldPath;
+  const oldFileName = node.stats?.oldPath?.split("/").pop() ?? node.stats?.oldPath ?? "";
 
   // Compute read status for files and directories
   let isFullyRead = false;
@@ -150,7 +156,7 @@ const TreeNodeContent: React.FC<{
     isFullyRead = dirStatus === "fully-read";
     isUnknownState = dirStatus === "unknown";
   } else if (getFileReadStatus) {
-    const readStatus = getFileReadStatus(node.path);
+    const readStatus = getFileReadStatus(canonicalFilePath);
     isFullyRead = readStatus ? readStatus.read === readStatus.total && readStatus.total > 0 : false;
     isUnknownState = readStatus === null;
   }
@@ -225,13 +231,22 @@ const TreeNodeContent: React.FC<{
             <span
               className={cn(
                 "flex-1",
+                isDeletedFile && "line-through",
                 isFullyRead &&
                   "text-dim line-through [text-decoration-color:var(--color-read)] [text-decoration-thickness:2px]",
                 isUnknownState && !isFullyRead && "text-dim",
                 !isFullyRead && !isUnknownState && "text-foreground"
               )}
             >
-              {node.name}
+              {isRenamedFile ? (
+                <>
+                  <span className="text-muted">{oldFileName}</span>
+                  <span className="text-muted">{" -> "}</span>
+                  <span>{fallbackFileName}</span>
+                </>
+              ) : (
+                node.name
+              )}
             </span>
             <span className="ml-auto flex items-center gap-2 text-[11px]">
               {node.stats?.additions ? (
