@@ -625,7 +625,8 @@ const ReviewNoteInput: React.FC<ReviewNoteInputProps> = React.memo(
     }, [noteText]);
 
     const handleSubmit = () => {
-      if (!noteText.trim()) return;
+      const text = textareaRef.current?.value ?? noteText;
+      if (!text.trim()) return;
 
       const [start, end] = [selection.startIndex, selection.endIndex].sort((a, b) => a - b);
       const selectedLineData = lineData.slice(start, end + 1);
@@ -690,7 +691,7 @@ const ReviewNoteInput: React.FC<ReviewNoteInputProps> = React.memo(
         selectedDiff,
         oldStart,
         newStart,
-        userNote: noteText.trim(),
+        userNote: text.trim(),
       });
     };
 
@@ -745,7 +746,10 @@ const ReviewNoteInput: React.FC<ReviewNoteInputProps> = React.memo(
               onKeyDown={(e) => {
                 e.stopPropagation();
 
-                if (e.key === "Enter") {
+                const isEnter = e.key === "Enter" || e.keyCode === 13;
+                const isEscape = e.key === "Escape" || e.keyCode === 27;
+
+                if (isEnter) {
                   if (e.shiftKey) {
                     // Shift+Enter: allow newline (default behavior)
                     return;
@@ -753,12 +757,23 @@ const ReviewNoteInput: React.FC<ReviewNoteInputProps> = React.memo(
                   // Enter: submit
                   e.preventDefault();
                   handleSubmit();
-                } else if (e.key === "Escape") {
+                } else if (isEscape) {
                   e.preventDefault();
                   onCancel();
                 }
               }}
             />
+            <button
+              type="button"
+              className="text-muted hover:text-primary shrink-0 px-2"
+              aria-label="Submit review note"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleSubmit();
+              }}
+            >
+              ↵
+            </button>
           </div>
         </div>
       </div>
