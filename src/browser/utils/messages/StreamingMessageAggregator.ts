@@ -950,8 +950,28 @@ export class StreamingMessageAggregator {
   // Unified event handlers that encapsulate all complex logic
   handleStreamStart(data: StreamStartEvent): void {
     // Detect compaction via stream mode (most authoritative).
-    // Fall back to pending compaction request metadata for older stream-start events without mode.
-    const isCompacting = data.mode === "compact" || this.pendingCompactionRequest !== null;
+    // For backwards compat (older stream-start events without mode), fall back to:
+    // - pending /compact metadata captured from the triggering user message, or
+    // - last user message metadata (reconnect scenario).
+    const isCompacting = (() => {
+      if (data.mode !== undefined) {
+        return data.mode === "compact";
+      }
+
+      if (this.pendingCompactionRequest !== null) {
+        return true;
+      }
+
+      const messages = this.getAllMessages();
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const message = messages[i];
+        if (message.role === "user") {
+          return message.metadata?.muxMetadata?.type === "compaction-request";
+        }
+      }
+
+      return false;
+    })();
 
     // Clear pending stream start timestamp - stream has started
     this.setPendingStreamStartTime(null);

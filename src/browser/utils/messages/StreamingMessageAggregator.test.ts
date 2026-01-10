@@ -404,6 +404,41 @@ describe("StreamingMessageAggregator", () => {
     });
   });
 
+  describe("compaction detection", () => {
+    test("treats active stream as compacting on reconnect when stream-start has no mode", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      const compactionRequestMessage = {
+        id: "msg1",
+        role: "user" as const,
+        parts: [{ type: "text" as const, text: "/compact" }],
+        metadata: {
+          historySequence: 1,
+          timestamp: Date.now(),
+          muxMetadata: {
+            type: "compaction-request" as const,
+            rawCommand: "/compact",
+            parsed: { model: "anthropic:claude-3-5-haiku-20241022" },
+          },
+        },
+      };
+
+      aggregator.loadHistoricalMessages([compactionRequestMessage], true);
+
+      // Older stream-start events may omit `mode`.
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: "test-workspace",
+        messageId: "msg2",
+        historySequence: 2,
+        model: "anthropic:claude-3-5-haiku-20241022",
+        startTime: Date.now(),
+      });
+
+      expect(aggregator.isCompacting()).toBe(true);
+    });
+  });
+
   describe("usage-delta handling", () => {
     test("handleUsageDelta stores usage by messageId", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
