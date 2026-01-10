@@ -3,6 +3,11 @@
  */
 
 /**
+ * Type of change for a file in a diff
+ */
+export type FileChangeType = "added" | "deleted" | "modified" | "renamed";
+
+/**
  * Individual hunk within a file diff
  */
 export interface DiffHunk {
@@ -23,7 +28,7 @@ export interface DiffHunk {
   /** Hunk header line (e.g., "@@ -1,5 +1,6 @@") */
   header: string;
   /** Change type from parent file */
-  changeType?: "added" | "deleted" | "modified" | "renamed";
+  changeType?: FileChangeType;
   /** Old file path (if renamed) */
   oldPath?: string;
 }
@@ -37,7 +42,7 @@ export interface FileDiff {
   /** Old file path (different if renamed) */
   oldPath?: string;
   /** Type of change */
-  changeType: "added" | "deleted" | "modified" | "renamed";
+  changeType: FileChangeType;
   /** Whether this is a binary file */
   isBinary: boolean;
   /** Hunks in this file */

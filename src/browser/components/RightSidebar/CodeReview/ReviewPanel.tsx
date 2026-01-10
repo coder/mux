@@ -38,6 +38,7 @@ import { parseDiff, extractAllHunks, buildGitDiffCommand } from "@/common/utils/
 import { getReviewSearchStateKey, REVIEW_SORT_ORDER_KEY } from "@/common/constants/storage";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/ui/tooltip";
 import { parseNumstat, buildFileTree, extractNewPath } from "@/common/utils/git/numstatParser";
+import { parseNameStatus } from "@/common/utils/git/nameStatusParser";
 import type {
   DiffHunk,
   ReviewFilters as ReviewFiltersType,
@@ -502,10 +503,26 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
       "numstat"
     );
 
+    const nameStatusCommand = buildGitDiffCommand(
+      filters.diffBase,
+      filters.includeUncommitted,
+      "", // No path filter for file tree
+      "name-status"
+    );
+
+    const numstatMarker = "__MUX_REVIEW_FILE_TREE_NUMSTAT__";
+    const nameStatusMarker = "__MUX_REVIEW_FILE_TREE_NAME_STATUS__";
+    const fileTreeCommand = [
+      `echo ${shellQuote(numstatMarker)}`,
+      numstatCommand,
+      `echo ${shellQuote(nameStatusMarker)}`,
+      nameStatusCommand,
+    ].join("\n");
+
     const cacheKey = makeReviewPanelCacheKey({
       workspaceId,
       workspacePath,
-      gitCommand: numstatCommand,
+      gitCommand: fileTreeCommand,
     });
 
     // Fast path: use cached tree when switching workspaces (unless user explicitly refreshed
@@ -536,12 +553,37 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         const tree = await executeWorkspaceBashAndCache({
           api,
           workspaceId,
-          script: numstatCommand,
+          script: fileTreeCommand,
           cacheKey,
           timeoutSecs: 30,
           parse: (result) => {
-            const numstatOutput = result.data.output ?? "";
+            const output = result.data.output ?? "";
+
+            const marker1 = `${numstatMarker}\n`;
+            const marker2 = `${nameStatusMarker}\n`;
+
+            let numstatOutput = output;
+            let nameStatusOutput = "";
+            const markerSplit = output.split(marker1);
+            if (markerSplit.length >= 2) {
+              const afterMarker1 = markerSplit[1] ?? "";
+              const sections = afterMarker1.split(marker2);
+              numstatOutput = sections[0] ?? "";
+              nameStatusOutput = sections[1] ?? "";
+            }
+
             const fileStats = parseNumstat(numstatOutput);
+            const nameStatus = parseNameStatus(nameStatusOutput);
+            const statusByPath = new Map(nameStatus.map((entry) => [entry.filePath, entry]));
+
+            for (const stat of fileStats) {
+              const key = extractNewPath(stat.filePath);
+              const status = statusByPath.get(key);
+              stat.changeType = status?.changeType ?? "modified";
+              if (status?.oldPath) {
+                stat.oldPath = status.oldPath;
+              }
+            }
 
             // Build tree with original paths (needed for git commands)
             return buildFileTree(fileStats);

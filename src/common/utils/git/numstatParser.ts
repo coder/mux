@@ -2,11 +2,14 @@
  * Parse git diff --numstat output
  * Format: <additions>\t<deletions>\t<filepath>
  */
+import type { FileChangeType } from "@/common/types/review";
 
 export interface FileStats {
   filePath: string;
   additions: number;
   deletions: number;
+  changeType?: FileChangeType;
+  oldPath?: string;
 }
 
 /**

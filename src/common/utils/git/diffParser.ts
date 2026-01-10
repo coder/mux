@@ -195,15 +195,20 @@ export function extractAllHunks(fileDiffs: FileDiff[]): DiffHunk[] {
  * @param diffBase - Base reference ("main", "HEAD", "--staged")
  * @param includeUncommitted - Include uncommitted working directory changes
  * @param pathFilter - Optional path filter (e.g., ' -- "src/foo.ts"')
- * @param command - "diff" (unified) or "numstat" (file stats)
+ * @param command - "diff" (unified), "numstat" (file stats), or "name-status" (file status)
  */
 export function buildGitDiffCommand(
   diffBase: string,
   includeUncommitted: boolean,
   pathFilter: string,
-  command: "diff" | "numstat"
+  command: "diff" | "numstat" | "name-status"
 ): string {
-  const flags = command === "numstat" ? " -M --numstat" : " -M";
+  const flags =
+    command === "numstat"
+      ? " -M --numstat"
+      : command === "name-status"
+        ? " -M --name-status"
+        : " -M";
 
   if (diffBase === "--staged") {
     // Staged changes, optionally with unstaged appended as separate diff

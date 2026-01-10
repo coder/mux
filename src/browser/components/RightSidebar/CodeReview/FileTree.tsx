@@ -4,6 +4,7 @@
 
 import React from "react";
 import type { FileTreeNode } from "@/common/utils/git/numstatParser";
+import type { FileChangeType } from "@/common/types/review";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { getFileTreeExpandStateKey } from "@/common/constants/storage";
 import { cn } from "@/common/lib/utils";
@@ -49,6 +50,34 @@ function computeDirectoryReadStatus(
 
   // Otherwise, directory has partial/no read state
   return null;
+}
+
+function getFileChangeBadge(
+  changeType: FileChangeType,
+  oldPath?: string
+): {
+  label: string;
+  className: string;
+  title: string;
+} {
+  switch (changeType) {
+    case "added":
+      return { label: "A", className: "bg-success text-on-success", title: "Added" };
+    case "deleted":
+      return { label: "D", className: "bg-danger text-on-danger", title: "Deleted" };
+    case "renamed":
+      return {
+        label: "R",
+        className: "bg-muted-foreground/20 text-muted-foreground",
+        title: oldPath ? `Renamed from ${oldPath}` : "Renamed",
+      };
+    case "modified":
+      return {
+        label: "M",
+        className: "bg-muted-foreground/20 text-muted-foreground",
+        title: "Modified",
+      };
+  }
 }
 
 const TreeNodeContent: React.FC<{
@@ -127,6 +156,11 @@ const TreeNodeContent: React.FC<{
 
   const iconOpacity = isFullyRead ? 0.45 : isUnknownState && !isFullyRead ? 0.7 : 1;
 
+  const fileChangeBadge =
+    !node.isDirectory && node.stats
+      ? getFileChangeBadge(node.stats.changeType ?? "modified", node.stats.oldPath)
+      : null;
+
   return (
     <>
       <div
@@ -181,6 +215,18 @@ const TreeNodeContent: React.FC<{
           </>
         ) : (
           <>
+            {fileChangeBadge && (
+              <span
+                className={cn(
+                  "inline-block shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap",
+                  fileChangeBadge.className
+                )}
+                title={fileChangeBadge.title}
+                style={{ opacity: iconOpacity }}
+              >
+                {fileChangeBadge.label}
+              </span>
+            )}
             <FileIcon
               fileName={fileNameForIcon}
               filePath={node.path}
