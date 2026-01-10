@@ -117,7 +117,7 @@ function SearchableModelSelect(props: {
   };
 
   return (
-    <Popover open={isOpen} onOpenChange={setIsOpen}>
+    <Popover open={isOpen} onOpenChange={setIsOpen} modal>
       <PopoverTrigger asChild>
         <button className="bg-background-secondary border-border-medium focus:border-accent flex h-8 w-full items-center justify-between rounded border px-2 text-xs">
           <span className={cn("truncate", !props.value && props.emptyOption && "text-muted")}>
@@ -126,7 +126,7 @@ function SearchableModelSelect(props: {
           <ChevronDown className="text-muted h-3 w-3 shrink-0" />
         </button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-[320px] p-0">
+      <PopoverContent align="start" className="max-h-[350px] w-[320px] p-0">
         {/* Search input */}
         <div className="border-border border-b px-2 py-1.5">
           <input
