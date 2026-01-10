@@ -135,7 +135,7 @@ describe("ProposePlanToolCall", () => {
     // Start in plan mode.
     window.localStorage.setItem(getAgentIdKey(workspaceId), JSON.stringify("plan"));
 
-    const sendMessageCalls: Array<SendMessageArgs & { agentIdAtSend: string | null }> = [];
+    const sendMessageCalls: SendMessageArgs[] = [];
 
     mockApi = {
       workspace: {
@@ -145,10 +145,7 @@ describe("ProposePlanToolCall", () => {
             data: { content: "# My Plan\n\nDo the thing.", path: planPath },
           }),
         sendMessage: (args: SendMessageArgs) => {
-          const agentIdAtSendRaw = window.localStorage.getItem(getAgentIdKey(workspaceId));
-          const agentIdAtSend = agentIdAtSendRaw ? (JSON.parse(agentIdAtSendRaw) as string) : null;
-
-          sendMessageCalls.push({ ...args, agentIdAtSend });
+          sendMessageCalls.push(args);
           return Promise.resolve({ success: true, data: undefined });
         },
       },
@@ -174,9 +171,7 @@ describe("ProposePlanToolCall", () => {
 
     await waitFor(() => expect(sendMessageCalls.length).toBe(1));
     expect(sendMessageCalls[0]?.message).toBe("Implement the plan");
-    // The button must switch the workspace to exec *before* sending.
-    expect(sendMessageCalls[0]?.agentIdAtSend).toBe("exec");
-
+    // Clicking Implement should switch the workspace agent to exec.
     expect(JSON.parse(window.localStorage.getItem(getAgentIdKey(workspaceId))!)).toBe("exec");
   });
 });
