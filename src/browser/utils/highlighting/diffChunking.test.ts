@@ -72,6 +72,61 @@ describe("groupDiffLines", () => {
     expect(chunks[3].newLineNumbers).toEqual([null]);
   });
 
+  it("should not number the missing side when oldStart is 0 (new file)", () => {
+    const lines = [" context", "+added"];
+    const chunks = groupDiffLines(lines, 0, 1);
+
+    expect(chunks).toHaveLength(2);
+
+    // Context line: new side exists, old side does not
+    expect(chunks[0].type).toBe("context");
+    expect(chunks[0].oldLineNumbers).toEqual([null]);
+    expect(chunks[0].newLineNumbers).toEqual([1]);
+
+    // Added line: only new increments
+    expect(chunks[1].type).toBe("add");
+    expect(chunks[1].oldLineNumbers).toEqual([null]);
+    expect(chunks[1].newLineNumbers).toEqual([2]);
+  });
+
+  it("should not number the missing side when newStart is 0 (deleted file)", () => {
+    const lines = [" context", "-removed"];
+    const chunks = groupDiffLines(lines, 1, 0);
+
+    expect(chunks).toHaveLength(2);
+
+    // Context line: old side exists, new side does not
+    expect(chunks[0].type).toBe("context");
+    expect(chunks[0].oldLineNumbers).toEqual([1]);
+    expect(chunks[0].newLineNumbers).toEqual([null]);
+
+    // Removed line: only old increments
+    expect(chunks[1].type).toBe("remove");
+    expect(chunks[1].oldLineNumbers).toEqual([2]);
+    expect(chunks[1].newLineNumbers).toEqual([null]);
+  });
+
+  it("should treat meta lines as unnumbered and not affect following line numbers", () => {
+    const lines = ["+line1", "\\ No newline at end of file", "+line2"];
+    const chunks = groupDiffLines(lines, 0, 1);
+
+    expect(chunks).toHaveLength(3);
+
+    // First add line
+    expect(chunks[0].type).toBe("add");
+    expect(chunks[0].newLineNumbers).toEqual([1]);
+
+    // Meta line
+    expect(chunks[1].type).toBe("context");
+    expect(chunks[1].lines).toEqual(["\\ No newline at end of file"]);
+    expect(chunks[1].oldLineNumbers).toEqual([null]);
+    expect(chunks[1].newLineNumbers).toEqual([null]);
+
+    // Second add line should be 2 (meta line should not increment)
+    expect(chunks[2].type).toBe("add");
+    expect(chunks[2].newLineNumbers).toEqual([2]);
+  });
+
   it("should handle empty input", () => {
     const chunks = groupDiffLines([], 1, 1);
     expect(chunks).toHaveLength(0);

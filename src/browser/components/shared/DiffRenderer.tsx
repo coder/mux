@@ -85,7 +85,7 @@ const getLineContentColor = (type: DiffLineType): string => DIFF_LINE_STYLES[typ
 // Split diff into lines while preserving indices.
 // We only remove the trailing empty line if the input ends with a newline.
 const splitDiffLines = (diff: string): string[] => {
-  const lines = diff.split("\n");
+  const lines = diff.split(/\r?\n/);
   if (lines.length > 0 && lines[lines.length - 1] === "") {
     lines.pop();
   }

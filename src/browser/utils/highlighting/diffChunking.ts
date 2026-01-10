@@ -18,6 +18,8 @@ export function groupDiffLines(lines: string[], oldStart: number, newStart: numb
 
   let oldLineNum = oldStart;
   let newLineNum = newStart;
+  let hasOldSide = oldStart > 0;
+  let hasNewSide = newStart > 0;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -37,6 +39,8 @@ export function groupDiffLines(lines: string[], oldStart: number, newStart: numb
       if (match) {
         oldLineNum = parseInt(match[1], 10);
         newLineNum = parseInt(match[2], 10);
+        hasOldSide = oldLineNum > 0;
+        hasNewSide = newLineNum > 0;
       }
       continue;
     }
@@ -45,19 +49,31 @@ export function groupDiffLines(lines: string[], oldStart: number, newStart: numb
     let type: Exclude<DiffLineType, "header">;
     let oldLineNumber: number | null;
     let newLineNumber: number | null;
+    let lineContent: string;
 
-    if (firstChar === "+") {
+    // Meta lines (e.g. "\\ No newline at end of file") should not affect line numbering.
+    const isMetaLine = firstChar !== "+" && firstChar !== "-" && firstChar !== " ";
+
+    if (isMetaLine) {
+      type = "context";
+      oldLineNumber = null;
+      newLineNumber = null;
+      lineContent = line;
+    } else if (firstChar === "+") {
       type = "add";
       oldLineNumber = null;
-      newLineNumber = newLineNum++;
+      newLineNumber = hasNewSide ? newLineNum++ : null;
+      lineContent = line.slice(1);
     } else if (firstChar === "-") {
       type = "remove";
-      oldLineNumber = oldLineNum++;
+      oldLineNumber = hasOldSide ? oldLineNum++ : null;
       newLineNumber = null;
+      lineContent = line.slice(1);
     } else {
       type = "context";
-      oldLineNumber = oldLineNum++;
-      newLineNumber = newLineNum++;
+      oldLineNumber = hasOldSide ? oldLineNum++ : null;
+      newLineNumber = hasNewSide ? newLineNum++ : null;
+      lineContent = line.slice(1);
     }
 
     // Start new chunk if type changed or no current chunk
@@ -77,8 +93,8 @@ export function groupDiffLines(lines: string[], oldStart: number, newStart: numb
       };
     }
 
-    // Add line to current chunk (without +/- prefix)
-    currentChunk.lines.push(line.slice(1));
+    // Add line to current chunk (without +/- prefix, except for meta lines)
+    currentChunk.lines.push(lineContent);
     currentChunk.oldLineNumbers.push(oldLineNumber);
     currentChunk.newLineNumbers.push(newLineNumber);
   }

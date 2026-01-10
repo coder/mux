@@ -100,14 +100,52 @@ describe("git diff parser (real repository)", () => {
     const diff = execSync("git diff --cached", { cwd: testRepoPath, encoding: "utf-8" });
     const fileDiffs = parseDiff(diff);
 
-    expect(fileDiffs.length).toBe(1);
+    expect(fileDiffs).toHaveLength(1);
     expect(fileDiffs[0].filePath).toBe("newfile.md");
+    expect(fileDiffs[0].changeType).toBe("added");
     expect(fileDiffs[0].hunks.length).toBeGreaterThan(0);
 
-    const allHunks = extractAllHunks(fileDiffs);
+    const hunk = fileDiffs[0].hunks[0];
+    expect(hunk.oldStart).toBe(0);
+    expect(hunk.oldLines).toBe(0);
+    expect(hunk.newStart).toBe(1);
+    expect(hunk.header).toMatch(/^@@ -0,0 \+1,\d+ @@/);
+
     // Check that all lines start with + (additions)
-    const contentLines = allHunks[0].content.split("\n");
-    expect(contentLines.some((l) => l.startsWith("+"))).toBe(true);
+    const contentLines = hunk.content.split("\n");
+    expect(contentLines.every((l) => l.startsWith("+"))).toBe(true);
+
+    // Regression: avoid phantom context line (space) from trailing-newline split artifacts
+    expect(contentLines.includes(" ")).toBe(false);
+  });
+
+  it("should normalize CRLF diff output (no \\r in hunk content)", () => {
+    const diffOutput =
+      [
+        "diff --git a/crlf.txt b/crlf.txt",
+        "new file mode 100644",
+        "index 0000000..1111111",
+        "--- /dev/null",
+        "+++ b/crlf.txt",
+        "@@ -0,0 +1,2 @@",
+        "+hello",
+        "+world",
+      ].join("\r\n") + "\r\n";
+
+    const fileDiffs = parseDiff(diffOutput);
+
+    expect(fileDiffs).toHaveLength(1);
+    expect(fileDiffs[0].filePath).toBe("crlf.txt");
+    expect(fileDiffs[0].changeType).toBe("added");
+    expect(fileDiffs[0].hunks).toHaveLength(1);
+
+    const hunk = fileDiffs[0].hunks[0];
+    expect(hunk.oldStart).toBe(0);
+    expect(hunk.newStart).toBe(1);
+
+    // `parseDiff` should strip CRLF-derived carriage returns.
+    expect(hunk.content).toBe("+hello\n+world");
+    expect(hunk.content.includes("\r")).toBe(false);
   });
 
   it("should parse file deletion", () => {
