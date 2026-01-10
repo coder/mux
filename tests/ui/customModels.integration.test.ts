@@ -1,34 +1,70 @@
 /**
- * Integration tests for custom model management in Settings → Models.
+ * Integration tests for custom model persistence.
  *
- * Tests cover:
- * - Adding a custom model via the UI
- * - Verifying the model appears in the custom models table
+ * Users reported that adding a custom model "flashes" and then disappears.
  *
- * Note: These tests drive the UI from the user's perspective - clicking buttons,
- * typing in inputs, not calling backend APIs directly for the actions being tested.
+ * We intentionally do NOT drive the full Settings → Models UI here:
+ * - Radix Dialog/Select portals are flaky in happy-dom
+ * - happy-dom doesn't reliably flush React controlled input updates
+ *
+ * Instead, we reproduce the critical behavior we rely on in the UI:
+ * - call updateModelsOptimistically(...)
+ * - immediately use its returned array in api.providers.setModels(...)
+ *
+ * If updateModelsOptimistically returns a stale/empty array, the backend will
+ * persist the wrong config and the UI will appear to "revert".
  */
 
-import { fireEvent, waitFor } from "@testing-library/react";
+import React, { useEffect, useRef } from "react";
+import { cleanup, render, waitFor } from "@testing-library/react";
+
+import { APIProvider, useAPI } from "@/browser/contexts/API";
+import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 
 import { shouldRunIntegrationTests } from "../testUtils";
-import {
-  cleanupSharedRepo,
-  createSharedRepo,
-  withSharedWorkspace,
-} from "../ipc/sendMessageTestHelpers";
+import { cleanupSharedRepo, createSharedRepo, getSharedEnv } from "../ipc/sendMessageTestHelpers";
 
 import { installDom } from "./dom";
-import { renderApp } from "./renderReviewPanel";
-import { cleanupView, setupWorkspaceView } from "./helpers";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
-// NOTE: This test is skipped because Radix Dialog portals don't work in happy-dom.
-// The Settings modal renders to a portal outside the test container, so we can't
-// query for it. The underlying bug (stale fetch overwriting optimistic updates)
-// is fixed in useProvidersConfig.ts via a version counter mechanism.
-describeIntegration.skip("Custom Models (UI)", () => {
+function AddCustomModelHarness(props: {
+  provider: string;
+  modelId: string;
+  onDone: (modelsSent: string[]) => void;
+}) {
+  const { api } = useAPI();
+  const { config, loading, updateModelsOptimistically } = useProvidersConfig();
+  const didRunRef = useRef(false);
+
+  useEffect(() => {
+    if (didRunRef.current) return;
+    if (!api || loading || !config) return;
+
+    didRunRef.current = true;
+
+    const modelsSent = updateModelsOptimistically(props.provider, (models) => [
+      ...models,
+      props.modelId,
+    ]);
+
+    void api.providers
+      .setModels({ provider: props.provider, models: modelsSent })
+      .finally(() => props.onDone(modelsSent));
+  }, [
+    api,
+    config,
+    loading,
+    props.modelId,
+    props.onDone,
+    props.provider,
+    updateModelsOptimistically,
+  ]);
+
+  return React.createElement("div", { "data-testid": "harness" }, loading ? "loading" : "ready");
+}
+
+describeIntegration("Custom Models", () => {
   beforeAll(async () => {
     await createSharedRepo();
   });
@@ -37,151 +73,55 @@ describeIntegration.skip("Custom Models (UI)", () => {
     await cleanupSharedRepo();
   });
 
-  test("adding a custom model shows it in the custom models table", async () => {
-    await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
-      const cleanupDom = installDom();
+  test("updateModelsOptimistically return is safe to persist", async () => {
+    const env = getSharedEnv();
 
-      const view = renderApp({
-        apiClient: env.orpc,
-        metadata,
-      });
+    const cleanupDom = installDom();
 
-      try {
-        await setupWorkspaceView(view, metadata, workspaceId);
+    // Ensure starting from a clean slate.
+    const reset = await env.orpc.providers.setModels({ provider: "anthropic", models: [] });
+    if (!reset.success) {
+      throw new Error(`Failed to reset models: ${reset.error}`);
+    }
 
-        // Click the Settings button to open settings modal
-        const settingsButton = await waitFor(
-          () => {
-            const btn = view.container.querySelector('[data-testid="settings-button"]');
-            if (!btn) throw new Error("Settings button not found");
-            return btn as HTMLElement;
+    let done = false;
+    let modelsSent: string[] | null = null;
+
+    const testModelId = "claude-test-custom-model";
+
+    const view = render(
+      React.createElement(APIProvider, {
+        client: env.orpc,
+        children: React.createElement(AddCustomModelHarness, {
+          provider: "anthropic",
+          modelId: testModelId,
+          onDone: (value) => {
+            done = true;
+            modelsSent = value;
           },
-          { timeout: 5_000 }
-        );
-        fireEvent.click(settingsButton);
+        }),
+      })
+    );
 
-        // Debug: check what's in the DOM
-        console.log("Settings button clicked, looking for modal...");
-        console.log("Document body children count:", document.body.children.length);
+    try {
+      await waitFor(
+        () => {
+          if (!done) throw new Error("Harness did not complete");
+        },
+        { timeout: 10_000 }
+      );
 
-        // Wait for Settings modal to appear (portalled to document.body)
-        const settingsModal = await waitFor(
-          () => {
-            // Dialog is portalled to document.body, so query from document
-            const modal = document.querySelector('[role="dialog"]');
-            if (!modal) throw new Error("Settings modal not found");
-            return modal as HTMLElement;
-          },
-          { timeout: 5_000 }
-        );
+      expect(modelsSent ?? []).toContain(testModelId);
 
-        // Click on "Models" section in the sidebar
-        const modelsTab = await waitFor(
-          () => {
-            const tab = Array.from(settingsModal.querySelectorAll("button")).find((btn) =>
-              btn.textContent?.includes("Models")
-            );
-            if (!tab) throw new Error("Models tab not found");
-            return tab as HTMLElement;
-          },
-          { timeout: 5_000 }
-        );
-        fireEvent.click(modelsTab);
+      const cfg = await env.orpc.providers.getConfig();
+      expect(cfg.anthropic.models ?? []).toContain(testModelId);
+    } finally {
+      view.unmount();
+      cleanup();
+      cleanupDom();
 
-        // Wait for the Models section to load (should see "Add new model" form)
-        await waitFor(
-          () => {
-            const addModelHeader = Array.from(settingsModal.querySelectorAll("div")).find((el) =>
-              el.textContent?.includes("Add new model")
-            );
-            if (!addModelHeader) throw new Error("Add new model section not found");
-          },
-          { timeout: 5_000 }
-        );
-
-        // Select Anthropic provider from the dropdown
-        const providerSelect = await waitFor(
-          () => {
-            // Find the provider dropdown button (first dropdown in the add model form)
-            const addModelSection = Array.from(settingsModal.querySelectorAll("div")).find(
-              (el) =>
-                el.className.includes("rounded-md") &&
-                el.textContent?.includes("Add new model") &&
-                el.textContent?.includes("Provider")
-            );
-            if (!addModelSection) throw new Error("Add model section container not found");
-
-            // The provider dropdown is the button with "Provider" text nearby
-            const dropdowns = addModelSection.querySelectorAll("select");
-            const providerDropdown = dropdowns[0] as HTMLSelectElement | undefined;
-            if (!providerDropdown) throw new Error("Provider dropdown not found");
-            return providerDropdown;
-          },
-          { timeout: 5_000 }
-        );
-
-        // Select "anthropic" provider
-        fireEvent.change(providerSelect, { target: { value: "anthropic" } });
-
-        // Find the model ID input and type a test model
-        const modelInput = await waitFor(
-          () => {
-            const input = settingsModal.querySelector(
-              'input[placeholder*="model"]'
-            ) as HTMLInputElement | null;
-            if (!input) throw new Error("Model ID input not found");
-            return input;
-          },
-          { timeout: 5_000 }
-        );
-
-        const testModelId = "claude-test-custom-model";
-        fireEvent.change(modelInput, { target: { value: testModelId } });
-
-        // Click the Add button
-        const addButton = await waitFor(
-          () => {
-            const btn = Array.from(settingsModal.querySelectorAll("button")).find(
-              (b) => b.textContent?.trim() === "Add"
-            );
-            if (!btn) throw new Error("Add button not found");
-            return btn as HTMLElement;
-          },
-          { timeout: 5_000 }
-        );
-
-        fireEvent.click(addButton);
-
-        // Verify the model appears in the custom models table
-        await waitFor(
-          () => {
-            // Look for the model ID in the custom models table
-            const customModelRow = Array.from(settingsModal.querySelectorAll("tr")).find((row) =>
-              row.textContent?.includes(testModelId)
-            );
-            if (!customModelRow) {
-              throw new Error(`Custom model "${testModelId}" not found in table`);
-            }
-          },
-          { timeout: 5_000 }
-        );
-
-        // Verify the input was cleared after successful add
-        await waitFor(
-          () => {
-            const input = settingsModal.querySelector(
-              'input[placeholder*="model"]'
-            ) as HTMLInputElement | null;
-            if (!input) throw new Error("Model ID input not found");
-            if (input.value !== "") {
-              throw new Error(`Input should be cleared but has value: ${input.value}`);
-            }
-          },
-          { timeout: 2_000 }
-        );
-      } finally {
-        await cleanupView(view, cleanupDom);
-      }
-    });
+      // Best-effort cleanup so other tests don't inherit custom models.
+      await env.orpc.providers.setModels({ provider: "anthropic", models: [] });
+    }
   }, 60_000);
 });

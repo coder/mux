@@ -12,6 +12,12 @@ export function useProvidersConfig() {
   const [config, setConfig] = useState<ProvidersConfigMap | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Keep a synchronous reference to the latest config.
+  //
+  // React state updates are async, so values derived inside setState updaters
+  // can't be returned reliably to the caller. (We need this for the custom
+  // models UI, which computes an updated models array and persists it.)
+  const configRef = useRef<ProvidersConfigMap | null>(null);
   // Version counter to ignore stale responses from out-of-order fetches
   const fetchVersionRef = useRef(0);
 
@@ -22,6 +28,7 @@ export function useProvidersConfig() {
       const cfg = await api.providers.getConfig();
       // Only update if this is the latest fetch (ignore stale responses)
       if (myVersion === fetchVersionRef.current) {
+        configRef.current = cfg;
         setConfig(cfg);
       }
     } catch {
@@ -43,13 +50,17 @@ export function useProvidersConfig() {
     (provider: string, updates: Partial<ProviderConfigInfo>) => {
       // Invalidate any in-flight fetches so they don't overwrite our optimistic update
       fetchVersionRef.current++;
-      setConfig((prev) => {
-        if (!prev) return prev;
-        return {
-          ...prev,
-          [provider]: { ...prev[provider], ...updates },
-        };
-      });
+
+      const prev = configRef.current;
+      if (!prev) return;
+
+      const next: ProvidersConfigMap = {
+        ...prev,
+        [provider]: { ...prev[provider], ...updates },
+      };
+
+      configRef.current = next;
+      setConfig(next);
     },
     []
   );
@@ -63,16 +74,20 @@ export function useProvidersConfig() {
     (provider: string, updater: (currentModels: string[]) => string[]): string[] => {
       // Invalidate any in-flight fetches so they don't overwrite our optimistic update
       fetchVersionRef.current++;
-      let newModels: string[] = [];
-      setConfig((prev) => {
-        if (!prev) return prev;
-        const currentModels = prev[provider]?.models ?? [];
-        newModels = updater(currentModels);
-        return {
-          ...prev,
-          [provider]: { ...prev[provider], models: newModels },
-        };
-      });
+
+      const prev = configRef.current;
+      if (!prev) return [];
+
+      const currentModels = prev[provider]?.models ?? [];
+      const newModels = updater(currentModels);
+
+      const next: ProvidersConfigMap = {
+        ...prev,
+        [provider]: { ...prev[provider], models: newModels },
+      };
+
+      configRef.current = next;
+      setConfig(next);
       return newModels;
     },
     []
