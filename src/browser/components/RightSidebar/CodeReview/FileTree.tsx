@@ -34,7 +34,11 @@ function computeDirectoryReadStatus(
       fileCount++;
       const status = getFileReadStatus(extractNewPath(n.path));
       if (status === null) {
-        hasUnknown = true;
+        // Some diff entries (renames, binary changes, mode-only edits) have no hunks.
+        // Only treat this as "unknown" when numstat indicates there's actual +/− content.
+        if ((n.stats?.additions ?? 0) > 0 || (n.stats?.deletions ?? 0) > 0) {
+          hasUnknown = true;
+        }
       } else if (status.read === status.total && status.total > 0) {
         fullyReadCount++;
       }
@@ -158,7 +162,11 @@ const TreeNodeContent: React.FC<{
   } else if (getFileReadStatus) {
     const readStatus = getFileReadStatus(canonicalFilePath);
     isFullyRead = readStatus ? readStatus.read === readStatus.total && readStatus.total > 0 : false;
-    isUnknownState = readStatus === null;
+
+    // Some diff entries (renames, binary changes, mode-only edits) have no hunks.
+    // Only treat this as "unknown" when numstat indicates there's actual +/− content.
+    isUnknownState =
+      readStatus === null && ((node.stats?.additions ?? 0) > 0 || (node.stats?.deletions ?? 0) > 0);
   }
 
   const iconOpacity = isFullyRead ? 0.45 : isUnknownState && !isFullyRead ? 0.7 : 1;
