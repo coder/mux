@@ -2,7 +2,11 @@ import React from "react";
 import { StreamingBarrierView } from "./StreamingBarrierView";
 import { getModelName } from "@/common/utils/ai/models";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
-import { VIM_ENABLED_KEY, getModelKey, PREFERRED_COMPACTION_MODEL_KEY } from "@/common/constants/storage";
+import {
+  VIM_ENABLED_KEY,
+  getModelKey,
+  PREFERRED_COMPACTION_MODEL_KEY,
+} from "@/common/constants/storage";
 import { readPersistedState, readPersistedString } from "@/browser/hooks/usePersistedState";
 import { useWorkspaceState, useWorkspaceAggregator } from "@/browser/stores/WorkspaceStore";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";

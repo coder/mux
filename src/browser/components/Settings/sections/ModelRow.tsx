@@ -1,5 +1,5 @@
 import React from "react";
-import { Check, Eye, Pencil, Star, Trash2, X } from "lucide-react";
+import { Check, Eye, Info, Pencil, Star, Trash2, X } from "lucide-react";
 import { createEditKeyHandler } from "@/browser/utils/ui/keybinds";
 import { GatewayIcon } from "@/browser/components/icons/GatewayIcon";
 import { cn } from "@/common/lib/utils";
@@ -185,147 +185,151 @@ export function ModelRow(props: ModelRowProps) {
   }
 
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <tr
-          className={cn(
-            "border-border-medium hover:bg-background-secondary/50 group border-b transition-colors",
-            props.isHiddenFromSelector && "opacity-50"
+    <tr
+      className={cn(
+        "border-border-medium hover:bg-background-secondary/50 group border-b transition-colors",
+        props.isHiddenFromSelector && "opacity-50"
+      )}
+    >
+      {/* Provider */}
+      <td className="w-20 py-1.5 pr-2 pl-2 md:w-24 md:pl-3">
+        <ProviderWithIcon
+          provider={props.provider}
+          displayName
+          className="text-muted overflow-hidden text-xs"
+        />
+      </td>
+
+      {/* Model ID + Aliases */}
+      <td className="min-w-0 py-1.5 pr-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="text-foreground min-w-0 truncate font-mono text-xs">
+            {props.modelId}
+          </span>
+          {props.aliases && props.aliases.length > 0 && (
+            <span className="text-muted-light shrink-0 text-xs">({props.aliases[0]})</span>
           )}
-        >
-          {/* Provider */}
-          <td className="w-20 py-1.5 pr-2 pl-2 md:w-24 md:pl-3">
-            <ProviderWithIcon
-              provider={props.provider}
-              displayName
-              className="text-muted overflow-hidden text-xs"
-            />
-          </td>
+        </div>
+      </td>
 
-          {/* Model ID + Aliases */}
-          <td className="min-w-0 py-1.5 pr-2">
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="text-foreground min-w-0 truncate font-mono text-xs">
-                {props.modelId}
-              </span>
-              {props.aliases && props.aliases.length > 0 && (
-                <span className="text-muted-light shrink-0 text-xs">({props.aliases[0]})</span>
-              )}
-            </div>
-          </td>
+      {/* Context Window */}
+      <td className="w-16 py-1.5 pr-2 text-right md:w-20">
+        <span className="text-muted text-xs">
+          {stats ? formatTokenCount(stats.max_input_tokens) : "—"}
+        </span>
+      </td>
 
-          {/* Context Window */}
-          <td className="w-16 py-1.5 pr-2 text-right md:w-20">
-            <span className="text-muted text-xs">
-              {stats ? formatTokenCount(stats.max_input_tokens) : "—"}
-            </span>
-          </td>
-
-          {/* Actions */}
-          <td className="w-28 py-1.5 pr-2 md:w-32 md:pr-3">
-            <div className="flex items-center justify-end gap-0.5">
-              {/* Visibility toggle button */}
-              {props.onToggleVisibility && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    props.onToggleVisibility?.();
-                  }}
-                  className={cn(
-                    "relative p-0.5 transition-colors",
-                    props.isHiddenFromSelector
-                      ? "text-muted-light"
-                      : "text-muted hover:text-foreground"
-                  )}
-                  aria-label={
-                    props.isHiddenFromSelector
-                      ? "Show in model selector"
-                      : "Hide from model selector"
-                  }
-                >
-                  <Eye
-                    className={cn(
-                      "h-3.5 w-3.5",
-                      props.isHiddenFromSelector ? "opacity-30" : "opacity-70"
-                    )}
-                  />
-                  {props.isHiddenFromSelector && (
-                    <span className="bg-muted-light absolute inset-0 m-auto h-px w-4 rotate-45" />
-                  )}
-                </button>
+      {/* Actions */}
+      <td className="w-28 py-1.5 pr-2 md:w-32 md:pr-3">
+        <div className="flex items-center justify-end gap-0.5">
+          {/* Info tooltip */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                className="text-muted hover:text-foreground p-0.5 transition-colors"
+                aria-label="Model details"
+              >
+                <Info className="h-3.5 w-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top" align="end" className="p-3">
+              <ModelTooltipContent fullId={props.fullId} aliases={props.aliases} stats={stats} />
+            </TooltipContent>
+          </Tooltip>
+          {/* Visibility toggle button */}
+          {props.onToggleVisibility && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                props.onToggleVisibility?.();
+              }}
+              className={cn(
+                "relative p-0.5 transition-colors",
+                props.isHiddenFromSelector ? "text-muted-light" : "text-muted hover:text-foreground"
               )}
-              {/* Gateway toggle button */}
-              {props.onToggleGateway && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    props.onToggleGateway?.();
-                  }}
-                  className={cn(
-                    "p-0.5 transition-colors",
-                    props.isGatewayEnabled ? "text-accent" : "text-muted hover:text-accent"
-                  )}
-                  aria-label={props.isGatewayEnabled ? "Disable Mux Gateway" : "Enable Mux Gateway"}
-                >
-                  <GatewayIcon className="h-3.5 w-3.5" active={props.isGatewayEnabled} />
-                </button>
+              aria-label={
+                props.isHiddenFromSelector ? "Show in model selector" : "Hide from model selector"
+              }
+            >
+              <Eye
+                className={cn(
+                  "h-3.5 w-3.5",
+                  props.isHiddenFromSelector ? "opacity-30" : "opacity-70"
+                )}
+              />
+              {props.isHiddenFromSelector && (
+                <span className="bg-muted-light absolute inset-0 m-auto h-px w-4 rotate-45" />
               )}
-              {/* Favorite/default button */}
+            </button>
+          )}
+          {/* Gateway toggle button */}
+          {props.onToggleGateway && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                props.onToggleGateway?.();
+              }}
+              className={cn(
+                "p-0.5 transition-colors",
+                props.isGatewayEnabled ? "text-accent" : "text-muted hover:text-accent"
+              )}
+              aria-label={props.isGatewayEnabled ? "Disable Mux Gateway" : "Enable Mux Gateway"}
+            >
+              <GatewayIcon className="h-3.5 w-3.5" active={props.isGatewayEnabled} />
+            </button>
+          )}
+          {/* Favorite/default button */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!props.isDefault) props.onSetDefault();
+            }}
+            className={cn(
+              "p-0.5 transition-colors",
+              props.isDefault
+                ? "cursor-default text-yellow-400"
+                : "text-muted hover:text-yellow-400"
+            )}
+            disabled={props.isDefault}
+            aria-label={props.isDefault ? "Current default model" : "Set as default model"}
+          >
+            <Star className={cn("h-3.5 w-3.5", props.isDefault && "fill-current")} />
+          </button>
+          {/* Edit/delete buttons only for custom models */}
+          {props.isCustom && (
+            <>
               <button
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (!props.isDefault) props.onSetDefault();
+                  props.onStartEdit?.();
                 }}
-                className={cn(
-                  "p-0.5 transition-colors",
-                  props.isDefault
-                    ? "cursor-default text-yellow-400"
-                    : "text-muted hover:text-yellow-400"
-                )}
-                disabled={props.isDefault}
-                aria-label={props.isDefault ? "Current default model" : "Set as default model"}
+                disabled={Boolean(props.saving) || Boolean(props.hasActiveEdit)}
+                className="text-muted hover:text-foreground p-0.5 transition-colors"
+                aria-label="Edit model"
               >
-                <Star className={cn("h-3.5 w-3.5", props.isDefault && "fill-current")} />
+                <Pencil className="h-3.5 w-3.5" />
               </button>
-              {/* Edit/delete buttons only for custom models */}
-              {props.isCustom && (
-                <>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      props.onStartEdit?.();
-                    }}
-                    disabled={Boolean(props.saving) || Boolean(props.hasActiveEdit)}
-                    className="text-muted hover:text-foreground p-0.5 transition-colors"
-                    aria-label="Edit model"
-                  >
-                    <Pencil className="h-3.5 w-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      props.onRemove?.();
-                    }}
-                    disabled={Boolean(props.saving) || Boolean(props.hasActiveEdit)}
-                    className="text-muted hover:text-error p-0.5 transition-colors"
-                    aria-label="Remove model"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </>
-              )}
-            </div>
-          </td>
-        </tr>
-      </TooltipTrigger>
-      <TooltipContent side="top" align="start" className="p-3">
-        <ModelTooltipContent fullId={props.fullId} aliases={props.aliases} stats={stats} />
-      </TooltipContent>
-    </Tooltip>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  props.onRemove?.();
+                }}
+                disabled={Boolean(props.saving) || Boolean(props.hasActiveEdit)}
+                className="text-muted hover:text-error p-0.5 transition-colors"
+                aria-label="Remove model"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </>
+          )}
+        </div>
+      </td>
+    </tr>
   );
 }
