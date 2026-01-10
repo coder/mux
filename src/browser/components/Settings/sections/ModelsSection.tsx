@@ -57,11 +57,11 @@ function SearchableModelSelect(props: {
       </PopoverTrigger>
       <PopoverContent
         align="start"
-        className="w-[320px] p-0"
+        className="w-[320px] overflow-visible p-0"
         onOpenAutoFocus={(e) => e.preventDefault()}
       >
         <Command
-          className="bg-background-secondary"
+          className="bg-background-secondary flex max-h-[320px] flex-col overflow-hidden rounded-md"
           filter={(value, search) => {
             const lower = search.toLowerCase();
             if (value.toLowerCase().includes(lower)) return 1;
@@ -71,10 +71,10 @@ function SearchableModelSelect(props: {
         >
           <Command.Input
             placeholder="Search models..."
-            className="text-foreground placeholder:text-muted border-border w-full border-b bg-transparent px-2 py-1.5 text-xs outline-none"
+            className="text-foreground placeholder:text-muted border-border w-full shrink-0 border-b bg-transparent px-2 py-1.5 text-xs outline-none"
             autoFocus
           />
-          <Command.List className="max-h-[280px] overflow-y-auto p-1">
+          <Command.List className="flex-1 overflow-y-auto p-1">
             <Command.Empty className="text-muted py-2 text-center text-[10px]">
               No matching models
             </Command.Empty>
