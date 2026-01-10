@@ -56,7 +56,7 @@ export function parseDiff(diffOutput: string): FileDiff[] {
   // Note: a CRLF file often produces diff lines ending in `\r\n` (the `\r` is part of the file line).
   const lines = diffOutput.split(/\r?\n/);
   // Avoid processing a phantom trailing line from a final newline.
-  if (lines.length > 0 && lines[lines.length - 1] === "") {
+  if (lines.at(-1) === "") {
     lines.pop();
   }
   const files: FileDiff[] = [];
