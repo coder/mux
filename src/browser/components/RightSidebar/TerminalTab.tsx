@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect } from "react";
 import { TerminalView } from "@/browser/components/TerminalView";
 import type { TabType } from "@/browser/types/rightSidebar";
 import { getTerminalSessionId } from "@/browser/types/rightSidebar";
@@ -26,25 +26,16 @@ interface TerminalTabProps {
 export const TerminalTab: React.FC<TerminalTabProps> = (props) => {
   // Extract session ID from tab type - must exist (sessions created before tab added)
   const sessionId = getTerminalSessionId(props.tabType);
-  // Track whether we've consumed the autoFocus prop to avoid calling callback multiple times
-  const autoFocusConsumedRef = useRef(false);
 
   // Destructure for use in effect (per eslint react-hooks/exhaustive-deps)
   const { autoFocus, onAutoFocusConsumed } = props;
 
-  // Consume the autoFocus state after it's been passed to TerminalView
+  // Consume the autoFocus state after it's been passed to TerminalView.
+  // By the time this effect runs, React has committed the render and TerminalView
+  // has already received the autoFocus prop. Safe to clear immediately.
   useEffect(() => {
-    if (autoFocus && !autoFocusConsumedRef.current) {
-      autoFocusConsumedRef.current = true;
-      // Clear the parent state after a small delay to ensure TerminalView has processed it
-      const timeout = setTimeout(() => {
-        onAutoFocusConsumed?.();
-      }, 100);
-      return () => clearTimeout(timeout);
-    }
-    // Reset the ref when autoFocus becomes false (for future focus requests)
-    if (!autoFocus) {
-      autoFocusConsumedRef.current = false;
+    if (autoFocus) {
+      onAutoFocusConsumed?.();
     }
   }, [autoFocus, onAutoFocusConsumed]);
 
