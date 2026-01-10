@@ -8,6 +8,8 @@ export interface StreamingBarrierViewProps {
   tps?: number;
   cancelText: string;
   className?: string;
+  /** Optional hint element shown after status (e.g., settings link) */
+  hintElement?: React.ReactNode;
 }
 
 /**
@@ -21,6 +23,7 @@ export const StreamingBarrierView: React.FC<StreamingBarrierViewProps> = (props)
     <div className={`flex items-center justify-between gap-4 ${props.className ?? ""}`}>
       <div className="flex flex-1 items-center gap-2">
         <BaseBarrier text={props.statusText} color="var(--color-assistant-border)" animate />
+        {props.hintElement}
         {props.tokenCount !== undefined && (
           <span className="text-assistant-border font-mono text-[11px] whitespace-nowrap select-none">
             ~{props.tokenCount.toLocaleString()} tokens

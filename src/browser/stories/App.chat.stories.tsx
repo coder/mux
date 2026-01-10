@@ -582,6 +582,51 @@ export const StreamingCompaction: AppStory = {
   },
 };
 
+/** Streaming compaction with configure hint - shows when no compaction model is set */
+export const StreamingCompactionWithConfigureHint: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        // Ensure no compaction model is set so the "configure" hint appears
+        localStorage.removeItem("preferredCompactionModel");
+
+        return setupStreamingChatStory({
+          workspaceId: "ws-compaction-hint",
+          messages: [
+            createUserMessage("msg-1", "Help me with this project", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 300000,
+            }),
+            createAssistantMessage(
+              "msg-2",
+              "I've been helping with various tasks on this project.",
+              {
+                historySequence: 2,
+                timestamp: STABLE_TIMESTAMP - 200000,
+              }
+            ),
+            createCompactionRequestMessage("msg-3", {
+              historySequence: 3,
+              timestamp: STABLE_TIMESTAMP - 3000,
+            }),
+          ],
+          streamingMessageId: "msg-4",
+          historySequence: 4,
+          streamText: "## Conversation Summary\n\nSummarizing the conversation...",
+        });
+      }}
+    />
+  ),
+  parameters: {
+    docs: {
+      description: {
+        story:
+          'Shows the "configure" hint link in the streaming barrier during compaction when no custom compaction model is set. Clicking it opens Settings → Models.',
+      },
+    },
+  },
+};
+
 /** Chat with running background processes banner */
 export const BackgroundProcesses: AppStory = {
   render: () => (
