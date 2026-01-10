@@ -21,6 +21,23 @@ import { Button } from "@/browser/components/ui/button";
 // Providers to exclude from the custom models UI (handled specially or internal)
 const HIDDEN_PROVIDERS = new Set(["mux-gateway"]);
 
+// Shared header cell styles
+const headerCellBase = "py-1.5 pr-2 text-xs font-medium text-muted";
+
+// Table header component to avoid duplication
+function ModelsTableHeader() {
+  return (
+    <thead>
+      <tr className="border-border-medium bg-background-secondary/50 border-b">
+        <th className={`${headerCellBase} pl-2 text-left md:pl-3`}>Provider</th>
+        <th className={`${headerCellBase} text-left`}>Model</th>
+        <th className={`${headerCellBase} w-16 text-right md:w-20`}>Context</th>
+        <th className={`${headerCellBase} w-28 text-right md:w-32 md:pr-3`}>Actions</th>
+      </tr>
+    </thead>
+  );
+}
+
 interface EditingState {
   provider: string;
   originalModelId: string;
@@ -178,7 +195,7 @@ export function ModelsSection() {
       </p>
 
       {/* Custom Models - shown first */}
-      <div className="space-y-1.5">
+      <div className="space-y-3">
         <div className="text-muted text-xs font-medium tracking-wide uppercase">Custom Models</div>
 
         {/* Add new model form */}
@@ -220,78 +237,95 @@ export function ModelsSection() {
           {error && !editing && <div className="text-error mt-1.5 text-xs">{error}</div>}
         </div>
 
-        {/* List custom models */}
-        {customModels.map((model) => {
-          const isModelEditing =
-            editing?.provider === model.provider && editing?.originalModelId === model.modelId;
-          return (
-            <ModelRow
-              key={model.fullId}
-              provider={model.provider}
-              modelId={model.modelId}
-              fullId={model.fullId}
-              isCustom={true}
-              isDefault={defaultModel === model.fullId}
-              isEditing={isModelEditing}
-              editValue={isModelEditing ? editing.newModelId : undefined}
-              editError={isModelEditing ? error : undefined}
-              saving={false}
-              hasActiveEdit={editing !== null}
-              isGatewayEnabled={gateway.modelUsesGateway(model.fullId)}
-              onSetDefault={() => setDefaultModel(model.fullId)}
-              onStartEdit={() => handleStartEdit(model.provider, model.modelId)}
-              onSaveEdit={handleSaveEdit}
-              onCancelEdit={handleCancelEdit}
-              onEditChange={(value) =>
-                setEditing((prev) => (prev ? { ...prev, newModelId: value } : null))
-              }
-              onRemove={() => handleRemoveModel(model.provider, model.modelId)}
-              isHiddenFromSelector={hiddenModels.includes(model.fullId)}
-              onToggleVisibility={() =>
-                hiddenModels.includes(model.fullId)
-                  ? unhideModel(model.fullId)
-                  : hideModel(model.fullId)
-              }
-              onToggleGateway={
-                gateway.canToggleModel(model.fullId)
-                  ? () => gateway.toggleModelGateway(model.fullId)
-                  : undefined
-              }
-            />
-          );
-        })}
+        {/* Table of custom models */}
+        {customModels.length > 0 && (
+          <div className="border-border-medium overflow-hidden rounded-md border">
+            <table className="w-full">
+              <ModelsTableHeader />
+              <tbody>
+                {customModels.map((model) => {
+                  const isModelEditing =
+                    editing?.provider === model.provider &&
+                    editing?.originalModelId === model.modelId;
+                  return (
+                    <ModelRow
+                      key={model.fullId}
+                      provider={model.provider}
+                      modelId={model.modelId}
+                      fullId={model.fullId}
+                      isCustom={true}
+                      isDefault={defaultModel === model.fullId}
+                      isEditing={isModelEditing}
+                      editValue={isModelEditing ? editing.newModelId : undefined}
+                      editError={isModelEditing ? error : undefined}
+                      saving={false}
+                      hasActiveEdit={editing !== null}
+                      isGatewayEnabled={gateway.modelUsesGateway(model.fullId)}
+                      onSetDefault={() => setDefaultModel(model.fullId)}
+                      onStartEdit={() => handleStartEdit(model.provider, model.modelId)}
+                      onSaveEdit={handleSaveEdit}
+                      onCancelEdit={handleCancelEdit}
+                      onEditChange={(value) =>
+                        setEditing((prev) => (prev ? { ...prev, newModelId: value } : null))
+                      }
+                      onRemove={() => handleRemoveModel(model.provider, model.modelId)}
+                      isHiddenFromSelector={hiddenModels.includes(model.fullId)}
+                      onToggleVisibility={() =>
+                        hiddenModels.includes(model.fullId)
+                          ? unhideModel(model.fullId)
+                          : hideModel(model.fullId)
+                      }
+                      onToggleGateway={
+                        gateway.canToggleModel(model.fullId)
+                          ? () => gateway.toggleModelGateway(model.fullId)
+                          : undefined
+                      }
+                    />
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* Built-in Models */}
-      <div className="space-y-1.5">
+      <div className="space-y-3">
         <div className="text-muted text-xs font-medium tracking-wide uppercase">
           Built-in Models
         </div>
-        {builtInModels.map((model) => (
-          <ModelRow
-            key={model.fullId}
-            provider={model.provider}
-            modelId={model.modelId}
-            fullId={model.fullId}
-            aliases={model.aliases}
-            isCustom={false}
-            isDefault={defaultModel === model.fullId}
-            isEditing={false}
-            isGatewayEnabled={gateway.modelUsesGateway(model.fullId)}
-            onSetDefault={() => setDefaultModel(model.fullId)}
-            isHiddenFromSelector={hiddenModels.includes(model.fullId)}
-            onToggleVisibility={() =>
-              hiddenModels.includes(model.fullId)
-                ? unhideModel(model.fullId)
-                : hideModel(model.fullId)
-            }
-            onToggleGateway={
-              gateway.canToggleModel(model.fullId)
-                ? () => gateway.toggleModelGateway(model.fullId)
-                : undefined
-            }
-          />
-        ))}
+        <div className="border-border-medium overflow-hidden rounded-md border">
+          <table className="w-full">
+            <ModelsTableHeader />
+            <tbody>
+              {builtInModels.map((model) => (
+                <ModelRow
+                  key={model.fullId}
+                  provider={model.provider}
+                  modelId={model.modelId}
+                  fullId={model.fullId}
+                  aliases={model.aliases}
+                  isCustom={false}
+                  isDefault={defaultModel === model.fullId}
+                  isEditing={false}
+                  isGatewayEnabled={gateway.modelUsesGateway(model.fullId)}
+                  onSetDefault={() => setDefaultModel(model.fullId)}
+                  isHiddenFromSelector={hiddenModels.includes(model.fullId)}
+                  onToggleVisibility={() =>
+                    hiddenModels.includes(model.fullId)
+                      ? unhideModel(model.fullId)
+                      : hideModel(model.fullId)
+                  }
+                  onToggleGateway={
+                    gateway.canToggleModel(model.fullId)
+                      ? () => gateway.toggleModelGateway(model.fullId)
+                      : undefined
+                  }
+                />
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
