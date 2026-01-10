@@ -20,6 +20,7 @@ import * as fs from "fs";
 import * as path from "path";
 import chalk from "chalk";
 import { parseBoolEnv } from "@/common/utils/env";
+import { safeJsonStringify } from "@/common/utils/safeJsonStringify";
 import { getMuxHome } from "@/common/constants/paths";
 
 // Lazy-initialized to avoid circular dependency with config.ts
@@ -261,8 +262,9 @@ function debugObject(filename: string, obj: unknown): void {
     // Ensure subdirectories exist
     fs.mkdirSync(dirPath, { recursive: true });
 
-    // Write the object as pretty-printed JSON
-    fs.writeFileSync(filePath, JSON.stringify(obj, null, 2), "utf-8");
+    // Write the object as pretty-printed JSON.
+    // Use safeJsonStringify to avoid dumping multi-megabyte base64 blobs (e.g. screenshots).
+    fs.writeFileSync(filePath, safeJsonStringify(obj, { space: 2 }), "utf-8");
 
     // Log that we dumped the object
     safePipeLog("debug", `Dumped object to ${filePath}`);

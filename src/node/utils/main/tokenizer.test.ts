@@ -4,8 +4,10 @@ import {
   __resetTokenizerForTests,
   countTokens,
   countTokensBatch,
+  countTokensForData,
   getTokenizerForModel,
   loadTokenizerModules,
+  type Tokenizer,
 } from "./tokenizer";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 
@@ -56,6 +58,29 @@ describe("tokenizer", () => {
     expect(tokenizer.encoding.length).toBeGreaterThan(0);
   });
 
+  test("countTokensForData redacts base64 image payloads", async () => {
+    const calls: string[] = [];
+    const mockTokenizer: Tokenizer = {
+      encoding: "test",
+      countTokens: (text: string) => {
+        calls.push(text);
+        return Promise.resolve(text.length);
+      },
+    };
+
+    const base64 = "A".repeat(50_000);
+    await countTokensForData(
+      {
+        type: "content",
+        value: [{ type: "media", mediaType: "image/png", data: base64 }],
+      },
+      mockTokenizer
+    );
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toContain("[omitted image data");
+    expect(calls[0]).not.toMatch(/[A]{1000,}/);
+  });
   test("countTokens returns stable values for google gemini 3", async () => {
     const text = "mux-google-tokenizer-test";
     const first = await countTokens(googleModel, text);

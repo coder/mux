@@ -6,6 +6,7 @@ import type { CountTokensInput } from "./tokenizer.worker";
 import { models, type ModelName } from "ai-tokenizer";
 import { run } from "./workerPool";
 import { TOKENIZER_MODEL_OVERRIDES, DEFAULT_WARM_MODELS } from "@/common/constants/knownModels";
+import { safeJsonStringify } from "@/common/utils/safeJsonStringify";
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
 import { log } from "@/node/services/log";
 
@@ -218,7 +219,7 @@ export function countTokensBatch(modelString: string, texts: string[]): Promise<
 }
 
 export function countTokensForData(data: unknown, tokenizer: Tokenizer): Promise<number> {
-  const serialized = JSON.stringify(data);
+  const serialized = safeJsonStringify(data);
   return tokenizer.countTokens(serialized);
 }
 
