@@ -538,6 +538,20 @@ export class StreamManager extends EventEmitter {
     streamInfo: WorkspaceStreamInfo,
     abandonPartial?: boolean
   ): Promise<void> {
+    // If stream already completed normally (emitted stream-end), wait for its
+    // finally block to finish before returning. This happens when ensureStreamSafety
+    // is called for a new stream after the previous one finished but before it was
+    // removed from workspaceStreams.
+    // Without this guard, we'd emit stream-abort after stream-end, causing the
+    // frontend to incorrectly flip the message back to partial:true.
+    // We must NOT delete workspaceStreams here — the finally block does that.
+    // If we delete early, the finally block's delete could race with a new stream
+    // being registered and delete the new stream's entry instead.
+    if (streamInfo.state === StreamState.COMPLETED) {
+      await streamInfo.processingPromise;
+      return;
+    }
+
     try {
       streamInfo.state = StreamState.STOPPING;
       // Flush any pending partial write immediately (preserves work on interruption)
@@ -1301,10 +1315,6 @@ export class StreamManager extends EventEmitter {
           parts: streamInfo.parts, // Parts array with temporal ordering (includes reasoning)
         };
 
-        // Mark as completed BEFORE emitting stream-end to prevent race conditions
-        // where isStreaming() returns true while event handlers try to send new messages
-        streamInfo.state = StreamState.COMPLETED;
-
         // Update history with final message BEFORE emitting stream-end
         // This prevents a race condition where compaction (triggered by stream-end)
         // clears history while updateHistory is still running, causing old messages
@@ -1353,6 +1363,13 @@ export class StreamManager extends EventEmitter {
             }
           }
         }
+
+        // Mark as completed right before emitting stream-end.
+        // This must happen AFTER async I/O (deletePartial, updateHistory) completes.
+        // If we set COMPLETED earlier, isStreaming() returns false during cleanup,
+        // allowing new messages (e.g., force-compaction) to bypass queuing and write
+        // to history before stream-end fires - causing compaction to use wrong parts.
+        streamInfo.state = StreamState.COMPLETED;
 
         // Emit stream-end AFTER history is updated to prevent race with compaction
         // Compaction handler listens to this event and clears history - if we emit
