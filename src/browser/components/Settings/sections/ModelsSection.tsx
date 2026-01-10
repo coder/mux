@@ -1,5 +1,4 @@
-import React, { useState, useCallback } from "react";
-import { Command } from "cmdk";
+import React, { useState, useCallback, useRef, useEffect } from "react";
 import { Plus, Loader2, Check, ChevronDown } from "lucide-react";
 import { SUPPORTED_PROVIDERS, PROVIDER_DISPLAY_NAMES } from "@/common/constants/providers";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
@@ -25,7 +24,7 @@ import { Button } from "@/browser/components/ui/button";
 import { getModelName } from "@/common/utils/ai/models";
 import { cn } from "@/common/lib/utils";
 
-/** Searchable model dropdown using cmdk for keyboard navigation */
+/** Searchable model dropdown with keyboard navigation */
 function SearchableModelSelect(props: {
   value: string;
   onChange: (value: string) => void;
@@ -34,15 +33,87 @@ function SearchableModelSelect(props: {
   emptyOption?: { value: string; label: string };
 }) {
   const [isOpen, setIsOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
   const displayValue =
     props.emptyOption && !props.value
       ? props.emptyOption.label
       : (getModelName(props.value) ?? props.placeholder ?? "Select model");
 
+  // Filter models based on search
+  const searchLower = search.toLowerCase();
+  const filteredModels = props.models.filter(
+    (m) =>
+      m.toLowerCase().includes(searchLower) ||
+      (getModelName(m)?.toLowerCase().includes(searchLower) ?? false)
+  );
+
+  // Build list of all selectable items (empty option + filtered models)
+  const items: Array<{ value: string; label: string; isMuted?: boolean }> = [];
+  if (props.emptyOption) {
+    items.push({
+      value: props.emptyOption.value,
+      label: props.emptyOption.label,
+      isMuted: true,
+    });
+  }
+  for (const model of filteredModels) {
+    items.push({ value: model, label: getModelName(model) ?? model });
+  }
+
+  // Reset highlight when search changes or popover opens
+  useEffect(() => {
+    setHighlightedIndex(0);
+  }, [search]);
+
+  useEffect(() => {
+    if (isOpen) {
+      setSearch("");
+      setHighlightedIndex(0);
+      // Focus input after popover renders
+      const timer = setTimeout(() => inputRef.current?.focus(), 10);
+      return () => clearTimeout(timer);
+    }
+  }, [isOpen]);
+
+  // Scroll highlighted item into view
+  useEffect(() => {
+    if (!listRef.current) return;
+    const highlighted = listRef.current.querySelector("[data-highlighted=true]");
+    if (highlighted) {
+      highlighted.scrollIntoView({ block: "nearest" });
+    }
+  }, [highlightedIndex]);
+
   const handleSelect = (value: string) => {
     props.onChange(value);
     setIsOpen(false);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    switch (e.key) {
+      case "ArrowDown":
+        e.preventDefault();
+        setHighlightedIndex((i) => Math.min(i + 1, items.length - 1));
+        break;
+      case "ArrowUp":
+        e.preventDefault();
+        setHighlightedIndex((i) => Math.max(i - 1, 0));
+        break;
+      case "Enter":
+        e.preventDefault();
+        if (items[highlightedIndex]) {
+          handleSelect(items[highlightedIndex].value);
+        }
+        break;
+      case "Escape":
+        e.preventDefault();
+        setIsOpen(false);
+        break;
+    }
   };
 
   return (
@@ -55,65 +126,49 @@ function SearchableModelSelect(props: {
           <ChevronDown className="text-muted h-3 w-3 shrink-0" />
         </button>
       </PopoverTrigger>
-      <PopoverContent
-        align="start"
-        className="w-[320px] overflow-visible p-0"
-        onOpenAutoFocus={(e) => e.preventDefault()}
-      >
-        <Command
-          className="bg-background-secondary flex max-h-[320px] flex-col overflow-hidden rounded-md"
-          filter={(value, search) => {
-            const lower = search.toLowerCase();
-            if (value.toLowerCase().includes(lower)) return 1;
-            if (getModelName(value)?.toLowerCase().includes(lower)) return 1;
-            return 0;
-          }}
-        >
-          <Command.Input
+      <PopoverContent align="start" className="w-[320px] p-0">
+        {/* Search input */}
+        <div className="border-border border-b px-2 py-1.5">
+          <input
+            ref={inputRef}
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={handleKeyDown}
             placeholder="Search models..."
-            className="text-foreground placeholder:text-muted border-border w-full shrink-0 border-b bg-transparent px-2 py-1.5 text-xs outline-none"
-            autoFocus
+            className="text-foreground placeholder:text-muted w-full bg-transparent text-xs outline-none"
           />
-          <Command.List className="flex-1 overflow-y-auto p-1">
-            <Command.Empty className="text-muted py-2 text-center text-[10px]">
-              No matching models
-            </Command.Empty>
+        </div>
 
-            {/* Empty option if provided */}
-            {props.emptyOption && (
-              <Command.Item
-                value={props.emptyOption.value || "__empty__"}
-                onSelect={() => handleSelect(props.emptyOption!.value)}
-                className="hover:bg-hover aria-selected:bg-hover flex cursor-pointer items-center gap-1.5 rounded-sm px-2 py-1 text-xs"
+        {/* Scrollable list */}
+        <div ref={listRef} className="max-h-[280px] overflow-y-auto p-1">
+          {items.length === 0 ? (
+            <div className="text-muted py-2 text-center text-[10px]">No matching models</div>
+          ) : (
+            items.map((item, index) => (
+              <button
+                key={item.value || "__empty__"}
+                data-highlighted={index === highlightedIndex}
+                onClick={() => handleSelect(item.value)}
+                onMouseEnter={() => setHighlightedIndex(index)}
+                className={cn(
+                  "flex w-full items-center gap-1.5 rounded-sm px-2 py-1 text-xs",
+                  index === highlightedIndex ? "bg-hover" : "hover:bg-hover"
+                )}
               >
                 <Check
                   className={cn(
                     "h-3 w-3 shrink-0",
-                    props.value === props.emptyOption.value ? "opacity-100" : "opacity-0"
+                    props.value === item.value || (!props.value && !item.value)
+                      ? "opacity-100"
+                      : "opacity-0"
                   )}
                 />
-                <span className="text-muted">{props.emptyOption.label}</span>
-              </Command.Item>
-            )}
-
-            {props.models.map((model) => (
-              <Command.Item
-                key={model}
-                value={model}
-                onSelect={() => handleSelect(model)}
-                className="hover:bg-hover aria-selected:bg-hover flex cursor-pointer items-center gap-1.5 rounded-sm px-2 py-1 text-xs"
-              >
-                <Check
-                  className={cn(
-                    "h-3 w-3 shrink-0",
-                    model === props.value ? "opacity-100" : "opacity-0"
-                  )}
-                />
-                <span className="truncate">{getModelName(model)}</span>
-              </Command.Item>
-            ))}
-          </Command.List>
-        </Command>
+                <span className={cn("truncate", item.isMuted && "text-muted")}>{item.label}</span>
+              </button>
+            ))
+          )}
+        </div>
       </PopoverContent>
     </Popover>
   );
