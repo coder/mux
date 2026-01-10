@@ -771,6 +771,22 @@ export class StreamManager extends EventEmitter {
       throw error;
     }
 
+    // Attach no-op catch handlers to side promises that we may not always await.
+    // This prevents unhandled rejection crashes if the stream is aborted/terminated
+    // and these promises reject (e.g., undici TypeError: terminated).
+    const suppressUnhandledRejection = (p: unknown): void => {
+      if (p && typeof (p as Promise<unknown>).catch === "function") {
+        void (p as Promise<unknown>).catch(() => undefined);
+      }
+    };
+    suppressUnhandledRejection(streamResult.usage);
+    suppressUnhandledRejection(streamResult.totalUsage);
+    suppressUnhandledRejection(streamResult.steps);
+    suppressUnhandledRejection(streamResult.providerMetadata);
+    suppressUnhandledRejection(streamResult.text);
+    suppressUnhandledRejection(streamResult.finishReason);
+    suppressUnhandledRejection(streamResult.warnings);
+
     const streamInfo: WorkspaceStreamInfo = {
       state: StreamState.STARTING,
       streamResult,
@@ -1162,15 +1178,20 @@ export class StreamManager extends EventEmitter {
               error: toolErrorPart.error,
             });
 
-            // Format error output
+            // Format error output - use safe stringify to avoid secondary exceptions
+            // (e.g., circular refs, BigInt) turning a handled tool failure into a crash
+            const formatToolError = (err: unknown): string => {
+              if (typeof err === "string") return err;
+              if (err instanceof Error) return err.message;
+              try {
+                return JSON.stringify(err);
+              } catch {
+                return String(err) || "[unserializable error]";
+              }
+            };
             const errorOutput = {
               success: false,
-              error:
-                typeof toolErrorPart.error === "string"
-                  ? toolErrorPart.error
-                  : toolErrorPart.error instanceof Error
-                    ? toolErrorPart.error.message
-                    : JSON.stringify(toolErrorPart.error),
+              error: formatToolError(toolErrorPart.error),
             };
 
             // Use shared completion logic (await to ensure partial is flushed before event)
@@ -1378,6 +1399,16 @@ export class StreamManager extends EventEmitter {
         this.emit("stream-end", streamEndEvent);
       }
     } catch (error) {
+      // If stream was aborted or is stopping, treat termination errors as expected cancellation
+      // rather than fatal errors. This prevents TypeError: terminated (undici) from corrupting
+      // stream state or showing scary error messages when user simply cancelled the stream.
+      const isAbortedOrStopping =
+        streamInfo.abortController.signal.aborted || streamInfo.state === StreamState.STOPPING;
+      if (isAbortedOrStopping) {
+        log.debug("Stream ended after abort/stop (not an error):", { error });
+        return;
+      }
+
       streamInfo.state = StreamState.ERROR;
 
       // Log the actual error for debugging
@@ -1580,6 +1611,25 @@ export class StreamManager extends EventEmitter {
       if (structuredError.code === "rate_limit_exceeded") {
         return "rate_limit";
       }
+    }
+
+    // Detect undici/fetch termination errors (e.g., TypeError: terminated, UND_ERR_BODY_TIMEOUT)
+    // These occur when the underlying HTTP connection is severed or times out
+    const isUndiciTermination =
+      (error instanceof TypeError && error.message === "terminated") ||
+      (typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        (error as { code?: string }).code === "UND_ERR_BODY_TIMEOUT") ||
+      (typeof error === "object" &&
+        error !== null &&
+        "cause" in error &&
+        typeof (error as { cause?: unknown }).cause === "object" &&
+        (error as { cause?: { code?: string } }).cause !== null &&
+        (error as { cause: { code?: string } }).cause.code === "UND_ERR_BODY_TIMEOUT");
+
+    if (isUndiciTermination) {
+      return "network";
     }
 
     // Fall back to string matching for other errors
