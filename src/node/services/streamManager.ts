@@ -538,13 +538,17 @@ export class StreamManager extends EventEmitter {
     streamInfo: WorkspaceStreamInfo,
     abandonPartial?: boolean
   ): Promise<void> {
-    // If stream already completed normally (emitted stream-end), just clean up.
-    // This happens when ensureStreamSafety is called for a new stream after the
-    // previous one finished but before it was removed from workspaceStreams.
+    // If stream already completed normally (emitted stream-end), wait for its
+    // finally block to finish before returning. This happens when ensureStreamSafety
+    // is called for a new stream after the previous one finished but before it was
+    // removed from workspaceStreams.
     // Without this guard, we'd emit stream-abort after stream-end, causing the
     // frontend to incorrectly flip the message back to partial:true.
+    // We must NOT delete workspaceStreams here — the finally block does that.
+    // If we delete early, the finally block's delete could race with a new stream
+    // being registered and delete the new stream's entry instead.
     if (streamInfo.state === StreamState.COMPLETED) {
-      this.workspaceStreams.delete(workspaceId);
+      await streamInfo.processingPromise;
       return;
     }
 
