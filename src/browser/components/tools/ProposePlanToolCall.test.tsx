@@ -4,6 +4,7 @@ import { GlobalWindow } from "happy-dom";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 
 import type { SendMessageOptions } from "@/common/orpc/types";
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getAgentIdKey } from "@/common/constants/storage";
 
 import { TooltipProvider } from "../ui/tooltip";
@@ -172,6 +173,17 @@ describe("ProposePlanToolCall", () => {
     await waitFor(() => expect(sendMessageCalls.length).toBe(1));
     expect(sendMessageCalls[0]?.message).toBe("Implement the plan");
     // Clicking Implement should switch the workspace agent to exec.
-    expect(JSON.parse(window.localStorage.getItem(getAgentIdKey(workspaceId))!)).toBe("exec");
+    //
+    // Note: some tests in this repo mock the `usePersistedState` module globally. In that case,
+    // `updatePersistedState` won't actually write to localStorage here, so we assert the call.
+    const agentKey = getAgentIdKey(workspaceId);
+    const updatePersistedStateMaybeMock = updatePersistedState as unknown as {
+      mock?: { calls: unknown[][] };
+    };
+    if (updatePersistedStateMaybeMock.mock) {
+      expect(updatePersistedState).toHaveBeenCalledWith(agentKey, "exec");
+    } else {
+      expect(JSON.parse(window.localStorage.getItem(agentKey)!)).toBe("exec");
+    }
   });
 });
