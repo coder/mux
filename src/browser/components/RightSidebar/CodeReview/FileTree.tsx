@@ -62,19 +62,19 @@ function getFileChangeBadge(
 } {
   switch (changeType) {
     case "added":
-      return { label: "A", className: "bg-success text-on-success", title: "Added" };
+      return { label: "A", className: "text-success-light", title: "Added" };
     case "deleted":
-      return { label: "D", className: "bg-danger text-on-danger", title: "Deleted" };
+      return { label: "D", className: "text-danger", title: "Deleted" };
     case "renamed":
       return {
         label: "R",
-        className: "bg-muted-foreground/20 text-muted-foreground",
+        className: "text-muted",
         title: oldPath ? `Renamed from ${oldPath}` : "Renamed",
       };
     case "modified":
       return {
         label: "M",
-        className: "bg-muted-foreground/20 text-muted-foreground",
+        className: "text-warning-light",
         title: "Modified",
       };
   }
@@ -215,18 +215,6 @@ const TreeNodeContent: React.FC<{
           </>
         ) : (
           <>
-            {fileChangeBadge && (
-              <span
-                className={cn(
-                  "inline-block shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap",
-                  fileChangeBadge.className
-                )}
-                title={fileChangeBadge.title}
-                style={{ opacity: iconOpacity }}
-              >
-                {fileChangeBadge.label}
-              </span>
-            )}
             <FileIcon
               fileName={fileNameForIcon}
               filePath={node.path}
@@ -244,16 +232,23 @@ const TreeNodeContent: React.FC<{
             >
               {node.name}
             </span>
-            {node.stats && (
-              <span className="flex gap-2 text-[11px]">
-                {node.stats.additions > 0 && (
-                  <span className="text-success-light">+{node.stats.additions}</span>
-                )}
-                {node.stats.deletions > 0 && (
-                  <span className="text-warning-light">-{node.stats.deletions}</span>
-                )}
-              </span>
-            )}
+            <span className="ml-auto flex items-center gap-2 text-[11px]">
+              {node.stats?.additions ? (
+                <span className="text-success-light">+{node.stats.additions}</span>
+              ) : null}
+              {node.stats?.deletions ? (
+                <span className="text-warning-light">-{node.stats.deletions}</span>
+              ) : null}
+              {fileChangeBadge ? (
+                <span
+                  className={cn("shrink-0 font-semibold", fileChangeBadge.className)}
+                  title={fileChangeBadge.title}
+                  style={{ opacity: iconOpacity }}
+                >
+                  {fileChangeBadge.label}
+                </span>
+              ) : null}
+            </span>
           </>
         )}
       </div>
