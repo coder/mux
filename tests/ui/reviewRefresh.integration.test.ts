@@ -526,10 +526,40 @@ describeIntegration("ReviewPanel auto refresh (UI + ORPC + live LLM)", () => {
         const duringTimestamp = refreshButton.getAttribute("data-last-refresh-timestamp");
         expect(duringTimestamp).toBe(initialTimestamp);
 
+        // Submit a review note and ensure the refresh button is re-enabled.
+        const NOTE_TEXT = "INLINE_REVIEW_NOTE_TEST_MARKER";
+        const textarea = (await view.findByPlaceholderText(
+          /Add a review note/i,
+          {},
+          { timeout: 10_000 }
+        )) as HTMLTextAreaElement;
+
+        fireEvent.change(textarea, { target: { value: NOTE_TEXT } });
+        fireEvent.keyDown(textarea, { key: "Enter" });
+
+        await waitFor(
+          () => {
+            expect(refreshButton.hasAttribute("disabled")).toBe(false);
+          },
+          { timeout: 5_000 }
+        );
+
+        await waitFor(
+          () => {
+            const inlineNotes = Array.from(
+              view.container.querySelectorAll<HTMLElement>("[data-inline-review-note]")
+            );
+            if (inlineNotes.length === 0) throw new Error("No inline review notes rendered");
+            expect(inlineNotes.some((el) => el.textContent?.includes(NOTE_TEXT))).toBe(true);
+          },
+          { timeout: 5_000 }
+        );
+
         // Note: Testing escape/cancel would require complex DOM simulation.
         // The key behaviors verified by this test:
         // 1. Button becomes disabled when composing review note
         // 2. Clicking disabled button does not trigger refresh
+        // 3. Submitting a note re-enables refresh and renders the note inline
         // Unit tests in RefreshController.test.ts verify that notifyUnpaused()
         // correctly flushes pending refreshes when composition ends.
       } finally {
