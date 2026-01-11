@@ -4,7 +4,7 @@
 
 import { formatModelDisplayName } from "../utils/ai/modelDisplay";
 
-type ModelProvider = "anthropic" | "openai" | "google" | "xai" | "azure-foundry";
+type ModelProvider = "anthropic" | "openai" | "google" | "xai" | "azure-foundry" | "azure-openai";
 
 interface KnownModelDefinition {
   /** Provider identifier used by SDK factories */
@@ -55,13 +55,30 @@ const MODEL_DEFINITIONS = {
     provider: "azure-foundry",
     providerModelId: "claude-sonnet-4-5",
     aliases: ["azure-sonnet", "foundry-sonnet"],
-    tokenizerOverride: "anthropic/claude-sonnet-4.5",
   },
   AZURE_FOUNDRY_HAIKU: {
     provider: "azure-foundry",
     providerModelId: "claude-haiku-4-5",
     aliases: ["azure-haiku", "foundry-haiku"],
-    tokenizerOverride: "anthropic/claude-3.5-haiku",
+  },
+  // Azure OpenAI models (GPT via Azure)
+  AZURE_OPENAI_GPT: {
+    provider: "azure-openai",
+    providerModelId: "gpt-5.2",
+    aliases: ["azure-gpt"],
+    tokenizerOverride: "openai/gpt-5",
+  },
+  AZURE_OPENAI_GPT_CODEX: {
+    provider: "azure-openai",
+    providerModelId: "gpt-5.1-codex",
+    aliases: ["azure-codex"],
+    tokenizerOverride: "openai/gpt-5",
+  },
+  AZURE_OPENAI_GPT_CODEX_MAX: {
+    provider: "azure-openai",
+    providerModelId: "gpt-5.1-codex-max",
+    aliases: ["azure-codex-max"],
+    tokenizerOverride: "openai/gpt-5",
   },
   GPT: {
     provider: "openai",

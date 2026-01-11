@@ -24,6 +24,8 @@ export const PROVIDER_ENV_VARS: Partial<
       organization?: string[];
       region?: string[];
       resource?: string[];
+      deployment?: string[];
+      apiVersion?: string[];
     }
   >
 > = {
@@ -34,6 +36,12 @@ export const PROVIDER_ENV_VARS: Partial<
   "azure-foundry": {
     apiKey: ["AZURE_FOUNDRY_API_KEY", "AZURE_API_KEY"],
     resource: ["AZURE_FOUNDRY_RESOURCE"],
+  },
+  "azure-openai": {
+    apiKey: ["AZURE_OPENAI_API_KEY"],
+    baseUrl: ["AZURE_OPENAI_ENDPOINT"],
+    deployment: ["AZURE_OPENAI_DEPLOYMENT"],
+    apiVersion: ["AZURE_OPENAI_API_VERSION"],
   },
   openai: {
     apiKey: ["OPENAI_API_KEY"],
@@ -57,14 +65,6 @@ export const PROVIDER_ENV_VARS: Partial<
   bedrock: {
     region: ["AWS_REGION", "AWS_DEFAULT_REGION"],
   },
-};
-
-/** Azure OpenAI env vars (special case: maps to "openai" provider) */
-export const AZURE_OPENAI_ENV_VARS = {
-  apiKey: "AZURE_OPENAI_API_KEY",
-  endpoint: "AZURE_OPENAI_ENDPOINT",
-  deployment: "AZURE_OPENAI_DEPLOYMENT",
-  apiVersion: "AZURE_OPENAI_API_VERSION",
 };
 
 /** Resolve first non-empty env var from a list of candidates */
@@ -97,6 +97,8 @@ export interface ProviderConfigRaw {
   voucher?: string; // legacy mux-gateway field
   organization?: string; // OpenAI org ID
   resource?: string; // Azure Foundry resource name
+  deployment?: string; // Azure OpenAI deployment name
+  apiVersion?: string; // Azure OpenAI API version
 }
 
 /** Result of resolving provider credentials */
@@ -112,6 +114,8 @@ export interface ResolvedCredentials {
   baseUrl?: string; // from config or env
   organization?: string; // openai
   resource?: string; // azure-foundry
+  deployment?: string; // azure-openai
+  apiVersion?: string; // azure-openai
 }
 
 /** Legacy alias for backward compatibility */
@@ -161,6 +165,22 @@ export function resolveProviderCredentials(
 
     if (apiKey && resource) {
       return { isConfigured: true, apiKey, resource };
+    }
+    return { isConfigured: false, missingRequirement: "api_key" };
+  }
+
+  // Azure OpenAI: requires API key and endpoint (baseUrl)
+  if (provider === "azure-openai") {
+    const envMapping = PROVIDER_ENV_VARS[provider];
+    // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- empty string should be treated as unset
+    const configKey = config.apiKey || null;
+    const apiKey = configKey ?? resolveEnv(envMapping?.apiKey, env);
+    const baseUrl = config.baseURL ?? config.baseUrl ?? resolveEnv(envMapping?.baseUrl, env);
+    const deployment = config.deployment ?? resolveEnv(envMapping?.deployment, env);
+    const apiVersion = config.apiVersion ?? resolveEnv(envMapping?.apiVersion, env);
+
+    if (apiKey && baseUrl) {
+      return { isConfigured: true, apiKey, baseUrl, deployment, apiVersion };
     }
     return { isConfigured: false, missingRequirement: "api_key" };
   }
@@ -227,28 +247,10 @@ export function buildProvidersFromEnv(
       const entry: ProviderConfig = { apiKey: creds.apiKey };
       if (creds.baseUrl) entry.baseUrl = creds.baseUrl;
       if (creds.organization) entry.organization = creds.organization;
+      // Azure OpenAI-specific fields
+      if (creds.deployment) entry.deployment = creds.deployment;
+      if (creds.apiVersion) entry.apiVersion = creds.apiVersion;
       providers[provider] = entry;
-    }
-  }
-
-  // Azure OpenAI special case: maps to "openai" provider if not already set
-  if (!providers.openai) {
-    const azureKey = env[AZURE_OPENAI_ENV_VARS.apiKey]?.trim();
-    const azureEndpoint = env[AZURE_OPENAI_ENV_VARS.endpoint]?.trim();
-
-    if (azureKey && azureEndpoint) {
-      const entry: ProviderConfig = {
-        apiKey: azureKey,
-        baseUrl: azureEndpoint,
-      };
-
-      const deployment = env[AZURE_OPENAI_ENV_VARS.deployment]?.trim();
-      if (deployment) entry.defaultModel = deployment;
-
-      const apiVersion = env[AZURE_OPENAI_ENV_VARS.apiVersion]?.trim();
-      if (apiVersion) entry.apiVersion = apiVersion;
-
-      providers.openai = entry;
     }
   }
 
