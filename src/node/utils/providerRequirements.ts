@@ -30,6 +30,10 @@ export const PROVIDER_ENV_VARS: Partial<
     apiKey: ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"],
     baseUrl: ["ANTHROPIC_BASE_URL"],
   },
+  "azure-foundry": {
+    apiKey: ["AZURE_FOUNDRY_API_KEY", "AZURE_API_KEY"],
+    baseUrl: ["AZURE_FOUNDRY_ENDPOINT", "AZURE_FOUNDRY_BASE_URL"],
+  },
   openai: {
     apiKey: ["OPENAI_API_KEY"],
     baseUrl: ["OPENAI_BASE_URL", "OPENAI_API_BASE"],

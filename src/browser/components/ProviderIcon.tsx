@@ -19,6 +19,7 @@ import { cn } from "@/common/lib/utils";
  */
 const PROVIDER_ICONS: Partial<Record<ProviderName, React.FC>> = {
   anthropic: AnthropicIcon,
+  "azure-foundry": AnthropicIcon, // Same icon as Anthropic (Claude branding)
   openai: OpenAIIcon,
   google: GoogleIcon,
   xai: XAIIcon,

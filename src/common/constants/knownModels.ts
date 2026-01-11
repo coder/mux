@@ -4,7 +4,7 @@
 
 import { formatModelDisplayName } from "../utils/ai/modelDisplay";
 
-type ModelProvider = "anthropic" | "openai" | "google" | "xai";
+type ModelProvider = "anthropic" | "openai" | "google" | "xai" | "azure-foundry";
 
 interface KnownModelDefinition {
   /** Provider identifier used by SDK factories */
@@ -44,6 +44,24 @@ const MODEL_DEFINITIONS = {
     provider: "anthropic",
     providerModelId: "claude-haiku-4-5",
     aliases: ["haiku"],
+    tokenizerOverride: "anthropic/claude-3.5-haiku",
+  },
+  AZURE_FOUNDRY_OPUS: {
+    provider: "azure-foundry",
+    providerModelId: "claude-opus-4-5",
+    aliases: ["azure-opus", "foundry-opus"],
+    tokenizerOverride: "anthropic/claude-3.5-sonnet",
+  },
+  AZURE_FOUNDRY_SONNET: {
+    provider: "azure-foundry",
+    providerModelId: "claude-sonnet-4-5",
+    aliases: ["azure-sonnet", "foundry-sonnet"],
+    tokenizerOverride: "anthropic/claude-sonnet-4.5",
+  },
+  AZURE_FOUNDRY_HAIKU: {
+    provider: "azure-foundry",
+    providerModelId: "claude-haiku-4-5",
+    aliases: ["azure-haiku", "foundry-haiku"],
     tokenizerOverride: "anthropic/claude-3.5-haiku",
   },
   GPT: {
