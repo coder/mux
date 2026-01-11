@@ -473,12 +473,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
               : null;
 
             if (parentMeta) {
-              setSelectedWorkspace({
-                workspaceId: parentMeta.id,
-                projectPath: parentMeta.projectPath,
-                projectName: parentMeta.projectName,
-                namedWorkspacePath: parentMeta.namedWorkspacePath,
-              });
+              setSelectedWorkspace(toWorkspaceSelection(parentMeta));
               continue;
             }
 
@@ -495,12 +490,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
               );
 
             if (fallbackMeta) {
-              setSelectedWorkspace({
-                workspaceId: fallbackMeta.id,
-                projectPath: fallbackMeta.projectPath,
-                projectName: fallbackMeta.projectName,
-                namedWorkspacePath: fallbackMeta.namedWorkspacePath,
-              });
+              setSelectedWorkspace(toWorkspaceSelection(fallbackMeta));
             } else if (projectPath) {
               navigateToProject(projectPath);
             } else {
@@ -545,19 +535,10 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         // Update metadata immediately to avoid race condition with validation effect
         ensureCreatedAt(result.metadata);
         seedWorkspaceLocalStorageFromBackend(result.metadata);
-        setWorkspaceMetadata((prev) => {
-          const updated = new Map(prev);
-          updated.set(result.metadata.id, result.metadata);
-          return updated;
-        });
+        setWorkspaceMetadata((prev) => new Map(prev).set(result.metadata.id, result.metadata));
 
         // Return the new workspace selection
-        return {
-          projectPath,
-          projectName: result.metadata.projectName,
-          namedWorkspacePath: result.metadata.namedWorkspacePath,
-          workspaceId: result.metadata.id,
-        };
+        return toWorkspaceSelection(result.metadata);
       } else {
         throw new Error(result.error);
       }
