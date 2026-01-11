@@ -19,6 +19,72 @@ import {
 import * as os from "os";
 import { getParseOptions } from "./argv";
 
+// -----------------------------------------------------------------------------
+// Safety net: prevent uncaught exceptions / unhandled rejections from crashing
+// the server process. This is a fallback; the real fixes are in StreamManager
+// and tool code, but this ensures resilience against unknown edge cases.
+// -----------------------------------------------------------------------------
+const isBenignNetworkError = (err: unknown): boolean => {
+  // TypeError: terminated - undici stream termination
+  if (err instanceof TypeError && err.message === "terminated") return true;
+
+  // UND_ERR_BODY_TIMEOUT - undici body timeout
+  if (
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    (err as { code?: string }).code === "UND_ERR_BODY_TIMEOUT"
+  )
+    return true;
+
+  // Check nested cause for UND_ERR_BODY_TIMEOUT
+  if (
+    typeof err === "object" &&
+    err !== null &&
+    "cause" in err &&
+    typeof (err as { cause?: unknown }).cause === "object" &&
+    (err as { cause?: { code?: string } }).cause !== null &&
+    (err as { cause: { code?: string } }).cause.code === "UND_ERR_BODY_TIMEOUT"
+  )
+    return true;
+
+  // AbortError - expected when streams are cancelled
+  if (err instanceof Error && err.name === "AbortError") return true;
+
+  return false;
+};
+
+const formatErrorWithCause = (err: unknown): string => {
+  if (!(err instanceof Error)) return String(err);
+  let msg = err.stack ?? err.message;
+  if (err.cause) {
+    msg += `\n  [cause] ${formatErrorWithCause(err.cause)}`;
+  }
+  return msg;
+};
+
+process.on("uncaughtException", (err) => {
+  if (isBenignNetworkError(err)) {
+    console.warn("[mux-server] Suppressed benign uncaughtException:", err.message ?? err);
+    return;
+  }
+  console.error("[mux-server] Uncaught exception (server continuing):", formatErrorWithCause(err));
+  // Do NOT exit - keep server running
+});
+
+process.on("unhandledRejection", (reason) => {
+  if (isBenignNetworkError(reason)) {
+    const msg = reason instanceof Error ? reason.message : String(reason);
+    console.warn("[mux-server] Suppressed benign unhandledRejection:", msg);
+    return;
+  }
+  console.error(
+    "[mux-server] Unhandled rejection (server continuing):",
+    formatErrorWithCause(reason)
+  );
+  // Do NOT exit - keep server running
+});
+
 const program = new Command();
 program
   .name("mux server")
