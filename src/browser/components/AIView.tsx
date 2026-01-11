@@ -447,7 +447,10 @@ const AIViewInner: React.FC<AIViewProps> = ({
   // Handle keyboard shortcuts (using optional refs that are safe even if not initialized)
   useAIViewKeybinds({
     workspaceId,
-    canInterrupt: workspaceState?.canInterrupt ?? false,
+    // Allow interrupt keybind even while waiting for stream-start ("starting...").
+    canInterrupt:
+      (workspaceState?.canInterrupt ?? false) ||
+      typeof workspaceState?.pendingStreamStartTime === "number",
     showRetryBarrier,
     setAutoRetry,
     chatInputAPI,

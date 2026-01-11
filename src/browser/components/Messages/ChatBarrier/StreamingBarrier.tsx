@@ -101,6 +101,7 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({ workspaceId,
   const cancelText = (() => {
     switch (phase) {
       case "starting":
+        return `hit ${formatKeybind(vimEnabled ? KEYBINDS.INTERRUPT_STREAM_VIM : KEYBINDS.INTERRUPT_STREAM_NORMAL)} to cancel`;
       case "interrupting":
         return "";
       case "awaiting-input":

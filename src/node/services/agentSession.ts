@@ -664,10 +664,6 @@ export class AgentSession {
   }): Promise<Result<void>> {
     this.assertNotDisposed("interruptStream");
 
-    if (!this.aiService.isStreaming(this.workspaceId)) {
-      return Ok(undefined);
-    }
-
     // For hard interrupts, delete partial BEFORE stopping to prevent abort handler
     // from committing it. For soft interrupts, defer to stream-abort handler since
     // the stream continues running and would recreate the partial.

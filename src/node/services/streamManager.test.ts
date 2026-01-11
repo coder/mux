@@ -165,27 +165,28 @@ describe("StreamManager - Concurrent Stream Prevention", () => {
       processingPromise: Promise<void>;
     }
 
-    const ensureStreamSafetyValue = Reflect.get(streamManager, "ensureStreamSafety") as unknown;
-    if (typeof ensureStreamSafetyValue !== "function") {
-      throw new Error("StreamManager.ensureStreamSafety is unavailable for testing");
-    }
-
-    const originalEnsure = (
-      ensureStreamSafetyValue as (workspaceId: string) => Promise<string>
-    ).bind(streamManager);
-
     const replaceEnsureResult = Reflect.set(
       streamManager,
       "ensureStreamSafety",
-      async (wsId: string): Promise<string> => {
+      async (_wsId: string): Promise<string> => {
         operations.push("ensure-start");
         await new Promise((resolve) => setTimeout(resolve, 50));
-        const result = await originalEnsure(wsId);
         operations.push("ensure-end");
-        return result;
+        return "test-token";
       }
     );
 
+    const replaceTempDirResult = Reflect.set(
+      streamManager,
+      "createTempDirForStream",
+      (_streamToken: string, _runtime: unknown): Promise<string> => {
+        return Promise.resolve("/tmp/mock-stream-temp");
+      }
+    );
+
+    if (!replaceTempDirResult) {
+      throw new Error("Failed to mock StreamManager.createTempDirForStream");
+    }
     if (!replaceEnsureResult) {
       throw new Error("Failed to mock StreamManager.ensureStreamSafety");
     }
@@ -202,23 +203,22 @@ describe("StreamManager - Concurrent Stream Prevention", () => {
       (
         wsId: string,
         streamToken: string,
-        messages: unknown,
-        modelArg: unknown,
+        _runtimeTempDir: string,
+        _runtime: unknown,
+        _messages: unknown,
+        _modelArg: unknown,
         modelString: string,
-        abortSignal: AbortSignal | undefined,
-        system: string,
+        abortController: AbortController,
+        _system: string,
         historySequence: number,
-        tools?: Record<string, unknown>,
+        _messageId: string,
+        _tools?: Record<string, unknown>,
         initialMetadata?: Record<string, unknown>,
         _providerOptions?: Record<string, unknown>,
         _maxOutputTokens?: number,
         _toolPolicy?: unknown
       ): WorkspaceStreamInfoStub => {
         operations.push("create");
-        const abortController = new AbortController();
-        if (abortSignal) {
-          abortSignal.addEventListener("abort", () => abortController.abort());
-        }
 
         const streamInfo: WorkspaceStreamInfoStub = {
           state: "starting",
@@ -322,6 +322,108 @@ describe("StreamManager - Concurrent Stream Prevention", () => {
       expect(ensureOperations[i]).toBe("ensure-start");
       expect(ensureOperations[i + 1]).toBe("ensure-end");
     }
+  });
+
+  test("should honor abortSignal before atomic stream creation", async () => {
+    const workspaceId = "test-workspace-abort-before-create";
+
+    let createCalled = false;
+    let processCalled = false;
+    let streamStartEmitted = false;
+
+    streamManager.on("stream-start", () => {
+      streamStartEmitted = true;
+    });
+
+    const abortController = new AbortController();
+
+    let tempDirStartedResolve: (() => void) | undefined;
+    const tempDirStarted = new Promise<void>((resolve) => {
+      tempDirStartedResolve = resolve;
+    });
+
+    const replaceTempDirResult = Reflect.set(
+      streamManager,
+      "createTempDirForStream",
+      (_streamToken: string, _runtime: unknown): Promise<string> => {
+        tempDirStartedResolve?.();
+        return new Promise((resolve) => {
+          abortController.signal.addEventListener("abort", () => resolve("/tmp/mock-stream-temp"), {
+            once: true,
+          });
+        });
+      }
+    );
+
+    if (!replaceTempDirResult) {
+      throw new Error("Failed to mock StreamManager.createTempDirForStream");
+    }
+
+    let cleanupCalled = false;
+    const replaceCleanupResult = Reflect.set(
+      streamManager,
+      "cleanupStreamTempDir",
+      (..._args: unknown[]): void => {
+        cleanupCalled = true;
+      }
+    );
+
+    if (!replaceCleanupResult) {
+      throw new Error("Failed to mock StreamManager.cleanupStreamTempDir");
+    }
+
+    const replaceCreateResult = Reflect.set(
+      streamManager,
+      "createStreamAtomically",
+      (..._args: unknown[]): never => {
+        createCalled = true;
+        throw new Error("createStreamAtomically should not be called");
+      }
+    );
+
+    if (!replaceCreateResult) {
+      throw new Error("Failed to mock StreamManager.createStreamAtomically");
+    }
+
+    const replaceProcessResult = Reflect.set(
+      streamManager,
+      "processStreamWithCleanup",
+      (..._args: unknown[]): Promise<void> => {
+        processCalled = true;
+        return Promise.resolve();
+      }
+    );
+
+    if (!replaceProcessResult) {
+      throw new Error("Failed to mock StreamManager.processStreamWithCleanup");
+    }
+
+    const anthropic = createAnthropic({ apiKey: "dummy-key" });
+    const model = anthropic("claude-sonnet-4-5");
+
+    const startPromise = streamManager.startStream(
+      workspaceId,
+      [{ role: "user", content: "test" }],
+      model,
+      KNOWN_MODELS.SONNET.id,
+      1,
+      "system",
+      runtime,
+      "test-msg-abort",
+      abortController.signal,
+      {}
+    );
+
+    await tempDirStarted;
+    abortController.abort();
+
+    const result = await startPromise;
+    expect(result.success).toBe(true);
+    expect(createCalled).toBe(false);
+    expect(cleanupCalled).toBe(true);
+    expect(processCalled).toBe(false);
+    expect(streamStartEmitted).toBe(false);
+    expect(streamManager.isStreaming(workspaceId)).toBe(false);
   });
 });
 
