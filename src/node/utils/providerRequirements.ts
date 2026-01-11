@@ -23,6 +23,7 @@ export const PROVIDER_ENV_VARS: Partial<
       baseUrl?: string[];
       organization?: string[];
       region?: string[];
+      resource?: string[];
     }
   >
 > = {
@@ -32,7 +33,7 @@ export const PROVIDER_ENV_VARS: Partial<
   },
   "azure-foundry": {
     apiKey: ["AZURE_FOUNDRY_API_KEY", "AZURE_API_KEY"],
-    baseUrl: ["AZURE_FOUNDRY_ENDPOINT", "AZURE_FOUNDRY_BASE_URL"],
+    resource: ["AZURE_FOUNDRY_RESOURCE"],
   },
   openai: {
     apiKey: ["OPENAI_API_KEY"],
@@ -95,6 +96,7 @@ export interface ProviderConfigRaw {
   couponCode?: string;
   voucher?: string; // legacy mux-gateway field
   organization?: string; // OpenAI org ID
+  resource?: string; // Azure Foundry resource name
 }
 
 /** Result of resolving provider credentials */
@@ -109,6 +111,7 @@ export interface ResolvedCredentials {
   couponCode?: string; // mux-gateway
   baseUrl?: string; // from config or env
   organization?: string; // openai
+  resource?: string; // azure-foundry
 }
 
 /** Legacy alias for backward compatibility */
@@ -146,6 +149,20 @@ export function resolveProviderCredentials(
     return couponCode
       ? { isConfigured: true, couponCode }
       : { isConfigured: false, missingRequirement: "coupon_code" };
+  }
+
+  // Azure Foundry: requires both API key and resource name
+  if (provider === "azure-foundry") {
+    const envMapping = PROVIDER_ENV_VARS[provider];
+    // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- empty string should be treated as unset
+    const configKey = config.apiKey || null;
+    const apiKey = configKey ?? resolveEnv(envMapping?.apiKey, env);
+    const resource = config.resource ?? resolveEnv(envMapping?.resource, env);
+
+    if (apiKey && resource) {
+      return { isConfigured: true, apiKey, resource };
+    }
+    return { isConfigured: false, missingRequirement: "api_key" };
   }
 
   // Keyless providers (e.g., ollama): require explicit opt-in via baseUrl or models
