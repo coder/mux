@@ -632,55 +632,26 @@ export class AIService extends EventEmitter {
         return Ok(provider(modelId));
       }
 
-      // Handle Azure Foundry provider (uses Anthropic SDK with Azure endpoints)
+      // Handle Azure Foundry provider (uses @ai-sdk/anthropic with Azure baseURL)
       if (providerName === "azure-foundry") {
         // Resolve credentials from config + env
         const creds = resolveProviderCredentials("azure-foundry", providerConfig);
-        if (!creds.isConfigured) {
+        if (!creds.isConfigured || !creds.apiKey || !creds.resource) {
           return Err({ type: "api_key_not_found", provider: providerName });
         }
 
-        // Build config with resolved credentials
-        const configWithApiKey = creds.apiKey
-          ? { ...providerConfig, apiKey: creds.apiKey }
-          : providerConfig;
+        // Build Azure Foundry baseURL from resource name
+        const baseURL = `https://${creds.resource}.services.ai.azure.com/anthropic/v1/`;
+        log.debug(`Azure Foundry baseURL: ${baseURL}`);
 
-        // Azure Foundry base URL (should NOT have /v1 suffix)
-        // Format: https://{resource}.services.ai.azure.com/anthropic
-        const effectiveBaseURL = configWithApiKey.baseURL ?? creds.baseUrl?.trim();
-        if (!effectiveBaseURL) {
-          return Err({ type: "api_key_not_found", provider: providerName }); // baseURL required
-        }
+        // Use @ai-sdk/anthropic with Azure baseURL - no special adapter needed
+        const { createAnthropic } = await import("@ai-sdk/anthropic");
 
-        // Ensure no /v1 suffix (Azure Foundry includes /v1 in API path)
-        const trimmedBaseURL = effectiveBaseURL.replace(/\/+$/, ""); // Remove trailing slashes
-        const normalizedBaseURL = trimmedBaseURL.endsWith("/v1")
-          ? trimmedBaseURL.slice(0, -3) // Remove /v1 if present
-          : trimmedBaseURL;
-
-        const normalizedConfig = {
-          ...configWithApiKey,
-          baseURL: normalizedBaseURL,
-        };
-
-        // Azure Foundry uses same headers as direct Anthropic
-        const headers = buildAnthropicHeaders(
-          normalizedConfig.headers,
-          muxProviderOptions?.anthropic?.use1MContext
-        );
-
-        // Lazy-load Anthropic SDK (same package as direct Anthropic)
-        const { createAnthropic } = await PROVIDER_REGISTRY["azure-foundry"]();
-
-        // Use same cache control wrapper as Anthropic
-        const baseFetch = getProviderFetch(providerConfig);
-        const fetchWithCacheControl = wrapFetchWithAnthropicCacheControl(baseFetch);
-
-        // Create provider using Anthropic SDK with Azure base URL
         const provider = createAnthropic({
-          ...normalizedConfig,
-          headers,
-          fetch: fetchWithCacheControl,
+          apiKey: creds.apiKey,
+          baseURL,
+          headers: providerConfig.headers,
+          fetch: getProviderFetch(providerConfig),
         });
 
         return Ok(provider(modelId));

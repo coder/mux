@@ -55,6 +55,7 @@ export class ProviderService {
       const config = (providersConfig[provider] ?? {}) as {
         apiKey?: string;
         baseUrl?: string;
+        resource?: string;
         models?: string[];
         serviceTier?: unknown;
         region?: string;
@@ -67,6 +68,7 @@ export class ProviderService {
         apiKeySet: !!config.apiKey,
         isConfigured: false, // computed below
         baseUrl: config.baseUrl,
+        resource: config.resource,
         models: config.models,
       };
 

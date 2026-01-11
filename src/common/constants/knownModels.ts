@@ -50,7 +50,6 @@ const MODEL_DEFINITIONS = {
     provider: "azure-foundry",
     providerModelId: "claude-opus-4-5",
     aliases: ["azure-opus", "foundry-opus"],
-    tokenizerOverride: "anthropic/claude-3.5-sonnet",
   },
   AZURE_FOUNDRY_SONNET: {
     provider: "azure-foundry",

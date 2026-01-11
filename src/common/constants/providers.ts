@@ -40,8 +40,8 @@ export const PROVIDER_DEFINITIONS = {
   },
   "azure-foundry": {
     displayName: "Azure Foundry",
-    import: () => import("@ai-sdk/anthropic"), // Same package as anthropic
-    factoryName: "createAnthropic", // Same factory function
+    import: () => import("@ai-sdk/anthropic"), // Uses Anthropic SDK with Azure baseURL
+    factoryName: "createAnthropic",
     requiresApiKey: true,
   },
   openai: {
