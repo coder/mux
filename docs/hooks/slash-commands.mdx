@@ -1,0 +1,209 @@
+---
+title: Custom Slash Commands
+description: Create custom executable commands that run in your workspace
+---
+
+Add executable scripts to `.mux/commands/` to define custom slash commands that run in your workspace context. The command's stdout becomes your message to the model.
+
+## Quick Start
+
+Create an executable script in your workspace:
+
+```bash
+mkdir -p .mux/commands
+cat > .mux/commands/dry << 'EOF'
+#!/usr/bin/env bash
+echo "Refactor the code to follow DRY (Don't Repeat Yourself) principles."
+EOF
+chmod +x .mux/commands/dry
+```
+
+Now type `/dry` in chat - the output becomes your message.
+
+## File Convention
+
+- **Location**: `<workspacePath>/.mux/commands/<name>`
+- **Name format**: lowercase letters, numbers, and hyphens (e.g., `my-command`)
+- **Interpreter**: via shebang (`#!/bin/bash`, `#!/usr/bin/env node`, etc.)
+
+## Progressive Examples
+
+### Level 1: Static Message
+
+The simplest command outputs a fixed prompt:
+
+```bash
+#!/usr/bin/env bash
+# .mux/commands/dry
+# Usage: /dry
+
+echo "Refactor the code to follow DRY (Don't Repeat Yourself) principles."
+echo "Identify repeated patterns and extract them into reusable functions or modules."
+```
+
+**Usage:** `/dry`
+
+### Level 2: Using Arguments
+
+Commands receive arguments from the same line:
+
+```bash
+#!/usr/bin/env bash
+# .mux/commands/pr-review
+# Usage: /pr-review <PR-NUM>
+
+pr_num="$1"
+if [ -z "$pr_num" ]; then
+  echo "Usage: /pr-review <PR-NUM>" >&2
+  exit 1
+fi
+
+# Fetch PR diff and format as prompt
+echo "Review this pull request (#$pr_num):"
+echo ""
+gh pr diff "$pr_num" 2>/dev/null || {
+  echo "Failed to fetch PR #$pr_num" >&2
+  exit 1
+}
+```
+
+**Usage:** `/pr-review 123`
+
+→ argv: `["123"]`
+
+### Level 3: Using stdin
+
+Content after the first newline becomes stdin:
+
+```bash
+#!/usr/bin/env bash
+# .mux/commands/refine
+# Usage: /refine [--audience <name>]
+# Wraps stdin with a refinement prompt
+
+audience="general"
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --audience) audience="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+
+echo "Please refine the following text for a $audience audience:"
+echo ""
+cat  # pass through stdin
+```
+
+**Usage:**
+
+```
+/refine --audience developers
+
+Here is some text that needs
+to be made clearer.
+```
+
+→ argv: `["--audience", "developers"]`, stdin: the text after the blank line
+
+## Result Protocol
+
+| Exit Code | Behavior                                                |
+| --------- | ------------------------------------------------------- |
+| 0         | Success - stdout sent as your message to the model      |
+| 2         | User abort - output shown but NOT sent (edit and retry) |
+| Other     | Error - shows error message, returns to editing         |
+
+- **stdout**: becomes the message text sent to the model
+- **stderr**: shown in the progress UI (for debugging), not sent to model
+
+Use exit code 2 when a command wants to show output but let the user decide whether to send it:
+
+```bash
+#!/usr/bin/env bash
+# .mux/commands/confirm
+# Shows preview and asks for confirmation
+
+echo "This will generate the following prompt:"
+echo "---"
+cat
+echo "---"
+echo ""
+read -p "Send to model? [y/N] " confirm
+if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+  exit 2  # User abort - don't send
+fi
+cat  # Send original stdin
+```
+
+## Real-time Output
+
+While your command runs, output streams in real-time below the chat input. You can:
+
+- Watch progress as lines arrive
+- Cancel mid-execution (Escape key or cancel button)
+- On cancel: returns to editing with original message preserved
+
+## Environment Variables
+
+Custom commands receive the same [environment variables](/hooks/environment-variables) as init hooks:
+
+- `MUX_PROJECT_PATH` - absolute path to your project
+- `MUX_RUNTIME` - runtime type (local, ssh, docker)
+- `MUX_WORKSPACE_NAME` - name of the current workspace
+- `MUX_WORKSPACE_PATH` - absolute path to the workspace
+
+## More Examples
+
+### Context-aware review
+
+````bash
+#!/usr/bin/env bash
+# .mux/commands/review
+# Usage: /review [file]
+
+file="${1:-}"
+if [ -n "$file" ]; then
+  echo "Please review this file: $file"
+  echo ""
+  echo '```'
+  cat "$file"
+  echo '```'
+else
+  echo "Please review the following code:"
+  echo ""
+  cat
+fi
+````
+
+### Node.js command
+
+```javascript
+#!/usr/bin/env node
+// .mux/commands/format-json
+// Usage: /format-json (pipe JSON via stdin)
+
+let input = "";
+process.stdin.on("data", (chunk) => (input += chunk));
+process.stdin.on("end", () => {
+  try {
+    const parsed = JSON.parse(input);
+    console.log(JSON.stringify(parsed, null, 2));
+  } catch (e) {
+    console.error("Invalid JSON:", e.message);
+    process.exit(1);
+  }
+});
+```
+
+## Autocomplete
+
+Custom commands appear in slash command suggestions after built-in commands. Type `/` to see available commands.
+
+## Comparison with Built-in Commands
+
+| Feature      | Built-in (`/compact`, `/model`) | Custom (`.mux/commands/*`) |
+| ------------ | ------------------------------- | -------------------------- |
+| Execution    | In-process                      | Subprocess                 |
+| Output       | Immediate action                | Becomes user message       |
+| Customizable | No                              | Yes                        |
+| Streaming    | N/A                             | Real-time                  |
