@@ -3,6 +3,7 @@ import * as path from "path";
 import writeFileAtomic from "write-file-atomic";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
+import { safeJsonStringify } from "@/common/utils/safeJsonStringify";
 import type { MuxMessage } from "@/common/types/message";
 import type { Config } from "@/node/config";
 import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks";
@@ -351,7 +352,7 @@ export class HistoryService {
         // We stringify the entire message for simplicity - only relative weights matter
         const messageTokens: Array<{ message: MuxMessage; tokens: number }> = await Promise.all(
           messages.map(async (msg) => {
-            const tokens = await tokenizer.countTokens(JSON.stringify(msg));
+            const tokens = await tokenizer.countTokens(safeJsonStringify(msg));
             return { message: msg, tokens };
           })
         );
