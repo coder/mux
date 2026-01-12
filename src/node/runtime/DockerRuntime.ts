@@ -414,7 +414,7 @@ export class DockerRuntime extends RemoteRuntime {
       };
     }
 
-    // Store container name - actual container creation happens in initWorkspace
+    // Store container name - actual container creation happens in postCreateSetup
     // so that image pull progress is visible in the init section
     this.containerName = containerName;
 
@@ -424,12 +424,68 @@ export class DockerRuntime extends RemoteRuntime {
     };
   }
 
-  async initWorkspace(params: WorkspaceInitParams): Promise<WorkspaceInitResult> {
+  /**
+   * Post-create setup: provision container OR detect fork and setup credentials.
+   * Runs after mux persists workspace metadata so build logs stream to UI in real-time.
+   *
+   * Handles ALL environment setup:
+   * - Fresh workspace: provisions container (create, sync, checkout, credentials)
+   * - Fork: detects existing container, logs "from fork", sets up credentials
+   * - Stale container: removes and re-provisions
+   *
+   * After this completes, the container is ready for initWorkspace() to run the hook.
+   */
+  async postCreateSetup(params: WorkspaceInitParams): Promise<void> {
     const { projectPath, branchName, trunkBranch, workspacePath, initLogger, abortSignal, env } =
       params;
 
-    // Hoisted outside try so catch block can check whether we created the container
-    let skipContainerSetup = false;
+    if (!this.containerName) {
+      throw new Error("Container not initialized. Call createWorkspace first.");
+    }
+    const containerName = this.containerName;
+
+    // Check if container already exists (e.g., from successful fork or aborted previous attempt)
+    const containerCheck = await this.checkExistingContainer(
+      containerName,
+      workspacePath,
+      branchName
+    );
+    switch (containerCheck.action) {
+      case "skip":
+        // Fork path: container already valid, just log and setup credentials
+        initLogger.logStep("Container already running (from fork), running init hook...");
+        await this.setupCredentials(containerName, env);
+        return;
+      case "cleanup":
+        initLogger.logStep(containerCheck.reason);
+        await runDockerCommand(`docker rm -f ${containerName}`, 10000);
+        break;
+      case "create":
+        break;
+    }
+
+    // Provision container (throws on error - caller handles)
+    await this.provisionContainer({
+      containerName,
+      projectPath,
+      workspacePath,
+      branchName,
+      trunkBranch,
+      initLogger,
+      abortSignal,
+      env,
+    });
+  }
+
+  /**
+   * Initialize workspace by running .mux/init hook.
+   * Assumes postCreateSetup() has already been called to provision/prepare the container.
+   *
+   * This method ONLY runs the hook - all container provisioning and credential setup
+   * is handled by postCreateSetup().
+   */
+  async initWorkspace(params: WorkspaceInitParams): Promise<WorkspaceInitResult> {
+    const { projectPath, branchName, workspacePath, initLogger, abortSignal, env } = params;
 
     try {
       if (!this.containerName) {
@@ -438,45 +494,8 @@ export class DockerRuntime extends RemoteRuntime {
           error: "Container not initialized. Call createWorkspace first.",
         };
       }
-      const containerName = this.containerName;
 
-      // Check if container already exists (e.g., from successful fork or aborted previous attempt)
-      const containerCheck = await this.checkExistingContainer(
-        containerName,
-        workspacePath,
-        branchName
-      );
-      switch (containerCheck.action) {
-        case "skip":
-          initLogger.logStep("Container already running (from fork), running init hook...");
-          await this.setupCredentials(containerName, env);
-          skipContainerSetup = true;
-          break;
-        case "cleanup":
-          initLogger.logStep(containerCheck.reason);
-          await runDockerCommand(`docker rm -f ${containerName}`, 10000);
-          break;
-        case "create":
-          break;
-      }
-
-      if (!skipContainerSetup) {
-        const setupResult = await this.setupContainerAndSyncProject({
-          containerName,
-          projectPath,
-          workspacePath,
-          branchName,
-          trunkBranch,
-          initLogger,
-          abortSignal,
-          env,
-        });
-        if (!setupResult.success) {
-          return setupResult;
-        }
-      }
-
-      // 4. Run .mux/init hook if it exists
+      // Run .mux/init hook if it exists
       const hookExists = await checkInitHookExists(projectPath);
       if (hookExists) {
         const muxEnv = { ...env, ...getMuxEnv(projectPath, "docker", branchName) };
@@ -491,10 +510,7 @@ export class DockerRuntime extends RemoteRuntime {
       const errorMsg = getErrorMessage(error);
       initLogger.logStderr(`Initialization failed: ${errorMsg}`);
       initLogger.logComplete(-1);
-      // Only clean up container if we created it (preserve forked containers on init hook failure)
-      if (this.containerName && !skipContainerSetup) {
-        await runDockerCommand(`docker rm -f ${this.containerName}`, 10000);
-      }
+      // Do NOT delete container on hook failure - user can debug
       return {
         success: false,
         error: errorMsg,
@@ -575,10 +591,11 @@ export class DockerRuntime extends RemoteRuntime {
   }
 
   /**
-   * Create container, sync project files, and checkout branch.
-   * This is the full setup path for new workspaces (not forked ones).
+   * Provision container: create, sync project, checkout branch.
+   * Throws on error (does not call logComplete - caller handles that).
+   * Used by postCreateSetup() for streaming logs before initWorkspace().
    */
-  private async setupContainerAndSyncProject(params: {
+  private async provisionContainer(params: {
     containerName: string;
     projectPath: string;
     workspacePath: string;
@@ -587,7 +604,7 @@ export class DockerRuntime extends RemoteRuntime {
     initLogger: InitLogger;
     abortSignal?: AbortSignal;
     env?: Record<string, string>;
-  }): Promise<WorkspaceInitResult> {
+  }): Promise<void> {
     const {
       containerName,
       projectPath,
@@ -599,20 +616,11 @@ export class DockerRuntime extends RemoteRuntime {
       env,
     } = params;
 
-    // Helper to log error, mark complete, clean up container, and return failure
-    const failWithCleanup = async (errorMsg: string): Promise<WorkspaceInitResult> => {
-      initLogger.logStderr(errorMsg);
-      initLogger.logComplete(-1);
-      await runDockerCommand(`docker rm -f ${containerName}`, 10000);
-      return { success: false, error: errorMsg };
-    };
-
     // 1. Create container (with image pull if needed)
     initLogger.logStep(`Creating container from ${this.config.image}...`);
 
     if (abortSignal?.aborted) {
-      initLogger.logComplete(-1);
-      return { success: false, error: "Workspace creation aborted" };
+      throw new Error("Workspace creation aborted");
     }
 
     // Create and start container with streaming output for image pull progress
@@ -621,19 +629,19 @@ export class DockerRuntime extends RemoteRuntime {
       shareCredentials: this.config.shareCredentials,
     });
     if (runResult.exitCode !== 0) {
-      return failWithCleanup(`Failed to create container: ${runResult.stderr}`);
+      await runDockerCommand(`docker rm -f ${containerName}`, 10000);
+      throw new Error(`Failed to create container: ${runResult.stderr}`);
     }
 
     // Create /src directory and /var/mux/plans in container
-    // /var/mux is used instead of ~/.mux because /root has 700 permissions,
-    // which makes it inaccessible to VS Code Dev Containers (non-root user)
     initLogger.logStep("Preparing workspace directory...");
     const mkdirResult = await runDockerCommand(
       `docker exec ${containerName} mkdir -p ${CONTAINER_SRC_DIR} /var/mux/plans`,
       10000
     );
     if (mkdirResult.exitCode !== 0) {
-      return failWithCleanup(`Failed to create workspace directory: ${mkdirResult.stderr}`);
+      await runDockerCommand(`docker rm -f ${containerName}`, 10000);
+      throw new Error(`Failed to create workspace directory: ${mkdirResult.stderr}`);
     }
 
     initLogger.logStep("Container ready");
@@ -652,7 +660,8 @@ export class DockerRuntime extends RemoteRuntime {
         abortSignal
       );
     } catch (error) {
-      return failWithCleanup(`Failed to sync project: ${getErrorMessage(error)}`);
+      await runDockerCommand(`docker rm -f ${containerName}`, 10000);
+      throw new Error(`Failed to sync project: ${getErrorMessage(error)}`);
     }
     initLogger.logStep("Files synced successfully");
 
@@ -673,16 +682,12 @@ export class DockerRuntime extends RemoteRuntime {
     ]);
 
     if (exitCode !== 0) {
-      return failWithCleanup(`Failed to checkout branch: ${stderr || stdout}`);
+      await runDockerCommand(`docker rm -f ${containerName}`, 10000);
+      throw new Error(`Failed to checkout branch: ${stderr || stdout}`);
     }
     initLogger.logStep("Branch checked out successfully");
-
-    return { success: true };
   }
 
-  /**
-   * Sync project to container using git bundle
-   */
   private async syncProjectToContainer(
     projectPath: string,
     containerName: string,

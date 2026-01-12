@@ -104,6 +104,7 @@ export async function createTestEnvironment(): Promise<TestEnvironment> {
     telemetryService: services.telemetryService,
     sessionUsageService: services.sessionUsageService,
     signingService: services.signingService,
+    coderService: services.coderService,
   };
   const orpc = createOrpcTestClient(orpcContext);
 

@@ -781,13 +781,14 @@ export class Config {
    */
   async updateWorkspaceMetadata(
     workspaceId: string,
-    updates: Partial<Pick<WorkspaceMetadata, "name">>
+    updates: Partial<Pick<WorkspaceMetadata, "name" | "runtimeConfig">>
   ): Promise<void> {
     await this.editConfig((config) => {
       for (const [_projectPath, projectConfig] of config.projects) {
         const workspace = projectConfig.workspaces.find((w) => w.id === workspaceId);
         if (workspace) {
           if (updates.name !== undefined) workspace.name = updates.name;
+          if (updates.runtimeConfig !== undefined) workspace.runtimeConfig = updates.runtimeConfig;
           return config;
         }
       }

@@ -1015,6 +1015,32 @@ export const router = (authToken?: string) => {
           };
         }),
     },
+    coder: {
+      getInfo: t
+        .input(schemas.coder.getInfo.input)
+        .output(schemas.coder.getInfo.output)
+        .handler(async ({ context }) => {
+          return context.coderService.getCoderInfo();
+        }),
+      listTemplates: t
+        .input(schemas.coder.listTemplates.input)
+        .output(schemas.coder.listTemplates.output)
+        .handler(async ({ context }) => {
+          return context.coderService.listTemplates();
+        }),
+      listPresets: t
+        .input(schemas.coder.listPresets.input)
+        .output(schemas.coder.listPresets.output)
+        .handler(async ({ context, input }) => {
+          return context.coderService.listPresets(input.template);
+        }),
+      listWorkspaces: t
+        .input(schemas.coder.listWorkspaces.input)
+        .output(schemas.coder.listWorkspaces.output)
+        .handler(async ({ context }) => {
+          return context.coderService.listWorkspaces();
+        }),
+    },
     workspace: {
       list: t
         .input(schemas.workspace.list.input)

@@ -1,0 +1,274 @@
+/**
+ * Hook for managing Coder workspace async data in the creation flow.
+ * Fetches Coder CLI info, templates, presets, and existing workspaces.
+ *
+ * The `coderConfig` state is owned by the parent (via selectedRuntime.coder) and passed in.
+ * This hook only manages async-fetched data and derived state.
+ */
+import { useState, useEffect, useCallback, useRef } from "react";
+import { useAPI } from "@/browser/contexts/API";
+import type {
+  CoderInfo,
+  CoderTemplate,
+  CoderPreset,
+  CoderWorkspace,
+} from "@/common/orpc/schemas/coder";
+import type { CoderWorkspaceConfig } from "@/common/types/runtime";
+
+interface UseCoderWorkspaceOptions {
+  /** Current Coder config (null = disabled, owned by parent via selectedRuntime.coder) */
+  coderConfig: CoderWorkspaceConfig | null;
+  /** Callback to update Coder config (updates selectedRuntime.coder) */
+  onCoderConfigChange: (config: CoderWorkspaceConfig | null) => void;
+}
+
+interface UseCoderWorkspaceReturn {
+  /** Whether Coder is enabled (derived: coderConfig != null) */
+  enabled: boolean;
+  /** Toggle Coder on/off (calls onCoderConfigChange with config or null) */
+  setEnabled: (enabled: boolean) => void;
+
+  /** Coder CLI availability info */
+  coderInfo: CoderInfo | null;
+
+  /** Current Coder configuration (passed through from props) */
+  coderConfig: CoderWorkspaceConfig | null;
+  /** Update Coder config (passed through from props) */
+  setCoderConfig: (config: CoderWorkspaceConfig | null) => void;
+
+  /** Available templates */
+  templates: CoderTemplate[];
+  /** Presets for the currently selected template */
+  presets: CoderPreset[];
+  /** Running Coder workspaces */
+  existingWorkspaces: CoderWorkspace[];
+
+  /** Loading states */
+  loadingTemplates: boolean;
+  loadingPresets: boolean;
+  loadingWorkspaces: boolean;
+}
+
+/**
+ * Manages Coder workspace async data for the creation flow.
+ *
+ * Fetches data lazily:
+ * - Coder info is fetched on mount
+ * - Templates are fetched when Coder is enabled
+ * - Presets are fetched when a template is selected
+ * - Workspaces are fetched when Coder is enabled
+ *
+ * State ownership: coderConfig is owned by parent (selectedRuntime.coder).
+ * This hook derives `enabled` from coderConfig and manages only async data.
+ */
+export function useCoderWorkspace({
+  coderConfig,
+  onCoderConfigChange,
+}: UseCoderWorkspaceOptions): UseCoderWorkspaceReturn {
+  const { api } = useAPI();
+
+  // Derived state: enabled when coderConfig is present
+  const enabled = coderConfig != null;
+
+  // Ref to access current coderConfig in async callbacks (avoids stale closures)
+  const coderConfigRef = useRef(coderConfig);
+  useEffect(() => {
+    coderConfigRef.current = coderConfig;
+  }, [coderConfig]);
+
+  // Async-fetched data (owned by this hook)
+  const [coderInfo, setCoderInfo] = useState<CoderInfo | null>(null);
+  const [templates, setTemplates] = useState<CoderTemplate[]>([]);
+  const [presets, setPresets] = useState<CoderPreset[]>([]);
+  const [existingWorkspaces, setExistingWorkspaces] = useState<CoderWorkspace[]>([]);
+
+  // Loading states
+  const [loadingTemplates, setLoadingTemplates] = useState(false);
+  const [loadingPresets, setLoadingPresets] = useState(false);
+  const [loadingWorkspaces, setLoadingWorkspaces] = useState(false);
+
+  // Fetch Coder info on mount
+  useEffect(() => {
+    if (!api) return;
+
+    let mounted = true;
+
+    api.coder
+      .getInfo()
+      .then((info) => {
+        if (mounted) {
+          setCoderInfo(info);
+        }
+      })
+      .catch(() => {
+        if (mounted) {
+          setCoderInfo({ available: false });
+        }
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, [api]);
+
+  // Fetch templates when Coder is enabled
+  useEffect(() => {
+    if (!api || !enabled || !coderInfo?.available) {
+      setTemplates([]);
+      setLoadingTemplates(false);
+      return;
+    }
+
+    let mounted = true;
+    setLoadingTemplates(true);
+
+    api.coder
+      .listTemplates()
+      .then((result) => {
+        if (mounted) {
+          setTemplates(result);
+          // Auto-select first template if none selected
+          // Use ref to get current config (avoids stale closure if user toggled modes during fetch)
+          const currentConfig = coderConfigRef.current;
+          if (result.length > 0 && !currentConfig?.template && !currentConfig?.existingWorkspace) {
+            onCoderConfigChange({
+              template: result[0].name,
+            });
+          }
+        }
+      })
+      .catch(() => {
+        if (mounted) {
+          setTemplates([]);
+        }
+      })
+      .finally(() => {
+        if (mounted) {
+          setLoadingTemplates(false);
+        }
+      });
+
+    return () => {
+      mounted = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- Intentionally only re-fetch on enable/available changes, not on coderConfig changes
+  }, [api, enabled, coderInfo?.available]);
+
+  // Fetch existing workspaces when Coder is enabled
+  useEffect(() => {
+    if (!api || !enabled || !coderInfo?.available) {
+      setExistingWorkspaces([]);
+      setLoadingWorkspaces(false);
+      return;
+    }
+
+    let mounted = true;
+    setLoadingWorkspaces(true);
+
+    api.coder
+      .listWorkspaces()
+      .then((result) => {
+        if (mounted) {
+          // Only show running workspaces (per spec)
+          setExistingWorkspaces(result.filter((w) => w.status === "running"));
+        }
+      })
+      .catch(() => {
+        if (mounted) {
+          setExistingWorkspaces([]);
+        }
+      })
+      .finally(() => {
+        if (mounted) {
+          setLoadingWorkspaces(false);
+        }
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, [api, enabled, coderInfo?.available]);
+
+  // Fetch presets when template changes (only for "new" mode)
+  useEffect(() => {
+    if (!api || !enabled || !coderConfig?.template || coderConfig.existingWorkspace) {
+      setPresets([]);
+      setLoadingPresets(false);
+      return;
+    }
+
+    let mounted = true;
+    setLoadingPresets(true);
+
+    api.coder
+      .listPresets({ template: coderConfig.template })
+      .then((result) => {
+        if (!mounted) {
+          return;
+        }
+
+        setPresets(result);
+
+        // Presets rules (per spec):
+        // - 0 presets: no dropdown
+        // - 1 preset: auto-select silently
+        // - 2+ presets: dropdown shown and selection is required (validated in ChatInput)
+        // Use ref to get current config (avoids stale closure if user changed config during fetch)
+        const currentConfig = coderConfigRef.current;
+        if (currentConfig && !currentConfig.existingWorkspace) {
+          if (result.length === 1) {
+            const onlyPreset = result[0];
+            if (onlyPreset && currentConfig.preset !== onlyPreset.name) {
+              onCoderConfigChange({ ...currentConfig, preset: onlyPreset.name });
+            }
+          } else if (result.length === 0 && currentConfig.preset) {
+            onCoderConfigChange({ ...currentConfig, preset: undefined });
+          }
+        }
+      })
+      .catch(() => {
+        if (mounted) {
+          setPresets([]);
+        }
+      })
+      .finally(() => {
+        if (mounted) {
+          setLoadingPresets(false);
+        }
+      });
+
+    return () => {
+      mounted = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- Only re-fetch on template/existingWorkspace changes, not on preset changes (would cause loop)
+  }, [api, enabled, coderConfig?.template, coderConfig?.existingWorkspace]);
+
+  // Handle enabled toggle
+  const handleSetEnabled = useCallback(
+    (newEnabled: boolean) => {
+      if (newEnabled) {
+        // Initialize config for new workspace mode (workspaceName omitted; backend derives)
+        onCoderConfigChange({
+          template: templates[0]?.name,
+        });
+      } else {
+        onCoderConfigChange(null);
+      }
+    },
+    [templates, onCoderConfigChange]
+  );
+
+  return {
+    enabled,
+    setEnabled: handleSetEnabled,
+    coderInfo,
+    coderConfig,
+    setCoderConfig: onCoderConfigChange,
+    templates,
+    presets,
+    existingWorkspaces,
+    loadingTemplates,
+    loadingPresets,
+    loadingWorkspaces,
+  };
+}

@@ -1,3 +1,5 @@
+import type { RuntimeConfig } from "@/common/types/runtime";
+
 /**
  * Runtime abstraction for executing tools in different environments.
  *
@@ -237,6 +239,10 @@ export interface WorkspaceForkResult {
   sourceBranch?: string;
   /** Error message (if failed) */
   error?: string;
+  /** Runtime config for the forked workspace (if different from source) */
+  forkedRuntimeConfig?: RuntimeConfig;
+  /** Updated runtime config for source workspace (e.g., mark as shared) */
+  sourceRuntimeConfig?: RuntimeConfig;
 }
 
 /**
@@ -344,6 +350,21 @@ export interface Runtime {
    * @returns Result with workspace path or error
    */
   createWorkspace(params: WorkspaceCreationParams): Promise<WorkspaceCreationResult>;
+
+  /**
+   * Optional long-running setup that runs after mux persists workspace metadata.
+   * Used for provisioning steps that must happen before initWorkspace but after
+   * the workspace is registered (e.g., creating Coder workspaces, pulling Docker images).
+   *
+   * Contract:
+   * - MAY take minutes (streams progress via initLogger)
+   * - MUST NOT call initLogger.logComplete() - that's handled by the caller
+   * - On failure: throw; caller will log error and mark init failed
+   * - Runtimes with this hook expect callers to use runFullInit/runBackgroundInit
+   *
+   * @param params Same as initWorkspace params
+   */
+  postCreateSetup?(params: WorkspaceInitParams): Promise<void>;
 
   /**
    * Initialize workspace asynchronously (may be slow, streams progress)

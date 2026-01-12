@@ -5,6 +5,10 @@
 import type { z } from "zod";
 import type { RuntimeConfigSchema } from "../orpc/schemas";
 import { RuntimeModeSchema } from "../orpc/schemas";
+import type { CoderWorkspaceConfig } from "../orpc/schemas/coder";
+
+// Re-export CoderWorkspaceConfig type from schema (single source of truth)
+export type { CoderWorkspaceConfig };
 
 /** Runtime mode type - used in UI and runtime string parsing */
 export type RuntimeMode = z.infer<typeof RuntimeModeSchema>;
@@ -44,7 +48,7 @@ export type RuntimeConfig = z.infer<typeof RuntimeConfigSchema>;
 export type ParsedRuntime =
   | { mode: "local" }
   | { mode: "worktree" }
-  | { mode: "ssh"; host: string }
+  | { mode: "ssh"; host: string; coder?: CoderWorkspaceConfig }
   | { mode: "docker"; image: string; shareCredentials?: boolean };
 
 /**
@@ -141,6 +145,7 @@ export function buildRuntimeConfig(parsed: ParsedRuntime): RuntimeConfig | undef
         type: RUNTIME_MODE.SSH,
         host: parsed.host.trim(),
         srcBaseDir: "~/mux", // Default remote base directory (tilde resolved by backend)
+        coder: parsed.coder,
       };
     case RUNTIME_MODE.DOCKER:
       return {

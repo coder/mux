@@ -367,6 +367,7 @@ async function loadServices(): Promise<void> {
     experimentsService: services.experimentsService,
     sessionUsageService: services.sessionUsageService,
     signingService: services.signingService,
+    coderService: services.coderService,
   };
 
   electronIpcMain.handle("mux:get-is-rosetta", async () => {

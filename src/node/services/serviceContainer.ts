@@ -42,6 +42,8 @@ import { SessionUsageService } from "@/node/services/sessionUsageService";
 import { IdleCompactionService } from "@/node/services/idleCompactionService";
 import { TaskService } from "@/node/services/taskService";
 import { getSigningService, type SigningService } from "@/node/services/signingService";
+import { coderService, type CoderService } from "@/node/services/coderService";
+import { setGlobalCoderService } from "@/node/runtime/runtimeFactory";
 
 /**
  * ServiceContainer - Central dependency container for all backend services.
@@ -76,6 +78,7 @@ export class ServiceContainer {
   public readonly experimentsService: ExperimentsService;
   public readonly sessionUsageService: SessionUsageService;
   public readonly signingService: SigningService;
+  public readonly coderService: CoderService;
   private readonly initStateManager: InitStateManager;
   private readonly extensionMetadata: ExtensionMetadataService;
   private readonly ptyService: PTYService;
@@ -163,6 +166,9 @@ export class ServiceContainer {
     this.featureFlagService = new FeatureFlagService(config, this.telemetryService);
     this.sessionTimingService = new SessionTimingService(config, this.telemetryService);
     this.signingService = getSigningService();
+    this.coderService = coderService;
+    // Register globally so all createRuntime calls can create CoderSSHRuntime
+    setGlobalCoderService(this.coderService);
 
     // Backend timing stats (behind feature flag).
     this.aiService.on("stream-start", (data: StreamStartEvent) =>

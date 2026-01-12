@@ -10,6 +10,7 @@ import { DocsLink } from "../DocsLink";
 import type { WorkspaceNameState } from "@/browser/hooks/useWorkspaceName";
 import type { SectionConfig } from "@/common/types/project";
 import { resolveSectionColor } from "@/common/constants/ui";
+import { CoderControls, type CoderControlsProps } from "./CoderControls";
 
 interface CreationControlsProps {
   branches: string[];
@@ -38,6 +39,8 @@ interface CreationControlsProps {
   onSectionChange?: (sectionId: string | null) => void;
   /** Which runtime field (if any) is in error state for visual feedback */
   runtimeFieldError?: "docker" | "ssh" | null;
+  /** Coder workspace controls props (optional - only rendered when provided) */
+  coderProps?: Omit<CoderControlsProps, "disabled">;
 }
 
 /** Runtime type button group with icons and colors */
@@ -416,8 +419,8 @@ export function CreationControls(props: CreationControlsProps) {
             </div>
           )}
 
-          {/* SSH Host Input */}
-          {selectedRuntime.mode === "ssh" && (
+          {/* SSH Host Input - hidden when Coder is enabled */}
+          {selectedRuntime.mode === "ssh" && !props.coderProps?.enabled && (
             <div className="flex items-center gap-2">
               <label className="text-muted-foreground text-xs">host</label>
               <input
@@ -461,28 +464,37 @@ export function CreationControls(props: CreationControlsProps) {
               />
             </div>
           )}
-
-          {/* Docker Credential Sharing */}
-          {selectedRuntime.mode === "docker" && (
-            <label className="flex items-center gap-1.5 text-xs">
-              <input
-                type="checkbox"
-                checked={selectedRuntime.shareCredentials ?? false}
-                onChange={(e) =>
-                  onSelectedRuntimeChange({
-                    mode: "docker",
-                    image: selectedRuntime.image,
-                    shareCredentials: e.target.checked,
-                  })
-                }
-                disabled={props.disabled}
-                className="accent-accent"
-              />
-              <span className="text-muted">Share credentials (SSH, Git)</span>
-              <DocsLink path="/runtime/docker#credential-sharing" />
-            </label>
-          )}
         </div>
+
+        {/* Docker Credential Sharing - separate row for consistency with Coder controls */}
+        {selectedRuntime.mode === "docker" && (
+          <label className="flex items-center gap-1.5 text-xs">
+            <input
+              type="checkbox"
+              checked={selectedRuntime.shareCredentials ?? false}
+              onChange={(e) =>
+                onSelectedRuntimeChange({
+                  mode: "docker",
+                  image: selectedRuntime.image,
+                  shareCredentials: e.target.checked,
+                })
+              }
+              disabled={props.disabled}
+              className="accent-accent"
+            />
+            <span className="text-muted">Share credentials (SSH, Git)</span>
+            <DocsLink path="/runtime/docker#credential-sharing" />
+          </label>
+        )}
+
+        {/* Coder Controls - shown when SSH mode is selected and Coder is available */}
+        {selectedRuntime.mode === "ssh" && props.coderProps && (
+          <CoderControls
+            {...props.coderProps}
+            disabled={props.disabled}
+            hasError={props.runtimeFieldError === "ssh"}
+          />
+        )}
       </div>
     </div>
   );

@@ -15,7 +15,7 @@ import {
   readAgentDefinition,
   discoverAgentDefinitions,
 } from "@/node/services/agentDefinitions/agentDefinitionsService";
-import { createRuntime } from "@/node/runtime/runtimeFactory";
+import { createRuntime, runBackgroundInit } from "@/node/runtime/runtimeFactory";
 import type { InitLogger, WorkspaceCreationResult } from "@/node/runtime/Runtime";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
 import { Ok, Err, type Result } from "@/common/types/result";
@@ -631,22 +631,20 @@ export class TaskService {
     // Emit metadata update so the UI sees the workspace immediately.
     await this.emitWorkspaceMetadata(taskId);
 
-    // Kick init hook (best-effort, async).
+    // Kick init (best-effort, async).
     const secrets = secretsToRecord(this.config.getProjectSecrets(parentMeta.projectPath));
-    void runtime
-      .initWorkspace({
+    runBackgroundInit(
+      runtime,
+      {
         projectPath: parentMeta.projectPath,
         branchName: workspaceName,
         trunkBranch,
         workspacePath,
         initLogger,
         env: secrets,
-      })
-      .catch((error: unknown) => {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        initLogger.logStderr(`Initialization failed: ${errorMessage}`);
-        initLogger.logComplete(-1);
-      });
+      },
+      taskId
+    );
 
     // Start immediately (counts towards parallel limit).
     const sendResult = await this.workspaceService.sendMessage(taskId, prompt, {
@@ -1536,20 +1534,18 @@ export class TaskService {
           trunkBranch,
         });
         const secrets = secretsToRecord(this.config.getProjectSecrets(taskEntry.projectPath));
-        void runtime
-          .initWorkspace({
+        runBackgroundInit(
+          runtime,
+          {
             projectPath: taskEntry.projectPath,
             branchName: workspaceName,
             trunkBranch,
             workspacePath,
             initLogger,
             env: secrets,
-          })
-          .catch((error: unknown) => {
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            initLogger.logStderr(`Initialization failed: ${errorMessage}`);
-            initLogger.logComplete(-1);
-          });
+          },
+          taskId
+        );
       }
 
       const model = task.taskModelString ?? defaultModel;
