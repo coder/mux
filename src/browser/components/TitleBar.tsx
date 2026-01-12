@@ -287,9 +287,13 @@ export function TitleBar() {
           </TooltipContent>
         </Tooltip>
       </div>
-      <div className={isDesktop ? "titlebar-no-drag" : undefined}>
+      {isDesktop ? (
+        <div className="titlebar-no-drag">
+          <SettingsButton />
+        </div>
+      ) : (
         <SettingsButton />
-      </div>
+      )}
     </div>
   );
 }

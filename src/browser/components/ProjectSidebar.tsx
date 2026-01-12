@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { cn } from "@/common/lib/utils";
+import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { EXPANDED_PROJECTS_KEY } from "@/common/constants/storage";
@@ -454,7 +455,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
         <WorkspaceDragLayer />
         <SectionDragLayer />
         <div
-          className="font-primary bg-sidebar border-border-light flex flex-1 flex-col overflow-hidden border-r"
+          className={cn(
+            "font-primary bg-sidebar border-border-light flex flex-1 flex-col overflow-hidden border-r",
+            // In desktop mode when collapsed, hide border (LeftSidebar handles the partial border)
+            isDesktopMode() && collapsed && "border-r-0"
+          )}
           role="navigation"
           aria-label="Projects"
         >

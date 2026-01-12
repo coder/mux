@@ -5,6 +5,7 @@ import {
   getRightSidebarLayoutKey,
   getTerminalTitlesKey,
 } from "@/common/constants/storage";
+import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 import {
   readPersistedState,
   updatePersistedState,
@@ -88,6 +89,8 @@ interface SidebarContainerProps {
   customWidth?: number;
   /** Whether actively dragging resize handle (disables transition) */
   isResizing?: boolean;
+  /** Whether running in Electron desktop mode (hides border when collapsed) */
+  isDesktop?: boolean;
   children: React.ReactNode;
   role: string;
   "aria-label": string;
@@ -105,6 +108,7 @@ const SidebarContainer: React.FC<SidebarContainerProps> = ({
   collapsed,
   customWidth,
   isResizing,
+  isDesktop,
   children,
   role,
   "aria-label": ariaLabel,
@@ -119,7 +123,10 @@ const SidebarContainer: React.FC<SidebarContainerProps> = ({
         collapsed && "sticky right-0 z-10 shadow-[-2px_0_4px_rgba(0,0,0,0.2)]",
         // Mobile: Show vertical meter when collapsed (20px), full width when expanded
         "max-md:border-l-0 max-md:border-t max-md:border-border-light",
-        !collapsed && "max-md:w-full max-md:relative max-md:max-h-[50vh]"
+        !collapsed && "max-md:w-full max-md:relative max-md:max-h-[50vh]",
+        // In desktop mode, hide the left border when collapsed to avoid
+        // visual separation in the titlebar area (overlay buttons zone)
+        isDesktop && collapsed && "border-l-0"
       )}
       style={{ width }}
       role={role}
@@ -1034,6 +1041,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       <SidebarContainer
         collapsed={collapsed}
         isResizing={isResizing}
+        isDesktop={isDesktopMode()}
         customWidth={width} // Unified width from AIView (applies to all tabs)
         role="complementary"
         aria-label="Workspace insights"

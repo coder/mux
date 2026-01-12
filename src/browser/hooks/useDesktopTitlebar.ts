@@ -8,9 +8,13 @@
  * In browser/mux server mode, these are no-ops.
  */
 
-/** Whether we're running in Electron desktop mode */
+/**
+ * Whether we're running in Electron desktop mode.
+ * Checks for getIsRosetta function which only exists in real Electron preload,
+ * not in story mocks that just set window.api for testing specific features.
+ */
 export function isDesktopMode(): boolean {
-  return typeof window !== "undefined" && !!window.api;
+  return typeof window !== "undefined" && typeof window.api?.getIsRosetta === "function";
 }
 
 /**
