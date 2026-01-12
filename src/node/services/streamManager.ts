@@ -43,6 +43,7 @@ import {
 } from "@/common/utils/ai/cacheStrategy";
 import type { SessionUsageService } from "./sessionUsageService";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
+import { extractToolMediaAsUserMessagesFromModelMessages } from "@/node/utils/messages/extractToolMediaAsUserMessagesFromModelMessages";
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
 
 // Disable AI SDK warning logging (e.g., "setting `toolChoice` to `none` is not supported")
@@ -748,6 +749,13 @@ export class StreamManager extends EventEmitter {
         messages: finalMessages,
         system: finalSystem,
         abortSignal: abortController.signal,
+        prepareStep: ({ messages: stepMessages }) => {
+          // streamText runs multiple internal LLM calls (steps) when tools are enabled.
+          // Extract base64 images out of tool-result JSON so providers don't treat them as text.
+          const rewritten = extractToolMediaAsUserMessagesFromModelMessages(stepMessages);
+          if (rewritten === stepMessages) return undefined;
+          return { messages: rewritten };
+        },
         tools: finalTools,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment
         toolChoice: toolChoice as any, // Force tool use when required by policy
