@@ -109,7 +109,9 @@ export default defineConfig(({ mode }) => ({
       },
       "/auth": {
         target: backendProxyTarget,
-        changeOrigin: true,
+        // Preserve the original Host so mux can generate OAuth redirect URLs that
+        // point back to the public dev-server origin (not 127.0.0.1:3000).
+        changeOrigin: false,
       },
       "/health": {
         target: backendProxyTarget,
