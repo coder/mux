@@ -133,6 +133,13 @@ export {
 export {
   ApiServerStatusSchema,
   AWSCredentialStatusSchema,
+  coder,
+  CoderInfoSchema,
+  CoderPresetSchema,
+  CoderTemplateSchema,
+  CoderWorkspaceConfigSchema,
+  CoderWorkspaceSchema,
+  CoderWorkspaceStatusSchema,
   config,
   debug,
   features,

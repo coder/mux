@@ -321,6 +321,17 @@ export const projects = {
   },
 };
 
+// Re-export Coder schemas from dedicated file
+export {
+  coder,
+  CoderInfoSchema,
+  CoderPresetSchema,
+  CoderTemplateSchema,
+  CoderWorkspaceConfigSchema,
+  CoderWorkspaceSchema,
+  CoderWorkspaceStatusSchema,
+} from "./coder";
+
 // Workspace
 export const workspace = {
   list: {

@@ -65,8 +65,9 @@ import assert from "@/common/utils/assert";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import { log, type LogLevel } from "@/node/services/log";
 import chalk from "chalk";
-import type { InitLogger } from "@/node/runtime/Runtime";
+import type { InitLogger, WorkspaceInitResult } from "@/node/runtime/Runtime";
 import { DockerRuntime } from "@/node/runtime/DockerRuntime";
+import { runFullInit } from "@/node/runtime/runtimeFactory";
 import { execSync } from "child_process";
 import { getParseOptions } from "./argv";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
@@ -494,13 +495,22 @@ async function main(): Promise<number> {
       process.exit(1);
     }
 
-    const initResult = await runtime.initWorkspace({
-      projectPath: projectDir,
-      branchName,
-      trunkBranch,
-      workspacePath: createResult.workspacePath!,
-      initLogger,
-    });
+    // Use runFullInit to ensure postCreateSetup runs before initWorkspace
+    let initResult: WorkspaceInitResult;
+    try {
+      initResult = await runFullInit(runtime, {
+        projectPath: projectDir,
+        branchName,
+        trunkBranch,
+        workspacePath: createResult.workspacePath!,
+        initLogger,
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      initLogger.logStderr(`Initialization failed: ${errorMessage}`);
+      initLogger.logComplete(-1);
+      initResult = { success: false, error: errorMessage };
+    }
     if (!initResult.success) {
       // Clean up orphaned container
       // eslint-disable-next-line @typescript-eslint/no-empty-function

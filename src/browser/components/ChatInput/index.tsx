@@ -84,6 +84,7 @@ import {
 } from "@/browser/utils/imageHandling";
 
 import type { ModeAiDefaults } from "@/common/types/modeAiDefaults";
+import type { ParsedRuntime } from "@/common/types/runtime";
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
 import type { MuxFrontendMetadata } from "@/common/types/message";
 import { prepareUserMessageForSend } from "@/common/types/message";
@@ -94,6 +95,7 @@ import { CreationCenterContent } from "./CreationCenterContent";
 import { cn } from "@/common/lib/utils";
 import { CreationControls } from "./CreationControls";
 import { useCreationWorkspace } from "./useCreationWorkspace";
+import { useCoderWorkspace } from "@/browser/hooks/useCoderWorkspace";
 import { useTutorial } from "@/browser/contexts/TutorialContext";
 import { useVoiceInput } from "@/browser/hooks/useVoiceInput";
 import { VoiceInputButton } from "./VoiceInputButton";
@@ -113,6 +115,47 @@ const MAX_PERSISTED_IMAGE_DRAFT_CHARS = 4_000_000;
 import type { ChatInputProps, ChatInputAPI } from "./types";
 import type { ImagePart } from "@/common/orpc/types";
 
+type CreationRuntimeValidationError =
+  | { mode: "docker"; kind: "missingImage" }
+  | { mode: "ssh"; kind: "missingHost" }
+  | { mode: "ssh"; kind: "missingCoderWorkspace" }
+  | { mode: "ssh"; kind: "missingCoderTemplate" }
+  | { mode: "ssh"; kind: "missingCoderPreset" };
+
+function validateCreationRuntime(
+  runtime: ParsedRuntime,
+  coderPresetCount: number
+): CreationRuntimeValidationError | null {
+  if (runtime.mode === "docker") {
+    return runtime.image.trim() ? null : { mode: "docker", kind: "missingImage" };
+  }
+
+  if (runtime.mode === "ssh") {
+    if (runtime.coder) {
+      if (runtime.coder.existingWorkspace) {
+        // Existing mode: workspace name is required
+        if (!(runtime.coder.workspaceName ?? "").trim()) {
+          return { mode: "ssh", kind: "missingCoderWorkspace" };
+        }
+      } else {
+        // New mode: template is required
+        if (!(runtime.coder.template ?? "").trim()) {
+          return { mode: "ssh", kind: "missingCoderTemplate" };
+        }
+        // Preset required when 2+ presets exist
+        const requiresPreset = coderPresetCount >= 2;
+        if (requiresPreset && !(runtime.coder.preset ?? "").trim()) {
+          return { mode: "ssh", kind: "missingCoderPreset" };
+        }
+      }
+      return null;
+    }
+
+    return runtime.host.trim() ? null : { mode: "ssh", kind: "missingHost" };
+  }
+
+  return null;
+}
 function imagePartsToAttachments(imageParts: ImagePart[], idPrefix: string): ImageAttachment[] {
   return imageParts.map((img, index) => ({
     id: `${idPrefix}-${index}`,
@@ -470,7 +513,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const creationSections = creationProject?.sections ?? [];
 
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(() => pendingSectionId);
-  const [runtimeFieldError, setRuntimeFieldError] = useState<"docker" | "ssh" | null>(null);
+  const [hasAttemptedCreateSend, setHasAttemptedCreateSend] = useState(false);
 
   // Keep local selection in sync with the URL-driven pending section (sidebar "+" button).
   useEffect(() => {
@@ -522,6 +565,33 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
   const isSendInFlight = variant === "creation" ? creationState.isSending : isSending;
 
+  // Coder workspace state - config is owned by selectedRuntime.coder, this hook manages async data
+  const currentRuntime = creationState.selectedRuntime;
+  const coderState = useCoderWorkspace({
+    coderConfig: currentRuntime.mode === "ssh" ? (currentRuntime.coder ?? null) : null,
+    onCoderConfigChange: (config) => {
+      if (currentRuntime.mode !== "ssh") return;
+      // Compute host from workspace name for "existing" mode.
+      // For "new" mode, workspaceName is omitted/undefined and backend derives it later.
+      const computedHost = config?.workspaceName
+        ? `${config.workspaceName}.coder`
+        : currentRuntime.host;
+      creationState.setSelectedRuntime({
+        mode: "ssh",
+        host: computedHost,
+        coder: config ?? undefined,
+      });
+    },
+  });
+
+  const creationRuntimeError =
+    variant === "creation"
+      ? validateCreationRuntime(creationState.selectedRuntime, coderState.presets.length)
+      : null;
+
+  const runtimeFieldError =
+    variant === "creation" && hasAttemptedCreateSend ? (creationRuntimeError?.mode ?? null) : null;
+
   const creationControlsProps =
     variant === "creation"
       ? ({
@@ -541,38 +611,38 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           selectedSectionId,
           onSectionChange: setSelectedSectionId,
           runtimeFieldError,
+          // Pass coderProps when CLI is available OR when Coder is enabled (so user can disable)
+          coderProps:
+            coderState.coderInfo?.available || coderState.enabled
+              ? {
+                  enabled: coderState.enabled,
+                  onEnabledChange: coderState.setEnabled,
+                  coderInfo: coderState.coderInfo,
+                  coderConfig: coderState.coderConfig,
+                  onCoderConfigChange: coderState.setCoderConfig,
+                  templates: coderState.templates,
+                  presets: coderState.presets,
+                  existingWorkspaces: coderState.existingWorkspaces,
+                  loadingTemplates: coderState.loadingTemplates,
+                  loadingPresets: coderState.loadingPresets,
+                  loadingWorkspaces: coderState.loadingWorkspaces,
+                }
+              : undefined,
         } satisfies React.ComponentProps<typeof CreationControls>)
       : null;
   const hasTypedText = input.trim().length > 0;
   const hasImages = imageAttachments.length > 0;
   const hasReviews = attachedReviews.length > 0;
-  const isDockerMissingImage =
-    variant === "creation" &&
-    creationState.selectedRuntime.mode === "docker" &&
-    !creationState.selectedRuntime.image.trim();
-  const isSshMissingHost =
-    variant === "creation" &&
-    creationState.selectedRuntime.mode === "ssh" &&
-    !creationState.selectedRuntime.host.trim();
-  const canSend = (hasTypedText || hasImages || hasReviews) && !disabled && !isSendInFlight;
+  // Disable send while Coder presets are loading (user could bypass preset validation)
+  const coderPresetsLoading =
+    coderState.enabled && !coderState.coderConfig?.existingWorkspace && coderState.loadingPresets;
+  const canSend =
+    (hasTypedText || hasImages || hasReviews) &&
+    !disabled &&
+    !isSendInFlight &&
+    !coderPresetsLoading;
 
   const creationProjectPath = variant === "creation" ? props.projectPath : "";
-
-  // Clear runtime field error when runtime mode changes or field becomes valid
-  useEffect(() => {
-    if (variant !== "creation" || !runtimeFieldError) {
-      return;
-    }
-    const rt = creationState.selectedRuntime;
-    // Clear if mode changed or if the relevant field is now filled
-    if (rt.mode !== runtimeFieldError) {
-      setRuntimeFieldError(null);
-    } else if (rt.mode === "docker" && rt.image.trim()) {
-      setRuntimeFieldError(null);
-    } else if (rt.mode === "ssh" && rt.host.trim()) {
-      setRuntimeFieldError(null);
-    }
-  }, [variant, runtimeFieldError, creationState.selectedRuntime]);
 
   // Creation variant: keep the project-scoped model/thinking in sync with global per-mode defaults
   // so switching Plan/Exec uses the configured defaults (and respects "inherit" semantics).
@@ -1258,16 +1328,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
     // Route to creation handler for creation variant
     if (variant === "creation") {
-      // Validate runtime fields before creating workspace
-      if (isDockerMissingImage) {
-        setRuntimeFieldError("docker");
-        return;
-      }
-      if (isSshMissingHost) {
-        setRuntimeFieldError("ssh");
-        return;
-      }
-
       // Handle /init command in creation variant - populate input with init message
       if (messageText.startsWith("/")) {
         const parsed = parseCommand(messageText);
@@ -1276,6 +1336,16 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           focusMessageInput();
           return;
         }
+      }
+
+      setHasAttemptedCreateSend(true);
+
+      const runtimeError = validateCreationRuntime(
+        creationState.selectedRuntime,
+        coderState.presets.length
+      );
+      if (runtimeError) {
+        return;
       }
 
       // Creation variant: simple message send + workspace creation
