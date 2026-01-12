@@ -50,19 +50,17 @@ const previewPort = Number(process.env.MUX_VITE_PREVIEW_PORT ?? "4173");
 
 function formatHostForUrl(host: string): string {
   const trimmed = host.trim();
+  const unbracketed =
+    trimmed.startsWith("[") && trimmed.endsWith("]") ? trimmed.slice(1, -1) : trimmed;
 
   // IPv6 URLs must be bracketed: http://[::1]:1234
-  if (trimmed.includes(":")) {
-    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-      return trimmed;
-    }
-
+  if (unbracketed.includes(":")) {
     // If the host contains a zone index (e.g. fe80::1%en0), percent must be encoded.
-    const escaped = trimmed.replaceAll("%", "%25");
+    const escaped = unbracketed.replace(/%(?![0-9A-Fa-f]{2})/g, "%25");
     return `[${escaped}]`;
   }
 
-  return trimmed;
+  return unbracketed;
 }
 
 // In dev-server mode we run the backend on a separate local port, but we want the
