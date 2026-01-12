@@ -33,7 +33,7 @@ import type { Secret } from "@/common/types/secrets";
 import { WorkspaceListItem, type WorkspaceSelection } from "./WorkspaceListItem";
 import { RenameProvider } from "@/browser/contexts/WorkspaceRenameContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
-import { ChevronRight, KeyRound, Plus } from "lucide-react";
+import { ChevronRight, KeyRound, Plus, Trash2 } from "lucide-react";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { usePopoverError } from "@/browser/hooks/usePopoverError";
 import { PopoverError } from "./PopoverError";
@@ -548,62 +548,129 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               <TooltipContent align="start">{projectPath}</TooltipContent>
                             </Tooltip>
                           </div>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
+                          {/* Collapsed: show secrets/remove on hover + show + button */}
+                          {!isExpanded && (
+                            <>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <button
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      void handleOpenSecrets(projectPath);
+                                    }}
+                                    aria-label={`Manage secrets for ${projectName}`}
+                                    data-project-path={projectPath}
+                                    className="text-muted-dark mr-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent text-sm opacity-0 transition-all duration-200 hover:bg-yellow-500/10 hover:text-yellow-500"
+                                  >
+                                    <KeyRound size={12} />
+                                  </button>
+                                </TooltipTrigger>
+                                <TooltipContent align="end">Manage secrets</TooltipContent>
+                              </Tooltip>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <button
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      const buttonElement = event.currentTarget;
+                                      void (async () => {
+                                        const result = await onRemoveProject(projectPath);
+                                        if (!result.success) {
+                                          const error = result.error ?? "Failed to remove project";
+                                          const rect = buttonElement.getBoundingClientRect();
+                                          const anchor = {
+                                            top: rect.top + window.scrollY,
+                                            left: rect.right + 10,
+                                          };
+                                          projectRemoveError.showError(projectPath, error, anchor);
+                                        }
+                                      })();
+                                    }}
+                                    aria-label={`Remove project ${projectName}`}
+                                    data-project-path={projectPath}
+                                    className="text-muted-dark hover:text-danger-light hover:bg-danger-light/10 mr-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent text-base opacity-0 transition-all duration-200"
+                                  >
+                                    ×
+                                  </button>
+                                </TooltipTrigger>
+                                <TooltipContent align="end">Remove project</TooltipContent>
+                              </Tooltip>
                               <button
                                 onClick={(event) => {
                                   event.stopPropagation();
-                                  void handleOpenSecrets(projectPath);
+                                  handleAddWorkspace(projectPath);
                                 }}
-                                aria-label={`Manage secrets for ${projectName}`}
+                                aria-label={`New chat in ${projectName}`}
                                 data-project-path={projectPath}
-                                className="text-muted-dark mr-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent text-sm opacity-0 transition-all duration-200 hover:bg-yellow-500/10 hover:text-yellow-500"
+                                className="text-secondary hover:bg-hover hover:border-border-light flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent text-sm leading-none transition-all duration-200"
                               >
-                                <KeyRound size={12} />
+                                +
                               </button>
-                            </TooltipTrigger>
-                            <TooltipContent align="end">Manage secrets</TooltipContent>
-                          </Tooltip>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <button
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  const buttonElement = event.currentTarget;
-                                  void (async () => {
-                                    const result = await onRemoveProject(projectPath);
-                                    if (!result.success) {
-                                      const error = result.error ?? "Failed to remove project";
-                                      const rect = buttonElement.getBoundingClientRect();
-                                      const anchor = {
-                                        top: rect.top + window.scrollY,
-                                        left: rect.right + 10,
-                                      };
-                                      projectRemoveError.showError(projectPath, error, anchor);
-                                    }
-                                  })();
-                                }}
-                                aria-label={`Remove project ${projectName}`}
-                                data-project-path={projectPath}
-                                className="text-muted-dark hover:text-danger-light hover:bg-danger-light/10 mr-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent text-base opacity-0 transition-all duration-200"
-                              >
-                                ×
-                              </button>
-                            </TooltipTrigger>
-                            <TooltipContent align="end">Remove project</TooltipContent>
-                          </Tooltip>
+                            </>
+                          )}
+                          {/* Expanded: show secrets/remove always visible */}
+                          {isExpanded && (
+                            <>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <button
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      void handleOpenSecrets(projectPath);
+                                    }}
+                                    aria-label={`Manage secrets for ${projectName}`}
+                                    data-project-path={projectPath}
+                                    className="text-muted-dark mr-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent text-sm transition-all duration-200 hover:bg-yellow-500/10 hover:text-yellow-500"
+                                  >
+                                    <KeyRound size={12} />
+                                  </button>
+                                </TooltipTrigger>
+                                <TooltipContent align="end">Manage secrets</TooltipContent>
+                              </Tooltip>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <button
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      const buttonElement = event.currentTarget;
+                                      void (async () => {
+                                        const result = await onRemoveProject(projectPath);
+                                        if (!result.success) {
+                                          const error = result.error ?? "Failed to remove project";
+                                          const rect = buttonElement.getBoundingClientRect();
+                                          const anchor = {
+                                            top: rect.top + window.scrollY,
+                                            left: rect.right + 10,
+                                          };
+                                          projectRemoveError.showError(projectPath, error, anchor);
+                                        }
+                                      })();
+                                    }}
+                                    aria-label={`Remove project ${projectName}`}
+                                    data-project-path={projectPath}
+                                    className="text-muted-dark hover:text-danger-light hover:bg-danger-light/10 mr-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent transition-all duration-200"
+                                  >
+                                    <Trash2 size={12} />
+                                  </button>
+                                </TooltipTrigger>
+                                <TooltipContent align="end">Remove project</TooltipContent>
+                              </Tooltip>
+                            </>
+                          )}
                         </DraggableProjectItem>
 
-                        {/* New chat button - always visible below project title */}
-                        <button
-                          onClick={() => handleAddWorkspace(projectPath)}
-                          aria-label={`New chat in ${projectName}`}
-                          data-project-path={projectPath}
-                          className="text-muted/60 hover:text-muted flex w-full cursor-pointer items-center justify-center gap-1 border-none bg-transparent px-3 py-1 text-[11px] transition-colors"
-                        >
-                          <Plus size={12} />
-                          <span>New chat</span>
-                        </button>
+                        {/* New chat button - visible when expanded */}
+                        {isExpanded && (
+                          <button
+                            onClick={() => handleAddWorkspace(projectPath)}
+                            aria-label={`New chat in ${projectName}`}
+                            data-project-path={projectPath}
+                            className="text-muted/60 hover:text-muted flex w-full cursor-pointer items-center justify-center gap-1 border-none bg-transparent px-3 py-1 text-[11px] transition-colors"
+                          >
+                            <Plus size={12} />
+                            <span>New chat</span>
+                          </button>
+                        )}
 
                         {isExpanded && (
                           <div
