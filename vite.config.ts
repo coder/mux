@@ -14,6 +14,12 @@ const devServerHost = process.env.MUX_VITE_HOST ?? "127.0.0.1"; // Secure by def
 const devServerPort = Number(process.env.MUX_VITE_PORT ?? "5173");
 const previewPort = Number(process.env.MUX_VITE_PREVIEW_PORT ?? "4173");
 
+// In dev-server mode we run the backend on a separate local port, but we want the
+// browser UI to talk to it via same-origin paths (single public port).
+const backendProxyHost = process.env.MUX_BACKEND_HOST ?? "127.0.0.1";
+const backendProxyPort = Number(process.env.MUX_BACKEND_PORT ?? "3000");
+const backendProxyTarget = `http://${backendProxyHost}:${backendProxyPort}`;
+
 const alias: Record<string, string> = {
   "@": path.resolve(__dirname, "./src"),
 };
@@ -90,6 +96,30 @@ export default defineConfig(({ mode }) => ({
     port: devServerPort,
     strictPort: true,
     allowedHosts: true, // Allow all hosts for dev server (secure by default via MUX_VITE_HOST)
+
+    proxy: {
+      "/orpc": {
+        target: backendProxyTarget,
+        changeOrigin: true,
+        ws: true,
+      },
+      "/api": {
+        target: backendProxyTarget,
+        changeOrigin: true,
+      },
+      "/auth": {
+        target: backendProxyTarget,
+        changeOrigin: true,
+      },
+      "/health": {
+        target: backendProxyTarget,
+        changeOrigin: true,
+      },
+      "/version": {
+        target: backendProxyTarget,
+        changeOrigin: true,
+      },
+    },
     sourcemapIgnoreList: () => false, // Show all sources in DevTools
 
     watch: {
