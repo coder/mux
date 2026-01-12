@@ -599,7 +599,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                           onClick={() => handleAddWorkspace(projectPath)}
                           aria-label={`New chat in ${projectName}`}
                           data-project-path={projectPath}
-                          className="text-muted/60 hover:text-muted flex w-full cursor-pointer items-center gap-1 border-none bg-transparent px-3 py-1 text-[11px] transition-colors"
+                          className="text-muted/60 hover:text-muted flex w-full cursor-pointer items-center justify-center gap-1 border-none bg-transparent px-3 py-1 text-[11px] transition-colors"
                         >
                           <Plus size={12} />
                           <span>New chat</span>
