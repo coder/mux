@@ -51,6 +51,23 @@ describe("file_edit_insert tool", () => {
     expect(updated).toBe("Line 1\nLine 2\nLine 3");
   });
 
+  it("inserts content using before guard when file uses CRLF", async () => {
+    await fs.writeFile(testFilePath, "Line 1\r\nLine 3\r\n");
+
+    const tool = createTestTool(testDir);
+    const args: FileEditInsertToolArgs = {
+      file_path: path.relative(testDir, testFilePath),
+      content: "Line 2\n",
+      before: "Line 1\n",
+    };
+
+    const result = (await tool.execute!(args, mockToolCallOptions)) as FileEditInsertToolResult;
+
+    expect(result.success).toBe(true);
+    const updated = await fs.readFile(testFilePath, "utf-8");
+    expect(updated).toBe("Line 1\r\nLine 2\r\nLine 3\r\n");
+  });
+
   it("inserts content using after guard", async () => {
     const tool = createTestTool(testDir);
     const args: FileEditInsertToolArgs = {
@@ -78,6 +95,22 @@ describe("file_edit_insert tool", () => {
     if (!result.success) {
       expect(result.error).toContain("multiple times");
     }
+  });
+
+  it("fails when guard is not found and does not modify the file", async () => {
+    const original = await fs.readFile(testFilePath, "utf-8");
+
+    const tool = createTestTool(testDir);
+    const args: FileEditInsertToolArgs = {
+      file_path: path.relative(testDir, testFilePath),
+      content: "Line 2\n",
+      before: "does not exist\n",
+    };
+
+    const result = (await tool.execute!(args, mockToolCallOptions)) as FileEditInsertToolResult;
+
+    expect(result.success).toBe(false);
+    expect(await fs.readFile(testFilePath, "utf-8")).toBe(original);
   });
 
   it("fails when both before and after are provided", async () => {
