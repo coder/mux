@@ -56,7 +56,9 @@ function formatHostForUrl(host: string): string {
   // IPv6 URLs must be bracketed: http://[::1]:1234
   if (unbracketed.includes(":")) {
     // If the host contains a zone index (e.g. fe80::1%en0), percent must be encoded.
-    const escaped = unbracketed.replace(/%(?![0-9A-Fa-f]{2})/g, "%25");
+    // Encode zone indices (including numeric ones like %12) while avoiding double-encoding
+    // if the user already provided a URL-safe %25.
+    const escaped = unbracketed.replace(/%(?!25)/gi, "%25");
     return `[${escaped}]`;
   }
 
