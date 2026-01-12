@@ -33,7 +33,7 @@ import type { Secret } from "@/common/types/secrets";
 import { WorkspaceListItem, type WorkspaceSelection } from "./WorkspaceListItem";
 import { RenameProvider } from "@/browser/contexts/WorkspaceRenameContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
-import { ChevronRight, KeyRound } from "lucide-react";
+import { ChevronRight, KeyRound, Plus } from "lucide-react";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { usePopoverError } from "@/browser/hooks/usePopoverError";
 import { PopoverError } from "./PopoverError";
@@ -592,18 +592,18 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             </TooltipTrigger>
                             <TooltipContent align="end">Remove project</TooltipContent>
                           </Tooltip>
-                          <button
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              handleAddWorkspace(projectPath);
-                            }}
-                            aria-label={`New chat in ${projectName}`}
-                            data-project-path={projectPath}
-                            className="text-secondary hover:bg-hover hover:border-border-light flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent text-sm leading-none transition-all duration-200"
-                          >
-                            +
-                          </button>
                         </DraggableProjectItem>
+
+                        {/* New chat button - always visible below project title */}
+                        <button
+                          onClick={() => handleAddWorkspace(projectPath)}
+                          aria-label={`New chat in ${projectName}`}
+                          data-project-path={projectPath}
+                          className="text-muted/60 hover:text-muted flex w-full cursor-pointer items-center gap-1 border-none bg-transparent px-3 py-1 text-[11px] transition-colors"
+                        >
+                          <Plus size={12} />
+                          <span>New chat</span>
+                        </button>
 
                         {isExpanded && (
                           <div
