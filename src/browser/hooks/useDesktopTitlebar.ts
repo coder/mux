@@ -24,9 +24,9 @@ export function getDesktopPlatform(): NodeJS.Platform | undefined {
  * Left inset (in pixels) to reserve for macOS traffic lights.
  * Only applies in Electron + macOS.
  *
- * The value accounts for the traffic lights (~52px) plus padding (~16px).
+ * The value accounts for the traffic lights (~68px) plus comfortable padding.
  */
-export const MAC_TRAFFIC_LIGHTS_INSET = 72;
+export const MAC_TRAFFIC_LIGHTS_INSET = 80;
 
 /**
  * Right inset (in pixels) to reserve for Windows/Linux titlebar overlay buttons.
