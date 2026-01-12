@@ -48,11 +48,28 @@ const devServerAllowedHosts = (() => {
 
 const previewPort = Number(process.env.MUX_VITE_PREVIEW_PORT ?? "4173");
 
+function formatHostForUrl(host: string): string {
+  const trimmed = host.trim();
+
+  // IPv6 URLs must be bracketed: http://[::1]:1234
+  if (trimmed.includes(":")) {
+    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+      return trimmed;
+    }
+
+    // If the host contains a zone index (e.g. fe80::1%en0), percent must be encoded.
+    const escaped = trimmed.replaceAll("%", "%25");
+    return `[${escaped}]`;
+  }
+
+  return trimmed;
+}
+
 // In dev-server mode we run the backend on a separate local port, but we want the
 // browser UI to talk to it via same-origin paths (single public port).
 const backendProxyHost = process.env.MUX_BACKEND_HOST ?? "127.0.0.1";
 const backendProxyPort = Number(process.env.MUX_BACKEND_PORT ?? "3000");
-const backendProxyTarget = `http://${backendProxyHost}:${backendProxyPort}`;
+const backendProxyTarget = `http://${formatHostForUrl(backendProxyHost)}:${backendProxyPort}`;
 
 const alias: Record<string, string> = {
   "@": path.resolve(__dirname, "./src"),
