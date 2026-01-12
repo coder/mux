@@ -437,6 +437,89 @@ describe("StreamingMessageAggregator", () => {
 
       expect(aggregator.isCompacting()).toBe(true);
     });
+
+    test("treats active stream as compacting on reconnect when stream-start mode is exec", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      const compactionRequestMessage = {
+        id: "msg1",
+        role: "user" as const,
+        parts: [{ type: "text" as const, text: "/compact" }],
+        metadata: {
+          historySequence: 1,
+          timestamp: Date.now(),
+          muxMetadata: {
+            type: "compaction-request" as const,
+            rawCommand: "/compact",
+            parsed: { model: "anthropic:claude-3-5-haiku-20241022" },
+          },
+        },
+      };
+
+      aggregator.loadHistoricalMessages([compactionRequestMessage], true);
+
+      // The backend may send mode="exec" even for compaction streams (mode is derived from
+      // the resolved agent/toolchain), so we must not treat non-compact mode as a negative.
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: "test-workspace",
+        messageId: "msg2",
+        historySequence: 2,
+        model: "anthropic:claude-3-5-haiku-20241022",
+        startTime: Date.now(),
+        mode: "exec",
+      });
+
+      expect(aggregator.isCompacting()).toBe(true);
+    });
+
+    test("treats active stream as compacting when user message is a compaction-request and stream-start mode is exec", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.handleMessage({
+        type: "message",
+        id: "msg1",
+        role: "user",
+        parts: [{ type: "text", text: "/compact" }],
+        metadata: {
+          historySequence: 1,
+          timestamp: Date.now(),
+          muxMetadata: {
+            type: "compaction-request",
+            rawCommand: "/compact",
+            parsed: { model: "anthropic:claude-3-5-haiku-20241022" },
+          },
+        },
+      });
+
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: "test-workspace",
+        messageId: "msg2",
+        historySequence: 2,
+        model: "anthropic:claude-3-5-haiku-20241022",
+        startTime: Date.now(),
+        mode: "exec",
+      });
+
+      expect(aggregator.isCompacting()).toBe(true);
+    });
+
+    test("treats mode=compact as authoritative", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: "test-workspace",
+        messageId: "msg1",
+        historySequence: 1,
+        model: "anthropic:claude-3-5-haiku-20241022",
+        startTime: Date.now(),
+        mode: "compact",
+      });
+
+      expect(aggregator.isCompacting()).toBe(true);
+    });
   });
 
   describe("usage-delta handling", () => {

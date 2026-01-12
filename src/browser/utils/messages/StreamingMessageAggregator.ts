@@ -954,8 +954,12 @@ export class StreamingMessageAggregator {
     // - pending /compact metadata captured from the triggering user message, or
     // - last user message metadata (reconnect scenario).
     const isCompacting = (() => {
-      if (data.mode !== undefined) {
-        return data.mode === "compact";
+      // If the backend explicitly labels the stream as compact, that's authoritative.
+      // Note: Today the backend may send mode="exec" even for compaction streams
+      // (AIService derives mode from the agent/toolchain), so a non-compact mode is
+      // not sufficient to conclude "not compacting".
+      if (data.mode === "compact") {
+        return true;
       }
 
       if (this.pendingCompactionRequest !== null) {
