@@ -1371,10 +1371,6 @@ export class AIService extends EventEmitter {
       // Providers can treat tool-result payloads as text/JSON, which can blow up context.
       // Rewrite those tool outputs to small text placeholders and attach the images as file parts.
       const messagesWithToolMediaExtracted = extractToolMediaAsUserMessages(messagesWithInlinedSvg);
-      log.debug_obj(
-        `${workspaceId}/2c_tool_media_extracted_messages.json`,
-        messagesWithToolMediaExtracted
-      );
 
       // Convert MuxMessage to ModelMessage format using Vercel AI SDK utility
       // Type assertion needed because MuxMessage has custom tool parts for interrupted tools
