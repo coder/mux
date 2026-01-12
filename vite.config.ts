@@ -145,12 +145,8 @@ export default defineConfig(({ mode }) => ({
       }),
     },
 
-    hmr: {
-      // Configure HMR to use the correct host for remote access
-      host: devServerHost,
-      port: devServerPort,
-      protocol: "ws",
-    },
+    // Note: leave `server.hmr` unset so Vite derives the websocket URL from the
+    // served script URL (works when accessed via reverse proxy / custom domain).
   },
   preview: {
     host: "127.0.0.1",
