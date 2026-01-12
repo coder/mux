@@ -12,6 +12,40 @@ const disableMermaid = process.env.VITE_DISABLE_MERMAID === "1";
 // Vite server configuration (for dev-server remote access)
 const devServerHost = process.env.MUX_VITE_HOST ?? "127.0.0.1"; // Secure by default
 const devServerPort = Number(process.env.MUX_VITE_PORT ?? "5173");
+
+const devServerAllowedHosts = (() => {
+  const raw = process.env.MUX_VITE_ALLOWED_HOSTS?.trim();
+  if (raw) {
+    if (raw === "true" || raw === "all") {
+      return true;
+    }
+
+    const parsed = raw
+      .split(",")
+      .map((host) => host.trim())
+      .filter(Boolean);
+
+    return parsed.length ? parsed : ["localhost", "127.0.0.1"];
+  }
+
+  // Default to localhost-only. For remote access, set MUX_VITE_ALLOWED_HOSTS (or
+  // the Makefile's VITE_ALLOWED_HOSTS).
+  const defaults = ["localhost", "127.0.0.1"];
+
+  // If the dev server is bound to a specific host (not a wildcard), include it so
+  // access works without extra configuration.
+  if (
+    devServerHost !== "127.0.0.1" &&
+    devServerHost !== "localhost" &&
+    devServerHost !== "0.0.0.0" &&
+    devServerHost !== "::"
+  ) {
+    defaults.push(devServerHost);
+  }
+
+  return defaults;
+})();
+
 const previewPort = Number(process.env.MUX_VITE_PREVIEW_PORT ?? "4173");
 
 // In dev-server mode we run the backend on a separate local port, but we want the
@@ -95,7 +129,7 @@ export default defineConfig(({ mode }) => ({
     host: devServerHost, // Configurable via MUX_VITE_HOST (defaults to 127.0.0.1 for security)
     port: devServerPort,
     strictPort: true,
-    allowedHosts: true, // Allow all hosts for dev server (secure by default via MUX_VITE_HOST)
+    allowedHosts: devServerAllowedHosts,
 
     proxy: {
       "/orpc": {
