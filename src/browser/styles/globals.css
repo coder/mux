@@ -1957,4 +1957,18 @@ input[type="checkbox"] {
   width: 14px;
   height: 14px;
 }
+/* Desktop titlebar drag regions (Electron only)
+ * -webkit-app-region: drag marks areas that can be used to drag the window
+ * -webkit-app-region: no-drag marks interactive elements inside drag regions
+ * These styles only apply in Electron; in browser mode they have no effect */
+.titlebar-drag {
+  -webkit-app-region: drag;
+  /* Prevent text selection while dragging */
+  user-select: none;
+}
+
+.titlebar-no-drag {
+  -webkit-app-region: no-drag;
+}
+
 

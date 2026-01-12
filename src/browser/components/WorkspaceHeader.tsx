@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Pencil, Server } from "lucide-react";
+import { cn } from "@/common/lib/utils";
 import { GitStatusIndicator } from "./GitStatusIndicator";
 import { RuntimeBadge } from "./RuntimeBadge";
 import { BranchSelector } from "./BranchSelector";
@@ -13,6 +14,7 @@ import type { RuntimeConfig } from "@/common/types/runtime";
 import { useTutorial } from "@/browser/contexts/TutorialContext";
 import { useOpenTerminal } from "@/browser/hooks/useOpenTerminal";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
+import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 
 interface WorkspaceHeaderProps {
   workspaceId: string;
@@ -75,12 +77,23 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     return () => clearTimeout(timer);
   }, [startTutorial, isSequenceCompleted]);
 
+  const isDesktop = isDesktopMode();
+
   return (
     <div
       data-testid="workspace-header"
-      className="bg-sidebar border-border-light flex h-8 items-center justify-between border-b px-[15px] [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:flex-wrap [@media(max-width:768px)]:gap-2 [@media(max-width:768px)]:py-2 [@media(max-width:768px)]:pl-[60px]"
+      className={cn(
+        "bg-sidebar border-border-light flex h-8 items-center justify-between border-b px-[15px] [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:flex-wrap [@media(max-width:768px)]:gap-2 [@media(max-width:768px)]:py-2 [@media(max-width:768px)]:pl-[60px]",
+        // In desktop mode, make header draggable for window movement
+        isDesktop && "titlebar-drag"
+      )}
     >
-      <div className="text-foreground flex min-w-0 items-center gap-2.5 overflow-hidden font-semibold">
+      <div
+        className={cn(
+          "text-foreground flex min-w-0 items-center gap-2.5 overflow-hidden font-semibold",
+          isDesktop && "titlebar-no-drag"
+        )}
+      >
         <RuntimeBadge
           runtimeConfig={runtimeConfig}
           isWorking={canInterrupt}
@@ -98,7 +111,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
           />
         </div>
       </div>
-      <div className="flex items-center">
+      <div className={cn("flex items-center", isDesktop && "titlebar-no-drag")}>
         {editorError && <span className="text-danger-soft mr-2 text-xs">{editorError}</span>}
         <Tooltip>
           <TooltipTrigger asChild>

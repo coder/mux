@@ -6,6 +6,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { useDroppable, useDndContext } from "@dnd-kit/core";
 import { Plus } from "lucide-react";
 import type { TabType } from "@/browser/types/rightSidebar";
+import { isDesktopMode, getTitlebarRightInset } from "@/browser/hooks/useDesktopTitlebar";
 
 // Re-export for consumers that import from this file
 export { getTabName } from "./tabs";
@@ -46,7 +47,8 @@ const SortableTab: React.FC<{
   item: RightSidebarTabStripItem;
   index: number;
   tabsetId: string;
-}> = ({ item, index, tabsetId }) => {
+  isDesktop: boolean;
+}> = ({ item, index, tabsetId, isDesktop }) => {
   // Create a unique sortable ID that encodes tabset + tab
   const sortableId = `${tabsetId}:${item.tab}`;
 
@@ -65,7 +67,7 @@ const SortableTab: React.FC<{
   };
 
   return (
-    <div className="relative shrink-0" style={style}>
+    <div className={cn("relative shrink-0", isDesktop && "titlebar-no-drag")} style={style}>
       <Tooltip>
         <TooltipTrigger asChild>
           <button
@@ -121,26 +123,42 @@ export const RightSidebarTabStrip: React.FC<RightSidebarTabStripProps> = ({
   const canDrop = activeData !== undefined && activeData.sourceTabsetId !== tabsetId;
   const showDropHighlight = isOver && canDrop;
 
+  // In desktop mode, add right padding for Windows/Linux titlebar overlay buttons
+  const isDesktop = isDesktopMode();
+  const rightInset = getTitlebarRightInset();
+
   return (
     <div
       ref={setNodeRef}
       className={cn(
         "border-border-light flex min-w-0 items-center gap-1 overflow-x-auto border-b px-2 py-1.5 transition-colors",
         showDropHighlight && "bg-accent/30",
-        isDraggingFromHere && "bg-accent/10"
+        isDraggingFromHere && "bg-accent/10",
+        // In desktop mode, make header draggable for window movement
+        isDesktop && "titlebar-drag"
       )}
+      style={rightInset > 0 ? { paddingRight: rightInset } : undefined}
       role="tablist"
       aria-label={ariaLabel}
     >
       {items.map((item, index) => (
-        <SortableTab key={item.id} item={item} index={index} tabsetId={tabsetId} />
+        <SortableTab
+          key={item.id}
+          item={item}
+          index={index}
+          tabsetId={tabsetId}
+          isDesktop={isDesktop}
+        />
       ))}
       {onAddTerminal && (
         <Tooltip>
           <TooltipTrigger asChild>
             <button
               type="button"
-              className="text-muted hover:bg-hover hover:text-foreground shrink-0 rounded-md p-1 transition-colors"
+              className={cn(
+                "text-muted hover:bg-hover hover:text-foreground shrink-0 rounded-md p-1 transition-colors",
+                isDesktop && "titlebar-no-drag"
+              )}
               onClick={onAddTerminal}
               aria-label="New terminal"
             >
