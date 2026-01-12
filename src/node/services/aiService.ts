@@ -7,6 +7,7 @@ import { convertToModelMessages, type LanguageModel, type Tool } from "ai";
 import { applyToolOutputRedaction } from "@/browser/utils/messages/applyToolOutputRedaction";
 import { sanitizeToolInputs } from "@/browser/utils/messages/sanitizeToolInput";
 import { inlineSvgAsTextForProvider } from "@/node/utils/messages/inlineSvgAsTextForProvider";
+import { extractToolMediaAsUserMessages } from "@/node/utils/messages/extractToolMediaAsUserMessages";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
@@ -1454,10 +1455,15 @@ export class AIService extends EventEmitter {
       // This is request-only (does not mutate persisted history).
       const messagesWithInlinedSvg = inlineSvgAsTextForProvider(sanitizedMessages);
 
+      // Some MCP tools return images as base64 in tool results.
+      // Providers can treat tool-result payloads as text/JSON, which can blow up context.
+      // Rewrite those tool outputs to small text placeholders and attach the images as file parts.
+      const messagesWithToolMediaExtracted = extractToolMediaAsUserMessages(messagesWithInlinedSvg);
+
       // Convert MuxMessage to ModelMessage format using Vercel AI SDK utility
       // Type assertion needed because MuxMessage has custom tool parts for interrupted tools
       // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument
-      const rawModelMessages = convertToModelMessages(messagesWithInlinedSvg as any, {
+      const rawModelMessages = convertToModelMessages(messagesWithToolMediaExtracted as any, {
         // Drop unfinished tool calls (input-streaming/input-available) so downstream
         // transforms only see tool calls that actually produced outputs.
         ignoreIncompleteToolCalls: true,
