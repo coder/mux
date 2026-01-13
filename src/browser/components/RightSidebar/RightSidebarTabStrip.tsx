@@ -131,7 +131,8 @@ export const RightSidebarTabStrip: React.FC<RightSidebarTabStripProps> = ({
     <div
       ref={setNodeRef}
       className={cn(
-        "border-border-light flex min-w-0 items-center gap-1 overflow-x-auto border-b px-2 py-1.5 transition-colors",
+        "border-border-light flex min-w-0 items-center gap-1 overflow-x-auto border-b px-2 transition-colors",
+        isDesktop ? "h-10" : "py-1.5",
         showDropHighlight && "bg-accent/30",
         isDraggingFromHere && "bg-accent/10",
         // In desktop mode, make header draggable for window movement
