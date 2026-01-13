@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, mock } from "bun:test";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { StreamManager } from "./streamManager";
-import { APICallError } from "ai";
+import { APICallError, RetryError } from "ai";
 import type { HistoryService } from "./historyService";
 import type { PartialService } from "./partialService";
 import { createAnthropic } from "@ai-sdk/anthropic";
@@ -580,6 +580,56 @@ describe("StreamManager - replayStream", () => {
 
     // If replayStream iterates the live array, it would also emit "b".
     expect(deltas).toEqual(["a"]);
+  });
+});
+
+describe("StreamManager - categorizeError", () => {
+  test("unwraps RetryError.lastError to classify model_not_found", () => {
+    const mockHistoryService = createMockHistoryService();
+    const mockPartialService = createMockPartialService();
+    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+
+    const categorizeMethod = Reflect.get(streamManager, "categorizeError") as (
+      error: unknown
+    ) => unknown;
+    expect(typeof categorizeMethod).toBe("function");
+
+    const apiError = new APICallError({
+      message: "The model `gpt-5.2-codex` does not exist or you do not have access to it.",
+      url: "https://api.openai.com/v1/responses",
+      requestBodyValues: {},
+      statusCode: 400,
+      responseHeaders: {},
+      responseBody:
+        '{"error":{"message":"The model `gpt-5.2-codex` does not exist or you do not have access to it.","code":"model_not_found"}}',
+      isRetryable: false,
+      data: { error: { code: "model_not_found" } },
+    });
+
+    const retryError = new RetryError({
+      message: "AI SDK retry exhausted",
+      reason: "maxRetriesExceeded",
+      errors: [apiError],
+    });
+
+    expect(categorizeMethod.call(streamManager, retryError)).toBe("model_not_found");
+  });
+
+  test("classifies model_not_found via message fallback", () => {
+    const mockHistoryService = createMockHistoryService();
+    const mockPartialService = createMockPartialService();
+    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+
+    const categorizeMethod = Reflect.get(streamManager, "categorizeError") as (
+      error: unknown
+    ) => unknown;
+    expect(typeof categorizeMethod).toBe("function");
+
+    const error = new Error(
+      "The model `gpt-5.2-codex` does not exist or you do not have access to it."
+    );
+
+    expect(categorizeMethod.call(streamManager, error)).toBe("model_not_found");
   });
 });
 

@@ -1565,6 +1565,20 @@ export class StreamManager extends EventEmitter {
       return "api";
     }
     if (RetryError.isInstance(error)) {
+      // The AI SDK wraps the underlying error(s) in RetryError when it exhausts its internal retries.
+      // If the underlying error is deterministically non-retryable (e.g. model_not_found), we should
+      // surface that classification so the frontend auto-retry loop stops.
+      //
+      // Keep returning retry_failed for generic/transient failures so the UI still communicates that
+      // the SDK already retried and gave up.
+      const underlyingType = error.lastError ? this.categorizeError(error.lastError) : "unknown";
+      if (
+        underlyingType !== "unknown" &&
+        underlyingType !== "api" &&
+        underlyingType !== "retry_failed"
+      ) {
+        return underlyingType;
+      }
       return "retry_failed";
     }
 
@@ -1578,6 +1592,14 @@ export class StreamManager extends EventEmitter {
       error.error !== null
     ) {
       const structuredError = error.error as { code?: string; type?: string };
+
+      // Model not found
+      if (
+        structuredError.code === "model_not_found" ||
+        structuredError.type === "not_found_error"
+      ) {
+        return "model_not_found";
+      }
 
       // OpenAI context length errors have code: 'context_length_exceeded'
       if (structuredError.code === "context_length_exceeded") {
@@ -1598,6 +1620,16 @@ export class StreamManager extends EventEmitter {
         return "aborted";
       } else if (message.includes("network") || message.includes("fetch")) {
         return "network";
+      } else if (
+        message.includes("model") &&
+        (message.includes("does not exist") ||
+          message.includes("doesn't exist") ||
+          message.includes("not found") ||
+          message.includes("do not have access") ||
+          message.includes("don't have access") ||
+          message.includes("no access"))
+      ) {
+        return "model_not_found";
       } else if (
         message.includes("token") ||
         message.includes("context") ||
