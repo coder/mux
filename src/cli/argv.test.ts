@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   CLI_GLOBAL_FLAGS,
+  consumeMuxRootFromArgv,
   detectCliEnvironment,
   getParseOptions,
   getSubcommand,
@@ -87,6 +88,53 @@ describe("getSubcommand", () => {
   test("returns undefined when no subcommand", () => {
     const env = detectCliEnvironment({}, undefined);
     expect(getSubcommand(["bun", "script.ts"], env)).toBeUndefined();
+  });
+});
+
+describe("consumeMuxRootFromArgv", () => {
+  test("bun/node: strips --mux-root before subcommand", () => {
+    const env = detectCliEnvironment({}, undefined);
+    const argv = ["bun", "script.ts", "--mux-root", "/tmp/mux-test", "server", "--help"];
+    const result = consumeMuxRootFromArgv(argv, env);
+
+    expect(result).toEqual({ muxRoot: "/tmp/mux-test" });
+    expect(argv).toEqual(["bun", "script.ts", "server", "--help"]);
+  });
+
+  test("bun/node: strips --root after subcommand", () => {
+    const env = detectCliEnvironment({}, undefined);
+    const argv = ["bun", "script.ts", "server", "--root", "/tmp/mux-test"];
+    const result = consumeMuxRootFromArgv(argv, env);
+
+    expect(result).toEqual({ muxRoot: "/tmp/mux-test" });
+    expect(argv).toEqual(["bun", "script.ts", "server"]);
+  });
+
+  test("packaged electron: strips --mux-root", () => {
+    const env = detectCliEnvironment({ electron: "33.0.0" }, undefined);
+    const argv = ["mux", "--mux-root", "/tmp/mux-test", "server", "--help"];
+    const result = consumeMuxRootFromArgv(argv, env);
+
+    expect(result).toEqual({ muxRoot: "/tmp/mux-test" });
+    expect(argv).toEqual(["mux", "server", "--help"]);
+  });
+
+  test("supports equals syntax", () => {
+    const env = detectCliEnvironment({ electron: "33.0.0" }, true);
+    const argv = ["electron", ".", "server", "--mux-root=/tmp/mux-test"];
+    const result = consumeMuxRootFromArgv(argv, env);
+
+    expect(result).toEqual({ muxRoot: "/tmp/mux-test" });
+    expect(argv).toEqual(["electron", ".", "server"]);
+  });
+
+  test("returns error when flag missing value", () => {
+    const env = detectCliEnvironment({}, undefined);
+    const argv = ["bun", "script.ts", "--mux-root"];
+    const result = consumeMuxRootFromArgv(argv, env);
+
+    expect(result.error).toBe("Missing value for --mux-root");
+    expect(argv).toEqual(["bun", "script.ts", "--mux-root"]);
   });
 });
 

@@ -36,7 +36,9 @@ import * as path from "path";
 import type { Config } from "@/node/config";
 import type { ServiceContainer } from "@/node/services/serviceContainer";
 import { VERSION } from "@/version";
-import { getMuxHome, migrateLegacyMuxHome } from "@/common/constants/paths";
+import { migrateLegacyMuxHome } from "@/common/constants/paths";
+
+import { resolveMuxUserDataDir } from "@/desktop/userDataDir";
 
 import assert from "@/common/utils/assert";
 import { loadTokenizerModules } from "@/node/utils/main/tokenizer";
@@ -64,16 +66,25 @@ let services: ServiceContainer | null = null;
 const isE2ETest = process.env.MUX_E2E === "1";
 const forceDistLoad = process.env.MUX_E2E_LOAD_DIST === "1";
 
-if (isE2ETest) {
-  // For e2e tests, use a test-specific userData directory
-  // Note: getMuxHome() already respects MUX_ROOT for test isolation
-  const e2eUserData = path.join(getMuxHome(), "user-data");
+const userDataDir = resolveMuxUserDataDir({
+  muxUserDataDir: process.env.MUX_USER_DATA_DIR,
+  muxRoot: process.env.MUX_ROOT,
+  isE2E: isE2ETest,
+});
+
+if (userDataDir) {
+  // Use a root-scoped userData directory so we can run multiple mux instances
+  // side-by-side without Electron singleton/localStorage collisions.
   try {
-    fs.mkdirSync(e2eUserData, { recursive: true });
-    app.setPath("userData", e2eUserData);
-    console.log("Using test userData directory:", e2eUserData);
+    fs.mkdirSync(userDataDir, { recursive: true });
+    app.setPath("userData", userDataDir);
+    if (isE2ETest) {
+      console.log("Using test userData directory:", userDataDir);
+    } else {
+      console.log("Using userData directory:", userDataDir);
+    }
   } catch (error) {
-    console.warn("Failed to prepare test userData directory:", error);
+    console.warn("Failed to prepare userData directory:", error);
   }
 }
 
