@@ -13,6 +13,16 @@ import { ConfiguredProvidersBar } from "./ConfiguredProvidersBar";
 import { ConfigureProvidersPrompt } from "./ConfigureProvidersPrompt";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
+import { AgentsInitBanner } from "./AgentsInitBanner";
+import initMessage from "@/browser/assets/initMessage.txt?raw";
+import { usePersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
+import {
+  getAgentIdKey,
+  getAgentsInitNudgeKey,
+  getInputKey,
+  getPendingScopeId,
+  getProjectScopeId,
+} from "@/common/constants/storage";
 import { SUPPORTED_PROVIDERS } from "@/common/constants/providers";
 
 interface ProjectPageProps {
@@ -54,8 +64,14 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
   const { api } = useAPI();
   const chatInputRef = useRef<ChatInputAPI | null>(null);
   const [archivedWorkspaces, setArchivedWorkspaces] = useState<FrontendWorkspaceMetadata[]>([]);
+  const [showAgentsInitNudge, setShowAgentsInitNudge] = usePersistedState<boolean>(
+    getAgentsInitNudgeKey(projectPath),
+    false,
+    { listener: true }
+  );
   const { config: providersConfig, loading: providersLoading } = useProvidersConfig();
   const hasProviders = hasConfiguredProvider(providersConfig);
+  const shouldShowAgentsInitBanner = !providersLoading && hasProviders && showAgentsInitNudge;
 
   // Git repository state for the banner
   const [branchesLoaded, setBranchesLoaded] = useState(false);
@@ -167,6 +183,25 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
   }, [api, projectPath, syncArchivedState]);
 
   const didAutoFocusRef = useRef(false);
+
+  const handleDismissAgentsInit = useCallback(() => {
+    setShowAgentsInitNudge(false);
+  }, [setShowAgentsInitNudge]);
+
+  const handleRunAgentsInit = useCallback(() => {
+    // Switch project-scope mode to exec.
+    updatePersistedState(getAgentIdKey(getProjectScopeId(projectPath)), "exec");
+
+    // Prefill the AGENTS bootstrap prompt.
+    if (chatInputRef.current) {
+      chatInputRef.current.restoreText(initMessage);
+    } else {
+      const pendingScopeId = getPendingScopeId(projectPath);
+      updatePersistedState(getInputKey(pendingScopeId), initMessage);
+    }
+
+    setShowAgentsInitNudge(false);
+  }, [projectPath, setShowAgentsInitNudge]);
   const handleChatReady = useCallback((api: ChatInputAPI) => {
     chatInputRef.current = api;
 
@@ -198,6 +233,12 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
                   <ConfigureProvidersPrompt />
                 ) : (
                   <>
+                    {shouldShowAgentsInitBanner && (
+                      <AgentsInitBanner
+                        onRunInit={handleRunAgentsInit}
+                        onDismiss={handleDismissAgentsInit}
+                      />
+                    )}
                     {/* Configured providers bar - compact icon carousel */}
                     {providersConfig && hasProviders && (
                       <ConfiguredProvidersBar providersConfig={providersConfig} />

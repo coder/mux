@@ -32,6 +32,7 @@ import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { isWorkspaceForkSwitchEvent } from "./utils/workspaceEvents";
 import {
   getAgentIdKey,
+  getAgentsInitNudgeKey,
   getModelKey,
   getThinkingLevelByModelKey,
   getThinkingLevelKey,
@@ -755,6 +756,7 @@ function AppInner() {
           onClose={closeProjectCreateModal}
           onSuccess={(normalizedPath, projectConfig) => {
             addProject(normalizedPath, projectConfig);
+            updatePersistedState(getAgentsInitNudgeKey(normalizedPath), true);
             beginWorkspaceCreation(normalizedPath);
           }}
         />
