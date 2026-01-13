@@ -128,29 +128,37 @@ jobs:
         if: always()
         run: |
           echo "=== Terminal-Bench Results Summary ==="
-          if [ -f "$(find runs -maxdepth 2 -name 'results.json' 2>/dev/null | head -1)" ]; then
-            RESULTS_FILE=$(find runs -maxdepth 2 -name 'results.json' | head -1)
-            jq '{n_resolved, n_unresolved, accuracy}' "$RESULTS_FILE" 2>/dev/null || cat "$RESULTS_FILE"
+          # Harbor writes to jobs/<timestamp>/result.json (singular)
+          if [ -f "$(find jobs -maxdepth 2 -name 'result.json' 2>/dev/null | head -1)" ]; then
+            RESULTS_FILE=$(find jobs -maxdepth 2 -name 'result.json' | head -1)
+            jq '.' "$RESULTS_FILE" 2>/dev/null || cat "$RESULTS_FILE"
           else
-            echo "❌ No results.json found"
-            ls -laR runs/ 2>/dev/null || echo "runs/ directory missing"
+            echo "❌ No result.json found"
+            ls -laR jobs/ 2>/dev/null || echo "jobs/ directory missing"
           fi
 
       - name: Verify at least one task resolved
         run: |
-          RESULTS_FILE=$(find runs -maxdepth 2 -name 'results.json' 2>/dev/null | head -1)
+          # Harbor writes to jobs/<timestamp>/result.json (singular)
+          RESULTS_FILE=$(find jobs -maxdepth 2 -name 'result.json' 2>/dev/null | head -1)
           if [ -z "$RESULTS_FILE" ]; then
-            echo "❌ No results.json found - benchmark failed to produce results"
+            echo "❌ No result.json found - benchmark failed to produce results"
             exit 1
           fi
-          N_RESOLVED=$(jq -r '.n_resolved' "$RESULTS_FILE")
-          N_TOTAL=$((N_RESOLVED + $(jq -r '.n_unresolved' "$RESULTS_FILE")))
-          echo "Resolved: $N_RESOLVED / $N_TOTAL"
-          if [ "$N_RESOLVED" -eq 0 ]; then
-            echo "❌ No tasks resolved - agent may be broken"
+          # Harbor uses n_pass/n_fail instead of n_resolved/n_unresolved
+          N_PASS=$(jq -r '.n_pass // .n_resolved // 0' "$RESULTS_FILE")
+          N_FAIL=$(jq -r '.n_fail // .n_unresolved // 0' "$RESULTS_FILE")
+          N_ERRORS=$(jq -r '.n_error // 0' "$RESULTS_FILE")
+          N_TOTAL=$((N_PASS + N_FAIL + N_ERRORS))
+          echo "Passed: $N_PASS / $N_TOTAL (errors: $N_ERRORS)"
+          if [ "$N_PASS" -eq 0 ] && [ "$N_TOTAL" -gt 0 ]; then
+            echo "❌ No tasks passed - agent may be broken"
+            # Print trial errors if available
+            echo "--- Trial errors ---"
+            find jobs -name 'error.txt' -exec cat {} \; 2>/dev/null || true
             exit 1
           fi
-          echo "✅ At least one task resolved"
+          echo "✅ At least one task passed"
 
       - name: Set artifact name
         if: always()
@@ -174,7 +182,7 @@ jobs:
         with:
           name: ${{ steps.artifact-name.outputs.name }}
           path: |
-            runs/
+            jobs/
             benchmark.log
           if-no-files-found: warn
           retention-days: 30
