@@ -7,7 +7,7 @@
  */
 
 import React, { useState, useCallback, useRef, useMemo } from "react";
-import { X, Pencil, Check, Trash2, Unlink } from "lucide-react";
+import { Pencil, Check, Trash2, Unlink } from "lucide-react";
 import { DiffRenderer } from "./DiffRenderer";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
@@ -217,38 +217,36 @@ const ReviewBlockCore: React.FC<ReviewBlockCoreProps> = ({
 
       {/* Comment section - inline with edit support */}
       {(comment || onEditComment) && (
-        <div className="border-t border-[var(--color-review-accent)]/20 px-2 py-1.5">
+        <div className="border-t border-[var(--color-review-accent)]/20 px-2 py-1">
           {isEditing ? (
-            <div className="space-y-1.5">
+            <div className="space-y-1">
               <textarea
                 ref={textareaRef}
                 value={editValue}
                 onChange={(e) => setEditValue(e.target.value)}
                 onKeyDown={handleKeyDown}
-                className="text-primary w-full resize-none rounded border border-[var(--color-review-accent)]/40 bg-[var(--color-review-accent)]/10 px-2 py-1.5 text-xs focus:border-[var(--color-review-accent)]/60 focus:outline-none"
+                className="text-primary w-full resize-none rounded border border-[var(--color-review-accent)]/40 bg-[var(--color-review-accent)]/10 px-1.5 py-1 text-xs focus:border-[var(--color-review-accent)]/60 focus:outline-none"
                 rows={2}
                 placeholder="Your comment..."
               />
-              <div className="flex items-center justify-end gap-1.5">
-                <span className="text-muted mr-1 text-[10px]">
-                  {formatKeybind(KEYBINDS.SAVE_EDIT)} save · Esc cancel
+              <div className="flex items-center justify-end gap-1">
+                <span className="text-muted text-[10px]">
+                  {formatKeybind(KEYBINDS.SAVE_EDIT)} · Esc
                 </span>
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-6 px-2 text-xs"
+                  className="h-5 px-1.5 text-[10px]"
                   onClick={handleCancelEdit}
                 >
-                  <X className="mr-1 size-3" />
                   Cancel
                 </Button>
                 <Button
                   variant="secondary"
                   size="sm"
-                  className="h-6 px-2 text-xs"
+                  className="h-5 px-1.5 text-[10px]"
                   onClick={handleSaveEdit}
                 >
-                  <Check className="mr-1 size-3" />
                   Save
                 </Button>
               </div>

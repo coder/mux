@@ -822,32 +822,41 @@ const InlineReviewNoteRow: React.FC<InlineReviewNoteRowProps> = React.memo(
         </span>
         {/* Indicator spacer */}
         <span style={{ background: codeBg }} />
-        {/* Inline note */}
-        <div className="min-w-0 py-1 pr-3" style={{ background: codeBg }}>
+        {/* Inline note - compact display since file context is already shown in hunk header */}
+        <div className="min-w-0 py-0.5 pr-3" style={{ background: codeBg }}>
           <div
-            className="flex w-full max-w-[560px] overflow-hidden rounded border border-[var(--color-review-accent)]/30 shadow-sm"
-            style={{ background: containerBg }}
+            className="flex w-full max-w-[560px] overflow-hidden rounded border shadow-sm"
+            style={{
+              background: containerBg,
+              borderColor:
+                review.status === "checked"
+                  ? "hsl(from var(--color-success) h s l / 0.3)"
+                  : "hsl(from var(--color-review-accent) h s l / 0.3)",
+            }}
           >
             {/* Left accent bar */}
             <div className="w-[3px] shrink-0" style={{ background: tintColor }} />
             <div className="min-w-0 flex-1 px-2 py-1">
-              <div className="flex items-center gap-1 text-[10px]">
+              {/* Header: line range + status badge */}
+              <div className="flex items-center gap-1.5 text-[10px]">
                 <MessageSquare className="size-3 shrink-0" style={{ color: tintColor }} />
-                <span className="text-primary min-w-0 flex-1 truncate font-mono">
-                  {review.data.filePath}:{review.data.lineRange}
-                </span>
+                <span className="text-muted font-mono">L{review.data.lineRange}</span>
                 <span
                   className={cn(
-                    "shrink-0 uppercase tracking-wide",
-                    review.status === "checked" ? "text-success" : "text-muted"
+                    "rounded px-1 py-0.5 text-[9px] font-medium uppercase",
+                    review.status === "checked"
+                      ? "bg-success/20 text-success"
+                      : review.status === "attached"
+                        ? "bg-warning/20 text-warning"
+                        : "bg-muted/20 text-muted"
                   )}
-                  style={{ fontSize: "9px" }}
                 >
                   {review.status}
                 </span>
               </div>
+              {/* Comment */}
               {review.data.userNote && (
-                <div className="text-primary mt-0.5 text-[11px] leading-[1.4] whitespace-pre-wrap">
+                <div className="text-secondary mt-1 text-[11px] leading-[1.4] whitespace-pre-wrap">
                   {review.data.userNote}
                 </div>
               )}
