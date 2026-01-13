@@ -59,6 +59,20 @@ export function getModelName(modelString: string): string {
 }
 
 /**
+ * Extract the provider from a model string (e.g., "anthropic:claude-sonnet-4-5" -> "anthropic")
+ * @param modelString - Full model string in format "provider:model-name"
+ * @returns The provider part (before the colon), or empty string if no colon is found
+ */
+export function getModelProvider(modelString: string): string {
+  const normalized = normalizeGatewayModel(modelString);
+  const colonIndex = normalized.indexOf(":");
+  if (colonIndex === -1) {
+    return "";
+  }
+  return normalized.substring(0, colonIndex);
+}
+
+/**
  * Check if a model supports the 1M context window.
  * The 1M context window is only available for Claude Sonnet 4 and Sonnet 4.5.
  * @param modelString - Full model string in format "provider:model-name"
