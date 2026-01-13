@@ -177,6 +177,10 @@ class MuxAgent(BaseInstalledAgent):
 
     async def setup(self, environment: BaseEnvironment) -> None:
         """Override setup to stage payload first, then run install template."""
+        # Create /installed-agent directory (normally done by super().setup(),
+        # but we need it to exist before uploading files)
+        await environment.exec(command="mkdir -p /installed-agent")
+
         # Build and stage the mux app archive BEFORE super().setup() runs the
         # install template, which extracts the archive and runs chmod on runner
         if not self._archive_bytes:

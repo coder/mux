@@ -145,17 +145,20 @@ jobs:
             echo "❌ No result.json found - benchmark failed to produce results"
             exit 1
           fi
-          # Harbor uses n_pass/n_fail instead of n_resolved/n_unresolved
+          # Harbor uses n_pass/n_fail/n_errors
           N_PASS=$(jq -r '.n_pass // .n_resolved // 0' "$RESULTS_FILE")
           N_FAIL=$(jq -r '.n_fail // .n_unresolved // 0' "$RESULTS_FILE")
-          N_ERRORS=$(jq -r '.n_error // 0' "$RESULTS_FILE")
+          N_ERRORS=$(jq -r '.n_errors // .n_error // 0' "$RESULTS_FILE")
           N_TOTAL=$((N_PASS + N_FAIL + N_ERRORS))
           echo "Passed: $N_PASS / $N_TOTAL (errors: $N_ERRORS)"
+          if [ "$N_ERRORS" -gt 0 ]; then
+            echo "❌ $N_ERRORS task(s) had errors - agent setup or execution failed"
+            echo "--- Exception details ---"
+            find jobs -name 'exception.txt' -exec echo "=== {} ===" \; -exec cat {} \; 2>/dev/null || true
+            exit 1
+          fi
           if [ "$N_PASS" -eq 0 ] && [ "$N_TOTAL" -gt 0 ]; then
             echo "❌ No tasks passed - agent may be broken"
-            # Print trial errors if available
-            echo "--- Trial errors ---"
-            find jobs -name 'error.txt' -exec cat {} \; 2>/dev/null || true
             exit 1
           fi
           echo "✅ At least one task passed"
