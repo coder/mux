@@ -167,6 +167,21 @@ describe("LocalRuntime", () => {
   // Note: exec, stat, resolvePath, normalizePath are tested in the shared Runtime
   // interface tests (tests/runtime/runtime.test.ts matrix)
 
+  describe("ensureDir", () => {
+    it("creates directories recursively", async () => {
+      const runtime = new LocalRuntime(testDir);
+
+      const dirPath = path.join(testDir, "ensure-dir", "a", "b", "c");
+      await runtime.ensureDir(dirPath);
+
+      const stat = await fs.stat(dirPath);
+      expect(stat.isDirectory()).toBe(true);
+
+      // Should be idempotent
+      await runtime.ensureDir(dirPath);
+    });
+  });
+
   describe("tilde expansion in file operations", () => {
     it("stat expands tilde paths", async () => {
       const runtime = new LocalRuntime(testDir);

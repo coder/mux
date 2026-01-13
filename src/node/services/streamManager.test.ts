@@ -1,4 +1,6 @@
 import { describe, test, expect, beforeEach, mock } from "bun:test";
+import * as fs from "node:fs/promises";
+
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { StreamManager } from "./streamManager";
 import { APICallError } from "ai";
@@ -6,6 +8,7 @@ import type { HistoryService } from "./historyService";
 import type { PartialService } from "./partialService";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { shouldRunIntegrationTests, validateApiKeys } from "../../../tests/testUtils";
+import { DisposableTempDir } from "@/node/services/tempDir";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 
 // Skip integration tests if TEST_INTEGRATION is not set
@@ -36,6 +39,49 @@ const createMockPartialService = (): PartialService => {
     commitToHistory: mock(() => Promise.resolve({ success: true })),
   } as unknown as PartialService;
 };
+
+describe("StreamManager - createTempDirForStream", () => {
+  test("creates ~/.mux-tmp/<token> under the runtime's home", async () => {
+    using home = new DisposableTempDir("stream-home");
+
+    const prevHome = process.env.HOME;
+    const prevUserProfile = process.env.USERPROFILE;
+
+    process.env.HOME = home.path;
+    process.env.USERPROFILE = home.path;
+
+    try {
+      const streamManager = new StreamManager(
+        createMockHistoryService(),
+        createMockPartialService()
+      );
+      const runtime = createRuntime({ type: "local", srcBaseDir: "/tmp" });
+
+      const token = streamManager.generateStreamToken();
+      const resolved = await streamManager.createTempDirForStream(token, runtime);
+
+      // StreamManager normalizes Windows paths to forward slashes.
+      const normalizedHomePath = home.path.replace(/\\/g, "/");
+      expect(resolved.startsWith(normalizedHomePath)).toBe(true);
+      expect(resolved).toContain(`/.mux-tmp/${token}`);
+
+      const stat = await fs.stat(resolved);
+      expect(stat.isDirectory()).toBe(true);
+    } finally {
+      if (prevHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = prevHome;
+      }
+
+      if (prevUserProfile === undefined) {
+        delete process.env.USERPROFILE;
+      } else {
+        process.env.USERPROFILE = prevUserProfile;
+      }
+    }
+  });
+});
 
 describe("StreamManager - Concurrent Stream Prevention", () => {
   let streamManager: StreamManager;

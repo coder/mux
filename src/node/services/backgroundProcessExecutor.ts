@@ -24,7 +24,7 @@ import {
   buildTerminateCommand,
   shellQuote,
 } from "@/node/runtime/backgroundCommands";
-import { execBuffered } from "@/node/utils/runtime/helpers";
+import { execBuffered, writeFileString } from "@/node/utils/runtime/helpers";
 import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
 import { toPosixPath } from "@/node/utils/paths";
 
@@ -140,15 +140,13 @@ export async function spawnProcess(
   );
 
   // Create output directory and empty file
-  const mkdirResult = await execBuffered(
-    runtime,
-    `mkdir -p ${quotePath(outputDir)} && touch ${quotePath(outputPath)}`,
-    { cwd: FALLBACK_CWD, timeout: 30 }
-  );
-  if (mkdirResult.exitCode !== 0) {
+  try {
+    await runtime.ensureDir(outputDir);
+    await writeFileString(runtime, outputPath, "");
+  } catch (error) {
     return {
       success: false,
-      error: `Failed to create output directory: ${mkdirResult.stderr}`,
+      error: `Failed to create output directory: ${errorMsg(error)}`,
     };
   }
 

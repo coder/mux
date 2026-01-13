@@ -34,9 +34,7 @@ import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
 import { stripInternalToolResultFields } from "@/common/utils/tools/internalToolResultFields";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import { StreamingTokenTracker } from "@/node/utils/main/StreamingTokenTracker";
-import { shescape } from "@/node/runtime/streamUtils";
 import type { Runtime } from "@/node/runtime/Runtime";
-import { execBuffered } from "@/node/utils/runtime/helpers";
 import {
   createCachedSystemMessage,
   applyCacheControlToTools,
@@ -307,16 +305,11 @@ export class StreamManager extends EventEmitter {
       resolvedPath = resolvedPath.replace(/\\/g, "/");
     }
 
-    // Create directory on target runtime (local/SSH/Docker)
-    const result = await execBuffered(runtime, `mkdir -p ${shescape.quote(resolvedPath)}`, {
-      cwd: "/",
-      timeout: 10,
-    });
-
-    if (result.exitCode !== 0) {
-      throw new Error(
-        `Failed to create temp directory ${resolvedPath}: exit code ${result.exitCode}`
-      );
+    try {
+      await runtime.ensureDir(resolvedPath);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`Failed to create temp directory ${resolvedPath}: ${msg}`);
     }
 
     return resolvedPath;

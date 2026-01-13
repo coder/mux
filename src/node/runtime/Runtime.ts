@@ -283,6 +283,14 @@ export interface Runtime {
   stat(path: string, abortSignal?: AbortSignal): Promise<FileStat>;
 
   /**
+   * Ensure a directory exists (mkdir -p semantics).
+   *
+   * This intentionally lives on the Runtime abstraction so local runtimes can use
+   * Node fs APIs (Windows-safe) while remote runtimes can use shell commands.
+   */
+  ensureDir(path: string): Promise<void>;
+
+  /**
    * Resolve a path to its absolute, canonical form (expanding tildes, resolving symlinks, etc.).
    * This is used at workspace creation time to normalize srcBaseDir paths in config.
    *

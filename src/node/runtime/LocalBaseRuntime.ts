@@ -308,6 +308,19 @@ export abstract class LocalBaseRuntime implements Runtime {
     }
   }
 
+  async ensureDir(dirPath: string): Promise<void> {
+    const expandedPath = expandTilde(dirPath);
+    try {
+      await fsPromises.mkdir(expandedPath, { recursive: true });
+    } catch (err) {
+      throw new RuntimeErrorClass(
+        `Failed to create directory ${dirPath}: ${err instanceof Error ? err.message : String(err)}`,
+        "file_io",
+        err instanceof Error ? err : undefined
+      );
+    }
+  }
+
   resolvePath(filePath: string): Promise<string> {
     // Expand tilde to actual home directory path
     const expanded = expandTilde(filePath);
