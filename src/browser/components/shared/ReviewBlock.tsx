@@ -128,6 +128,7 @@ const ReviewBlockCore: React.FC<ReviewBlockCoreProps> = ({
                   <button
                     type="button"
                     onClick={handleStartEdit}
+                    aria-label="Edit comment"
                     className="text-muted hover:text-secondary flex items-center justify-center rounded p-1 transition-colors"
                   >
                     <Pencil className="size-3" />
@@ -142,6 +143,7 @@ const ReviewBlockCore: React.FC<ReviewBlockCoreProps> = ({
                   <button
                     type="button"
                     onClick={onComplete}
+                    aria-label="Mark as done"
                     className="text-muted hover:text-success flex items-center justify-center rounded p-1 transition-colors"
                   >
                     <Check className="size-3" />
@@ -156,6 +158,7 @@ const ReviewBlockCore: React.FC<ReviewBlockCoreProps> = ({
                   <button
                     type="button"
                     onClick={onDetach}
+                    aria-label="Detach from message"
                     className="text-muted hover:text-secondary flex items-center justify-center rounded p-1 transition-colors"
                   >
                     <Unlink className="size-3" />
@@ -170,6 +173,7 @@ const ReviewBlockCore: React.FC<ReviewBlockCoreProps> = ({
                   <button
                     type="button"
                     onClick={onDelete}
+                    aria-label="Delete review"
                     className="text-muted hover:text-error flex items-center justify-center rounded p-1 transition-colors"
                   >
                     <Trash2 className="size-3" />
