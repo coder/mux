@@ -169,8 +169,8 @@ export function useCoderWorkspace({
       .listWorkspaces()
       .then((result) => {
         if (mounted) {
-          // Only show running workspaces (per spec)
-          setExistingWorkspaces(result.filter((w) => w.status === "running"));
+          // Backend already filters to running workspaces by default
+          setExistingWorkspaces(result);
         }
       })
       .catch(() => {
