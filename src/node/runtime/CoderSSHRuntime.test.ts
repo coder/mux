@@ -1,18 +1,11 @@
 import { describe, expect, it, mock, beforeEach, afterEach, spyOn, type Mock } from "bun:test";
 import type { CoderService } from "@/node/services/coderService";
 import type { RuntimeConfig } from "@/common/types/runtime";
+import * as runtimeHelpers from "@/node/utils/runtime/helpers";
 
 // eslint-disable-next-line @typescript-eslint/no-empty-function
 const noop = () => {};
 import type { RuntimeStatusEvent } from "./Runtime";
-
-const execBufferedMock = mock(() =>
-  Promise.resolve({ stdout: "", stderr: "", exitCode: 0, duration: 0 })
-);
-
-void mock.module("@/node/utils/runtime/helpers", () => ({
-  execBuffered: execBufferedMock,
-}));
 
 import { CoderSSHRuntime, type CoderSSHRuntimeConfig } from "./CoderSSHRuntime";
 import { SSHRuntime } from "./SSHRuntime";
@@ -344,8 +337,19 @@ describe("CoderSSHRuntime.validateBeforePersist", () => {
 // =============================================================================
 
 describe("CoderSSHRuntime.postCreateSetup", () => {
+  let execBufferedSpy: ReturnType<typeof spyOn>;
+
   beforeEach(() => {
-    execBufferedMock.mockClear();
+    execBufferedSpy = spyOn(runtimeHelpers, "execBuffered").mockResolvedValue({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+      duration: 0,
+    });
+  });
+
+  afterEach(() => {
+    mock.restore();
   });
 
   it("creates a new Coder workspace and prepares the directory", async () => {
@@ -414,7 +418,7 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
 
     expect(createWorkspace).toHaveBeenCalledWith("my-ws", "my-template", undefined, undefined);
     expect(ensureSSHConfig).toHaveBeenCalled();
-    expect(execBufferedMock).toHaveBeenCalled();
+    expect(execBufferedSpy).toHaveBeenCalled();
 
     // After postCreateSetup, ensureReady should succeed (workspace exists on server)
     const afterReady = await runtime.ensureReady();
@@ -457,7 +461,7 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
 
     expect(createWorkspace).not.toHaveBeenCalled();
     expect(ensureSSHConfig).toHaveBeenCalled();
-    expect(execBufferedMock).toHaveBeenCalled();
+    expect(execBufferedSpy).toHaveBeenCalled();
   });
 
   it("throws when workspaceName is missing", () => {
