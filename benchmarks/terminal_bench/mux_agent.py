@@ -215,9 +215,43 @@ class MuxAgent(BaseInstalledAgent):
             )
         ]
 
+    async def run(
+        self,
+        instruction: str,
+        environment: BaseEnvironment,
+        context: AgentContext,
+    ) -> None:
+        """Run agent commands, download token file, then populate context."""
+        # Execute commands (from base class logic, but without calling populate_context)
+        for i, exec_input in enumerate(self.create_run_agent_commands(instruction)):
+            command_dir = self.logs_dir / f"command-{i}"
+            command_dir.mkdir(parents=True, exist_ok=True)
+            (command_dir / "command.txt").write_text(exec_input.command)
+
+            result = await environment.exec(
+                command=exec_input.command,
+                cwd=exec_input.cwd,
+                env=exec_input.env,
+                timeout_sec=exec_input.timeout_sec,
+            )
+
+            (command_dir / "return-code.txt").write_text(str(result.return_code))
+            if result.stdout:
+                (command_dir / "stdout.txt").write_text(result.stdout)
+            if result.stderr:
+                (command_dir / "stderr.txt").write_text(result.stderr)
+
+        # Download token file from container BEFORE populating context
+        token_file = self.logs_dir / "mux-tokens.json"
+        try:
+            await environment.download_file(self._TOKEN_FILE_PATH, token_file)
+        except Exception:
+            pass  # Token file may not exist if agent crashed early
+
+        self.populate_context_post_run(context)
+
     def populate_context_post_run(self, context: AgentContext) -> None:
         """Extract token usage from the token file written by mux-run.sh."""
-        # Best-effort: try to read local copy if available
         token_file = self.logs_dir / "mux-tokens.json"
         if token_file.exists():
             try:
