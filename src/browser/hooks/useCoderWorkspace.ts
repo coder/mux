@@ -200,10 +200,18 @@ export function useCoderWorkspace({
     let mounted = true;
     setLoadingPresets(true);
 
+    // Capture template at request time to detect stale responses
+    const templateAtRequest = coderConfig.template;
+
     api.coder
-      .listPresets({ template: coderConfig.template })
+      .listPresets({ template: templateAtRequest })
       .then((result) => {
         if (!mounted) {
+          return;
+        }
+
+        // Stale response guard: if user changed template while request was in-flight, ignore this response
+        if (coderConfigRef.current?.template !== templateAtRequest) {
           return;
         }
 
