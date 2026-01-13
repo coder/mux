@@ -14,7 +14,7 @@ interface SectionHeaderProps {
   onAddWorkspace: () => void;
   onRename: (name: string) => void;
   onChangeColor: (color: string) => void;
-  onDelete: () => void;
+  onDelete: (event: React.MouseEvent<HTMLButtonElement>) => void;
 }
 
 export const SectionHeader: React.FC<SectionHeaderProps> = ({
@@ -206,7 +206,7 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
         <Tooltip>
           <TooltipTrigger asChild>
             <button
-              onClick={onDelete}
+              onClick={(e) => onDelete(e)}
               className="text-muted hover:text-danger-light hover:bg-danger-light/10 flex h-5 w-5 cursor-pointer items-center justify-center rounded border-none bg-transparent p-0 transition-colors"
               aria-label="Delete section"
             >

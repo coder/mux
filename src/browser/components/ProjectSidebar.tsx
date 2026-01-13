@@ -293,6 +293,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const [archivingWorkspaceIds, setArchivingWorkspaceIds] = useState<Set<string>>(new Set());
   const workspaceArchiveError = usePopoverError();
   const projectRemoveError = usePopoverError();
+  const sectionRemoveError = usePopoverError();
   const [secretsModalState, setSecretsModalState] = useState<{
     isOpen: boolean;
     projectPath: string;
@@ -367,6 +368,23 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     },
     [onArchiveWorkspace, workspaceArchiveError]
   );
+
+  const handleRemoveSection = async (
+    projectPath: string,
+    sectionId: string,
+    buttonElement: HTMLElement
+  ) => {
+    const result = await removeSection(projectPath, sectionId);
+    if (!result.success) {
+      const error = result.error ?? "Failed to remove section";
+      const rect = buttonElement.getBoundingClientRect();
+      const anchor = {
+        top: rect.top + window.scrollY,
+        left: rect.right + 10,
+      };
+      sectionRemoveError.showError(sectionId, error, anchor);
+    }
+  };
 
   const handleOpenSecrets = async (projectPath: string) => {
     const secrets = await onGetSecrets(projectPath);
@@ -818,8 +836,12 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                         onChangeColor={(color) => {
                                           void updateSection(projectPath, section.id, { color });
                                         }}
-                                        onDelete={() => {
-                                          void removeSection(projectPath, section.id);
+                                        onDelete={(e) => {
+                                          void handleRemoveSection(
+                                            projectPath,
+                                            section.id,
+                                            e.currentTarget
+                                          );
                                         }}
                                       />
                                       {isSectionExpanded && (
@@ -920,6 +942,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
             error={projectRemoveError.error}
             prefix="Failed to remove project"
             onDismiss={projectRemoveError.clearError}
+          />
+          <PopoverError
+            error={sectionRemoveError.error}
+            prefix="Failed to remove section"
+            onDismiss={sectionRemoveError.clearError}
           />
         </div>
       </DndProvider>
