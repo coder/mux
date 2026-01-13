@@ -246,7 +246,9 @@ class MuxAgent(BaseInstalledAgent):
                 (command_dir / "stderr.txt").write_text(result.stderr)
 
         # Download token file from container BEFORE populating context
+        # Clear any stale token file first to avoid reading outdated data if download fails
         token_file = self.logs_dir / "mux-tokens.json"
+        token_file.unlink(missing_ok=True)
         try:
             await environment.download_file(self._TOKEN_FILE_PATH, token_file)
         except Exception:
