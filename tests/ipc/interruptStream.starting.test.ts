@@ -23,7 +23,7 @@ import {
   HAIKU_MODEL,
 } from "./helpers";
 import { createStreamCollector } from "./streamCollector";
-import { isMuxMessage } from "@/common/orpc/types";
+import { isInitOutput, isMuxMessage } from "@/common/orpc/types";
 import * as path from "path";
 import * as fs from "fs/promises";
 // eslint-disable-next-line local/no-unsafe-child-process
@@ -60,7 +60,7 @@ describeIntegration("interruptStream during startup", () => {
     // Give the init hook enough time to keep init in-progress while we interrupt.
     await addInitHook(
       repoPath,
-      ['echo "Starting init hook..."', "sleep 3", 'echo "Init hook done"', "exit 0"].join("\n")
+      ['echo "Starting init hook..."', "sleep 6", 'echo "Init hook done"', "exit 0"].join("\n")
     );
 
     let workspaceId: string | null = null;
@@ -88,6 +88,14 @@ describeIntegration("interruptStream during startup", () => {
 
       const activeCollector = collector;
 
+      // Ensure the init hook is actually running so sendMessage() will block on waitForInit.
+      const sawInitStart = await waitFor(() => {
+        return activeCollector
+          .getEvents()
+          .some((e) => isInitOutput(e) && e.line.includes("Starting init hook..."));
+      }, 5000);
+      expect(sawInitStart).toBe(true);
+
       // Start sending a message (will block on init hook).
       const sendPromise = sendMessageWithModel(
         env,
@@ -111,6 +119,9 @@ describeIntegration("interruptStream during startup", () => {
 
       // We should still be in pre-stream-start startup.
       expect(activeCollector.getEvents().some((e) => e.type === "stream-start")).toBe(false);
+
+      // Give sendMessage() a moment to enter AIService.streamMessage and register the pending start.
+      await new Promise((resolve) => setTimeout(resolve, 50));
 
       // Interrupt while still in "starting...".
       const interruptResult = await env.orpc.workspace.interruptStream({ workspaceId });
