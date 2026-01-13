@@ -170,9 +170,6 @@ export function CoderControls(props: CoderControlsProps) {
   const effectivePreset =
     presets.length === 0 ? undefined : presets.length === 1 ? presets[0].name : coderConfig?.preset;
 
-  // Show preset dropdown only when 2+ presets
-  const showPresetDropdown = presets.length >= 2;
-
   return (
     <div className="flex flex-col gap-1.5" data-testid="coder-controls">
       <CoderCheckbox enabled={enabled} onEnabledChange={onEnabledChange} disabled={disabled} />
@@ -237,7 +234,7 @@ export function CoderControls(props: CoderControlsProps) {
           {/* New workspace controls - template/preset stacked vertically */}
           {mode === "new" && (
             <div className="flex flex-col gap-1.5 p-2 pl-3">
-              <div className="flex items-center gap-2">
+              <div className="flex h-7 items-center gap-2">
                 <label className="text-muted-foreground w-16 text-xs">Template</label>
                 {loadingTemplates ? (
                   <Loader2 className="text-muted h-4 w-4 animate-spin" />
@@ -258,30 +255,29 @@ export function CoderControls(props: CoderControlsProps) {
                   </select>
                 )}
               </div>
-              {showPresetDropdown && (
-                <div className="flex items-center gap-2">
-                  <label className="text-muted-foreground w-16 text-xs">Preset</label>
-                  {loadingPresets ? (
-                    <Loader2 className="text-muted h-4 w-4 animate-spin" />
-                  ) : (
-                    <select
-                      value={effectivePreset ?? ""}
-                      onChange={(e) => handlePresetChange(e.target.value)}
-                      disabled={disabled}
-                      className="bg-bg-dark text-foreground border-border-medium focus:border-accent h-7 w-[180px] rounded-md border px-2 text-sm focus:outline-none disabled:opacity-50"
-                      data-testid="coder-preset-select"
-                    >
-                      <option value="">Select preset...</option>
-                      {presets.map((p) => (
-                        <option key={p.id} value={p.name}>
-                          {p.name}
-                          {p.isDefault ? " (default)" : ""}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                </div>
-              )}
+              <div className="flex h-7 items-center gap-2">
+                <label className="text-muted-foreground w-16 text-xs">Preset</label>
+                {loadingPresets ? (
+                  <Loader2 className="text-muted h-4 w-4 animate-spin" />
+                ) : (
+                  <select
+                    value={effectivePreset ?? ""}
+                    onChange={(e) => handlePresetChange(e.target.value)}
+                    disabled={disabled || presets.length === 0}
+                    className="bg-bg-dark text-foreground border-border-medium focus:border-accent h-7 w-[180px] rounded-md border px-2 text-sm focus:outline-none disabled:opacity-50"
+                    data-testid="coder-preset-select"
+                  >
+                    {presets.length === 0 && <option value="">No presets</option>}
+                    {presets.length > 0 && <option value="">Select preset...</option>}
+                    {presets.map((p) => (
+                      <option key={p.id} value={p.name}>
+                        {p.name}
+                        {p.isDefault ? " (default)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
             </div>
           )}
 
