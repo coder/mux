@@ -25,6 +25,7 @@
 import { LRUCache } from "lru-cache";
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { HunkViewer } from "./HunkViewer";
+import type { ReviewActionCallbacks } from "../../shared/InlineReviewNote";
 import { ReviewControls } from "./ReviewControls";
 import { FileTree } from "./FileTree";
 import { UntrackedStatus } from "./UntrackedStatus";
@@ -339,7 +340,15 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   // Track hunk first-seen timestamps for LIFO sorting
   const { recordFirstSeen, firstSeenMap } = useHunkFirstSeen(workspaceId);
 
-  const { reviews } = useReviews(workspaceId);
+  const {
+    reviews,
+    updateReviewNote,
+    checkReview,
+    uncheckReview,
+    attachReview,
+    detachReview,
+    removeReview,
+  } = useReviews(workspaceId);
 
   const reviewsByFilePath = useMemo(() => {
     const grouped = new Map<string, typeof reviews>();
@@ -358,6 +367,19 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
 
     return grouped;
   }, [reviews]);
+
+  // Memoized review action callbacks for inline review notes
+  const reviewActions: ReviewActionCallbacks = useMemo(
+    () => ({
+      onEditComment: updateReviewNote,
+      onComplete: checkReview,
+      onUncheck: uncheckReview,
+      onAttach: attachReview,
+      onDetach: detachReview,
+      onDelete: removeReview,
+    }),
+    [updateReviewNote, checkReview, uncheckReview, attachReview, detachReview, removeReview]
+  );
 
   // Derive hunks from diffState for use in filters and rendering
   const hunks = useMemo(
@@ -1309,6 +1331,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
                       onComposingChange={handleHunkComposingChange}
                       diffBase={filters.diffBase}
                       includeUncommitted={filters.includeUncommitted}
+                      reviewActions={reviewActions}
                     />
                   );
                 })
