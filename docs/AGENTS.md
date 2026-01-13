@@ -1,6 +1,6 @@
 ---
 title: AGENTS.md
-description: Agent instructions for AI assistants working on the mux codebase
+description: Agent instructions for AI assistants working on the Mux codebase
 ---
 
 **Prime directive:** keep edits minimal and token-efficient—say only what conveys actionable signal.
@@ -74,7 +74,7 @@ EOF
 ## Refactoring & Runtime Etiquette
 
 - Use `git mv` to retain history when moving files.
-- Never kill the running mux process; rely on `make typecheck` + targeted `bun test path/to/file.test.ts` for validation (run `make test` only when necessary; it can be slow).
+- Never kill the running Mux process; rely on `make typecheck` + targeted `bun test path/to/file.test.ts` for validation (run `make test` only when necessary; it can be slow).
 
 ## Self-Healing & Crash Resilience
 

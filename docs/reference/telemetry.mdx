@@ -1,18 +1,18 @@
 ---
 title: Telemetry
-description: What mux collects, what it doesn’t, and how to disable it
+description: What Mux collects, what it doesn’t, and how to disable it
 ---
 
-mux collects anonymous usage telemetry to help improve the product.
+Mux collects anonymous usage telemetry to help improve the product.
 
 ## Privacy policy
 
-- **No personal information**: mux does not collect usernames, project names, file paths, or code content.
+- **No personal information**: Mux does not collect usernames, project names, file paths, or code content.
 - **Random IDs only**: Only randomly generated workspace IDs are sent.
 - **No hashing**: Hashing is vulnerable to rainbow table attacks.
 - **Transparent payload**: See exactly what is sent in [`src/common/telemetry/payload.ts`](https://github.com/coder/mux/blob/main/src/common/telemetry/payload.ts).
 
-## What mux tracks
+## What Mux tracks
 
 All telemetry events include basic system information:
 
@@ -28,7 +28,7 @@ All telemetry events include basic system information:
 - **Message sending**: When messages are sent (model, mode, message length rounded to base-2)
 - **Errors**: Error types and context (no sensitive data)
 
-### What mux does _not_ track
+### What Mux does _not_ track
 
 - Your messages or code
 - Project names or file paths
@@ -48,7 +48,7 @@ This disables telemetry collection at the backend level.
 
 <Note>
   Disabling telemetry also hides the **Share** button on assistant messages. Link sharing uses
-  [mux.md](https://mux.md), a separate mux service, and is gated on telemetry enablement to respect
+  [mux.md](https://mux.md), a separate Mux service, and is gated on telemetry enablement to respect
   your privacy preferences.
 </Note>
 
