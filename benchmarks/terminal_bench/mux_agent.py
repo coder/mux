@@ -176,11 +176,9 @@ class MuxAgent(BaseInstalledAgent):
     _TOKEN_FILE_PATH = "/tmp/mux-tokens.json"
 
     async def setup(self, environment: BaseEnvironment) -> None:
-        """Override setup to also stage the mux payload and runner script."""
-        # Call parent setup which runs the install.sh template
-        await super().setup(environment)
-
-        # Build and stage the mux app archive
+        """Override setup to stage payload first, then run install template."""
+        # Build and stage the mux app archive BEFORE super().setup() runs the
+        # install template, which extracts the archive and runs chmod on runner
         if not self._archive_bytes:
             self._archive_bytes = build_app_archive(
                 self._repo_root, self._INCLUDE_PATHS
@@ -200,11 +198,9 @@ class MuxAgent(BaseInstalledAgent):
             target_path=f"/installed-agent/{self._RUNNER_NAME}",
         )
 
-        # Extract archive and make runner executable
-        await environment.exec(
-            command=f"tar -xzf /installed-agent/{self._ARCHIVE_NAME} -C /opt/mux-app"
-        )
-        await environment.exec(command=f"chmod +x /installed-agent/{self._RUNNER_NAME}")
+        # Now run parent setup which executes mux_setup.sh.j2 template
+        # (extracts archive, installs bun/deps, chmod +x runner)
+        await super().setup(environment)
 
         # Store environment reference for token extraction later
         self._last_environment = environment
