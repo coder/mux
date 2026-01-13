@@ -975,9 +975,9 @@ export class DockerRuntime extends RemoteRuntime {
       const destGid = gidResult.stdout.trim() || "0";
       const destHome = homeResult.stdout.trim() || "/root";
 
-      // Create /var/mux/plans (git clone will create /src)
+      // Create /src and /var/mux/plans as root, then chown to container user
       const mkdirResult = await runDockerCommand(
-        `docker exec --user root ${destContainerName} sh -c 'mkdir -p /var/mux/plans && chown ${destUid}:${destGid} /var/mux /var/mux/plans'`,
+        `docker exec --user root ${destContainerName} sh -c 'mkdir -p ${CONTAINER_SRC_DIR} /var/mux/plans && chown ${destUid}:${destGid} ${CONTAINER_SRC_DIR} /var/mux /var/mux/plans'`,
         10000
       );
       if (mkdirResult.exitCode !== 0) {
