@@ -11,26 +11,9 @@ import { Pencil, Check, Trash2, Unlink } from "lucide-react";
 import { DiffRenderer } from "./DiffRenderer";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
+import { formatLineRangeCompact } from "@/browser/utils/review/lineRange";
 import { matchesKeybind, formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import type { ReviewNoteDataForDisplay } from "@/common/types/message";
-
-/**
- * Format line range for compact display.
- * Input: "-10-14 +10-15" or "-5" or "+5-10"
- * Output: "10-15" (prefers new lines, falls back to old)
- */
-function formatLineRangeCompact(lineRange: string): string {
-  // Extract new line range (after +) if present
-  const newMatch = /\+(\d+(?:-\d+)?)/.exec(lineRange);
-  if (newMatch) return newMatch[1];
-
-  // Fall back to old line range (after -)
-  const oldMatch = /-(\d+(?:-\d+)?)/.exec(lineRange);
-  if (oldMatch) return oldMatch[1];
-
-  // Fallback: return as-is
-  return lineRange;
-}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SHARED INTERNAL COMPONENT
@@ -117,7 +100,7 @@ const ReviewBlockCore: React.FC<ReviewBlockCoreProps> = ({
   );
 
   // Has any action available
-  const hasActions = onComplete ?? onDetach ?? onDelete ?? onEditComment;
+  const hasActions = Boolean(onComplete ?? onDetach ?? onDelete ?? onEditComment);
 
   return (
     <div className="group/review min-w-0 overflow-hidden rounded border border-[var(--color-review-accent)]/30 bg-[var(--color-review-accent)]/5">
@@ -253,7 +236,7 @@ const ReviewBlockCore: React.FC<ReviewBlockCoreProps> = ({
               />
               <div className="flex items-center justify-end gap-1">
                 <span className="text-muted text-[10px]">
-                  {formatKeybind(KEYBINDS.SAVE_EDIT)} · Esc
+                  {formatKeybind(KEYBINDS.SAVE_EDIT)} · {formatKeybind(KEYBINDS.CANCEL_EDIT)}
                 </span>
                 <Button
                   variant="ghost"

@@ -1,42 +1,18 @@
 /**
- * InlineReviewNote - Compact review note display shared between ChatInput and Review pane
+ * InlineReviewNote - compact review note UI (comment + status + actions).
  *
- * Provides consistent aesthetics and controls across:
- * - ChatInput attached review preview
- * - Review pane inline review display
- *
- * Does NOT include code chunk rendering - parent components handle that context.
+ * Used for inline review notes rendered inside diff views (e.g. the Review pane).
+ * Does NOT include code chunk rendering; parent components provide that context.
  */
 
 import React, { useState, useCallback, useRef } from "react";
 import { Pencil, Check, Trash2, Unlink, MessageSquare } from "lucide-react";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
+import { formatLineRangeCompact } from "@/browser/utils/review/lineRange";
 import { matchesKeybind, formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { cn } from "@/common/lib/utils";
 import type { Review } from "@/common/types/review";
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// HELPERS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/**
- * Format line range for compact display.
- * Input: "-10-14 +10-15" or "-5" or "+5-10"
- * Output: "10-15" (prefers new lines, falls back to old)
- */
-function formatLineRangeCompact(lineRange: string): string {
-  // Extract new line range (after +) if present
-  const newMatch = /\+(\d+(?:-\d+)?)/.exec(lineRange);
-  if (newMatch) return newMatch[1];
-
-  // Fall back to old line range (after -)
-  const oldMatch = /-(\d+(?:-\d+)?)/.exec(lineRange);
-  if (oldMatch) return oldMatch[1];
-
-  // Fallback: return as-is
-  return lineRange;
-}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -117,14 +93,16 @@ export const InlineReviewNote: React.FC<InlineReviewNoteProps> = ({
   );
 
   // Determine which actions are available based on status
-  const canEdit = actions?.onEditComment && !isEditing;
-  const canComplete = actions?.onComplete && review.status !== "checked";
-  const canUncheck = actions?.onUncheck && review.status === "checked";
-  const canDetach = actions?.onDetach && review.status === "attached";
-  const canAttach = actions?.onAttach && review.status === "pending";
-  const canDelete = actions?.onDelete;
+  const canEdit = Boolean(actions?.onEditComment) && !isEditing;
+  const canComplete = Boolean(actions?.onComplete) && review.status !== "checked";
+  const canUncheck = Boolean(actions?.onUncheck) && review.status === "checked";
+  const canDetach = Boolean(actions?.onDetach) && review.status === "attached";
+  const canAttach = Boolean(actions?.onAttach) && review.status === "pending";
+  const canDelete = Boolean(actions?.onDelete);
 
-  const hasActions = canEdit ?? canComplete ?? canUncheck ?? canDetach ?? canAttach ?? canDelete;
+  const hasActions = [canEdit, canComplete, canUncheck, canDetach, canAttach, canDelete].some(
+    Boolean
+  );
 
   // Color based on status
   const tintColor =
@@ -292,7 +270,7 @@ export const InlineReviewNote: React.FC<InlineReviewNoteProps> = ({
                 />
                 <div className="flex items-center justify-end gap-1">
                   <span className="text-muted text-[9px]">
-                    {formatKeybind(KEYBINDS.SAVE_EDIT)} · Esc
+                    {formatKeybind(KEYBINDS.SAVE_EDIT)} · {formatKeybind(KEYBINDS.CANCEL_EDIT)}
                   </span>
                   <Button
                     variant="ghost"
