@@ -149,18 +149,21 @@ export class CoderService {
         return [];
       }
 
-      const presets = JSON.parse(stdout) as Array<{
-        id: string;
-        name: string;
-        description?: string;
-        is_default?: boolean;
+      // CLI returns [{TemplatePreset: {ID, Name, ...}}, ...] wrapper structure
+      const raw = JSON.parse(stdout) as Array<{
+        TemplatePreset: {
+          ID: string;
+          Name: string;
+          Description?: string;
+          Default?: boolean;
+        };
       }>;
 
-      return presets.map((p) => ({
-        id: p.id,
-        name: p.name,
-        description: p.description,
-        isDefault: p.is_default ?? false,
+      return raw.map((entry) => ({
+        id: entry.TemplatePreset.ID,
+        name: entry.TemplatePreset.Name,
+        description: entry.TemplatePreset.Description,
+        isDefault: entry.TemplatePreset.Default ?? false,
       }));
     } catch (error) {
       log.debug("Failed to list Coder presets (may not exist for template)", {
