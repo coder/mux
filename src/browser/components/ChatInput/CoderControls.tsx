@@ -19,7 +19,7 @@ export interface CoderControlsProps {
   enabled: boolean;
   onEnabledChange: (enabled: boolean) => void;
 
-  /** Whether Coder CLI is available */
+  /** Coder CLI availability info (null while checking) */
   coderInfo: CoderInfo | null;
 
   /** Current Coder configuration */
@@ -49,6 +49,29 @@ type CoderMode = "new" | "existing";
  * Coder workspace controls component.
  * Shows checkbox to enable Coder, then New/Existing toggle with appropriate dropdowns.
  */
+/** Checkbox row with optional status indicator */
+function CoderCheckbox(props: {
+  enabled: boolean;
+  onEnabledChange: (enabled: boolean) => void;
+  disabled: boolean;
+  status?: React.ReactNode;
+}) {
+  return (
+    <label className="flex items-center gap-1.5 text-xs">
+      <input
+        type="checkbox"
+        checked={props.enabled}
+        onChange={(e) => props.onEnabledChange(e.target.checked)}
+        disabled={props.disabled}
+        className="accent-accent"
+        data-testid="coder-checkbox"
+      />
+      <span className="text-muted">Use Coder Workspace</span>
+      {props.status}
+    </label>
+  );
+}
+
 export function CoderControls(props: CoderControlsProps) {
   const {
     enabled,
@@ -66,29 +89,37 @@ export function CoderControls(props: CoderControlsProps) {
     hasError,
   } = props;
 
-  // Coder CLI not available
-  if (!coderInfo?.available) {
-    // If user previously enabled Coder but CLI is now unavailable, show checkbox so they can disable it
-    if (enabled) {
-      return (
-        <div className="flex flex-col gap-1.5" data-testid="coder-controls">
-          <label className="flex items-center gap-1.5 text-xs">
-            <input
-              type="checkbox"
-              checked={enabled}
-              onChange={(e) => onEnabledChange(e.target.checked)}
-              disabled={disabled}
-              className="accent-accent"
-              data-testid="coder-checkbox"
-            />
-            <span className="text-muted">Use Coder Workspace</span>
-            <span className="text-yellow-500">(CLI unavailable)</span>
-          </label>
-        </div>
-      );
-    }
-    // Otherwise don't render anything
-    return null;
+  // Coder CLI status: loading (null), unavailable (available=false), or available (available=true)
+  if (coderInfo === null) {
+    return (
+      <div className="flex flex-col gap-1.5" data-testid="coder-controls">
+        <CoderCheckbox
+          enabled={enabled}
+          onEnabledChange={onEnabledChange}
+          disabled={disabled}
+          status={
+            <span className="text-muted flex items-center gap-1">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Checking…
+            </span>
+          }
+        />
+      </div>
+    );
+  }
+
+  if (!coderInfo.available) {
+    if (!enabled) return null;
+    return (
+      <div className="flex flex-col gap-1.5" data-testid="coder-controls">
+        <CoderCheckbox
+          enabled={enabled}
+          onEnabledChange={onEnabledChange}
+          disabled={disabled}
+          status={<span className="text-yellow-500">(CLI unavailable)</span>}
+        />
+      </div>
+    );
   }
 
   const mode: CoderMode = coderConfig?.existingWorkspace ? "existing" : "new";
@@ -144,18 +175,7 @@ export function CoderControls(props: CoderControlsProps) {
 
   return (
     <div className="flex flex-col gap-1.5" data-testid="coder-controls">
-      {/* Coder checkbox */}
-      <label className="flex items-center gap-1.5 text-xs">
-        <input
-          type="checkbox"
-          checked={enabled}
-          onChange={(e) => onEnabledChange(e.target.checked)}
-          disabled={disabled}
-          className="accent-accent"
-          data-testid="coder-checkbox"
-        />
-        <span className="text-muted">Use Coder Workspace</span>
-      </label>
+      <CoderCheckbox enabled={enabled} onEnabledChange={onEnabledChange} disabled={disabled} />
 
       {/* Coder controls - only shown when enabled */}
       {enabled && (

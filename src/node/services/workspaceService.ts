@@ -22,7 +22,6 @@ import {
   IncompatibleRuntimeError,
   runBackgroundInit,
 } from "@/node/runtime/runtimeFactory";
-import { prepareCoderConfigForCreate } from "@/node/runtime/CoderSSHRuntime";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
 import { getPlanFilePath, getLegacyPlanFilePath } from "@/common/utils/planStorage";
 import { shellQuote } from "@/node/runtime/backgroundCommands";
@@ -570,20 +569,14 @@ export class WorkspaceService extends EventEmitter {
       return Err("Trunk branch is required for worktree and SSH runtimes");
     }
 
-    // For SSH+Coder, we can't reach the host until postCreateSetup runs (it may not exist yet).
-    // Skip srcBaseDir resolution; SSH runtime will expand ~ at execution time.
-    const isCoderSSH = isSSHRuntime(finalRuntimeConfig) && finalRuntimeConfig.coder;
-
-    // NOTE: Coder config preparation (prepareCoderConfigForCreate) is deferred until after
-    // the collision loop so that it uses the final workspace name (which may have a suffix).
-
     let runtime;
     try {
       runtime = createRuntime(finalRuntimeConfig, { projectPath });
 
-      // Resolve srcBaseDir path if the config has one (skip for Coder - host doesn't exist yet)
+      // Resolve srcBaseDir path if the config has one.
+      // Skip if runtime has deferredHost flag (host doesn't exist yet, e.g., Coder).
       const srcBaseDir = getSrcBaseDir(finalRuntimeConfig);
-      if (srcBaseDir && !isCoderSSH) {
+      if (srcBaseDir && !runtime.createFlags?.deferredHost) {
         const resolvedSrcBaseDir = await runtime.resolvePath(srcBaseDir);
         if (resolvedSrcBaseDir !== srcBaseDir && hasSrcBaseDir(finalRuntimeConfig)) {
           finalRuntimeConfig = {
@@ -607,10 +600,9 @@ export class WorkspaceService extends EventEmitter {
       let finalBranchName = branchName;
       let createResult: { success: boolean; workspacePath?: string; error?: string };
 
-      // For Coder workspaces, check config-level collisions upfront since CoderSSHRuntime.createWorkspace()
-      // can't detect collisions (the Coder host may not exist yet). This matches other runtimes' behavior
-      // where collision is detected by the runtime and triggers suffix retry.
-      if (isCoderSSH) {
+      // If runtime uses config-level collision detection (e.g., Coder - can't reach host),
+      // check against existing workspace names before createWorkspace.
+      if (runtime.createFlags?.configLevelCollisionDetection) {
         const existingNames = new Set(
           (this.config.loadConfigOrDefault().projects.get(projectPath)?.workspaces ?? []).map(
             (w) => w.name
@@ -621,7 +613,7 @@ export class WorkspaceService extends EventEmitter {
           i < MAX_WORKSPACE_NAME_COLLISION_RETRIES && existingNames.has(finalBranchName);
           i++
         ) {
-          log.debug(`Coder workspace name collision for "${finalBranchName}", adding suffix`);
+          log.debug(`Workspace name collision for "${finalBranchName}", adding suffix`);
           finalBranchName = appendCollisionSuffix(branchName);
         }
       }
@@ -654,21 +646,27 @@ export class WorkspaceService extends EventEmitter {
         return Err(createResult!.error ?? "Failed to create workspace");
       }
 
-      // Prepare Coder config AFTER collision handling so it uses the final workspace name.
-      // This ensures the Coder workspace name matches the mux workspace name (possibly with suffix).
-      if (isSSHRuntime(finalRuntimeConfig) && finalRuntimeConfig.coder) {
-        const coderResult = prepareCoderConfigForCreate(finalRuntimeConfig.coder, finalBranchName);
-        if (!coderResult.success) {
+      // Let runtime finalize config (e.g., derive names, compute host) after collision handling
+      if (runtime.finalizeConfig) {
+        const finalizeResult = await runtime.finalizeConfig(finalBranchName, finalRuntimeConfig);
+        if (!finalizeResult.success) {
           initLogger.logComplete(-1);
-          return Err(coderResult.error);
+          return Err(finalizeResult.error);
         }
-        finalRuntimeConfig = {
-          ...finalRuntimeConfig,
-          host: coderResult.host,
-          coder: coderResult.coder,
-        };
-        // Re-create runtime with updated config (needed for postCreateSetup to have correct host)
+        finalRuntimeConfig = finalizeResult.data;
         runtime = createRuntime(finalRuntimeConfig, { projectPath });
+      }
+
+      // Let runtime validate before persisting (e.g., external collision checks)
+      if (runtime.validateBeforePersist) {
+        const validateResult = await runtime.validateBeforePersist(
+          finalBranchName,
+          finalRuntimeConfig
+        );
+        if (!validateResult.success) {
+          initLogger.logComplete(-1);
+          return Err(validateResult.error);
+        }
       }
 
       const projectName =

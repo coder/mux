@@ -1,4 +1,5 @@
 import type { RuntimeConfig } from "@/common/types/runtime";
+import type { Result } from "@/common/types/result";
 
 /**
  * Runtime abstraction for executing tools in different environments.
@@ -246,12 +247,36 @@ export interface WorkspaceForkResult {
 }
 
 /**
+ * Flags that control workspace creation behavior in WorkspaceService.
+ * Allows runtimes to customize the create flow without WorkspaceService
+ * needing runtime-specific conditionals.
+ */
+export interface RuntimeCreateFlags {
+  /**
+   * Skip srcBaseDir resolution before createWorkspace.
+   * Use when host doesn't exist until postCreateSetup (e.g., Coder).
+   */
+  deferredHost?: boolean;
+
+  /**
+   * Use config-level collision detection instead of runtime.createWorkspace.
+   * Use when createWorkspace can't detect existing workspaces (host doesn't exist).
+   */
+  configLevelCollisionDetection?: boolean;
+}
+
+/**
  * Runtime interface - minimal, low-level abstraction for tool execution environments.
  *
  * All methods return streaming primitives for memory efficiency.
  * Use helpers in utils/runtime/ for convenience wrappers (e.g., readFileString, execBuffered).
  */
 export interface Runtime {
+  /**
+   * Flags that control workspace creation behavior.
+   * If not provided, defaults to standard behavior (no flags set).
+   */
+  readonly createFlags?: RuntimeCreateFlags;
   /**
    * Execute a bash command with streaming I/O
    * @param command The bash script to execute
@@ -358,6 +383,47 @@ export interface Runtime {
    * @returns Result with workspace path or error
    */
   createWorkspace(params: WorkspaceCreationParams): Promise<WorkspaceCreationResult>;
+
+  /**
+   * Finalize runtime config after collision handling.
+   * Called with final branch name (may have collision suffix).
+   *
+   * Use cases:
+   * - Coder: derive workspace name from branch, compute SSH host
+   *
+   * @param finalBranchName Branch name after collision handling
+   * @param config Current runtime config
+   * @returns Updated runtime config, or error
+   */
+  finalizeConfig?(
+    finalBranchName: string,
+    config: RuntimeConfig
+  ): Promise<Result<RuntimeConfig, string>>;
+
+  /**
+   * Validate before persisting workspace metadata.
+   * Called after finalizeConfig, before editConfig.
+   * May make network calls for external validation.
+   *
+   * Use cases:
+   * - Coder: check if workspace name already exists
+   *
+   * IMPORTANT: This hook runs AFTER createWorkspace(). Only implement this if:
+   * - createWorkspace() is side-effect-free for this runtime, OR
+   * - The runtime can tolerate/clean up side effects on validation failure
+   *
+   * If your runtime's createWorkspace() has side effects (e.g., creates directories)
+   * and validation failure would leave orphaned resources, consider whether those
+   * checks belong in createWorkspace() itself instead.
+   *
+   * @param finalBranchName Branch name after collision handling
+   * @param config Finalized runtime config
+   * @returns Success, or error message
+   */
+  validateBeforePersist?(
+    finalBranchName: string,
+    config: RuntimeConfig
+  ): Promise<Result<void, string>>;
 
   /**
    * Optional long-running setup that runs after mux persists workspace metadata.
