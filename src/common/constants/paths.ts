@@ -14,8 +14,18 @@ const MUX_DIR_NAME = ".mux";
  * This ensures old scripts/tools referencing ~/.cmux continue working.
  */
 export function migrateLegacyMuxHome(): void {
-  const oldPath = join(homedir(), LEGACY_MUX_DIR_NAME);
   const newPath = join(homedir(), MUX_DIR_NAME);
+
+  // When running with a custom mux root (e.g. a test instance), avoid migrating or touching
+  // the user's real ~/.mux. Allow migration only when MUX_ROOT is unset or explicitly points
+  // at the default ~/.mux path.
+  // eslint-disable-next-line no-restricted-syntax, no-restricted-globals
+  const muxRoot = process.env.MUX_ROOT;
+  if (muxRoot && muxRoot !== newPath) {
+    return;
+  }
+
+  const oldPath = join(homedir(), LEGACY_MUX_DIR_NAME);
 
   // If .mux exists, we're done (already migrated or fresh install)
   if (existsSync(newPath)) {

@@ -24,6 +24,7 @@ import { Command } from "commander";
 import { VERSION } from "../version";
 import {
   CLI_GLOBAL_FLAGS,
+  consumeMuxRootFromArgv,
   detectCliEnvironment,
   getParseOptions,
   getSubcommand,
@@ -32,6 +33,16 @@ import {
 } from "./argv";
 
 const env = detectCliEnvironment();
+
+const muxRootResult = consumeMuxRootFromArgv(process.argv, env);
+if (muxRootResult.error) {
+  console.error(muxRootResult.error);
+  process.exit(1);
+}
+if (muxRootResult.muxRoot) {
+  process.env.MUX_ROOT = muxRootResult.muxRoot;
+}
+
 const subcommand = getSubcommand(process.argv, env);
 
 function launchDesktop(): void {
