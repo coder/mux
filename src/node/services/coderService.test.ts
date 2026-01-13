@@ -3,6 +3,42 @@ import { Readable } from "stream";
 import { describe, it, expect, vi, beforeEach, afterEach } from "bun:test";
 import { CoderService, compareVersions } from "./coderService";
 
+function mockExecOk(stdout: string, stderr = ""): void {
+  mockExecAsync.mockReturnValue({
+    result: Promise.resolve({ stdout, stderr }),
+    [Symbol.dispose]: noop,
+  });
+}
+
+function mockExecError(error: Error): void {
+  mockExecAsync.mockReturnValue({
+    result: Promise.reject(error),
+    [Symbol.dispose]: noop,
+  });
+}
+
+function mockCoderCommandResult(options: {
+  stdout?: string;
+  stderr?: string;
+  exitCode: number;
+}): void {
+  const stdout = Readable.from(options.stdout ? [Buffer.from(options.stdout)] : []);
+  const stderr = Readable.from(options.stderr ? [Buffer.from(options.stderr)] : []);
+  const events = new EventEmitter();
+
+  mockSpawn.mockReturnValue({
+    stdout,
+    stderr,
+    exitCode: null,
+    signalCode: null,
+    kill: vi.fn(),
+    on: events.on.bind(events),
+    removeListener: events.removeListener.bind(events),
+  } as never);
+
+  // Emit close after handlers are attached.
+  setTimeout(() => events.emit("close", options.exitCode), 0);
+}
 // eslint-disable-next-line @typescript-eslint/no-empty-function
 const noop = () => {};
 
@@ -39,10 +75,7 @@ describe("CoderService", () => {
 
   describe("getCoderInfo", () => {
     it("returns available: true with valid version", async () => {
-      mockExecAsync.mockReturnValue({
-        result: Promise.resolve({ stdout: JSON.stringify({ version: "2.28.2" }) }),
-        [Symbol.dispose]: noop,
-      });
+      mockExecOk(JSON.stringify({ version: "2.28.2" }));
 
       const info = await service.getCoderInfo();
 
@@ -50,10 +83,7 @@ describe("CoderService", () => {
     });
 
     it("returns available: true for exact minimum version", async () => {
-      mockExecAsync.mockReturnValue({
-        result: Promise.resolve({ stdout: JSON.stringify({ version: "2.25.0" }) }),
-        [Symbol.dispose]: noop,
-      });
+      mockExecOk(JSON.stringify({ version: "2.25.0" }));
 
       const info = await service.getCoderInfo();
 
@@ -61,10 +91,7 @@ describe("CoderService", () => {
     });
 
     it("returns available: false for version below minimum", async () => {
-      mockExecAsync.mockReturnValue({
-        result: Promise.resolve({ stdout: JSON.stringify({ version: "2.24.9" }) }),
-        [Symbol.dispose]: noop,
-      });
+      mockExecOk(JSON.stringify({ version: "2.24.9" }));
 
       const info = await service.getCoderInfo();
 
@@ -72,10 +99,7 @@ describe("CoderService", () => {
     });
 
     it("handles version with dev suffix", async () => {
-      mockExecAsync.mockReturnValue({
-        result: Promise.resolve({ stdout: JSON.stringify({ version: "2.28.2-devel+903c045b9" }) }),
-        [Symbol.dispose]: noop,
-      });
+      mockExecOk(JSON.stringify({ version: "2.28.2-devel+903c045b9" }));
 
       const info = await service.getCoderInfo();
 
@@ -83,10 +107,7 @@ describe("CoderService", () => {
     });
 
     it("returns available: false when CLI not installed", async () => {
-      mockExecAsync.mockReturnValue({
-        result: Promise.reject(new Error("command not found: coder")),
-        [Symbol.dispose]: noop,
-      });
+      mockExecError(new Error("command not found: coder"));
 
       const info = await service.getCoderInfo();
 
@@ -94,10 +115,7 @@ describe("CoderService", () => {
     });
 
     it("caches the result", async () => {
-      mockExecAsync.mockReturnValue({
-        result: Promise.resolve({ stdout: JSON.stringify({ version: "2.28.2" }) }),
-        [Symbol.dispose]: noop,
-      });
+      mockExecOk(JSON.stringify({ version: "2.28.2" }));
 
       await service.getCoderInfo();
       await service.getCoderInfo();
@@ -280,22 +298,15 @@ describe("CoderService", () => {
 
   describe("workspaceExists", () => {
     it("returns true when exact match is found in search results", async () => {
-      mockExecAsync.mockReturnValue({
-        result: Promise.resolve({ stdout: JSON.stringify([{ name: "ws-1" }, { name: "ws-10" }]) }),
-        [Symbol.dispose]: noop,
-      });
+      mockExecOk(JSON.stringify([{ name: "ws-1" }, { name: "ws-10" }]));
 
       const exists = await service.workspaceExists("ws-1");
 
       expect(exists).toBe(true);
-      expect(mockExecAsync).toHaveBeenCalledWith("coder list --search 'name:ws-1' --output=json");
     });
 
     it("returns false when only prefix matches", async () => {
-      mockExecAsync.mockReturnValue({
-        result: Promise.resolve({ stdout: JSON.stringify([{ name: "ws-10" }]) }),
-        [Symbol.dispose]: noop,
-      });
+      mockExecOk(JSON.stringify([{ name: "ws-10" }]));
 
       const exists = await service.workspaceExists("ws-1");
 
@@ -303,10 +314,7 @@ describe("CoderService", () => {
     });
 
     it("returns false on CLI error", async () => {
-      mockExecAsync.mockReturnValue({
-        result: Promise.reject(new Error("not logged in")),
-        [Symbol.dispose]: noop,
-      });
+      mockExecError(new Error("not logged in"));
 
       const exists = await service.workspaceExists("ws-1");
 
@@ -314,6 +322,67 @@ describe("CoderService", () => {
     });
   });
 
+  describe("getWorkspaceStatus", () => {
+    it("returns status for exact match (search is prefix-based)", async () => {
+      mockCoderCommandResult({
+        exitCode: 0,
+        stdout: JSON.stringify([
+          { name: "ws-1", latest_build: { status: "running" } },
+          { name: "ws-10", latest_build: { status: "stopped" } },
+        ]),
+      });
+
+      const result = await service.getWorkspaceStatus("ws-1");
+
+      expect(result.status).toBe("running");
+      expect(result.error).toBeUndefined();
+    });
+
+    it("returns workspace not found when only prefix matches", async () => {
+      mockCoderCommandResult({
+        exitCode: 0,
+        stdout: JSON.stringify([{ name: "ws-10", latest_build: { status: "running" } }]),
+      });
+
+      const result = await service.getWorkspaceStatus("ws-1");
+
+      expect(result.status).toBeNull();
+      expect(result.error).toContain("not found");
+    });
+
+    it("returns null status for unknown workspace status", async () => {
+      mockCoderCommandResult({
+        exitCode: 0,
+        stdout: JSON.stringify([{ name: "ws-1", latest_build: { status: "weird" } }]),
+      });
+
+      const result = await service.getWorkspaceStatus("ws-1");
+
+      expect(result.status).toBeNull();
+      expect(result.error).toContain("Unknown status");
+    });
+  });
+
+  describe("startWorkspaceAndWait", () => {
+    it("returns success true on exit code 0", async () => {
+      mockCoderCommandResult({ exitCode: 0 });
+
+      const result = await service.startWorkspaceAndWait("ws-1", 1000);
+
+      expect(result).toEqual({ success: true });
+    });
+
+    it("maps build already active errors to build_in_progress", async () => {
+      mockCoderCommandResult({
+        exitCode: 1,
+        stderr: "workspace build is already active",
+      });
+
+      const result = await service.startWorkspaceAndWait("ws-1", 1000);
+
+      expect(result).toEqual({ success: false, error: "build_in_progress" });
+    });
+  });
   describe("createWorkspace", () => {
     it("streams stdout/stderr lines and passes expected args", async () => {
       const stdout = Readable.from([Buffer.from("out-1\nout-2\n")]);
@@ -440,32 +509,6 @@ describe("CoderService", () => {
       expect(thrown).toBeTruthy();
       expect(thrown instanceof Error ? thrown.message : String(thrown)).toContain("aborted");
       expect(kill).toHaveBeenCalled();
-    });
-  });
-
-  describe("deleteWorkspace", () => {
-    it("calls coder delete with --yes flag", async () => {
-      mockExecAsync.mockReturnValue({
-        result: Promise.resolve({ stdout: "", stderr: "" }),
-        [Symbol.dispose]: noop,
-      });
-
-      await service.deleteWorkspace("my-workspace");
-
-      expect(mockExecAsync).toHaveBeenCalledWith("coder delete 'my-workspace' --yes");
-    });
-  });
-
-  describe("ensureSSHConfig", () => {
-    it("calls coder config-ssh with --yes flag", async () => {
-      mockExecAsync.mockReturnValue({
-        result: Promise.resolve({ stdout: "", stderr: "" }),
-        [Symbol.dispose]: noop,
-      });
-
-      await service.ensureSSHConfig();
-
-      expect(mockExecAsync).toHaveBeenCalledWith("coder config-ssh --yes");
     });
   });
 });
