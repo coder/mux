@@ -1912,6 +1912,20 @@ export class AIService extends EventEmitter {
         return Err(streamResult.error);
       }
 
+      // If we were interrupted during StreamManager startup before the stream was registered,
+      // make sure we don't leave an empty assistant placeholder behind.
+      if (combinedAbortSignal.aborted && !this.streamManager.isStreaming(workspaceId)) {
+        const deleteResult = await this.historyService.deleteMessage(
+          workspaceId,
+          assistantMessageId
+        );
+        if (!deleteResult.success) {
+          log.error(
+            `Failed to delete aborted assistant placeholder (${assistantMessageId}): ${deleteResult.error}`
+          );
+        }
+      }
+
       // StreamManager now handles history updates directly on stream-end
       // No need for event listener here
       return Ok(undefined);
