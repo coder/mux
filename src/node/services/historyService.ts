@@ -247,6 +247,55 @@ export class HistoryService {
   }
 
   /**
+   * Delete a single message by ID while preserving the rest of the history.
+   *
+   * This is safer than truncateAfterMessage for cleanup paths where subsequent
+   * messages may already have been appended.
+   */
+  async deleteMessage(workspaceId: string, messageId: string): Promise<Result<void>> {
+    return this.fileLocks.withLock(workspaceId, async () => {
+      try {
+        const historyResult = await this.getHistory(workspaceId);
+        if (!historyResult.success) {
+          return historyResult;
+        }
+
+        const messages = historyResult.data;
+        const filteredMessages = messages.filter((msg) => msg.id !== messageId);
+
+        if (filteredMessages.length === messages.length) {
+          return Err(`Message with ID ${messageId} not found in history`);
+        }
+
+        const historyPath = this.getChatHistoryPath(workspaceId);
+        const historyEntries = filteredMessages
+          .map((msg) => JSON.stringify({ ...msg, workspaceId }) + "\n")
+          .join("");
+
+        // Atomic write prevents corruption if app crashes mid-write
+        await writeFileAtomic(historyPath, historyEntries);
+
+        // Keep the in-memory sequence counter monotonic. It's okay to reuse deleted sequence
+        // numbers on restart, but we must not regress within a running process.
+        const maxSeq = filteredMessages.reduce((max, msg) => {
+          const seq = msg.metadata?.historySequence;
+          return typeof seq === "number" && seq > max ? seq : max;
+        }, -1);
+        const nextSeq = maxSeq + 1;
+        const currentCounter = this.sequenceCounters.get(workspaceId);
+        if (currentCounter === undefined || currentCounter < nextSeq) {
+          this.sequenceCounters.set(workspaceId, nextSeq);
+        }
+
+        return Ok(undefined);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return Err(`Failed to delete message: ${message}`);
+      }
+    });
+  }
+
+  /**
    * Truncate history after a specific message ID
    * Removes the message with the given ID and all subsequent messages
    */

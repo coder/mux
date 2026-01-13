@@ -192,6 +192,10 @@ export class MockAiStreamPlayer {
       model: streamStart.model,
     });
 
+    if (abortSignal?.aborted) {
+      return Ok(undefined);
+    }
+
     const appendResult = await this.deps.historyService.appendToHistory(
       workspaceId,
       assistantMessage
@@ -201,8 +205,15 @@ export class MockAiStreamPlayer {
     }
 
     if (abortSignal?.aborted) {
+      const deleteResult = await this.deps.historyService.deleteMessage(workspaceId, messageId);
+      if (!deleteResult.success) {
+        log.error(
+          `Failed to delete aborted mock assistant placeholder (${messageId}): ${deleteResult.error}`
+        );
+      }
       return Ok(undefined);
     }
+
     historySequence = assistantMessage.metadata?.historySequence ?? historySequence;
 
     // Cancel any existing stream before starting a new one

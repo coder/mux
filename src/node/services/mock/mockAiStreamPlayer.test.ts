@@ -8,6 +8,7 @@ import type { AIService } from "@/node/services/aiService";
 
 class InMemoryHistoryService {
   public appended: Array<{ workspaceId: string; message: MuxMessage }> = [];
+  public messages = new Map<string, MuxMessage[]>();
   private nextSequence = 0;
 
   appendToHistory(workspaceId: string, message: MuxMessage) {
@@ -20,6 +21,19 @@ class InMemoryHistoryService {
     }
 
     this.appended.push({ workspaceId, message });
+
+    const existing = this.messages.get(workspaceId) ?? [];
+    this.messages.set(workspaceId, [...existing, message]);
+
+    return Promise.resolve(Ok(undefined));
+  }
+
+  deleteMessage(workspaceId: string, messageId: string) {
+    const existing = this.messages.get(workspaceId) ?? [];
+    this.messages.set(
+      workspaceId,
+      existing.filter((message) => message.id !== messageId)
+    );
     return Promise.resolve(Ok(undefined));
   }
 }
@@ -84,6 +98,68 @@ describe("MockAiStreamPlayer", () => {
     expect(secondSeq).toBe(firstSeq + 1);
 
     player.stop(workspaceId);
+  });
+
+  test("removes assistant placeholder when aborted before stream scheduling", async () => {
+    type AppendGateResult = Awaited<ReturnType<InMemoryHistoryService["appendToHistory"]>>;
+    type AppendGatePromise = ReturnType<InMemoryHistoryService["appendToHistory"]>;
+
+    class DeferredHistoryService extends InMemoryHistoryService {
+      private appendGateResolve?: (result: AppendGateResult) => void;
+      public appendGate: AppendGatePromise = new Promise<AppendGateResult>((resolve) => {
+        this.appendGateResolve = resolve;
+      });
+
+      private appendedMessageResolve?: (message: MuxMessage) => void;
+      public appendedMessage = new Promise<MuxMessage>((resolve) => {
+        this.appendedMessageResolve = resolve;
+      });
+
+      override appendToHistory(workspaceId: string, message: MuxMessage) {
+        void super.appendToHistory(workspaceId, message);
+        this.appendedMessageResolve?.(message);
+        return this.appendGate;
+      }
+
+      resolveAppend() {
+        this.appendGateResolve?.(Ok(undefined));
+      }
+    }
+
+    const historyStub = new DeferredHistoryService();
+    const aiServiceStub = new EventEmitter();
+
+    const player = new MockAiStreamPlayer({
+      historyService: historyStub as unknown as HistoryService,
+      aiService: aiServiceStub as unknown as AIService,
+    });
+
+    const workspaceId = "workspace-abort-startup";
+
+    const userMessage = createMuxMessage(
+      "user-1",
+      "user",
+      "[mock:list-languages] List 3 programming languages",
+      {
+        timestamp: Date.now(),
+      }
+    );
+
+    const abortController = new AbortController();
+    const playPromise = player.play([userMessage], workspaceId, {
+      abortSignal: abortController.signal,
+    });
+
+    const assistantMessage = await historyStub.appendedMessage;
+
+    historyStub.resolveAppend();
+    abortController.abort();
+
+    const result = await playPromise;
+    expect(result.success).toBe(true);
+
+    const storedMessages = historyStub.messages.get(workspaceId) ?? [];
+    expect(storedMessages.some((msg) => msg.id === assistantMessage.id)).toBe(false);
   });
 
   test("stop prevents queued stream events from emitting", async () => {
