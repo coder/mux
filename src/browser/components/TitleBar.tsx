@@ -7,20 +7,16 @@ import type { UpdateStatus } from "@/common/orpc/types";
 import { Download, Loader2, RefreshCw } from "lucide-react";
 
 import { useTutorial } from "@/browser/contexts/TutorialContext";
+import MuxLogoDark from "@/browser/assets/logos/mux-logo-dark.svg?react";
+import MuxLogoLight from "@/browser/assets/logos/mux-logo-light.svg?react";
+import { useTheme } from "@/browser/contexts/ThemeContext";
+
 import { useAPI } from "@/browser/contexts/API";
 import { isDesktopMode, getTitlebarLeftInset } from "@/browser/hooks/useDesktopTitlebar";
 
 // Update check intervals
 const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
 const UPDATE_CHECK_HOVER_COOLDOWN_MS = 60 * 1000; // 1 minute
-
-const updateStatusColors: Record<"available" | "downloading" | "downloaded" | "disabled", string> =
-  {
-    available: "#4CAF50", // Green for available
-    downloading: "#2196F3", // Blue for downloading
-    downloaded: "#FF9800", // Orange for ready to install
-    disabled: "#666666", // Gray for disabled
-  };
 
 interface VersionMetadata {
   buildTime: string;
@@ -81,6 +77,9 @@ export function TitleBar() {
   const { api } = useAPI();
   const { extendedTimestamp, gitDescribe } = parseBuildInfo(VERSION satisfies unknown);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ type: "idle" });
+
+  const { theme } = useTheme();
+  const MuxLogo = theme === "dark" || theme === "solarized-dark" ? MuxLogoDark : MuxLogoLight;
   const [isCheckingOnHover, setIsCheckingOnHover] = useState(false);
   const lastHoverCheckTime = useRef<number>(0);
 
@@ -135,6 +134,11 @@ export function TitleBar() {
   }, [api]);
 
   const handleIndicatorHover = () => {
+    // Skip update checks in browser mode - app updates only apply to Electron
+    if (!window.api) {
+      return;
+    }
+
     // Debounce: Only check once per cooldown period on hover
     const now = Date.now();
 
@@ -157,6 +161,11 @@ export function TitleBar() {
   };
 
   const handleUpdateClick = () => {
+    // Skip in browser mode - app updates only apply to Electron
+    if (!window.api) {
+      return;
+    }
+
     if (updateStatus.type === "available") {
       api?.update.download().catch(console.error);
     } else if (updateStatus.type === "downloaded") {
@@ -168,7 +177,9 @@ export function TitleBar() {
     const currentVersion = gitDescribe ?? "dev";
     const lines: React.ReactNode[] = [`Current: ${currentVersion}`];
 
-    if (isCheckingOnHover || updateStatus.type === "checking") {
+    if (!window.api) {
+      lines.push("Desktop updates are available in the Electron app only.");
+    } else if (isCheckingOnHover || updateStatus.type === "checking") {
       lines.push("Checking for updates...");
     } else {
       switch (updateStatus.type) {
@@ -212,25 +223,30 @@ export function TitleBar() {
     );
   };
 
-  const getIndicatorStatus = (): "available" | "downloading" | "downloaded" | "disabled" => {
-    if (isCheckingOnHover || updateStatus.type === "checking") return "disabled";
+  const showUpdateShimmer = updateStatus.type === "available";
 
-    switch (updateStatus.type) {
-      case "available":
-        return "available";
-      case "downloading":
-        return "downloading";
-      case "downloaded":
-        return "downloaded";
-      default:
-        return "disabled";
+  const updateBadgeIcon = (() => {
+    if (updateStatus.type === "available") {
+      return <Download className="size-3.5" />;
     }
-  };
 
-  const indicatorStatus = getIndicatorStatus();
-  // Always show indicator in packaged builds (or dev with DEBUG_UPDATER)
-  // In dev without DEBUG_UPDATER, the backend won't initialize updater service
-  const showUpdateIndicator = true;
+    if (updateStatus.type === "downloaded") {
+      return <RefreshCw className="size-3.5" />;
+    }
+
+    if (
+      updateStatus.type === "downloading" ||
+      updateStatus.type === "checking" ||
+      isCheckingOnHover
+    ) {
+      return <Loader2 className="size-3.5 animate-spin" />;
+    }
+
+    return null;
+  })();
+
+  const isUpdateActionable =
+    updateStatus.type === "available" || updateStatus.type === "downloaded";
 
   // In desktop mode, add left padding for macOS traffic lights
   const leftInset = getTitlebarLeftInset();
@@ -246,40 +262,44 @@ export function TitleBar() {
       style={leftInset > 0 ? { paddingLeft: leftInset } : undefined}
     >
       <div className={cn("mr-4 flex min-w-0 items-center gap-2", isDesktop && "titlebar-no-drag")}>
-        {showUpdateIndicator && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <div
-                className={cn(
-                  "w-4 h-4 flex items-center justify-center",
-                  indicatorStatus === "disabled"
-                    ? "cursor-default"
-                    : "cursor-pointer hover:opacity-70"
-                )}
-                style={{ color: updateStatusColors[indicatorStatus] }}
-                onClick={handleUpdateClick}
-                onMouseEnter={handleIndicatorHover}
-              >
-                {indicatorStatus === "disabled" ? (
-                  <span className="text-sm">⊘</span>
-                ) : indicatorStatus === "downloading" ? (
-                  <Loader2 className="size-3.5 animate-spin" />
-                ) : indicatorStatus === "downloaded" ? (
-                  <RefreshCw className="size-3.5" />
-                ) : (
-                  <Download className="size-3.5" />
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div
+              className={cn(
+                "flex items-center gap-1",
+                isUpdateActionable ? "cursor-pointer hover:opacity-70" : "cursor-default"
+              )}
+              onClick={handleUpdateClick}
+              onMouseEnter={handleIndicatorHover}
+            >
+              <div className="relative h-4 w-[35px] overflow-hidden [&_svg]:h-full [&_svg]:w-full">
+                <MuxLogo />
+                {showUpdateShimmer && (
+                  <div
+                    className="pointer-events-none absolute inset-0 animate-[shimmer-slide_2.5s_infinite_linear]"
+                    data-chromatic="ignore"
+                    style={{
+                      background:
+                        "linear-gradient(90deg, transparent 0%, transparent 40%, color-mix(in srgb, var(--color-accent) 35%, transparent) 50%, transparent 60%, transparent 100%)",
+                      width: "300%",
+                      marginLeft: "-180%",
+                    }}
+                  />
                 )}
               </div>
-            </TooltipTrigger>
-            <TooltipContent align="start" className="pointer-events-auto">
-              {getUpdateTooltip()}
-            </TooltipContent>
-          </Tooltip>
-        )}
+              <div className="text-accent flex h-3.5 w-3.5 items-center justify-center">
+                {updateBadgeIcon}
+              </div>
+            </div>
+          </TooltipTrigger>
+          <TooltipContent align="start" className="pointer-events-auto">
+            {getUpdateTooltip()}
+          </TooltipContent>
+        </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
             <div className="min-w-0 cursor-text truncate text-xs font-normal tracking-wider select-text">
-              mux {gitDescribe ?? "(dev)"}
+              {gitDescribe ?? "(dev)"}
             </div>
           </TooltipTrigger>
           <TooltipContent side="bottom" align="start">
