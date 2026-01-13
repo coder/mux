@@ -1871,6 +1871,15 @@ export class AIService extends EventEmitter {
       }
 
       if (combinedAbortSignal.aborted) {
+        const deleteResult = await this.historyService.deleteMessage(
+          workspaceId,
+          assistantMessageId
+        );
+        if (!deleteResult.success) {
+          log.error(
+            `Failed to delete aborted assistant placeholder (${assistantMessageId}): ${deleteResult.error}`
+          );
+        }
         return Ok(undefined);
       }
 
