@@ -1972,3 +1972,10 @@ input[type="checkbox"] {
 }
 
 
+
+/* Titlebar inset for WorkspaceHeader when left sidebar is collapsed.
+ * The sidebar collapse state is synced to a data attribute on :root by App.tsx.
+ * This centralizes the concern - WorkspaceHeader doesn't need props or JS logic. */
+:root[data-left-sidebar-collapsed="true"] [data-testid="workspace-header"] {
+  padding-left: 60px;
+}

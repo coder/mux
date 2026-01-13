@@ -6,6 +6,16 @@
  * 2. Insets for native window controls (traffic lights on mac, overlay on win/linux)
  *
  * In browser/mux server mode, these are no-ops.
+ *
+ * ## Architecture
+ *
+ * Titlebar insets are centralized via CSS custom properties:
+ * - `--titlebar-left-inset`: Space for macOS traffic lights (80px on darwin, 0 elsewhere)
+ * - `--titlebar-right-inset`: Space for Windows/Linux overlay (138px on win32/linux, 0 elsewhere)
+ *
+ * Call `initTitlebarInsets()` once at app startup to set these properties on :root.
+ * Components then use `var(--titlebar-left-inset)` in CSS/styles without needing
+ * to import platform detection logic.
  */
 
 /**
@@ -59,4 +69,23 @@ export function getTitlebarRightInset(): number {
   const platform = getDesktopPlatform();
   if (platform === "win32" || platform === "linux") return WIN_LINUX_OVERLAY_INSET;
   return 0;
+}
+
+/**
+ * Initialize CSS custom properties for titlebar insets.
+ * Call once at app startup. Sets:
+ * - `--titlebar-left-inset`: macOS traffic lights (80px) or 0
+ * - `--titlebar-right-inset`: Windows/Linux overlay (138px) or 0
+ *
+ * Components can then use these variables without importing platform logic:
+ * ```css
+ * padding-left: var(--titlebar-left-inset, 0px);
+ * ```
+ */
+export function initTitlebarInsets(): void {
+  if (typeof document === "undefined") return;
+
+  const root = document.documentElement;
+  root.style.setProperty("--titlebar-left-inset", `${getTitlebarLeftInset()}px`);
+  root.style.setProperty("--titlebar-right-inset", `${getTitlebarRightInset()}px`);
 }

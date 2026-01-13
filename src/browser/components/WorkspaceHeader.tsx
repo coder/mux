@@ -14,11 +14,7 @@ import type { RuntimeConfig } from "@/common/types/runtime";
 import { useTutorial } from "@/browser/contexts/TutorialContext";
 import { useOpenTerminal } from "@/browser/hooks/useOpenTerminal";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
-import {
-  isDesktopMode,
-  getTitlebarLeftInset,
-  getTitlebarRightInset,
-} from "@/browser/hooks/useDesktopTitlebar";
+import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 
 interface WorkspaceHeaderProps {
   workspaceId: string;
@@ -82,16 +78,6 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   }, [startTutorial, isSequenceCompleted]);
 
   const isDesktop = isDesktopMode();
-  // Reserve space for native window controls when left sidebar is collapsed
-  // macOS: traffic lights on left; Windows/Linux: overlay buttons on right
-  const leftInset = getTitlebarLeftInset();
-  const rightInset = getTitlebarRightInset();
-
-  // Build style object only if needed
-  const insetStyle =
-    leftInset > 0 || rightInset > 0
-      ? { paddingLeft: leftInset || undefined, paddingRight: rightInset || undefined }
-      : undefined;
 
   return (
     <div
@@ -101,7 +87,6 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
         // In desktop mode, make header draggable for window movement
         isDesktop && "titlebar-drag"
       )}
-      style={insetStyle}
     >
       <div
         className={cn(
