@@ -45,10 +45,10 @@ export function BaseSelectorPopover({
     setInputValue(value);
   }, [value]);
 
-  // Focus input when popover opens
+  // Clear search and focus input when popover opens
   useEffect(() => {
     if (isOpen) {
-      // Small delay to let popover render
+      setInputValue(""); // Clear to show all suggestions
       setTimeout(() => inputRef.current?.focus(), 0);
     }
   }, [isOpen]);
