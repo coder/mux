@@ -255,7 +255,8 @@ export function TitleBar() {
   return (
     <div
       className={cn(
-        "bg-sidebar border-border-light font-primary text-muted flex h-8 shrink-0 items-center justify-between border-b px-4 text-[11px] select-none",
+        "bg-sidebar border-border-light font-primary text-muted flex shrink-0 items-center justify-between border-b px-4 text-[11px] select-none",
+        isDesktop ? "h-10" : "h-8",
         // In desktop mode, make header draggable for window movement
         isDesktop && "titlebar-drag"
       )}
