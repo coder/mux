@@ -71,9 +71,13 @@ class MuxAgent(BaseInstalledAgent):
         mode: str | None = None,
         thinking_level: str | None = None,
         experiments: str | None = None,
+        timeout: int | str | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(logs_dir=logs_dir, **kwargs)
+        # Set MUX_TIMEOUT_MS if timeout is provided via agent kwargs
+        if timeout is not None:
+            os.environ["MUX_TIMEOUT_MS"] = str(int(timeout) * 1000)
         repo_root_env = os.environ.get("MUX_AGENT_REPO_ROOT")
         repo_root = (
             Path(repo_root_env).resolve()

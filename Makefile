@@ -448,7 +448,7 @@ benchmark-terminal: ## Run Terminal-Bench 2.0 with Harbor (use TB_DATASET/TB_CON
 	uvx harbor run \
 		--dataset "$$TB_DATASET" \
 		--agent-import-path benchmarks.terminal_bench.mux_agent:MuxAgent \
-		--global-agent-timeout-sec $$TB_TIMEOUT \
+		--agent-kwarg timeout=$$TB_TIMEOUT \
 		--n-concurrent $$TB_CONCURRENCY \
 		$$ENV_FLAG \
 		$$TASK_NAME_FLAGS \
