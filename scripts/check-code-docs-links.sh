@@ -33,7 +33,7 @@ echo "🔗 Checking code-to-docs links..."
 
 # Extract from README.md
 while IFS= read -r url; do
-  path="${url#$DOCS_BASE}"
+  path="${url#"$DOCS_BASE"}"
   check_path "$path" "README.md"
 done < <(grep -oP "https://mux\.coder\.com[^\s\)\"']*" README.md 2>/dev/null || true)
 
@@ -41,7 +41,7 @@ done < <(grep -oP "https://mux\.coder\.com[^\s\)\"']*" README.md 2>/dev/null || 
 while IFS=: read -r file line url; do
   [[ "$url" == *"gateway."* ]] && continue
   [[ "$file" == *.generated.ts ]] && continue
-  path="${url#$DOCS_BASE}"
+  path="${url#"$DOCS_BASE"}"
   check_path "$path" "$file:$line"
 done < <(grep -rn --include="*.ts" --include="*.tsx" -oP "https://mux\.coder\.com[^\s\)\"']*" src/ 2>/dev/null || true)
 

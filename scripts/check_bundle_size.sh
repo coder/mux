@@ -25,7 +25,7 @@ main_kb=$((main_size / 1024))
 echo "Bundle sizes:"
 echo "  dist/main.js: ${main_kb}KB (max: ${MAIN_JS_MAX_KB}KB)"
 
-if [ $main_kb -gt $MAIN_JS_MAX_KB ]; then
+if [ "$main_kb" -gt "$MAIN_JS_MAX_KB" ]; then
   echo "❌ BUNDLE SIZE REGRESSION: main.js (${main_kb}KB) exceeds ${MAIN_JS_MAX_KB}KB"
   echo ""
   echo "This usually means new eager imports were added to main process."

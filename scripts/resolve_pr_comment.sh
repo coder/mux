@@ -9,6 +9,7 @@ fi
 
 THREAD_ID="$1"
 
+# shellcheck disable=SC2016 # Single quotes are intentional - this is a GraphQL query, not shell expansion
 MUTATION='mutation($threadId: ID!) {
   resolveReviewThread(input: {threadId: $threadId}) {
     thread {

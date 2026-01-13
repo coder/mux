@@ -57,9 +57,11 @@ runs:
     - name: Verify cache status
       shell: bash
       run: |
-        if [[ "${{ steps.cache-ollama-models.outputs.cache-hit }}" == "true" ]]; then
+        if [[ "${STEPS_CACHE_OLLAMA_MODELS_OUTPUTS_CACHE_HIT}" == "true" ]]; then
           echo "Model cache restored - available for tests"
           ls -lh "$HOME/.ollama" || echo "Warning: .ollama directory not found"
         else
           echo "Model cache miss - tests will pull models on first run"
         fi
+      env:
+        STEPS_CACHE_OLLAMA_MODELS_OUTPUTS_CACHE_HIT: ${{ steps.cache-ollama-models.outputs.cache-hit }}

@@ -29,9 +29,21 @@ runs:
     - name: Install Playwright browsers
       if: steps.cache-playwright.outputs.cache-hit != 'true'
       shell: bash
-      run: bun x playwright install ${{ inputs.browsers }}
+      run: |
+        set -euo pipefail
+        set -f
+        read -r -a browsers <<<"$BROWSERS"
+        bun x playwright install "${browsers[@]}"
+      env:
+        BROWSERS: ${{ inputs.browsers }}
 
     - name: Install Playwright system dependencies (Linux)
       if: runner.os == 'Linux'
       shell: bash
-      run: bun x playwright install-deps ${{ inputs.browsers }}
+      run: |
+        set -euo pipefail
+        set -f
+        read -r -a browsers <<<"$BROWSERS"
+        bun x playwright install-deps "${browsers[@]}"
+      env:
+        BROWSERS: ${{ inputs.browsers }}

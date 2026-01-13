@@ -36,6 +36,8 @@ jobs:
       browser: ${{ steps.filter.outputs.browser }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -73,6 +75,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: ./.github/actions/setup-mux
       - run: ./scripts/generate-version.sh
       - uses: actions/cache@v4
@@ -92,7 +95,12 @@ jobs:
             exit 1
           fi
 
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Install shellcheck
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
       - uses: cachix/install-nix-action@v27
         with:
           extra_nix_config: |
@@ -100,8 +108,11 @@ jobs:
       - run: |
           set -euo pipefail
           curl --retry 5 --retry-all-errors --retry-delay 2 -LsSf https://astral.sh/uv/install.sh | sh
-      - run: echo "$HOME/.local/bin" >> $GITHUB_PATH
+      - run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - run: make -j static-check
+        env:
+          # Used by zizmor to lint third-party GitHub actions
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   test-unit:
     name: Test / Unit
@@ -110,9 +121,13 @@ jobs:
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-mux
       - run: make build-main
-      - run: bun test --coverage --coverage-reporter=lcov ${{ github.event.inputs.test_filter || 'src' }}
+      # workflow_dispatch inputs are only triggerable by repo members, so direct
+      # interpolation is acceptable and preserves shell quoting in the filter.
+      - run: bun test --coverage --coverage-reporter=lcov ${{ github.event.inputs.test_filter || 'src' }} # zizmor: ignore[template-injection]
       - uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -128,18 +143,21 @@ jobs:
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-mux
       - run: make build-main
+      # workflow_dispatch inputs are only triggerable by repo members, so direct
+      # interpolation is acceptable and preserves shell quoting in the filter.
       - name: Run integration tests
-        run: |
-          # Manual override
+        run: | # zizmor: ignore[template-injection]
+          set -euo pipefail
+
+          # Manual override (workflow_dispatch input)
           if [[ -n "${{ github.event.inputs.test_filter }}" ]]; then
             TEST_INTEGRATION=1 bun x jest --coverage --maxWorkers=100% --silent ${{ github.event.inputs.test_filter }}
             exit 0
           fi
-          
-          BACKEND="${{ needs.changes.outputs.backend }}"
-          BROWSER="${{ needs.changes.outputs.browser }}"
           
           # Skip if no relevant changes
           if [[ "$BACKEND" != "true" && "$BROWSER" != "true" ]]; then
@@ -159,8 +177,9 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          BACKEND: ${{ needs.changes.outputs.backend }}
+          BROWSER: ${{ needs.changes.outputs.browser }}
       - uses: codecov/codecov-action@v5
-        if: ${{ steps.test-filter.outputs.filter != '' }}
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage/lcov.info
@@ -174,6 +193,8 @@ jobs:
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-mux
       - uses: ./.github/actions/setup-playwright
       - run: make storybook-build
@@ -206,6 +227,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-mux
       - name: Install xvfb
         if: matrix.os == 'linux'
@@ -231,6 +254,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: ./.github/actions/setup-mux
       - run: make build
       - run: npm pack
@@ -239,6 +263,7 @@ jobs:
           SERVER_HOST: localhost
           STARTUP_TIMEOUT: 30
         run: |
+          # shellcheck disable=SC2012 # ls is fine here - known filename pattern in controlled directory
           TARBALL=$(ls mux-*.tgz | head -1)
           PACKAGE_TARBALL="$TARBALL" ./scripts/smoke-test.sh
       - uses: actions/upload-artifact@v4
@@ -258,6 +283,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v6
         with:
@@ -290,6 +316,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: ./.github/actions/setup-mux
       - run: bun run build
       - run: make dist-linux
@@ -309,6 +336,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: ./.github/actions/setup-mux
       - name: Setup code signing
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -343,6 +371,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: ./.github/actions/setup-mux
       - name: Add MSYS2 make to PATH
         shell: pwsh
@@ -390,6 +419,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: ./.github/actions/setup-mux
       - uses: ./.github/actions/build-vscode-extension
       - uses: actions/upload-artifact@v4
@@ -407,6 +437,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
       - env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: ./scripts/check_codex_comments.sh ${{ github.event.pull_request.number }}

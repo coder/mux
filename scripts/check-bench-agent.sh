@@ -38,7 +38,6 @@ echo "Verifying agent CLI startup (checking imports)..."
 # We expect it to fail with "Unknown option" or "workspace-path required" but NOT with "Module not found" or "worker error"
 if ! output=$(bun "$FULL_CLI_PATH" --help 2>&1); then
   # It failed, which is expected (no args/bad args), but we need to check WHY
-  exit_code=$?
 
   # Check for known import/worker errors
   if echo "$output" | grep -qE "Module not found|Worker error|Cannot find module"; then

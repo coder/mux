@@ -269,7 +269,7 @@ build/icon.png: docs/img/logo.webp scripts/generate-icons.ts
 	@bun scripts/generate-icons.ts png
 
 ## Quality checks (can run in parallel)
-static-check: lint typecheck fmt-check check-eager-imports check-bench-agent check-docs-links check-code-docs-links ## Run all static checks
+static-check: lint typecheck fmt-check check-eager-imports check-bench-agent check-docs-links check-code-docs-links lint-actions lint-shellcheck ## Run all static checks
 
 check-bench-agent: ## Verify terminal-bench agent configuration and imports
 	@./scripts/check-bench-agent.sh
@@ -279,6 +279,20 @@ lint: node_modules/.installed src/version.ts $(BUILTIN_SKILLS_GENERATED) ## Run 
 
 lint-fix: node_modules/.installed src/version.ts $(BUILTIN_SKILLS_GENERATED) ## Run linter with --fix
 	@./scripts/lint.sh --fix
+
+lint-actions: lint-actionlint lint-zizmor ## Lint GitHub Actions workflows
+
+lint-actionlint: ## Run actionlint on GitHub Actions workflows (uses shellcheck if installed)
+	go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+
+lint-zizmor: ## Run zizmor security analysis on GitHub Actions workflows
+	@./scripts/zizmor.sh --min-confidence high .
+
+# Shell files to lint (excludes node_modules, build artifacts, .git)
+SHELL_SRC_FILES := $(shell find . -not \( -path '*/.git/*' -o -path './node_modules/*' -o -path './build/*' -o -path './dist/*' \) -type f -name '*.sh' 2>/dev/null)
+
+lint-shellcheck: ## Run shellcheck on shell scripts
+	shellcheck --external-sources $(SHELL_SRC_FILES)
 
 ifeq ($(OS),Windows_NT)
 typecheck: node_modules/.installed src/version.ts $(BUILTIN_AGENTS_GENERATED) $(BUILTIN_SKILLS_GENERATED) ## Run TypeScript type checking (uses tsgo for 10x speedup)

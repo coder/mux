@@ -32,6 +32,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0 # Required for git describe to find tags
+          persist-credentials: false
 
       - uses: ./.github/actions/setup-mux
 
@@ -48,8 +49,8 @@ jobs:
           # Get base version from package.json
           BASE_VERSION=$(node -p "require('./package.json').version")
 
-          # Generate git describe version
-          GIT_DESCRIBE=$(git describe --tags --always --dirty 2>/dev/null || echo "unknown")
+          # Generate git describe version (for debugging; used indirectly via commits_since_tag)
+          git describe --tags --always --dirty 2>/dev/null || echo "unknown"
 
           if [[ $GITHUB_REF == refs/tags/* ]]; then
             # For tags, use the base version as-is (stable release)
@@ -60,14 +61,15 @@ jobs:
             # For main branch, create a pre-release version using git describe
             # Format: 0.3.0-next.5.g1a2b3c4 (base-next.commits.hash)
             GIT_COMMIT=$(git rev-parse --short HEAD)
-            COMMITS_SINCE_TAG=$(git rev-list --count HEAD ^$(git describe --tags --abbrev=0 2>/dev/null || echo HEAD) 2>/dev/null || echo "0")
+            TAG_BASE=$(git describe --tags --abbrev=0 2>/dev/null || echo HEAD)
+            COMMITS_SINCE_TAG=$(git rev-list --count HEAD "^$TAG_BASE" 2>/dev/null || echo "0")
             NPM_VERSION="${BASE_VERSION}-next.${COMMITS_SINCE_TAG}.g${GIT_COMMIT}"
             NPM_TAG="next"
             echo "Publishing pre-release: ${NPM_VERSION}"
           fi
 
-          echo "version=${NPM_VERSION}" >> $GITHUB_OUTPUT
-          echo "tag=${NPM_TAG}" >> $GITHUB_OUTPUT
+          echo "version=${NPM_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${NPM_TAG}" >> "$GITHUB_OUTPUT"
 
           # Update package.json with the new version
           node -e "const fs = require('fs'); const pkg = JSON.parse(fs.readFileSync('package.json')); pkg.version = '${NPM_VERSION}'; fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');"
@@ -86,8 +88,9 @@ jobs:
       - name: Find package tarball
         id: find-tarball
         run: |
+          # shellcheck disable=SC2012 # ls is fine here - known filename pattern in controlled directory
           TARBALL=$(ls mux-*.tgz | head -1)
-          echo "tarball=$TARBALL" >> $GITHUB_OUTPUT
+          echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
           echo "Found package: $TARBALL"
 
       - name: Run smoke test
@@ -117,21 +120,27 @@ jobs:
         id: check-exists
         run: |
           PACKAGE_NAME=$(node -p "require('./package.json').name")
-          VERSION="${{ steps.version.outputs.version }}"
+          VERSION="${STEPS_VERSION_OUTPUTS_VERSION}"
 
           if npm view "${PACKAGE_NAME}@${VERSION}" version &>/dev/null; then
-            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "exists=true" >> "$GITHUB_OUTPUT"
             echo "Version ${VERSION} already exists on npm"
           else
-            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "exists=false" >> "$GITHUB_OUTPUT"
             echo "Version ${VERSION} does not exist, will publish"
           fi
+        env:
+          STEPS_VERSION_OUTPUTS_VERSION: ${{ steps.version.outputs.version }}
 
       - name: Publish to NPM
         if: steps.check-exists.outputs.exists == 'false'
-        run: npm publish --tag ${{ steps.version.outputs.tag }}
+        run: npm publish --tag "$STEPS_VERSION_OUTPUTS_TAG"
+        env:
+          STEPS_VERSION_OUTPUTS_TAG: ${{ steps.version.outputs.tag }}
 
       - name: Skip (version already exists)
         if: steps.check-exists.outputs.exists == 'true'
         run: |
-          echo "Version ${{ steps.version.outputs.version }} already exists on npm; skipping publish."
+          echo "Version ${STEPS_VERSION_OUTPUTS_VERSION} already exists on npm; skipping publish."
+        env:
+          STEPS_VERSION_OUTPUTS_VERSION: ${{ steps.version.outputs.version }}

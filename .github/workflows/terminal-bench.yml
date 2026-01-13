@@ -94,6 +94,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0 # Required for git describe to find tags
+          persist-credentials: false
 
       - uses: ./.github/actions/setup-mux
 
@@ -101,7 +102,7 @@ jobs:
         run: curl -LsSf https://astral.sh/uv/install.sh | sh
 
       - name: Add uv to PATH
-        run: echo "$HOME/.local/bin" >> $GITHUB_PATH
+        run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Generate version file
         run: ./scripts/generate-version.sh
@@ -129,7 +130,7 @@ jobs:
           echo "=== Terminal-Bench Results Summary ==="
           if [ -f "$(find runs -maxdepth 2 -name 'results.json' 2>/dev/null | head -1)" ]; then
             RESULTS_FILE=$(find runs -maxdepth 2 -name 'results.json' | head -1)
-            cat "$RESULTS_FILE" | jq '{n_resolved, n_unresolved, accuracy}' 2>/dev/null || cat "$RESULTS_FILE"
+            jq '{n_resolved, n_unresolved, accuracy}' "$RESULTS_FILE" 2>/dev/null || cat "$RESULTS_FILE"
           else
             echo "❌ No results.json found"
             ls -laR runs/ 2>/dev/null || echo "runs/ directory missing"
@@ -154,14 +155,17 @@ jobs:
       - name: Set artifact name
         if: always()
         id: artifact-name
+        env:
+          MODEL_NAME: ${{ inputs.model_name }}
+          RUN_ID: ${{ github.run_id }}
         run: |
-          if [ -n "${{ inputs.model_name }}" ]; then
+          if [ -n "$MODEL_NAME" ]; then
             # Replace colons with hyphens for filesystem compatibility
-            ARTIFACT_NAME="terminal-bench-results-$(echo "${{ inputs.model_name }}-${{ github.run_id }}" | tr ':' '-')"
+            ARTIFACT_NAME="terminal-bench-results-$(echo "$MODEL_NAME-$RUN_ID" | tr ':' '-')"
           else
-            ARTIFACT_NAME="terminal-bench-results-${{ github.run_id }}"
+            ARTIFACT_NAME="terminal-bench-results-$RUN_ID"
           fi
-          echo "name=$ARTIFACT_NAME" >> $GITHUB_OUTPUT
+          echo "name=$ARTIFACT_NAME" >> "$GITHUB_OUTPUT"
           echo "Artifact name: $ARTIFACT_NAME"
 
       - name: Upload benchmark results

@@ -1,0 +1,20 @@
+# zizmor configuration
+# https://docs.zizmor.sh/configuration/
+
+rules:
+  # TODO: Pin all actions to SHA hashes instead of version tags.
+  # Version tags like @v4 can be moved by maintainers, which is a supply chain risk.
+  # Use a tool like pinact (https://github.com/suzuki-shunsuke/pinact) to auto-pin.
+  unpinned-uses:
+    disable: true
+
+  # TODO: Move these workflow-level permissions to job-level for least-privilege.
+  # These permissions are documented in the workflow files with specific reasons.
+  # Moving to job-level requires restructuring since multiple jobs need them.
+  excessive-permissions:
+    ignore:
+      # TODO: Move id-token:write to only the jobs that need GCP workload identity
+      - pr.yml:25
+      # TODO: Move contents:write and id-token:write to only the release job
+      - release.yml:14
+      - release.yml:15

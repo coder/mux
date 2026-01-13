@@ -7,12 +7,12 @@ if [ $# -eq 0 ]; then
 fi
 
 PR_NUMBER=$1
-BOT_LOGIN_REST="chatgpt-codex-connector[bot]"
 BOT_LOGIN_GRAPHQL="chatgpt-codex-connector"
 
 echo "Checking for unresolved Codex comments in PR #${PR_NUMBER}..."
 
 # Use GraphQL to get all comments (including minimized status)
+# shellcheck disable=SC2016 # Single quotes are intentional - this is a GraphQL query, not shell expansion
 GRAPHQL_QUERY='query($owner: String!, $repo: String!, $pr: Int!) {
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $pr) {
@@ -63,7 +63,7 @@ for ((attempt = 1; attempt <= MAX_ATTEMPTS; attempt++)); do
     break
   fi
 
-  if [ $attempt -eq $MAX_ATTEMPTS ]; then
+  if [ "$attempt" -eq "$MAX_ATTEMPTS" ]; then
     echo "❌ GraphQL query failed after ${MAX_ATTEMPTS} attempts"
     exit 1
   fi
@@ -94,11 +94,11 @@ if [ $TOTAL_UNRESOLVED -gt 0 ]; then
   echo ""
   echo "Codex comments:"
 
-  if [ $REGULAR_COUNT -gt 0 ]; then
+  if [ "$REGULAR_COUNT" -gt 0 ]; then
     echo "$REGULAR_COMMENTS" | jq -r '.[] | "  - [\(.created_at)] \(.body[0:100] | gsub("\\n"; " "))..."'
   fi
 
-  if [ $UNRESOLVED_COUNT -gt 0 ]; then
+  if [ "$UNRESOLVED_COUNT" -gt 0 ]; then
     THREAD_SUMMARY=$(echo "$UNRESOLVED_THREADS" | jq '[.[] | {
       createdAt: .comments.nodes[0].createdAt,
       thread: .id,

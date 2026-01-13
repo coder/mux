@@ -23,15 +23,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Ensure release tag context
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
           if [ -z "$RELEASE_TAG" ]; then
             echo "::error::RELEASE_TAG is empty. Ensure this workflow runs on a release event or refs/tags/* ref."
             exit 1
           fi
 
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            if [ -n "${{ inputs.tag }}" ]; then
-              echo "workflow_dispatch with explicit tag input: ${{ inputs.tag }}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            if [ -n "$INPUT_TAG" ]; then
+              echo "workflow_dispatch with explicit tag input: $INPUT_TAG"
             elif [[ "$GITHUB_REF" != refs/tags/* ]]; then
               echo "::error::workflow_dispatch runs must either provide a 'tag' input or target a tag ref. Current ref: $GITHUB_REF"
               exit 1
@@ -50,6 +53,7 @@ jobs:
         with:
           ref: ${{ inputs.tag || github.ref }}
           fetch-depth: 0 # Required for git describe to find tags
+          persist-credentials: false
 
       - uses: ./.github/actions/setup-mux
 
@@ -80,6 +84,7 @@ jobs:
         with:
           ref: ${{ inputs.tag || github.ref }}
           fetch-depth: 0 # Required for git describe to find tags
+          persist-credentials: false
 
       - uses: ./.github/actions/setup-mux
 
@@ -101,6 +106,7 @@ jobs:
         with:
           ref: ${{ inputs.tag || github.ref }}
           fetch-depth: 0 # Required for git describe to find tags
+          persist-credentials: false
 
       - uses: ./.github/actions/setup-mux
 
@@ -153,6 +159,7 @@ jobs:
         with:
           ref: ${{ inputs.tag || github.ref }}
           fetch-depth: 0
+          persist-credentials: false
 
       - uses: ./.github/actions/setup-mux
 
