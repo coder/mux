@@ -10,6 +10,7 @@
  */
 
 import type {
+  RuntimeCreateFlags,
   WorkspaceCreationParams,
   WorkspaceCreationResult,
   WorkspaceForkParams,
@@ -17,8 +18,11 @@ import type {
   WorkspaceInitParams,
 } from "./Runtime";
 import { SSHRuntime, type SSHRuntimeConfig } from "./SSHRuntime";
-import type { CoderWorkspaceConfig } from "@/common/types/runtime";
+import type { CoderWorkspaceConfig, RuntimeConfig } from "@/common/types/runtime";
+import { isSSHRuntime } from "@/common/types/runtime";
 import type { CoderService } from "@/node/services/coderService";
+import type { Result } from "@/common/types/result";
+import { Ok, Err } from "@/common/types/result";
 import { log } from "@/node/services/log";
 import { execBuffered } from "@/node/utils/runtime/helpers";
 import { expandTildeForSSH } from "./tildeExpansion";
@@ -27,6 +31,27 @@ import * as path from "path";
 export interface CoderSSHRuntimeConfig extends SSHRuntimeConfig {
   /** Coder-specific configuration */
   coder: CoderWorkspaceConfig;
+}
+
+/**
+ * Coder workspace name regex: ^[a-zA-Z0-9]+(?:-[a-zA-Z0-9]+)*$
+ * - Must start with alphanumeric
+ * - Can contain hyphens, but only between alphanumeric segments
+ * - No underscores (unlike mux workspace names)
+ */
+const CODER_NAME_REGEX = /^[a-zA-Z0-9]+(?:-[a-zA-Z0-9]+)*$/;
+
+/**
+ * Transform a mux workspace name to be Coder-compatible.
+ * - Replace underscores with hyphens
+ * - Remove leading/trailing hyphens
+ * - Collapse multiple consecutive hyphens
+ */
+function toCoderCompatibleName(name: string): string {
+  return name
+    .replace(/_/g, "-") // Replace underscores with hyphens
+    .replace(/^-+|-+$/g, "") // Remove leading/trailing hyphens
+    .replace(/-{2,}/g, "-"); // Collapse multiple hyphens
 }
 
 /**
@@ -40,6 +65,16 @@ export class CoderSSHRuntime extends SSHRuntime {
   private coderConfig: CoderWorkspaceConfig;
   private readonly coderService: CoderService;
 
+  /**
+   * Flags for WorkspaceService to customize create flow:
+   * - deferredHost: skip srcBaseDir resolution (Coder host doesn't exist yet)
+   * - configLevelCollisionDetection: use config-based collision check (can't reach host)
+   */
+  readonly createFlags: RuntimeCreateFlags = {
+    deferredHost: true,
+    configLevelCollisionDetection: true,
+  };
+
   constructor(config: CoderSSHRuntimeConfig, coderService: CoderService) {
     super({
       host: config.host,
@@ -50,6 +85,95 @@ export class CoderSSHRuntime extends SSHRuntime {
     });
     this.coderConfig = config.coder;
     this.coderService = coderService;
+  }
+
+  /**
+   * Finalize runtime config after collision handling.
+   * Derives Coder workspace name from branch name and computes SSH host.
+   */
+  finalizeConfig(
+    finalBranchName: string,
+    config: RuntimeConfig
+  ): Promise<Result<RuntimeConfig, string>> {
+    if (!isSSHRuntime(config) || !config.coder) {
+      return Promise.resolve(Ok(config));
+    }
+
+    const coder = config.coder;
+    let workspaceName = coder.workspaceName?.trim() ?? "";
+
+    if (!coder.existingWorkspace) {
+      // New workspace: derive name from mux workspace name if not provided
+      if (!workspaceName) {
+        workspaceName = finalBranchName;
+      }
+      // Transform to Coder-compatible name (handles underscores, etc.)
+      workspaceName = toCoderCompatibleName(workspaceName);
+
+      // Validate against Coder's regex
+      if (!CODER_NAME_REGEX.test(workspaceName)) {
+        return Promise.resolve(
+          Err(
+            `Workspace name "${finalBranchName}" cannot be converted to a valid Coder name. ` +
+              `Use only letters, numbers, and hyphens.`
+          )
+        );
+      }
+    } else {
+      // Existing workspace: name must be provided (selected from dropdown)
+      if (!workspaceName) {
+        return Promise.resolve(Err("Coder workspace name is required for existing workspaces"));
+      }
+    }
+
+    // Final validation
+    if (!workspaceName) {
+      return Promise.resolve(Err("Coder workspace name is required"));
+    }
+
+    return Promise.resolve(
+      Ok({
+        ...config,
+        host: `${workspaceName}.coder`,
+        coder: { ...coder, workspaceName },
+      })
+    );
+  }
+
+  /**
+   * Validate before persisting workspace metadata.
+   * Checks if a Coder workspace with this name already exists.
+   */
+  async validateBeforePersist(
+    _finalBranchName: string,
+    config: RuntimeConfig
+  ): Promise<Result<void, string>> {
+    if (!isSSHRuntime(config) || !config.coder) {
+      return Ok(undefined);
+    }
+
+    // Skip for "existing" mode - user explicitly selected an existing workspace
+    if (config.coder.existingWorkspace) {
+      return Ok(undefined);
+    }
+
+    const workspaceName = config.coder.workspaceName;
+    if (!workspaceName) {
+      return Ok(undefined);
+    }
+
+    const existingWorkspaces = await this.coderService.listWorkspaces(false);
+    const collision = existingWorkspaces.find((w) => w.name === workspaceName);
+
+    if (collision) {
+      return Err(
+        `A Coder workspace named "${workspaceName}" already exists. ` +
+          `Either switch to "Existing" mode to use it, delete/rename it in Coder, ` +
+          `or choose a different mux workspace name.`
+      );
+    }
+
+    return Ok(undefined);
   }
 
   /**
@@ -95,7 +219,7 @@ export class CoderSSHRuntime extends SSHRuntime {
       return sshResult;
     }
 
-    // workspaceName should always be set after workspace creation (prepareCoderConfigForCreate sets it)
+    // workspaceName should always be set after workspace creation (finalizeConfig sets it)
     const coderWorkspaceName = this.coderConfig.workspaceName;
     if (!coderWorkspaceName) {
       log.warn("Coder workspace name not set, skipping Coder workspace deletion");
@@ -166,12 +290,10 @@ export class CoderSSHRuntime extends SSHRuntime {
 
     // Create Coder workspace if not connecting to an existing one
     if (!this.coderConfig.existingWorkspace) {
-      // Validate required fields (workspaceName is set by prepareCoderConfigForCreate before this runs)
+      // Validate required fields (workspaceName is set by finalizeConfig during workspace creation)
       const coderWorkspaceName = this.coderConfig.workspaceName;
       if (!coderWorkspaceName) {
-        throw new Error(
-          "Coder workspace name is required (should be set by prepareCoderConfigForCreate)"
-        );
+        throw new Error("Coder workspace name is required (should be set by finalizeConfig)");
       }
       if (!this.coderConfig.template) {
         throw new Error("Coder template is required for new workspaces");
@@ -224,85 +346,4 @@ export class CoderSSHRuntime extends SSHRuntime {
       throw new Error(`Failed to prepare workspace directory: ${errorMsg}`);
     }
   }
-}
-// ============================================================================
-// Coder RuntimeConfig helpers (called by workspaceService before persistence)
-// ============================================================================
-
-/**
- * Result of preparing a Coder SSH runtime config for workspace creation.
- */
-export type PrepareCoderConfigResult =
-  | { success: true; host: string; coder: CoderWorkspaceConfig }
-  | { success: false; error: string };
-
-/**
- * Coder workspace name regex: ^[a-zA-Z0-9]+(?:-[a-zA-Z0-9]+)*$
- * - Must start with alphanumeric
- * - Can contain hyphens, but only between alphanumeric segments
- * - No underscores (unlike mux workspace names)
- */
-const CODER_NAME_REGEX = /^[a-zA-Z0-9]+(?:-[a-zA-Z0-9]+)*$/;
-
-/**
- * Transform a mux workspace name to be Coder-compatible.
- * - Replace underscores with hyphens
- * - Remove leading/trailing hyphens
- * - Collapse multiple consecutive hyphens
- */
-function toCoderCompatibleName(name: string): string {
-  return name
-    .replace(/_/g, "-") // Replace underscores with hyphens
-    .replace(/^-+|-+$/g, "") // Remove leading/trailing hyphens
-    .replace(/-{2,}/g, "-"); // Collapse multiple hyphens
-}
-
-/**
- * Prepare Coder config for workspace creation.
- *
- * For new workspaces: derives workspaceName from mux workspace name if not set,
- * transforming it to be Coder-compatible (no underscores, valid format).
- * For existing workspaces: validates workspaceName is present.
- * Always normalizes host to `<workspaceName>.coder`.
- *
- * Call this before persisting RuntimeConfig to ensure correct values are stored.
- */
-export function prepareCoderConfigForCreate(
-  coder: CoderWorkspaceConfig,
-  muxWorkspaceName: string
-): PrepareCoderConfigResult {
-  let workspaceName = coder.workspaceName?.trim() ?? "";
-
-  if (!coder.existingWorkspace) {
-    // New workspace: derive name from mux workspace name if not provided
-    if (!workspaceName) {
-      workspaceName = muxWorkspaceName;
-    }
-    // Transform to Coder-compatible name (handles underscores, etc.)
-    workspaceName = toCoderCompatibleName(workspaceName);
-
-    // Validate against Coder's regex
-    if (!CODER_NAME_REGEX.test(workspaceName)) {
-      return {
-        success: false,
-        error: `Workspace name "${muxWorkspaceName}" cannot be converted to a valid Coder name. Use only letters, numbers, and hyphens.`,
-      };
-    }
-  } else {
-    // Existing workspace: name must be provided (selected from dropdown)
-    if (!workspaceName) {
-      return { success: false, error: "Coder workspace name is required for existing workspaces" };
-    }
-  }
-
-  // Final validation
-  if (!workspaceName) {
-    return { success: false, error: "Coder workspace name is required" };
-  }
-
-  return {
-    success: true,
-    host: `${workspaceName}.coder`,
-    coder: { ...coder, workspaceName },
-  };
 }
