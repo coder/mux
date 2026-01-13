@@ -185,6 +185,15 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({ args, result, status
   const errorResult = isToolErrorResult(result) ? result : null;
   const successResult = result && typeof result === "object" && "status" in result ? result : null;
 
+  // Override status for background tasks: the aggregator sees success=true and marks "completed",
+  // but if the task is still queued/running, we should show "backgrounded" instead
+  const effectiveStatus: ToolStatus =
+    status === "completed" &&
+    successResult &&
+    (successResult.status === "queued" || successResult.status === "running")
+      ? "backgrounded"
+      : status;
+
   // Derive expansion: auto-expand for reports or errors, but respect user's explicit toggle
   const hasReport = successResult?.status === "completed" && !!successResult.reportMarkdown;
   const shouldAutoExpand = hasReport || !!errorResult;
@@ -219,7 +228,9 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({ args, result, status
         {isBackground && (
           <span className="text-backgrounded text-[10px] font-medium">background</span>
         )}
-        <StatusIndicator status={status}>{getStatusDisplay(status)}</StatusIndicator>
+        <StatusIndicator status={effectiveStatus}>
+          {getStatusDisplay(effectiveStatus)}
+        </StatusIndicator>
       </ToolHeader>
 
       {expanded && (
@@ -253,7 +264,7 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({ args, result, status
             )}
 
             {/* Pending state */}
-            {status === "executing" && !reportMarkdown && (
+            {effectiveStatus === "executing" && !reportMarkdown && (
               <div className="text-muted text-[11px] italic">
                 Task {isBackground ? "running in background" : "executing"}
                 <LoadingDots />
