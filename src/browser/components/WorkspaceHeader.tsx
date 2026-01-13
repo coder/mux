@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Pencil, Server } from "lucide-react";
-import { cn } from "@/common/lib/utils";
 import { GitStatusIndicator } from "./GitStatusIndicator";
 import { RuntimeBadge } from "./RuntimeBadge";
 import { BranchSelector } from "./BranchSelector";
@@ -14,11 +13,6 @@ import type { RuntimeConfig } from "@/common/types/runtime";
 import { useTutorial } from "@/browser/contexts/TutorialContext";
 import { useOpenTerminal } from "@/browser/hooks/useOpenTerminal";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
-import {
-  isDesktopMode,
-  getTitlebarLeftInset,
-  getTitlebarRightInset,
-} from "@/browser/hooks/useDesktopTitlebar";
 
 interface WorkspaceHeaderProps {
   workspaceId: string;
@@ -81,34 +75,12 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     return () => clearTimeout(timer);
   }, [startTutorial, isSequenceCompleted]);
 
-  const isDesktop = isDesktopMode();
-  // Reserve space for native window controls when left sidebar is collapsed
-  // macOS: traffic lights on left; Windows/Linux: overlay buttons on right
-  const leftInset = getTitlebarLeftInset();
-  const rightInset = getTitlebarRightInset();
-
-  // Build style object only if needed
-  const insetStyle =
-    leftInset > 0 || rightInset > 0
-      ? { paddingLeft: leftInset || undefined, paddingRight: rightInset || undefined }
-      : undefined;
-
   return (
     <div
       data-testid="workspace-header"
-      className={cn(
-        "bg-sidebar border-border-light flex h-8 items-center justify-between border-b px-[15px] [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:flex-wrap [@media(max-width:768px)]:gap-2 [@media(max-width:768px)]:py-2 [@media(max-width:768px)]:pl-[60px]",
-        // In desktop mode, make header draggable for window movement
-        isDesktop && "titlebar-drag"
-      )}
-      style={insetStyle}
+      className="bg-sidebar border-border-light flex h-8 items-center justify-between border-b px-[15px] [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:flex-wrap [@media(max-width:768px)]:gap-2 [@media(max-width:768px)]:py-2 [@media(max-width:768px)]:pl-[60px]"
     >
-      <div
-        className={cn(
-          "text-foreground flex min-w-0 items-center gap-2.5 overflow-hidden font-semibold",
-          isDesktop && "titlebar-no-drag"
-        )}
-      >
+      <div className="text-foreground flex min-w-0 items-center gap-2.5 overflow-hidden font-semibold">
         <RuntimeBadge
           runtimeConfig={runtimeConfig}
           isWorking={canInterrupt}
@@ -126,7 +98,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
           />
         </div>
       </div>
-      <div className={cn("flex items-center", isDesktop && "titlebar-no-drag")}>
+      <div className="flex items-center">
         {editorError && <span className="text-danger-soft mr-2 text-xs">{editorError}</span>}
         <Tooltip>
           <TooltipTrigger asChild>
