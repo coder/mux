@@ -69,14 +69,6 @@ export class CoderSSHRuntime extends SSHRuntime {
   private readonly coderService: CoderService;
 
   /**
-   * Tracks whether the Coder workspace is ready for use.
-   * - For existing workspaces: true (already exists)
-   * - For new workspaces: false until postCreateSetup() succeeds
-   * Used by ensureReady() to return proper status after build failures.
-   */
-  private coderWorkspaceReady: boolean;
-
-  /**
    * Timestamp of last time we (a) successfully used the runtime or (b) decided not
    * to block the user (unknown Coder CLI error).
    * Used to avoid running expensive status checks on every message while still
@@ -106,8 +98,6 @@ export class CoderSSHRuntime extends SSHRuntime {
     });
     this.coderConfig = config.coder;
     this.coderService = coderService;
-    // Existing workspaces are already ready; new ones need postCreateSetup() to succeed
-    this.coderWorkspaceReady = config.coder.existingWorkspace ?? false;
   }
 
   /** Overall timeout for ensureReady operations (start + polling) */
@@ -132,15 +122,6 @@ export class CoderSSHRuntime extends SSHRuntime {
    * Concurrency: shares an in-flight promise to avoid duplicate start sequences.
    */
   override async ensureReady(options?: EnsureReadyOptions): Promise<EnsureReadyResult> {
-    // Fast-fail: workspace never created successfully
-    if (!this.coderWorkspaceReady) {
-      return {
-        ready: false,
-        error: "Coder workspace does not exist. Check init logs for build errors.",
-        errorType: "runtime_not_ready",
-      };
-    }
-
     const workspaceName = this.coderConfig.workspaceName;
     if (!workspaceName) {
       return {
@@ -658,8 +639,6 @@ export class CoderSSHRuntime extends SSHRuntime {
       throw new Error(`Failed to prepare workspace directory: ${errorMsg}`);
     }
 
-    // Mark workspace as ready only after all setup succeeds
-    this.coderWorkspaceReady = true;
     this.lastActivityAtMs = Date.now();
   }
 }

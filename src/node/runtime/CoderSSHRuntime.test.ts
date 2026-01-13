@@ -358,15 +358,35 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
     );
     const ensureSSHConfig = mock(() => Promise.resolve());
 
-    const coderService = createMockCoderService({ createWorkspace, ensureSSHConfig });
+    // Start with workspace not found, then return running after creation
+    let workspaceCreated = false;
+    const getWorkspaceStatus = mock(() =>
+      Promise.resolve(
+        workspaceCreated
+          ? { status: "running" as const }
+          : { status: null, error: "Workspace not found" }
+      )
+    );
+
+    const coderService = createMockCoderService({
+      createWorkspace,
+      ensureSSHConfig,
+      getWorkspaceStatus,
+    });
     const runtime = createRuntime(
       { existingWorkspace: false, workspaceName: "my-ws", template: "my-template" },
       coderService
     );
 
-    // Before postCreateSetup, ensureReady should fail fast (workspace not created yet)
+    // Before postCreateSetup, ensureReady should fail (workspace doesn't exist on server)
     const beforeReady = await runtime.ensureReady();
     expect(beforeReady.ready).toBe(false);
+    if (!beforeReady.ready) {
+      expect(beforeReady.errorType).toBe("runtime_not_ready");
+    }
+
+    // Simulate workspace being created by postCreateSetup
+    workspaceCreated = true;
 
     const steps: string[] = [];
     const stdout: string[] = [];
@@ -396,7 +416,7 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
     expect(ensureSSHConfig).toHaveBeenCalled();
     expect(execBufferedMock).toHaveBeenCalled();
 
-    // After postCreateSetup, ensureReady should no longer fast-fail
+    // After postCreateSetup, ensureReady should succeed (workspace exists on server)
     const afterReady = await runtime.ensureReady();
     expect(afterReady.ready).toBe(true);
 
