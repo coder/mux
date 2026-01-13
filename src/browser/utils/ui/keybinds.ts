@@ -139,6 +139,29 @@ export function isEditableElement(target: EventTarget | null): boolean {
 }
 
 /**
+ * Data attribute used to identify terminal containers.
+ * Used by isTerminalFocused() to detect when keyboard events should be
+ * routed to the terminal instead of handled globally.
+ */
+export const TERMINAL_CONTAINER_ATTR = "data-terminal-container";
+
+/**
+ * Check if the event target is inside a terminal container.
+ * Used to let terminal components handle their own keyboard shortcuts
+ * (like Ctrl+C for SIGINT) instead of intercepting them globally.
+ */
+export function isTerminalFocused(target: EventTarget | null): boolean {
+  if (!target) {
+    return false;
+  }
+  // Check if HTMLElement exists (not available in non-DOM test environments)
+  if (typeof HTMLElement === "undefined" || !(target instanceof HTMLElement)) {
+    return false;
+  }
+  return target.closest(`[${TERMINAL_CONTAINER_ATTR}]`) !== null;
+}
+
+/**
  * Format a keybind for display to users.
  * Returns Mac-style symbols on macOS, or Windows-style text elsewhere.
  */

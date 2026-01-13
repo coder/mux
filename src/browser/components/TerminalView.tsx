@@ -2,6 +2,7 @@ import { useRef, useEffect, useState, useCallback } from "react";
 import { init, Terminal, FitAddon } from "ghostty-web";
 import { useAPI } from "@/browser/contexts/API";
 import { useTerminalRouter } from "@/browser/terminal/TerminalRouterContext";
+import { TERMINAL_CONTAINER_ATTR } from "@/browser/utils/ui/keybinds";
 
 interface TerminalViewProps {
   workspaceId: string;
@@ -511,6 +512,7 @@ export function TerminalView({
       <div
         ref={containerRef}
         className="terminal-container"
+        {...{ [TERMINAL_CONTAINER_ATTR]: true }}
         style={{
           flex: 1,
           minHeight: 0,

@@ -1,6 +1,11 @@
 import { useEffect } from "react";
 import type { ChatInputAPI } from "@/browser/components/ChatInput";
-import { matchesKeybind, KEYBINDS, isEditableElement } from "@/browser/utils/ui/keybinds";
+import {
+  matchesKeybind,
+  KEYBINDS,
+  isEditableElement,
+  isTerminalFocused,
+} from "@/browser/utils/ui/keybinds";
 import type { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
 import { isCompactingStream, cancelCompaction } from "@/browser/utils/compaction/handler";
 import { useAPI } from "@/browser/contexts/API";
@@ -53,8 +58,8 @@ export function useAIViewKeybinds({
         : KEYBINDS.INTERRUPT_STREAM_NORMAL;
 
       // Interrupt stream: Ctrl+C in vim mode, Esc in normal mode
-      // Only intercept if actively compacting (otherwise allow browser default for copy in vim mode)
-      if (matchesKeybind(e, interruptKeybind)) {
+      // Skip if terminal is focused - let terminal handle Ctrl+C (sends SIGINT to process)
+      if (matchesKeybind(e, interruptKeybind) && !isTerminalFocused(e.target)) {
         // ask_user_question is a special waiting state: don't interrupt it with Esc/Ctrl+C.
         // Users can still respond via the questions UI, or type in chat to cancel.
         if (aggregator?.hasAwaitingUserQuestion()) {
