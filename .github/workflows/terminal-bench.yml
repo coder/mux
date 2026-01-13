@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       model_name:
-        description: "Model to use (e.g., anthropic:claude-opus-4-5)"
+        description: "Model to use (e.g., anthropic/claude-opus-4-5)"
         required: false
         type: string
       thinking_level:
@@ -15,23 +15,23 @@ on:
         description: "Terminal-Bench dataset to use"
         required: false
         type: string
-        default: "terminal-bench-core==0.1.1"
+        default: "terminal-bench@2.0"
       concurrency:
         description: "Number of concurrent tasks (--n-concurrent)"
         required: false
         type: string
         default: "4"
-      livestream:
-        description: "Enable livestream mode (verbose output to console)"
+      env:
+        description: "Environment to run in (local, daytona)"
         required: false
-        type: boolean
-        default: false
-      sample_size:
-        description: "Number of random tasks to run (empty = all tasks)"
+        type: string
+        default: ""
+      task_names:
+        description: "Space-separated task names to run (empty = all tasks)"
         required: false
         type: string
       extra_args:
-        description: "Additional arguments to pass to terminal-bench"
+        description: "Additional arguments to pass to harbor"
         required: false
         type: string
       experiments:
@@ -48,24 +48,24 @@ on:
       dataset:
         description: "Terminal-Bench dataset to use"
         required: false
-        default: "terminal-bench-core==0.1.1"
+        default: "terminal-bench@2.0"
         type: string
       concurrency:
         description: "Number of concurrent tasks (--n-concurrent)"
         required: false
         default: "4"
         type: string
-      livestream:
-        description: "Enable livestream mode (verbose output to console)"
+      env:
+        description: "Environment to run in (local, daytona)"
         required: false
-        default: false
-        type: boolean
-      sample_size:
-        description: "Number of random tasks to run (empty = all tasks)"
+        default: ""
+        type: string
+      task_names:
+        description: "Space-separated task names to run (empty = all tasks)"
         required: false
         type: string
       model_name:
-        description: "Model to use (e.g., anthropic:claude-opus-4-5, openai:gpt-5.2)"
+        description: "Model to use (e.g., anthropic/claude-opus-4-5, openai/gpt-5.2)"
         required: false
         type: string
       thinking_level:
@@ -73,7 +73,7 @@ on:
         required: false
         type: string
       extra_args:
-        description: "Additional arguments to pass to terminal-bench"
+        description: "Additional arguments to pass to harbor"
         required: false
         type: string
       experiments:
@@ -115,8 +115,8 @@ jobs:
         env:
           TB_DATASET: ${{ inputs.dataset }}
           TB_CONCURRENCY: ${{ inputs.concurrency }}
-          TB_LIVESTREAM: ${{ inputs.livestream && '1' || '' }}
-          TB_SAMPLE_SIZE: ${{ inputs.sample_size }}
+          TB_ENV: ${{ inputs.env }}
+          TB_TASK_NAMES: ${{ inputs.task_names }}
           TB_ARGS: >-
             ${{ inputs.model_name && format('--agent-kwarg model_name={0} --agent-kwarg thinking_level={1}', inputs.model_name, inputs.thinking_level) || '' }}
             ${{ inputs.extra_args || '' }}

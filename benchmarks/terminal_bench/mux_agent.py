@@ -6,17 +6,14 @@ import shlex
 from pathlib import Path
 from typing import Any, Sequence
 
-from terminal_bench.agents.base_agent import AgentResult
-from terminal_bench.agents.installed_agents.abstract_installed_agent import (
-    AbstractInstalledAgent,
-)
-from terminal_bench.terminal.models import TerminalCommand
-from terminal_bench.terminal.tmux_session import TmuxSession
+from harbor.agents.installed.base import BaseInstalledAgent, ExecInput
+from harbor.environments.base import BaseEnvironment
+from harbor.models.agent.context import AgentContext
 
-from .mux_payload import build_app_archive, stage_payload
+from .mux_payload import build_app_archive
 
 
-class MuxAgent(AbstractInstalledAgent):
+class MuxAgent(BaseInstalledAgent):
     """
     Minimal Terminal-Bench adapter that installs mux into the task container and
     forwards the benchmark instruction to the mux headless runner.
@@ -69,13 +66,14 @@ class MuxAgent(AbstractInstalledAgent):
 
     def __init__(
         self,
+        logs_dir: Path,
         model_name: str = "anthropic:claude-sonnet-4-5",
         mode: str | None = None,
         thinking_level: str | None = None,
         experiments: str | None = None,
         **kwargs: Any,
     ) -> None:
-        super().__init__(**kwargs)
+        super().__init__(logs_dir=logs_dir, **kwargs)
         repo_root_env = os.environ.get("MUX_AGENT_REPO_ROOT")
         repo_root = (
             Path(repo_root_env).resolve()
@@ -92,11 +90,11 @@ class MuxAgent(AbstractInstalledAgent):
         self._runner_path = runner_path
         self._repo_root = repo_root
         self._archive_bytes: bytes | None = None
-        self._staged_container_id: str | None = None
         self._mode = mode.lower() if mode else None
         self._thinking_level = thinking_level.lower() if thinking_level else None
         self._model_name = (model_name or "").strip()
         self._experiments = (experiments or "").strip() if experiments else None
+        self._last_environment: BaseEnvironment | None = None
 
     @staticmethod
     def name() -> str:
@@ -168,65 +166,63 @@ class MuxAgent(AbstractInstalledAgent):
         return env
 
     @property
-    def _install_agent_script_path(self) -> Path:
-        return self._get_templated_script_path("mux_setup.sh.j2")
+    def _install_agent_template_path(self) -> Path:
+        return Path(__file__).with_name("mux_setup.sh.j2")
 
     _TOKEN_FILE_PATH = "/tmp/mux-tokens.json"
 
-    def perform_task(
-        self,
-        instruction: str,
-        session: TmuxSession,
-        logging_dir=None,
-    ) -> AgentResult:
-        if not instruction.strip():
-            raise ValueError("instruction must be a non-empty string")
-        self._ensure_payload_staged(session)
+    async def setup(self, environment: BaseEnvironment) -> None:
+        """Override setup to also stage the mux payload and runner script."""
+        # Call parent setup which runs the install.sh template
+        await super().setup(environment)
 
-        # Run agent via parent (returns hardcoded 0 tokens)
-        super().perform_task(instruction, session, logging_dir)
-
-        # Read tokens from file written by mux-run.sh (best-effort)
-        input_tokens = 0
-        output_tokens = 0
-        try:
-            result = session.container.exec_run(f"cat {self._TOKEN_FILE_PATH}")
-            if result.exit_code == 0:
-                data = json.loads(result.output.decode())
-                input_tokens = data.get("input", 0)
-                output_tokens = data.get("output", 0)
-        except Exception:
-            pass  # Token extraction is best-effort
-
-        return AgentResult(
-            total_input_tokens=input_tokens,
-            total_output_tokens=output_tokens,
-        )
-
-    def _ensure_payload_staged(self, session: TmuxSession) -> None:
-        container_id = getattr(session.container, "id", None)
-        if container_id == self._staged_container_id:
-            return
-
+        # Build and stage the mux app archive
         if not self._archive_bytes:
             self._archive_bytes = build_app_archive(
                 self._repo_root, self._INCLUDE_PATHS
             )
 
-        stage_payload(
-            session, self._archive_bytes, self._ARCHIVE_NAME, self._runner_path
+        # Write archive to logs_dir and upload
+        archive_path = self.logs_dir / self._ARCHIVE_NAME
+        archive_path.write_bytes(self._archive_bytes)
+        await environment.upload_file(
+            source_path=archive_path,
+            target_path=f"/installed-agent/{self._ARCHIVE_NAME}",
         )
-        self._staged_container_id = container_id
 
-    def _run_agent_commands(self, instruction: str) -> list[TerminalCommand]:
+        # Upload runner script
+        await environment.upload_file(
+            source_path=self._runner_path,
+            target_path=f"/installed-agent/{self._RUNNER_NAME}",
+        )
+
+        # Extract archive and make runner executable
+        await environment.exec(
+            command=f"tar -xzf /installed-agent/{self._ARCHIVE_NAME} -C /opt/mux-app"
+        )
+        await environment.exec(command=f"chmod +x /installed-agent/{self._RUNNER_NAME}")
+
+        # Store environment reference for token extraction later
+        self._last_environment = environment
+
+    def create_run_agent_commands(self, instruction: str) -> list[ExecInput]:
         escaped = shlex.quote(instruction)
         command = f"bash /installed-agent/{self._RUNNER_NAME} {escaped}"
         return [
-            TerminalCommand(
+            ExecInput(
                 command=command,
-                min_timeout_sec=0.0,
-                max_timeout_sec=float("inf"),  # Let global timeout handle this
-                block=True,
-                append_enter=True,
+                env=self._env,
             )
         ]
+
+    def populate_context_post_run(self, context: AgentContext) -> None:
+        """Extract token usage from the token file written by mux-run.sh."""
+        # Best-effort: try to read local copy if available
+        token_file = self.logs_dir / "mux-tokens.json"
+        if token_file.exists():
+            try:
+                data = json.loads(token_file.read_text())
+                context.n_input_tokens = data.get("input", 0)
+                context.n_output_tokens = data.get("output", 0)
+            except Exception:
+                pass  # Token extraction is best-effort
