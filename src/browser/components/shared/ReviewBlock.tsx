@@ -7,9 +7,10 @@
  */
 
 import React, { useState, useCallback, useRef, useMemo } from "react";
-import { MessageSquare, X, Pencil, Check, Trash2 } from "lucide-react";
+import { X, Pencil, Check, Trash2, Unlink } from "lucide-react";
 import { DiffRenderer } from "./DiffRenderer";
 import { Button } from "../ui/button";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { matchesKeybind, formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import type { ReviewNoteDataForDisplay } from "@/common/types/message";
 
@@ -32,6 +33,8 @@ interface ReviewBlockCoreProps {
   /** Permanently delete the review */
   onDelete?: () => void;
   onEditComment?: (newComment: string) => void;
+  /** Compact mode: hide file header (when parent already shows file context) */
+  compact?: boolean;
 }
 
 /**
@@ -49,6 +52,7 @@ const ReviewBlockCore: React.FC<ReviewBlockCoreProps> = ({
   onComplete,
   onDelete,
   onEditComment,
+  compact = false,
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(comment);
@@ -94,51 +98,93 @@ const ReviewBlockCore: React.FC<ReviewBlockCoreProps> = ({
     [handleSaveEdit, handleCancelEdit]
   );
 
+  // Has any action available
+  const hasActions = onComplete ?? onDetach ?? onDelete ?? onEditComment;
+
   return (
-    <div className="min-w-0 overflow-hidden rounded border border-[var(--color-review-accent)]/30 bg-[var(--color-review-accent)]/5">
-      {/* Header - actions left of file path (consistent with ReviewsBanner), trash on right */}
-      <div className="flex items-center gap-1 border-b border-[var(--color-review-accent)]/20 bg-[var(--color-review-accent)]/10 px-2 py-1 text-xs">
-        {/* Safe actions on left: complete and detach */}
-        {onComplete && (
-          <button
-            type="button"
-            onClick={onComplete}
-            className="text-muted hover:text-success flex shrink-0 items-center justify-center rounded p-0.5 transition-colors"
-            title="Mark as done"
-          >
-            <Check className="size-3" />
-          </button>
+    <div className="group/review min-w-0 overflow-hidden rounded border border-[var(--color-review-accent)]/30 bg-[var(--color-review-accent)]/5">
+      {/* Header row: file:line on left, actions on right */}
+      <div className="flex items-center gap-1.5 border-b border-[var(--color-review-accent)]/20 bg-[var(--color-review-accent)]/10 px-2 py-1 text-xs">
+        {/* File path and line range - only show if not compact */}
+        {!compact && (
+          <span className="text-primary min-w-0 flex-1 truncate font-mono text-[11px]">
+            {filePath}:{lineRange}
+          </span>
         )}
-        {onDetach && (
-          <button
-            type="button"
-            onClick={onDetach}
-            className="text-muted hover:text-secondary flex shrink-0 items-center justify-center rounded p-0.5 transition-colors"
-            title="Detach from message"
-          >
-            <X className="size-3" />
-          </button>
+
+        {/* In compact mode, show line range only */}
+        {compact && (
+          <span className="text-muted min-w-0 flex-1 truncate font-mono text-[10px]">
+            L{lineRange}
+          </span>
         )}
-        <MessageSquare className="size-3 shrink-0 text-[var(--color-review-accent)]" />
-        <span className="text-primary min-w-0 flex-1 truncate font-mono">
-          {filePath}:{lineRange}
-        </span>
-        {/* Destructive action on right */}
-        {onDelete && (
-          <button
-            type="button"
-            onClick={onDelete}
-            className="text-muted hover:text-error flex shrink-0 items-center justify-center rounded p-0.5 transition-colors"
-            title="Delete review"
-          >
-            <Trash2 className="size-3" />
-          </button>
+
+        {/* Action buttons - visible on hover */}
+        {hasActions && (
+          <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover/review:opacity-100">
+            {onEditComment && !isEditing && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={handleStartEdit}
+                    className="text-muted hover:text-secondary flex items-center justify-center rounded p-1 transition-colors"
+                  >
+                    <Pencil className="size-3" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>Edit comment</TooltipContent>
+              </Tooltip>
+            )}
+            {onComplete && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={onComplete}
+                    className="text-muted hover:text-success flex items-center justify-center rounded p-1 transition-colors"
+                  >
+                    <Check className="size-3" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>Mark as done</TooltipContent>
+              </Tooltip>
+            )}
+            {onDetach && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={onDetach}
+                    className="text-muted hover:text-secondary flex items-center justify-center rounded p-1 transition-colors"
+                  >
+                    <Unlink className="size-3" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>Detach from message</TooltipContent>
+              </Tooltip>
+            )}
+            {onDelete && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={onDelete}
+                    className="text-muted hover:text-error flex items-center justify-center rounded p-1 transition-colors"
+                  >
+                    <Trash2 className="size-3" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>Delete review</TooltipContent>
+              </Tooltip>
+            )}
+          </div>
         )}
       </div>
 
-      {/* Code snippet - horizontal scroll for long lines, vertical scroll limited to max-h-64 */}
+      {/* Code snippet - horizontal scroll for long lines, vertical scroll limited to max-h-48 */}
       {(diff ?? code) && (
-        <div className="max-h-64 overflow-auto border-b border-[var(--color-review-accent)]/20 text-[11px]">
+        <div className="max-h-48 overflow-auto text-[11px]">
           {diff ? (
             <DiffRenderer
               content={diff}
@@ -169,60 +215,48 @@ const ReviewBlockCore: React.FC<ReviewBlockCoreProps> = ({
         </div>
       )}
 
-      {/* Comment - editable when onEditComment provided */}
+      {/* Comment section - inline with edit support */}
       {(comment || onEditComment) && (
-        <div className="group/comment px-2 py-1">
+        <div className="border-t border-[var(--color-review-accent)]/20 px-2 py-1.5">
           {isEditing ? (
-            <div className="space-y-1">
+            <div className="space-y-1.5">
               <textarea
                 ref={textareaRef}
                 value={editValue}
                 onChange={(e) => setEditValue(e.target.value)}
                 onKeyDown={handleKeyDown}
-                className="text-primary w-full resize-none rounded border border-[var(--color-review-accent)]/40 bg-[var(--color-review-accent)]/10 px-1.5 py-1 text-xs focus:border-[var(--color-review-accent)]/60 focus:outline-none"
+                className="text-primary w-full resize-none rounded border border-[var(--color-review-accent)]/40 bg-[var(--color-review-accent)]/10 px-2 py-1.5 text-xs focus:border-[var(--color-review-accent)]/60 focus:outline-none"
                 rows={2}
                 placeholder="Your comment..."
               />
-              <div className="flex items-center justify-end gap-1">
+              <div className="flex items-center justify-end gap-1.5">
                 <span className="text-muted mr-1 text-[10px]">
-                  {formatKeybind(KEYBINDS.SAVE_EDIT)} save, Esc cancel
+                  {formatKeybind(KEYBINDS.SAVE_EDIT)} save · Esc cancel
                 </span>
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-5 px-1.5 text-[10px]"
+                  className="h-6 px-2 text-xs"
                   onClick={handleCancelEdit}
                 >
-                  <X className="mr-0.5 size-2.5" />
+                  <X className="mr-1 size-3" />
                   Cancel
                 </Button>
                 <Button
                   variant="secondary"
                   size="sm"
-                  className="h-5 px-1.5 text-[10px]"
+                  className="h-6 px-2 text-xs"
                   onClick={handleSaveEdit}
                 >
-                  <Check className="mr-0.5 size-2.5" />
+                  <Check className="mr-1 size-3" />
                   Save
                 </Button>
               </div>
             </div>
           ) : (
-            <div className="flex items-start gap-1">
-              <blockquote className="text-primary flex-1 border-l-2 border-[var(--color-review-accent)] pl-1.5 text-xs whitespace-pre-wrap italic">
-                {comment || <span className="text-muted">No comment</span>}
-              </blockquote>
-              {onEditComment && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-5 shrink-0 opacity-0 transition-opacity group-hover/comment:opacity-100 [&_svg]:size-3"
-                  onClick={handleStartEdit}
-                >
-                  <Pencil />
-                </Button>
-              )}
-            </div>
+            <blockquote className="text-secondary border-l-2 border-[var(--color-review-accent)]/50 pl-2 text-xs leading-relaxed whitespace-pre-wrap">
+              {comment || <span className="text-muted italic">No comment</span>}
+            </blockquote>
           )}
         </div>
       )}
@@ -245,6 +279,8 @@ interface ReviewBlockFromDataProps {
   onDelete?: () => void;
   /** Optional callback to edit the comment */
   onEditComment?: (newComment: string) => void;
+  /** Compact mode: hide file header (when parent already shows file context) */
+  compact?: boolean;
 }
 
 /**
@@ -257,6 +293,7 @@ export const ReviewBlockFromData: React.FC<ReviewBlockFromDataProps> = ({
   onComplete,
   onDelete,
   onEditComment,
+  compact,
 }) => {
   return (
     <ReviewBlockCore
@@ -268,6 +305,7 @@ export const ReviewBlockFromData: React.FC<ReviewBlockFromDataProps> = ({
       newStart={data.newStart}
       comment={data.userNote}
       onDetach={onDetach}
+      compact={compact}
       onComplete={onComplete}
       onDelete={onDelete}
       onEditComment={onEditComment}
