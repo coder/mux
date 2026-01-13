@@ -2,10 +2,14 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { AppLoader } from "@/browser/components/AppLoader";
 import { initTelemetry, trackAppStarted } from "@/common/telemetry";
+import { initTitlebarInsets } from "@/browser/hooks/useDesktopTitlebar";
 
 // Initialize telemetry on app startup
 initTelemetry();
 trackAppStarted();
+
+// Initialize titlebar CSS custom properties (platform-specific insets)
+initTitlebarInsets();
 
 // Global error handlers for renderer process
 // These catch errors that escape the ErrorBoundary

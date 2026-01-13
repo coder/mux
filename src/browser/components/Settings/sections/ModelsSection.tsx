@@ -21,7 +21,8 @@ import {
 } from "@/browser/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/browser/components/ui/popover";
 import { Button } from "@/browser/components/ui/button";
-import { getModelName } from "@/common/utils/ai/models";
+import { getModelName, getModelProvider } from "@/common/utils/ai/models";
+import { ProviderIcon } from "@/browser/components/ProviderIcon";
 import { cn } from "@/common/lib/utils";
 
 /** Searchable model dropdown with keyboard navigation */
@@ -42,6 +43,7 @@ function SearchableModelSelect(props: {
     props.emptyOption && !props.value
       ? props.emptyOption.label
       : (getModelName(props.value) ?? props.placeholder ?? "Select model");
+  const selectedProvider = props.value ? getModelProvider(props.value) : "";
 
   // Filter models based on search
   const searchLower = search.toLowerCase();
@@ -52,7 +54,7 @@ function SearchableModelSelect(props: {
   );
 
   // Build list of all selectable items (empty option + filtered models)
-  const items: Array<{ value: string; label: string; isMuted?: boolean }> = [];
+  const items: Array<{ value: string; label: string; provider?: string; isMuted?: boolean }> = [];
   if (props.emptyOption) {
     items.push({
       value: props.emptyOption.value,
@@ -61,7 +63,11 @@ function SearchableModelSelect(props: {
     });
   }
   for (const model of filteredModels) {
-    items.push({ value: model, label: getModelName(model) ?? model });
+    items.push({
+      value: model,
+      label: getModelName(model) ?? model,
+      provider: getModelProvider(model),
+    });
   }
 
   // Reset highlight when search changes or popover opens
@@ -120,7 +126,15 @@ function SearchableModelSelect(props: {
     <Popover open={isOpen} onOpenChange={setIsOpen} modal>
       <PopoverTrigger asChild>
         <button className="bg-background-secondary border-border-medium focus:border-accent flex h-8 w-full items-center justify-between rounded border px-2 text-xs">
-          <span className={cn("truncate", !props.value && props.emptyOption && "text-muted")}>
+          <span
+            className={cn(
+              "flex items-center gap-1.5 truncate",
+              !props.value && props.emptyOption && "text-muted"
+            )}
+          >
+            {selectedProvider && (
+              <ProviderIcon provider={selectedProvider} className="text-muted shrink-0" />
+            )}
             {displayValue}
           </span>
           <ChevronDown className="text-muted h-3 w-3 shrink-0" />
@@ -164,6 +178,9 @@ function SearchableModelSelect(props: {
                       : "opacity-0"
                   )}
                 />
+                {item.provider && (
+                  <ProviderIcon provider={item.provider} className="text-muted shrink-0" />
+                )}
                 <span className={cn("truncate", item.isMuted && "text-muted")}>{item.label}</span>
               </button>
             ))

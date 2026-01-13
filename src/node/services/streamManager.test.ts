@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, mock } from "bun:test";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { StreamManager } from "./streamManager";
-import { APICallError } from "ai";
+import { APICallError, RetryError } from "ai";
 import type { HistoryService } from "./historyService";
 import type { PartialService } from "./partialService";
 import { createAnthropic } from "@ai-sdk/anthropic";
@@ -165,27 +165,28 @@ describe("StreamManager - Concurrent Stream Prevention", () => {
       processingPromise: Promise<void>;
     }
 
-    const ensureStreamSafetyValue = Reflect.get(streamManager, "ensureStreamSafety") as unknown;
-    if (typeof ensureStreamSafetyValue !== "function") {
-      throw new Error("StreamManager.ensureStreamSafety is unavailable for testing");
-    }
-
-    const originalEnsure = (
-      ensureStreamSafetyValue as (workspaceId: string) => Promise<string>
-    ).bind(streamManager);
-
     const replaceEnsureResult = Reflect.set(
       streamManager,
       "ensureStreamSafety",
-      async (wsId: string): Promise<string> => {
+      async (_wsId: string): Promise<string> => {
         operations.push("ensure-start");
         await new Promise((resolve) => setTimeout(resolve, 50));
-        const result = await originalEnsure(wsId);
         operations.push("ensure-end");
-        return result;
+        return "test-token";
       }
     );
 
+    const replaceTempDirResult = Reflect.set(
+      streamManager,
+      "createTempDirForStream",
+      (_streamToken: string, _runtime: unknown): Promise<string> => {
+        return Promise.resolve("/tmp/mock-stream-temp");
+      }
+    );
+
+    if (!replaceTempDirResult) {
+      throw new Error("Failed to mock StreamManager.createTempDirForStream");
+    }
     if (!replaceEnsureResult) {
       throw new Error("Failed to mock StreamManager.ensureStreamSafety");
     }
@@ -202,23 +203,22 @@ describe("StreamManager - Concurrent Stream Prevention", () => {
       (
         wsId: string,
         streamToken: string,
-        messages: unknown,
-        modelArg: unknown,
+        _runtimeTempDir: string,
+        _runtime: unknown,
+        _messages: unknown,
+        _modelArg: unknown,
         modelString: string,
-        abortSignal: AbortSignal | undefined,
-        system: string,
+        abortController: AbortController,
+        _system: string,
         historySequence: number,
-        tools?: Record<string, unknown>,
+        _messageId: string,
+        _tools?: Record<string, unknown>,
         initialMetadata?: Record<string, unknown>,
         _providerOptions?: Record<string, unknown>,
         _maxOutputTokens?: number,
         _toolPolicy?: unknown
       ): WorkspaceStreamInfoStub => {
         operations.push("create");
-        const abortController = new AbortController();
-        if (abortSignal) {
-          abortSignal.addEventListener("abort", () => abortController.abort());
-        }
 
         const streamInfo: WorkspaceStreamInfoStub = {
           state: "starting",
@@ -322,6 +322,108 @@ describe("StreamManager - Concurrent Stream Prevention", () => {
       expect(ensureOperations[i]).toBe("ensure-start");
       expect(ensureOperations[i + 1]).toBe("ensure-end");
     }
+  });
+
+  test("should honor abortSignal before atomic stream creation", async () => {
+    const workspaceId = "test-workspace-abort-before-create";
+
+    let createCalled = false;
+    let processCalled = false;
+    let streamStartEmitted = false;
+
+    streamManager.on("stream-start", () => {
+      streamStartEmitted = true;
+    });
+
+    const abortController = new AbortController();
+
+    let tempDirStartedResolve: (() => void) | undefined;
+    const tempDirStarted = new Promise<void>((resolve) => {
+      tempDirStartedResolve = resolve;
+    });
+
+    const replaceTempDirResult = Reflect.set(
+      streamManager,
+      "createTempDirForStream",
+      (_streamToken: string, _runtime: unknown): Promise<string> => {
+        tempDirStartedResolve?.();
+        return new Promise((resolve) => {
+          abortController.signal.addEventListener("abort", () => resolve("/tmp/mock-stream-temp"), {
+            once: true,
+          });
+        });
+      }
+    );
+
+    if (!replaceTempDirResult) {
+      throw new Error("Failed to mock StreamManager.createTempDirForStream");
+    }
+
+    let cleanupCalled = false;
+    const replaceCleanupResult = Reflect.set(
+      streamManager,
+      "cleanupStreamTempDir",
+      (..._args: unknown[]): void => {
+        cleanupCalled = true;
+      }
+    );
+
+    if (!replaceCleanupResult) {
+      throw new Error("Failed to mock StreamManager.cleanupStreamTempDir");
+    }
+
+    const replaceCreateResult = Reflect.set(
+      streamManager,
+      "createStreamAtomically",
+      (..._args: unknown[]): never => {
+        createCalled = true;
+        throw new Error("createStreamAtomically should not be called");
+      }
+    );
+
+    if (!replaceCreateResult) {
+      throw new Error("Failed to mock StreamManager.createStreamAtomically");
+    }
+
+    const replaceProcessResult = Reflect.set(
+      streamManager,
+      "processStreamWithCleanup",
+      (..._args: unknown[]): Promise<void> => {
+        processCalled = true;
+        return Promise.resolve();
+      }
+    );
+
+    if (!replaceProcessResult) {
+      throw new Error("Failed to mock StreamManager.processStreamWithCleanup");
+    }
+
+    const anthropic = createAnthropic({ apiKey: "dummy-key" });
+    const model = anthropic("claude-sonnet-4-5");
+
+    const startPromise = streamManager.startStream(
+      workspaceId,
+      [{ role: "user", content: "test" }],
+      model,
+      KNOWN_MODELS.SONNET.id,
+      1,
+      "system",
+      runtime,
+      "test-msg-abort",
+      abortController.signal,
+      {}
+    );
+
+    await tempDirStarted;
+    abortController.abort();
+
+    const result = await startPromise;
+    expect(result.success).toBe(true);
+    expect(createCalled).toBe(false);
+    expect(cleanupCalled).toBe(true);
+    expect(processCalled).toBe(false);
+    expect(streamStartEmitted).toBe(false);
+    expect(streamManager.isStreaming(workspaceId)).toBe(false);
   });
 });
 
@@ -580,6 +682,56 @@ describe("StreamManager - replayStream", () => {
 
     // If replayStream iterates the live array, it would also emit "b".
     expect(deltas).toEqual(["a"]);
+  });
+});
+
+describe("StreamManager - categorizeError", () => {
+  test("unwraps RetryError.lastError to classify model_not_found", () => {
+    const mockHistoryService = createMockHistoryService();
+    const mockPartialService = createMockPartialService();
+    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+
+    const categorizeMethod = Reflect.get(streamManager, "categorizeError") as (
+      error: unknown
+    ) => unknown;
+    expect(typeof categorizeMethod).toBe("function");
+
+    const apiError = new APICallError({
+      message: "The model `gpt-5.2-codex` does not exist or you do not have access to it.",
+      url: "https://api.openai.com/v1/responses",
+      requestBodyValues: {},
+      statusCode: 400,
+      responseHeaders: {},
+      responseBody:
+        '{"error":{"message":"The model `gpt-5.2-codex` does not exist or you do not have access to it.","code":"model_not_found"}}',
+      isRetryable: false,
+      data: { error: { code: "model_not_found" } },
+    });
+
+    const retryError = new RetryError({
+      message: "AI SDK retry exhausted",
+      reason: "maxRetriesExceeded",
+      errors: [apiError],
+    });
+
+    expect(categorizeMethod.call(streamManager, retryError)).toBe("model_not_found");
+  });
+
+  test("classifies model_not_found via message fallback", () => {
+    const mockHistoryService = createMockHistoryService();
+    const mockPartialService = createMockPartialService();
+    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+
+    const categorizeMethod = Reflect.get(streamManager, "categorizeError") as (
+      error: unknown
+    ) => unknown;
+    expect(typeof categorizeMethod).toBe("function");
+
+    const error = new Error(
+      "The model `gpt-5.2-codex` does not exist or you do not have access to it."
+    );
+
+    expect(categorizeMethod.call(streamManager, error)).toBe("model_not_found");
   });
 });
 

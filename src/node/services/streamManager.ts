@@ -30,6 +30,7 @@ import type { NestedToolCall } from "@/common/orpc/schemas/message";
 import type { PartialService } from "./partialService";
 import type { HistoryService } from "./historyService";
 import { addUsage, accumulateProviderMetadata } from "@/common/utils/tokens/usageHelpers";
+import { linkAbortSignal } from "@/node/utils/abort";
 import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
 import { stripInternalToolResultFields } from "@/common/utils/tools/internalToolResultFields";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
@@ -114,6 +115,7 @@ function stripEncryptedContent(output: unknown): unknown {
 interface WorkspaceStreamInfo {
   state: StreamState;
   streamResult: Awaited<ReturnType<typeof streamText>>;
+  unlinkAbortSignal?: () => void;
   abortController: AbortController;
   messageId: string;
   token: StreamToken;
@@ -320,6 +322,28 @@ export class StreamManager extends EventEmitter {
     }
 
     return resolvedPath;
+  }
+
+  private cleanupStreamTempDir(runtime: Runtime, runtimeTempDir: string): void {
+    // Use parent directory as cwd for safety - if runtimeTempDir is malformed,
+    // we won't accidentally run rm -rf from root.
+    const tempDirBasename = PlatformPaths.basename(runtimeTempDir);
+    const tempDirParent = path.dirname(runtimeTempDir);
+
+    // Fire-and-forget: don't block stream completion waiting for directory deletion.
+    // This is especially important for SSH where rm -rf can take 500ms-2s.
+    void runtime
+      .exec(`rm -rf "${tempDirBasename}"`, {
+        cwd: tempDirParent,
+        timeout: 10,
+      })
+      .then(async (result) => {
+        await result.exitCode;
+        log.debug(`Cleaned up temp dir: ${runtimeTempDir}`);
+      })
+      .catch((error) => {
+        log.error(`Failed to cleanup temp dir ${runtimeTempDir}:`, error);
+      });
   }
 
   /**
@@ -664,7 +688,7 @@ export class StreamManager extends EventEmitter {
     messages: ModelMessage[],
     model: LanguageModel,
     modelString: string,
-    abortSignal: AbortSignal | undefined,
+    abortController: AbortController,
     system: string,
     historySequence: number,
     messageId: string,
@@ -675,13 +699,7 @@ export class StreamManager extends EventEmitter {
     toolPolicy?: ToolPolicy,
     hasQueuedMessage?: () => boolean
   ): WorkspaceStreamInfo {
-    // Create abort controller for this specific stream
-    const abortController = new AbortController();
-
-    // Link external abort signal
-    if (abortSignal) {
-      abortSignal.addEventListener("abort", () => abortController.abort());
-    }
+    // abortController is created and linked to the caller-provided abortSignal in startStream().
 
     // Determine toolChoice based on toolPolicy.
     //
@@ -1462,6 +1480,9 @@ export class StreamManager extends EventEmitter {
         streamInfo.partialWriteTimer = undefined;
       }
 
+      streamInfo.unlinkAbortSignal?.();
+      streamInfo.unlinkAbortSignal = undefined;
+
       // Clean up stream temp directory using runtime (fire-and-forget)
       // Don't block stream completion waiting for directory deletion
       // This is especially important for SSH where rm -rf can take 500ms-2s
@@ -1565,6 +1586,20 @@ export class StreamManager extends EventEmitter {
       return "api";
     }
     if (RetryError.isInstance(error)) {
+      // The AI SDK wraps the underlying error(s) in RetryError when it exhausts its internal retries.
+      // If the underlying error is deterministically non-retryable (e.g. model_not_found), we should
+      // surface that classification so the frontend auto-retry loop stops.
+      //
+      // Keep returning retry_failed for generic/transient failures so the UI still communicates that
+      // the SDK already retried and gave up.
+      const underlyingType = error.lastError ? this.categorizeError(error.lastError) : "unknown";
+      if (
+        underlyingType !== "unknown" &&
+        underlyingType !== "api" &&
+        underlyingType !== "retry_failed"
+      ) {
+        return underlyingType;
+      }
       return "retry_failed";
     }
 
@@ -1578,6 +1613,14 @@ export class StreamManager extends EventEmitter {
       error.error !== null
     ) {
       const structuredError = error.error as { code?: string; type?: string };
+
+      // Model not found
+      if (
+        structuredError.code === "model_not_found" ||
+        structuredError.type === "not_found_error"
+      ) {
+        return "model_not_found";
+      }
 
       // OpenAI context length errors have code: 'context_length_exceeded'
       if (structuredError.code === "context_length_exceeded") {
@@ -1598,6 +1641,16 @@ export class StreamManager extends EventEmitter {
         return "aborted";
       } else if (message.includes("network") || message.includes("fetch")) {
         return "network";
+      } else if (
+        message.includes("model") &&
+        (message.includes("does not exist") ||
+          message.includes("doesn't exist") ||
+          message.includes("not found") ||
+          message.includes("do not have access") ||
+          message.includes("don't have access") ||
+          message.includes("no access"))
+      ) {
+        return "model_not_found";
       } else if (
         message.includes("token") ||
         message.includes("context") ||
@@ -1668,49 +1721,87 @@ export class StreamManager extends EventEmitter {
         `[STREAM START] workspaceId=${workspaceId} historySequence=${historySequence} model=${modelString}`
       );
 
-      // Step 1: Cancel any existing stream before proceeding
-      // This must happen regardless of whether a token was provided
-      await this.ensureStreamSafety(typedWorkspaceId);
+      const streamAbortController = new AbortController();
+      const unlinkAbortSignal = linkAbortSignal(abortSignal, streamAbortController);
 
-      // Step 2: Use provided stream token or generate a new one
-      const streamToken = providedStreamToken ?? this.generateStreamToken();
+      let runtimeTempDir: string | undefined;
+      let streamRegistered = false;
 
-      // Step 3: Create temp directory for this stream using runtime
-      // If token was provided, temp dir might already exist - mkdir -p handles this
-      const runtimeTempDir = await this.createTempDirForStream(streamToken, runtime);
+      try {
+        // Step 1: Cancel any existing stream before proceeding
+        // This must happen regardless of whether a token was provided
+        const generatedStreamToken = await this.ensureStreamSafety(typedWorkspaceId);
 
-      // Step 4: Atomic stream creation and registration
-      const streamInfo = this.createStreamAtomically(
-        typedWorkspaceId,
-        streamToken,
-        runtimeTempDir,
-        runtime,
-        messages,
-        model,
-        modelString,
-        abortSignal,
-        system,
-        historySequence,
-        messageId,
-        tools,
-        initialMetadata,
-        providerOptions,
-        maxOutputTokens,
-        toolPolicy,
-        hasQueuedMessage
-      );
+        // Step 2: Use provided stream token or the generated one
+        const streamToken = providedStreamToken ?? generatedStreamToken;
 
-      // Step 5: Track the processing promise for guaranteed cleanup
-      // This allows cancelStreamSafely to wait for full exit
-      streamInfo.processingPromise = this.processStreamWithCleanup(
-        typedWorkspaceId,
-        streamInfo,
-        historySequence
-      ).catch((error) => {
-        log.error("Unexpected error in stream processing:", error);
-      });
+        // If the stream was interrupted while we were waiting on async setup (mutex,
+        // temp dir creation, etc), avoid starting the stream entirely.
+        if (streamAbortController.signal.aborted) {
+          return Ok(streamToken);
+        }
 
-      return Ok(streamToken);
+        // Step 3: Create temp directory for this stream using runtime
+        // If token was provided, temp dir might already exist - mkdir -p handles this
+        runtimeTempDir = await this.createTempDirForStream(streamToken, runtime);
+
+        if (streamAbortController.signal.aborted) {
+          return Ok(streamToken);
+        }
+
+        // Step 4: Atomic stream creation and registration
+        const streamInfo = this.createStreamAtomically(
+          typedWorkspaceId,
+          streamToken,
+          runtimeTempDir,
+          runtime,
+          messages,
+          model,
+          modelString,
+          streamAbortController,
+          system,
+          historySequence,
+          messageId,
+          tools,
+          initialMetadata,
+          providerOptions,
+          maxOutputTokens,
+          toolPolicy,
+          hasQueuedMessage
+        );
+
+        // Guard against a narrow race:
+        // - stopStream() may abort while we're between the last aborted-check and stream registration.
+        // - If we start processStreamWithCleanup anyway, it would emit stream-start, but no one would
+        //   subsequently call stopStream() again (it already ran), so we'd never emit stream-abort/end.
+        // In that case, immediately drop the registered stream and rely on the caller to handle UI.
+        if (streamAbortController.signal.aborted) {
+          this.workspaceStreams.delete(typedWorkspaceId);
+          return Ok(streamToken);
+        }
+
+        streamInfo.unlinkAbortSignal = unlinkAbortSignal;
+        streamRegistered = true;
+
+        // Step 5: Track the processing promise for guaranteed cleanup
+        // This allows cancelStreamSafely to wait for full exit
+        streamInfo.processingPromise = this.processStreamWithCleanup(
+          typedWorkspaceId,
+          streamInfo,
+          historySequence
+        ).catch((error) => {
+          log.error("Unexpected error in stream processing:", error);
+        });
+
+        return Ok(streamToken);
+      } finally {
+        if (!streamRegistered) {
+          unlinkAbortSignal();
+          if (runtimeTempDir) {
+            this.cleanupStreamTempDir(runtime, runtimeTempDir);
+          }
+        }
+      }
     } catch (error) {
       // Guaranteed cleanup on any failure
       this.workspaceStreams.delete(typedWorkspaceId);

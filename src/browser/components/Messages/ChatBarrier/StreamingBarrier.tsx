@@ -80,6 +80,10 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({ workspaceId,
 
   // Vim mode affects cancel keybind hint (read once per render, no subscription needed)
   const vimEnabled = readPersistedState(VIM_ENABLED_KEY, false);
+  const interruptKeybind = formatKeybind(
+    vimEnabled ? KEYBINDS.INTERRUPT_STREAM_VIM : KEYBINDS.INTERRUPT_STREAM_NORMAL
+  );
+  const interruptHint = `hit ${interruptKeybind} to cancel`;
 
   // Compute status text based on phase
   const statusText = (() => {
@@ -100,14 +104,14 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({ workspaceId,
   // Compute cancel hint based on phase
   const cancelText = (() => {
     switch (phase) {
-      case "starting":
       case "interrupting":
         return "";
       case "awaiting-input":
         return "type a message to respond";
+      case "starting":
       case "compacting":
       case "streaming":
-        return `hit ${formatKeybind(vimEnabled ? KEYBINDS.INTERRUPT_STREAM_VIM : KEYBINDS.INTERRUPT_STREAM_NORMAL)} to cancel`;
+        return interruptHint;
     }
   })();
 

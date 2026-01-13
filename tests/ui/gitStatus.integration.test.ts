@@ -139,6 +139,11 @@ describeIntegration("GitStatus (UI + ORPC)", () => {
       try {
         await setupWorkspaceView(view, metadata, workspaceId);
 
+        // Wait for any initial git status fetch to complete before making commits.
+        // The RefreshController has debounce/min-interval guards that can delay
+        // subsequent refreshes if we start too quickly.
+        await waitForGitStatusElement(view.container, workspaceId, 10_000);
+
         // Make 2 commits to get ahead of remote
         for (let i = 0; i < 2; i++) {
           const bashRes = await env.orpc.workspace.executeBash({

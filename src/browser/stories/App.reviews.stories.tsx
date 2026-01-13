@@ -390,3 +390,58 @@ export const QueuedMessageWithReviews: AppStory = {
     blurActiveElement();
   },
 };
+
+/**
+ * Shows attached review with hover actions visible.
+ * Demonstrates the edit, check, detach, and delete buttons that appear on hover.
+ */
+export const AttachedReviewHoverActions: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const workspaceId = "ws-hover-actions";
+
+        const baseTime = 1700000000000;
+        setReviews(workspaceId, [
+          createReview(
+            "review-hover-1",
+            "src/api/auth.ts",
+            "42-48",
+            "Consider using a constant for the token expiry duration instead of hardcoding 3600000",
+            "attached",
+            baseTime + 1
+          ),
+        ]);
+
+        return setupSimpleChatStory({
+          workspaceId,
+          workspaceName: "feature/auth",
+          projectName: "my-app",
+          messages: [
+            createUserMessage("msg-1", "Fix the auth token handling", { historySequence: 1 }),
+            createAssistantMessage("msg-2", "I'll help you fix the authentication.", {
+              historySequence: 2,
+            }),
+          ],
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    const canvas = within(canvasElement);
+
+    // Wait for the attached review to appear
+    await waitFor(() => {
+      canvas.getByText(/src\/api\/auth\.ts:L42-48/);
+    });
+
+    // Hover over the review block to reveal action buttons
+    const reviewBlock = canvasElement.querySelector("[class*='group/review']");
+    if (reviewBlock) {
+      await userEvent.hover(reviewBlock);
+    }
+
+    await waitForChatInputAutofocusDone(canvasElement);
+    blurActiveElement();
+  },
+};

@@ -9,6 +9,7 @@ import { cn } from "@/common/lib/utils";
 import { getLanguageFromPath } from "@/common/utils/git/languageDetector";
 import { useOverflowDetection } from "@/browser/hooks/useOverflowDetection";
 import { MessageSquare } from "lucide-react";
+import { InlineReviewNote, type ReviewActionCallbacks } from "./InlineReviewNote";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { groupDiffLines } from "@/browser/utils/highlighting/diffChunking";
 import { useTheme, type ThemeMode } from "@/browser/contexts/ThemeContext";
@@ -578,6 +579,8 @@ interface SelectableDiffRendererProps extends Omit<DiffRendererProps, "filePath"
   enableHighlighting?: boolean;
   /** Callback when review note composition state changes (selection active/inactive) */
   onComposingChange?: (isComposing: boolean) => void;
+  /** Action callbacks for inline review notes (edit, check, delete, etc.) */
+  reviewActions?: ReviewActionCallbacks;
 }
 
 interface LineSelection {
@@ -788,19 +791,13 @@ interface InlineReviewNoteRowProps {
   lineType: DiffLineType;
   showLineNumbers: boolean;
   lineNumberWidths: LineNumberWidths;
+  /** Optional action callbacks for review actions */
+  reviewActions?: ReviewActionCallbacks;
 }
 
 const InlineReviewNoteRow: React.FC<InlineReviewNoteRowProps> = React.memo(
-  ({ review, lineType, showLineNumbers, lineNumberWidths }) => {
+  ({ review, lineType, showLineNumbers, lineNumberWidths, reviewActions }) => {
     const codeBg = getDiffLineBackground(lineType);
-
-    const tintColor =
-      review.status === "checked" ? "var(--color-success)" : "var(--color-review-accent)";
-
-    const containerBg =
-      review.status === "checked"
-        ? "hsl(from var(--color-success) h s l / 0.06)"
-        : "hsl(from var(--color-review-accent) h s l / 0.08)";
 
     return (
       <div
@@ -822,37 +819,9 @@ const InlineReviewNoteRow: React.FC<InlineReviewNoteRowProps> = React.memo(
         </span>
         {/* Indicator spacer */}
         <span style={{ background: codeBg }} />
-        {/* Inline note */}
-        <div className="min-w-0 py-1 pr-3" style={{ background: codeBg }}>
-          <div
-            className="flex w-full max-w-[560px] overflow-hidden rounded border border-[var(--color-review-accent)]/30 shadow-sm"
-            style={{ background: containerBg }}
-          >
-            {/* Left accent bar */}
-            <div className="w-[3px] shrink-0" style={{ background: tintColor }} />
-            <div className="min-w-0 flex-1 px-2 py-1">
-              <div className="flex items-center gap-1 text-[10px]">
-                <MessageSquare className="size-3 shrink-0" style={{ color: tintColor }} />
-                <span className="text-primary min-w-0 flex-1 truncate font-mono">
-                  {review.data.filePath}:{review.data.lineRange}
-                </span>
-                <span
-                  className={cn(
-                    "shrink-0 uppercase tracking-wide",
-                    review.status === "checked" ? "text-success" : "text-muted"
-                  )}
-                  style={{ fontSize: "9px" }}
-                >
-                  {review.status}
-                </span>
-              </div>
-              {review.data.userNote && (
-                <div className="text-primary mt-0.5 text-[11px] leading-[1.4] whitespace-pre-wrap">
-                  {review.data.userNote}
-                </div>
-              )}
-            </div>
-          </div>
+        {/* Inline note using shared component */}
+        <div className="min-w-0 py-0.5 pr-3" style={{ background: codeBg }}>
+          <InlineReviewNote review={review} showFilePath={false} actions={reviewActions} />
         </div>
       </div>
     );
@@ -877,6 +846,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     searchConfig,
     enableHighlighting = true,
     onComposingChange,
+    reviewActions,
   }) => {
     const dragAnchorRef = React.useRef<number | null>(null);
     const [isDragging, setIsDragging] = React.useState(false);
@@ -1197,6 +1167,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
                   lineType={lineInfo.type}
                   showLineNumbers={showLineNumbers}
                   lineNumberWidths={lineNumberWidths}
+                  reviewActions={reviewActions}
                 />
               ))}
             </React.Fragment>

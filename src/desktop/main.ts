@@ -41,6 +41,7 @@ import { getMuxHome, migrateLegacyMuxHome } from "@/common/constants/paths";
 import assert from "@/common/utils/assert";
 import { loadTokenizerModules } from "@/node/utils/main/tokenizer";
 import windowStateKeeper from "electron-window-state";
+import { getTitleBarOptions } from "@/desktop/titleBarOptions";
 
 // React DevTools for development profiling
 // Using dynamic import() to avoid loading electron-devtools-installer at module init time
@@ -498,6 +499,8 @@ function createWindow() {
     // User can press Alt to toggle it
     autoHideMenuBar: process.platform === "linux",
     show: false, // Don't show until ready-to-show event
+    // VSCode-like integrated titlebar (hidden native titlebar with native window controls)
+    ...getTitleBarOptions(),
   });
 
   // Track window state (handles resize, move, maximize, fullscreen)

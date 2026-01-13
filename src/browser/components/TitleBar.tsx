@@ -8,6 +8,7 @@ import { Download, Loader2, RefreshCw } from "lucide-react";
 
 import { useTutorial } from "@/browser/contexts/TutorialContext";
 import { useAPI } from "@/browser/contexts/API";
+import { isDesktopMode, getTitlebarLeftInset } from "@/browser/hooks/useDesktopTitlebar";
 
 // Update check intervals
 const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
@@ -231,9 +232,20 @@ export function TitleBar() {
   // In dev without DEBUG_UPDATER, the backend won't initialize updater service
   const showUpdateIndicator = true;
 
+  // In desktop mode, add left padding for macOS traffic lights
+  const leftInset = getTitlebarLeftInset();
+  const isDesktop = isDesktopMode();
+
   return (
-    <div className="bg-sidebar border-border-light font-primary text-muted flex h-8 shrink-0 items-center justify-between border-b px-4 text-[11px] select-none">
-      <div className="mr-4 flex min-w-0 items-center gap-2">
+    <div
+      className={cn(
+        "bg-sidebar border-border-light font-primary text-muted flex h-8 shrink-0 items-center justify-between border-b px-4 text-[11px] select-none",
+        // In desktop mode, make header draggable for window movement
+        isDesktop && "titlebar-drag"
+      )}
+      style={leftInset > 0 ? { paddingLeft: leftInset } : undefined}
+    >
+      <div className={cn("mr-4 flex min-w-0 items-center gap-2", isDesktop && "titlebar-no-drag")}>
         {showUpdateIndicator && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -275,7 +287,13 @@ export function TitleBar() {
           </TooltipContent>
         </Tooltip>
       </div>
-      <SettingsButton />
+      {isDesktop ? (
+        <div className="titlebar-no-drag">
+          <SettingsButton />
+        </div>
+      ) : (
+        <SettingsButton />
+      )}
     </div>
   );
 }

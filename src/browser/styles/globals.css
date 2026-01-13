@@ -1957,4 +1957,25 @@ input[type="checkbox"] {
   width: 14px;
   height: 14px;
 }
+/* Desktop titlebar drag regions (Electron only)
+ * -webkit-app-region: drag marks areas that can be used to drag the window
+ * -webkit-app-region: no-drag marks interactive elements inside drag regions
+ * These styles only apply in Electron; in browser mode they have no effect */
+.titlebar-drag {
+  -webkit-app-region: drag;
+  /* Prevent text selection while dragging */
+  user-select: none;
+}
 
+.titlebar-no-drag {
+  -webkit-app-region: no-drag;
+}
+
+
+
+/* Titlebar inset for WorkspaceHeader when left sidebar is collapsed.
+ * The sidebar collapse state is synced to a data attribute on :root by App.tsx.
+ * This centralizes the concern - WorkspaceHeader doesn't need props or JS logic. */
+:root[data-left-sidebar-collapsed="true"] [data-testid="workspace-header"] {
+  padding-left: 60px;
+}

@@ -6,6 +6,7 @@ import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
 import { convertToModelMessages, type LanguageModel, type Tool } from "ai";
 import { applyToolOutputRedaction } from "@/browser/utils/messages/applyToolOutputRedaction";
 import { sanitizeToolInputs } from "@/browser/utils/messages/sanitizeToolInput";
+import { linkAbortSignal } from "@/node/utils/abort";
 import { inlineSvgAsTextForProvider } from "@/node/utils/messages/inlineSvgAsTextForProvider";
 import { extractToolMediaAsUserMessages } from "@/node/utils/messages/extractToolMediaAsUserMessages";
 import type { Result } from "@/common/types/result";
@@ -402,6 +403,13 @@ export class AIService extends EventEmitter {
   private mockAiStreamPlayer?: MockAiStreamPlayer;
   private readonly backgroundProcessManager?: BackgroundProcessManager;
   private readonly sessionUsageService?: SessionUsageService;
+
+  // Tracks in-flight stream startup (before StreamManager emits stream-start).
+  // This enables user interrupts (Esc/Ctrl+C) during the UI "starting..." phase.
+  private readonly pendingStreamStarts = new Map<
+    string,
+    { abortController: AbortController; startTime: number; syntheticMessageId: string }
+  >();
   private taskService?: TaskService;
   private extraTools?: Record<string, Tool>;
 
@@ -1117,9 +1125,29 @@ export class AIService extends EventEmitter {
     disableWorkspaceAgents?: boolean,
     hasQueuedMessage?: () => boolean
   ): Promise<Result<void, SendMessageError>> {
+    // Support interrupts during startup (before StreamManager emits stream-start).
+    // We register an AbortController up-front and let stopStream() abort it.
+    const pendingAbortController = new AbortController();
+    const startTime = Date.now();
+    const syntheticMessageId = `starting-${startTime}-${Math.random().toString(36).substring(2, 11)}`;
+
+    // Link external abort signal (if provided).
+    const unlinkAbortSignal = linkAbortSignal(abortSignal, pendingAbortController);
+
+    this.pendingStreamStarts.set(workspaceId, {
+      abortController: pendingAbortController,
+      startTime,
+      syntheticMessageId,
+    });
+
+    const combinedAbortSignal = pendingAbortController.signal;
+
     try {
       if (this.mockModeEnabled && this.mockAiStreamPlayer) {
-        return await this.mockAiStreamPlayer.play(messages, workspaceId, { model: modelString });
+        return await this.mockAiStreamPlayer.play(messages, workspaceId, {
+          model: modelString,
+          abortSignal: combinedAbortSignal,
+        });
       }
 
       // DEBUG: Log streamMessage call
@@ -1219,9 +1247,9 @@ export class AIService extends EventEmitter {
 
       // Wait for init to complete before any runtime I/O operations
       // (SSH/devcontainer may not be ready until init finishes pulling the container)
-      await this.initStateManager.waitForInit(workspaceId, abortSignal);
-      if (abortSignal?.aborted) {
-        return Err({ type: "unknown", raw: "Aborted during initialization wait" });
+      await this.initStateManager.waitForInit(workspaceId, combinedAbortSignal);
+      if (combinedAbortSignal.aborted) {
+        return Ok(undefined);
       }
 
       // Verify runtime is actually reachable after init completes.
@@ -1437,7 +1465,7 @@ export class AIService extends EventEmitter {
       const messagesWithFileAtMentions = await injectFileAtMentions(messagesWithPostCompaction, {
         runtime,
         workspacePath,
-        abortSignal,
+        abortSignal: combinedAbortSignal,
       });
 
       // Apply centralized tool-output redaction BEFORE converting to provider ModelMessages
@@ -1744,6 +1772,10 @@ export class AIService extends EventEmitter {
       });
 
       // Create assistant message placeholder with historySequence from backend
+
+      if (combinedAbortSignal.aborted) {
+        return Ok(undefined);
+      }
       const assistantMessageId = `assistant-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
       const assistantMessage = createMuxMessage(assistantMessageId, "assistant", "", {
         timestamp: Date.now(),
@@ -1926,6 +1958,19 @@ export class AIService extends EventEmitter {
         );
       }
 
+      if (combinedAbortSignal.aborted) {
+        const deleteResult = await this.historyService.deleteMessage(
+          workspaceId,
+          assistantMessageId
+        );
+        if (!deleteResult.success) {
+          log.error(
+            `Failed to delete aborted assistant placeholder (${assistantMessageId}): ${deleteResult.error}`
+          );
+        }
+        return Ok(undefined);
+      }
+
       // Delegate to StreamManager with model instance, system message, tools, historySequence, and initial metadata
       const streamResult = await this.streamManager.startStream(
         workspaceId,
@@ -1936,7 +1981,7 @@ export class AIService extends EventEmitter {
         systemMessage,
         runtime,
         assistantMessageId, // Shared messageId ensures nested tool events match stream events
-        abortSignal,
+        combinedAbortSignal,
         tools,
         {
           systemMessageTokens,
@@ -1955,6 +2000,20 @@ export class AIService extends EventEmitter {
         return Err(streamResult.error);
       }
 
+      // If we were interrupted during StreamManager startup before the stream was registered,
+      // make sure we don't leave an empty assistant placeholder behind.
+      if (combinedAbortSignal.aborted && !this.streamManager.isStreaming(workspaceId)) {
+        const deleteResult = await this.historyService.deleteMessage(
+          workspaceId,
+          assistantMessageId
+        );
+        if (!deleteResult.success) {
+          log.error(
+            `Failed to delete aborted assistant placeholder (${assistantMessageId}): ${deleteResult.error}`
+          );
+        }
+      }
+
       // StreamManager now handles history updates directly on stream-end
       // No need for event listener here
       return Ok(undefined);
@@ -1963,6 +2022,12 @@ export class AIService extends EventEmitter {
       log.error("Stream message error:", error);
       // Return as unknown error type
       return Err({ type: "unknown", raw: `Failed to stream message: ${errorMessage}` });
+    } finally {
+      unlinkAbortSignal();
+      const pending = this.pendingStreamStarts.get(workspaceId);
+      if (pending?.abortController === pendingAbortController) {
+        this.pendingStreamStarts.delete(workspaceId);
+      }
     }
   }
 
@@ -1970,6 +2035,28 @@ export class AIService extends EventEmitter {
     workspaceId: string,
     options?: { soft?: boolean; abandonPartial?: boolean }
   ): Promise<Result<void>> {
+    const pending = this.pendingStreamStarts.get(workspaceId);
+    const isActuallyStreaming =
+      this.mockModeEnabled && this.mockAiStreamPlayer
+        ? this.mockAiStreamPlayer.isStreaming(workspaceId)
+        : this.streamManager.isStreaming(workspaceId);
+
+    if (pending) {
+      pending.abortController.abort();
+
+      // If we're still in pre-stream startup (no StreamManager stream yet), emit a synthetic
+      // stream-abort so the renderer can exit the "starting..." UI immediately.
+      if (!isActuallyStreaming) {
+        this.emit("stream-abort", {
+          type: "stream-abort",
+          workspaceId,
+          messageId: pending.syntheticMessageId,
+          metadata: { duration: Date.now() - pending.startTime },
+          abandonPartial: options?.abandonPartial,
+        } satisfies StreamAbortEvent);
+      }
+    }
+
     if (this.mockModeEnabled && this.mockAiStreamPlayer) {
       this.mockAiStreamPlayer.stop(workspaceId);
       return Ok(undefined);

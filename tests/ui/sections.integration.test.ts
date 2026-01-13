@@ -520,4 +520,82 @@ describeIntegration("Workspace Sections", () => {
       await env.orpc.projects.sections.remove({ projectPath, sectionId }).catch(() => {});
     }
   }, 30_000);
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Section Deletion Error Feedback
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  test("clicking delete on section with active workspaces shows error popover", async () => {
+    const env = getSharedEnv();
+    const projectPath = getSharedRepoPath();
+    const trunkBranch = await detectDefaultTrunkBranch(projectPath);
+
+    // Create a setup workspace first to ensure project is registered
+    const setupWs = await env.orpc.workspace.create({
+      projectPath,
+      branchName: generateBranchName("setup-delete-error"),
+      trunkBranch,
+    });
+    if (!setupWs.success) throw new Error(`Setup failed: ${setupWs.error}`);
+
+    // Create a section
+    const sectionResult = await env.orpc.projects.sections.create({
+      projectPath,
+      name: `test-delete-error-${Date.now()}`,
+    });
+    expect(sectionResult.success).toBe(true);
+    const sectionId = sectionResult.success ? sectionResult.data.id : "";
+
+    // Create a workspace in that section (active, not archived)
+    const wsResult = await env.orpc.workspace.create({
+      projectPath,
+      branchName: generateBranchName("in-section-delete-error"),
+      trunkBranch,
+      sectionId,
+    });
+    expect(wsResult.success).toBe(true);
+    const workspaceId = wsResult.success ? wsResult.metadata.id : "";
+    const metadata = wsResult.success ? wsResult.metadata : setupWs.metadata;
+
+    const cleanupDom = installDom();
+    expandProjects([projectPath]);
+
+    const view = renderApp({ apiClient: env.orpc, metadata });
+
+    try {
+      await setupWorkspaceView(view, metadata, workspaceId);
+
+      // Wait for section to appear in UI
+      await waitForSection(view.container, sectionId);
+
+      // Find and click the delete button on the section
+      const sectionElement = view.container.querySelector(`[data-section-id="${sectionId}"]`);
+      expect(sectionElement).not.toBeNull();
+
+      // Hover over section to reveal action buttons (they're only visible on hover)
+      fireEvent.mouseEnter(sectionElement!);
+
+      const deleteButton = sectionElement!.querySelector('[aria-label="Delete section"]');
+      expect(deleteButton).not.toBeNull();
+      fireEvent.click(deleteButton!);
+
+      // Wait for error popover to appear with message about active workspaces
+      await waitFor(
+        () => {
+          const errorPopover = document.querySelector('[role="alert"]');
+          if (!errorPopover) throw new Error("Error popover not found");
+          const errorText = errorPopover.textContent ?? "";
+          if (!errorText.toLowerCase().includes("active workspace")) {
+            throw new Error(`Expected error about active workspaces, got: ${errorText}`);
+          }
+        },
+        { timeout: 5_000 }
+      );
+    } finally {
+      await cleanupView(view, cleanupDom);
+      await env.orpc.workspace.remove({ workspaceId });
+      await env.orpc.workspace.remove({ workspaceId: setupWs.metadata.id });
+      await env.orpc.projects.sections.remove({ projectPath, sectionId }).catch(() => {});
+    }
+  }, 60_000);
 });

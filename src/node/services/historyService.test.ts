@@ -336,6 +336,57 @@ describe("HistoryService", () => {
     });
   });
 
+  describe("deleteMessage", () => {
+    it("should remove only the targeted message and preserve subsequent messages", async () => {
+      const workspaceId = "workspace1";
+      const msg1 = createMuxMessage("msg1", "user", "First");
+      const msg2 = createMuxMessage("msg2", "assistant", "Second");
+      const msg3 = createMuxMessage("msg3", "user", "Third");
+
+      await service.appendToHistory(workspaceId, msg1);
+      await service.appendToHistory(workspaceId, msg2);
+      await service.appendToHistory(workspaceId, msg3);
+
+      const result = await service.deleteMessage(workspaceId, "msg2");
+      expect(result.success).toBe(true);
+
+      const history = await service.getHistory(workspaceId);
+      if (history.success) {
+        expect(history.data).toHaveLength(2);
+        expect(history.data.map((message) => message.id)).toEqual(["msg1", "msg3"]);
+      }
+
+      const msg4 = createMuxMessage("msg4", "assistant", "Fourth");
+      await service.appendToHistory(workspaceId, msg4);
+
+      const historyAfterAppend = await service.getHistory(workspaceId);
+      if (historyAfterAppend.success) {
+        const msg3Seq = historyAfterAppend.data.find((message) => message.id === "msg3")?.metadata
+          ?.historySequence;
+        const msg4Seq = historyAfterAppend.data.find((message) => message.id === "msg4")?.metadata
+          ?.historySequence;
+
+        expect(msg3Seq).toBeDefined();
+        expect(msg4Seq).toBeDefined();
+        expect(msg4Seq).toBeGreaterThan(msg3Seq ?? -1);
+      }
+    });
+
+    it("should return error if message not found", async () => {
+      const workspaceId = "workspace1";
+      const msg = createMuxMessage("msg1", "user", "Hello");
+
+      await service.appendToHistory(workspaceId, msg);
+
+      const result = await service.deleteMessage(workspaceId, "nonexistent");
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toContain("not found");
+      }
+    });
+  });
+
   describe("truncateAfterMessage", () => {
     it("should remove message and all subsequent messages", async () => {
       const workspaceId = "workspace1";

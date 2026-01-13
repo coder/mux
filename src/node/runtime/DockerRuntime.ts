@@ -287,6 +287,10 @@ export class DockerRuntime extends RemoteRuntime {
   private readonly config: DockerRuntimeConfig;
   /** Container name - set during construction (for existing) or createWorkspace (for new) */
   private containerName?: string;
+  /** Container user info - detected after container creation/start */
+  private containerUid?: string;
+  private containerGid?: string;
+  private containerHome?: string;
 
   constructor(config: DockerRuntimeConfig) {
     super();
@@ -320,11 +324,12 @@ export class DockerRuntime extends RemoteRuntime {
   }
 
   protected quoteForRemote(filePath: string): string {
-    // Expand ~ to /root since container runs as root
+    // Expand ~ to container user's home (detected at runtime, defaults to /root)
+    const home = this.containerHome ?? "/root";
     const expanded = filePath.startsWith("~/")
-      ? `/root/${filePath.slice(2)}`
+      ? `${home}/${filePath.slice(2)}`
       : filePath === "~"
-        ? "/root"
+        ? home
         : filePath;
     return shescape.quote(expanded);
   }
@@ -375,11 +380,16 @@ export class DockerRuntime extends RemoteRuntime {
   resolvePath(filePath: string): Promise<string> {
     // DockerRuntime uses a fixed workspace base (/src), but we still want reasonable shell-style
     // behavior for callers that pass "~" or "~/...".
+    //
+    // NOTE: Some base images (e.g., codercom/*-base) run as a non-root user (like "coder"), so
+    // "~" should resolve to that user's home (e.g., /home/coder), not /root.
+    const home = this.containerHome ?? "/root";
+
     if (filePath === "~") {
-      return Promise.resolve("/root");
+      return Promise.resolve(home);
     }
     if (filePath.startsWith("~/")) {
-      return Promise.resolve(path.posix.join("/root", filePath.slice(2)));
+      return Promise.resolve(path.posix.join(home, filePath.slice(2)));
     }
 
     return Promise.resolve(
@@ -624,12 +634,23 @@ export class DockerRuntime extends RemoteRuntime {
       return failWithCleanup(`Failed to create container: ${runResult.stderr}`);
     }
 
+    // Detect container's default user (may be non-root, e.g., codercom/enterprise-base runs as "coder")
+    const [uidResult, gidResult, homeResult] = await Promise.all([
+      runDockerCommand(`docker exec ${containerName} id -u`, 5000),
+      runDockerCommand(`docker exec ${containerName} id -g`, 5000),
+      runDockerCommand(`docker exec ${containerName} sh -c 'echo $HOME'`, 5000),
+    ]);
+    this.containerUid = uidResult.stdout.trim() || "0";
+    this.containerGid = gidResult.stdout.trim() || "0";
+    this.containerHome = homeResult.stdout.trim() || "/root";
+
     // Create /src directory and /var/mux/plans in container
+    // Use --user root to create directories, then chown to container's default user
     // /var/mux is used instead of ~/.mux because /root has 700 permissions,
     // which makes it inaccessible to VS Code Dev Containers (non-root user)
     initLogger.logStep("Preparing workspace directory...");
     const mkdirResult = await runDockerCommand(
-      `docker exec ${containerName} mkdir -p ${CONTAINER_SRC_DIR} /var/mux/plans`,
+      `docker exec --user root ${containerName} sh -c 'mkdir -p ${CONTAINER_SRC_DIR} /var/mux/plans && chown ${this.containerUid}:${this.containerGid} ${CONTAINER_SRC_DIR} /var/mux /var/mux/plans'`,
       10000
     );
     if (mkdirResult.exitCode !== 0) {
@@ -944,6 +965,28 @@ export class DockerRuntime extends RemoteRuntime {
       }
       destContainerCreated = true;
 
+      // 5b. Detect container user and prepare directories (may be non-root)
+      const [uidResult, gidResult, homeResult] = await Promise.all([
+        runDockerCommand(`docker exec ${destContainerName} id -u`, 5000),
+        runDockerCommand(`docker exec ${destContainerName} id -g`, 5000),
+        runDockerCommand(`docker exec ${destContainerName} sh -c 'echo $HOME'`, 5000),
+      ]);
+      const destUid = uidResult.stdout.trim() || "0";
+      const destGid = gidResult.stdout.trim() || "0";
+      const destHome = homeResult.stdout.trim() || "/root";
+
+      // Create /src and /var/mux/plans as root, then chown to container user
+      const mkdirResult = await runDockerCommand(
+        `docker exec --user root ${destContainerName} sh -c 'mkdir -p ${CONTAINER_SRC_DIR} /var/mux/plans && chown ${destUid}:${destGid} ${CONTAINER_SRC_DIR} /var/mux /var/mux/plans'`,
+        10000
+      );
+      if (mkdirResult.exitCode !== 0) {
+        return {
+          success: false,
+          error: `Failed to prepare workspace directory: ${mkdirResult.stderr}`,
+        };
+      }
+
       // 6. Copy bundle into destination and clone
       initLogger.logStep("Copying bundle to destination container...");
       const cpInResult = await runDockerCommand(
@@ -965,6 +1008,17 @@ export class DockerRuntime extends RemoteRuntime {
       if (cloneResult.exitCode !== 0) {
         return { success: false, error: `Failed to clone from bundle: ${cloneResult.stderr}` };
       }
+
+      // Ensure /src is owned by the container user (git clone may create as current user)
+      await runDockerCommand(
+        `docker exec --user root ${destContainerName} chown -R ${destUid}:${destGid} ${CONTAINER_SRC_DIR}`,
+        30000
+      );
+
+      // Store user info for this runtime instance
+      this.containerUid = destUid;
+      this.containerGid = destGid;
+      this.containerHome = destHome;
 
       // 7. Create local tracking branches (best-effort)
       initLogger.logStep("Creating local tracking branches...");
@@ -1072,9 +1126,23 @@ export class DockerRuntime extends RemoteRuntime {
     }
 
     const result = await runDockerCommand(`docker start ${this.containerName}`, 30000);
-    return result.exitCode === 0
-      ? { ready: true }
-      : { ready: false, error: result.stderr || "Failed to start container" };
+    if (result.exitCode !== 0) {
+      return { ready: false, error: result.stderr || "Failed to start container" };
+    }
+
+    // Detect container user info if not already set (e.g., runtime recreated for existing workspace)
+    if (!this.containerHome) {
+      const [uidResult, gidResult, homeResult] = await Promise.all([
+        runDockerCommand(`docker exec ${this.containerName} id -u`, 5000),
+        runDockerCommand(`docker exec ${this.containerName} id -g`, 5000),
+        runDockerCommand(`docker exec ${this.containerName} sh -c 'echo $HOME'`, 5000),
+      ]);
+      this.containerUid = uidResult.stdout.trim() || "0";
+      this.containerGid = gidResult.stdout.trim() || "0";
+      this.containerHome = homeResult.stdout.trim() || "/root";
+    }
+
+    return { ready: true };
   }
 
   /**

@@ -18,6 +18,22 @@ const NUM_SAMPLES = WINDOW_DURATION_MS / SAMPLE_INTERVAL_MS;
 // waking JavaScript at 120Hz+ on high refresh rate displays
 const RENDER_INTERVAL_MS = 1000 / 60;
 
+/**
+ * Resolve CSS variable to its computed value.
+ * Canvas 2D API doesn't understand CSS custom properties, so we need to resolve them.
+ */
+function resolveCssColor(color: string): string {
+  if (!color.startsWith("var(")) return color;
+
+  // Extract variable name from var(--name) or var(--name, fallback)
+  const match = /^var\(([^,)]+)/.exec(color);
+  if (!match) return color;
+
+  const varName = match[1].trim();
+  const computed = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+  return computed || color;
+}
+
 interface RecordingOverlayProps {
   state: VoiceInputState;
   /** CSS color value for agent (e.g., "var(--color-exec-mode)") */
@@ -208,7 +224,7 @@ const SlidingWaveform: React.FC<SlidingWaveformProps> = (props) => {
       const gap = barWidth * 0.4;
       const centerY = canvas.height / 2;
 
-      ctx.fillStyle = props.color;
+      ctx.fillStyle = resolveCssColor(props.color);
 
       for (let i = 0; i < numBars; i++) {
         const scaledAmplitude = Math.min(1, samples[i] * 3); // Boost for visibility

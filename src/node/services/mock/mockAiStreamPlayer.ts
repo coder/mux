@@ -151,8 +151,14 @@ export class MockAiStreamPlayer {
     workspaceId: string,
     options?: {
       model?: string;
+      abortSignal?: AbortSignal;
     }
   ): Promise<Result<void, SendMessageError>> {
+    const abortSignal = options?.abortSignal;
+    if (abortSignal?.aborted) {
+      return Ok(undefined);
+    }
+
     const latest = messages[messages.length - 1];
     if (!latest || latest.role !== "user") {
       return Err({ type: "unknown", raw: "Mock AI expected a user message" });
@@ -186,6 +192,10 @@ export class MockAiStreamPlayer {
       model: streamStart.model,
     });
 
+    if (abortSignal?.aborted) {
+      return Ok(undefined);
+    }
+
     const appendResult = await this.deps.historyService.appendToHistory(
       workspaceId,
       assistantMessage
@@ -193,6 +203,17 @@ export class MockAiStreamPlayer {
     if (!appendResult.success) {
       return Err({ type: "unknown", raw: appendResult.error });
     }
+
+    if (abortSignal?.aborted) {
+      const deleteResult = await this.deps.historyService.deleteMessage(workspaceId, messageId);
+      if (!deleteResult.success) {
+        log.error(
+          `Failed to delete aborted mock assistant placeholder (${messageId}): ${deleteResult.error}`
+        );
+      }
+      return Ok(undefined);
+    }
+
     historySequence = assistantMessage.metadata?.historySequence ?? historySequence;
 
     // Cancel any existing stream before starting a new one

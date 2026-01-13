@@ -38,7 +38,7 @@ export function SplashScreen(props: SplashScreenProps) {
 
   return (
     <Dialog open onOpenChange={(open) => !open && props.onDismiss()}>
-      <DialogContent maxWidth="500px">
+      <DialogContent maxWidth="500px" onInteractOutside={(e) => e.preventDefault()}>
         <DialogHeader>
           <DialogTitle>{props.title}</DialogTitle>
         </DialogHeader>

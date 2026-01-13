@@ -6,6 +6,7 @@
 import React, { useState, useMemo } from "react";
 import type { DiffHunk, Review, ReviewNoteData } from "@/common/types/review";
 import { SelectableDiffRenderer } from "../../shared/DiffRenderer";
+import type { ReviewActionCallbacks } from "../../shared/InlineReviewNote";
 import {
   type SearchHighlightConfig,
   highlightSearchInText,
@@ -40,6 +41,8 @@ interface HunkViewerProps {
   diffBase: string;
   /** Whether uncommitted changes are included in the diff */
   includeUncommitted: boolean;
+  /** Action callbacks for inline review notes */
+  reviewActions?: ReviewActionCallbacks;
 }
 
 export const HunkViewer = React.memo<HunkViewerProps>(
@@ -58,6 +61,7 @@ export const HunkViewer = React.memo<HunkViewerProps>(
     searchConfig,
     onComposingChange,
     diffBase,
+    reviewActions,
     includeUncommitted,
   }) => {
     // Ref for the hunk container to track visibility
@@ -321,6 +325,7 @@ export const HunkViewer = React.memo<HunkViewerProps>(
                   maxHeight="none"
                   className="rounded-none border-0 [&>div]:overflow-x-visible"
                   enableHighlighting={isVisible}
+                  reviewActions={reviewActions}
                 />
                 {/* Collapse indicator between expanded context and main hunk */}
                 <ContextCollapseIndicator
@@ -351,6 +356,7 @@ export const HunkViewer = React.memo<HunkViewerProps>(
               searchConfig={searchConfig}
               enableHighlighting={isVisible}
               onComposingChange={handleComposingChange}
+              reviewActions={reviewActions}
             />
 
             {/* Expanded content below */}
@@ -372,6 +378,7 @@ export const HunkViewer = React.memo<HunkViewerProps>(
                   maxHeight="none"
                   className="rounded-none border-0 [&>div]:overflow-x-visible"
                   enableHighlighting={isVisible}
+                  reviewActions={reviewActions}
                 />
               </>
             )}

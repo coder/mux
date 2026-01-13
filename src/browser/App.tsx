@@ -96,6 +96,11 @@ function AppInner() {
   // Auto-collapse sidebar on mobile by default
   const isMobile = typeof window !== "undefined" && window.innerWidth <= 768;
   const [sidebarCollapsed, setSidebarCollapsed] = usePersistedState("sidebarCollapsed", isMobile);
+
+  // Sync sidebar collapse state to root element for CSS-based titlebar insets
+  useEffect(() => {
+    document.documentElement.dataset.leftSidebarCollapsed = String(sidebarCollapsed);
+  }, [sidebarCollapsed]);
   const defaultProjectPath = getFirstProjectPath(projects);
   const creationProjectPath = !selectedWorkspace
     ? (pendingNewWorkspaceProject ?? (projects.size === 1 ? defaultProjectPath : null))
