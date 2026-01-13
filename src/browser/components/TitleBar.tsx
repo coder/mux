@@ -272,8 +272,10 @@ export function TitleBar() {
               onClick={handleUpdateClick}
               onMouseEnter={handleIndicatorHover}
             >
-              <div className="relative h-4 w-[35px] overflow-hidden [&_svg]:h-full [&_svg]:w-full">
-                <MuxLogo />
+              <div className="relative h-4 w-[35px] overflow-hidden">
+                <MuxLogo
+                  className={cn("block h-full w-full", leftInset > 0 && "-translate-y-px")}
+                />
                 {showUpdateShimmer && (
                   <div
                     className="pointer-events-none absolute inset-0 animate-[shimmer-slide_2.5s_infinite_linear]"
