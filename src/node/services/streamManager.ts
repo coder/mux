@@ -1769,6 +1769,17 @@ export class StreamManager extends EventEmitter {
           toolPolicy,
           hasQueuedMessage
         );
+
+        // Guard against a narrow race:
+        // - stopStream() may abort while we're between the last aborted-check and stream registration.
+        // - If we start processStreamWithCleanup anyway, it would emit stream-start, but no one would
+        //   subsequently call stopStream() again (it already ran), so we'd never emit stream-abort/end.
+        // In that case, immediately drop the registered stream and rely on the caller to handle UI.
+        if (streamAbortController.signal.aborted) {
+          this.workspaceStreams.delete(typedWorkspaceId);
+          return Ok(streamToken);
+        }
+
         streamInfo.unlinkAbortSignal = unlinkAbortSignal;
         streamRegistered = true;
 
