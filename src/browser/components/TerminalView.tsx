@@ -229,8 +229,10 @@ export function TerminalView({
 
         // Capture terminal reference for the closure
         const term = terminal;
+        // ghostty-web custom key handler: return true to PREVENT default, false to ALLOW default
         term.attachCustomKeyEventHandler((ev: KeyboardEvent) => {
-          if (ev.type !== "keydown") return true;
+          // Only handle keydown events, let ghostty handle keyup/keypress
+          if (ev.type !== "keydown") return false;
 
           // Use ev.key.toLowerCase() for layout-aware detection that handles Caps Lock.
           // This ensures Dvorak/Colemak users get shortcuts on their layout's C/V keys.
@@ -246,7 +248,7 @@ export function TerminalView({
             void navigator.clipboard.readText().then((text) => {
               if (text) term.paste(text);
             });
-            return false;
+            return true; // Prevent default - we handled it
           }
 
           // Copy shortcuts
@@ -260,16 +262,16 @@ export function TerminalView({
             if (term.hasSelection()) {
               void navigator.clipboard.writeText(term.getSelection());
             }
-            return false; // Always swallow on Linux to prevent SIGINT
+            return true; // Prevent default on Linux to avoid SIGINT
           }
 
           if ((isMacCopy || isWindowsCopy) && term.hasSelection()) {
             void navigator.clipboard.writeText(term.getSelection());
-            return false;
+            return true; // Prevent default - we handled it
           }
 
           // Let ghostty handle everything else (including Ctrl+C → SIGINT on Linux when no selection)
-          return true;
+          return false;
         });
 
         // ghostty-web calls focus() internally in open(), which steals focus.
