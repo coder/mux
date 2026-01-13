@@ -8,6 +8,7 @@ import { run } from "./workerPool";
 import { TOKENIZER_MODEL_OVERRIDES, DEFAULT_WARM_MODELS } from "@/common/constants/knownModels";
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
 import { log } from "@/node/services/log";
+import { safeStringifyForCounting } from "@/common/utils/tokens/safeStringifyForCounting";
 
 /**
  * Public tokenizer interface exposed to callers.
@@ -218,7 +219,7 @@ export function countTokensBatch(modelString: string, texts: string[]): Promise<
 }
 
 export function countTokensForData(data: unknown, tokenizer: Tokenizer): Promise<number> {
-  const serialized = JSON.stringify(data);
+  const serialized = safeStringifyForCounting(data);
   return tokenizer.countTokens(serialized);
 }
 
