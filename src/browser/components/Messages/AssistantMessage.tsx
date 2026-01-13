@@ -11,7 +11,7 @@ import { CompactingMessageContent } from "./CompactingMessageContent";
 import { CompactionBackground } from "./CompactionBackground";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import type { ButtonConfig } from "./MessageWindow";
-import { MessageWindow } from "./MessageWindow";
+import { IconActionButton, MessageWindow } from "./MessageWindow";
 import { ModelDisplay } from "./ModelDisplay";
 import { TypewriterMarkdown } from "./TypewriterMarkdown";
 
@@ -61,15 +61,13 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
 
   // Keep only Copy button visible (most common action)
   // Kebab menu saves horizontal space by collapsing less-used actions into a single ⋮ button
-  const buttons: ButtonConfig[] = isStreaming
-    ? []
-    : [
-        {
-          label: copied ? "Copied" : "Copy",
-          onClick: () => void copyToClipboard(content),
-          icon: copied ? <ClipboardCheck /> : <Clipboard />,
-        },
-      ];
+  const copyButton: ButtonConfig = {
+    label: copied ? "Copied" : "Copy",
+    onClick: () => void copyToClipboard(content),
+    icon: copied ? <ClipboardCheck /> : <Clipboard />,
+  };
+
+  const buttons: ButtonConfig[] = isStreaming ? [] : [copyButton];
 
   if (!isStreaming) {
     buttons.push({
@@ -120,9 +118,14 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
     // Completed text renders as static content
     return content ? (
       showRaw ? (
-        <pre className="text-text bg-code-bg m-0 rounded-sm p-2 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap">
-          {content}
-        </pre>
+        <div className="group relative">
+          <pre className="text-text bg-code-bg m-0 rounded-sm p-2 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap">
+            {content}
+          </pre>
+          <div className="pointer-events-none absolute top-1 right-1 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100">
+            <IconActionButton button={copyButton} />
+          </div>
+        </div>
       ) : (
         <MarkdownRenderer content={content} />
       )
