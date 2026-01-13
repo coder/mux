@@ -112,16 +112,19 @@ export class CoderService {
         return [];
       }
 
-      const templates = JSON.parse(stdout) as Array<{
-        name: string;
-        display_name?: string;
-        organization_name?: string;
+      // CLI returns [{Template: {...}}, ...] wrapper structure
+      const raw = JSON.parse(stdout) as Array<{
+        Template: {
+          name: string;
+          display_name?: string;
+          organization_name?: string;
+        };
       }>;
 
-      return templates.map((t) => ({
-        name: t.name,
-        displayName: t.display_name ?? t.name,
-        organizationName: t.organization_name ?? "default",
+      return raw.map((entry) => ({
+        name: entry.Template.name,
+        displayName: entry.Template.display_name ?? entry.Template.name,
+        organizationName: entry.Template.organization_name ?? "default",
       }));
     } catch (error) {
       // Common user state: Coder CLI installed but not configured/logged in.
