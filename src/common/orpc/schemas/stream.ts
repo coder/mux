@@ -10,6 +10,7 @@ import {
   MuxToolPartSchema,
 } from "./message";
 import { MuxProviderOptionsSchema } from "./providerOptions";
+import { RuntimeModeSchema } from "./runtime";
 
 // Chat Events
 export const CaughtUpMessageSchema = z.object({
@@ -17,6 +18,20 @@ export const CaughtUpMessageSchema = z.object({
 });
 
 /** Sent when a workspace becomes eligible for idle compaction while connected */
+
+/**
+ * Progress event for runtime readiness checks.
+ * Used by Coder workspaces to show "Starting Coder workspace..." while ensureReady() blocks.
+ * Not used by Docker (start is near-instant) or local runtimes.
+ */
+export const RuntimeStatusEventSchema = z.object({
+  type: z.literal("runtime-status"),
+  workspaceId: z.string(),
+  phase: z.enum(["checking", "starting", "waiting", "ready", "error"]),
+  runtimeType: RuntimeModeSchema,
+  detail: z.string().optional(), // Human-readable status like "Starting Coder workspace..."
+});
+
 export const IdleCompactionNeededEventSchema = z.object({
   type: z.literal("idle-compaction-needed"),
 });
@@ -341,6 +356,8 @@ export const WorkspaceChatMessageSchema = z.discriminatedUnion("type", [
   RestoreToInputEventSchema,
   // Idle compaction notification
   IdleCompactionNeededEventSchema,
+  // Runtime status events
+  RuntimeStatusEventSchema,
   // Init events
   ...WorkspaceInitEventSchema.def.options,
   // Chat messages with type discriminator

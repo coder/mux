@@ -10,7 +10,7 @@ import {
 } from "@/common/types/runtime";
 import { extractSshHostname } from "@/browser/utils/ui/runtimeBadge";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
-import { SSHIcon, WorktreeIcon, LocalIcon, DockerIcon } from "./icons/RuntimeIcons";
+import { SSHIcon, WorktreeIcon, LocalIcon, DockerIcon, CoderIcon } from "./icons/RuntimeIcons";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 
 interface RuntimeBadgeProps {
@@ -96,6 +96,32 @@ export function RuntimeBadge({
   workspacePath,
   branchName,
 }: RuntimeBadgeProps) {
+  // Coder-backed SSH runtime: show Coder icon with workspace name (uses SSH styling)
+  if (isSSHRuntime(runtimeConfig) && runtimeConfig.coder) {
+    const coderWorkspaceName = runtimeConfig.coder.workspaceName;
+    const styles = isWorking ? RUNTIME_STYLES.ssh.working : RUNTIME_STYLES.ssh.idle;
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className={cn(
+              "inline-flex items-center rounded px-1 py-0.5 border transition-colors",
+              styles,
+              className
+            )}
+          >
+            <CoderIcon />
+          </span>
+        </TooltipTrigger>
+        <TooltipContent align="end">
+          <div>Coder: {coderWorkspaceName ?? runtimeConfig.host}</div>
+          {branchName && <BranchWithLabel branchName={branchName} />}
+          {workspacePath && <PathWithCopy path={workspacePath} />}
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+
   // SSH runtime: show server icon with hostname
   if (isSSHRuntime(runtimeConfig)) {
     const hostname = extractSshHostname(runtimeConfig);

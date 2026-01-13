@@ -41,6 +41,7 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({ workspaceId,
     currentModel,
     pendingStreamStartTime,
     pendingCompactionModel,
+    runtimeStatus,
   } = workspaceState;
 
   // Determine if we're in "starting" phase (message sent, waiting for stream-start)
@@ -85,6 +86,10 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({ workspaceId,
   const statusText = (() => {
     switch (phase) {
       case "starting":
+        // Show a runtime-specific message if the workspace is still booting (e.g., Coder/devcontainers).
+        if (runtimeStatus?.phase === "starting" || runtimeStatus?.phase === "waiting") {
+          return runtimeStatus.detail ?? "Starting workspace...";
+        }
         return modelName ? `${modelName} starting...` : "starting...";
       case "interrupting":
         return "interrupting...";

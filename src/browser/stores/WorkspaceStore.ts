@@ -21,7 +21,7 @@ import {
   isQueuedMessageChanged,
   isRestoreToInput,
 } from "@/common/orpc/types";
-import type { StreamEndEvent, StreamAbortEvent } from "@/common/types/stream";
+import type { StreamEndEvent, StreamAbortEvent, RuntimeStatusEvent } from "@/common/types/stream";
 import { MapStore } from "./MapStore";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { WorkspaceConsumerManager } from "./WorkspaceConsumerManager";
@@ -56,6 +56,8 @@ export interface WorkspaceState {
   pendingStreamStartTime: number | null;
   // Model override from pending compaction request (used during "starting" phase)
   pendingCompactionModel: string | null;
+  // Runtime status from ensureReady (for Coder workspace starting UX)
+  runtimeStatus: RuntimeStatusEvent | null;
   // Live streaming stats (updated on each stream-delta)
   streamingTokenCount: number | undefined;
   streamingTPS: number | undefined;
@@ -866,6 +868,7 @@ export class WorkspaceStore {
         agentStatus: aggregator.getAgentStatus(),
         pendingStreamStartTime: aggregator.getPendingStreamStartTime(),
         pendingCompactionModel: aggregator.getPendingCompactionModel(),
+        runtimeStatus: aggregator.getRuntimeStatus(),
         streamingTokenCount,
         streamingTPS,
       };

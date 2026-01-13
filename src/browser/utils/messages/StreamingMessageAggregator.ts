@@ -18,6 +18,7 @@ import type {
   ToolCallEndEvent,
   ReasoningDeltaEvent,
   ReasoningEndEvent,
+  RuntimeStatusEvent,
 } from "@/common/types/stream";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { TodoItem, StatusSetToolResult, NotifyToolResult } from "@/common/types/tools";
@@ -221,6 +222,10 @@ export class StreamingMessageAggregator {
   // IMPORTANT: We intentionally keep this timestamp until a stream actually starts
   // (or the user retries) so retry UI/backoff logic doesn't misfire on send failures.
   private pendingStreamStartTime: number | null = null;
+
+  // Current runtime status (set during ensureReady for Coder workspaces)
+  // Used to show "Starting Coder workspace..." in StreamingBarrier
+  private runtimeStatus: RuntimeStatusEvent | null = null;
 
   // Pending compaction request metadata for the next stream (set when user message arrives).
   // This is used for UI before we receive stream-start (e.g., show compaction model while "starting").
@@ -661,6 +666,27 @@ export class StreamingMessageAggregator {
   }
 
   /**
+   * Get the current runtime status (for Coder workspace starting UX).
+   * Returns null if no runtime status is active.
+   */
+  getRuntimeStatus(): RuntimeStatusEvent | null {
+    return this.runtimeStatus;
+  }
+
+  /**
+   * Handle runtime-status event (emitted during ensureReady for Coder workspaces).
+   * Used to show "Starting Coder workspace..." in StreamingBarrier.
+   */
+  handleRuntimeStatus(status: RuntimeStatusEvent): void {
+    // Clear status when ready/error or set new status
+    if (status.phase === "ready" || status.phase === "error") {
+      this.runtimeStatus = null;
+    } else {
+      this.runtimeStatus = status;
+    }
+  }
+
+  /**
    * Get the model override for a pending compaction request (before stream-start).
    *
    * Returns null if there's no pending stream or the pending request is not a compaction.
@@ -976,6 +1002,9 @@ export class StreamingMessageAggregator {
     // Clear pending stream start timestamp - stream has started
     this.setPendingStreamStartTime(null);
 
+    // Clear runtime status - runtime is ready now that stream has started
+    this.runtimeStatus = null;
+
     // NOTE: We do NOT clear agentStatus or currentTodos here.
     // They are cleared when a new user message arrives (see handleMessage),
     // ensuring consistent behavior whether loading from history or processing live events.
@@ -1115,6 +1144,9 @@ export class StreamingMessageAggregator {
     }
 
     // Direct lookup by messageId
+
+    // Clear runtime status (ensureReady is no longer relevant once stream aborts)
+    this.runtimeStatus = null;
     const activeStream = this.activeStreams.get(data.messageId);
 
     if (activeStream) {
@@ -1143,6 +1175,9 @@ export class StreamingMessageAggregator {
     this.setPendingStreamStartTime(null);
 
     // Direct lookup by messageId
+
+    // Clear runtime status - runtime start/ensureReady failed
+    this.runtimeStatus = null;
     const activeStream = this.activeStreams.get(data.messageId);
 
     if (activeStream) {

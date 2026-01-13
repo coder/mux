@@ -212,7 +212,7 @@ export function useCoderWorkspace({
         // Presets rules (per spec):
         // - 0 presets: no dropdown
         // - 1 preset: auto-select silently
-        // - 2+ presets: dropdown shown and selection is required (validated in ChatInput)
+        // - 2+ presets: dropdown shown, auto-select default if exists, otherwise user must pick
         // Use ref to get current config (avoids stale closure if user changed config during fetch)
         const currentConfig = coderConfigRef.current;
         if (currentConfig && !currentConfig.existingWorkspace) {
@@ -220,6 +220,12 @@ export function useCoderWorkspace({
             const onlyPreset = result[0];
             if (onlyPreset && currentConfig.preset !== onlyPreset.name) {
               onCoderConfigChange({ ...currentConfig, preset: onlyPreset.name });
+            }
+          } else if (result.length >= 2 && !currentConfig.preset) {
+            // Auto-select default preset if available (don't override user choice)
+            const defaultPreset = result.find((p) => p.isDefault);
+            if (defaultPreset) {
+              onCoderConfigChange({ ...currentConfig, preset: defaultPreset.name });
             }
           } else if (result.length === 0 && currentConfig.preset) {
             onCoderConfigChange({ ...currentConfig, preset: undefined });

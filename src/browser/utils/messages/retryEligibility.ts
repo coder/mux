@@ -56,8 +56,9 @@ export function isNonRetryableSendError(error: SendMessageError): boolean {
     case "incompatible_workspace": // Workspace from newer mux version - user must upgrade
     case "runtime_not_ready": // Container doesn't exist - user must recreate workspace
       return true;
+    case "runtime_start_failed": // Runtime is starting - transient, worth retrying
     case "unknown":
-      return false; // Unknown errors might be transient
+      return false; // Transient errors might resolve on their own
   }
 }
 
