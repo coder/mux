@@ -26,6 +26,7 @@ import type {
   WorkspaceForkParams,
   WorkspaceForkResult,
   InitLogger,
+  EnsureReadyResult,
 } from "./Runtime";
 import { RuntimeError } from "./Runtime";
 import { RemoteRuntime, type SpawnResult } from "./RemoteRuntime";
@@ -1126,15 +1127,32 @@ export class DockerRuntime extends RemoteRuntime {
    * Ensure the Docker container is running.
    * `docker start` is idempotent - succeeds if already running, starts if stopped,
    * and waits if container is in a transitional state (starting/restarting).
+   *
+   * Returns typed error for retry decisions:
+   * - runtime_not_ready: container missing or permanent failure
+   * - runtime_start_failed: transient failure (daemon issue, etc.)
    */
-  override async ensureReady(): Promise<{ ready: boolean; error?: string }> {
+  override async ensureReady(): Promise<EnsureReadyResult> {
     if (!this.containerName) {
-      return { ready: false, error: "Container name not set" };
+      return {
+        ready: false,
+        error: "Container name not set",
+        errorType: "runtime_not_ready",
+      };
     }
 
     const result = await runDockerCommand(`docker start ${this.containerName}`, 30000);
     if (result.exitCode !== 0) {
-      return { ready: false, error: result.stderr || "Failed to start container" };
+      const stderr = result.stderr || "Failed to start container";
+
+      // Classify error type based on stderr content
+      const isContainerMissing = stderr.includes("No such container") || stderr.includes("not found");
+
+      return {
+        ready: false,
+        error: stderr,
+        errorType: isContainerMissing ? "runtime_not_ready" : "runtime_start_failed",
+      };
     }
 
     // Detect container user info if not already set (e.g., runtime recreated for existing workspace)

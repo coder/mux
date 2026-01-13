@@ -315,7 +315,9 @@ describeIntegration("Runtime integration tests", () => {
 
           const result = await runtime.ensureReady();
           expect(result.ready).toBe(false);
-          expect(result.error).toBeDefined();
+          if (!result.ready) {
+            expect(result.error).toBeDefined();
+          }
         });
       });
 

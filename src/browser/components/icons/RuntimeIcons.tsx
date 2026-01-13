@@ -74,6 +74,27 @@ export function LocalIcon({ size = 10, className }: IconProps) {
   );
 }
 
+/** Coder logo icon for Coder-backed SSH runtime (placeholder - replace with official logo) */
+export function CoderIcon({ size = 10, className }: IconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-label="Coder Runtime"
+      className={className}
+    >
+      {/* Placeholder: simple "C" shape - replace with Coder logo */}
+      <path d="M12 4 C10 2, 6 2, 4 4 C2 6, 2 10, 4 12 C6 14, 10 14, 12 12" />
+    </svg>
+  );
+}
+
 /** Container icon for Docker runtime */
 export function DockerIcon({ size = 10, className }: IconProps) {
   return (

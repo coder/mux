@@ -166,9 +166,15 @@ export function CoderControls(props: CoderControlsProps) {
     });
   };
 
-  // Auto-select default preset if 0 or 1 presets (per spec)
+  // Preset value: hook handles auto-selection, but keep a UI fallback to avoid a brief
+  // "Select preset" flash while async preset loading + config update races.
+  const defaultPresetName = presets.find((p) => p.isDefault)?.name;
   const effectivePreset =
-    presets.length === 0 ? undefined : presets.length === 1 ? presets[0].name : coderConfig?.preset;
+    presets.length === 0
+      ? undefined
+      : presets.length === 1
+        ? presets[0]?.name
+        : (coderConfig?.preset ?? defaultPresetName);
 
   return (
     <div className="flex flex-col gap-1.5" data-testid="coder-controls">
@@ -233,7 +239,7 @@ export function CoderControls(props: CoderControlsProps) {
           {/* Right column: Mode-specific controls */}
           {/* New workspace controls - template/preset stacked vertically */}
           {mode === "new" && (
-            <div className="flex flex-col gap-1.5 p-2 pl-3">
+            <div className="flex flex-col gap-1 p-2 pl-3">
               <div className="flex h-7 items-center gap-2">
                 <label className="text-muted-foreground w-16 text-xs">Template</label>
                 {loadingTemplates ? (
@@ -272,7 +278,6 @@ export function CoderControls(props: CoderControlsProps) {
                     {presets.map((p) => (
                       <option key={p.id} value={p.name}>
                         {p.name}
-                        {p.isDefault ? " (default)" : ""}
                       </option>
                     ))}
                   </select>
@@ -281,9 +286,9 @@ export function CoderControls(props: CoderControlsProps) {
             </div>
           )}
 
-          {/* Existing workspace controls */}
+          {/* Existing workspace controls - min-h matches New mode (2×h-7 + gap-1 + p-2) */}
           {mode === "existing" && (
-            <div className="flex items-center gap-2 p-2 pl-3">
+            <div className="flex min-h-[4.75rem] items-center gap-2 p-2 pl-3">
               <label className="text-muted-foreground text-xs">Workspace</label>
               {loadingWorkspaces ? (
                 <Loader2 className="text-muted h-4 w-4 animate-spin" />

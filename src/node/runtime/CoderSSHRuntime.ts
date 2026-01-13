@@ -16,6 +16,9 @@ import type {
   WorkspaceForkParams,
   WorkspaceForkResult,
   WorkspaceInitParams,
+  EnsureReadyOptions,
+  EnsureReadyResult,
+  RuntimeStatusEvent,
 } from "./Runtime";
 import { SSHRuntime, type SSHRuntimeConfig } from "./SSHRuntime";
 import type { CoderWorkspaceConfig, RuntimeConfig } from "@/common/types/runtime";
@@ -66,6 +69,24 @@ export class CoderSSHRuntime extends SSHRuntime {
   private readonly coderService: CoderService;
 
   /**
+   * Tracks whether the Coder workspace is ready for use.
+   * - For existing workspaces: true (already exists)
+   * - For new workspaces: false until postCreateSetup() succeeds
+   * Used by ensureReady() to return proper status after build failures.
+   */
+  private coderWorkspaceReady: boolean;
+
+  /**
+   * Timestamp of last time we (a) successfully used the runtime or (b) decided not
+   * to block the user (unknown Coder CLI error).
+   * Used to avoid running expensive status checks on every message while still
+   * catching auto-stopped workspaces after long inactivity.
+   */
+  private lastActivityAtMs = 0;
+
+  private static readonly INACTIVITY_THRESHOLD_MS = 5 * 60 * 1000;
+
+  /**
    * Flags for WorkspaceService to customize create flow:
    * - deferredHost: skip srcBaseDir resolution (Coder host doesn't exist yet)
    * - configLevelCollisionDetection: use config-based collision check (can't reach host)
@@ -85,6 +106,298 @@ export class CoderSSHRuntime extends SSHRuntime {
     });
     this.coderConfig = config.coder;
     this.coderService = coderService;
+    // Existing workspaces are already ready; new ones need postCreateSetup() to succeed
+    this.coderWorkspaceReady = config.coder.existingWorkspace ?? false;
+  }
+
+  /** Overall timeout for ensureReady operations (start + polling) */
+  private static readonly ENSURE_READY_TIMEOUT_MS = 120_000;
+
+  /** Polling interval when waiting for workspace to stop/start */
+  private static readonly STATUS_POLL_INTERVAL_MS = 2_000;
+
+  /** In-flight ensureReady promise to avoid duplicate start/wait sequences */
+  private ensureReadyPromise: Promise<EnsureReadyResult> | null = null;
+
+  /**
+   * Check if runtime is ready for use.
+   *
+   * Behavior:
+   * - If creation failed during postCreateSetup(), fail fast.
+   * - If workspace is running: return ready.
+   * - If workspace is stopped: auto-start and wait (blocking, ~120s timeout).
+   * - If workspace is stopping: poll until stopped, then start.
+   * - Emits runtime-status events via statusSink for UX feedback.
+   *
+   * Concurrency: shares an in-flight promise to avoid duplicate start sequences.
+   */
+  override async ensureReady(options?: EnsureReadyOptions): Promise<EnsureReadyResult> {
+    // Fast-fail: workspace never created successfully
+    if (!this.coderWorkspaceReady) {
+      return {
+        ready: false,
+        error: "Coder workspace does not exist. Check init logs for build errors.",
+        errorType: "runtime_not_ready",
+      };
+    }
+
+    const workspaceName = this.coderConfig.workspaceName;
+    if (!workspaceName) {
+      return {
+        ready: false,
+        error: "Coder workspace name not set",
+        errorType: "runtime_not_ready",
+      };
+    }
+
+    const now = Date.now();
+
+    // Fast path: recently active, skip expensive status check
+    if (
+      this.lastActivityAtMs !== 0 &&
+      now - this.lastActivityAtMs < CoderSSHRuntime.INACTIVITY_THRESHOLD_MS
+    ) {
+      return { ready: true };
+    }
+
+    // Avoid duplicate concurrent start/wait sequences
+    if (this.ensureReadyPromise) {
+      return this.ensureReadyPromise;
+    }
+
+    this.ensureReadyPromise = this.doEnsureReady(workspaceName, options);
+    try {
+      return await this.ensureReadyPromise;
+    } finally {
+      this.ensureReadyPromise = null;
+    }
+  }
+
+  /**
+   * Core ensureReady logic - called once (protected by ensureReadyPromise).
+   */
+  private async doEnsureReady(
+    workspaceName: string,
+    options?: EnsureReadyOptions
+  ): Promise<EnsureReadyResult> {
+    const statusSink = options?.statusSink;
+    const signal = options?.signal;
+    const startTime = Date.now();
+
+    const emitStatus = (phase: RuntimeStatusEvent["phase"], detail?: string) => {
+      statusSink?.({ phase, runtimeType: "ssh", detail });
+    };
+
+    // Helper: check if we've exceeded overall timeout
+    const isTimedOut = () => Date.now() - startTime > CoderSSHRuntime.ENSURE_READY_TIMEOUT_MS;
+    const remainingMs = () =>
+      Math.max(0, CoderSSHRuntime.ENSURE_READY_TIMEOUT_MS - (Date.now() - startTime));
+
+    // Step 1: Check current status
+    emitStatus("checking");
+
+    if (signal?.aborted) {
+      emitStatus("error");
+      return { ready: false, error: "Aborted", errorType: "runtime_start_failed" };
+    }
+
+    const statusResult = await this.coderService.getWorkspaceStatus(workspaceName, {
+      timeoutMs: Math.min(remainingMs(), 10_000),
+      signal,
+    });
+
+    if (statusResult.status === "running") {
+      this.lastActivityAtMs = Date.now();
+      emitStatus("ready");
+      return { ready: true };
+    }
+
+    const isWorkspaceNotFoundError = (error: string | undefined) =>
+      Boolean(error && /workspace not found/i.test(error));
+
+    if (statusResult.status === null) {
+      // Fail fast only when we're confident the workspace doesn't exist.
+      // For other errors (timeout, auth hiccup, Coder CLI issues), proceed optimistically
+      // and let SSH fail naturally to avoid blocking the happy path.
+      if (isWorkspaceNotFoundError(statusResult.error)) {
+        emitStatus("error");
+        return {
+          ready: false,
+          error: `Coder workspace "${workspaceName}" not found`,
+          errorType: "runtime_not_ready",
+        };
+      }
+
+      log.debug("Coder workspace status unknown, proceeding optimistically", {
+        workspaceName,
+        error: statusResult.error,
+      });
+      this.lastActivityAtMs = Date.now();
+      return { ready: true };
+    }
+
+    // Step 2: Handle "stopping" status - wait for it to become "stopped"
+    let currentStatus: string | null = statusResult.status;
+
+    if (currentStatus === "stopping") {
+      emitStatus("waiting", "Waiting for Coder workspace to stop...");
+
+      while (currentStatus === "stopping" && !isTimedOut()) {
+        if (signal?.aborted) {
+          emitStatus("error");
+          return { ready: false, error: "Aborted", errorType: "runtime_start_failed" };
+        }
+
+        await this.sleep(CoderSSHRuntime.STATUS_POLL_INTERVAL_MS);
+        const pollResult = await this.coderService.getWorkspaceStatus(workspaceName, {
+          timeoutMs: Math.min(remainingMs(), 10_000),
+          signal,
+        });
+        currentStatus = pollResult.status;
+
+        if (currentStatus === "running") {
+          this.lastActivityAtMs = Date.now();
+          emitStatus("ready");
+          return { ready: true };
+        }
+
+        // If status became null, only fail fast if the workspace is definitively gone.
+        // Otherwise fall through to start attempt (status check might have been flaky).
+        if (currentStatus === null) {
+          if (isWorkspaceNotFoundError(pollResult.error)) {
+            emitStatus("error");
+            return {
+              ready: false,
+              error: `Coder workspace "${workspaceName}" not found`,
+              errorType: "runtime_not_ready",
+            };
+          }
+          break;
+        }
+      }
+
+      if (isTimedOut()) {
+        emitStatus("error");
+        return {
+          ready: false,
+          error: "Coder workspace is still stopping... Please retry shortly.",
+          errorType: "runtime_start_failed",
+        };
+      }
+    }
+
+    // Step 3: Start the workspace and wait for it to be ready
+    emitStatus("starting", "Starting Coder workspace...");
+    log.debug("Starting Coder workspace", { workspaceName, currentStatus });
+
+    const startResult = await this.coderService.startWorkspaceAndWait(
+      workspaceName,
+      remainingMs(),
+      signal
+    );
+
+    if (startResult.success) {
+      this.lastActivityAtMs = Date.now();
+      emitStatus("ready");
+      return { ready: true };
+    }
+
+    if (isWorkspaceNotFoundError(startResult.error)) {
+      emitStatus("error");
+      return {
+        ready: false,
+        error: `Coder workspace "${workspaceName}" not found`,
+        errorType: "runtime_not_ready",
+      };
+    }
+
+    // Handle "build already active" - poll until running or stopped
+    if (startResult.error === "build_in_progress") {
+      log.debug("Coder workspace build already active, polling for completion", { workspaceName });
+      emitStatus("waiting", "Waiting for Coder workspace build...");
+
+      while (!isTimedOut()) {
+        if (signal?.aborted) {
+          emitStatus("error");
+          return { ready: false, error: "Aborted", errorType: "runtime_start_failed" };
+        }
+
+        await this.sleep(CoderSSHRuntime.STATUS_POLL_INTERVAL_MS);
+        const pollResult = await this.coderService.getWorkspaceStatus(workspaceName, {
+          timeoutMs: Math.min(remainingMs(), 10_000),
+          signal,
+        });
+
+        if (pollResult.status === null && isWorkspaceNotFoundError(pollResult.error)) {
+          emitStatus("error");
+          return {
+            ready: false,
+            error: `Coder workspace "${workspaceName}" not found`,
+            errorType: "runtime_not_ready",
+          };
+        }
+
+        if (pollResult.status === "running") {
+          this.lastActivityAtMs = Date.now();
+          emitStatus("ready");
+          return { ready: true };
+        }
+
+        if (pollResult.status === "stopped") {
+          // Build finished but workspace ended up stopped - retry start once
+          log.debug("Coder workspace stopped after build, retrying start", { workspaceName });
+          emitStatus("starting", "Starting Coder workspace...");
+
+          const retryResult = await this.coderService.startWorkspaceAndWait(
+            workspaceName,
+            remainingMs(),
+            signal
+          );
+
+          if (retryResult.success) {
+            this.lastActivityAtMs = Date.now();
+            emitStatus("ready");
+            return { ready: true };
+          }
+
+          if (isWorkspaceNotFoundError(retryResult.error)) {
+            emitStatus("error");
+            return {
+              ready: false,
+              error: `Coder workspace "${workspaceName}" not found`,
+              errorType: "runtime_not_ready",
+            };
+          }
+
+          emitStatus("error");
+          return {
+            ready: false,
+            error: `Failed to start Coder workspace: ${retryResult.error ?? "unknown error"}`,
+            errorType: "runtime_start_failed",
+          };
+        }
+      }
+
+      emitStatus("error");
+      return {
+        ready: false,
+        error: "Coder workspace is still starting... Please retry shortly.",
+        errorType: "runtime_start_failed",
+      };
+    }
+
+    // Other start failure
+    emitStatus("error");
+    return {
+      ready: false,
+      error: `Failed to start Coder workspace: ${startResult.error ?? "unknown error"}`,
+      errorType: "runtime_start_failed",
+    };
+  }
+
+  /** Promise-based sleep helper */
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   /**
@@ -162,10 +475,9 @@ export class CoderSSHRuntime extends SSHRuntime {
       return Ok(undefined);
     }
 
-    const existingWorkspaces = await this.coderService.listWorkspaces(false);
-    const collision = existingWorkspaces.find((w) => w.name === workspaceName);
+    const exists = await this.coderService.workspaceExists(workspaceName);
 
-    if (collision) {
+    if (exists) {
       return Err(
         `A Coder workspace named "${workspaceName}" already exists. ` +
           `Either switch to "Existing" mode to use it, delete/rename it in Coder, ` +
@@ -345,5 +657,9 @@ export class CoderSSHRuntime extends SSHRuntime {
       initLogger.logStderr(`Failed to prepare workspace directory: ${errorMsg}`);
       throw new Error(`Failed to prepare workspace directory: ${errorMsg}`);
     }
+
+    // Mark workspace as ready only after all setup succeeds
+    this.coderWorkspaceReady = true;
+    this.lastActivityAtMs = Date.now();
   }
 }

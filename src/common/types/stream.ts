@@ -17,6 +17,7 @@ import type {
   ToolCallStartEventSchema,
   BashOutputEventSchema,
   UsageDeltaEventSchema,
+  RuntimeStatusEventSchema,
 } from "../orpc/schemas";
 
 /**
@@ -46,6 +47,12 @@ export type ReasoningEndEvent = z.infer<typeof ReasoningEndEventSchema>;
  */
 export type UsageDeltaEvent = z.infer<typeof UsageDeltaEventSchema>;
 
+/**
+ * Progress event for runtime readiness checks.
+ * Used by Coder workspaces to show "Starting Coder workspace..." while ensureReady() blocks.
+ */
+export type RuntimeStatusEvent = z.infer<typeof RuntimeStatusEventSchema>;
+
 export type AIServiceEvent =
   | StreamStartEvent
   | StreamDeltaEvent
@@ -58,4 +65,5 @@ export type AIServiceEvent =
   | BashOutputEvent
   | ReasoningDeltaEvent
   | ReasoningEndEvent
-  | UsageDeltaEvent;
+  | UsageDeltaEvent
+  | RuntimeStatusEvent;

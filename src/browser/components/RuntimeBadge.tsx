@@ -10,7 +10,7 @@ import {
 } from "@/common/types/runtime";
 import { extractSshHostname } from "@/browser/utils/ui/runtimeBadge";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
-import { SSHIcon, WorktreeIcon, LocalIcon, DockerIcon } from "./icons/RuntimeIcons";
+import { SSHIcon, WorktreeIcon, LocalIcon, DockerIcon, CoderIcon } from "./icons/RuntimeIcons";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 
 interface RuntimeBadgeProps {
@@ -32,6 +32,12 @@ interface RuntimeBadgeProps {
 // Working: brighter colors with pulse animation
 const RUNTIME_STYLES = {
   ssh: {
+    idle: "bg-transparent text-muted border-[var(--color-runtime-ssh)]/50",
+    working:
+      "bg-[var(--color-runtime-ssh)]/20 text-[var(--color-runtime-ssh-text)] border-[var(--color-runtime-ssh)]/60 animate-pulse",
+  },
+  coder: {
+    // Coder uses SSH styling since it's an SSH-based runtime
     idle: "bg-transparent text-muted border-[var(--color-runtime-ssh)]/50",
     working:
       "bg-[var(--color-runtime-ssh)]/20 text-[var(--color-runtime-ssh-text)] border-[var(--color-runtime-ssh)]/60 animate-pulse",
@@ -97,6 +103,7 @@ type RuntimeType = keyof typeof RUNTIME_STYLES;
 
 const RUNTIME_ICONS: Record<RuntimeType, React.ComponentType> = {
   ssh: SSHIcon,
+  coder: CoderIcon,
   worktree: WorktreeIcon,
   local: LocalIcon,
   docker: DockerIcon,
@@ -106,6 +113,11 @@ function getRuntimeInfo(
   runtimeConfig?: RuntimeConfig
 ): { type: RuntimeType; label: string } | null {
   if (isSSHRuntime(runtimeConfig)) {
+    // Coder-backed SSH runtime gets special treatment
+    if (runtimeConfig.coder) {
+      const coderWorkspaceName = runtimeConfig.coder.workspaceName;
+      return { type: "coder", label: `Coder: ${coderWorkspaceName ?? runtimeConfig.host}` };
+    }
     const hostname = extractSshHostname(runtimeConfig);
     return { type: "ssh", label: `SSH: ${hostname ?? runtimeConfig.host}` };
   }

@@ -4,6 +4,7 @@ import type { DeleteMessage, StreamErrorMessage, WorkspaceChatMessage } from "@/
 import type {
   ReasoningDeltaEvent,
   ReasoningEndEvent,
+  RuntimeStatusEvent,
   StreamAbortEvent,
   StreamDeltaEvent,
   StreamEndEvent,
@@ -72,6 +73,10 @@ class StubAggregator implements WorkspaceChatEventAggregator {
 
   handleMessage(data: WorkspaceChatMessage): void {
     this.calls.push(`handleMessage:${data.type}`);
+  }
+
+  handleRuntimeStatus(data: RuntimeStatusEvent): void {
+    this.calls.push(`handleRuntimeStatus:${data.phase}:${data.runtimeType}`);
   }
 
   clearTokenState(messageId: string): void {

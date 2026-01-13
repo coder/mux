@@ -1,4 +1,5 @@
 import type { RuntimeConfig } from "@/common/types/runtime";
+import type { RuntimeStatusEvent as StreamRuntimeStatusEvent } from "@/common/types/stream";
 import type { Result } from "@/common/types/result";
 
 /**
@@ -266,6 +267,48 @@ export interface RuntimeCreateFlags {
 }
 
 /**
+ * Runtime status update payload for ensureReady progress.
+ *
+ * Derived from the stream schema type to keep phase/runtimeType/detail consistent
+ * across backend + frontend.
+ */
+export type RuntimeStatusEvent = Pick<StreamRuntimeStatusEvent, "phase" | "runtimeType" | "detail">;
+
+/**
+ * Callback for runtime status updates during ensureReady().
+ */
+export type RuntimeStatusSink = (status: RuntimeStatusEvent) => void;
+
+/**
+ * Options for ensureReady().
+ */
+export interface EnsureReadyOptions {
+  /**
+   * Callback to emit runtime-status events for UX feedback.
+   * Coder uses this to show "Starting Coder workspace..." during boot.
+   */
+  statusSink?: RuntimeStatusSink;
+
+  /**
+   * Abort signal to cancel long-running operations.
+   */
+  signal?: AbortSignal;
+}
+
+/**
+ * Result of ensureReady().
+ * Distinguishes between permanent failures (runtime_not_ready) and
+ * transient failures (runtime_start_failed) for retry logic.
+ */
+export type EnsureReadyResult =
+  | { ready: true }
+  | {
+      ready: false;
+      error: string;
+      errorType: "runtime_not_ready" | "runtime_start_failed";
+    };
+
+/**
  * Runtime interface - minimal, low-level abstraction for tool execution environments.
  *
  * All methods return streaming primitives for memory efficiency.
@@ -498,10 +541,14 @@ export interface Runtime {
    * - LocalRuntime: Always returns ready (no-op)
    * - DockerRuntime: Starts container if stopped
    * - SSHRuntime: Could verify connection (future)
+   * - CoderSSHRuntime: Checks workspace status, starts if stopped, waits for ready
    *
-   * Called automatically by executeBash handler before first operation.
+   * Called automatically by AIService before streaming.
+   *
+   * @param options Optional config: statusSink for progress events, signal for cancellation
+   * @returns Result indicating ready or failure with error type for retry decisions
    */
-  ensureReady(): Promise<{ ready: boolean; error?: string }>;
+  ensureReady(options?: EnsureReadyOptions): Promise<EnsureReadyResult>;
 
   /**
    * Fork an existing workspace to create a new one

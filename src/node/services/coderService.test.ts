@@ -111,8 +111,14 @@ describe("CoderService", () => {
       mockExecAsync.mockReturnValue({
         result: Promise.resolve({
           stdout: JSON.stringify([
-            { name: "template-1", display_name: "Template One", organization_name: "org1" },
-            { name: "template-2", display_name: "Template Two" },
+            {
+              Template: {
+                name: "template-1",
+                display_name: "Template One",
+                organization_name: "org1",
+              },
+            },
+            { Template: { name: "template-2", display_name: "Template Two" } },
           ]),
         }),
         [Symbol.dispose]: noop,
@@ -129,7 +135,7 @@ describe("CoderService", () => {
     it("uses name as displayName when display_name not present", async () => {
       mockExecAsync.mockReturnValue({
         result: Promise.resolve({
-          stdout: JSON.stringify([{ name: "my-template" }]),
+          stdout: JSON.stringify([{ Template: { name: "my-template" } }]),
         }),
         [Symbol.dispose]: noop,
       });
@@ -169,8 +175,21 @@ describe("CoderService", () => {
       mockExecAsync.mockReturnValue({
         result: Promise.resolve({
           stdout: JSON.stringify([
-            { id: "preset-1", name: "Small", description: "Small instance", is_default: true },
-            { id: "preset-2", name: "Large", description: "Large instance" },
+            {
+              TemplatePreset: {
+                ID: "preset-1",
+                Name: "Small",
+                Description: "Small instance",
+                Default: true,
+              },
+            },
+            {
+              TemplatePreset: {
+                ID: "preset-2",
+                Name: "Large",
+                Description: "Large instance",
+              },
+            },
           ]),
         }),
         [Symbol.dispose]: noop,
@@ -256,6 +275,42 @@ describe("CoderService", () => {
       const workspaces = await service.listWorkspaces();
 
       expect(workspaces).toEqual([]);
+    });
+  });
+
+  describe("workspaceExists", () => {
+    it("returns true when exact match is found in search results", async () => {
+      mockExecAsync.mockReturnValue({
+        result: Promise.resolve({ stdout: JSON.stringify([{ name: "ws-1" }, { name: "ws-10" }]) }),
+        [Symbol.dispose]: noop,
+      });
+
+      const exists = await service.workspaceExists("ws-1");
+
+      expect(exists).toBe(true);
+      expect(mockExecAsync).toHaveBeenCalledWith("coder list --search 'name:ws-1' --output=json");
+    });
+
+    it("returns false when only prefix matches", async () => {
+      mockExecAsync.mockReturnValue({
+        result: Promise.resolve({ stdout: JSON.stringify([{ name: "ws-10" }]) }),
+        [Symbol.dispose]: noop,
+      });
+
+      const exists = await service.workspaceExists("ws-1");
+
+      expect(exists).toBe(false);
+    });
+
+    it("returns false on CLI error", async () => {
+      mockExecAsync.mockReturnValue({
+        result: Promise.reject(new Error("not logged in")),
+        [Symbol.dispose]: noop,
+      });
+
+      const exists = await service.workspaceExists("ws-1");
+
+      expect(exists).toBe(false);
     });
   });
 

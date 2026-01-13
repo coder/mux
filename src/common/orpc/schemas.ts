@@ -113,6 +113,7 @@ export {
   ReasoningDeltaEventSchema,
   ReasoningEndEventSchema,
   RestoreToInputEventSchema,
+  RuntimeStatusEventSchema,
   SendMessageOptionsSchema,
   StreamAbortEventSchema,
   StreamDeltaEventSchema,
