@@ -14,6 +14,24 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { matchesKeybind, formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import type { ReviewNoteDataForDisplay } from "@/common/types/message";
 
+/**
+ * Format line range for compact display.
+ * Input: "-10-14 +10-15" or "-5" or "+5-10"
+ * Output: "10-15" (prefers new lines, falls back to old)
+ */
+function formatLineRangeCompact(lineRange: string): string {
+  // Extract new line range (after +) if present
+  const newMatch = /\+(\d+(?:-\d+)?)/.exec(lineRange);
+  if (newMatch) return newMatch[1];
+
+  // Fall back to old line range (after -)
+  const oldMatch = /-(\d+(?:-\d+)?)/.exec(lineRange);
+  if (oldMatch) return oldMatch[1];
+
+  // Fallback: return as-is
+  return lineRange;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // SHARED INTERNAL COMPONENT
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -108,14 +126,14 @@ const ReviewBlockCore: React.FC<ReviewBlockCoreProps> = ({
         {/* File path and line range - only show if not compact */}
         {!compact && (
           <span className="text-primary min-w-0 flex-1 truncate font-mono text-[11px]">
-            {filePath}:{lineRange}
+            {filePath}:L{formatLineRangeCompact(lineRange)}
           </span>
         )}
 
         {/* In compact mode, show line range only */}
         {compact && (
           <span className="text-muted min-w-0 flex-1 truncate font-mono text-[10px]">
-            L{lineRange}
+            L{formatLineRangeCompact(lineRange)}
           </span>
         )}
 

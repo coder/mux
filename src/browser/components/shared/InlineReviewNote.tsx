@@ -17,6 +17,28 @@ import { cn } from "@/common/lib/utils";
 import type { Review } from "@/common/types/review";
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Format line range for compact display.
+ * Input: "-10-14 +10-15" or "-5" or "+5-10"
+ * Output: "10-15" (prefers new lines, falls back to old)
+ */
+function formatLineRangeCompact(lineRange: string): string {
+  // Extract new line range (after +) if present
+  const newMatch = /\+(\d+(?:-\d+)?)/.exec(lineRange);
+  if (newMatch) return newMatch[1];
+
+  // Fall back to old line range (after -)
+  const oldMatch = /-(\d+(?:-\d+)?)/.exec(lineRange);
+  if (oldMatch) return oldMatch[1];
+
+  // Fallback: return as-is
+  return lineRange;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // TYPES
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -135,10 +157,12 @@ export const InlineReviewNote: React.FC<InlineReviewNoteProps> = ({
           {/* File path or just line range */}
           {showFilePath ? (
             <span className="text-primary min-w-0 flex-1 truncate font-mono text-[10px]">
-              {review.data.filePath}:{review.data.lineRange}
+              {review.data.filePath}:L{formatLineRangeCompact(review.data.lineRange)}
             </span>
           ) : (
-            <span className="text-muted font-mono">L{review.data.lineRange}</span>
+            <span className="text-muted font-mono">
+              L{formatLineRangeCompact(review.data.lineRange)}
+            </span>
           )}
 
           {/* Status badge */}
