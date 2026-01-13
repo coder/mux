@@ -1,4 +1,6 @@
-import { electronTest as test } from "../electronTest";
+import fs from "fs";
+import path from "path";
+import { electronTest as test, electronExpect as expect } from "../electronTest";
 
 test.skip(
   ({ browserName }) => browserName !== "chromium",
@@ -88,14 +90,29 @@ test("keyboard input reaches terminal (regression #1586)", async ({ ui, page, wo
   await page.keyboard.press("Enter");
 
   // Give commands time to complete
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(1000);
 
-  // The test passes if we got this far without the terminal blocking input.
-  // The key handler fix ensures all keystrokes flow through to ghostty.
-  //
-  // Note: We can't easily verify terminal canvas output, but the fact that
-  // we could type commands without the terminal appearing frozen proves
-  // the key handler is returning correct values (false for normal keys).
+  // CRITICAL ASSERTION: Verify the file was actually created.
+  // This proves keyboard input reached the terminal - if the bug from #1586
+  // regressed (key handler returning true), the file would NOT exist because
+  // ghostty wouldn't process any keystrokes.
+  const filePath = path.join(workspace.demoProject.workspacePath, testFile);
+
+  // Poll for file creation (shell command may take a moment)
+  let fileExists = false;
+  for (let i = 0; i < 10; i++) {
+    if (fs.existsSync(filePath)) {
+      fileExists = true;
+      break;
+    }
+    await page.waitForTimeout(200);
+  }
+
+  expect(fileExists).toBe(true);
+
+  // Also verify the file contains our marker
+  const fileContents = fs.readFileSync(filePath, "utf-8").trim();
+  expect(fileContents).toBe(marker);
 });
 
 /**
@@ -103,7 +120,7 @@ test("keyboard input reaches terminal (regression #1586)", async ({ ui, page, wo
  * These were also blocked by the #1586 bug since the handler returned true
  * for ALL non-clipboard keydown events.
  */
-test("special keys work in terminal (regression #1586)", async ({ ui, page }) => {
+test("special keys work in terminal (regression #1586)", async ({ ui, page, workspace }) => {
   await ui.projects.openFirstWorkspace();
 
   await ui.metaSidebar.expectVisible();
@@ -113,35 +130,42 @@ test("special keys work in terminal (regression #1586)", async ({ ui, page }) =>
   await page.waitForTimeout(1000);
   await ui.metaSidebar.focusTerminal();
 
-  // Test Enter key - type a simple command
-  await page.keyboard.type("echo test");
+  // Create a unique marker file to verify the test actually works
+  const marker = `SPECIAL_KEYS_TEST_${Date.now()}`;
+  const testFile = "special_keys_test.txt";
+
+  // Test Backspace - type something wrong, delete it with Backspace, then type correct value
+  // If Backspace doesn't work, the file will contain "wrongMARKER" instead of just "MARKER"
+  await page.keyboard.type("echo wrong");
+  await page.keyboard.press("Backspace");
+  await page.keyboard.press("Backspace");
+  await page.keyboard.press("Backspace");
+  await page.keyboard.press("Backspace");
+  await page.keyboard.press("Backspace");
+  // Now type the actual marker
+  await page.keyboard.type(`${marker} > ${testFile}`, { delay: 30 });
   await page.keyboard.press("Enter"); // This was blocked in #1586
 
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(1000);
 
-  // Test Backspace - type something, delete it, type something else
-  await page.keyboard.type("wrong");
-  await page.keyboard.press("Backspace");
-  await page.keyboard.press("Backspace");
-  await page.keyboard.press("Backspace");
-  await page.keyboard.press("Backspace");
-  await page.keyboard.press("Backspace");
-  await page.keyboard.type("echo correct");
-  await page.keyboard.press("Enter");
+  // CRITICAL ASSERTION: Verify the file was created with CORRECT content.
+  // This proves both Enter AND Backspace work:
+  // - Enter must work for the command to execute
+  // - Backspace must work or the file would contain "wrong" prefix
+  const filePath = path.join(workspace.demoProject.workspacePath, testFile);
 
-  await page.waitForTimeout(300);
+  let fileExists = false;
+  for (let i = 0; i < 10; i++) {
+    if (fs.existsSync(filePath)) {
+      fileExists = true;
+      break;
+    }
+    await page.waitForTimeout(200);
+  }
 
-  // Test Tab for command completion (if available)
-  await page.keyboard.type("ech");
-  await page.keyboard.press("Tab"); // Tab completion
-  await page.keyboard.press("Escape"); // Cancel any completion menu
+  expect(fileExists).toBe(true);
 
-  await page.waitForTimeout(300);
-
-  // Test arrow keys - navigate command history
-  await page.keyboard.press("ArrowUp"); // Previous command
-  await page.keyboard.press("ArrowDown"); // Next command
-  await page.keyboard.press("Escape"); // Clear
-
-  // If we got here without the terminal freezing, the key handler is working
+  const fileContents = fs.readFileSync(filePath, "utf-8").trim();
+  // If Backspace didn't work, this would be "wrongMARKER..." instead of just the marker
+  expect(fileContents).toBe(marker);
 });
