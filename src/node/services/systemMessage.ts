@@ -78,6 +78,7 @@ function buildEnvironmentContext(workspacePath: string, runtimeType: RuntimeMode
     "- This IS a git repository - run git commands directly (no cd needed)",
     "- Tools run here automatically",
     "- You are meant to do your work isolated from the user and other agents",
+    "- Parent directories may contain other workspaces - do not confuse them with this project",
   ];
 
   let description: string;
