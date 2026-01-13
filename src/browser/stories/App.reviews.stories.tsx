@@ -432,7 +432,7 @@ export const AttachedReviewHoverActions: AppStory = {
 
     // Wait for the attached review to appear
     await waitFor(() => {
-      canvas.getByText(/src\/api\/auth\.ts:42-48/);
+      canvas.getByText(/src\/api\/auth\.ts:L42-48/);
     });
 
     // Hover over the review block to reveal action buttons

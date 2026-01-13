@@ -12,11 +12,11 @@
  */
 export function formatLineRangeCompact(lineRange: string): string {
   // Extract new line range (after +) if present
-  const newMatch = /\+(\d+(?:-\d+)?)/.exec(lineRange);
+  const newMatch = /(?:^|\s)\+(\d+(?:-\d+)?)/.exec(lineRange);
   if (newMatch) return newMatch[1];
 
   // Fall back to old line range (after -)
-  const oldMatch = /-(\d+(?:-\d+)?)/.exec(lineRange);
+  const oldMatch = /(?:^|\s)-(\d+(?:-\d+)?)/.exec(lineRange);
   if (oldMatch) return oldMatch[1];
 
   // Fallback: return as-is
