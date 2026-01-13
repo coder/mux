@@ -138,6 +138,22 @@ describe("applyWorkspaceChatEventToAggregator", () => {
     expect(aggregator.calls).toEqual(["handleStreamEnd:msg-1", "clearTokenState:msg-1"]);
   });
 
+  test("runtime-status routes to handleRuntimeStatus", () => {
+    const aggregator = new StubAggregator();
+
+    const event: WorkspaceChatMessage = {
+      type: "runtime-status",
+      workspaceId: "ws-1",
+      phase: "starting",
+      runtimeType: "ssh",
+      detail: "Starting Coder workspace...",
+    };
+
+    const hint = applyWorkspaceChatEventToAggregator(aggregator, event);
+
+    expect(hint).toBe("immediate");
+    expect(aggregator.calls).toEqual(["handleRuntimeStatus:starting:ssh"]);
+  });
   test("stream-abort clears token state before calling handleStreamAbort", () => {
     const aggregator = new StubAggregator();
 

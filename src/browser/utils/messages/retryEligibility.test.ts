@@ -452,6 +452,26 @@ describe("isEligibleForAutoRetry", () => {
       ];
       expect(isEligibleForAutoRetry(messages)).toBe(false);
     });
+    it("returns false for runtime_not_ready errors (workspace needs attention)", () => {
+      const messages: DisplayedMessage[] = [
+        {
+          type: "user",
+          id: "user-1",
+          historyId: "user-1",
+          content: "Hello",
+          historySequence: 1,
+        },
+        {
+          type: "stream-error",
+          id: "error-1",
+          historyId: "assistant-1",
+          error: "Coder workspace does not exist",
+          errorType: "runtime_not_ready",
+          historySequence: 2,
+        },
+      ];
+      expect(isEligibleForAutoRetry(messages)).toBe(false);
+    });
   });
 
   describe("retryable error types", () => {
@@ -512,6 +532,27 @@ describe("isEligibleForAutoRetry", () => {
           historyId: "assistant-1",
           error: "Rate limit exceeded",
           errorType: "rate_limit",
+          historySequence: 2,
+        },
+      ];
+      expect(isEligibleForAutoRetry(messages)).toBe(true);
+    });
+
+    it("returns true for runtime_start_failed errors (transient runtime start failures)", () => {
+      const messages: DisplayedMessage[] = [
+        {
+          type: "user",
+          id: "user-1",
+          historyId: "user-1",
+          content: "Hello",
+          historySequence: 1,
+        },
+        {
+          type: "stream-error",
+          id: "error-1",
+          historyId: "assistant-1",
+          error: "Failed to start runtime",
+          errorType: "runtime_start_failed",
           historySequence: 2,
         },
       ];
@@ -628,6 +669,21 @@ describe("isNonRetryableSendError", () => {
     expect(isNonRetryableSendError(error)).toBe(false);
   });
 
+  it("returns true for runtime_not_ready error", () => {
+    const error: SendMessageError = {
+      type: "runtime_not_ready",
+      message: "Coder workspace does not exist",
+    };
+    expect(isNonRetryableSendError(error)).toBe(true);
+  });
+
+  it("returns false for runtime_start_failed error", () => {
+    const error: SendMessageError = {
+      type: "runtime_start_failed",
+      message: "Failed to start runtime",
+    };
+    expect(isNonRetryableSendError(error)).toBe(false);
+  });
   it("returns true for incompatible_workspace error", () => {
     const error: SendMessageError = {
       type: "incompatible_workspace",
