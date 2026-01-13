@@ -1,20 +1,53 @@
 import { describe, it, expect } from "bun:test";
 import { matchesKeybind, type Keybind } from "./keybinds";
 
-describe("matchesKeybind", () => {
-  // Helper to create a minimal keyboard event
-  function createEvent(overrides: Partial<KeyboardEvent> = {}): KeyboardEvent {
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-    return {
-      key: "a",
-      ctrlKey: false,
-      shiftKey: false,
-      altKey: false,
-      metaKey: false,
-      ...overrides,
-    } as KeyboardEvent;
-  }
+// Helper to create a minimal keyboard event
+function createEvent(overrides: Partial<KeyboardEvent> = {}): KeyboardEvent {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+  return {
+    key: "a",
+    ctrlKey: false,
+    shiftKey: false,
+    altKey: false,
+    metaKey: false,
+    ...overrides,
+  } as KeyboardEvent;
+}
 
+describe("CYCLE_MODEL keybind (Ctrl+/)", () => {
+  it("matches Ctrl+/ on Linux/Windows", () => {
+    // Mock non-Mac platform
+    globalThis.window = { api: { platform: "linux" } } as unknown as Window & typeof globalThis;
+    const event = createEvent({ key: "/", ctrlKey: true });
+    expect(matchesKeybind(event, { key: "/", ctrl: true })).toBe(true);
+  });
+
+  it("matches Cmd+/ on macOS", () => {
+    // Mock Mac platform
+    globalThis.window = { api: { platform: "darwin" } } as unknown as Window & typeof globalThis;
+    const event = createEvent({ key: "/", metaKey: true });
+    expect(matchesKeybind(event, { key: "/", ctrl: true })).toBe(true);
+  });
+
+  it("matches Ctrl+/ on macOS (either behavior)", () => {
+    // Mock Mac platform
+    globalThis.window = { api: { platform: "darwin" } } as unknown as Window & typeof globalThis;
+    const event = createEvent({ key: "/", ctrlKey: true });
+    expect(matchesKeybind(event, { key: "/", ctrl: true })).toBe(true);
+  });
+
+  it("does not match just /", () => {
+    const event = createEvent({ key: "/" });
+    expect(matchesKeybind(event, { key: "/", ctrl: true })).toBe(false);
+  });
+
+  it("does not match Ctrl+? (shifted /)", () => {
+    const event = createEvent({ key: "?", ctrlKey: true, shiftKey: true });
+    expect(matchesKeybind(event, { key: "/", ctrl: true })).toBe(false);
+  });
+});
+
+describe("matchesKeybind", () => {
   it("should return false when event.key is undefined", () => {
     // This can happen with dead keys, modifier-only events, etc.
     const event = createEvent({ key: undefined as unknown as string });

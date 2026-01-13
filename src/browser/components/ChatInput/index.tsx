@@ -278,7 +278,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const focusBorderColor = currentAgent?.uiColor ?? "var(--color-border-light)";
   const {
     models,
-    customModels,
     hiddenModels,
     hideModel,
     unhideModel,
@@ -438,12 +437,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     ]
   );
 
-  // Model cycling candidates. Prefer the user's custom model list (as configured in Settings).
-  // If no custom models are configured, fall back to the full suggested list.
-  const cycleModels = useMemo(
-    () => (customModels.length > 0 ? customModels : models),
-    [customModels, models]
-  );
+  // Model cycling candidates: all visible models (custom + built-in, minus hidden).
+  const cycleModels = models;
 
   const cycleToNextModel = useCallback(() => {
     if (cycleModels.length < 2) {
