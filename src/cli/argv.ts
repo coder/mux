@@ -73,7 +73,7 @@ export function consumeMuxRootFromArgv(
 
     if (arg === "--mux-root" || arg === "--root") {
       const value = argv[i + 1];
-      if (value === undefined) {
+      if (value === undefined || value.startsWith("-")) {
         return { error: `Missing value for ${arg}` };
       }
 
