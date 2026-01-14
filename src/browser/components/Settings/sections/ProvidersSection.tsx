@@ -277,7 +277,14 @@ export function ProvidersSection() {
 
         if (waitResult.success) {
           if (muxGatewayApplyDefaultModelsOnSuccessRef.current) {
-            setGatewayDefaultEnabled(true);
+            let latestConfig = config;
+            try {
+              latestConfig = await api.providers.getConfig();
+            } catch {
+              // Ignore errors fetching config; fall back to the current snapshot.
+            }
+
+            setGatewayModels(getEligibleGatewayModels(latestConfig));
             muxGatewayApplyDefaultModelsOnSuccessRef.current = false;
           }
 

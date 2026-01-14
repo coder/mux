@@ -123,7 +123,17 @@ export function LoginWithMuxGatewaySplash(props: { onDismiss: () => void }) {
 
         if (waitResult.success) {
           if (applyDefaultModelsOnSuccessRef.current) {
-            updatePersistedState(GATEWAY_MODELS_KEY, eligibleGatewayModels);
+            let latestConfig = config;
+            try {
+              latestConfig = await api.providers.getConfig();
+            } catch {
+              // Ignore errors fetching config; fall back to the current snapshot.
+            }
+
+            updatePersistedState(
+              GATEWAY_MODELS_KEY,
+              getSuggestedModels(latestConfig).filter(isProviderSupported)
+            );
             applyDefaultModelsOnSuccessRef.current = false;
           }
 
