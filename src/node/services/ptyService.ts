@@ -21,6 +21,7 @@ import { DockerRuntime } from "@/node/runtime/DockerRuntime";
 import { access } from "fs/promises";
 import { constants } from "fs";
 import { getControlPath, sshConnectionPool } from "@/node/runtime/sshConnectionPool";
+import { resolveLocalPtyShell } from "@/node/utils/main/resolveLocalPtyShell";
 import { expandTildeForSSH } from "@/node/runtime/tildeExpansion";
 
 interface SessionData {
@@ -180,12 +181,19 @@ export class PTYService {
       } catch {
         throw new Error(`Workspace path does not exist: ${workspacePath}`);
       }
-      const shell = process.env.SHELL ?? "/bin/bash";
-      spawnConfig = { command: shell, args: [], cwd: workspacePath };
+      const shell = resolveLocalPtyShell();
+      spawnConfig = { command: shell.command, args: shell.args, cwd: workspacePath };
+
+      if (!spawnConfig.command.trim()) {
+        throw new Error("Cannot spawn Local terminal: empty shell command");
+      }
+
+      const printableArgs = spawnConfig.args.length > 0 ? ` ${spawnConfig.args.join(" ")}` : "";
       log.info(
-        `Spawning PTY with shell: ${shell}, cwd: ${workspacePath}, size: ${params.cols}x${params.rows}`
+        `Spawning PTY: ${spawnConfig.command}${printableArgs}, cwd: ${workspacePath}, size: ${params.cols}x${params.rows}`
       );
-      log.debug(`PATH env: ${process.env.PATH ?? "undefined"}`);
+      log.debug(`process.env.SHELL: ${process.env.SHELL ?? "undefined"}`);
+      log.debug(`process.env.PATH: ${process.env.PATH ?? process.env.Path ?? "undefined"}`);
     } else if (runtime instanceof SSHRuntime) {
       const sshConfig = runtime.getConfig();
       // Ensure connection is healthy before spawning terminal
@@ -217,6 +225,11 @@ export class PTYService {
     // Load node-pty and spawn process
     // Local prefers node-pty (Electron rebuild), SSH/Docker prefer @lydell/node-pty (prebuilds)
     const isLocal = runtime instanceof LocalBaseRuntime;
+
+    const pathEnv =
+      process.env.PATH ??
+      process.env.Path ??
+      (process.platform === "win32" ? undefined : "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin");
     const pty = loadNodePty(runtimeType, isLocal);
     let ptyProcess: IPty;
     try {
@@ -228,19 +241,30 @@ export class PTYService {
         env: {
           ...process.env,
           TERM: "xterm-256color",
-          PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+          ...(pathEnv ? { PATH: pathEnv } : {}),
         },
       });
     } catch (err) {
       log.error(`[PTY] Failed to spawn ${runtimeType} terminal ${sessionId}:`, err);
+
+      const printableArgs = spawnConfig.args.length > 0 ? ` ${spawnConfig.args.join(" ")}` : "";
+      const cmd = `${spawnConfig.command}${printableArgs}`;
+      const details = `cmd="${cmd}", cwd="${spawnConfig.cwd}", platform="${process.platform}"`;
+      const errMessage = err instanceof Error ? err.message : String(err);
+
       if (isLocal) {
-        log.error(`Shell: ${spawnConfig.command}, CWD: ${spawnConfig.cwd}`);
+        log.error(`Local PTY spawn config: ${cmd} (cwd: ${spawnConfig.cwd})`);
         log.error(`process.env.SHELL: ${process.env.SHELL ?? "undefined"}`);
-        log.error(`process.env.PATH: ${process.env.PATH ?? "undefined"}`);
+        log.error(`process.env.PATH: ${process.env.PATH ?? process.env.Path ?? "undefined"}`);
       }
-      throw new Error(
-        `Failed to spawn ${runtimeType} terminal: ${err instanceof Error ? err.message : String(err)}`
-      );
+
+      if (err instanceof Error) {
+        throw new Error(`Failed to spawn ${runtimeType} terminal (${details}): ${errMessage}`, {
+          cause: err,
+        });
+      }
+
+      throw new Error(`Failed to spawn ${runtimeType} terminal (${details}): ${errMessage}`);
     }
 
     // Wire up handlers
