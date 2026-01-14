@@ -211,7 +211,12 @@ export class CoderSSHRuntime extends SSHRuntime {
     }
 
     if (statusResult.kind === "error") {
-      // For errors (timeout, auth hiccup, Coder CLI issues), proceed optimistically
+      // Check if this was an abort - don't proceed optimistically if user cancelled
+      if (signal?.aborted) {
+        emitStatus("error");
+        return { ready: false, error: "Aborted", errorType: "runtime_start_failed" };
+      }
+      // For other errors (timeout, auth hiccup, Coder CLI issues), proceed optimistically
       // and let SSH fail naturally to avoid blocking the happy path.
       log.debug("Coder workspace status unknown, proceeding optimistically", {
         workspaceName,

@@ -1146,7 +1146,8 @@ export class DockerRuntime extends RemoteRuntime {
       const stderr = result.stderr || "Failed to start container";
 
       // Classify error type based on stderr content
-      const isContainerMissing = stderr.includes("No such container") || stderr.includes("not found");
+      const isContainerMissing =
+        stderr.includes("No such container") || stderr.includes("not found");
 
       return {
         ready: false,
