@@ -44,7 +44,7 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
   const [state, setState] = React.useState<ExplorerState>({
     entries: new Map(),
     expanded: new Set(),
-    loading: new Set([""]), // empty string = root directory
+    loading: new Set(), // starts empty, set when fetch begins
     error: null,
   });
 
@@ -102,13 +102,14 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
     [api, props.workspacePath]
   );
 
-  // Initial load
+  // Initial load - retry when api becomes available
   React.useEffect(() => {
+    if (!api) return;
     if (!initialLoadRef.current) {
       initialLoadRef.current = true;
       void fetchDirectory("");
     }
-  }, [fetchDirectory]);
+  }, [api, fetchDirectory]);
 
   // Subscribe to file-modifying tool events and debounce refresh
   React.useEffect(() => {
