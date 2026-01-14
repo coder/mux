@@ -73,6 +73,8 @@ export interface FileTreeNode {
   path: string;
   isDirectory: boolean;
   children: FileTreeNode[];
+  /** Whether this file/directory is gitignored */
+  ignored?: boolean;
   stats?: FileStats;
   /** Total stats including all children (for directories) */
   totalStats?: FileStats;

@@ -165,31 +165,31 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
     }));
   };
 
-  // Expand all recursively
+  // Expand all recursively (skip gitignored directories)
   const handleExpandAll = () => {
-    // Collect all known directories from loaded entries
+    // Collect all known non-ignored directories from loaded entries
     const allDirs: string[] = [];
-    
+
     const collectDirs = (parentKey: string) => {
       const entries = state.entries.get(parentKey);
       if (!entries) return;
       for (const entry of entries) {
-        if (entry.isDirectory) {
+        if (entry.isDirectory && !entry.ignored) {
           allDirs.push(entry.path);
           collectDirs(entry.path);
         }
       }
     };
-    
+
     collectDirs("__root__");
-    
+
     // Fetch any directories not yet loaded
     for (const dir of allDirs) {
       if (!state.entries.has(dir)) {
         void fetchDirectory(dir);
       }
     }
-    
+
     setState((prev) => ({
       ...prev,
       expanded: new Set(allDirs),
@@ -204,6 +204,7 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
     const isExpanded = state.expanded.has(key);
     const isLoading = state.loading.has(key);
     const children = state.entries.get(key) ?? [];
+    const isIgnored = node.ignored === true;
 
     return (
       <div key={key}>
@@ -211,7 +212,8 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
           type="button"
           className={cn(
             "flex w-full cursor-pointer items-center gap-1 px-2 py-0.5 text-left text-sm hover:bg-accent/50",
-            "focus:bg-accent/50 focus:outline-none"
+            "focus:bg-accent/50 focus:outline-none",
+            isIgnored && "opacity-50"
           )}
           style={{ paddingLeft: `${8 + depth * INDENT_PX}px` }}
           onClick={() => (node.isDirectory ? toggleExpand(node) : undefined)}
