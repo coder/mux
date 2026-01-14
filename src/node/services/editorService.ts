@@ -21,7 +21,7 @@ export interface EditorConfig {
 /**
  * Service for opening workspaces in code editors.
  * Supports VS Code, Cursor, Zed, and custom editors.
- * For SSH workspaces, can use Remote-SSH extension (VS Code/Cursor only).
+ * For SSH workspaces: VS Code/Cursor use Remote-SSH; Zed opens an ssh:// URL.
  */
 export class EditorService {
   private readonly config: Config;
@@ -77,29 +77,47 @@ export class EditorService {
       }
 
       if (isSSH) {
-        // SSH workspace handling - only VS Code and Cursor support Remote-SSH
-        if (editorConfig.editor !== "vscode" && editorConfig.editor !== "cursor") {
-          return {
-            success: false,
-            error: `${editorConfig.editor} does not support Remote-SSH for SSH workspaces`,
-          };
-        }
-
-        // Resolve tilde paths to absolute paths for SSH (VS Code doesn't expand ~)
+        // Resolve tilde paths to absolute paths for SSH.
+        // (VS Code's Remote-SSH won't expand ~, and Zed expects a concrete ssh:// URL.)
         const runtime = createRuntime(runtimeConfig, { projectPath: workspace.projectPath });
         const resolvedPath = await runtime.resolvePath(targetPath);
 
-        // Build the remote command: code --remote ssh-remote+host /remote/path
-        // Quote the path to handle spaces; the remote host arg doesn't need quoting
-        const shellCmd = `${editorCommand} --remote ${shellQuote(`ssh-remote+${runtimeConfig.host}`)} ${shellQuote(resolvedPath)}`;
+        if (editorConfig.editor === "zed") {
+          const hostWithPort =
+            runtimeConfig.port != null
+              ? runtimeConfig.host + ":" + runtimeConfig.port
+              : runtimeConfig.host;
+          const sshUrl = `ssh://${hostWithPort}${resolvedPath}`;
+          const shellCmd = `${editorCommand} ${shellQuote(sshUrl)}`;
 
-        log.info(`Opening SSH path in editor: ${shellCmd}`);
-        const child = spawn(shellCmd, [], {
-          detached: true,
-          stdio: "ignore",
-          shell: true,
-        });
-        child.unref();
+          log.info(`Opening SSH path in editor: ${shellCmd}`);
+          const child = spawn(shellCmd, [], {
+            detached: true,
+            stdio: "ignore",
+            shell: true,
+          });
+          child.unref();
+        } else {
+          // VS Code/Cursor SSH workspace handling via Remote-SSH
+          if (editorConfig.editor !== "vscode" && editorConfig.editor !== "cursor") {
+            return {
+              success: false,
+              error: `${editorConfig.editor} does not support SSH connections for SSH workspaces`,
+            };
+          }
+
+          // Build the remote command: code --remote ssh-remote+host /remote/path
+          // Quote the path to handle spaces; the remote host arg doesn't need quoting
+          const shellCmd = `${editorCommand} --remote ${shellQuote(`ssh-remote+${runtimeConfig.host}`)} ${shellQuote(resolvedPath)}`;
+
+          log.info(`Opening SSH path in editor: ${shellCmd}`);
+          const child = spawn(shellCmd, [], {
+            detached: true,
+            stdio: "ignore",
+            shell: true,
+          });
+          child.unref();
+        }
       } else {
         // Local - expand tilde and open the path (quote to handle spaces)
         const resolvedPath = targetPath.startsWith("~/")

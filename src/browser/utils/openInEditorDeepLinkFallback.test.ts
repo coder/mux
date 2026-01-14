@@ -44,7 +44,7 @@ describe("getEditorDeepLinkFallbackUrl", () => {
     expect(url).toBe("cursor://vscode-remote/ssh-remote+devbox/home/user/project/file.ts");
   });
 
-  test("returns null for zed + SSH runtime (unsupported)", () => {
+  test("returns zed://ssh URL for SSH runtime", () => {
     const runtimeConfig: RuntimeConfig = {
       type: "ssh",
       host: "devbox",
@@ -58,7 +58,25 @@ describe("getEditorDeepLinkFallbackUrl", () => {
       error: "Editor command not found: zed",
     });
 
-    expect(url).toBeNull();
+    expect(url).toBe("zed://ssh/devbox/home/user/project/file.ts");
+  });
+
+  test("includes port in zed://ssh URL for SSH runtime when provided", () => {
+    const runtimeConfig: RuntimeConfig = {
+      type: "ssh",
+      host: "devbox",
+      port: 2222,
+      srcBaseDir: "~/mux",
+    };
+
+    const url = getEditorDeepLinkFallbackUrl({
+      editor: "zed",
+      targetPath: "/home/user/project/file.ts",
+      runtimeConfig,
+      error: "Editor command not found: zed",
+    });
+
+    expect(url).toBe("zed://ssh/devbox:2222/home/user/project/file.ts");
   });
 
   test("returns null when error is not command-not-found", () => {

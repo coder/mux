@@ -19,21 +19,28 @@ export interface DeepLinkOptions {
 /**
  * Generate an editor deep link URL.
  *
- * @returns Deep link URL, or null if the editor doesn't support the requested config
- *          (e.g., Zed doesn't support SSH remote)
+ * @returns Deep link URL, or null if the editor doesn't support the requested config.
  */
 export function getEditorDeepLink(options: DeepLinkOptions): string | null {
   const { editor, path, sshHost, line, column } = options;
 
-  // Zed doesn't support Remote-SSH
-  if (sshHost && editor === "zed") {
-    return null;
-  }
-
   const scheme = editor; // vscode, cursor, zed all use their name as scheme
 
   if (sshHost) {
-    // Remote-SSH format: vscode://vscode-remote/ssh-remote+host/path
+    // Zed remote-SSH deep links use a different format than VS Code/Cursor.
+    // https://zed.dev/docs/remote-development
+    if (editor === "zed") {
+      let url = `${scheme}://ssh/${sshHost}${path}`;
+      if (line != null) {
+        url += `:${line}`;
+        if (column != null) {
+          url += `:${column}`;
+        }
+      }
+      return url;
+    }
+
+    // VS Code/Cursor Remote-SSH format: vscode://vscode-remote/ssh-remote+host/path
     let url = `${scheme}://vscode-remote/ssh-remote+${encodeURIComponent(sshHost)}${path}`;
     if (line != null) {
       url += `:${line}`;

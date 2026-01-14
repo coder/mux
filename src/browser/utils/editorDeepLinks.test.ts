@@ -66,13 +66,22 @@ describe("getEditorDeepLink", () => {
       expect(url).toBe("cursor://vscode-remote/ssh-remote+devbox/home/user/project/file.ts");
     });
 
-    test("returns null for zed with SSH host (unsupported)", () => {
+    test("generates zed://ssh URL for SSH host", () => {
       const url = getEditorDeepLink({
         editor: "zed",
         path: "/home/user/project/file.ts",
         sshHost: "devbox",
       });
-      expect(url).toBeNull();
+      expect(url).toBe("zed://ssh/devbox/home/user/project/file.ts");
+    });
+
+    test("includes port in zed://ssh URL when provided in sshHost", () => {
+      const url = getEditorDeepLink({
+        editor: "zed",
+        path: "/home/user/project/file.ts",
+        sshHost: "devbox:2222",
+      });
+      expect(url).toBe("zed://ssh/devbox:2222/home/user/project/file.ts");
     });
 
     test("encodes SSH host with special characters", () => {

@@ -29,7 +29,13 @@ export function getEditorDeepLinkFallbackUrl(args: {
 
   if (!deepLinkEditor) return null;
 
-  const sshHost = isSSHRuntime(args.runtimeConfig) ? args.runtimeConfig.host : undefined;
+  let sshHost: string | undefined;
+  if (isSSHRuntime(args.runtimeConfig)) {
+    sshHost = args.runtimeConfig.host;
+    if (deepLinkEditor === "zed" && args.runtimeConfig.port != null) {
+      sshHost = sshHost + ":" + args.runtimeConfig.port;
+    }
+  }
 
   return getEditorDeepLink({
     editor: deepLinkEditor,

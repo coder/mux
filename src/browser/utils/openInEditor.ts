@@ -41,15 +41,12 @@ export async function openInEditor(args: {
     return { success: false, error: "Please configure a custom editor command in Settings" };
   }
 
-  // For SSH workspaces, validate the editor supports Remote-SSH (only VS Code/Cursor)
+  // For SSH workspaces, validate the editor supports SSH connections
   if (isSSH) {
-    if (editorConfig.editor === "zed") {
-      return { success: false, error: "Zed does not support Remote-SSH for SSH workspaces" };
-    }
     if (editorConfig.editor === "custom") {
       return {
         success: false,
-        error: "Custom editors do not support Remote-SSH for SSH workspaces",
+        error: "Custom editors do not support SSH connections for SSH workspaces",
       };
     }
   }
@@ -101,7 +98,7 @@ export async function openInEditor(args: {
     if (editorConfig.editor === "custom") {
       return {
         success: false,
-        error: "Custom editors are not supported in browser mode. Use VS Code or Cursor.",
+        error: "Custom editors are not supported in browser mode. Use VS Code, Cursor, or Zed.",
       };
     }
 
@@ -110,6 +107,9 @@ export async function openInEditor(args: {
     if (isSSH && args.runtimeConfig?.type === "ssh") {
       // SSH workspace: use the configured SSH host
       sshHost = args.runtimeConfig.host;
+      if (editorConfig.editor === "zed" && args.runtimeConfig.port != null) {
+        sshHost = sshHost + ":" + args.runtimeConfig.port;
+      }
     } else if (!isLocalhost(window.location.hostname)) {
       // Remote server + local workspace: need SSH to reach server's files
       const serverSshHost = await args.api?.server.getSshHost();
