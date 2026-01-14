@@ -53,7 +53,7 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
 
   // Fetch a directory's contents and return the entries (for recursive expand)
   const fetchDirectory = React.useCallback(
-    async (relativePath: string): Promise<FileTreeNode[] | null> => {
+    async (relativePath: string, suppressErrors = false): Promise<FileTreeNode[] | null> => {
       if (!api) return null;
 
       const key = relativePath; // empty string = root directory
@@ -72,11 +72,22 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
         });
 
         if (!result.success) {
-          setState((prev) => ({
-            ...prev,
-            loading: new Set([...prev.loading].filter((k) => k !== key)),
-            error: result.error,
-          }));
+          setState((prev) => {
+            // On failure, remove from expanded set (dir may have been deleted)
+            const newExpanded = new Set(prev.expanded);
+            newExpanded.delete(key);
+            // Remove stale entries
+            const newEntries = new Map(prev.entries);
+            newEntries.delete(key);
+            return {
+              ...prev,
+              entries: newEntries,
+              expanded: newExpanded,
+              loading: new Set([...prev.loading].filter((k) => k !== key)),
+              // Only set error for root or if not suppressing
+              error: suppressErrors ? prev.error : result.error,
+            };
+          });
           return null;
         }
 
@@ -92,11 +103,20 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
 
         return result.data;
       } catch (err) {
-        setState((prev) => ({
-          ...prev,
-          loading: new Set([...prev.loading].filter((k) => k !== key)),
-          error: err instanceof Error ? err.message : String(err),
-        }));
+        setState((prev) => {
+          // On error, remove from expanded set
+          const newExpanded = new Set(prev.expanded);
+          newExpanded.delete(key);
+          const newEntries = new Map(prev.entries);
+          newEntries.delete(key);
+          return {
+            ...prev,
+            entries: newEntries,
+            expanded: newExpanded,
+            loading: new Set([...prev.loading].filter((k) => k !== key)),
+            error: suppressErrors ? prev.error : err instanceof Error ? err.message : String(err),
+          };
+        });
         return null;
       }
     },
@@ -120,8 +140,11 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
       if (timeoutId) clearTimeout(timeoutId);
       timeoutId = setTimeout(() => {
         // Refresh root and all expanded directories
-        const pathsToRefresh = ["", ...state.expanded];
-        void Promise.all(pathsToRefresh.map((p) => fetchDirectory(p)));
+        // Suppress errors for non-root paths (dir may have been deleted)
+        void fetchDirectory("");
+        for (const p of state.expanded) {
+          void fetchDirectory(p, true);
+        }
       }, DEBOUNCE_MS);
     }, props.workspaceId);
 
