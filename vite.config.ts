@@ -212,8 +212,10 @@ export default defineConfig(({ mode }) => ({
       target: "esnext",
     },
 
-    // Include only what's actually imported to reduce scanning
-    entries: ["src/**/*.{ts,tsx}"],
+    // Limit dependency pre-bundling scans to the renderer entrypoints.
+    // Scanning all of src/ includes backend-only code (src/node, src/cli), which can
+    // pull in Node-only deps and break Vite's dep-scan (notably on Windows).
+    entries: ["index.html", "terminal.html"],
 
     // Force re-optimize dependencies
     force: false,
