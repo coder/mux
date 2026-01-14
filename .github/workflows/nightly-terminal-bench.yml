@@ -2,7 +2,7 @@ name: Nightly Terminal-Bench
 
 on:
   schedule:
-    # Run full benchmark suite (~80 tasks) every night at midnight UTC
+    # Run full benchmark suite every night at midnight UTC
     - cron: "0 0 * * *"
   workflow_dispatch:
     inputs:
@@ -17,18 +17,17 @@ on:
         type: string
 
 jobs:
-  # Smoke test: run hello-world task first to catch broken agent setup
+  # Smoke test: run chess-best-move task first to catch broken agent setup
   # If this fails, skip the full suite to save time and API costs
   smoke-test:
-    name: Smoke test (hello-world)
+    name: Smoke test (chess-best-move)
     uses: ./.github/workflows/terminal-bench.yml
     with:
-      model_name: "anthropic:claude-sonnet-4-5"
+      model_name: "anthropic/claude-sonnet-4-5"
       thinking_level: "high"
-      dataset: "terminal-bench-core==0.1.1"
+      dataset: "terminal-bench@2.0"
       concurrency: "1"
-      livestream: false
-      extra_args: "--task-id hello-world"
+      task_names: "chess-best-move"
       experiments: ${{ inputs.experiments }}
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -47,7 +46,7 @@ jobs:
           INPUT_MODELS: ${{ inputs.models }}
         run: |
           if [ "$INPUT_MODELS" = "all" ] || [ -z "$INPUT_MODELS" ]; then
-            echo 'models=["anthropic:claude-opus-4-5","openai:gpt-5.2"]' >> "$GITHUB_OUTPUT"
+            echo 'models=["anthropic/claude-opus-4-5","openai/gpt-5.2"]' >> "$GITHUB_OUTPUT"
           else
             # Convert comma-separated to JSON array
             models_json=$(echo "$INPUT_MODELS" | jq -R -s -c 'split(",") | map(gsub("^\\s+|\\s+$"; ""))')
@@ -65,9 +64,8 @@ jobs:
     with:
       model_name: ${{ matrix.model }}
       thinking_level: "high"
-      dataset: "terminal-bench-core==0.1.1"
+      dataset: "terminal-bench@2.0"
       concurrency: "4"
-      livestream: false
       experiments: ${{ inputs.experiments }}
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

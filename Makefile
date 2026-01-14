@@ -431,39 +431,27 @@ chromatic: node_modules/.installed ## Run Chromatic for visual regression testin
 	@bun x chromatic --exit-zero-on-changes
 
 ## Benchmarks
-benchmark-terminal: ## Run Terminal-Bench with the mux agent (use TB_DATASET/TB_SAMPLE_SIZE/TB_TIMEOUT/TB_ARGS to customize)
-	@TB_DATASET=$${TB_DATASET:-terminal-bench-core==0.1.1}; \
+benchmark-terminal: ## Run Terminal-Bench 2.0 with Harbor (use TB_DATASET/TB_CONCURRENCY/TB_TIMEOUT/TB_ENV/TB_ARGS to customize)
+	@TB_DATASET=$${TB_DATASET:-terminal-bench@2.0}; \
 	TB_TIMEOUT=$${TB_TIMEOUT:-1800}; \
-	CONCURRENCY_FLAG=$${TB_CONCURRENCY:+--n-concurrent $$TB_CONCURRENCY}; \
-	LIVESTREAM_FLAG=$${TB_LIVESTREAM:+--livestream}; \
-	TASK_ID_FLAGS=""; \
-	if [ -n "$$TB_SAMPLE_SIZE" ]; then \
-		echo "Ensuring dataset $$TB_DATASET is downloaded..."; \
-		uvx terminal-bench datasets download --dataset "$$TB_DATASET" 2>&1 | grep -v "already exists" || true; \
-		echo "Sampling $$TB_SAMPLE_SIZE tasks from $$TB_DATASET..."; \
-		TASK_IDS=$$(python3 benchmarks/terminal_bench/sample_tasks.py --dataset "$$TB_DATASET" --sample-size "$$TB_SAMPLE_SIZE" --format space) || { \
-			echo "Error: Failed to sample tasks" >&2; \
-			exit 1; \
-		}; \
-		if [ -z "$$TASK_IDS" ]; then \
-			echo "Error: Sampling returned no task IDs" >&2; \
-			exit 1; \
-		fi; \
-		for task_id in $$TASK_IDS; do \
-			TASK_ID_FLAGS="$$TASK_ID_FLAGS --task-id $$task_id"; \
+	TB_CONCURRENCY=$${TB_CONCURRENCY:-4}; \
+	ENV_FLAG=$${TB_ENV:+--env $$TB_ENV}; \
+	TASK_NAME_FLAGS=""; \
+	if [ -n "$$TB_TASK_NAMES" ]; then \
+		for task_name in $$TB_TASK_NAMES; do \
+			TASK_NAME_FLAGS="$$TASK_NAME_FLAGS --task-name $$task_name"; \
 		done; \
-		echo "Selected task IDs: $$TASK_IDS"; \
 	fi; \
 	echo "Using timeout: $$TB_TIMEOUT seconds"; \
-	echo "Running Terminal-Bench with dataset $$TB_DATASET"; \
+	echo "Running Terminal-Bench with dataset $$TB_DATASET (concurrency: $$TB_CONCURRENCY)"; \
 	export MUX_TIMEOUT_MS=$$((TB_TIMEOUT * 1000)); \
-	uvx terminal-bench run \
+	uvx harbor run \
 		--dataset "$$TB_DATASET" \
 		--agent-import-path benchmarks.terminal_bench.mux_agent:MuxAgent \
-		--global-agent-timeout-sec $$TB_TIMEOUT \
-		$$CONCURRENCY_FLAG \
-		$$LIVESTREAM_FLAG \
-		$$TASK_ID_FLAGS \
+		--agent-kwarg timeout=$$TB_TIMEOUT \
+		--n-concurrent $$TB_CONCURRENCY \
+		$$ENV_FLAG \
+		$$TASK_NAME_FLAGS \
 		$${TB_ARGS}
 
 ## Clean
