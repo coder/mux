@@ -284,6 +284,10 @@ export function ProvidersSection() {
               // Ignore errors fetching config; fall back to the current snapshot.
             }
 
+            if (attempt !== muxGatewayLoginAttemptRef.current) {
+              return;
+            }
+
             setGatewayModels(getEligibleGatewayModels(latestConfig));
             muxGatewayApplyDefaultModelsOnSuccessRef.current = false;
           }

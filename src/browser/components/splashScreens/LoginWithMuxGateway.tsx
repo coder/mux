@@ -125,6 +125,10 @@ export function LoginWithMuxGatewaySplash(props: { onDismiss: () => void }) {
               // Ignore errors fetching config; fall back to the current snapshot.
             }
 
+            if (attempt !== loginAttemptRef.current) {
+              return;
+            }
+
             updatePersistedState(
               GATEWAY_MODELS_KEY,
               getSuggestedModels(latestConfig).filter(isProviderSupported)
