@@ -428,7 +428,11 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     },
     general: {
       listDirectory: () => Promise.resolve({ entries: [], hasMore: false }),
-      listWorkspaceDirectory: (input: { workspacePath: string; relativePath?: string }) => {
+      listWorkspaceDirectory: (input: {
+        workspaceId: string;
+        workspacePath: string;
+        relativePath?: string;
+      }) => {
         // Return different contents based on the requested path
         if (input.relativePath === "src") {
           return Promise.resolve({

@@ -578,6 +578,15 @@ export const router = (authToken?: string) => {
         .input(schemas.general.listWorkspaceDirectory.input)
         .output(schemas.general.listWorkspaceDirectory.output)
         .handler(async ({ context, input }) => {
+          // Check if workspace uses a remote runtime (SSH/Docker)
+          const metadataResult = await context.aiService.getWorkspaceMetadata(input.workspaceId);
+          if (metadataResult.success) {
+            const runtimeType = metadataResult.data.runtimeConfig?.type;
+            if (runtimeType && runtimeType !== "local" && runtimeType !== "worktree") {
+              // Remote runtimes (SSH/Docker) not yet supported - return empty list
+              return { success: true as const, data: [] };
+            }
+          }
           return context.projectService.listWorkspaceDirectory(
             input.workspacePath,
             input.relativePath

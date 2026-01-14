@@ -66,6 +66,7 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
 
       try {
         const result = await api.general.listWorkspaceDirectory({
+          workspaceId: props.workspaceId,
           workspacePath: props.workspacePath,
           relativePath: relativePath || undefined,
         });
@@ -99,7 +100,7 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
         return null;
       }
     },
-    [api, props.workspacePath]
+    [api, props.workspaceId, props.workspacePath]
   );
 
   // Initial load - retry when api becomes available
@@ -223,21 +224,25 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
   const rootEntries = state.entries.get("") ?? [];
   const isRootLoading = state.loading.has("");
 
-  // Shorten workspace path for display (replace home dir with ~, show last 2 segments if still long)
+  // Shorten workspace path for display (replace home dir with ~)
   const shortenPath = (fullPath: string): string => {
-    // Replace home directory with ~
-    const homeDir = "/home/";
-    let shortened = fullPath;
-    if (shortened.startsWith(homeDir)) {
-      const afterHome = shortened.slice(homeDir.length);
-      const slashIdx = afterHome.indexOf("/");
-      if (slashIdx !== -1) {
-        shortened = "~" + afterHome.slice(slashIdx);
-      } else {
-        shortened = "~";
+    // Match home directory patterns across platforms:
+    // Linux: /home/username/...
+    // macOS: /Users/username/...
+    // Windows: C:\Users\username\... (may come as forward slashes too)
+    const homePatterns = [
+      /^\/home\/[^/]+/, // Linux
+      /^\/Users\/[^/]+/, // macOS
+      /^[A-Za-z]:[\\/]Users[\\/][^\\/]+/, // Windows
+    ];
+
+    for (const pattern of homePatterns) {
+      const match = fullPath.match(pattern);
+      if (match) {
+        return "~" + fullPath.slice(match[0].length);
       }
     }
-    return shortened;
+    return fullPath;
   };
 
   const displayPath = shortenPath(props.workspacePath);
