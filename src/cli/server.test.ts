@@ -83,6 +83,7 @@ async function createTestServer(): Promise<TestServerHandle> {
     voiceService: services.voiceService,
     telemetryService: services.telemetryService,
     sessionUsageService: services.sessionUsageService,
+    testInstanceService: services.testInstanceService,
     signingService: services.signingService,
     coderService: services.coderService,
   };

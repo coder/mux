@@ -22,6 +22,7 @@ import type { SigningService } from "@/node/services/signingService";
 import type { FeatureFlagService } from "@/node/services/featureFlagService";
 import type { SessionTimingService } from "@/node/services/sessionTimingService";
 import type { SessionUsageService } from "@/node/services/sessionUsageService";
+import type { TestInstanceService } from "@/node/services/testInstanceService";
 import type { TaskService } from "@/node/services/taskService";
 import type { CoderService } from "@/node/services/coderService";
 
@@ -49,6 +50,7 @@ export interface ORPCContext {
   telemetryService: TelemetryService;
   experimentsService: ExperimentsService;
   sessionUsageService: SessionUsageService;
+  testInstanceService: TestInstanceService;
   signingService: SigningService;
   coderService: CoderService;
   headers?: IncomingHttpHeaders;

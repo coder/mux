@@ -1080,4 +1080,23 @@ export const debug = {
     }),
     output: z.boolean(), // true if error was triggered on an active stream
   },
+
+  /**
+   * Launch a new mux desktop instance under an isolated root (for QA).
+   */
+  launchTestInstance: {
+    input: z.object({}),
+    output: ResultSchema(z.object({ rootDir: z.string() }), z.string()),
+  },
+
+  /**
+   * Delete all test instance roots under <muxHome>/instances.
+   */
+  deleteTestInstances: {
+    input: z.object({}),
+    output: ResultSchema(
+      z.object({ instancesDir: z.string(), deletedCount: z.number() }),
+      z.string()
+    ),
+  },
 };
