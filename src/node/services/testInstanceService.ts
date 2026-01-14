@@ -23,6 +23,8 @@ export function createIsolatedConfigForTestInstance(source: ProjectsConfig): Pro
   return {
     ...source,
     projects,
+    // Avoid API server port collisions if the main instance is pinned to a fixed port.
+    apiServerPort: undefined,
   };
 }
 
