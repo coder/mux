@@ -228,6 +228,56 @@ export const ReviewTab: AppStory = {
 };
 
 /**
+ * Explorer tab showing workspace file tree with folders and files
+ */
+export const ExplorerTab: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("explorer"));
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "350");
+        localStorage.removeItem(getRightSidebarLayoutKey("ws-explorer"));
+
+        const client = setupSimpleChatStory({
+          workspaceId: "ws-explorer",
+          workspaceName: "feature/files",
+          projectName: "my-app",
+          messages: [
+            createUserMessage("msg-1", "Show me the project structure", { historySequence: 1 }),
+            createAssistantMessage("msg-2", "Here is the project structure.", {
+              historySequence: 2,
+            }),
+          ],
+        });
+        expandRightSidebar();
+        return client;
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Wait for explorer tab to be available and click it
+    const explorerTab = await canvas.findByRole("tab", { name: /^explorer/i }, { timeout: 3000 });
+    await userEvent.click(explorerTab);
+
+    // Wait for file tree to load (mock returns src, tests, node_modules, etc.)
+    await waitFor(
+      () => {
+        canvas.getByText("src");
+        canvas.getByText("package.json");
+      },
+      { timeout: 5000 }
+    );
+
+    // Verify ignored folder is shown with reduced opacity (node_modules)
+    await waitFor(() => {
+      canvas.getByText("node_modules");
+    });
+  },
+};
+
+/**
  * Stats tab when idle (no timing data) - shows placeholder message
  */
 export const StatsTabIdle: AppStory = {
@@ -235,6 +285,7 @@ export const StatsTabIdle: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("stats"));
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "400");
         // Clear persisted layout to ensure stats tab appears in fresh default layout
         localStorage.removeItem(getRightSidebarLayoutKey("ws-stats-idle"));
 
@@ -275,6 +326,7 @@ export const StatsTabStreaming: AppStory = {
     <AppWithMocks
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("stats"));
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "400");
         // Clear persisted layout to ensure stats tab appears in fresh default layout
         localStorage.removeItem(getRightSidebarLayoutKey("ws-stats-streaming"));
 

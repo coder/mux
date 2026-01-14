@@ -428,6 +428,24 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     },
     general: {
       listDirectory: () => Promise.resolve({ entries: [], hasMore: false }),
+      listWorkspaceDirectory: () =>
+        Promise.resolve({
+          success: true as const,
+          data: [
+            { name: "src", path: "src", isDirectory: true, children: [] },
+            { name: "tests", path: "tests", isDirectory: true, children: [] },
+            {
+              name: "node_modules",
+              path: "node_modules",
+              isDirectory: true,
+              children: [],
+              ignored: true,
+            },
+            { name: "package.json", path: "package.json", isDirectory: false, children: [] },
+            { name: "README.md", path: "README.md", isDirectory: false, children: [] },
+            { name: "tsconfig.json", path: "tsconfig.json", isDirectory: false, children: [] },
+          ],
+        }),
       ping: (input: string) => Promise.resolve(`Pong: ${input}`),
       tick: async function* () {
         // No ticks in the mock, but keep the subscription open.
