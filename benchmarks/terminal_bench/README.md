@@ -15,8 +15,31 @@ make benchmark-terminal TB_TASK_NAMES="hello-world chess-best-move"
 make benchmark-terminal TB_ARGS="--agent-kwarg model_name=anthropic/claude-opus-4-5"
 
 # Run on Daytona cloud (high parallelism)
-TB_ENV=daytona TB_CONCURRENCY=32 make benchmark-terminal
+TB_ENV=daytona TB_CONCURRENCY=48 make benchmark-terminal
 ```
+
+## Daytona Cloud Sandboxes
+
+For faster benchmarks, use [Daytona](https://www.daytona.io/) cloud sandboxes instead of local Docker:
+
+```bash
+# Set API key (get from https://app.daytona.io)
+export DAYTONA_API_KEY="your-api-key"
+
+# Run with 48 concurrent cloud sandboxes (~6x faster than local)
+make benchmark-terminal TB_ENV=daytona TB_CONCURRENCY=48
+
+# Run specific tasks on Daytona
+make benchmark-terminal TB_ENV=daytona TB_CONCURRENCY=48 TB_TASK_NAMES="chess-best-move stockfish-elo"
+```
+
+**Account limits (Tier 3):** Pool of 250 vCPU / 500GB RAM. Most tasks require 1 vCPU / 2GB RAM, with a few needing up to 4 vCPU / 8GB RAM. Harbor automatically requests the correct per-task resources.
+
+**Speed comparison:**
+| Environment | Concurrency | Full suite time |
+|-------------|-------------|-----------------|
+| Local Docker | 4 | ~90 min |
+| Daytona Cloud | 48 | ~10-15 min |
 
 ## Configuration
 

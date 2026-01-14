@@ -431,11 +431,12 @@ chromatic: node_modules/.installed ## Run Chromatic for visual regression testin
 	@bun x chromatic --exit-zero-on-changes
 
 ## Benchmarks
-benchmark-terminal: ## Run Terminal-Bench 2.0 with Harbor (use TB_DATASET/TB_CONCURRENCY/TB_TIMEOUT/TB_ENV/TB_ARGS to customize)
+benchmark-terminal: ## Run Terminal-Bench 2.0 with Harbor (use TB_DATASET/TB_CONCURRENCY/TB_TIMEOUT/TB_ENV/TB_MODEL/TB_ARGS to customize)
 	@TB_DATASET=$${TB_DATASET:-terminal-bench@2.0}; \
 	TB_TIMEOUT=$${TB_TIMEOUT:-1800}; \
 	TB_CONCURRENCY=$${TB_CONCURRENCY:-4}; \
 	ENV_FLAG=$${TB_ENV:+--env $$TB_ENV}; \
+	MODEL_FLAG=$${TB_MODEL:+-m $$TB_MODEL}; \
 	TASK_NAME_FLAGS=""; \
 	if [ -n "$$TB_TASK_NAMES" ]; then \
 		for task_name in $$TB_TASK_NAMES; do \
@@ -451,6 +452,7 @@ benchmark-terminal: ## Run Terminal-Bench 2.0 with Harbor (use TB_DATASET/TB_CON
 		--agent-kwarg timeout=$$TB_TIMEOUT \
 		--n-concurrent $$TB_CONCURRENCY \
 		$$ENV_FLAG \
+		$$MODEL_FLAG \
 		$$TASK_NAME_FLAGS \
 		$${TB_ARGS}
 

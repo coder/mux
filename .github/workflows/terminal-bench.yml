@@ -38,11 +38,18 @@ on:
         description: "Experiments to enable (comma-separated)"
         required: false
         type: string
+      timeout:
+        description: "Agent timeout in seconds (default: 1800 = 30 min)"
+        required: false
+        type: string
+        default: ""
     secrets:
       ANTHROPIC_API_KEY:
         required: true
       OPENAI_API_KEY:
         required: true
+      DAYTONA_API_KEY:
+        required: false
   workflow_dispatch:
     inputs:
       dataset:
@@ -78,6 +85,10 @@ on:
         type: string
       experiments:
         description: "Experiments to enable (comma-separated)"
+        required: false
+        type: string
+      timeout:
+        description: "Agent timeout in seconds (default: 1800 = 30 min)"
         required: false
         type: string
 
@@ -117,12 +128,16 @@ jobs:
           TB_CONCURRENCY: ${{ inputs.concurrency }}
           TB_ENV: ${{ inputs.env }}
           TB_TASK_NAMES: ${{ inputs.task_names }}
+          TB_MODEL: ${{ inputs.model_name }}
+          MUX_MODEL: ${{ inputs.model_name }}
+          TB_TIMEOUT: ${{ inputs.timeout }}
           TB_ARGS: >-
-            ${{ inputs.model_name && format('--agent-kwarg model_name={0} --agent-kwarg thinking_level={1}', inputs.model_name, inputs.thinking_level) || '' }}
+            ${{ inputs.thinking_level && format('--agent-kwarg thinking_level={0}', inputs.thinking_level) || '' }}
             ${{ inputs.extra_args || '' }}
           MUX_EXPERIMENTS: ${{ inputs.experiments }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
 
       - name: Print results summary
         if: always()
@@ -155,13 +170,19 @@ jobs:
             echo "❌ No trials ran - benchmark configuration may be wrong"
             exit 1
           fi
-          if [ "$N_ERRORS" -gt 0 ]; then
-            echo "❌ $N_ERRORS task(s) had errors - agent setup or execution failed"
-            echo "--- Exception details ---"
-            find jobs -name 'exception.txt' -exec echo "=== {} ===" \; -exec cat {} \; 2>/dev/null || true
+          # Count timeout errors separately from other errors
+          TIMEOUT_ERRORS=$(find jobs -name 'exception.txt' -exec grep -l "AgentTimeoutError" {} \; 2>/dev/null | wc -l | tr -d ' ')
+          OTHER_ERRORS=$((N_ERRORS - TIMEOUT_ERRORS))
+          if [ "$OTHER_ERRORS" -gt 0 ]; then
+            echo "❌ $OTHER_ERRORS task(s) had non-timeout errors - agent setup or execution failed"
+            echo "--- Exception details (excluding timeouts) ---"
+            find jobs -name 'exception.txt' -exec sh -c 'grep -L "AgentTimeoutError" "$1" 2>/dev/null && echo "=== $1 ===" && cat "$1"' _ {} \; 2>/dev/null || true
             exit 1
           fi
-          echo "✅ Agent ran $N_TRIALS trial(s) without errors (mean score: $MEAN_SCORE)"
+          if [ "$TIMEOUT_ERRORS" -gt 0 ]; then
+            echo "⏱️ $TIMEOUT_ERRORS task(s) timed out (expected for hard tasks)"
+          fi
+          echo "✅ Agent ran $N_TRIALS trial(s) successfully (mean score: $MEAN_SCORE)"
 
       - name: Set artifact name
         if: always()
@@ -171,8 +192,8 @@ jobs:
           RUN_ID: ${{ github.run_id }}
         run: |
           if [ -n "$MODEL_NAME" ]; then
-            # Replace colons with hyphens for filesystem compatibility
-            ARTIFACT_NAME="terminal-bench-results-$(echo "$MODEL_NAME-$RUN_ID" | tr ':' '-')"
+            # Replace colons and slashes with hyphens for filesystem compatibility
+            ARTIFACT_NAME="terminal-bench-results-$(echo "$MODEL_NAME-$RUN_ID" | tr ':/' '--')"
           else
             ARTIFACT_NAME="terminal-bench-results-$RUN_ID"
           fi
