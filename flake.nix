@@ -147,22 +147,40 @@
         };
 
         devShells.default = pkgs.mkShell {
-          buildInputs = with pkgs; [
-            bun
-            git
-            bash
-            nixfmt-rfc-style
+          buildInputs =
+            with pkgs;
+            [
+              bun
 
-            # Documentation
-            mdbook
-            mdbook-mermaid
-            mdbook-linkcheck
-            mdbook-pagetoc
+              # Node + build tooling
+              nodejs
+              gnumake
 
-            # Terminal bench
-            uv
-            asciinema
-          ];
+              # Common CLIs
+              git
+              bash
+
+              # Nix tooling
+              nixfmt-rfc-style
+
+              # Repo linting (make static-check)
+              go
+              shellcheck
+              shfmt
+              gh
+              jq
+
+              # Documentation
+              mdbook
+              mdbook-mermaid
+              mdbook-linkcheck
+              mdbook-pagetoc
+
+              # Terminal bench
+              uv
+              asciinema
+            ]
+            ++ lib.optionals stdenv.isLinux [ docker ];
         };
       }
     );
