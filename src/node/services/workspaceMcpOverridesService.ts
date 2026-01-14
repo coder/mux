@@ -20,14 +20,16 @@ const MCP_OVERRIDES_GITIGNORE_PATTERNS = [
 
 function joinForRuntime(runtimeConfig: RuntimeConfig | undefined, ...parts: string[]): string {
   assert(parts.length > 0, "joinForRuntime requires at least one path segment");
-  // For SSH runtimes, paths must remain POSIX even on Windows.
-  return runtimeConfig?.type === "ssh" ? path.posix.join(...parts) : path.join(...parts);
+
+  // Remote runtimes run inside a POSIX shell (SSH host, Docker container), even if the user is
+  // running mux on Windows. Use POSIX joins so we don't accidentally introduce backslashes.
+  const usePosix = runtimeConfig?.type === "ssh" || runtimeConfig?.type === "docker";
+  return usePosix ? path.posix.join(...parts) : path.join(...parts);
 }
 
 function isAbsoluteForRuntime(runtimeConfig: RuntimeConfig | undefined, filePath: string): boolean {
-  return runtimeConfig?.type === "ssh"
-    ? path.posix.isAbsolute(filePath)
-    : path.isAbsolute(filePath);
+  const usePosix = runtimeConfig?.type === "ssh" || runtimeConfig?.type === "docker";
+  return usePosix ? path.posix.isAbsolute(filePath) : path.isAbsolute(filePath);
 }
 
 function isStringArray(value: unknown): value is string[] {
