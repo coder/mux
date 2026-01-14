@@ -131,7 +131,7 @@ export const RightSidebarTabStrip: React.FC<RightSidebarTabStripProps> = ({
     <div
       ref={setNodeRef}
       className={cn(
-        "border-border-light flex min-w-0 items-center gap-1 overflow-x-auto border-b px-2 transition-colors",
+        "border-border-light flex min-w-0 items-center border-b px-2 transition-colors",
         isDesktop ? "h-10" : "py-1.5",
         showDropHighlight && "bg-accent/30",
         isDraggingFromHere && "bg-accent/10",
@@ -142,33 +142,42 @@ export const RightSidebarTabStrip: React.FC<RightSidebarTabStripProps> = ({
       role="tablist"
       aria-label={ariaLabel}
     >
-      {items.map((item, index) => (
-        <SortableTab
-          key={item.id}
-          item={item}
-          index={index}
-          tabsetId={tabsetId}
-          isDesktop={isDesktop}
-        />
-      ))}
-      {onAddTerminal && (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              className={cn(
-                "text-muted hover:bg-hover hover:text-foreground shrink-0 rounded-md p-1 transition-colors",
-                isDesktop && "titlebar-no-drag"
-              )}
-              onClick={onAddTerminal}
-              aria-label="New terminal"
-            >
-              <Plus className="h-3.5 w-3.5" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">New terminal</TooltipContent>
-        </Tooltip>
-      )}
+      <div
+        className={cn(
+          "flex min-w-0 flex-1 items-center gap-1 overflow-x-auto",
+          // In desktop mode, the tab strip sits in the titlebar drag region.
+          // Mark the scroll container as no-drag so horizontal scrolling works.
+          isDesktop && "titlebar-no-drag"
+        )}
+      >
+        {items.map((item, index) => (
+          <SortableTab
+            key={item.id}
+            item={item}
+            index={index}
+            tabsetId={tabsetId}
+            isDesktop={isDesktop}
+          />
+        ))}
+        {onAddTerminal && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                className={cn(
+                  "text-muted hover:bg-hover hover:text-foreground shrink-0 rounded-md p-1 transition-colors",
+                  isDesktop && "titlebar-no-drag"
+                )}
+                onClick={onAddTerminal}
+                aria-label="New terminal"
+              >
+                <Plus className="h-3.5 w-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">New terminal</TooltipContent>
+          </Tooltip>
+        )}
+      </div>
     </div>
   );
 };

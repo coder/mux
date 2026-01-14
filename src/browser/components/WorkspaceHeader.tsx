@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Pencil, Server } from "lucide-react";
 import { cn } from "@/common/lib/utils";
+import { RIGHT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
 import { GitStatusIndicator } from "./GitStatusIndicator";
 import { RuntimeBadge } from "./RuntimeBadge";
 import { BranchSelector } from "./BranchSelector";
@@ -14,7 +15,8 @@ import type { RuntimeConfig } from "@/common/types/runtime";
 import { useTutorial } from "@/browser/contexts/TutorialContext";
 import { useOpenTerminal } from "@/browser/hooks/useOpenTerminal";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
-import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
+import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { getTitlebarRightInset, isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 import { WorkspaceLinks } from "./WorkspaceLinks";
 
 interface WorkspaceHeaderProps {
@@ -44,6 +46,11 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   const { startSequence: startTutorial, isSequenceCompleted } = useTutorial();
   const [editorError, setEditorError] = useState<string | null>(null);
   const [mcpModalOpen, setMcpModalOpen] = useState(false);
+
+  const [rightSidebarCollapsed] = usePersistedState<boolean>(RIGHT_SIDEBAR_COLLAPSED_KEY, false, {
+    // This state is toggled from RightSidebar, so we need cross-component updates.
+    listener: true,
+  });
 
   const handleOpenTerminal = useCallback(() => {
     if (onOpenTerminal) {
@@ -78,10 +85,17 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     return () => clearTimeout(timer);
   }, [startTutorial, isSequenceCompleted]);
 
+  // On Windows/Linux, the native window controls overlay the top-right of the app.
+  // When the right sidebar is collapsed (20px), this header stretches underneath
+  // those controls and the MCP/editor/terminal buttons become unclickable.
+  const titlebarRightInset = getTitlebarRightInset();
+  const headerRightPadding =
+    rightSidebarCollapsed && titlebarRightInset > 0 ? Math.max(0, titlebarRightInset - 20) : 0;
   const isDesktop = isDesktopMode();
 
   return (
     <div
+      style={headerRightPadding > 0 ? { paddingRight: headerRightPadding } : undefined}
       data-testid="workspace-header"
       className={cn(
         "bg-sidebar border-border-light flex items-center justify-between border-b px-[15px] [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:flex-wrap [@media(max-width:768px)]:gap-2 [@media(max-width:768px)]:py-2 [@media(max-width:768px)]:pl-[60px]",
