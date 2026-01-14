@@ -523,9 +523,9 @@ export class CoderService {
   }
 
   /**
-   * List Coder workspaces. Only returns "running" workspaces by default.
+   * List Coder workspaces (all statuses).
    */
-  async listWorkspaces(filterRunning = true): Promise<CoderWorkspace[]> {
+  async listWorkspaces(): Promise<CoderWorkspace[]> {
     // Derive known statuses from schema to avoid duplication and prevent ORPC validation errors
     const KNOWN_STATUSES = new Set<string>(CoderWorkspaceStatusSchema.options);
 
@@ -546,19 +546,14 @@ export class CoderService {
         };
       }>;
 
-      // Filter to known statuses first to avoid ORPC schema validation failures
-      const mapped = workspaces
+      // Filter to known statuses to avoid ORPC schema validation failures
+      return workspaces
         .filter((w) => KNOWN_STATUSES.has(w.latest_build.status))
         .map((w) => ({
           name: w.name,
           templateName: w.template_name,
           status: w.latest_build.status as CoderWorkspaceStatus,
         }));
-
-      if (filterRunning) {
-        return mapped.filter((w) => w.status === "running");
-      }
-      return mapped;
     } catch (error) {
       // Common user state: Coder CLI installed but not configured/logged in.
       // Don't spam error logs for UI list calls.

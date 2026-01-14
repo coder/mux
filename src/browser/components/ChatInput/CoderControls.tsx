@@ -184,7 +184,7 @@ export function CoderControls(props: CoderControlsProps) {
       {enabled && (
         <div
           className={cn(
-            "flex rounded-md border",
+            "flex w-fit rounded-md border",
             hasError ? "border-red-500" : "border-border-medium"
           )}
           data-testid="coder-controls-inner"
@@ -300,13 +300,11 @@ export function CoderControls(props: CoderControlsProps) {
                   className="bg-bg-dark text-foreground border-border-medium focus:border-accent h-7 w-[180px] rounded-md border px-2 text-sm focus:outline-none disabled:opacity-50"
                   data-testid="coder-workspace-select"
                 >
-                  {existingWorkspaces.length === 0 && (
-                    <option value="">No running workspaces</option>
-                  )}
+                  {existingWorkspaces.length === 0 && <option value="">No workspaces found</option>}
                   {existingWorkspaces.length > 0 && <option value="">Select workspace...</option>}
                   {existingWorkspaces.map((w) => (
                     <option key={w.name} value={w.name}>
-                      {w.name} ({w.templateName})
+                      {w.name} ({w.templateName}) • {w.status}
                     </option>
                   ))}
                 </select>

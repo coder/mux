@@ -1,7 +1,11 @@
 import { EventEmitter } from "events";
 import { Readable } from "stream";
-import { describe, it, expect, vi, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, vi, beforeEach, afterEach, spyOn } from "bun:test";
 import { CoderService, compareVersions } from "./coderService";
+import * as childProcess from "child_process";
+
+// eslint-disable-next-line @typescript-eslint/no-empty-function
+const noop = () => {};
 
 function mockExecOk(stdout: string, stderr = ""): void {
   mockExecAsync.mockReturnValue({
@@ -17,6 +21,12 @@ function mockExecError(error: Error): void {
   });
 }
 
+/**
+ * Mock spawn for streaming createWorkspace() tests.
+ * Uses spyOn instead of vi.mock to avoid polluting other test files.
+ */
+let spawnSpy: ReturnType<typeof spyOn<typeof childProcess, "spawn">> | null = null;
+
 function mockCoderCommandResult(options: {
   stdout?: string;
   stderr?: string;
@@ -26,7 +36,7 @@ function mockCoderCommandResult(options: {
   const stderr = Readable.from(options.stderr ? [Buffer.from(options.stderr)] : []);
   const events = new EventEmitter();
 
-  mockSpawn.mockReturnValue({
+  spawnSpy?.mockReturnValue({
     stdout,
     stderr,
     exitCode: null,
@@ -39,19 +49,8 @@ function mockCoderCommandResult(options: {
   // Emit close after handlers are attached.
   setTimeout(() => events.emit("close", options.exitCode), 0);
 }
-// eslint-disable-next-line @typescript-eslint/no-empty-function
-const noop = () => {};
 
-// Mock execAsync
-
-// Mock spawn for streaming createWorkspace()
-void vi.mock("child_process", () => ({
-  spawn: vi.fn(),
-}));
-
-import { spawn } from "child_process";
-
-const mockSpawn = spawn as ReturnType<typeof vi.fn>;
+// Mock execAsync (this is safe - it's our own module, not a Node.js built-in)
 void vi.mock("@/node/utils/disposableExec", () => ({
   execAsync: vi.fn(),
 }));
@@ -67,10 +66,14 @@ describe("CoderService", () => {
   beforeEach(() => {
     service = new CoderService();
     vi.clearAllMocks();
+    // Set up spawn spy for tests that use mockCoderCommandResult
+    spawnSpy = spyOn(childProcess, "spawn");
   });
 
   afterEach(() => {
     service.clearCache();
+    spawnSpy?.mockRestore();
+    spawnSpy = null;
   });
 
   describe("getCoderInfo", () => {
@@ -245,13 +248,13 @@ describe("CoderService", () => {
   });
 
   describe("listWorkspaces", () => {
-    it("returns only running workspaces by default", async () => {
+    it("returns all workspaces regardless of status", async () => {
       mockExecAsync.mockReturnValue({
         result: Promise.resolve({
           stdout: JSON.stringify([
             { name: "ws-1", template_name: "t1", latest_build: { status: "running" } },
             { name: "ws-2", template_name: "t2", latest_build: { status: "stopped" } },
-            { name: "ws-3", template_name: "t3", latest_build: { status: "running" } },
+            { name: "ws-3", template_name: "t3", latest_build: { status: "starting" } },
           ]),
         }),
         [Symbol.dispose]: noop,
@@ -261,26 +264,8 @@ describe("CoderService", () => {
 
       expect(workspaces).toEqual([
         { name: "ws-1", templateName: "t1", status: "running" },
-        { name: "ws-3", templateName: "t3", status: "running" },
-      ]);
-    });
-
-    it("returns all workspaces when filterRunning is false", async () => {
-      mockExecAsync.mockReturnValue({
-        result: Promise.resolve({
-          stdout: JSON.stringify([
-            { name: "ws-1", template_name: "t1", latest_build: { status: "running" } },
-            { name: "ws-2", template_name: "t2", latest_build: { status: "stopped" } },
-          ]),
-        }),
-        [Symbol.dispose]: noop,
-      });
-
-      const workspaces = await service.listWorkspaces(false);
-
-      expect(workspaces).toEqual([
-        { name: "ws-1", templateName: "t1", status: "running" },
         { name: "ws-2", templateName: "t2", status: "stopped" },
+        { name: "ws-3", templateName: "t3", status: "starting" },
       ]);
     });
 
@@ -483,7 +468,7 @@ describe("CoderService", () => {
       const stderr = Readable.from([Buffer.from("err-1\n")]);
       const events = new EventEmitter();
 
-      mockSpawn.mockReturnValue({
+      spawnSpy!.mockReturnValue({
         stdout,
         stderr,
         kill: vi.fn(),
@@ -498,7 +483,7 @@ describe("CoderService", () => {
         lines.push(line);
       }
 
-      expect(mockSpawn).toHaveBeenCalledWith(
+      expect(spawnSpy).toHaveBeenCalledWith(
         "coder",
         ["create", "my-workspace", "-t", "my-template", "--yes"],
         { stdio: ["ignore", "pipe", "pipe"] }
@@ -517,7 +502,7 @@ describe("CoderService", () => {
       const stderr = Readable.from([]);
       const events = new EventEmitter();
 
-      mockSpawn.mockReturnValue({
+      spawnSpy!.mockReturnValue({
         stdout,
         stderr,
         kill: vi.fn(),
@@ -530,7 +515,7 @@ describe("CoderService", () => {
         // drain
       }
 
-      expect(mockSpawn).toHaveBeenCalledWith(
+      expect(spawnSpy).toHaveBeenCalledWith(
         "coder",
         ["create", "ws", "-t", "tmpl", "--yes", "--preset", "preset"],
         { stdio: ["ignore", "pipe", "pipe"] }
@@ -549,7 +534,7 @@ describe("CoderService", () => {
       const stderr = Readable.from([]);
       const events = new EventEmitter();
 
-      mockSpawn.mockReturnValue({
+      spawnSpy!.mockReturnValue({
         stdout,
         stderr,
         kill: vi.fn(),
@@ -562,7 +547,7 @@ describe("CoderService", () => {
         // drain
       }
 
-      expect(mockSpawn).toHaveBeenCalledWith(
+      expect(spawnSpy).toHaveBeenCalledWith(
         "coder",
         [
           "create",
@@ -587,7 +572,7 @@ describe("CoderService", () => {
       const stderr = Readable.from([]);
       const events = new EventEmitter();
 
-      mockSpawn.mockReturnValue({
+      spawnSpy!.mockReturnValue({
         stdout,
         stderr,
         kill: vi.fn(),
