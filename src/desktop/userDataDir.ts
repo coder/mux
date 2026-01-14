@@ -12,7 +12,9 @@ export function resolveMuxUserDataDir(options: {
   }
 
   if (options.muxRoot || options.isE2E) {
-    const muxHome = options.muxHome ?? getMuxHome();
+    // Prefer explicit inputs (muxHome / muxRoot) so callers can compute a path
+    // without mutating process.env before calling this helper.
+    const muxHome = options.muxHome ?? options.muxRoot ?? getMuxHome();
     return path.join(muxHome, "user-data");
   }
 

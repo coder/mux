@@ -14,8 +14,8 @@ describe("resolveMuxUserDataDir", () => {
     expect(result).toBe("/tmp/custom-user-data");
   });
 
-  test("defaults to <muxHome>/user-data when muxRoot is set", () => {
-    const result = resolveMuxUserDataDir({ muxRoot: "/tmp/mux-root", muxHome: "/tmp/mux-root" });
+  test("defaults to <muxRoot>/user-data when muxRoot is set", () => {
+    const result = resolveMuxUserDataDir({ muxRoot: "/tmp/mux-root" });
     expect(result).toBe(path.join("/tmp/mux-root", "user-data"));
   });
 
