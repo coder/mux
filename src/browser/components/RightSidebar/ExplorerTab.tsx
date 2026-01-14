@@ -200,9 +200,9 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
                 <ChevronRight className="text-muted h-3 w-3 shrink-0" />
               )}
               {isExpanded ? (
-                <FolderOpen className="h-4 w-4 shrink-0 text-[#dcb67a]" />
+                <FolderOpen className="h-4 w-4 shrink-0 text-[var(--color-folder-icon)]" />
               ) : (
-                <FolderClosed className="h-4 w-4 shrink-0 text-[#dcb67a]" />
+                <FolderClosed className="h-4 w-4 shrink-0 text-[var(--color-folder-icon)]" />
               )}
             </>
           ) : (
@@ -251,7 +251,7 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
     <div className="flex h-full flex-col">
       {/* Toolbar */}
       <div className="border-border-light flex items-center gap-1 border-b px-2 py-1">
-        <FolderOpen className="h-4 w-4 shrink-0 text-[#dcb67a]" />
+        <FolderOpen className="h-4 w-4 shrink-0 text-[var(--color-folder-icon)]" />
         <Tooltip>
           <TooltipTrigger asChild>
             <span className="min-w-0 flex-1 truncate text-xs font-medium">{displayPath}</span>
