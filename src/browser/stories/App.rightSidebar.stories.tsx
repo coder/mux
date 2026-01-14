@@ -278,6 +278,121 @@ export const ExplorerTab: AppStory = {
 };
 
 /**
+ * Explorer tab with expanded directory showing Collapse All button
+ */
+export const ExplorerTabExpanded: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("explorer"));
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "350");
+        localStorage.removeItem(getRightSidebarLayoutKey("ws-explorer-expanded"));
+
+        const client = setupSimpleChatStory({
+          workspaceId: "ws-explorer-expanded",
+          workspaceName: "feature/files",
+          projectName: "my-app",
+          messages: [
+            createUserMessage("msg-1", "Show me the project structure", { historySequence: 1 }),
+            createAssistantMessage("msg-2", "Here is the project structure.", {
+              historySequence: 2,
+            }),
+          ],
+        });
+        expandRightSidebar();
+        return client;
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Wait for explorer tab and click it
+    const explorerTab = await canvas.findByRole("tab", { name: /^explorer/i }, { timeout: 3000 });
+    await userEvent.click(explorerTab);
+
+    // Wait for file tree to load
+    await waitFor(
+      () => {
+        canvas.getByText("src");
+      },
+      { timeout: 5000 }
+    );
+
+    // Click on src folder to expand it
+    const srcFolder = canvas.getByText("src");
+    await userEvent.click(srcFolder);
+
+    // Wait for src contents to load and collapse all button to appear
+    await waitFor(
+      () => {
+        canvas.getByText("App.tsx");
+        canvas.getByText("components");
+      },
+      { timeout: 5000 }
+    );
+
+    // Verify collapse all button is visible (tooltip text)
+    await waitFor(() => {
+      canvas.getByRole("button", { name: /collapse all/i });
+    });
+
+    // Blur to get clean screenshot
+    blurActiveElement();
+  },
+};
+
+/**
+ * Explorer tab with selected item showing blue background
+ */
+export const ExplorerTabSelected: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("explorer"));
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "350");
+        localStorage.removeItem(getRightSidebarLayoutKey("ws-explorer-selected"));
+
+        const client = setupSimpleChatStory({
+          workspaceId: "ws-explorer-selected",
+          workspaceName: "feature/files",
+          projectName: "my-app",
+          messages: [
+            createUserMessage("msg-1", "Show me the project structure", { historySequence: 1 }),
+            createAssistantMessage("msg-2", "Here is the project structure.", {
+              historySequence: 2,
+            }),
+          ],
+        });
+        expandRightSidebar();
+        return client;
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Wait for explorer tab and click it
+    const explorerTab = await canvas.findByRole("tab", { name: /^explorer/i }, { timeout: 3000 });
+    await userEvent.click(explorerTab);
+
+    // Wait for file tree to load
+    await waitFor(
+      () => {
+        canvas.getByText("package.json");
+      },
+      { timeout: 5000 }
+    );
+
+    // Click on package.json to select it (will have focus/selected blue background)
+    const packageJson = canvas.getByText("package.json");
+    await userEvent.click(packageJson);
+
+    // Don't blur - keep the item selected/focused for the screenshot
+  },
+};
+
+/**
  * Stats tab when idle (no timing data) - shows placeholder message
  */
 export const StatsTabIdle: AppStory = {

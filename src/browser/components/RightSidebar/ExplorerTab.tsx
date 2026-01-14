@@ -275,6 +275,7 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
                   type="button"
                   className="text-muted hover:bg-accent/50 hover:text-foreground rounded p-1"
                   onClick={handleCollapseAll}
+                  aria-label="Collapse All"
                 >
                   <ChevronsDownUp className="h-3.5 w-3.5" />
                 </button>
