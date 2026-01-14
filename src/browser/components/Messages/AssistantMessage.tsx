@@ -6,12 +6,13 @@ import { copyToClipboard } from "@/browser/utils/clipboard";
 import { Clipboard, ClipboardCheck, FileText, ListStart } from "lucide-react";
 import { ShareMessagePopover } from "@/browser/components/ShareMessagePopover";
 import { useOptionalWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
+import { Button } from "../ui/button";
 import React, { useState } from "react";
 import { CompactingMessageContent } from "./CompactingMessageContent";
 import { CompactionBackground } from "./CompactionBackground";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import type { ButtonConfig } from "./MessageWindow";
-import { IconActionButton, MessageWindow } from "./MessageWindow";
+import { MessageWindow } from "./MessageWindow";
 import { ModelDisplay } from "./ModelDisplay";
 import { TypewriterMarkdown } from "./TypewriterMarkdown";
 
@@ -118,12 +119,21 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
     // Completed text renders as static content
     return content ? (
       showRaw ? (
-        <div className="group relative">
-          <pre className="text-text bg-code-bg m-0 rounded-sm p-2 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap">
+        <div className="relative">
+          <pre className="text-text bg-code-bg m-0 rounded-sm p-2 pb-8 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap">
             {content}
           </pre>
-          <div className="pointer-events-none absolute top-1 right-1 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100">
-            <IconActionButton button={copyButton} />
+          <div className="absolute right-2 bottom-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-6 px-2 text-[11px] [&_svg]:size-3.5"
+              onClick={() => void copyToClipboard(content)}
+            >
+              {copied ? <ClipboardCheck /> : <Clipboard />}
+              {copied ? "Copied" : "Copy to clipboard"}
+            </Button>
           </div>
         </div>
       ) : (
