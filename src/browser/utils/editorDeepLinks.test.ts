@@ -36,6 +36,14 @@ describe("getEditorDeepLink", () => {
       });
       expect(url).toBe("cursor://file/C:/Users/Me/proj/file.ts:42:10");
     });
+
+    test("strips surrounding quotes from local deep link paths", () => {
+      const url = getEditorDeepLink({
+        editor: "vscode",
+        path: "'C:\\Users\\Me\\proj\\file.ts'",
+      });
+      expect(url).toBe("vscode://file/C:/Users/Me/proj/file.ts");
+    });
     test("generates zed:// URL for local path", () => {
       const url = getEditorDeepLink({
         editor: "zed",

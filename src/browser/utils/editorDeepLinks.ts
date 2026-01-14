@@ -69,7 +69,14 @@ export function getEditorDeepLink(options: DeepLinkOptions): string | null {
 }
 
 function normalizeLocalPathForEditorDeepLink(path: string): string {
-  const pathWithSlashes = path.replace(/\\/g, "/");
+  const trimmed = path.trim();
+  const unquoted =
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+      ? trimmed.slice(1, -1)
+      : trimmed;
+
+  const pathWithSlashes = unquoted.replace(/\\/g, "/");
 
   // Ensure the URL parses as `scheme://file/<path>`.
   if (pathWithSlashes.startsWith("/")) {

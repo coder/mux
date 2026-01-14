@@ -5,11 +5,42 @@ import { log } from "@/node/services/log";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 
 /**
+ * Build a detached spawn invocation for opening GUI editors.
+ *
+ * On Windows, many editor CLIs are batch scripts (e.g. code.cmd), which require
+ * launching via cmd.exe. Using cmd.exe with args (instead of a shell string)
+ * also avoids platform-specific quoting bugs.
+ */
+export function getDetachedSpawnSpec(options: {
+  platform: NodeJS.Platform;
+  command: string;
+  args: string[];
+}): { command: string; args: string[] } {
+  if (options.platform === "win32") {
+    return {
+      command: "cmd.exe",
+      args: ["/d", "/s", "/c", options.command, ...options.args],
+    };
+  }
+
+  return { command: options.command, args: options.args };
+}
+
+/**
  * Quote a string for safe use in shell commands.
- * Uses single quotes with proper escaping for embedded single quotes.
+ *
+ * IMPORTANT: Prefer spawning commands with an args array instead of building a
+ * single shell string. This helper exists only for custom editor commands.
  */
 function shellQuote(value: string): string {
-  if (value.length === 0) return "''";
+  if (value.length === 0) return process.platform === "win32" ? '""' : "''";
+
+  // cmd.exe: use double quotes (single quotes are treated as literal characters)
+  if (process.platform === "win32") {
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+
+  // POSIX shells: single quotes with proper escaping for embedded single quotes.
   return "'" + value.replace(/'/g, "'\"'\"'") + "'";
 }
 
@@ -88,13 +119,18 @@ export class EditorService {
               ? runtimeConfig.host + ":" + runtimeConfig.port
               : runtimeConfig.host;
           const sshUrl = `ssh://${hostWithPort}${resolvedPath}`;
-          const shellCmd = `${editorCommand} ${shellQuote(sshUrl)}`;
 
-          log.info(`Opening SSH path in editor: ${shellCmd}`);
-          const child = spawn(shellCmd, [], {
+          const { command, args } = getDetachedSpawnSpec({
+            platform: process.platform,
+            command: editorCommand,
+            args: [sshUrl],
+          });
+
+          log.info(`Opening SSH path in editor: ${[command, ...args].join(" ")}`);
+          const child = spawn(command, args, {
             detached: true,
             stdio: "ignore",
-            shell: true,
+            windowsHide: true,
           });
           child.unref();
         } else {
@@ -106,29 +142,51 @@ export class EditorService {
             };
           }
 
-          // Build the remote command: code --remote ssh-remote+host /remote/path
-          // Quote the path to handle spaces; the remote host arg doesn't need quoting
-          const shellCmd = `${editorCommand} --remote ${shellQuote(`ssh-remote+${runtimeConfig.host}`)} ${shellQuote(resolvedPath)}`;
+          const { command, args } = getDetachedSpawnSpec({
+            platform: process.platform,
+            command: editorCommand,
+            args: ["--remote", `ssh-remote+${runtimeConfig.host}`, resolvedPath],
+          });
 
-          log.info(`Opening SSH path in editor: ${shellCmd}`);
-          const child = spawn(shellCmd, [], {
+          log.info(`Opening SSH path in editor: ${[command, ...args].join(" ")}`);
+          const child = spawn(command, args, {
             detached: true,
             stdio: "ignore",
-            shell: true,
+            windowsHide: true,
           });
           child.unref();
         }
       } else {
-        // Local - expand tilde and open the path (quote to handle spaces)
+        // Local - expand tilde (spawn doesn't expand ~)
         const resolvedPath = targetPath.startsWith("~/")
           ? targetPath.replace("~", process.env.HOME ?? "~")
           : targetPath;
-        const shellCmd = `${editorCommand} ${shellQuote(resolvedPath)}`;
-        log.info(`Opening local path in editor: ${shellCmd}`);
-        const child = spawn(shellCmd, [], {
+
+        // Custom commands may include flags, env vars, etc.
+        if (editorConfig.editor === "custom") {
+          const shellCmd = `${editorCommand} ${shellQuote(resolvedPath)}`;
+          log.info(`Opening local path in editor: ${shellCmd}`);
+          const child = spawn(shellCmd, [], {
+            detached: true,
+            stdio: "ignore",
+            shell: true,
+            windowsHide: true,
+          });
+          child.unref();
+          return { success: true, data: undefined };
+        }
+
+        const { command, args } = getDetachedSpawnSpec({
+          platform: process.platform,
+          command: editorCommand,
+          args: [resolvedPath],
+        });
+
+        log.info(`Opening local path in editor: ${[command, ...args].join(" ")}`);
+        const child = spawn(command, args, {
           detached: true,
           stdio: "ignore",
-          shell: true,
+          windowsHide: true,
         });
         child.unref();
       }
@@ -147,7 +205,8 @@ export class EditorService {
    */
   private isCommandAvailable(command: string): boolean {
     try {
-      const result = spawnSync("which", [command], { encoding: "utf8" });
+      const lookupCommand = process.platform === "win32" ? "where" : "which";
+      const result = spawnSync(lookupCommand, [command], { encoding: "utf8" });
       return result.status === 0;
     } catch {
       return false;
