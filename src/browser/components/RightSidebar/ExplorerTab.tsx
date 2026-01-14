@@ -54,6 +54,8 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
   // Fetch a directory's contents and return the entries (for recursive expand)
   const fetchDirectory = React.useCallback(
     async (relativePath: string): Promise<FileTreeNode[] | null> => {
+      if (!api) return null;
+
       const key = relativePath || "__root__";
 
       setState((prev) => ({
@@ -63,7 +65,6 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
       }));
 
       try {
-        if (!api) return null;
         const result = await api.general.listWorkspaceDirectory({
           workspacePath: props.workspacePath,
           relativePath: relativePath || undefined,
