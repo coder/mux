@@ -976,6 +976,18 @@ export const features = {
 
 // General
 export const general = {
+  /**
+   * List workspace directory contents (files and directories).
+   * Unlike listDirectory (directories only), this returns both files and directories.
+   * Sorted: directories first, then files, both alphabetically. .git is filtered out.
+   */
+  listWorkspaceDirectory: {
+    input: z.object({
+      workspacePath: z.string(),
+      relativePath: z.string().optional(),
+    }),
+    output: ResultSchema(z.array(FileTreeNodeSchema)),
+  },
   listDirectory: {
     input: z.object({ path: z.string() }),
     output: ResultSchema(FileTreeNodeSchema),

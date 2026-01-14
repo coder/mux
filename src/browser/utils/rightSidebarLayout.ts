@@ -58,7 +58,7 @@ export interface RightSidebarLayoutState {
 
 export function getDefaultRightSidebarLayoutState(activeTab: TabType): RightSidebarLayoutState {
   // Default tabs exclude terminal - users add terminals via the "+" button
-  const baseTabs: TabType[] = ["costs", "review"];
+  const baseTabs: TabType[] = ["costs", "review", "explorer"];
   const tabs = baseTabs.includes(activeTab) ? baseTabs : [...baseTabs, activeTab];
 
   return {

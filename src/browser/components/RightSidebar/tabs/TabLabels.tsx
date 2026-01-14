@@ -5,7 +5,7 @@
  */
 
 import React from "react";
-import { ExternalLink, Terminal as TerminalIcon, X } from "lucide-react";
+import { ExternalLink, FolderTree, Terminal as TerminalIcon, X } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/tooltip";
 import { formatTabDuration, type ReviewStats } from "./registry";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
@@ -60,6 +60,14 @@ export const StatsTabLabel: React.FC<StatsTabLabelProps> = ({ sessionDuration })
       <span className="text-muted text-[10px]">{formatTabDuration(sessionDuration)}</span>
     )}
   </>
+);
+
+/** Explorer tab label with folder tree icon */
+export const ExplorerTabLabel: React.FC = () => (
+  <span className="inline-flex items-center gap-1">
+    <FolderTree className="h-3 w-3 shrink-0" />
+    Explorer
+  </span>
 );
 
 interface TerminalTabLabelProps {

@@ -1,4 +1,4 @@
-export const RIGHT_SIDEBAR_TABS = ["costs", "review", "terminal", "stats"] as const;
+export const RIGHT_SIDEBAR_TABS = ["costs", "review", "terminal", "explorer", "stats"] as const;
 
 /** Base tab types that are always valid */
 export type BaseTabType = (typeof RIGHT_SIDEBAR_TABS)[number];

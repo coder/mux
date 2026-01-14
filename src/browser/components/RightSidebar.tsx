@@ -62,12 +62,14 @@ import {
 import { createTerminalSession, openTerminalPopout } from "@/browser/utils/terminal";
 import {
   CostsTabLabel,
+  ExplorerTabLabel,
   ReviewTabLabel,
   StatsTabLabel,
   TerminalTabLabel,
   getTabContentClassName,
   type ReviewStats,
 } from "./RightSidebar/tabs";
+import { ExplorerTab } from "./RightSidebar/ExplorerTab";
 import {
   DndContext,
   DragOverlay,
@@ -302,6 +304,8 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
       label = <CostsTabLabel sessionCost={props.sessionCost} />;
     } else if (tab === "review") {
       label = <ReviewTabLabel reviewStats={props.reviewStats} />;
+    } else if (tab === "explorer") {
+      label = <ExplorerTabLabel />;
     } else if (tab === "stats") {
       label = <StatsTabLabel sessionDuration={props.sessionDuration} />;
     } else if (isTerminal) {
@@ -333,10 +337,12 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
 
   const costsPanelId = `${tabsetBaseId}-panel-costs`;
   const reviewPanelId = `${tabsetBaseId}-panel-review`;
+  const explorerPanelId = `${tabsetBaseId}-panel-explorer`;
   const statsPanelId = `${tabsetBaseId}-panel-stats`;
 
   const costsTabId = `${tabsetBaseId}-tab-costs`;
   const reviewTabId = `${tabsetBaseId}-tab-review`;
+  const explorerTabId = `${tabsetBaseId}-tab-explorer`;
   const statsTabId = `${tabsetBaseId}-tab-stats`;
 
   // Generate sortable IDs for tabs in this tabset
@@ -455,6 +461,17 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
             <ErrorBoundary workspaceInfo="Stats tab">
               <StatsTab workspaceId={props.workspaceId} />
             </ErrorBoundary>
+          </div>
+        )}
+
+        {props.node.activeTab === "explorer" && (
+          <div
+            role="tabpanel"
+            id={explorerPanelId}
+            aria-labelledby={explorerTabId}
+            className="h-full"
+          >
+            <ExplorerTab workspaceId={props.workspaceId} workspacePath={props.workspacePath} />
           </div>
         )}
 

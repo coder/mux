@@ -59,6 +59,43 @@ async function listDirectory(requestedPath: string): Promise<FileTreeNode> {
 }
 
 const FILE_COMPLETIONS_CACHE_TTL_MS = 10_000;
+/**
+ * List workspace directory contents (files AND directories).
+ * Unlike listDirectory (directories only), this returns both.
+ * Sorted: directories first, then files, both alphabetically. .git is filtered out.
+ */
+async function listWorkspaceDirectory(
+  workspacePath: string,
+  relativePath?: string
+): Promise<Result<FileTreeNode[]>> {
+  try {
+    const targetPath = relativePath ? path.join(workspacePath, relativePath) : workspacePath;
+    const normalizedPath = path.resolve(targetPath);
+
+    const entries = await fsPromises.readdir(normalizedPath, { withFileTypes: true });
+
+    const nodes: FileTreeNode[] = entries
+      .filter((entry) => entry.name !== ".git")
+      .map((entry) => ({
+        name: entry.name,
+        path: relativePath ? path.join(relativePath, entry.name) : entry.name,
+        isDirectory: entry.isDirectory(),
+        children: [],
+      }))
+      // Sort: directories first, then files, both alphabetically
+      .sort((a, b) => {
+        if (a.isDirectory !== b.isDirectory) {
+          return a.isDirectory ? -1 : 1;
+        }
+        return a.name.localeCompare(b.name);
+      });
+
+    return Ok(nodes);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return Err(`Failed to list directory: ${message}`);
+  }
+}
 
 interface FileCompletionsCacheEntry {
   index: FileCompletionsIndex;
@@ -318,6 +355,10 @@ export class ProjectService {
         error: error instanceof Error ? error.message : String(error),
       };
     }
+  }
+
+  async listWorkspaceDirectory(workspacePath: string, relativePath?: string) {
+    return listWorkspaceDirectory(workspacePath, relativePath);
   }
 
   async createDirectory(

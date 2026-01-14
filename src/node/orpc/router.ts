@@ -574,6 +574,15 @@ export const router = (authToken?: string) => {
         }),
     },
     general: {
+      listWorkspaceDirectory: t
+        .input(schemas.general.listWorkspaceDirectory.input)
+        .output(schemas.general.listWorkspaceDirectory.output)
+        .handler(async ({ context, input }) => {
+          return context.projectService.listWorkspaceDirectory(
+            input.workspacePath,
+            input.relativePath
+          );
+        }),
       listDirectory: t
         .input(schemas.general.listDirectory.input)
         .output(schemas.general.listDirectory.output)
