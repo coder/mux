@@ -661,6 +661,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   );
 
   // Method to restore images to input (used by queued message edit)
+
+  const handleSendRef = useRef<() => Promise<void>>(() => Promise.resolve());
+  const send = useCallback(() => {
+    return handleSendRef.current();
+  }, []);
   const restoreImages = useCallback(
     (images: ImagePart[]) => {
       setImageAttachments(imagePartsToAttachments(images, `restored-${Date.now()}`));
@@ -675,13 +680,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     if (onReady) {
       onReady({
         focus: focusMessageInput,
+        send,
         restoreText,
         appendText,
         prependText,
         restoreImages,
       });
     }
-  }, [onReady, focusMessageInput, restoreText, appendText, prependText, restoreImages]);
+  }, [onReady, focusMessageInput, send, restoreText, appendText, prependText, restoreImages]);
 
   useEffect(() => {
     const handleGlobalKeyDown = (event: KeyboardEvent) => {
@@ -1763,6 +1769,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       }, 0);
     }
   };
+
+  // Keep the imperative API pointing at the latest send handler.
+  handleSendRef.current = handleSend;
 
   // Handler for Escape in vim normal mode - cancels edit if editing
   const handleEscapeInNormalMode = () => {

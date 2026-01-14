@@ -63,6 +63,7 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
 }) => {
   const { api } = useAPI();
   const chatInputRef = useRef<ChatInputAPI | null>(null);
+  const pendingAgentsInitSendRef = useRef(false);
   const [archivedWorkspaces, setArchivedWorkspaces] = useState<FrontendWorkspaceMetadata[]>([]);
   const [showAgentsInitNudge, setShowAgentsInitNudge] = usePersistedState<boolean>(
     getAgentsInitNudgeKey(projectPath),
@@ -192,18 +193,33 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
     // Switch project-scope mode to exec.
     updatePersistedState(getAgentIdKey(getProjectScopeId(projectPath)), "exec");
 
-    // Prefill the AGENTS bootstrap prompt.
+    // Prefill the AGENTS bootstrap prompt and start the creation chat.
     if (chatInputRef.current) {
       chatInputRef.current.restoreText(initMessage);
+      requestAnimationFrame(() => {
+        void chatInputRef.current?.send();
+      });
     } else {
+      pendingAgentsInitSendRef.current = true;
       const pendingScopeId = getPendingScopeId(projectPath);
       updatePersistedState(getInputKey(pendingScopeId), initMessage);
     }
 
     setShowAgentsInitNudge(false);
   }, [projectPath, setShowAgentsInitNudge]);
+
   const handleChatReady = useCallback((api: ChatInputAPI) => {
     chatInputRef.current = api;
+
+    if (pendingAgentsInitSendRef.current) {
+      pendingAgentsInitSendRef.current = false;
+      didAutoFocusRef.current = true;
+      api.restoreText(initMessage);
+      requestAnimationFrame(() => {
+        void api.send();
+      });
+      return;
+    }
 
     // Auto-focus the prompt once when entering the creation screen.
     // Defensive: avoid re-focusing on unrelated re-renders (e.g. workspace list updates),
