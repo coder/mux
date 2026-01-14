@@ -52,7 +52,13 @@ export function getEditorDeepLink(options: DeepLinkOptions): string | null {
   }
 
   // Local format: vscode://file/path
-  let url = `${scheme}://file${path}`;
+  //
+  // Note: On Windows, callers may provide native paths like `C:\\Users\\...`.
+  // VS Code/Cursor/Zed expect forward slashes and a leading `/` after `file`:
+  //   vscode://file/C:/Users/...
+  const normalizedPath = normalizeLocalPathForEditorDeepLink(path);
+
+  let url = `${scheme}://file${normalizedPath}`;
   if (line != null) {
     url += `:${line}`;
     if (column != null) {
@@ -60,6 +66,17 @@ export function getEditorDeepLink(options: DeepLinkOptions): string | null {
     }
   }
   return url;
+}
+
+function normalizeLocalPathForEditorDeepLink(path: string): string {
+  const pathWithSlashes = path.replace(/\\/g, "/");
+
+  // Ensure the URL parses as `scheme://file/<path>`.
+  if (pathWithSlashes.startsWith("/")) {
+    return pathWithSlashes;
+  }
+
+  return `/${pathWithSlashes}`;
 }
 
 /**

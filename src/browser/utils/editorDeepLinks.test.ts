@@ -19,6 +19,23 @@ describe("getEditorDeepLink", () => {
       expect(url).toBe("cursor://file/home/user/project/file.ts");
     });
 
+    test("normalizes Windows drive paths for local deep links", () => {
+      const url = getEditorDeepLink({
+        editor: "vscode",
+        path: "C:\\Users\\Me\\proj\\file.ts",
+      });
+      expect(url).toBe("vscode://file/C:/Users/Me/proj/file.ts");
+    });
+
+    test("normalizes Windows drive paths with forward slashes", () => {
+      const url = getEditorDeepLink({
+        editor: "cursor",
+        path: "C:/Users/Me/proj/file.ts",
+        line: 42,
+        column: 10,
+      });
+      expect(url).toBe("cursor://file/C:/Users/Me/proj/file.ts:42:10");
+    });
     test("generates zed:// URL for local path", () => {
       const url = getEditorDeepLink({
         editor: "zed",
