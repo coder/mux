@@ -6,14 +6,14 @@ runs:
   steps:
     - name: Cache Ollama binary
       id: cache-ollama-binary
-      uses: actions/cache@v4
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
         path: ./.ollama-install
         key: ${{ runner.os }}-ollama-binary-v2
 
     - name: Cache Ollama models
       id: cache-ollama-models
-      uses: actions/cache@v4
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
         path: ~/.ollama
         key: ${{ runner.os }}-ollama-models-v2

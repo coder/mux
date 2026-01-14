@@ -294,6 +294,9 @@ SHELL_SRC_FILES := $(shell find . -not \( -path '*/.git/*' -o -path './node_modu
 lint-shellcheck: ## Run shellcheck on shell scripts
 	shellcheck --external-sources $(SHELL_SRC_FILES)
 
+pin-actions: ## Pin GitHub Actions to SHA hashes (requires GH_TOKEN or gh CLI)
+	./scripts/pin-actions.sh .github/workflows/*.yml .github/actions/*/action.yml
+
 ifeq ($(OS),Windows_NT)
 typecheck: node_modules/.installed src/version.ts $(BUILTIN_AGENTS_GENERATED) $(BUILTIN_SKILLS_GENERATED) ## Run TypeScript type checking (uses tsgo for 10x speedup)
 	@# On Windows, use npm run because bun x doesn't correctly pass arguments
