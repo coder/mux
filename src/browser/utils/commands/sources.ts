@@ -681,7 +681,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
   // Debug
   actions.push(() => {
     const api = p.api;
-    if (!api || !window.api) return [];
+    if (!api || typeof window === "undefined" || !window.api) return [];
 
     return [
       {
