@@ -578,19 +578,27 @@ export const router = (authToken?: string) => {
         .input(schemas.general.listWorkspaceDirectory.input)
         .output(schemas.general.listWorkspaceDirectory.output)
         .handler(async ({ context, input }) => {
-          // Check if workspace uses a remote runtime (SSH/Docker)
+          // Get workspace metadata to derive the actual path (don't trust frontend path)
           const metadataResult = await context.aiService.getWorkspaceMetadata(input.workspaceId);
-          if (metadataResult.success) {
-            const runtimeType = metadataResult.data.runtimeConfig?.type;
-            if (runtimeType && runtimeType !== "local" && runtimeType !== "worktree") {
-              // Remote runtimes (SSH/Docker) not yet supported - return empty list
-              return { success: true as const, data: [] };
-            }
+          if (!metadataResult.success) {
+            return { success: false as const, error: metadataResult.error };
           }
-          return context.projectService.listWorkspaceDirectory(
-            input.workspacePath,
-            input.relativePath
-          );
+
+          const metadata = metadataResult.data;
+          const runtimeType = metadata.runtimeConfig?.type;
+
+          // Remote runtimes (SSH/Docker) not yet supported - return empty list
+          if (runtimeType && runtimeType !== "local" && runtimeType !== "worktree") {
+            return { success: true as const, data: [] };
+          }
+
+          // Derive workspace path from metadata (secure - not from frontend input)
+          const runtime = createRuntime(metadata.runtimeConfig, {
+            projectPath: metadata.projectPath,
+          });
+          const workspacePath = runtime.getWorkspacePath(metadata.projectPath, metadata.name);
+
+          return context.projectService.listWorkspaceDirectory(workspacePath, input.relativePath);
         }),
       listDirectory: t
         .input(schemas.general.listDirectory.input)

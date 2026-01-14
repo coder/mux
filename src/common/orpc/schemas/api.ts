@@ -984,7 +984,6 @@ export const general = {
   listWorkspaceDirectory: {
     input: z.object({
       workspaceId: z.string(),
-      workspacePath: z.string(),
       relativePath: z.string().optional(),
     }),
     output: ResultSchema(z.array(FileTreeNodeSchema)),

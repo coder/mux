@@ -67,7 +67,6 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
       try {
         const result = await api.general.listWorkspaceDirectory({
           workspaceId: props.workspaceId,
-          workspacePath: props.workspacePath,
           relativePath: relativePath || undefined,
         });
 
@@ -120,7 +119,7 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
         return null;
       }
     },
-    [api, props.workspaceId, props.workspacePath]
+    [api, props.workspaceId]
   );
 
   // Initial load - retry when api becomes available
