@@ -908,8 +908,15 @@ export class CoderService {
 
   /**
    * Delete a Coder workspace.
+   *
+   * Safety: Only deletes workspaces with "mux-" prefix to prevent accidentally
+   * deleting user workspaces that weren't created by mux.
    */
   async deleteWorkspace(name: string): Promise<void> {
+    if (!name.startsWith("mux-")) {
+      log.warn("Refusing to delete Coder workspace without mux- prefix", { name });
+      return;
+    }
     log.debug("Deleting Coder workspace", { name });
     using proc = execAsync(`coder delete ${shescape.quote(name)} --yes`);
     await proc.result;

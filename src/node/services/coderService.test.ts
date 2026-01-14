@@ -810,6 +810,34 @@ describe("validateRequiredParams", () => {
   });
 });
 
+describe("deleteWorkspace", () => {
+  const service = new CoderService();
+  const mockExec = execAsync as ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("refuses to delete workspace without mux- prefix", async () => {
+    await service.deleteWorkspace("my-workspace");
+
+    // Should not call execAsync at all
+    expect(mockExec).not.toHaveBeenCalled();
+  });
+
+  it("deletes workspace with mux- prefix", async () => {
+    mockExec.mockReturnValue({
+      result: Promise.resolve({ stdout: "", stderr: "" }),
+      [Symbol.dispose]: noop,
+    });
+
+    await service.deleteWorkspace("mux-my-workspace");
+
+    expect(mockExec).toHaveBeenCalledWith(expect.stringContaining("coder delete"));
+    expect(mockExec).toHaveBeenCalledWith(expect.stringContaining("mux-my-workspace"));
+  });
+});
+
 describe("compareVersions", () => {
   it("returns 0 for equal versions", () => {
     expect(compareVersions("2.28.6", "2.28.6")).toBe(0);

@@ -474,6 +474,10 @@ export class WorkspaceStore {
       applyWorkspaceChatEventToAggregator(aggregator, data);
       this.states.bump(workspaceId);
     },
+    "runtime-status": (workspaceId, aggregator, data) => {
+      applyWorkspaceChatEventToAggregator(aggregator, data);
+      this.states.bump(workspaceId);
+    },
     "session-usage-delta": (workspaceId, _aggregator, data) => {
       const usageDelta = data as Extract<WorkspaceChatMessage, { type: "session-usage-delta" }>;
 
