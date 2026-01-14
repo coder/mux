@@ -136,6 +136,12 @@ export class TestInstanceService {
         detached: true,
         stdio: "ignore",
         windowsHide: true,
+        env: {
+          ...process.env,
+          // Ensure test instances stay isolated even if the parent was launched with
+          // MUX_USER_DATA_DIR (which would otherwise override per-root userData).
+          MUX_USER_DATA_DIR: path.join(rootDir, "user-data"),
+        },
       });
       child.unref();
 
