@@ -44,7 +44,7 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
   const [state, setState] = React.useState<ExplorerState>({
     entries: new Map(),
     expanded: new Set(),
-    loading: new Set(["__root__"]),
+    loading: new Set([""]), // empty string = root directory
     error: null,
   });
 
@@ -56,7 +56,7 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
     async (relativePath: string): Promise<FileTreeNode[] | null> => {
       if (!api) return null;
 
-      const key = relativePath || "__root__";
+      const key = relativePath; // empty string = root directory
 
       setState((prev) => ({
         ...prev,
@@ -221,8 +221,8 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
     );
   };
 
-  const rootEntries = state.entries.get("__root__") ?? [];
-  const isRootLoading = state.loading.has("__root__");
+  const rootEntries = state.entries.get("") ?? [];
+  const isRootLoading = state.loading.has("");
 
   // Shorten workspace path for display (replace home dir with ~, show last 2 segments if still long)
   const shortenPath = (fullPath: string): string => {
