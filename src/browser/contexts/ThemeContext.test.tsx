@@ -5,6 +5,7 @@ const dom = new GlobalWindow();
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access */
 (global as any).window = dom.window;
 (global as any).document = dom.window.document;
+(global as any).location = new URL("https://example.com/");
 // Polyfill console since happy-dom might interfere or we just want standard console
 (global as any).console = console;
 /* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access */

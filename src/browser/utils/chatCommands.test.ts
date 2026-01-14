@@ -11,12 +11,29 @@ import {
 import type { CommandHandlerContext } from "./chatCommands";
 import type { ReviewNoteData } from "@/common/types/review";
 
-// Simple mock for localStorage to satisfy resolveCompactionModel
+// Simple mock for localStorage to satisfy resolveCompactionModel.
+// Note: resolveCompactionModel reads from window.localStorage (via readPersistedString),
+// so we set both globalThis.localStorage and window.localStorage for test isolation.
 beforeEach(() => {
-  globalThis.localStorage = {
+  const storage = {
     getItem: () => null,
     setItem: () => undefined,
+    removeItem: () => undefined,
+    clear: () => undefined,
+    key: () => null,
+    length: 0,
   } as unknown as Storage;
+
+  globalThis.localStorage = storage;
+
+  if (typeof window !== "undefined") {
+    try {
+      Object.defineProperty(window, "localStorage", { value: storage, configurable: true });
+    } catch {
+      // Some test DOM environments expose localStorage as a readonly getter.
+      (window as unknown as { localStorage?: Storage }).localStorage = storage;
+    }
+  }
 });
 
 describe("parseRuntimeString", () => {
