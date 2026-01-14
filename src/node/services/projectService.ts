@@ -89,6 +89,23 @@ async function listWorkspaceDirectory(
   relativePath?: string
 ): Promise<Result<FileTreeNode[]>> {
   try {
+    // Validate relativePath doesn't escape workspace
+    if (relativePath) {
+      // Reject absolute paths
+      if (path.isAbsolute(relativePath)) {
+        return Err("Absolute paths are not allowed");
+      }
+      // Normalize and verify it stays within workspace
+      const resolved = path.resolve(workspacePath, relativePath);
+      const normalizedWorkspace = path.resolve(workspacePath);
+      if (
+        !resolved.startsWith(normalizedWorkspace + path.sep) &&
+        resolved !== normalizedWorkspace
+      ) {
+        return Err("Path traversal not allowed");
+      }
+    }
+
     const targetPath = relativePath ? path.join(workspacePath, relativePath) : workspacePath;
     const normalizedPath = path.resolve(targetPath);
 
@@ -102,7 +119,9 @@ async function listWorkspaceDirectory(
       .map((entry) => {
         const entryPath = relativePath ? path.join(relativePath, entry.name) : entry.name;
         // For directories, append / to match gitignore directory patterns
-        const pathToCheck = entry.isDirectory() ? `${entryPath}/` : entryPath;
+        // Use POSIX separators for gitignore matching (Windows uses backslashes)
+        const posixPath = entryPath.split(path.sep).join("/");
+        const pathToCheck = entry.isDirectory() ? `${posixPath}/` : posixPath;
         const ignored = ig ? ig.ignores(pathToCheck) : false;
 
         return {
