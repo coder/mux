@@ -136,6 +136,15 @@ describe("consumeMuxRootFromArgv", () => {
     expect(result.error).toBe("Missing value for --mux-root");
     expect(argv).toEqual(["bun", "script.ts", "--mux-root"]);
   });
+
+  test("returns error when flag value is another flag", () => {
+    const env = detectCliEnvironment({}, undefined);
+    const argv = ["bun", "script.ts", "--mux-root", "--help", "server"];
+    const result = consumeMuxRootFromArgv(argv, env);
+
+    expect(result.error).toBe("Missing value for --mux-root");
+    expect(argv).toEqual(["bun", "script.ts", "--mux-root", "--help", "server"]);
+  });
 });
 
 describe("getArgsAfterSplice", () => {
