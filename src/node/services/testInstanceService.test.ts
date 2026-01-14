@@ -21,7 +21,7 @@ describe("createIsolatedConfigForTestInstance", () => {
 
     const isolated = createIsolatedConfigForTestInstance(source);
 
-    expect(isolated.apiServerPort).toBe(1234);
+    expect(isolated.apiServerPort).toBeUndefined();
     expect(Array.from(isolated.projects.keys())).toEqual(["/repo/project-a"]);
 
     const isolatedProject = isolated.projects.get("/repo/project-a");
