@@ -15,8 +15,31 @@ make benchmark-terminal TB_TASK_NAMES="hello-world chess-best-move"
 make benchmark-terminal TB_ARGS="--agent-kwarg model_name=anthropic/claude-opus-4-5"
 
 # Run on Daytona cloud (high parallelism)
-TB_ENV=daytona TB_CONCURRENCY=32 make benchmark-terminal
+TB_ENV=daytona TB_CONCURRENCY=24 make benchmark-terminal
 ```
+
+## Daytona Cloud Sandboxes
+
+For faster benchmarks, use [Daytona](https://www.daytona.io/) cloud sandboxes instead of local Docker:
+
+```bash
+# Set API key (get from https://app.daytona.io)
+export DAYTONA_API_KEY="your-api-key"
+
+# Run with 24 concurrent cloud sandboxes (~5x faster than local)
+make benchmark-terminal TB_ENV=daytona TB_CONCURRENCY=24
+
+# Run specific tasks on Daytona
+make benchmark-terminal TB_ENV=daytona TB_CONCURRENCY=24 TB_TASK_NAMES="chess-best-move stockfish-elo"
+```
+
+**Account limits:** Max 25 concurrent sandboxes (100 vCPU / 4 vCPU each). Use `n=24` for optimal throughput.
+
+**Speed comparison:**
+| Environment | Concurrency | Full suite time |
+|-------------|-------------|-----------------|
+| Local Docker | 4 | ~90 min |
+| Daytona Cloud | 24 | ~15-20 min |
 
 ## Configuration
 

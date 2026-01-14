@@ -43,6 +43,8 @@ on:
         required: true
       OPENAI_API_KEY:
         required: true
+      DAYTONA_API_KEY:
+        required: false
   workflow_dispatch:
     inputs:
       dataset:
@@ -117,12 +119,15 @@ jobs:
           TB_CONCURRENCY: ${{ inputs.concurrency }}
           TB_ENV: ${{ inputs.env }}
           TB_TASK_NAMES: ${{ inputs.task_names }}
+          TB_MODEL: ${{ inputs.model_name }}
+          MUX_MODEL: ${{ inputs.model_name }}
           TB_ARGS: >-
-            ${{ inputs.model_name && format('--agent-kwarg model_name={0} --agent-kwarg thinking_level={1}', inputs.model_name, inputs.thinking_level) || '' }}
+            ${{ inputs.thinking_level && format('--agent-kwarg thinking_level={0}', inputs.thinking_level) || '' }}
             ${{ inputs.extra_args || '' }}
           MUX_EXPERIMENTS: ${{ inputs.experiments }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
 
       - name: Print results summary
         if: always()
@@ -171,8 +176,8 @@ jobs:
           RUN_ID: ${{ github.run_id }}
         run: |
           if [ -n "$MODEL_NAME" ]; then
-            # Replace colons with hyphens for filesystem compatibility
-            ARTIFACT_NAME="terminal-bench-results-$(echo "$MODEL_NAME-$RUN_ID" | tr ':' '-')"
+            # Replace colons and slashes with hyphens for filesystem compatibility
+            ARTIFACT_NAME="terminal-bench-results-$(echo "$MODEL_NAME-$RUN_ID" | tr ':/' '--')"
           else
             ARTIFACT_NAME="terminal-bench-results-$RUN_ID"
           fi

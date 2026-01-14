@@ -32,6 +32,7 @@ jobs:
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
 
   determine-models:
     name: Determine models to test
@@ -60,13 +61,16 @@ jobs:
       matrix:
         model: ${{ fromJSON(needs.determine-models.outputs.models) }}
       fail-fast: false
+      max-parallel: 1  # Run models sequentially to stay within Daytona's 25-sandbox limit
     uses: ./.github/workflows/terminal-bench.yml
     with:
       model_name: ${{ matrix.model }}
       thinking_level: "high"
       dataset: "terminal-bench@2.0"
-      concurrency: "4"
+      concurrency: "24"
+      env: "daytona"
       experiments: ${{ inputs.experiments }}
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
