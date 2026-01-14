@@ -146,10 +146,8 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
 
       newExpanded.add(key);
 
-      // Fetch if not already loaded
-      if (!prev.entries.has(key)) {
-        void fetchDirectory(key);
-      }
+      // Always fetch when expanding to ensure fresh data
+      void fetchDirectory(key);
 
       return { ...prev, expanded: newExpanded };
     });
