@@ -67,7 +67,7 @@ jobs:
       model_name: ${{ matrix.model }}
       thinking_level: "high"
       dataset: "terminal-bench@2.0"
-      concurrency: "24"
+      concurrency: "48"
       env: "daytona"
       experiments: ${{ inputs.experiments }}
     secrets:

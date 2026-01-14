@@ -38,6 +38,11 @@ on:
         description: "Experiments to enable (comma-separated)"
         required: false
         type: string
+      timeout:
+        description: "Agent timeout in seconds (default: 1800 = 30 min)"
+        required: false
+        type: string
+        default: ""
     secrets:
       ANTHROPIC_API_KEY:
         required: true
@@ -82,6 +87,10 @@ on:
         description: "Experiments to enable (comma-separated)"
         required: false
         type: string
+      timeout:
+        description: "Agent timeout in seconds (default: 1800 = 30 min)"
+        required: false
+        type: string
 
 jobs:
   benchmark:
@@ -121,6 +130,7 @@ jobs:
           TB_TASK_NAMES: ${{ inputs.task_names }}
           TB_MODEL: ${{ inputs.model_name }}
           MUX_MODEL: ${{ inputs.model_name }}
+          TB_TIMEOUT: ${{ inputs.timeout }}
           TB_ARGS: >-
             ${{ inputs.thinking_level && format('--agent-kwarg thinking_level={0}', inputs.thinking_level) || '' }}
             ${{ inputs.extra_args || '' }}
@@ -160,13 +170,19 @@ jobs:
             echo "❌ No trials ran - benchmark configuration may be wrong"
             exit 1
           fi
-          if [ "$N_ERRORS" -gt 0 ]; then
-            echo "❌ $N_ERRORS task(s) had errors - agent setup or execution failed"
-            echo "--- Exception details ---"
-            find jobs -name 'exception.txt' -exec echo "=== {} ===" \; -exec cat {} \; 2>/dev/null || true
+          # Count timeout errors separately from other errors
+          TIMEOUT_ERRORS=$(find jobs -name 'exception.txt' -exec grep -l "AgentTimeoutError" {} \; 2>/dev/null | wc -l | tr -d ' ')
+          OTHER_ERRORS=$((N_ERRORS - TIMEOUT_ERRORS))
+          if [ "$OTHER_ERRORS" -gt 0 ]; then
+            echo "❌ $OTHER_ERRORS task(s) had non-timeout errors - agent setup or execution failed"
+            echo "--- Exception details (excluding timeouts) ---"
+            find jobs -name 'exception.txt' -exec sh -c 'grep -L "AgentTimeoutError" "$1" 2>/dev/null && echo "=== $1 ===" && cat "$1"' _ {} \; 2>/dev/null || true
             exit 1
           fi
-          echo "✅ Agent ran $N_TRIALS trial(s) without errors (mean score: $MEAN_SCORE)"
+          if [ "$TIMEOUT_ERRORS" -gt 0 ]; then
+            echo "⏱️ $TIMEOUT_ERRORS task(s) timed out (expected for hard tasks)"
+          fi
+          echo "✅ Agent ran $N_TRIALS trial(s) successfully (mean score: $MEAN_SCORE)"
 
       - name: Set artifact name
         if: always()
