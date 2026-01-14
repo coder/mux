@@ -52,9 +52,9 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
   // Track if we've done initial load
   const initialLoadRef = React.useRef(false);
 
-  // Fetch a directory's contents
+  // Fetch a directory's contents and return the entries (for recursive expand)
   const fetchDirectory = React.useCallback(
-    async (relativePath: string) => {
+    async (relativePath: string): Promise<FileTreeNode[] | null> => {
       const key = relativePath || "__root__";
 
       setState((prev) => ({
@@ -64,7 +64,7 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
       }));
 
       try {
-        if (!api) return;
+        if (!api) return null;
         const result = await api.general.listWorkspaceDirectory({
           workspacePath: props.workspacePath,
           relativePath: relativePath || undefined,
@@ -76,7 +76,7 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
             loading: new Set([...prev.loading].filter((k) => k !== key)),
             error: result.error,
           }));
-          return;
+          return null;
         }
 
         setState((prev) => {
@@ -88,12 +88,15 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
             loading: new Set([...prev.loading].filter((k) => k !== key)),
           };
         });
+
+        return result.data;
       } catch (err) {
         setState((prev) => ({
           ...prev,
           loading: new Set([...prev.loading].filter((k) => k !== key)),
           error: err instanceof Error ? err.message : String(err),
         }));
+        return null;
       }
     },
     [api, props.workspacePath]
@@ -166,29 +169,38 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
   };
 
   // Expand all recursively (skip gitignored directories)
-  const handleExpandAll = () => {
-    // Collect all known non-ignored directories from loaded entries
+  const handleExpandAll = async () => {
     const allDirs: string[] = [];
+    const entriesCache = new Map(state.entries);
 
-    const collectDirs = (parentKey: string) => {
-      const entries = state.entries.get(parentKey);
+    // Recursively fetch and collect all non-ignored directories
+    const expandRecursively = async (parentKey: string): Promise<void> => {
+      let entries = entriesCache.get(parentKey);
+
+      // Fetch if not in cache
+      if (!entries) {
+        const fetched = await fetchDirectory(parentKey === "__root__" ? "" : parentKey);
+        if (fetched) {
+          entries = fetched;
+          entriesCache.set(parentKey, entries);
+        }
+      }
+
       if (!entries) return;
+
+      // Process children in parallel
+      const childPromises: Array<Promise<void>> = [];
       for (const entry of entries) {
         if (entry.isDirectory && !entry.ignored) {
           allDirs.push(entry.path);
-          collectDirs(entry.path);
+          childPromises.push(expandRecursively(entry.path));
         }
       }
+
+      await Promise.all(childPromises);
     };
 
-    collectDirs("__root__");
-
-    // Fetch any directories not yet loaded
-    for (const dir of allDirs) {
-      if (!state.entries.has(dir)) {
-        void fetchDirectory(dir);
-      }
-    }
+    await expandRecursively("__root__");
 
     setState((prev) => ({
       ...prev,
