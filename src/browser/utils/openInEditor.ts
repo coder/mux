@@ -13,7 +13,6 @@ import {
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { isSSHRuntime, isDockerRuntime } from "@/common/types/runtime";
 import type { APIClient } from "@/browser/contexts/API";
-import { getEditorDeepLinkFallbackUrl } from "@/browser/utils/openInEditorDeepLinkFallback";
 
 export interface OpenInEditorResult {
   success: boolean;
@@ -22,6 +21,13 @@ export interface OpenInEditorResult {
 
 // Browser mode: window.api is not set (only exists in Electron via preload)
 const isBrowserMode = typeof window !== "undefined" && !window.api;
+
+// Helper for opening URLs - allows testing in Node environment
+function openUrl(url: string): void {
+  if (typeof window !== "undefined" && window.open) {
+    window.open(url, "_blank");
+  }
+}
 
 export async function openInEditor(args: {
   api: APIClient | null | undefined;
@@ -88,20 +94,12 @@ export async function openInEditor(args: {
       return { success: false, error: `${editorConfig.editor} does not support Docker containers` };
     }
 
-    window.open(deepLink, "_blank");
+    openUrl(deepLink);
     return { success: true };
   }
 
-  // Browser mode: use deep links instead of backend spawn
-  if (isBrowserMode) {
-    // Custom editor can't work via deep links
-    if (editorConfig.editor === "custom") {
-      return {
-        success: false,
-        error: "Custom editors are not supported in browser mode. Use VS Code, Cursor, or Zed.",
-      };
-    }
-
+  // VS Code / Cursor / Zed: always use deep links (works in browser + Electron)
+  if (editorConfig.editor !== "custom") {
     // Determine SSH host for deep link
     let sshHost: string | undefined;
     if (isSSH && args.runtimeConfig?.type === "ssh") {
@@ -110,7 +108,7 @@ export async function openInEditor(args: {
       if (editorConfig.editor === "zed" && args.runtimeConfig.port != null) {
         sshHost = sshHost + ":" + args.runtimeConfig.port;
       }
-    } else if (!isLocalhost(window.location.hostname)) {
+    } else if (isBrowserMode && !isLocalhost(window.location.hostname)) {
       // Remote server + local workspace: need SSH to reach server's files
       const serverSshHost = await args.api?.server.getSshHost();
       sshHost = serverSshHost ?? window.location.hostname;
@@ -130,11 +128,20 @@ export async function openInEditor(args: {
       };
     }
 
-    window.open(deepLink, "_blank");
+    openUrl(deepLink);
     return { success: true };
   }
 
-  // Electron mode: call the backend API
+  // Custom editor:
+  // - Browser mode: can't spawn processes on the server
+  // - Electron mode: spawn via backend API
+  if (isBrowserMode) {
+    return {
+      success: false,
+      error: "Custom editors are not supported in browser mode. Use VS Code, Cursor, or Zed.",
+    };
+  }
+
   const result = await args.api?.general.openInEditor({
     workspaceId: args.workspaceId,
     targetPath: args.targetPath,
@@ -146,21 +153,6 @@ export async function openInEditor(args: {
   }
 
   if (!result.success) {
-    const deepLink =
-      typeof window === "undefined"
-        ? null
-        : getEditorDeepLinkFallbackUrl({
-            editor: editorConfig.editor,
-            targetPath: args.targetPath,
-            runtimeConfig: args.runtimeConfig,
-            error: result.error,
-          });
-
-    if (deepLink) {
-      window.open(deepLink, "_blank");
-      return { success: true };
-    }
-
     return { success: false, error: result.error };
   }
 
