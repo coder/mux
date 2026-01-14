@@ -14,7 +14,6 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronsDownUp,
-  ChevronsUpDown,
   FolderClosed,
   FolderOpen,
   RefreshCw,
@@ -168,46 +167,6 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
     }));
   };
 
-  // Expand all recursively (skip gitignored directories)
-  const handleExpandAll = async () => {
-    const allDirs: string[] = [];
-    const entriesCache = new Map(state.entries);
-
-    // Recursively fetch and collect all non-ignored directories
-    const expandRecursively = async (parentKey: string): Promise<void> => {
-      let entries = entriesCache.get(parentKey);
-
-      // Fetch if not in cache
-      if (!entries) {
-        const fetched = await fetchDirectory(parentKey === "__root__" ? "" : parentKey);
-        if (fetched) {
-          entries = fetched;
-          entriesCache.set(parentKey, entries);
-        }
-      }
-
-      if (!entries) return;
-
-      // Process children in parallel
-      const childPromises: Array<Promise<void>> = [];
-      for (const entry of entries) {
-        if (entry.isDirectory && !entry.ignored) {
-          allDirs.push(entry.path);
-          childPromises.push(expandRecursively(entry.path));
-        }
-      }
-
-      await Promise.all(childPromises);
-    };
-
-    await expandRecursively("__root__");
-
-    setState((prev) => ({
-      ...prev,
-      expanded: new Set(allDirs),
-    }));
-  };
-
   const hasExpandedDirs = state.expanded.size > 0;
 
   // Render a tree node recursively
@@ -308,24 +267,20 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
             </TooltipTrigger>
             <TooltipContent side="bottom">Refresh</TooltipContent>
           </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                className="text-muted hover:bg-accent/50 hover:text-foreground rounded p-1"
-                onClick={hasExpandedDirs ? handleCollapseAll : handleExpandAll}
-              >
-                {hasExpandedDirs ? (
+          {hasExpandedDirs && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className="text-muted hover:bg-accent/50 hover:text-foreground rounded p-1"
+                  onClick={handleCollapseAll}
+                >
                   <ChevronsDownUp className="h-3.5 w-3.5" />
-                ) : (
-                  <ChevronsUpDown className="h-3.5 w-3.5" />
-                )}
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">
-              {hasExpandedDirs ? "Collapse All" : "Expand All"}
-            </TooltipContent>
-          </Tooltip>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">Collapse All</TooltipContent>
+            </Tooltip>
+          )}
         </div>
       </div>
 

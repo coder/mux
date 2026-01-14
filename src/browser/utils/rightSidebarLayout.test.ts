@@ -122,19 +122,19 @@ test("moveTabToTabset removes empty source tabset", () => {
 });
 
 test("reorderTabInTabset reorders tabs within a tabset", () => {
-  // Default layout has ["costs", "review"]; reorder costs from 0 to 1
+  // Default layout has ["costs", "review", "explorer"]; reorder costs from 0 to 1
   const s0 = getDefaultRightSidebarLayoutState("costs");
   const s1 = reorderTabInTabset(s0, "tabset-1", 0, 1);
 
   expect(s1.root.type).toBe("tabset");
   if (s1.root.type !== "tabset") throw new Error("expected tabset");
 
-  expect(s1.root.tabs).toEqual(["review", "costs"]);
+  expect(s1.root.tabs).toEqual(["review", "costs", "explorer"]);
   expect(s1.root.activeTab).toBe("costs");
 });
 
 test("dockTabToEdge splits a tabset and moves the dragged tab into the new pane", () => {
-  // Default layout has ["costs", "review"]; drag review into a bottom split
+  // Default layout has ["costs", "review", "explorer"]; drag review into a bottom split
   const s0 = getDefaultRightSidebarLayoutState("costs");
 
   const s1 = dockTabToEdge(s0, "review", "tabset-1", "tabset-1", "bottom");
