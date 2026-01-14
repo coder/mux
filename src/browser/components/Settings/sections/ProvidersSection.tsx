@@ -379,8 +379,21 @@ export function ProvidersSection() {
 
       if (data.ok === true) {
         if (muxGatewayApplyDefaultModelsOnSuccessRef.current) {
-          setGatewayDefaultEnabled(true);
           muxGatewayApplyDefaultModelsOnSuccessRef.current = false;
+
+          const applyLatest = (latestConfig: ProvidersConfigMap | null) => {
+            if (muxGatewayLoginAttemptRef.current !== attempt) return;
+            setGatewayModels(getEligibleGatewayModels(latestConfig));
+          };
+
+          if (api) {
+            api.providers
+              .getConfig()
+              .then(applyLatest)
+              .catch(() => applyLatest(config));
+          } else {
+            applyLatest(config);
+          }
         }
 
         setMuxGatewayLoginStatus("success");
@@ -399,7 +412,9 @@ export function ProvidersSection() {
     muxGatewayLoginStatus,
     muxGatewayServerState,
     backendOrigin,
-    setGatewayDefaultEnabled,
+    api,
+    config,
+    setGatewayModels,
   ]);
   const muxGatewayCouponCodeSet = config?.["mux-gateway"]?.couponCodeSet ?? false;
   const muxGatewayLoginInProgress =

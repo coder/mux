@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { SplashScreen } from "./SplashScreen";
 import { useAPI } from "@/browser/contexts/API";
 import { getStoredAuthToken } from "@/browser/components/AuthTokenModal";
@@ -31,11 +31,6 @@ type LoginStatus = "idle" | "starting" | "waiting" | "success" | "error";
 
 export function LoginWithMuxGatewaySplash(props: { onDismiss: () => void }) {
   const { config } = useProvidersConfig();
-
-  const eligibleGatewayModels = useMemo(
-    () => getSuggestedModels(config).filter(isProviderSupported),
-    [config]
-  );
 
   const applyDefaultModelsOnSuccessRef = useRef(false);
   const { api } = useAPI();
@@ -221,8 +216,23 @@ export function LoginWithMuxGatewaySplash(props: { onDismiss: () => void }) {
 
       if (data.ok === true) {
         if (applyDefaultModelsOnSuccessRef.current) {
-          updatePersistedState(GATEWAY_MODELS_KEY, eligibleGatewayModels);
           applyDefaultModelsOnSuccessRef.current = false;
+
+          const applyLatest = (latestConfig: typeof config) => {
+            updatePersistedState(
+              GATEWAY_MODELS_KEY,
+              getSuggestedModels(latestConfig).filter(isProviderSupported)
+            );
+          };
+
+          if (api) {
+            api.providers
+              .getConfig()
+              .then(applyLatest)
+              .catch(() => applyLatest(config));
+          } else {
+            applyLatest(config);
+          }
         }
 
         setStatus("success");
@@ -236,7 +246,7 @@ export function LoginWithMuxGatewaySplash(props: { onDismiss: () => void }) {
 
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [isDesktop, status, serverState, backendOrigin, eligibleGatewayModels]);
+  }, [isDesktop, status, serverState, backendOrigin, api, config]);
 
   const isSuccess = status === "success";
 
