@@ -92,6 +92,9 @@ export const FrontendWorkspaceMetadataSchema = WorkspaceMetadataSchema.extend({
     description:
       "If set, this workspace has an incompatible runtime configuration (e.g., from a newer version of mux). The workspace should be displayed but interactions should show this error message.",
   }),
+  isRemoving: z.boolean().optional().meta({
+    description: "True if this workspace is currently being deleted (deletion in progress).",
+  }),
 });
 
 export const WorkspaceActivitySnapshotSchema = z.object({
