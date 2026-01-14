@@ -66,6 +66,10 @@ export const CommandIds = {
 
   // Help commands
   helpKeybinds: () => "help:keybinds" as const,
+
+  // Debug commands
+  debugLaunchTestInstance: () => "debug:launch-test-instance" as const,
+  debugDeleteTestInstances: () => "debug:delete-test-instances" as const,
 } as const;
 
 /**

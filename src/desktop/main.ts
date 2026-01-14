@@ -377,6 +377,7 @@ async function loadServices(): Promise<void> {
     voiceService: services.voiceService,
     telemetryService: services.telemetryService,
     experimentsService: services.experimentsService,
+    testInstanceService: services.testInstanceService,
     sessionUsageService: services.sessionUsageService,
     signingService: services.signingService,
     coderService: services.coderService,

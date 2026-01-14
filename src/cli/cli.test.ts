@@ -81,6 +81,7 @@ async function createTestServer(authToken?: string): Promise<TestServerHandle> {
     telemetryService: services.telemetryService,
     sessionUsageService: services.sessionUsageService,
     signingService: services.signingService,
+    testInstanceService: services.testInstanceService,
     coderService: services.coderService,
   };
 

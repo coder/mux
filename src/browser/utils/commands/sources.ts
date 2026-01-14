@@ -81,6 +81,7 @@ export const COMMAND_SECTIONS = {
   HELP: "Help",
   PROJECTS: "Projects",
   APPEARANCE: "Appearance",
+  DEBUG: "Debug",
   SETTINGS: "Settings",
 } as const;
 
@@ -92,6 +93,7 @@ const section = {
   mode: COMMAND_SECTIONS.MODE,
   help: COMMAND_SECTIONS.HELP,
   projects: COMMAND_SECTIONS.PROJECTS,
+  debug: COMMAND_SECTIONS.DEBUG,
   settings: COMMAND_SECTIONS.SETTINGS,
 };
 
@@ -675,6 +677,62 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
       },
     },
   ]);
+
+  // Debug
+  actions.push(() => {
+    const api = p.api;
+    if (!api || !window.api) return [];
+
+    return [
+      {
+        id: CommandIds.debugLaunchTestInstance(),
+        title: "Debug: Launch Test Instance",
+        subtitle: "Launch a second mux instance under <muxHome>/instances/*",
+        section: section.debug,
+        run: async () => {
+          try {
+            const result = await api.debug.launchTestInstance({});
+            if (result.success) {
+              alert(`Launched test instance at:\n${result.data.rootDir}`);
+            } else {
+              alert(`Failed to launch test instance:\n${result.error}`);
+            }
+          } catch (err) {
+            alert(
+              `Failed to launch test instance:\n${err instanceof Error ? err.message : String(err)}`
+            );
+          }
+        },
+      },
+      {
+        id: CommandIds.debugDeleteTestInstances(),
+        title: "Debug: Delete Test Instances…",
+        subtitle: "Delete <muxHome>/instances/*",
+        section: section.debug,
+        run: async () => {
+          const ok = confirm(
+            "Delete ALL test instances under <muxHome>/instances?\n\nAny running test instances may break."
+          );
+          if (!ok) return;
+
+          try {
+            const result = await api.debug.deleteTestInstances({});
+            if (result.success) {
+              alert(
+                `Deleted ${result.data.deletedCount} test instance(s).\n\n${result.data.instancesDir}`
+              );
+            } else {
+              alert(`Failed to delete test instances:\n${result.error}`);
+            }
+          } catch (err) {
+            alert(
+              `Failed to delete test instances:\n${err instanceof Error ? err.message : String(err)}`
+            );
+          }
+        },
+      },
+    ];
+  });
 
   // Projects
   actions.push(() => {

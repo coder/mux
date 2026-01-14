@@ -1931,6 +1931,18 @@ export const router = (authToken?: string) => {
             input.errorMessage
           );
         }),
+      launchTestInstance: t
+        .input(schemas.debug.launchTestInstance.input)
+        .output(schemas.debug.launchTestInstance.output)
+        .handler(({ context }) => {
+          return context.testInstanceService.launchTestInstance();
+        }),
+      deleteTestInstances: t
+        .input(schemas.debug.deleteTestInstances.input)
+        .output(schemas.debug.deleteTestInstances.output)
+        .handler(({ context }) => {
+          return context.testInstanceService.deleteTestInstances();
+        }),
     },
     telemetry: {
       track: t
