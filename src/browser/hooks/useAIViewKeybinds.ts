@@ -51,7 +51,7 @@ export function useAIViewKeybinds({
   const { api } = useAPI();
 
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
+    const handleInterruptKeyDown = (e: KeyboardEvent) => {
       // Check vim-aware interrupt keybind
       const interruptKeybind = vimEnabled
         ? KEYBINDS.INTERRUPT_STREAM_VIM
@@ -59,6 +59,9 @@ export function useAIViewKeybinds({
 
       // Interrupt stream: Ctrl+C in vim mode, Esc in normal mode
       // Skip if terminal is focused - let terminal handle Ctrl+C (sends SIGINT to process)
+      //
+      // IMPORTANT: This handler runs in **bubble phase** so dialogs/popovers can stopPropagation()
+      // on Escape without accidentally interrupting a stream.
       if (matchesKeybind(e, interruptKeybind) && !isTerminalFocused(e.target)) {
         // ask_user_question is a special waiting state: don't interrupt it with Esc/Ctrl+C.
         // Users can still respond via the questions UI, or type in chat to cancel.
@@ -89,7 +92,9 @@ export function useAIViewKeybinds({
           return;
         }
       }
+    };
 
+    const handleKeyDownCapture = (e: KeyboardEvent) => {
       // Focus chat input works anywhere (even in input fields)
       if (matchesKeybind(e, KEYBINDS.FOCUS_CHAT)) {
         e.preventDefault();
@@ -120,10 +125,17 @@ export function useAIViewKeybinds({
       }
     };
 
-    // Use capture phase so keybinds work even when terminal is focused
-    // (terminal components may consume events in bubble phase)
-    window.addEventListener("keydown", handleKeyDown, { capture: true });
-    return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
+    // Use capture phase for non-destructive keybinds so they work even when terminal is focused
+    // (terminal components may consume events in bubble phase).
+    window.addEventListener("keydown", handleKeyDownCapture, { capture: true });
+
+    // Interrupt keybind is handled separately in bubble phase (see comment above).
+    window.addEventListener("keydown", handleInterruptKeyDown);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDownCapture, { capture: true });
+      window.removeEventListener("keydown", handleInterruptKeyDown);
+    };
   }, [
     jumpToBottom,
     handleOpenTerminal,
