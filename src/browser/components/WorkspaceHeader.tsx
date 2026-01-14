@@ -15,6 +15,7 @@ import { useTutorial } from "@/browser/contexts/TutorialContext";
 import { useOpenTerminal } from "@/browser/hooks/useOpenTerminal";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
 import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
+import { WorkspaceLinks } from "./WorkspaceLinks";
 
 interface WorkspaceHeaderProps {
   workspaceId: string;
@@ -112,8 +113,9 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
           />
         </div>
       </div>
-      <div className={cn("flex items-center", isDesktop && "titlebar-no-drag")}>
-        {editorError && <span className="text-danger-soft mr-2 text-xs">{editorError}</span>}
+      <div className={cn("flex items-center gap-2", isDesktop && "titlebar-no-drag")}>
+        <WorkspaceLinks workspaceId={workspaceId} />
+        {editorError && <span className="text-danger-soft text-xs">{editorError}</span>}
         <Tooltip>
           <TooltipTrigger asChild>
             <Button

@@ -4,6 +4,7 @@ import { AuthTokenModal } from "./AuthTokenModal";
 import { LoadingScreen } from "./LoadingScreen";
 import { useWorkspaceStoreRaw, workspaceStore } from "../stores/WorkspaceStore";
 import { useGitStatusStoreRaw } from "../stores/GitStatusStore";
+import { getPRStatusStoreInstance } from "../stores/PRStatusStore";
 import { ProjectProvider, useProjectContext } from "../contexts/ProjectContext";
 import { APIProvider, useAPI, type APIClient } from "@/browser/contexts/API";
 import { WorkspaceProvider, useWorkspaceContext } from "../contexts/WorkspaceContext";
@@ -64,6 +65,7 @@ function AppLoaderInner() {
     if (api) {
       workspaceStoreInstance.setClient(api);
       gitStatusStore.setClient(api);
+      getPRStatusStoreInstance().setClient(api);
     }
 
     if (!workspaceContext.loading) {

@@ -5,6 +5,7 @@ import type { WorkspaceChatMessage, WorkspaceStatsSnapshot } from "@/common/orpc
 import type { RouterClient } from "@orpc/server";
 import type { AppRouter } from "@/node/orpc/router";
 import type { TodoItem } from "@/common/types/tools";
+import type { DetectedLink } from "@/common/types/links";
 import { applyWorkspaceChatEventToAggregator } from "@/browser/utils/messages/applyWorkspaceChatEventToAggregator";
 import { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
@@ -59,6 +60,8 @@ export interface WorkspaceState {
   // Live streaming stats (updated on each stream-delta)
   streamingTokenCount: number | undefined;
   streamingTPS: number | undefined;
+  // Detected links from chat content (generic URLs for links dropdown)
+  detectedLinks: DetectedLink[];
 }
 
 /**
@@ -868,6 +871,7 @@ export class WorkspaceStore {
         pendingCompactionModel: aggregator.getPendingCompactionModel(),
         streamingTokenCount,
         streamingTPS,
+        detectedLinks: aggregator.getDetectedLinks(),
       };
     });
   }
@@ -1866,6 +1870,46 @@ export function useWorkspaceSidebarState(workspaceId: string): WorkspaceSidebarS
   return useSyncExternalStore(
     (listener) => store.subscribeKey(workspaceId, listener),
     () => store.getWorkspaceSidebarState(workspaceId)
+  );
+}
+
+/**
+ * State for detected links in a workspace (for the links dropdown).
+ * PR badge uses branch-based detection via useWorkspacePR instead.
+ */
+export interface WorkspaceLinksState {
+  detectedLinks: DetectedLink[];
+}
+
+// Cache for useWorkspaceLinks to return stable references
+const workspaceLinksCache = new Map<string, WorkspaceLinksState>();
+
+/**
+ * Hook to get detected links from a workspace.
+ * Separate from sidebar state to avoid re-renders on message changes.
+ * Returns cached references to avoid triggering infinite render loops.
+ */
+export function useWorkspaceLinks(workspaceId: string): WorkspaceLinksState {
+  const store = getStoreInstance();
+
+  return useSyncExternalStore(
+    (listener) => store.subscribeKey(workspaceId, listener),
+    () => {
+      const state = store.getWorkspaceState(workspaceId);
+      const existing = workspaceLinksCache.get(workspaceId);
+
+      // Return same reference if nothing meaningful changed
+      if (existing && existing.detectedLinks === state.detectedLinks) {
+        return existing;
+      }
+
+      // Create new state and cache it
+      const newState: WorkspaceLinksState = {
+        detectedLinks: state.detectedLinks,
+      };
+      workspaceLinksCache.set(workspaceId, newState);
+      return newState;
+    }
   );
 }
 
