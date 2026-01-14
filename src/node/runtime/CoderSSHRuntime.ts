@@ -23,7 +23,7 @@ import type {
 import { SSHRuntime, type SSHRuntimeConfig } from "./SSHRuntime";
 import type { CoderWorkspaceConfig, RuntimeConfig } from "@/common/types/runtime";
 import { isSSHRuntime } from "@/common/types/runtime";
-import type { CoderService } from "@/node/services/coderService";
+import type { CoderService, WorkspaceStatusResult } from "@/node/services/coderService";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import { log } from "@/node/services/log";
@@ -182,33 +182,37 @@ export class CoderSSHRuntime extends SSHRuntime {
       return { ready: false, error: "Aborted", errorType: "runtime_start_failed" };
     }
 
+    // Helper to check if an error string indicates workspace not found (for startWorkspaceAndWait errors)
+    const isWorkspaceNotFoundError = (error: string | undefined): boolean =>
+      Boolean(error && /workspace not found/i.test(error));
+
     const statusResult = await this.coderService.getWorkspaceStatus(workspaceName, {
       timeoutMs: Math.min(remainingMs(), 10_000),
       signal,
     });
 
-    if (statusResult.status === "running") {
+    // Helper to extract status from result, or null if not available
+    const getStatus = (r: WorkspaceStatusResult): string | null =>
+      r.kind === "ok" ? r.status : null;
+
+    if (statusResult.kind === "ok" && statusResult.status === "running") {
       this.lastActivityAtMs = Date.now();
       emitStatus("ready");
       return { ready: true };
     }
 
-    const isWorkspaceNotFoundError = (error: string | undefined) =>
-      Boolean(error && /workspace not found/i.test(error));
+    if (statusResult.kind === "not_found") {
+      emitStatus("error");
+      return {
+        ready: false,
+        error: `Coder workspace "${workspaceName}" not found`,
+        errorType: "runtime_not_ready",
+      };
+    }
 
-    if (statusResult.status === null) {
-      // Fail fast only when we're confident the workspace doesn't exist.
-      // For other errors (timeout, auth hiccup, Coder CLI issues), proceed optimistically
+    if (statusResult.kind === "error") {
+      // For errors (timeout, auth hiccup, Coder CLI issues), proceed optimistically
       // and let SSH fail naturally to avoid blocking the happy path.
-      if (isWorkspaceNotFoundError(statusResult.error)) {
-        emitStatus("error");
-        return {
-          ready: false,
-          error: `Coder workspace "${workspaceName}" not found`,
-          errorType: "runtime_not_ready",
-        };
-      }
-
       log.debug("Coder workspace status unknown, proceeding optimistically", {
         workspaceName,
         error: statusResult.error,
@@ -218,7 +222,7 @@ export class CoderSSHRuntime extends SSHRuntime {
     }
 
     // Step 2: Handle "stopping" status - wait for it to become "stopped"
-    let currentStatus: string | null = statusResult.status;
+    let currentStatus: string | null = getStatus(statusResult);
 
     if (currentStatus === "stopping") {
       emitStatus("waiting", "Waiting for Coder workspace to stop...");
@@ -234,7 +238,7 @@ export class CoderSSHRuntime extends SSHRuntime {
           timeoutMs: Math.min(remainingMs(), 10_000),
           signal,
         });
-        currentStatus = pollResult.status;
+        currentStatus = getStatus(pollResult);
 
         if (currentStatus === "running") {
           this.lastActivityAtMs = Date.now();
@@ -242,17 +246,17 @@ export class CoderSSHRuntime extends SSHRuntime {
           return { ready: true };
         }
 
-        // If status became null, only fail fast if the workspace is definitively gone.
+        // If status unavailable, only fail fast if the workspace is definitively gone.
         // Otherwise fall through to start attempt (status check might have been flaky).
-        if (currentStatus === null) {
-          if (isWorkspaceNotFoundError(pollResult.error)) {
-            emitStatus("error");
-            return {
-              ready: false,
-              error: `Coder workspace "${workspaceName}" not found`,
-              errorType: "runtime_not_ready",
-            };
-          }
+        if (pollResult.kind === "not_found") {
+          emitStatus("error");
+          return {
+            ready: false,
+            error: `Coder workspace "${workspaceName}" not found`,
+            errorType: "runtime_not_ready",
+          };
+        }
+        if (pollResult.kind === "error") {
           break;
         }
       }
@@ -309,7 +313,7 @@ export class CoderSSHRuntime extends SSHRuntime {
           signal,
         });
 
-        if (pollResult.status === null && isWorkspaceNotFoundError(pollResult.error)) {
+        if (pollResult.kind === "not_found") {
           emitStatus("error");
           return {
             ready: false,
@@ -318,13 +322,15 @@ export class CoderSSHRuntime extends SSHRuntime {
           };
         }
 
-        if (pollResult.status === "running") {
+        const pollStatus = getStatus(pollResult);
+
+        if (pollStatus === "running") {
           this.lastActivityAtMs = Date.now();
           emitStatus("ready");
           return { ready: true };
         }
 
-        if (pollResult.status === "stopped") {
+        if (pollStatus === "stopped") {
           // Build finished but workspace ended up stopped - retry start once
           log.debug("Coder workspace stopped after build, retrying start", { workspaceName });
           emitStatus("starting", "Starting Coder workspace...");
@@ -399,7 +405,7 @@ export class CoderSSHRuntime extends SSHRuntime {
     if (!coder.existingWorkspace) {
       // New workspace: derive name from mux workspace name if not provided
       if (!workspaceName) {
-        workspaceName = finalBranchName;
+        workspaceName = `mux-${finalBranchName}`;
       }
       // Transform to Coder-compatible name (handles underscores, etc.)
       workspaceName = toCoderCompatibleName(workspaceName);
@@ -498,24 +504,48 @@ export class CoderSSHRuntime extends SSHRuntime {
     force: boolean,
     abortSignal?: AbortSignal
   ): Promise<{ success: true; deletedPath: string } | { success: false; error: string }> {
-    const sshResult = await super.deleteWorkspace(projectPath, workspaceName, force, abortSignal);
-
-    // If this workspace is an existing Coder workspace that mux didn't create, never delete it.
+    // If this workspace is an existing Coder workspace that mux didn't create, just do SSH cleanup.
     if (this.coderConfig.existingWorkspace) {
-      return sshResult;
+      return super.deleteWorkspace(projectPath, workspaceName, force, abortSignal);
     }
+
+    const coderWorkspaceName = this.coderConfig.workspaceName;
+    if (!coderWorkspaceName) {
+      log.warn("Coder workspace name not set, falling back to SSH-only deletion");
+      return super.deleteWorkspace(projectPath, workspaceName, force, abortSignal);
+    }
+
+    // Check if Coder workspace still exists before attempting SSH operations.
+    // If it's already gone, skip SSH cleanup (would hang trying to connect to non-existent host).
+    const statusResult = await this.coderService.getWorkspaceStatus(coderWorkspaceName);
+    if (statusResult.kind === "not_found") {
+      log.debug("Coder workspace already deleted, skipping SSH cleanup", { coderWorkspaceName });
+      return { success: true, deletedPath: this.getWorkspacePath(projectPath, workspaceName) };
+    }
+    if (statusResult.kind === "error") {
+      // API errors (auth, network): fall through to SSH cleanup, let it fail naturally
+      log.warn("Could not check Coder workspace status, proceeding with SSH cleanup", {
+        coderWorkspaceName,
+        error: statusResult.error,
+      });
+    }
+    if (statusResult.kind === "ok") {
+      // Workspace is being deleted or already deleted - skip SSH (would hang connecting to dying host)
+      if (statusResult.status === "deleted" || statusResult.status === "deleting") {
+        log.debug("Coder workspace is deleted/deleting, skipping SSH cleanup", {
+          coderWorkspaceName,
+          status: statusResult.status,
+        });
+        return { success: true, deletedPath: this.getWorkspacePath(projectPath, workspaceName) };
+      }
+    }
+
+    const sshResult = await super.deleteWorkspace(projectPath, workspaceName, force, abortSignal);
 
     // In the normal (force=false) delete path, only delete the Coder workspace if the SSH delete
     // succeeded. If SSH delete failed (e.g., dirty workspace), WorkspaceService.remove() keeps the
     // workspace metadata and the user can retry.
     if (!sshResult.success && !force) {
-      return sshResult;
-    }
-
-    // workspaceName should always be set after workspace creation (finalizeConfig sets it)
-    const coderWorkspaceName = this.coderConfig.workspaceName;
-    if (!coderWorkspaceName) {
-      log.warn("Coder workspace name not set, skipping Coder workspace deletion");
       return sshResult;
     }
 

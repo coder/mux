@@ -27,7 +27,9 @@ function createMockCoderService(overrides?: Partial<CoderService>): CoderService
     ),
     deleteWorkspace: mock(() => Promise.resolve()),
     ensureSSHConfig: mock(() => Promise.resolve()),
-    getWorkspaceStatus: mock(() => Promise.resolve({ status: "running" as const })),
+    getWorkspaceStatus: mock(() =>
+      Promise.resolve({ kind: "ok" as const, status: "running" as const })
+    ),
     listWorkspaces: mock(() => Promise.resolve([])),
     startWorkspaceAndWait: mock(() => Promise.resolve({ success: true })),
     workspaceExists: mock(() => Promise.resolve(false)),
@@ -97,8 +99,8 @@ describe("CoderSSHRuntime.finalizeConfig", () => {
       if (result.success) {
         expect(result.data.type).toBe("ssh");
         if (result.data.type === "ssh") {
-          expect(result.data.coder?.workspaceName).toBe("my-feature");
-          expect(result.data.host).toBe("my-feature.coder");
+          expect(result.data.coder?.workspaceName).toBe("mux-my-feature");
+          expect(result.data.host).toBe("mux-my-feature.coder");
         }
       }
     });
@@ -109,8 +111,8 @@ describe("CoderSSHRuntime.finalizeConfig", () => {
 
       expect(result.success).toBe(true);
       if (result.success && result.data.type === "ssh") {
-        expect(result.data.coder?.workspaceName).toBe("my-feature-branch");
-        expect(result.data.host).toBe("my-feature-branch.coder");
+        expect(result.data.coder?.workspaceName).toBe("mux-my-feature-branch");
+        expect(result.data.host).toBe("mux-my-feature-branch.coder");
       }
     });
 
@@ -120,14 +122,14 @@ describe("CoderSSHRuntime.finalizeConfig", () => {
 
       expect(result.success).toBe(true);
       if (result.success && result.data.type === "ssh") {
-        expect(result.data.coder?.workspaceName).toBe("my-feature");
+        expect(result.data.coder?.workspaceName).toBe("mux-my-feature");
       }
     });
 
     it("rejects names that fail regex after conversion", async () => {
       const config = createSSHCoderConfig({ existingWorkspace: false });
-      // Name that becomes empty or invalid after conversion
-      const result = await runtime.finalizeConfig("---", config);
+      // Name with special chars that can't form a valid Coder name (only hyphens/underscores become invalid)
+      const result = await runtime.finalizeConfig("@#$%", config);
 
       expect(result.success).toBe(false);
       if (!result.success) {
@@ -291,6 +293,66 @@ describe("CoderSSHRuntime.deleteWorkspace", () => {
       expect(result.error).toContain("Coder API error");
     }
   });
+
+  it("succeeds immediately when Coder workspace is already deleted", async () => {
+    // getWorkspaceStatus returns { kind: "not_found" } when workspace doesn't exist
+    const getWorkspaceStatus = mock(() => Promise.resolve({ kind: "not_found" as const }));
+    const deleteWorkspace = mock(() => Promise.resolve());
+    const coderService = createMockCoderService({ getWorkspaceStatus, deleteWorkspace });
+
+    const runtime = createRuntime(
+      { existingWorkspace: false, workspaceName: "my-ws" },
+      coderService
+    );
+
+    const result = await runtime.deleteWorkspace("/project", "ws", false);
+
+    // Should succeed without calling SSH delete or Coder delete
+    expect(result.success).toBe(true);
+    expect(sshDeleteSpy).not.toHaveBeenCalled();
+    expect(deleteWorkspace).not.toHaveBeenCalled();
+  });
+
+  it("proceeds with SSH cleanup when status check fails with API error", async () => {
+    // API error (auth, network) - should NOT treat as "already deleted"
+    const getWorkspaceStatus = mock(() =>
+      Promise.resolve({ kind: "error" as const, error: "coder timed out" })
+    );
+    const deleteWorkspace = mock(() => Promise.resolve());
+    const coderService = createMockCoderService({ getWorkspaceStatus, deleteWorkspace });
+
+    const runtime = createRuntime(
+      { existingWorkspace: false, workspaceName: "my-ws" },
+      coderService
+    );
+
+    const result = await runtime.deleteWorkspace("/project", "ws", false);
+
+    // Should proceed with SSH cleanup (which succeeds), then Coder delete
+    expect(sshDeleteSpy).toHaveBeenCalled();
+    expect(deleteWorkspace).toHaveBeenCalled();
+    expect(result.success).toBe(true);
+  });
+
+  it("succeeds immediately when Coder workspace status is 'deleting'", async () => {
+    const getWorkspaceStatus = mock(() =>
+      Promise.resolve({ kind: "ok" as const, status: "deleting" as const })
+    );
+    const deleteWorkspace = mock(() => Promise.resolve());
+    const coderService = createMockCoderService({ getWorkspaceStatus, deleteWorkspace });
+
+    const runtime = createRuntime(
+      { existingWorkspace: false, workspaceName: "my-ws" },
+      coderService
+    );
+
+    const result = await runtime.deleteWorkspace("/project", "ws", false);
+
+    // Should succeed without calling SSH delete or Coder delete (workspace already dying)
+    expect(result.success).toBe(true);
+    expect(sshDeleteSpy).not.toHaveBeenCalled();
+    expect(deleteWorkspace).not.toHaveBeenCalled();
+  });
 });
 
 // =============================================================================
@@ -367,8 +429,8 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
     const getWorkspaceStatus = mock(() =>
       Promise.resolve(
         workspaceCreated
-          ? { status: "running" as const }
-          : { status: null, error: "Workspace not found" }
+          ? { kind: "ok" as const, status: "running" as const }
+          : { kind: "not_found" as const }
       )
     );
 
@@ -514,7 +576,9 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
 
 describe("CoderSSHRuntime.ensureReady", () => {
   it("returns ready when workspace is already running", async () => {
-    const getWorkspaceStatus = mock(() => Promise.resolve({ status: "running" as const }));
+    const getWorkspaceStatus = mock(() =>
+      Promise.resolve({ kind: "ok" as const, status: "running" as const })
+    );
     const startWorkspaceAndWait = mock(() => Promise.resolve({ success: true }));
     const coderService = createMockCoderService({ getWorkspaceStatus, startWorkspaceAndWait });
 
@@ -536,7 +600,9 @@ describe("CoderSSHRuntime.ensureReady", () => {
   });
 
   it("starts the workspace when status is stopped", async () => {
-    const getWorkspaceStatus = mock(() => Promise.resolve({ status: "stopped" as const }));
+    const getWorkspaceStatus = mock(() =>
+      Promise.resolve({ kind: "ok" as const, status: "stopped" as const })
+    );
     const startWorkspaceAndWait = mock(() => Promise.resolve({ success: true }));
     const coderService = createMockCoderService({ getWorkspaceStatus, startWorkspaceAndWait });
 
@@ -556,7 +622,9 @@ describe("CoderSSHRuntime.ensureReady", () => {
   });
 
   it("returns runtime_start_failed when start fails", async () => {
-    const getWorkspaceStatus = mock(() => Promise.resolve({ status: "stopped" as const }));
+    const getWorkspaceStatus = mock(() =>
+      Promise.resolve({ kind: "ok" as const, status: "stopped" as const })
+    );
     const startWorkspaceAndWait = mock(() => Promise.resolve({ success: false, error: "boom" }));
     const coderService = createMockCoderService({ getWorkspaceStatus, startWorkspaceAndWait });
 

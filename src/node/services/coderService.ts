@@ -18,6 +18,12 @@ import {
 // Re-export types for consumers that import from this module
 export type { CoderInfo, CoderTemplate, CoderPreset, CoderWorkspace, CoderWorkspaceStatus };
 
+/** Discriminated union for workspace status check results */
+export type WorkspaceStatusResult =
+  | { kind: "ok"; status: CoderWorkspaceStatus }
+  | { kind: "not_found" }
+  | { kind: "error"; error: string };
+
 // Minimum supported Coder CLI version
 const MIN_CODER_VERSION = "2.25.0";
 
@@ -172,6 +178,246 @@ export class CoderService {
    */
   clearCache(): void {
     this.cachedInfo = null;
+  }
+
+  /**
+   * Get the Coder deployment URL via `coder whoami`.
+   * Throws if Coder CLI is not configured/logged in.
+   */
+  private async getDeploymentUrl(): Promise<string> {
+    using proc = execAsync("coder whoami --output json");
+    const { stdout } = await proc.result;
+
+    const data = JSON.parse(stdout) as Array<{ url: string }>;
+    if (!data[0]?.url) {
+      throw new Error("Could not determine Coder deployment URL from `coder whoami`");
+    }
+    return data[0].url;
+  }
+
+  /**
+   * Get the active template version ID for a template.
+   * Throws if template not found.
+   */
+  private async getActiveTemplateVersionId(templateName: string): Promise<string> {
+    using proc = execAsync("coder templates list --output=json");
+    const { stdout } = await proc.result;
+
+    if (!stdout.trim()) {
+      throw new Error(`Template "${templateName}" not found (no templates exist)`);
+    }
+
+    const raw = JSON.parse(stdout) as Array<{
+      Template: {
+        name: string;
+        active_version_id: string;
+      };
+    }>;
+
+    const template = raw.find((t) => t.Template.name === templateName);
+    if (!template) {
+      throw new Error(`Template "${templateName}" not found`);
+    }
+
+    return template.Template.active_version_id;
+  }
+
+  /**
+   * Get parameter names covered by a preset.
+   * Returns empty set if preset not found (allows creation to proceed without preset params).
+   */
+  private async getPresetParamNames(
+    templateName: string,
+    presetName: string
+  ): Promise<Set<string>> {
+    try {
+      using proc = execAsync(
+        `coder templates presets list ${shescape.quote(templateName)} --output=json`
+      );
+      const { stdout } = await proc.result;
+
+      if (!stdout.trim()) {
+        return new Set();
+      }
+
+      const raw = JSON.parse(stdout) as Array<{
+        TemplatePreset: {
+          Name: string;
+          Parameters?: Array<{ Name: string }>;
+        };
+      }>;
+
+      const preset = raw.find((p) => p.TemplatePreset.Name === presetName);
+      if (!preset?.TemplatePreset.Parameters) {
+        return new Set();
+      }
+
+      return new Set(preset.TemplatePreset.Parameters.map((p) => p.Name));
+    } catch (error) {
+      log.debug("Failed to get preset param names", { templateName, presetName, error });
+      return new Set();
+    }
+  }
+
+  /**
+   * Parse rich parameter data from the Coder API.
+   * Filters out entries with missing/invalid names to avoid generating invalid --parameter flags.
+   */
+  private parseRichParameters(data: unknown): Array<{
+    name: string;
+    defaultValue: string;
+    type: string;
+    ephemeral: boolean;
+    required: boolean;
+  }> {
+    if (!Array.isArray(data)) {
+      throw new Error("Expected array of rich parameters");
+    }
+    return data
+      .filter((p): p is Record<string, unknown> => {
+        if (p === null || typeof p !== "object") return false;
+        const obj = p as Record<string, unknown>;
+        return typeof obj.name === "string" && obj.name !== "";
+      })
+      .map((p) => ({
+        name: p.name as string,
+        defaultValue: typeof p.default_value === "string" ? p.default_value : "",
+        type: typeof p.type === "string" ? p.type : "string",
+        ephemeral: Boolean(p.ephemeral),
+        required: Boolean(p.required),
+      }));
+  }
+
+  /**
+   * Fetch template rich parameters from Coder API.
+   * Creates a short-lived token, fetches params, then cleans up the token.
+   */
+  private async getTemplateRichParameters(
+    deploymentUrl: string,
+    versionId: string,
+    workspaceName: string
+  ): Promise<
+    Array<{
+      name: string;
+      defaultValue: string;
+      type: string;
+      ephemeral: boolean;
+      required: boolean;
+    }>
+  > {
+    // Create short-lived token named after workspace (avoids keychain read issues)
+    const tokenName = `mux-${workspaceName}`;
+    using tokenProc = execAsync(
+      `coder tokens create --lifetime 5m --name ${shescape.quote(tokenName)}`
+    );
+    const { stdout: token } = await tokenProc.result;
+
+    try {
+      const url = new URL(
+        `/api/v2/templateversions/${versionId}/rich-parameters`,
+        deploymentUrl
+      ).toString();
+
+      const response = await fetch(url, {
+        headers: {
+          "Coder-Session-Token": token.trim(),
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(
+          `Failed to fetch rich parameters: ${response.status} ${response.statusText}`
+        );
+      }
+
+      const data: unknown = await response.json();
+      return this.parseRichParameters(data);
+    } finally {
+      // Clean up the token by name
+      try {
+        using deleteProc = execAsync(`coder tokens delete ${shescape.quote(tokenName)} --yes`);
+        await deleteProc.result;
+      } catch {
+        // Best-effort cleanup; token will expire in 5 minutes anyway
+        log.debug("Failed to delete temporary token", { tokenName });
+      }
+    }
+  }
+
+  /**
+   * Encode a parameter string for the Coder CLI's --parameter flag.
+   * The CLI uses CSV parsing, so values containing quotes or commas need escaping:
+   * - Wrap the entire string in double quotes
+   * - Escape internal double quotes as ""
+   */
+  private encodeParameterValue(nameValue: string): string {
+    if (!nameValue.includes('"') && !nameValue.includes(",")) {
+      return nameValue;
+    }
+    // CSV quoting: wrap in quotes, escape internal quotes as ""
+    return `"${nameValue.replace(/"/g, '""')}"`;
+  }
+
+  /**
+   * Compute extra --parameter flags needed for workspace creation.
+   * Filters to non-ephemeral params not covered by preset, using their defaults.
+   * Values are passed through as-is (list(string) types expect JSON-encoded arrays).
+   */
+  computeExtraParams(
+    allParams: Array<{
+      name: string;
+      defaultValue: string;
+      type: string;
+      ephemeral: boolean;
+      required: boolean;
+    }>,
+    coveredByPreset: Set<string>
+  ): Array<{ name: string; encoded: string }> {
+    const extra: Array<{ name: string; encoded: string }> = [];
+
+    for (const p of allParams) {
+      // Skip ephemeral params
+      if (p.ephemeral) continue;
+      // Skip params covered by preset
+      if (coveredByPreset.has(p.name)) continue;
+
+      // Encode for CLI's CSV parser (escape quotes/commas)
+      const encoded = this.encodeParameterValue(`${p.name}=${p.defaultValue}`);
+      extra.push({ name: p.name, encoded });
+    }
+
+    return extra;
+  }
+
+  /**
+   * Validate that all required params have values (either from preset or defaults).
+   * Throws if any required param is missing a value.
+   */
+  validateRequiredParams(
+    allParams: Array<{
+      name: string;
+      defaultValue: string;
+      type: string;
+      ephemeral: boolean;
+      required: boolean;
+    }>,
+    coveredByPreset: Set<string>
+  ): void {
+    const missing: string[] = [];
+
+    for (const p of allParams) {
+      if (p.ephemeral) continue;
+      if (p.required && !p.defaultValue && !coveredByPreset.has(p.name)) {
+        missing.push(p.name);
+      }
+    }
+
+    if (missing.length > 0) {
+      throw new Error(
+        `Required template parameters missing values: ${missing.join(", ")}. ` +
+          `Select a preset that provides these values or contact your template admin.`
+      );
+    }
   }
 
   /**
@@ -424,7 +670,7 @@ export class CoderService {
   async getWorkspaceStatus(
     workspaceName: string,
     options?: { timeoutMs?: number; signal?: AbortSignal }
-  ): Promise<{ status: CoderWorkspaceStatus | null; error?: string }> {
+  ): Promise<WorkspaceStatusResult> {
     const timeoutMs = options?.timeoutMs ?? 10_000;
 
     try {
@@ -435,11 +681,11 @@ export class CoderService {
 
       const interpreted = interpretCoderResult(result);
       if (!interpreted.ok) {
-        return { status: null, error: interpreted.error };
+        return { kind: "error", error: interpreted.error };
       }
 
       if (!interpreted.stdout.trim()) {
-        return { status: null, error: "Workspace not found" };
+        return { kind: "not_found" };
       }
 
       const workspaces = JSON.parse(interpreted.stdout) as Array<{
@@ -450,7 +696,7 @@ export class CoderService {
       // Exact match required (search is prefix-based)
       const match = workspaces.find((w) => w.name === workspaceName);
       if (!match) {
-        return { status: null, error: "Workspace not found" };
+        return { kind: "not_found" };
       }
 
       // Validate status against known schema values
@@ -458,14 +704,14 @@ export class CoderService {
       const parsed = CoderWorkspaceStatusSchema.safeParse(status);
       if (!parsed.success) {
         log.warn("Unknown Coder workspace status", { workspaceName, status });
-        return { status: null, error: `Unknown status: ${status}` };
+        return { kind: "error", error: `Unknown status: ${status}` };
       }
 
-      return { status: parsed.data };
+      return { kind: "ok", status: parsed.data };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       log.debug("Failed to get Coder workspace status", { workspaceName, error: message });
-      return { status: null, error: message };
+      return { kind: "error", error: message };
     }
   }
 
@@ -510,7 +756,10 @@ export class CoderService {
 
   /**
    * Create a new Coder workspace. Yields build log lines as they arrive.
-   * Streams stdout and stderr concurrently to avoid blocking on either stream.
+   *
+   * Pre-fetches template parameters and passes defaults via --parameter flags
+   * to avoid interactive prompts during creation.
+   *
    * @param name Workspace name
    * @param template Template name
    * @param preset Optional preset name
@@ -522,10 +771,144 @@ export class CoderService {
     preset?: string,
     abortSignal?: AbortSignal
   ): AsyncGenerator<string, void, unknown> {
-    // TEMPORARY: Use workaround for parameter prompts.
-    // Delete the workaround section below when `coder create --yes` no longer prompts
-    // for parameters that have defaults.
-    yield* this._createWorkspaceWithParamWorkaround(name, template, preset, abortSignal);
+    log.debug("Creating Coder workspace", { name, template, preset });
+
+    if (abortSignal?.aborted) {
+      throw new Error("Coder workspace creation aborted");
+    }
+
+    // 1. Get deployment URL
+    const deploymentUrl = await this.getDeploymentUrl();
+
+    // 2. Get active template version ID
+    const versionId = await this.getActiveTemplateVersionId(template);
+
+    // 3. Get parameter names covered by preset (if any)
+    const coveredByPreset = preset
+      ? await this.getPresetParamNames(template, preset)
+      : new Set<string>();
+
+    // 4. Fetch all template parameters from API
+    const allParams = await this.getTemplateRichParameters(deploymentUrl, versionId, name);
+
+    // 5. Validate required params have values
+    this.validateRequiredParams(allParams, coveredByPreset);
+
+    // 6. Compute extra --parameter flags for non-ephemeral params not in preset
+    const extraParams = this.computeExtraParams(allParams, coveredByPreset);
+
+    log.debug("Computed extra params for coder create", {
+      name,
+      template,
+      preset,
+      extraParamCount: extraParams.length,
+      extraParamNames: extraParams.map((p) => p.name),
+    });
+
+    // 7. Build and run single coder create command
+    const args = ["create", name, "-t", template, "--yes"];
+    if (preset) {
+      args.push("--preset", preset);
+    }
+    for (const p of extraParams) {
+      args.push("--parameter", p.encoded);
+    }
+
+    // Yield the command we're about to run so it's visible in UI
+    yield `$ coder ${args.join(" ")}`;
+
+    const child = spawn("coder", args, {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    const terminator = createGracefulTerminator(child);
+
+    const abortHandler = () => {
+      terminator.terminate();
+    };
+    abortSignal?.addEventListener("abort", abortHandler);
+
+    try {
+      // Use an async queue to stream lines as they arrive (not buffer until end)
+      const lineQueue: string[] = [];
+      let streamsDone = false;
+      let resolveNext: (() => void) | null = null;
+
+      const pushLine = (line: string) => {
+        lineQueue.push(line);
+        if (resolveNext) {
+          resolveNext();
+          resolveNext = null;
+        }
+      };
+
+      // Set up stream processing
+      let pending = 2;
+      const markDone = () => {
+        pending--;
+        if (pending === 0) {
+          streamsDone = true;
+          if (resolveNext) {
+            resolveNext();
+            resolveNext = null;
+          }
+        }
+      };
+
+      const processStream = (stream: NodeJS.ReadableStream | null) => {
+        if (!stream) {
+          markDone();
+          return;
+        }
+        let buffer = "";
+        stream.on("data", (chunk: Buffer) => {
+          buffer += chunk.toString();
+          const parts = buffer.split("\n");
+          buffer = parts.pop() ?? "";
+          for (const line of parts) {
+            const trimmed = line.trim();
+            if (trimmed) pushLine(trimmed);
+          }
+        });
+        stream.on("end", () => {
+          if (buffer.trim()) pushLine(buffer.trim());
+          markDone();
+        });
+        stream.on("error", markDone);
+      };
+
+      processStream(child.stdout);
+      processStream(child.stderr);
+
+      // Yield lines as they arrive
+      while (!streamsDone || lineQueue.length > 0) {
+        if (lineQueue.length > 0) {
+          yield lineQueue.shift()!;
+        } else if (!streamsDone) {
+          // Wait for more data
+          await new Promise<void>((resolve) => {
+            resolveNext = resolve;
+          });
+        }
+      }
+
+      // Wait for process to exit
+      const exitCode = await new Promise<number | null>((resolve) => {
+        child.on("close", resolve);
+        child.on("error", () => resolve(null));
+      });
+
+      if (abortSignal?.aborted) {
+        throw new Error("Coder workspace creation aborted");
+      }
+
+      if (exitCode !== 0) {
+        throw new Error(`coder create failed with exit code ${String(exitCode)}`);
+      }
+    } finally {
+      terminator.cleanup();
+      abortSignal?.removeEventListener("abort", abortHandler);
+    }
   }
 
   /**
@@ -546,227 +929,6 @@ export class CoderService {
     using proc = execAsync("coder config-ssh --yes");
     await proc.result;
   }
-
-  // ============================================================================
-  // TEMPORARY WORKAROUND: Parameter prompt retry logic
-  // Delete this entire section when `coder create --yes` properly handles
-  // parameters with defaults. Then update createWorkspace to run `coder create`
-  // directly (without prompt-detection retries).
-  // ============================================================================
-
-  private async *_createWorkspaceWithParamWorkaround(
-    name: string,
-    template: string,
-    preset: string | undefined,
-    abortSignal: AbortSignal | undefined
-  ): AsyncGenerator<string, void, unknown> {
-    const MAX_PARAM_RETRIES = 20;
-    const PROMPT_TIMEOUT_MS = 5000;
-
-    const collectedParams: Array<{ name: string; value: string }> = [];
-
-    for (let attempt = 0; attempt < MAX_PARAM_RETRIES; attempt++) {
-      log.debug("Creating Coder workspace (workaround attempt)", {
-        name,
-        template,
-        preset,
-        attempt,
-        collectedParams,
-      });
-
-      if (abortSignal?.aborted) {
-        throw new Error("Coder workspace creation aborted");
-      }
-
-      const result = await this._tryCreateDetectingPrompts(
-        name,
-        template,
-        preset,
-        collectedParams,
-        PROMPT_TIMEOUT_MS,
-        abortSignal
-      );
-
-      if (result.type === "success") {
-        for (const line of result.lines) {
-          yield line;
-        }
-        return;
-      }
-
-      if (result.type === "prompt") {
-        log.debug("Detected parameter prompt, will retry", { param: result.param, attempt });
-        // Yield collected lines so user sees progress
-        for (const line of result.lines) {
-          yield line;
-        }
-        yield `[Detected parameter prompt "${result.param.name}", retrying with default "${result.param.value}"...]`;
-        collectedParams.push(result.param);
-        continue;
-      }
-
-      // Yield collected lines before throwing so user sees CLI output
-      for (const line of result.lines) {
-        yield line;
-      }
-      throw new Error(result.error);
-    }
-
-    throw new Error(
-      `Too many parameter prompts (${MAX_PARAM_RETRIES}). ` +
-        `Collected: ${collectedParams.map((p) => p.name).join(", ")}`
-    );
-  }
-
-  private async _tryCreateDetectingPrompts(
-    name: string,
-    template: string,
-    preset: string | undefined,
-    extraParams: Array<{ name: string; value: string }>,
-    promptTimeoutMs: number,
-    abortSignal: AbortSignal | undefined
-  ): Promise<
-    | { type: "success"; lines: string[] }
-    | { type: "prompt"; param: { name: string; value: string }; lines: string[] }
-    | { type: "error"; error: string; lines: string[] }
-  > {
-    const args = ["create", name, "-t", template, "--yes"];
-    if (preset) {
-      args.push("--preset", preset);
-    }
-    for (const p of extraParams) {
-      args.push("--parameter", `${p.name}=${p.value}`);
-    }
-
-    const child = spawn("coder", args, {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const terminator = createGracefulTerminator(child);
-
-    const lines: string[] = [];
-    let rawOutput = "";
-    let aborted = false;
-    let promptDetected = false;
-
-    const abortHandler = () => {
-      aborted = true;
-      terminator.terminate();
-    };
-    abortSignal?.addEventListener("abort", abortHandler);
-
-    const processStream = async (stream: NodeJS.ReadableStream): Promise<void> => {
-      for await (const chunk of stream) {
-        const text = (chunk as Buffer).toString();
-        rawOutput += text;
-        for (const line of text.split("\n")) {
-          if (line.trim()) {
-            lines.push(line);
-          }
-        }
-      }
-    };
-
-    const stdoutDone = processStream(child.stdout).catch((error: unknown) => {
-      log.debug("Failed to read coder create stdout", { error });
-    });
-    const stderrDone = processStream(child.stderr).catch((error: unknown) => {
-      log.debug("Failed to read coder create stderr", { error });
-    });
-
-    const exitPromise = new Promise<number | null>((resolve) => {
-      child.on("close", (code) => resolve(code));
-      child.on("error", () => resolve(null));
-    });
-
-    const promptCheckInterval = setInterval(() => {
-      const parsed = this._parseParameterPrompt(rawOutput);
-      if (parsed) {
-        promptDetected = true;
-        terminator.terminate();
-        clearInterval(promptCheckInterval);
-      }
-    }, 200);
-
-    const exitCode = await Promise.race([
-      exitPromise,
-      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), promptTimeoutMs)),
-    ]);
-
-    clearInterval(promptCheckInterval);
-
-    if (exitCode === "timeout") {
-      const parsed = this._parseParameterPrompt(rawOutput);
-      if (parsed) {
-        terminator.terminate();
-
-        const didExit = await Promise.race([
-          exitPromise.then(() => true),
-          new Promise<false>((resolve) => setTimeout(() => resolve(false), 1000)),
-        ]);
-        if (didExit) {
-          terminator.cleanup();
-        }
-
-        abortSignal?.removeEventListener("abort", abortHandler);
-        return { type: "prompt", param: parsed, lines };
-      }
-      const finalExitCode = await exitPromise;
-      await Promise.all([stdoutDone, stderrDone]);
-      terminator.cleanup();
-      abortSignal?.removeEventListener("abort", abortHandler);
-
-      if (aborted) {
-        return { type: "error", error: "Coder workspace creation aborted", lines };
-      }
-      if (finalExitCode !== 0) {
-        return {
-          type: "error",
-          error: `coder create failed with exit code ${String(finalExitCode)}`,
-          lines,
-        };
-      }
-      return { type: "success", lines };
-    }
-
-    await Promise.all([stdoutDone, stderrDone]);
-    terminator.cleanup();
-    abortSignal?.removeEventListener("abort", abortHandler);
-
-    if (aborted) {
-      return { type: "error", error: "Coder workspace creation aborted", lines };
-    }
-
-    if (promptDetected) {
-      const parsed = this._parseParameterPrompt(rawOutput);
-      if (parsed) {
-        return { type: "prompt", param: parsed, lines };
-      }
-    }
-
-    if (exitCode !== 0) {
-      const parsed = this._parseParameterPrompt(rawOutput);
-      if (parsed) {
-        return { type: "prompt", param: parsed, lines };
-      }
-      return {
-        type: "error",
-        error: `coder create failed with exit code ${String(exitCode)}`,
-        lines,
-      };
-    }
-
-    return { type: "success", lines };
-  }
-
-  private _parseParameterPrompt(output: string): { name: string; value: string } | null {
-    const re = /^([^\n]+)\n {2}[^\n]+\n\n> Enter a value \(default: "([^"]*)"\):/m;
-    const match = re.exec(output);
-    return match ? { name: match[1].trim(), value: match[2] } : null;
-  }
-
-  // ============================================================================
-  // END TEMPORARY WORKAROUND
-  // ============================================================================
 }
 
 // Singleton instance

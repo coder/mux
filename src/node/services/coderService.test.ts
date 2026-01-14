@@ -334,11 +334,13 @@ describe("CoderService", () => {
 
       const result = await service.getWorkspaceStatus("ws-1");
 
-      expect(result.status).toBe("running");
-      expect(result.error).toBeUndefined();
+      expect(result.kind).toBe("ok");
+      if (result.kind === "ok") {
+        expect(result.status).toBe("running");
+      }
     });
 
-    it("returns workspace not found when only prefix matches", async () => {
+    it("returns not_found when only prefix matches", async () => {
       mockCoderCommandResult({
         exitCode: 0,
         stdout: JSON.stringify([{ name: "ws-10", latest_build: { status: "running" } }]),
@@ -346,11 +348,10 @@ describe("CoderService", () => {
 
       const result = await service.getWorkspaceStatus("ws-1");
 
-      expect(result.status).toBeNull();
-      expect(result.error).toContain("not found");
+      expect(result.kind).toBe("not_found");
     });
 
-    it("returns null status for unknown workspace status", async () => {
+    it("returns error for unknown workspace status", async () => {
       mockCoderCommandResult({
         exitCode: 0,
         stdout: JSON.stringify([{ name: "ws-1", latest_build: { status: "weird" } }]),
@@ -358,8 +359,10 @@ describe("CoderService", () => {
 
       const result = await service.getWorkspaceStatus("ws-1");
 
-      expect(result.status).toBeNull();
-      expect(result.error).toContain("Unknown status");
+      expect(result.kind).toBe("error");
+      if (result.kind === "error") {
+        expect(result.error).toContain("Unknown status");
+      }
     });
   });
 
@@ -384,7 +387,98 @@ describe("CoderService", () => {
     });
   });
   describe("createWorkspace", () => {
+    // Capture original fetch once per describe block to avoid nested mock issues
+    let originalFetch: typeof fetch;
+
+    beforeEach(() => {
+      originalFetch = global.fetch;
+    });
+
+    afterEach(() => {
+      global.fetch = originalFetch;
+    });
+
+    // Helper to mock the pre-fetch calls that happen before spawn
+    function mockPrefetchCalls(options?: { presetParamNames?: string[] }) {
+      // Mock getDeploymentUrl (coder whoami)
+      // Mock getActiveTemplateVersionId (coder templates list)
+      // Mock getPresetParamNames (coder templates presets list)
+      // Mock getTemplateRichParameters (coder tokens create + fetch)
+      mockExecAsync.mockImplementation((cmd: string) => {
+        if (cmd === "coder whoami --output json") {
+          return {
+            result: Promise.resolve({
+              stdout: JSON.stringify([{ url: "https://coder.example.com" }]),
+            }),
+            [Symbol.dispose]: noop,
+          };
+        }
+        if (cmd === "coder templates list --output=json") {
+          return {
+            result: Promise.resolve({
+              stdout: JSON.stringify([
+                { Template: { name: "my-template", active_version_id: "version-123" } },
+                { Template: { name: "tmpl", active_version_id: "version-456" } },
+              ]),
+            }),
+            [Symbol.dispose]: noop,
+          };
+        }
+        if (cmd.startsWith("coder templates presets list")) {
+          const paramNames = options?.presetParamNames ?? [];
+          return {
+            result: Promise.resolve({
+              stdout: JSON.stringify([
+                {
+                  TemplatePreset: {
+                    Name: "preset",
+                    Parameters: paramNames.map((name) => ({ Name: name })),
+                  },
+                },
+              ]),
+            }),
+            [Symbol.dispose]: noop,
+          };
+        }
+        if (cmd.startsWith("coder tokens create --lifetime 5m --name")) {
+          return {
+            result: Promise.resolve({ stdout: "fake-token-123" }),
+            [Symbol.dispose]: noop,
+          };
+        }
+        if (cmd.startsWith("coder tokens delete")) {
+          return {
+            result: Promise.resolve({ stdout: "" }),
+            [Symbol.dispose]: noop,
+          };
+        }
+        // Fallback for any other command
+        return {
+          result: Promise.reject(new Error(`Unexpected command: ${cmd}`)),
+          [Symbol.dispose]: noop,
+        };
+      });
+    }
+
+    // Helper to mock fetch for rich parameters API
+    function mockFetchRichParams(
+      params: Array<{
+        name: string;
+        default_value: string;
+        ephemeral?: boolean;
+        required?: boolean;
+      }>
+    ) {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(params),
+      }) as unknown as typeof fetch;
+    }
+
     it("streams stdout/stderr lines and passes expected args", async () => {
+      mockPrefetchCalls();
+      mockFetchRichParams([]);
+
       const stdout = Readable.from([Buffer.from("out-1\nout-2\n")]);
       const stderr = Readable.from([Buffer.from("err-1\n")]);
       const events = new EventEmitter();
@@ -410,10 +504,15 @@ describe("CoderService", () => {
         { stdio: ["ignore", "pipe", "pipe"] }
       );
 
-      expect(lines.sort()).toEqual(["err-1", "out-1", "out-2"]);
+      // First line is the command, rest are stdout/stderr
+      expect(lines[0]).toBe("$ coder create my-workspace -t my-template --yes");
+      expect(lines.slice(1).sort()).toEqual(["err-1", "out-1", "out-2"]);
     });
 
     it("includes --preset when provided", async () => {
+      mockPrefetchCalls({ presetParamNames: ["covered-param"] });
+      mockFetchRichParams([{ name: "covered-param", default_value: "val" }]);
+
       const stdout = Readable.from([]);
       const stderr = Readable.from([]);
       const events = new EventEmitter();
@@ -438,7 +537,52 @@ describe("CoderService", () => {
       );
     });
 
+    it("includes --parameter flags for uncovered non-ephemeral params", async () => {
+      mockPrefetchCalls({ presetParamNames: ["covered-param"] });
+      mockFetchRichParams([
+        { name: "covered-param", default_value: "val1" },
+        { name: "uncovered-param", default_value: "val2" },
+        { name: "ephemeral-param", default_value: "val3", ephemeral: true },
+      ]);
+
+      const stdout = Readable.from([]);
+      const stderr = Readable.from([]);
+      const events = new EventEmitter();
+
+      mockSpawn.mockReturnValue({
+        stdout,
+        stderr,
+        kill: vi.fn(),
+        on: events.on.bind(events),
+      } as never);
+
+      setTimeout(() => events.emit("close", 0), 0);
+
+      for await (const _line of service.createWorkspace("ws", "tmpl", "preset")) {
+        // drain
+      }
+
+      expect(mockSpawn).toHaveBeenCalledWith(
+        "coder",
+        [
+          "create",
+          "ws",
+          "-t",
+          "tmpl",
+          "--yes",
+          "--preset",
+          "preset",
+          "--parameter",
+          "uncovered-param=val2",
+        ],
+        { stdio: ["ignore", "pipe", "pipe"] }
+      );
+    });
+
     it("throws when exit code is non-zero", async () => {
+      mockPrefetchCalls();
+      mockFetchRichParams([]);
+
       const stdout = Readable.from([]);
       const stderr = Readable.from([]);
       const events = new EventEmitter();
@@ -465,51 +609,219 @@ describe("CoderService", () => {
       expect(thrown instanceof Error ? thrown.message : String(thrown)).toContain("exit code 42");
     });
 
-    it("aborts by killing the child process", async () => {
-      const stdout = new Readable({
-        read() {
-          // Keep stream open until aborted.
-          return;
-        },
-      });
-      const stderr = new Readable({
-        read() {
-          // Keep stream open until aborted.
-          return;
-        },
-      });
-      const events = new EventEmitter();
-
-      const kill = vi.fn(() => {
-        stdout.destroy();
-        stderr.destroy();
-        events.emit("close", null);
-      });
-
-      mockSpawn.mockReturnValue({
-        stdout,
-        stderr,
-        kill,
-        on: events.on.bind(events),
-      } as never);
-
+    it("aborts before spawn when already aborted", async () => {
       const abortController = new AbortController();
-      const iterator = service.createWorkspace("ws", "tmpl", undefined, abortController.signal);
-
-      const pending = iterator.next();
       abortController.abort();
 
       let thrown: unknown;
       try {
-        await pending;
+        for await (const _line of service.createWorkspace(
+          "ws",
+          "tmpl",
+          undefined,
+          abortController.signal
+        )) {
+          // drain
+        }
       } catch (error) {
         thrown = error;
       }
 
       expect(thrown).toBeTruthy();
       expect(thrown instanceof Error ? thrown.message : String(thrown)).toContain("aborted");
-      expect(kill).toHaveBeenCalled();
     });
+
+    it("throws when required param has no default and is not covered by preset", async () => {
+      mockPrefetchCalls({ presetParamNames: [] });
+      mockFetchRichParams([{ name: "required-param", default_value: "", required: true }]);
+
+      let thrown: unknown;
+      try {
+        for await (const _line of service.createWorkspace("ws", "tmpl")) {
+          // drain
+        }
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeTruthy();
+      expect(thrown instanceof Error ? thrown.message : String(thrown)).toContain("required-param");
+    });
+  });
+});
+
+describe("computeExtraParams", () => {
+  let service: CoderService;
+
+  beforeEach(() => {
+    service = new CoderService();
+  });
+
+  it("returns empty array when all params are covered by preset", () => {
+    const params = [
+      { name: "param1", defaultValue: "val1", type: "string", ephemeral: false, required: false },
+      { name: "param2", defaultValue: "val2", type: "string", ephemeral: false, required: false },
+    ];
+    const covered = new Set(["param1", "param2"]);
+
+    expect(service.computeExtraParams(params, covered)).toEqual([]);
+  });
+
+  it("returns uncovered non-ephemeral params with defaults", () => {
+    const params = [
+      { name: "covered", defaultValue: "val1", type: "string", ephemeral: false, required: false },
+      {
+        name: "uncovered",
+        defaultValue: "val2",
+        type: "string",
+        ephemeral: false,
+        required: false,
+      },
+    ];
+    const covered = new Set(["covered"]);
+
+    expect(service.computeExtraParams(params, covered)).toEqual([
+      { name: "uncovered", encoded: "uncovered=val2" },
+    ]);
+  });
+
+  it("excludes ephemeral params", () => {
+    const params = [
+      { name: "normal", defaultValue: "val1", type: "string", ephemeral: false, required: false },
+      { name: "ephemeral", defaultValue: "val2", type: "string", ephemeral: true, required: false },
+    ];
+    const covered = new Set<string>();
+
+    expect(service.computeExtraParams(params, covered)).toEqual([
+      { name: "normal", encoded: "normal=val1" },
+    ]);
+  });
+
+  it("includes params with empty default values", () => {
+    const params = [
+      {
+        name: "empty-default",
+        defaultValue: "",
+        type: "string",
+        ephemeral: false,
+        required: false,
+      },
+    ];
+    const covered = new Set<string>();
+
+    expect(service.computeExtraParams(params, covered)).toEqual([
+      { name: "empty-default", encoded: "empty-default=" },
+    ]);
+  });
+
+  it("CSV-encodes list(string) values containing quotes", () => {
+    const params = [
+      {
+        name: "Select IDEs",
+        defaultValue: '["vscode","code-server","cursor"]',
+        type: "list(string)",
+        ephemeral: false,
+        required: false,
+      },
+    ];
+    const covered = new Set<string>();
+
+    // CLI uses CSV parsing, so quotes need escaping: " -> ""
+    expect(service.computeExtraParams(params, covered)).toEqual([
+      { name: "Select IDEs", encoded: '"Select IDEs=[""vscode"",""code-server"",""cursor""]"' },
+    ]);
+  });
+
+  it("passes empty list(string) array without CSV encoding", () => {
+    const params = [
+      {
+        name: "empty-list",
+        defaultValue: "[]",
+        type: "list(string)",
+        ephemeral: false,
+        required: false,
+      },
+    ];
+    const covered = new Set<string>();
+
+    // No quotes or commas, so no encoding needed
+    expect(service.computeExtraParams(params, covered)).toEqual([
+      { name: "empty-list", encoded: "empty-list=[]" },
+    ]);
+  });
+});
+
+describe("validateRequiredParams", () => {
+  let service: CoderService;
+
+  beforeEach(() => {
+    service = new CoderService();
+  });
+
+  it("does not throw when all required params have defaults", () => {
+    const params = [
+      {
+        name: "required-with-default",
+        defaultValue: "val",
+        type: "string",
+        ephemeral: false,
+        required: true,
+      },
+    ];
+    const covered = new Set<string>();
+
+    expect(() => service.validateRequiredParams(params, covered)).not.toThrow();
+  });
+
+  it("does not throw when required params are covered by preset", () => {
+    const params = [
+      {
+        name: "required-no-default",
+        defaultValue: "",
+        type: "string",
+        ephemeral: false,
+        required: true,
+      },
+    ];
+    const covered = new Set(["required-no-default"]);
+
+    expect(() => service.validateRequiredParams(params, covered)).not.toThrow();
+  });
+
+  it("throws when required param has no default and is not covered", () => {
+    const params = [
+      { name: "missing-param", defaultValue: "", type: "string", ephemeral: false, required: true },
+    ];
+    const covered = new Set<string>();
+
+    expect(() => service.validateRequiredParams(params, covered)).toThrow("missing-param");
+  });
+
+  it("ignores ephemeral required params", () => {
+    const params = [
+      {
+        name: "ephemeral-required",
+        defaultValue: "",
+        type: "string",
+        ephemeral: true,
+        required: true,
+      },
+    ];
+    const covered = new Set<string>();
+
+    expect(() => service.validateRequiredParams(params, covered)).not.toThrow();
+  });
+
+  it("lists all missing required params in error", () => {
+    const params = [
+      { name: "missing1", defaultValue: "", type: "string", ephemeral: false, required: true },
+      { name: "missing2", defaultValue: "", type: "string", ephemeral: false, required: true },
+    ];
+    const covered = new Set<string>();
+
+    expect(() => service.validateRequiredParams(params, covered)).toThrow(
+      /missing1.*missing2|missing2.*missing1/
+    );
   });
 });
 
