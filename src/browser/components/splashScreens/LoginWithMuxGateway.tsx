@@ -1,7 +1,11 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { SplashScreen } from "./SplashScreen";
 import { useAPI } from "@/browser/contexts/API";
 import { getStoredAuthToken } from "@/browser/components/AuthTokenModal";
+import { isProviderSupported } from "@/browser/hooks/useGatewayModels";
+import { getSuggestedModels } from "@/browser/hooks/useModelsFromSettings";
+import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
+import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 
 interface OAuthMessage {
@@ -20,9 +24,20 @@ function getBackendBaseUrl(): string {
   // @ts-ignore - import.meta is available in Vite
   return import.meta.env.VITE_BACKEND_URL ?? window.location.origin;
 }
+
+const GATEWAY_MODELS_KEY = "gateway-models";
+const GATEWAY_CONFIGURED_KEY = "gateway-available";
 type LoginStatus = "idle" | "starting" | "waiting" | "success" | "error";
 
 export function LoginWithMuxGatewaySplash(props: { onDismiss: () => void }) {
+  const { config } = useProvidersConfig();
+
+  const eligibleGatewayModels = useMemo(
+    () => getSuggestedModels(config).filter(isProviderSupported),
+    [config]
+  );
+
+  const applyDefaultModelsOnSuccessRef = useRef(false);
   const { api } = useAPI();
   const { open: openSettings } = useSettings();
 
@@ -44,6 +59,7 @@ export function LoginWithMuxGatewaySplash(props: { onDismiss: () => void }) {
   const [serverState, setServerState] = useState<string | null>(null);
 
   const handleDismiss = () => {
+    applyDefaultModelsOnSuccessRef.current = false;
     loginAttemptRef.current++;
 
     if (isDesktop && api && desktopFlowId) {
@@ -54,6 +70,13 @@ export function LoginWithMuxGatewaySplash(props: { onDismiss: () => void }) {
 
   const startLogin = async () => {
     const attempt = ++loginAttemptRef.current;
+
+    // Enable Mux Gateway for all eligible models after the *first* successful login.
+    // (If config isn't loaded yet, fall back to the persisted gateway-available state.)
+    const isLoggedIn =
+      config?.["mux-gateway"]?.couponCodeSet ??
+      readPersistedState<boolean>(GATEWAY_CONFIGURED_KEY, false);
+    applyDefaultModelsOnSuccessRef.current = !isLoggedIn;
 
     try {
       setError(null);
@@ -99,6 +122,11 @@ export function LoginWithMuxGatewaySplash(props: { onDismiss: () => void }) {
         }
 
         if (waitResult.success) {
+          if (applyDefaultModelsOnSuccessRef.current) {
+            updatePersistedState(GATEWAY_MODELS_KEY, eligibleGatewayModels);
+            applyDefaultModelsOnSuccessRef.current = false;
+          }
+
           setStatus("success");
           return;
         }
@@ -182,6 +210,11 @@ export function LoginWithMuxGatewaySplash(props: { onDismiss: () => void }) {
       if (data.state !== serverState) return;
 
       if (data.ok === true) {
+        if (applyDefaultModelsOnSuccessRef.current) {
+          updatePersistedState(GATEWAY_MODELS_KEY, eligibleGatewayModels);
+          applyDefaultModelsOnSuccessRef.current = false;
+        }
+
         setStatus("success");
         return;
       }
@@ -193,7 +226,7 @@ export function LoginWithMuxGatewaySplash(props: { onDismiss: () => void }) {
 
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [isDesktop, status, serverState, backendOrigin]);
+  }, [isDesktop, status, serverState, backendOrigin, eligibleGatewayModels]);
 
   const isSuccess = status === "success";
 
