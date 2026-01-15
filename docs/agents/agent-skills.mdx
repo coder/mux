@@ -80,6 +80,12 @@ metadata:
 
 mux injects an `<agent-skills>` block into the system prompt listing the available skills.
 
+You can apply a skill in two ways:
+
+- **Explicit (slash command)**: type `/{skill-name} ...` in the chat input. mux will send your message normally, but inject the skill content into the system context for that send.
+  - Type `/` to see skills in the suggestions list.
+- **Agent-initiated (tool call)**: the agent can load skills on-demand.
+
 To load a skill, the agent calls:
 
 ```ts
@@ -101,7 +107,8 @@ agent_skill_read_file({ name: "my-skill", filePath: "references/template.md" });
 
 ## Current limitations
 
-- There is no `/skill` command or UI activation flow yet; skills are loaded on-demand via tools.
+- Slash command invocation supports only a single skill as the first token (for example `/{skill-name} ...`).
+- Skill bodies may be truncated when injected to avoid accidental mega-prompts.
 - `allowed-tools` is not enforced by mux (it is tolerated in frontmatter, but ignored).
 
 ## Further reading
