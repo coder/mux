@@ -1931,6 +1931,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
               text: messageTextForSend,
               imageParts,
               reviews: reviewsData,
+              muxMetadata: skillInvocation
+                ? {
+                    type: "agent-skill",
+                    rawCommand: messageText,
+                    skillName: skillInvocation.descriptor.name,
+                    scope: skillInvocation.descriptor.scope,
+                  }
+                : undefined,
               model: sendMessageOptions.model,
               agentId: sendMessageOptions.agentId ?? "exec",
             }),
