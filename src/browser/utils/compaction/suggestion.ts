@@ -38,14 +38,14 @@ export function getExplicitCompactionSuggestion(options: {
   const normalized = normalizeGatewayModel(modelId);
   const colonIndex = normalized.indexOf(":");
   const provider = colonIndex === -1 ? null : normalized.slice(0, colonIndex);
-  const hasProviderCreds = provider
-    ? options.providersConfig?.[provider]?.apiKeySet === true
+  const isProviderConfigured = provider
+    ? options.providersConfig?.[provider]?.isConfigured === true
     : false;
 
   // "Configured" is intentionally fuzzy: we require either provider credentials,
   // or gateway routing enabled for that model (avoids suggesting unusable models).
   const routesThroughGateway = isGatewayFormat(toGatewayModel(modelId));
-  if (!hasProviderCreds && !routesThroughGateway) {
+  if (!isProviderConfigured && !routesThroughGateway) {
     return null;
   }
 
@@ -84,9 +84,9 @@ export function getHigherContextCompactionSuggestion(options: {
   for (const known of Object.values(KNOWN_MODELS)) {
     // "Configured" is intentionally fuzzy: we require either provider credentials,
     // or gateway routing enabled for that model (avoids suggesting unusable models).
-    const hasProviderCreds = options.providersConfig?.[known.provider]?.apiKeySet === true;
+    const isProviderConfigured = options.providersConfig?.[known.provider]?.isConfigured === true;
     const routesThroughGateway = isGatewayFormat(toGatewayModel(known.id));
-    if (!hasProviderCreds && !routesThroughGateway) {
+    if (!isProviderConfigured && !routesThroughGateway) {
       continue;
     }
 
