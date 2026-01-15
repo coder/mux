@@ -1,14 +1,4 @@
 # zizmor configuration
 # https://docs.zizmor.sh/configuration/
 
-rules:
-  # TODO: Move these workflow-level permissions to job-level for least-privilege.
-  # These permissions are documented in the workflow files with specific reasons.
-  # Moving to job-level requires restructuring since multiple jobs need them.
-  excessive-permissions:
-    ignore:
-      # TODO: Move id-token:write to only the jobs that need GCP workload identity
-      - pr.yml:25
-      # TODO: Move contents:write and id-token:write to only the release job
-      - release.yml:14
-      - release.yml:15
+rules: {}
