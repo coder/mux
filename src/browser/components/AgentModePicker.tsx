@@ -4,6 +4,7 @@ import { ChevronDown, FolderX, RefreshCw } from "lucide-react";
 import { useAgent } from "@/browser/contexts/AgentContext";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
+import { LoadingIndicator } from "@/browser/components/ui/LoadingIndicator";
 import { cn } from "@/common/lib/utils";
 import { DocsLink } from "@/browser/components/DocsLink";
 import {
@@ -521,7 +522,11 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
                     refreshing && "text-accent"
                   )}
                 >
-                  <RefreshCw className={cn("h-3 w-3", refreshing && "animate-spin")} />
+                  {refreshing ? (
+                    <LoadingIndicator size={12} ariaLabel="Reloading agents" />
+                  ) : (
+                    <RefreshCw className="h-3 w-3" />
+                  )}
                 </button>
               </TooltipTrigger>
               <TooltipContent side="bottom" align="end">

@@ -1,4 +1,5 @@
 import React from "react";
+import { LoadingIndicator } from "@/browser/components/ui/LoadingIndicator";
 import type { WebFetchToolArgs, WebFetchToolResult } from "@/common/types/tools";
 import {
   ToolContainer,
@@ -8,7 +9,6 @@ import {
   ToolDetails,
   DetailSection,
   DetailLabel,
-  LoadingDots,
   ToolIcon,
   ErrorBox,
 } from "./shared/ToolPrimitives";
@@ -114,7 +114,7 @@ export const WebFetchToolCall: React.FC<WebFetchToolCallProps> = ({
             <DetailSection>
               <div className="text-secondary text-[11px]">
                 Fetching page
-                <LoadingDots />
+                <LoadingIndicator size={10} className="ml-1" ariaLabel="Fetching page" />
               </div>
             </DetailSection>
           )}

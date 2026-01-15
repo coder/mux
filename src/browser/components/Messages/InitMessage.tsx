@@ -1,7 +1,8 @@
 import React, { useEffect, useRef } from "react";
 import { cn } from "@/common/lib/utils";
 import type { DisplayedMessage } from "@/common/types/message";
-import { Loader2, Wrench, CheckCircle2, AlertCircle } from "lucide-react";
+import { Wrench, CheckCircle2, AlertCircle } from "lucide-react";
+import { LoadingIndicator } from "@/browser/components/ui/LoadingIndicator";
 import { Shimmer } from "../ai-elements/shimmer";
 
 interface InitMessageProps {
@@ -50,7 +51,7 @@ export const InitMessage = React.memo<InitMessageProps>(({ message, className })
           )}
         >
           {isRunning ? (
-            <Loader2 className="size-3.5 animate-spin" />
+            <LoadingIndicator size={14} ariaLabel="Running init hook" />
           ) : isSuccess ? (
             <CheckCircle2 className="size-3.5" />
           ) : isError ? (

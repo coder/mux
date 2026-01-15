@@ -1,4 +1,5 @@
 import React from "react";
+import { LoadingIndicator } from "@/browser/components/ui/LoadingIndicator";
 import type {
   BashBackgroundListArgs,
   BashBackgroundListResult,
@@ -11,7 +12,6 @@ import {
   StatusIndicator,
   ToolDetails,
   DetailSection,
-  LoadingDots,
   ToolIcon,
   ErrorBox,
 } from "./shared/ToolPrimitives";
@@ -109,7 +109,7 @@ export const BashBackgroundListToolCall: React.FC<BashBackgroundListToolCallProp
             <DetailSection>
               <div className="text-[11px]">
                 Listing processes
-                <LoadingDots />
+                <LoadingIndicator size={10} className="ml-1" ariaLabel="Listing processes" />
               </div>
             </DetailSection>
           )}

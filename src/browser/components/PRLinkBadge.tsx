@@ -2,15 +2,8 @@
  * PR link badge component for displaying GitHub PR status in header.
  */
 
-import {
-  ExternalLink,
-  GitPullRequest,
-  Loader2,
-  Check,
-  X,
-  AlertCircle,
-  CircleDot,
-} from "lucide-react";
+import { ExternalLink, GitPullRequest, Check, X, AlertCircle, CircleDot } from "lucide-react";
+import { LoadingIndicator } from "@/browser/components/ui/LoadingIndicator";
 import type { GitHubPRLinkWithStatus } from "@/common/types/links";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { Button } from "./ui/button";
@@ -57,7 +50,7 @@ function getStatusColorClass(prLink: GitHubPRLinkWithStatus): string {
  */
 function StatusIcon({ prLink }: { prLink: GitHubPRLinkWithStatus }) {
   if (prLink.loading) {
-    return <Loader2 className="h-3 w-3 animate-spin" />;
+    return <LoadingIndicator size={12} ariaLabel="Loading PR status" />;
   }
   if (prLink.error) {
     return <AlertCircle className="h-3 w-3" />;

@@ -4,7 +4,6 @@ import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import {
   Trash2,
   Play,
-  Loader2,
   CheckCircle,
   XCircle,
   Plus,
@@ -16,6 +15,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { Button } from "@/browser/components/ui/button";
+import { LoadingIndicator } from "@/browser/components/ui/LoadingIndicator";
 import {
   Select,
   SelectContent,
@@ -153,7 +153,7 @@ const ToolAllowlistSection: React.FC<{
           Tools: {localAllowlist.length}/{availableTools.length}
         </span>
         <span className="text-muted/60 ml-1">({formatRelativeTime(testedAt)})</span>
-        {saving && <Loader2 className="ml-1 h-3 w-3 animate-spin" />}
+        {saving && <LoadingIndicator size={12} className="ml-1" ariaLabel="Saving" />}
       </button>
 
       {expanded && (
@@ -576,7 +576,7 @@ export const ProjectSettingsSection: React.FC = () => {
         <div className="space-y-2">
           {loading ? (
             <div className="text-muted flex items-center gap-2 py-4 text-sm">
-              <Loader2 className="h-4 w-4 animate-spin" />
+              <LoadingIndicator size={16} ariaLabel="Loading servers" />
               Loading servers…
             </div>
           ) : Object.keys(servers).length === 0 ? (
@@ -668,7 +668,7 @@ export const ProjectSettingsSection: React.FC = () => {
                             title="Save (Enter)"
                           >
                             {savingEdit ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
+                              <LoadingIndicator size={16} ariaLabel="Saving server" />
                             ) : (
                               <Check className="h-4 w-4" />
                             )}
@@ -695,7 +695,7 @@ export const ProjectSettingsSection: React.FC = () => {
                             title="Test connection"
                           >
                             {isTesting ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
+                              <LoadingIndicator size={16} ariaLabel="Testing server" />
                             ) : (
                               <Play className="h-4 w-4" />
                             )}
@@ -871,7 +871,7 @@ export const ProjectSettingsSection: React.FC = () => {
                 disabled={!canTest || testingNew}
               >
                 {testingNew ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <LoadingIndicator size={14} ariaLabel="Testing server" />
                 ) : (
                   <Play className="h-3.5 w-3.5" />
                 )}
@@ -883,7 +883,7 @@ export const ProjectSettingsSection: React.FC = () => {
                 disabled={!canAdd || addingServer}
               >
                 {addingServer ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <LoadingIndicator size={14} ariaLabel="Adding server" />
                 ) : (
                   <Plus className="h-3.5 w-3.5" />
                 )}

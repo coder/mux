@@ -14,7 +14,8 @@ import {
   HelpIndicator,
 } from "@/browser/components/ui/tooltip";
 import { Button } from "@/browser/components/ui/button";
-import { Check, ExternalLink, Link2, Loader2, Trash2, PenTool } from "lucide-react";
+import { Check, ExternalLink, Link2, Trash2, PenTool } from "lucide-react";
+import { LoadingIndicator } from "@/browser/components/ui/LoadingIndicator";
 import { CopyIcon } from "@/browser/components/icons/CopyIcon";
 import { copyToClipboard } from "@/browser/utils/clipboard";
 
@@ -639,7 +640,7 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
               </>
             ) : (
               <div className="flex items-center justify-center py-3">
-                <Loader2 className="text-muted h-4 w-4 animate-spin" />
+                <LoadingIndicator size={16} className="text-muted" ariaLabel="Encrypting" />
                 <span className="text-muted ml-2 text-xs">Encrypting...</span>
               </div>
             )}
@@ -670,7 +671,7 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
                       tabIndex={-1}
                     >
                       {isDeleting ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        <LoadingIndicator size={14} ariaLabel="Deleting shared link" />
                       ) : (
                         <Trash2 className="h-3.5 w-3.5" />
                       )}
@@ -752,7 +753,13 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
                 </span>
               )}
               {/* Inline status: spinner while updating, checkmark on success */}
-              {isUpdating && <Loader2 className="text-muted h-3.5 w-3.5 animate-spin" />}
+              {isUpdating && (
+                <LoadingIndicator
+                  size={14}
+                  className="text-muted"
+                  ariaLabel="Updating expiration"
+                />
+              )}
               {showUpdated && <Check className="h-3.5 w-3.5 text-green-500" />}
             </div>
 

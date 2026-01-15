@@ -7,7 +7,8 @@
 import React from "react";
 import { useAPI } from "@/browser/contexts/API";
 import { workspaceStore } from "@/browser/stores/WorkspaceStore";
-import { RefreshCw, AlertCircle } from "lucide-react";
+import { AlertCircle } from "lucide-react";
+import { LoadingIndicator } from "@/browser/components/ui/LoadingIndicator";
 import { TextFileViewer } from "./TextFileViewer";
 import { ImageFileViewer } from "./ImageFileViewer";
 import {
@@ -149,7 +150,7 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
   if (state.status === "loading") {
     return (
       <div className="flex h-full items-center justify-center">
-        <RefreshCw className="text-muted h-5 w-5 animate-spin" />
+        <LoadingIndicator size={20} className="text-muted" ariaLabel="Loading file" />
       </div>
     );
   }

@@ -244,7 +244,7 @@ export function Button(props: ButtonProps) {
       onMouseUp={handleMouseUp}
     >
       {props.loading && (
-        <span className="inline-block animate-spin mr-2">⟳</span>
+        <span className="inline-block mr-2">⟳</span>
       )}
       {props.label}
     </button>
@@ -338,7 +338,7 @@ const SAMPLE_DIFF = `--- /tmp/Button.old.tsx	2026-01-15 05:00:17.950815972 +0000
      >
 -      {props.isLoading && (
 +      {props.loading && (
-         <span className="inline-block animate-spin mr-2">⟳</span>
+         <span className="inline-block mr-2">⟳</span>
        )}
        {props.label}
 `;

@@ -1,4 +1,5 @@
 import React from "react";
+import { LoadingIndicator } from "@/browser/components/ui/LoadingIndicator";
 import { Layers, Link } from "lucide-react";
 import type { BashOutputToolArgs, BashOutputToolResult } from "@/common/types/tools";
 import {
@@ -10,7 +11,6 @@ import {
   DetailSection,
   DetailLabel,
   DetailContent,
-  LoadingDots,
   ToolIcon,
   ErrorBox,
   OutputStatusBadge,
@@ -87,7 +87,7 @@ export const BashOutputToolCall: React.FC<BashOutputToolCallProps> = ({
             <DetailSection>
               <DetailContent className="px-2 py-1.5">
                 Waiting for result
-                <LoadingDots />
+                <LoadingIndicator size={10} className="ml-1" ariaLabel="Waiting" />
               </DetailContent>
             </DetailSection>
           )}

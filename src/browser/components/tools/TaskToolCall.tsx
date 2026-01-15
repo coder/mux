@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { LoadingIndicator } from "@/browser/components/ui/LoadingIndicator";
 import {
   ToolContainer,
   ToolHeader,
@@ -6,7 +7,6 @@ import {
   ToolName,
   StatusIndicator,
   ToolDetails,
-  LoadingDots,
   ErrorBox,
 } from "./shared/ToolPrimitives";
 import {
@@ -267,7 +267,7 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({ args, result, status
             {effectiveStatus === "executing" && !reportMarkdown && (
               <div className="text-muted text-[11px] italic">
                 Task {isBackground ? "running in background" : "executing"}
-                <LoadingDots />
+                <LoadingIndicator size={10} className="ml-1" ariaLabel="Loading" />
               </div>
             )}
 
@@ -352,7 +352,7 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
             ) : status === "executing" ? (
               <div className="text-muted text-[11px] italic">
                 Waiting for tasks to complete
-                <LoadingDots />
+                <LoadingIndicator size={10} className="ml-1" ariaLabel="Loading" />
               </div>
             ) : (
               <div className="text-muted text-[11px] italic">No tasks specified</div>
@@ -457,7 +457,7 @@ export const TaskListToolCall: React.FC<TaskListToolCallProps> = ({
             ) : status === "executing" ? (
               <div className="text-muted text-[11px] italic">
                 Fetching tasks
-                <LoadingDots />
+                <LoadingIndicator size={10} className="ml-1" ariaLabel="Loading" />
               </div>
             ) : (
               <div className="text-muted text-[11px] italic">No tasks found</div>
@@ -544,7 +544,7 @@ export const TaskTerminateToolCall: React.FC<TaskTerminateToolCallProps> = ({
             ) : status === "executing" ? (
               <div className="text-muted text-[11px] italic">
                 Terminating tasks
-                <LoadingDots />
+                <LoadingIndicator size={10} className="ml-1" ariaLabel="Loading" />
               </div>
             ) : (
               <div className="text-muted text-[10px]">Tasks to terminate: {taskIds.join(", ")}</div>

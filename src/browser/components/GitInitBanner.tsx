@@ -1,5 +1,6 @@
 import React, { useCallback, useState } from "react";
-import { Check, GitBranch, Loader2 } from "lucide-react";
+import { Check, GitBranch } from "lucide-react";
+import { LoadingIndicator } from "@/browser/components/ui/LoadingIndicator";
 import { useAPI } from "@/browser/contexts/API";
 
 interface GitInitBannerProps {
@@ -89,7 +90,7 @@ export function GitInitBanner(props: GitInitBannerProps) {
       >
         {isLoading ? (
           <>
-            <Loader2 className="h-4 w-4 animate-spin" />
+            <LoadingIndicator size={16} ariaLabel="Running git init" />
             Running...
           </>
         ) : (

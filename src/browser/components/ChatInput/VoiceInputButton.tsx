@@ -4,7 +4,8 @@
  */
 
 import React from "react";
-import { Mic, Loader2 } from "lucide-react";
+import { Mic } from "lucide-react";
+import { LoadingIndicator } from "@/browser/components/ui/LoadingIndicator";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { cn } from "@/common/lib/utils";
@@ -53,8 +54,6 @@ export const VoiceInputButton: React.FC<VoiceInputButtonProps> = (props) => {
       ? "animate-pulse"
       : STATE_COLORS[props.state as keyof typeof STATE_COLORS];
 
-  const Icon = isTranscribing ? Loader2 : Mic;
-
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -71,7 +70,11 @@ export const VoiceInputButton: React.FC<VoiceInputButtonProps> = (props) => {
           )}
           style={isRecording && !isDisabled ? { color: props.agentColor } : undefined}
         >
-          <Icon className={cn("h-4 w-4", isTranscribing && "animate-spin")} strokeWidth={1.5} />
+          {isTranscribing ? (
+            <LoadingIndicator size={16} ariaLabel={label} />
+          ) : (
+            <Mic className="h-4 w-4" strokeWidth={1.5} />
+          )}
         </button>
       </TooltipTrigger>
       <TooltipContent>

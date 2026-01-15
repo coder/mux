@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { LoadingDots } from "./ToolPrimitives";
+import { LoadingIndicator } from "@/browser/components/ui/LoadingIndicator";
 import type { ToolErrorResult } from "@/common/types/tools";
 
 /**
@@ -31,7 +31,8 @@ export function getStatusDisplay(status: ToolStatus): React.ReactNode {
     case "executing":
       return (
         <>
-          <LoadingDots /> <span className="status-text">executing</span>
+          <LoadingIndicator size={10} className="mr-1" ariaLabel="Executing" />
+          <span className="status-text">executing</span>
         </>
       );
     case "completed":

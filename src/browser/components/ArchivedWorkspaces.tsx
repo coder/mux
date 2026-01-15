@@ -3,7 +3,8 @@ import { cn } from "@/common/lib/utils";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { useAPI } from "@/browser/contexts/API";
-import { Trash2, Search, Loader2 } from "lucide-react";
+import { Trash2, Search } from "lucide-react";
+import { LoadingIndicator } from "@/browser/components/ui/LoadingIndicator";
 import { ArchiveIcon, ArchiveRestoreIcon } from "./icons/ArchiveIcon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { RuntimeBadge } from "./RuntimeBadge";
@@ -691,7 +692,7 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
                                 aria-label={`Delete workspace ${displayTitle}`}
                               >
                                 {isProcessing ? (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                  <LoadingIndicator size={16} ariaLabel="Deleting workspace" />
                                 ) : (
                                   <Trash2 className="h-4 w-4" />
                                 )}

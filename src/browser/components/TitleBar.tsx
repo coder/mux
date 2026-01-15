@@ -4,7 +4,8 @@ import { VERSION } from "@/version";
 import { SettingsButton } from "./SettingsButton";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import type { UpdateStatus } from "@/common/orpc/types";
-import { Download, Loader2, RefreshCw } from "lucide-react";
+import { Download, RefreshCw } from "lucide-react";
+import { LoadingIndicator } from "@/browser/components/ui/LoadingIndicator";
 
 import { useTutorial } from "@/browser/contexts/TutorialContext";
 import MuxLogoDark from "@/browser/assets/logos/mux-logo-dark.svg?react";
@@ -239,7 +240,7 @@ export function TitleBar() {
       updateStatus.type === "checking" ||
       isCheckingOnHover
     ) {
-      return <Loader2 className="size-3.5 animate-spin" />;
+      return <LoadingIndicator size={14} ariaLabel="Checking for updates" />;
     }
 
     return null;

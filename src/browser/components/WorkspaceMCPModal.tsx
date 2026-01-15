@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Server, Loader2 } from "lucide-react";
+import { Server } from "lucide-react";
+import { LoadingIndicator } from "@/browser/components/ui/LoadingIndicator";
 import { Button } from "@/browser/components/ui/button";
 import { Switch } from "@/browser/components/ui/switch";
 import { useSettings } from "@/browser/contexts/SettingsContext";
@@ -259,7 +260,7 @@ export const WorkspaceMCPModal: React.FC<WorkspaceMCPModalProps> = ({
 
         {loading ? (
           <div className="flex items-center justify-center py-8">
-            <Loader2 className="text-muted h-6 w-6 animate-spin" />
+            <LoadingIndicator size={24} className="text-muted" ariaLabel="Loading MCP servers" />
           </div>
         ) : !hasServers ? (
           <div className="text-muted py-8 text-center">
@@ -329,7 +330,7 @@ export const WorkspaceMCPModal: React.FC<WorkspaceMCPModalProps> = ({
                           disabled={isLoadingTools}
                         >
                           {isLoadingTools ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
+                            <LoadingIndicator size={16} ariaLabel="Fetching tools" />
                           ) : tools ? (
                             "Refresh Tools"
                           ) : (
@@ -370,7 +371,7 @@ export const WorkspaceMCPModal: React.FC<WorkspaceMCPModalProps> = ({
                 Cancel
               </Button>
               <Button onClick={() => void handleSave()} disabled={saving}>
-                {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                {saving ? <LoadingIndicator size={16} className="mr-2" ariaLabel="Saving" /> : null}
                 Save
               </Button>
             </div>

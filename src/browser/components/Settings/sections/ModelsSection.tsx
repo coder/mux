@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect } from "react";
-import { Plus, Loader2, Check, ChevronDown } from "lucide-react";
+import { Plus, Check, ChevronDown } from "lucide-react";
+import { LoadingIndicator } from "@/browser/components/ui/LoadingIndicator";
 import { SUPPORTED_PROVIDERS, PROVIDER_DISPLAY_NAMES } from "@/common/constants/providers";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import {
@@ -340,7 +341,7 @@ export function ModelsSection() {
   if (loading || !config) {
     return (
       <div className="flex items-center justify-center gap-2 py-12">
-        <Loader2 className="text-muted h-5 w-5 animate-spin" />
+        <LoadingIndicator size={20} className="text-muted" ariaLabel="Loading settings" />
         <span className="text-muted text-sm">Loading settings...</span>
       </div>
     );

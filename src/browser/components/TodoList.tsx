@@ -1,4 +1,5 @@
 import React from "react";
+import { LoadingIndicator } from "@/browser/components/ui/LoadingIndicator";
 import { cn } from "@/common/lib/utils";
 import type { TodoItem } from "@/common/types/tools";
 
@@ -123,8 +124,7 @@ export const TodoList: React.FC<TodoListProps> = ({ todos }) => {
                 className={cn(
                   "whitespace-nowrap",
                   todo.status === "completed" && "line-through",
-                  todo.status === "in_progress" &&
-                    "font-medium after:content-['...'] after:inline after:overflow-hidden after:animate-[ellipsis_1.5s_steps(4,end)_infinite]"
+                  todo.status === "in_progress" && "font-medium"
                 )}
                 style={{
                   color: statusTextColors[todo.status],
@@ -132,6 +132,9 @@ export const TodoList: React.FC<TodoListProps> = ({ todos }) => {
                 }}
               >
                 {todo.content}
+                {todo.status === "in_progress" && (
+                  <LoadingIndicator size={10} className="ml-1" ariaLabel="In progress" />
+                )}
               </div>
             </div>
           </div>

@@ -4,7 +4,7 @@
  */
 
 import React, { useRef, useState, useLayoutEffect, useEffect } from "react";
-import { Loader2 } from "lucide-react";
+import { LoadingIndicator } from "@/browser/components/ui/LoadingIndicator";
 import { cn } from "@/common/lib/utils";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import type { VoiceInputState } from "@/browser/hooks/useVoiceInput";
@@ -80,7 +80,7 @@ export const RecordingOverlay: React.FC<RecordingOverlayProps> = (props) => {
             height={32}
           />
         ) : (
-          <Loader2 className="h-5 w-5 animate-spin text-amber-500" />
+          <LoadingIndicator size={20} className="text-amber-500" ariaLabel={statusText} />
         )}
       </div>
 

@@ -1,4 +1,5 @@
 import React from "react";
+import { LoadingIndicator } from "@/browser/components/ui/LoadingIndicator";
 import { FileIcon } from "@/browser/components/FileIcon";
 import { parsePatch } from "diff";
 import type {
@@ -17,7 +18,6 @@ import {
   ToolDetails,
   DetailSection,
   DetailLabel,
-  LoadingDots,
   ToolIcon,
   ErrorBox,
 } from "./shared/ToolPrimitives";
@@ -178,7 +178,7 @@ export const FileEditToolCall: React.FC<FileEditToolCallProps> = ({
             <DetailSection>
               <div className="text-secondary text-[11px]">
                 Waiting for result
-                <LoadingDots />
+                <LoadingIndicator size={10} className="ml-1" ariaLabel="Waiting for result" />
               </div>
             </DetailSection>
           )}

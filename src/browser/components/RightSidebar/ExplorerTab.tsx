@@ -19,6 +19,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { FileIcon } from "../FileIcon";
+import { LoadingIndicator } from "@/browser/components/ui/LoadingIndicator";
 import { cn } from "@/common/lib/utils";
 import type { FileTreeNode } from "@/common/utils/git/numstatParser";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
@@ -367,7 +368,11 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
           {node.isDirectory ? (
             <>
               {isLoading ? (
-                <RefreshCw className="text-muted h-3 w-3 shrink-0 animate-spin" />
+                <LoadingIndicator
+                  size={12}
+                  className="text-muted shrink-0"
+                  ariaLabel="Loading directory"
+                />
               ) : isExpanded ? (
                 <ChevronDown className="text-muted h-3 w-3 shrink-0" />
               ) : (
@@ -443,7 +448,11 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
                 onClick={handleRefresh}
                 disabled={isRootLoading}
               >
-                <RefreshCw className={cn("h-3.5 w-3.5", isRootLoading && "animate-spin")} />
+                {isRootLoading ? (
+                  <LoadingIndicator size={14} ariaLabel="Refreshing files" />
+                ) : (
+                  <RefreshCw className="h-3.5 w-3.5" />
+                )}
               </button>
             </TooltipTrigger>
             <TooltipContent side="bottom">Refresh</TooltipContent>
@@ -471,7 +480,7 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
         {state.error && <div className="text-destructive px-3 py-2 text-sm">{state.error}</div>}
         {isRootLoading && rootEntries.length === 0 ? (
           <div className="flex items-center justify-center py-4">
-            <RefreshCw className="text-muted h-5 w-5 animate-spin" />
+            <LoadingIndicator size={20} className="text-muted" ariaLabel="Loading files" />
           </div>
         ) : (
           rootEntries.map((node) => renderNode(node, 0))

@@ -1,4 +1,5 @@
 import React from "react";
+import { LoadingIndicator } from "@/browser/components/ui/LoadingIndicator";
 import {
   ToolContainer,
   ToolHeader,
@@ -7,7 +8,6 @@ import {
   ToolDetails,
   DetailSection,
   DetailLabel,
-  LoadingDots,
   ToolIcon,
 } from "./shared/ToolPrimitives";
 import { useToolExpansion, getStatusDisplay, type ToolStatus } from "./shared/toolUtils";
@@ -123,7 +123,7 @@ export const WebSearchToolCall: React.FC<WebSearchToolCallProps> = ({
             <DetailSection>
               <div className="text-secondary text-[11px]">
                 Searching
-                <LoadingDots />
+                <LoadingIndicator size={10} className="ml-1" ariaLabel="Searching" />
               </div>
             </DetailSection>
           )}

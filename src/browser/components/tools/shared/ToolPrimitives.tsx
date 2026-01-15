@@ -133,19 +133,6 @@ export const DetailContent = React.forwardRef<HTMLPreElement, React.HTMLAttribut
 
 DetailContent.displayName = "DetailContent";
 
-export const LoadingDots: React.FC<React.HTMLAttributes<HTMLSpanElement>> = ({
-  className,
-  ...props
-}) => (
-  <span
-    className={cn(
-      "after:inline-block after:w-[3ch] after:text-left after:content-[''] after:animate-[ellipsis_1.2s_steps(4,end)_infinite]",
-      className
-    )}
-    {...props}
-  />
-);
-
 interface HeaderButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   active?: boolean;
 }

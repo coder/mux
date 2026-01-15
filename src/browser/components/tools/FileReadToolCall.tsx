@@ -1,4 +1,5 @@
 import React from "react";
+import { LoadingIndicator } from "@/browser/components/ui/LoadingIndicator";
 import { FileIcon } from "@/browser/components/FileIcon";
 import type { FileReadToolArgs, FileReadToolResult } from "@/common/types/tools";
 import {
@@ -10,7 +11,6 @@ import {
   DetailSection,
   DetailLabel,
   DetailContent,
-  LoadingDots,
   ToolIcon,
   ErrorBox,
 } from "./shared/ToolPrimitives";
@@ -149,7 +149,7 @@ export const FileReadToolCall: React.FC<FileReadToolCallProps> = ({
             <DetailSection>
               <DetailContent>
                 Reading file
-                <LoadingDots />
+                <LoadingIndicator size={10} className="ml-1" ariaLabel="Reading file" />
               </DetailContent>
             </DetailSection>
           )}

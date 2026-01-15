@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect } from "react";
-import { Terminal, X, ChevronDown, ChevronRight, Loader2 } from "lucide-react";
+import { Terminal, X, ChevronDown, ChevronRight } from "lucide-react";
+import { LoadingIndicator } from "@/browser/components/ui/LoadingIndicator";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import type { BackgroundProcessInfo } from "@/common/orpc/schemas/api";
 import { cn } from "@/common/lib/utils";
@@ -119,7 +120,7 @@ export const BackgroundProcessesBanner: React.FC<BackgroundProcessesBannerProps>
                         )}
                       >
                         {isTerminating ? (
-                          <Loader2 size={14} className="animate-spin" />
+                          <LoadingIndicator size={14} ariaLabel="Terminating process" />
                         ) : (
                           <X size={14} />
                         )}

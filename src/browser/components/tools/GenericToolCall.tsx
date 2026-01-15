@@ -1,4 +1,5 @@
 import React from "react";
+import { LoadingIndicator } from "@/browser/components/ui/LoadingIndicator";
 import {
   ToolContainer,
   ToolHeader,
@@ -9,7 +10,6 @@ import {
   DetailSection,
   DetailLabel,
   DetailContent,
-  LoadingDots,
 } from "./shared/ToolPrimitives";
 import { useToolExpansion, getStatusDisplay, type ToolStatus } from "./shared/toolUtils";
 import { JsonHighlight } from "./shared/HighlightedCode";
@@ -94,7 +94,7 @@ export const GenericToolCall: React.FC<GenericToolCallProps> = ({
             <DetailSection>
               <DetailContent>
                 Waiting for result
-                <LoadingDots />
+                <LoadingIndicator size={10} className="ml-1" ariaLabel="Waiting for result" />
               </DetailContent>
             </DetailSection>
           )}

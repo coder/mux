@@ -2,7 +2,8 @@ import React, { useCallback, useEffect } from "react";
 import { RUNTIME_MODE, type RuntimeMode, type ParsedRuntime } from "@/common/types/runtime";
 import type { RuntimeAvailabilityMap } from "./useCreationWorkspace";
 import { Select } from "../Select";
-import { Loader2, Wand2 } from "lucide-react";
+import { Wand2 } from "lucide-react";
+import { LoadingIndicator } from "@/browser/components/ui/LoadingIndicator";
 import { cn } from "@/common/lib/utils";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { SSHIcon, WorktreeIcon, LocalIcon, DockerIcon } from "../icons/RuntimeIcons";
@@ -311,7 +312,11 @@ export function CreationControls(props: CreationControlsProps) {
           {/* Magic wand / loading indicator */}
           <div className="absolute inset-y-0 right-0 flex items-center pr-2">
             {nameState.isGenerating ? (
-              <Loader2 className="text-accent h-3.5 w-3.5 animate-spin" />
+              <LoadingIndicator
+                size={14}
+                className="text-accent"
+                ariaLabel="Generating workspace name"
+              />
             ) : (
               <Tooltip>
                 <TooltipTrigger asChild>

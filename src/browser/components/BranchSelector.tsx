@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef } from "react";
-import { GitBranch, Loader2, Check, Copy, Globe, ChevronRight } from "lucide-react";
+import { GitBranch, Check, Copy, Globe, ChevronRight } from "lucide-react";
+import { LoadingIndicator } from "@/browser/components/ui/LoadingIndicator";
 import { cn } from "@/common/lib/utils";
 import { useAPI } from "@/browser/contexts/API";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
@@ -312,7 +313,11 @@ export function BranchSelector({ workspaceId, workspaceName, className }: Branch
     return (
       <div className={cn("group flex items-center gap-0.5", className)}>
         <div className="text-muted-light flex max-w-[180px] min-w-0 items-center gap-1 px-1 py-0.5 font-mono text-[11px]">
-          <Loader2 className="h-3 w-3 shrink-0 animate-spin opacity-70" />
+          <LoadingIndicator
+            size={12}
+            className="shrink-0 opacity-70"
+            ariaLabel="Loading git status"
+          />
           <span className="truncate">{workspaceName}</span>
         </div>
       </div>
@@ -331,7 +336,7 @@ export function BranchSelector({ workspaceId, workspaceName, className }: Branch
             )}
           >
             {isSwitching ? (
-              <Loader2 className="h-3 w-3 animate-spin" />
+              <LoadingIndicator size={12} ariaLabel="Switching branches" />
             ) : (
               <>
                 <GitBranch className="h-3 w-3 shrink-0 opacity-70" />
@@ -388,7 +393,7 @@ export function BranchSelector({ workspaceId, workspaceName, className }: Branch
                         <div className="ml-3">
                           {isRemoteLoading ? (
                             <div className="text-muted flex items-center justify-center py-2">
-                              <Loader2 className="h-3 w-3 animate-spin" />
+                              <LoadingIndicator size={12} ariaLabel="Loading remote branches" />
                             </div>
                           ) : remoteBranches.length === 0 ? (
                             <div className="text-muted py-1.5 pl-2 text-[10px]">No branches</div>
@@ -432,7 +437,7 @@ export function BranchSelector({ workspaceId, workspaceName, className }: Branch
             {/* Local branches */}
             {isLoading && localBranches.length <= 1 ? (
               <div className="text-muted flex items-center justify-center py-2">
-                <Loader2 className="h-3 w-3 animate-spin" />
+                <LoadingIndicator size={12} ariaLabel="Loading branches" />
               </div>
             ) : filteredLocalBranches.length === 0 ? (
               <div className="text-muted py-2 text-center text-[10px]">No matching branches</div>
