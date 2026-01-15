@@ -1133,22 +1133,34 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     const { type, percentage } = pendingDestructiveCommand;
     setPendingDestructiveCommand(null);
 
+    // Save the original input in case we need to restore on error
+    const originalInput = input;
     setInput("");
     if (inputRef.current) {
       inputRef.current.style.height = "";
     }
 
-    if (type === "clear") {
-      await props.onTruncateHistory(1.0);
-      pushToast({ type: "success", message: "Chat history cleared" });
-    } else if (type === "truncate" && percentage !== undefined) {
-      await props.onTruncateHistory(percentage);
+    try {
+      if (type === "clear") {
+        await props.onTruncateHistory(1.0);
+        pushToast({ type: "success", message: "Chat history cleared" });
+      } else if (type === "truncate" && percentage !== undefined) {
+        await props.onTruncateHistory(percentage);
+        pushToast({
+          type: "success",
+          message: `Chat history truncated by ${Math.round(percentage * 100)}%`,
+        });
+      }
+    } catch (error) {
+      console.error("Failed to execute destructive command:", error);
       pushToast({
-        type: "success",
-        message: `Chat history truncated by ${Math.round(percentage * 100)}%`,
+        type: "error",
+        message: error instanceof Error ? error.message : "Failed to modify chat history",
       });
+      // Restore the input so user can retry
+      setInput(originalInput);
     }
-  }, [pendingDestructiveCommand, variant, props, pushToast, setInput]);
+  }, [pendingDestructiveCommand, variant, props, pushToast, setInput, input]);
 
   const handleDestructiveCommandCancel = useCallback(() => {
     setPendingDestructiveCommand(null);
