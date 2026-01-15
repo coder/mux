@@ -10,6 +10,9 @@ export const CoderWorkspaceConfigSchema = z.object({
    */
   workspaceName: z.string().optional().meta({ description: "Coder workspace name" }),
   template: z.string().optional().meta({ description: "Template used to create workspace" }),
+  templateOrg: z.string().optional().meta({
+    description: "Template organization (for disambiguation when templates have same name)",
+  }),
   preset: z.string().optional().meta({ description: "Preset used during creation" }),
   existingWorkspace: z
     .boolean()
@@ -83,7 +86,10 @@ export const coder = {
     output: z.array(CoderTemplateSchema),
   },
   listPresets: {
-    input: z.object({ template: z.string() }),
+    input: z.object({
+      template: z.string(),
+      org: z.string().optional().meta({ description: "Organization name for disambiguation" }),
+    }),
     output: z.array(CoderPresetSchema),
   },
   listWorkspaces: {

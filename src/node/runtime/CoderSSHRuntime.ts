@@ -600,7 +600,8 @@ export class CoderSSHRuntime extends SSHRuntime {
           coderWorkspaceName,
           this.coderConfig.template,
           this.coderConfig.preset,
-          abortSignal
+          abortSignal,
+          this.coderConfig.templateOrg
         )) {
           initLogger.logStdout(line);
         }

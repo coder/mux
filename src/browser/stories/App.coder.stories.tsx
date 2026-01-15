@@ -329,8 +329,8 @@ export const CoderNoPresets: AppStory = {
     // Preset dropdown should be visible but disabled (shows "No presets" placeholder)
     const presetSelect = await canvas.findByTestId("coder-preset-select", {}, { timeout: 5000 });
     await waitFor(() => {
-      // Radix UI Select sets data-disabled attribute when disabled
-      if (presetSelect.getAttribute("data-disabled") !== "true") {
+      // Radix UI Select sets data-disabled="" (empty string) when disabled
+      if (!presetSelect.hasAttribute("data-disabled")) {
         throw new Error("Preset dropdown should be disabled when template has no presets");
       }
     });

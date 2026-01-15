@@ -134,18 +134,32 @@ export function CoderControls(props: CoderControlsProps) {
       });
     } else {
       // Switch to new workspace mode (workspaceName omitted; backend derives from branch)
+      const firstTemplate = templates[0];
+      const firstIsDuplicate = firstTemplate
+        ? templates.some(
+            (t) =>
+              t.name === firstTemplate.name && t.organizationName !== firstTemplate.organizationName
+          )
+        : false;
       onCoderConfigChange({
-        template: templates[0]?.name,
+        template: firstTemplate?.name,
+        templateOrg: firstIsDuplicate ? firstTemplate?.organizationName : undefined,
       });
     }
   };
 
-  const handleTemplateChange = (templateName: string) => {
+  const handleTemplateChange = (value: string) => {
     if (!coderConfig) return;
+
+    // Value is "org/name" when duplicates exist, otherwise just "name"
+    const [orgOrName, maybeName] = value.split("/");
+    const templateName = maybeName ?? orgOrName;
+    const templateOrg = maybeName ? orgOrName : undefined;
 
     onCoderConfigChange({
       ...coderConfig,
       template: templateName,
+      templateOrg,
       preset: undefined, // Reset preset when template changes
     });
     // Presets will be loaded by parent via effect
@@ -247,7 +261,27 @@ export function CoderControls(props: CoderControlsProps) {
                   <Loader2 className="text-muted h-4 w-4 animate-spin" />
                 ) : (
                   <Select
-                    value={coderConfig?.template ?? ""}
+                    value={(() => {
+                      const templateName = coderConfig?.template;
+                      if (!templateName) {
+                        return "";
+                      }
+
+                      const matchingTemplates = templates.filter((t) => t.name === templateName);
+                      const hasDuplicate = matchingTemplates.some(
+                        (t) => t.organizationName !== matchingTemplates[0]?.organizationName
+                      );
+
+                      if (!hasDuplicate) {
+                        return templateName;
+                      }
+
+                      const org =
+                        coderConfig?.templateOrg ??
+                        matchingTemplates[0]?.organizationName ??
+                        undefined;
+                      return org ? `${org}/${templateName}` : templateName;
+                    })()}
                     onValueChange={handleTemplateChange}
                     disabled={disabled || templates.length === 0}
                   >
@@ -264,8 +298,10 @@ export function CoderControls(props: CoderControlsProps) {
                           (other) =>
                             other.name === t.name && other.organizationName !== t.organizationName
                         );
+                        // Use org/name as value when duplicates exist for disambiguation
+                        const itemValue = hasDuplicate ? `${t.organizationName}/${t.name}` : t.name;
                         return (
-                          <SelectItem key={`${t.organizationName}/${t.name}`} value={t.name}>
+                          <SelectItem key={`${t.organizationName}/${t.name}`} value={itemValue}>
                             {t.displayName || t.name}
                             {hasDuplicate && (
                               <span className="text-muted ml-1">({t.organizationName})</span>

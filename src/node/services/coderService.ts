@@ -322,7 +322,8 @@ export class CoderService {
    * Get the active template version ID for a template.
    * Throws if template not found.
    */
-  private async getActiveTemplateVersionId(templateName: string): Promise<string> {
+  private async getActiveTemplateVersionId(templateName: string, org?: string): Promise<string> {
+    // Note: `coder templates list` doesn't support --org flag, so we filter client-side
     using proc = execAsync("coder templates list --output=json");
     const { stdout } = await proc.result;
 
@@ -333,13 +334,18 @@ export class CoderService {
     const raw = JSON.parse(stdout) as Array<{
       Template: {
         name: string;
+        organization_name: string;
         active_version_id: string;
       };
     }>;
 
-    const template = raw.find((t) => t.Template.name === templateName);
+    // Filter by name and optionally by org for disambiguation
+    const template = raw.find(
+      (t) => t.Template.name === templateName && (!org || t.Template.organization_name === org)
+    );
     if (!template) {
-      throw new Error(`Template "${templateName}" not found`);
+      const orgSuffix = org ? ` in organization "${org}"` : "";
+      throw new Error(`Template "${templateName}" not found${orgSuffix}`);
     }
 
     return template.Template.active_version_id;
@@ -351,11 +357,13 @@ export class CoderService {
    */
   private async getPresetParamNames(
     templateName: string,
-    presetName: string
+    presetName: string,
+    org?: string
   ): Promise<Set<string>> {
     try {
+      const orgFlag = org ? ` --org ${shescape.quote(org)}` : "";
       using proc = execAsync(
-        `coder templates presets list ${shescape.quote(templateName)} --output=json`
+        `coder templates presets list ${shescape.quote(templateName)}${orgFlag} --output=json`
       );
       const { stdout } = await proc.result;
 
@@ -580,11 +588,14 @@ export class CoderService {
 
   /**
    * List presets for a template.
+   * @param templateName - Template name
+   * @param org - Organization name for disambiguation (optional)
    */
-  async listPresets(templateName: string): Promise<CoderPreset[]> {
+  async listPresets(templateName: string, org?: string): Promise<CoderPreset[]> {
     try {
+      const orgFlag = org ? ` --org ${shescape.quote(org)}` : "";
       using proc = execAsync(
-        `coder templates presets list ${shescape.quote(templateName)} --output=json`
+        `coder templates presets list ${shescape.quote(templateName)}${orgFlag} --output=json`
       );
       const { stdout } = await proc.result;
 
@@ -862,14 +873,16 @@ export class CoderService {
    * @param template Template name
    * @param preset Optional preset name
    * @param abortSignal Optional signal to cancel workspace creation
+   * @param org Optional organization name for disambiguation
    */
   async *createWorkspace(
     name: string,
     template: string,
     preset?: string,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    org?: string
   ): AsyncGenerator<string, void, unknown> {
-    log.debug("Creating Coder workspace", { name, template, preset });
+    log.debug("Creating Coder workspace", { name, template, preset, org });
 
     if (abortSignal?.aborted) {
       throw new Error("Coder workspace creation aborted");
@@ -879,11 +892,11 @@ export class CoderService {
     const deploymentUrl = await this.getDeploymentUrl();
 
     // 2. Get active template version ID
-    const versionId = await this.getActiveTemplateVersionId(template);
+    const versionId = await this.getActiveTemplateVersionId(template, org);
 
     // 3. Get parameter names covered by preset (if any)
     const coveredByPreset = preset
-      ? await this.getPresetParamNames(template, preset)
+      ? await this.getPresetParamNames(template, preset, org)
       : new Set<string>();
 
     // 4. Fetch all template parameters from API
@@ -899,12 +912,16 @@ export class CoderService {
       name,
       template,
       preset,
+      org,
       extraParamCount: extraParams.length,
       extraParamNames: extraParams.map((p) => p.name),
     });
 
     // 7. Build and run single coder create command
     const args = ["create", name, "-t", template, "--yes"];
+    if (org) {
+      args.push("--org", org);
+    }
     if (preset) {
       args.push("--preset", preset);
     }

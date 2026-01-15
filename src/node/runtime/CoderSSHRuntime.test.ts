@@ -486,7 +486,13 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
       workspacePath: "/home/user/src/my-project/my-ws",
     });
 
-    expect(createWorkspace).toHaveBeenCalledWith("my-ws", "my-template", undefined, undefined);
+    expect(createWorkspace).toHaveBeenCalledWith(
+      "my-ws",
+      "my-template",
+      undefined,
+      undefined,
+      undefined
+    );
     expect(ensureSSHConfig).toHaveBeenCalled();
     expect(execBufferedSpy).toHaveBeenCalled();
 

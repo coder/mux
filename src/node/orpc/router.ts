@@ -1040,7 +1040,7 @@ export const router = (authToken?: string) => {
         .input(schemas.coder.listPresets.input)
         .output(schemas.coder.listPresets.output)
         .handler(async ({ context, input }) => {
-          return context.coderService.listPresets(input.template);
+          return context.coderService.listPresets(input.template, input.org);
         }),
       listWorkspaces: t
         .input(schemas.coder.listWorkspaces.input)

@@ -131,8 +131,15 @@ export function useCoderWorkspace({
           // Use ref to get current config (avoids stale closure if user toggled modes during fetch)
           const currentConfig = coderConfigRef.current;
           if (result.length > 0 && !currentConfig?.template && !currentConfig?.existingWorkspace) {
+            const firstTemplate = result[0];
+            const firstIsDuplicate = result.some(
+              (t) =>
+                t.name === firstTemplate.name &&
+                t.organizationName !== firstTemplate.organizationName
+            );
             onCoderConfigChange({
-              template: result[0].name,
+              template: firstTemplate.name,
+              templateOrg: firstIsDuplicate ? firstTemplate.organizationName : undefined,
             });
           }
         }
@@ -200,18 +207,22 @@ export function useCoderWorkspace({
     let mounted = true;
     setLoadingPresets(true);
 
-    // Capture template at request time to detect stale responses
+    // Capture template/org at request time to detect stale responses
     const templateAtRequest = coderConfig.template;
+    const orgAtRequest = coderConfig.templateOrg;
 
     api.coder
-      .listPresets({ template: templateAtRequest })
+      .listPresets({ template: templateAtRequest, org: orgAtRequest })
       .then((result) => {
         if (!mounted) {
           return;
         }
 
-        // Stale response guard: if user changed template while request was in-flight, ignore this response
-        if (coderConfigRef.current?.template !== templateAtRequest) {
+        // Stale response guard: if user changed template/org while request was in-flight, ignore this response
+        if (
+          coderConfigRef.current?.template !== templateAtRequest ||
+          coderConfigRef.current?.templateOrg !== orgAtRequest
+        ) {
           return;
         }
 
@@ -230,10 +241,12 @@ export function useCoderWorkspace({
               onCoderConfigChange({ ...currentConfig, preset: onlyPreset.name });
             }
           } else if (result.length >= 2 && !currentConfig.preset) {
-            // Auto-select default preset if available (don't override user choice)
+            // Auto-select default preset if available, otherwise first preset
+            // This keeps UI and config in sync (UI falls back to first preset for display)
             const defaultPreset = result.find((p) => p.isDefault);
-            if (defaultPreset) {
-              onCoderConfigChange({ ...currentConfig, preset: defaultPreset.name });
+            const presetToSelect = defaultPreset ?? result[0];
+            if (presetToSelect) {
+              onCoderConfigChange({ ...currentConfig, preset: presetToSelect.name });
             }
           } else if (result.length === 0 && currentConfig.preset) {
             onCoderConfigChange({ ...currentConfig, preset: undefined });
@@ -254,16 +267,31 @@ export function useCoderWorkspace({
     return () => {
       mounted = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- Only re-fetch on template/existingWorkspace changes, not on preset changes (would cause loop)
-  }, [api, enabled, coderConfig?.template, coderConfig?.existingWorkspace]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- Only re-fetch on template/org/existingWorkspace changes, not on preset changes (would cause loop)
+  }, [
+    api,
+    enabled,
+    coderConfig?.template,
+    coderConfig?.templateOrg,
+    coderConfig?.existingWorkspace,
+  ]);
 
   // Handle enabled toggle
   const handleSetEnabled = useCallback(
     (newEnabled: boolean) => {
       if (newEnabled) {
         // Initialize config for new workspace mode (workspaceName omitted; backend derives)
+        const firstTemplate = templates[0];
+        const firstIsDuplicate = firstTemplate
+          ? templates.some(
+              (t) =>
+                t.name === firstTemplate.name &&
+                t.organizationName !== firstTemplate.organizationName
+            )
+          : false;
         onCoderConfigChange({
-          template: templates[0]?.name,
+          template: firstTemplate?.name,
+          templateOrg: firstIsDuplicate ? firstTemplate?.organizationName : undefined,
         });
       } else {
         onCoderConfigChange(null);
