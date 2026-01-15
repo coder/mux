@@ -16,6 +16,8 @@ import {
   findPreviousModel,
   type ContextSwitchWarning,
 } from "@/browser/utils/compaction/contextSwitchCheck";
+
+// Note: findPreviousModel is still used for 1M toggle changes (effect below)
 import { executeCompaction } from "@/browser/utils/chatCommands";
 
 interface UseContextSwitchWarningProps {
@@ -43,6 +45,8 @@ export function useContextSwitchWarning(
 
   const [warning, setWarning] = useState<ContextSwitchWarning | null>(null);
   const prevUse1MRef = useRef(use1M);
+  // Track previous model so we can use it as compaction fallback on switch
+  const prevPendingModelRef = useRef(pendingModel);
 
   const getCurrentTokens = useCallback(() => {
     const usage = workspaceUsage?.liveUsage ?? workspaceUsage?.lastContextUsage;
@@ -52,11 +56,13 @@ export function useContextSwitchWarning(
   const handleModelChange = useCallback(
     (newModel: string) => {
       const tokens = getCurrentTokens();
-      setWarning(
-        tokens > 0 ? checkContextSwitch(tokens, newModel, findPreviousModel(messages), use1M) : null
-      );
+      // Use the model user was just on (not last assistant message's model)
+      // so compaction fallback works even if user switches without sending
+      const previousModel = prevPendingModelRef.current;
+      prevPendingModelRef.current = newModel;
+      setWarning(tokens > 0 ? checkContextSwitch(tokens, newModel, previousModel, use1M) : null);
     },
-    [getCurrentTokens, messages, use1M]
+    [getCurrentTokens, use1M]
   );
 
   const handleCompact = useCallback(() => {
