@@ -184,6 +184,30 @@ describe("oRPC Server Endpoints", () => {
       expect(result).toBe("Pong: hello");
     });
 
+    test("agentSkills.list and agentSkills.get work with projectPath", async () => {
+      const client = createHttpClient(serverHandle.server.baseUrl);
+
+      const projectPath = await fs.mkdtemp(path.join(os.tmpdir(), "mux-agent-skills-project-"));
+      const skillName = `test-skill-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+      try {
+        const skillDir = path.join(projectPath, ".mux", "skills", skillName);
+        await fs.mkdir(skillDir, { recursive: true });
+
+        const skillContent = `---\nname: ${skillName}\ndescription: Test skill\n---\n\nTest body\n`;
+        await fs.writeFile(path.join(skillDir, "SKILL.md"), skillContent, "utf-8");
+
+        const descriptors = await client.agentSkills.list({ projectPath });
+        expect(descriptors.some((d) => d.name === skillName && d.scope === "project")).toBe(true);
+
+        const pkg = await client.agentSkills.get({ projectPath, skillName });
+        expect(pkg.frontmatter.name).toBe(skillName);
+        expect(pkg.scope).toBe("project");
+        expect(pkg.body).toContain("Test body");
+      } finally {
+        await fs.rm(projectPath, { recursive: true, force: true });
+      }
+    });
     test("ping with empty string", async () => {
       const client = createHttpClient(serverHandle.server.baseUrl);
       const result = await client.general.ping("");

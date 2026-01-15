@@ -1739,6 +1739,10 @@ export class StreamingMessageAggregator {
             }
           : undefined;
 
+      const userDisplayText =
+        compactionRequest?.rawCommand ??
+        (muxMeta?.type === "agent-skill" ? muxMeta.rawCommand : content);
+
       // Extract reviews from muxMetadata for rich UI display (orthogonal to message type)
       const reviews = muxMeta?.reviews;
 
@@ -1746,7 +1750,7 @@ export class StreamingMessageAggregator {
         type: "user",
         id: message.id,
         historyId: message.id,
-        content: compactionRequest ? compactionRequest.rawCommand : content,
+        content: userDisplayText,
         imageParts: imageParts.length > 0 ? imageParts : undefined,
         historySequence,
         isSynthetic: message.metadata?.synthetic === true ? true : undefined,

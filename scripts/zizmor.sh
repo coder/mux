@@ -8,6 +8,16 @@
 # Fallback: if Docker isn't available/running (common on dev machines), download a
 # prebuilt zizmor binary from GitHub Releases and run it directly.
 
+if ! command -v docker >/dev/null 2>&1; then
+  echo "⚠️  docker not found; skipping zizmor" >&2
+  exit 0
+fi
+
+if ! docker info >/dev/null 2>&1; then
+  echo "⚠️  docker daemon not running; skipping zizmor" >&2
+  exit 0
+fi
+
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

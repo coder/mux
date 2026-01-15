@@ -28,6 +28,10 @@ import {
   normalizeTaskSettings,
 } from "@/common/types/tasks";
 import {
+  discoverAgentSkills,
+  readAgentSkill,
+} from "@/node/services/agentSkills/agentSkillsService";
+import {
   discoverAgentDefinitions,
   readAgentDefinition,
 } from "@/node/services/agentDefinitions/agentDefinitionsService";
@@ -493,6 +497,23 @@ export const router = (authToken?: string) => {
           }
           const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
           return readAgentDefinition(runtime, discoveryPath, input.agentId);
+        }),
+    },
+    agentSkills: {
+      list: t
+        .input(schemas.agentSkills.list.input)
+        .output(schemas.agentSkills.list.output)
+        .handler(async ({ context, input }) => {
+          const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
+          return discoverAgentSkills(runtime, discoveryPath);
+        }),
+      get: t
+        .input(schemas.agentSkills.get.input)
+        .output(schemas.agentSkills.get.output)
+        .handler(async ({ context, input }) => {
+          const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
+          const result = await readAgentSkill(runtime, discoveryPath, input.skillName);
+          return result.package;
         }),
     },
     providers: {

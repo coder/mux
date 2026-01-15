@@ -9,6 +9,7 @@ import { ConnectionStatusToast } from "../ConnectionStatusToast";
 import { ChatInputToast } from "../ChatInputToast";
 import { createCommandToast, createErrorToast } from "../ChatInputToasts";
 import { ConfirmationModal } from "../ConfirmationModal";
+import type { ParsedCommand } from "@/browser/utils/slashCommands/types";
 import { parseCommand } from "@/browser/utils/slashCommands/parser";
 import {
   readPersistedState,
@@ -82,6 +83,7 @@ import {
   processImageFiles,
 } from "@/browser/utils/imageHandling";
 
+import type { AgentSkillDescriptor, AgentSkillPackage } from "@/common/types/agentSkill";
 import type { ModeAiDefaults } from "@/common/types/modeAiDefaults";
 import type { ParsedRuntime } from "@/common/types/runtime";
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
@@ -110,9 +112,49 @@ import initMessage from "@/browser/assets/initMessage.txt?raw";
 // Be conservative here so we can warn the user before writes start failing.
 const MAX_PERSISTED_IMAGE_DRAFT_CHARS = 4_000_000;
 
+// Guardrail: prevent accidental mega-prompts when injecting skill bodies.
+type UnknownSlashCommand = Extract<ParsedCommand, { type: "unknown-command" }>;
+
+function isUnknownSlashCommand(value: ParsedCommand): value is UnknownSlashCommand {
+  return value !== null && value.type === "unknown-command";
+}
+
+const MAX_AGENT_SKILL_BODY_CHARS = 50_000;
+
+function mergeAdditionalSystemInstructions(
+  ...parts: Array<string | undefined>
+): string | undefined {
+  const filtered = parts.filter((part) => typeof part === "string" && part.trim().length > 0);
+  if (filtered.length === 0) {
+    return undefined;
+  }
+  return filtered.join("\n\n");
+}
+
+function buildAgentSkillSystemInstructionsForAutoCompaction(skill: AgentSkillPackage): string {
+  return (
+    "The following skill instructions are for the user's next message after compaction. " +
+    "If you are currently summarizing/compacting, ignore them.\n\n" +
+    buildAgentSkillSystemInstructions(skill)
+  );
+}
+function buildAgentSkillSystemInstructions(skill: AgentSkillPackage): string {
+  const scopeLabel = skill.scope === "global" ? "user" : skill.scope;
+  const skillName = skill.frontmatter.name;
+  const header = `Agent Skill applied: ${skillName} (${scopeLabel})`;
+  const invocationHint = `If the user's message starts with /${skillName}, ignore that leading token.`;
+
+  const body =
+    skill.body.length > MAX_AGENT_SKILL_BODY_CHARS
+      ? `${skill.body.slice(0, MAX_AGENT_SKILL_BODY_CHARS)}\n\n[Skill body truncated to ${MAX_AGENT_SKILL_BODY_CHARS} characters]`
+      : skill.body;
+
+  return `${header}\n${invocationHint}\n\n${body}`;
+}
+
 // Import types from local types file
 import type { ChatInputProps, ChatInputAPI } from "./types";
-import type { ImagePart } from "@/common/orpc/types";
+import type { ImagePart, SendMessageOptions } from "@/common/orpc/types";
 
 type CreationRuntimeValidationError =
   | { mode: "docker"; kind: "missingImage" }
@@ -211,6 +253,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const [showCommandSuggestions, setShowCommandSuggestions] = useState(false);
 
   const [commandSuggestions, setCommandSuggestions] = useState<SlashSuggestion[]>([]);
+  const [agentSkillDescriptors, setAgentSkillDescriptors] = useState<AgentSkillDescriptor[]>([]);
   const [providerNames, setProviderNames] = useState<string[]>([]);
   const [toast, setToast] = useState<Toast | null>(null);
   // State for destructive command confirmation modal
@@ -945,10 +988,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
   // Watch input for slash commands
   useEffect(() => {
-    const suggestions = getSlashCommandSuggestions(input, { providerNames, variant });
+    const suggestions = getSlashCommandSuggestions(input, {
+      providerNames,
+      agentSkills: agentSkillDescriptors,
+      variant,
+    });
     setCommandSuggestions(suggestions);
     setShowCommandSuggestions(suggestions.length > 0);
-  }, [input, providerNames, variant]);
+  }, [input, providerNames, agentSkillDescriptors, variant]);
 
   // Load provider names for suggestions
   useEffect(() => {
@@ -972,8 +1019,53 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     };
   }, [api]);
 
-  // Check if OpenAI API key is configured (for voice input)
-  // Subscribe to config changes so key status updates immediately when set in Settings
+  // Load agent skills for suggestions
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadAgentSkills = async () => {
+      if (!api) {
+        if (isMounted) {
+          setAgentSkillDescriptors([]);
+        }
+        return;
+      }
+
+      const discoveryInput =
+        variant === "workspace" && workspaceId
+          ? { workspaceId }
+          : variant === "creation" && atMentionProjectPath
+            ? { projectPath: atMentionProjectPath }
+            : null;
+
+      if (!discoveryInput) {
+        if (isMounted) {
+          setAgentSkillDescriptors([]);
+        }
+        return;
+      }
+
+      try {
+        const skills = await api.agentSkills.list(discoveryInput);
+        if (isMounted && Array.isArray(skills)) {
+          setAgentSkillDescriptors(skills);
+        }
+      } catch (error) {
+        console.error("Failed to load agent skills:", error);
+        if (isMounted) {
+          setAgentSkillDescriptors([]);
+        }
+      }
+    };
+
+    void loadAgentSkills();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [api, variant, workspaceId, atMentionProjectPath]);
+
+  // Voice input: track whether OpenAI API key is configured (subscribe to provider config changes)
   useEffect(() => {
     if (!api) return;
     const abortController = new AbortController();
@@ -1326,13 +1418,80 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
     // Route to creation handler for creation variant
     if (variant === "creation") {
+      // Validate runtime fields before creating workspace
+      if (isDockerMissingImage) {
+        setRuntimeFieldError("docker");
+        return;
+      }
+      if (isSshMissingHost) {
+        setRuntimeFieldError("ssh");
+        return;
+      }
+
+      let creationMessageTextForSend = messageText;
+      let creationOptionsOverride: Partial<SendMessageOptions> | undefined;
+
       // Handle /init command in creation variant - populate input with init message
       if (messageText.startsWith("/")) {
         const parsed = parseCommand(messageText);
+
         if (parsed?.type === "init") {
           setInput(initMessage);
           focusMessageInput();
           return;
+        }
+
+        if (isUnknownSlashCommand(parsed)) {
+          const command = parsed.command;
+          const maybeSkill = agentSkillDescriptors.find((skill) => skill.name === command);
+          if (maybeSkill) {
+            const prefix = `/${maybeSkill.name}`;
+            const afterPrefix = messageText.slice(prefix.length);
+            const hasSeparator = afterPrefix.length === 0 || /^\s/.test(afterPrefix);
+
+            if (hasSeparator) {
+              const userText = afterPrefix.trimStart();
+              if (!userText) {
+                pushToast({
+                  type: "error",
+                  message: `Please add a message after ${prefix}`,
+                });
+                return;
+              }
+
+              if (!api) {
+                pushToast({ type: "error", message: "Not connected to server" });
+                return;
+              }
+
+              try {
+                const skillPackage = await api.agentSkills.get({
+                  projectPath: props.projectPath,
+                  skillName: maybeSkill.name,
+                });
+                creationMessageTextForSend = userText;
+                creationOptionsOverride = {
+                  additionalSystemInstructions: buildAgentSkillSystemInstructions(skillPackage),
+                  muxMetadata: {
+                    type: "agent-skill",
+                    rawCommand: messageText,
+                    skillName: maybeSkill.name,
+                    scope: maybeSkill.scope,
+                  },
+                };
+              } catch (error) {
+                console.error("Failed to load agent skill:", error);
+                pushToast({
+                  type: "error",
+                  message:
+                    error instanceof Error
+                      ? error.message
+                      : `Failed to load agent skill ${maybeSkill.name}`,
+                });
+                return;
+              }
+            }
+          }
         }
       }
 
@@ -1349,8 +1508,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       // Creation variant: simple message send + workspace creation
       const creationImageParts = imageAttachmentsToImageParts(imageAttachments);
       const ok = await creationState.handleSend(
-        messageText,
-        creationImageParts.length > 0 ? creationImageParts : undefined
+        creationMessageTextForSend,
+        creationImageParts.length > 0 ? creationImageParts : undefined,
+        creationOptionsOverride
       );
       if (ok) {
         setInput("");
@@ -1369,7 +1529,33 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
     try {
       // Parse command
-      const parsed = parseCommand(messageText);
+      let parsed = parseCommand(messageText);
+
+      let skillInvocation: { descriptor: AgentSkillDescriptor; userText: string } | null = null;
+
+      if (isUnknownSlashCommand(parsed)) {
+        const command = parsed.command;
+        const maybeSkill = agentSkillDescriptors.find((skill) => skill.name === command);
+        if (maybeSkill) {
+          const prefix = `/${maybeSkill.name}`;
+          const afterPrefix = messageText.slice(prefix.length);
+          const hasSeparator = afterPrefix.length === 0 || /^\s/.test(afterPrefix);
+
+          if (hasSeparator) {
+            const userText = afterPrefix.trimStart();
+            if (!userText) {
+              pushToast({
+                type: "error",
+                message: `Please add a message after ${prefix}`,
+              });
+              return;
+            }
+
+            skillInvocation = { descriptor: maybeSkill, userText };
+            parsed = null;
+          }
+        }
+      }
 
       if (parsed) {
         // Handle /clear command - show confirmation modal
@@ -1658,6 +1844,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       }
 
       // Regular message - send directly via API
+      const messageTextForSend = skillInvocation?.userText ?? messageText;
+
       if (!api) {
         pushToast({ type: "error", message: "Not connected to server" });
         return;
@@ -1694,6 +1882,40 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
         // Clear input immediately for responsive UX
         setInput("");
+
+        let compactionSkillInstructions: string | undefined;
+        if (skillInvocation) {
+          try {
+            const skillPackage = await api.agentSkills.get({
+              workspaceId: props.workspaceId,
+              skillName: skillInvocation.descriptor.name,
+            });
+            compactionSkillInstructions =
+              buildAgentSkillSystemInstructionsForAutoCompaction(skillPackage);
+          } catch (error) {
+            console.error("Failed to load agent skill:", error);
+            setDraft(preSendDraft);
+            pushToast({
+              type: "error",
+              title: "Auto-Compaction Failed",
+              message:
+                error instanceof Error
+                  ? error.message
+                  : `Failed to load agent skill ${skillInvocation.descriptor.name}`,
+            });
+            setIsSending(false);
+            return;
+          }
+        }
+
+        const compactionSendMessageOptions: SendMessageOptions = {
+          ...sendMessageOptions,
+          additionalSystemInstructions: mergeAdditionalSystemInstructions(
+            sendMessageOptions.additionalSystemInstructions,
+            compactionSkillInstructions
+          ),
+        };
+
         setImageAttachments([]);
         setHideReviewsDuringSend(true);
 
@@ -1702,13 +1924,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             api,
             workspaceId: props.workspaceId,
             continueMessage: buildContinueMessage({
-              text: messageText,
+              text: messageTextForSend,
               imageParts,
               reviews: reviewsData,
               model: sendMessageOptions.model,
               agentId: sendMessageOptions.agentId ?? "exec",
             }),
-            sendMessageOptions,
+            sendMessageOptions: compactionSendMessageOptions,
           });
 
           if (!result.success) {
@@ -1760,12 +1982,41 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         const reviewsData =
           attachedReviews.length > 0 ? attachedReviews.map((r) => r.data) : undefined;
 
-        // When editing a /compact command, regenerate the actual summarization request
-        let actualMessageText = messageText;
-        let muxMetadata: MuxFrontendMetadata | undefined;
-        let compactionOptions = {};
+        // Load agent skill content (if invoked via /{skillName})
+        let skillSystemInstructions: string | undefined;
+        if (skillInvocation) {
+          try {
+            const skillPackage = await api.agentSkills.get({
+              workspaceId: props.workspaceId,
+              skillName: skillInvocation.descriptor.name,
+            });
+            skillSystemInstructions = buildAgentSkillSystemInstructions(skillPackage);
+          } catch (error) {
+            console.error("Failed to load agent skill:", error);
+            pushToast({
+              type: "error",
+              message:
+                error instanceof Error
+                  ? error.message
+                  : `Failed to load agent skill ${skillInvocation.descriptor.name}`,
+            });
+            return;
+          }
+        }
 
-        if (editingMessage && messageText.startsWith("/")) {
+        // When editing a /compact command, regenerate the actual summarization request
+        let actualMessageText = messageTextForSend;
+        let muxMetadata: MuxFrontendMetadata | undefined = skillInvocation
+          ? {
+              type: "agent-skill",
+              rawCommand: messageText,
+              skillName: skillInvocation.descriptor.name,
+              scope: skillInvocation.descriptor.scope,
+            }
+          : undefined;
+        let compactionOptions: Partial<SendMessageOptions> = {};
+
+        if (editingMessage && actualMessageText.startsWith("/")) {
           const parsed = parseCommand(messageText);
           if (parsed?.type === "compact") {
             const {
@@ -1798,6 +2049,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           { text: actualMessageText, reviews: reviewsData },
           muxMetadata
         );
+        const additionalSystemInstructions = mergeAdditionalSystemInstructions(
+          sendMessageOptions.additionalSystemInstructions,
+          compactionOptions.additionalSystemInstructions,
+          skillSystemInstructions
+        );
+
         muxMetadata = reviewMetadata;
 
         // Capture review IDs before clearing (for marking as checked on success)
@@ -1820,6 +2077,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           options: {
             ...sendMessageOptions,
             ...compactionOptions,
+            additionalSystemInstructions,
             editMessageId: editingMessage?.id,
             imageParts: sendImageParts,
             muxMetadata,
