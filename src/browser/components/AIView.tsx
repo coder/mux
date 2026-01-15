@@ -16,6 +16,7 @@ import { RetryBarrier } from "./Messages/ChatBarrier/RetryBarrier";
 import { PinnedTodoList } from "./PinnedTodoList";
 import {
   getAutoRetryKey,
+  getRetryStateKey,
   VIM_ENABLED_KEY,
   RIGHT_SIDEBAR_WIDTH_KEY,
 } from "@/common/constants/storage";
@@ -30,7 +31,10 @@ import {
   getEditableUserMessageText,
 } from "@/browser/utils/messages/messageUtils";
 import { BashOutputCollapsedIndicator } from "./tools/BashOutputCollapsedIndicator";
-import { hasInterruptedStream } from "@/browser/utils/messages/retryEligibility";
+import {
+  hasInterruptedStream,
+  shouldKeepRetryBarrierVisibleDuringRetry,
+} from "@/browser/utils/messages/retryEligibility";
 import { ThinkingProvider } from "@/browser/contexts/ThinkingContext";
 import { WorkspaceModeAISync } from "@/browser/components/WorkspaceModeAISync";
 import { ModeProvider } from "@/browser/contexts/ModeContext";
@@ -40,6 +44,7 @@ import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useAutoScroll } from "@/browser/hooks/useAutoScroll";
 
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
+import type { RetryState } from "@/browser/hooks/useResumeManager";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 
 import {
@@ -87,6 +92,11 @@ interface AIViewProps {
   /** If 'creating', workspace is still being set up (git operations in progress) */
   status?: "creating";
 }
+
+const defaultRetryState: RetryState = {
+  attempt: 0,
+  retryStartTime: 0,
+};
 
 const AIViewInner: React.FC<AIViewProps> = ({
   workspaceId,
@@ -237,6 +247,16 @@ const AIViewInner: React.FC<AIViewProps> = ({
       listener: true,
     }
   );
+
+  // Retry state - used to stabilize RetryBarrier UI during auto-retry loops
+  const [retryState] = usePersistedState<RetryState>(
+    getRetryStateKey(workspaceId),
+    defaultRetryState,
+    {
+      listener: true,
+    }
+  );
+  const retryAttempt = (retryState ?? defaultRetryState).attempt;
 
   // Vim mode state - needed for keybind selection (Ctrl+C in vim, Esc otherwise)
   const [vimEnabled] = usePersistedState<boolean>(VIM_ENABLED_KEY, false, { listener: true });
@@ -440,8 +460,8 @@ const AIViewInner: React.FC<AIViewProps> = ({
   // Track if last message was interrupted or errored (for RetryBarrier)
   // Uses same logic as useResumeManager for DRY
   const showRetryBarrier = workspaceState
-    ? !workspaceState.canInterrupt &&
-      hasInterruptedStream(workspaceState.messages, workspaceState.pendingStreamStartTime)
+    ? hasInterruptedStream(workspaceState.messages, workspaceState.pendingStreamStartTime) ||
+      shouldKeepRetryBarrierVisibleDuringRetry(workspaceState.messages, retryAttempt)
     : false;
 
   // Handle keyboard shortcuts (using optional refs that are safe even if not initialized)
@@ -688,7 +708,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
                 </>
               )}
               <PinnedTodoList workspaceId={workspaceId} />
-              <StreamingBarrier workspaceId={workspaceId} />
+              {!showRetryBarrier && <StreamingBarrier workspaceId={workspaceId} />}
               {shouldShowQueuedAgentTaskPrompt && (
                 <QueuedMessage
                   message={{

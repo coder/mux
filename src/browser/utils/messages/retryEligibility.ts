@@ -127,6 +127,39 @@ export function hasInterruptedStream(
 }
 
 /**
+ * During auto-retry loops we can reach stream-start and then fail again before the first token.
+ *
+ * In that window, AIView previously hid RetryBarrier because canInterrupt flipped to true,
+ * causing the banner to flicker on every retry attempt.
+ *
+ * This helper keeps RetryBarrier visible while the new stream is active but has not produced
+ * any visible assistant content yet.
+ */
+export function shouldKeepRetryBarrierVisibleDuringRetry(
+  messages: DisplayedMessage[],
+  retryAttempt: number
+): boolean {
+  if (retryAttempt <= 0) return false;
+  if (messages.length < 2) return false;
+
+  const lastMessage = messages[messages.length - 1];
+  if (lastMessage.type !== "assistant") return false;
+  if (!lastMessage.isStreaming) return false;
+  if (lastMessage.content.trim().length > 0) return false;
+
+  const previousMessage = messages[messages.length - 2];
+
+  // Only keep the banner sticky when this stream is a retry/resume attempt.
+  // If the previous message is a fresh user message, we want normal streaming UX.
+  return (
+    previousMessage.type === "stream-error" ||
+    (previousMessage.type === "assistant" && previousMessage.isPartial === true) ||
+    (previousMessage.type === "tool" && previousMessage.isPartial === true) ||
+    (previousMessage.type === "reasoning" && previousMessage.isPartial === true)
+  );
+}
+
+/**
  * Check if messages are eligible for automatic retry
  *
  * Used by useResumeManager to determine if workspace should be auto-retried.
