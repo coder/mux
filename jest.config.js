@@ -14,6 +14,7 @@ module.exports = {
   moduleNameMapper: {
     // Vite query suffixes must be matched BEFORE the @/ alias
     "^@/(.+)\\.svg\\?react$": "<rootDir>/tests/__mocks__/svgReactMock.js",
+    "^@/(.+)\\.png$": "<rootDir>/tests/__mocks__/fileMock.js",
     "^@/(.+)\\.txt\\?raw$": "<rootDir>/tests/__mocks__/textMock.js",
     "^@/(.*)$": "<rootDir>/src/$1",
     "^chalk$": "<rootDir>/tests/__mocks__/chalk.js",
@@ -21,6 +22,7 @@ module.exports = {
     // Mock static assets for full App rendering
     "\\.css$": "<rootDir>/tests/__mocks__/styleMock.js",
     "\\.txt$": "<rootDir>/tests/__mocks__/textMock.js",
+    "\\.png$": "<rootDir>/tests/__mocks__/fileMock.js",
     "\\.svg$": "<rootDir>/tests/__mocks__/svgMock.js",
   },
   // Avoid haste module collision with vscode extension

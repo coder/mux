@@ -229,6 +229,9 @@ const sharedConfig = {
   },
   nodePaths: [path.resolve(__dirname, "../node_modules")],
   mainFields: ["module", "main"],
+  loader: {
+    ".png": "dataurl",
+  },
   sourcemap: true,
 };
 
