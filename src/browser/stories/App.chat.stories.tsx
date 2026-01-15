@@ -1917,8 +1917,10 @@ export const ContextSwitchWarning: AppStory = {
       setup={() => {
         const workspaceId = "ws-context-switch";
 
-        // Start with Sonnet which can handle large context
-        updatePersistedState(getModelKey(workspaceId), "anthropic:claude-sonnet-4-5");
+        // Set GPT-4o as current model (128K limit)
+        // Previous message was from Sonnet with 150K tokens
+        // On mount, effect sees model "changed" from Sonnet → GPT-4o and triggers warning
+        updatePersistedState(getModelKey(workspaceId), "openai:gpt-4o");
 
         return setupSimpleChatStory({
           workspaceId,
@@ -1927,9 +1929,8 @@ export const ContextSwitchWarning: AppStory = {
               historySequence: 1,
               timestamp: STABLE_TIMESTAMP - 300000,
             }),
-            // Large context usage - 150K tokens
-            // To see the warning: manually switch to GPT-4o (128K limit)
-            // 150K > 90% of 128K will trigger the warning
+            // Large context usage - 150K tokens from Sonnet (which handles 200K+)
+            // Now switching to GPT-4o (128K limit): 150K > 90% of 128K triggers warning
             createAssistantMessage(
               "msg-2",
               "I've analyzed the codebase. Here's my refactoring plan...",
@@ -1948,15 +1949,13 @@ export const ContextSwitchWarning: AppStory = {
       }}
     />
   ),
-  // No play function - warning triggers on model switch which requires user interaction.
-  // To test: click model selector, choose GPT-4o, warning banner appears.
   parameters: {
     docs: {
       description: {
         story:
-          "Setup for context switch warning. To see the warning: click the model selector " +
-          "and switch to GPT-4o. Since context (150K) exceeds 90% of GPT-4o's limit (128K), " +
-          "a warning banner will appear offering a one-click compact action.",
+          "Shows the context switch warning banner. Previous message used Sonnet (150K tokens), " +
+          "but workspace is now set to GPT-4o (128K limit). Since 150K exceeds 90% of 128K, " +
+          "the warning banner appears offering a one-click compact action.",
       },
     },
   },
