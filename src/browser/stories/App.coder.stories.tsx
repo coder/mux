@@ -285,7 +285,7 @@ export const CoderNotAvailable: AppStory = {
 
 /**
  * Coder with template that has no presets.
- * When selecting a template with 0 presets, the preset dropdown is hidden.
+ * When selecting a template with 0 presets, the preset dropdown is visible but disabled.
  */
 export const CoderNoPresets: AppStory = {
   render: () => (
@@ -326,11 +326,14 @@ export const CoderNoPresets: AppStory = {
     // Template dropdown should be visible
     await canvas.findByTestId("coder-template-select", {}, { timeout: 5000 });
 
-    // Preset dropdown should NOT be visible (0 presets)
-    const presetSelect = canvas.queryByTestId("coder-preset-select");
-    if (presetSelect) {
-      throw new Error("Preset dropdown should not appear when template has no presets");
-    }
+    // Preset dropdown should be visible but disabled (shows "No presets" placeholder)
+    const presetSelect = await canvas.findByTestId("coder-preset-select", {}, { timeout: 5000 });
+    await waitFor(() => {
+      // Radix UI Select sets data-disabled attribute when disabled
+      if (presetSelect.getAttribute("data-disabled") !== "true") {
+        throw new Error("Preset dropdown should be disabled when template has no presets");
+      }
+    });
   },
 };
 
