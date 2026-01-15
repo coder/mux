@@ -83,8 +83,11 @@ const REHYPE_PLUGINS: Pluggable[] = [
   [
     harden, // Additional URL filtering for links and images
     {
-      allowedImagePrefixes: ["*"],
-      allowedLinkPrefixes: ["*"],
+      // SECURITY: restrict potentially dangerous URL schemes in user/assistant content.
+      // This is especially important in read-only viewers (mux.md) which may render
+      // untrusted content.
+      allowedImagePrefixes: ["http:", "https:"],
+      allowedLinkPrefixes: ["http:", "https:", "mailto:"],
       defaultOrigin: undefined,
       allowDataImages: true,
     },
