@@ -618,7 +618,8 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
                   {periodWorkspaces.map((workspace) => {
                     const isProcessing = processingIds.has(workspace.id) || workspace.isRemoving;
                     const isSelected = selectedIds.has(workspace.id);
-                    const branchForTooltip =
+                    // Show workspace name in tooltip when it differs from displayed title
+                    const workspaceNameForTooltip =
                       workspace.title && workspace.title !== workspace.name
                         ? workspace.name
                         : undefined;
@@ -645,7 +646,7 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
                           runtimeConfig={workspace.runtimeConfig}
                           isWorking={false}
                           workspacePath={workspace.namedWorkspacePath}
-                          branchName={branchForTooltip}
+                          workspaceName={workspaceNameForTooltip}
                         />
                         <div className="min-w-0 flex-1">
                           <div className="text-foreground truncate text-sm font-medium">

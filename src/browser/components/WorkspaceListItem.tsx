@@ -212,7 +212,12 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
         )}
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <div className="grid min-w-0 grid-cols-[auto_1fr_auto] items-center gap-1.5">
-            <RuntimeBadge runtimeConfig={metadata.runtimeConfig} isWorking={isWorking} />
+            <RuntimeBadge
+              runtimeConfig={metadata.runtimeConfig}
+              isWorking={isWorking}
+              workspaceName={metadata.name}
+              workspacePath={namedWorkspacePath}
+            />
             {isEditing ? (
               <input
                 className="bg-input-bg text-input-text border-input-border font-inherit focus:border-input-border-focus col-span-2 min-w-0 flex-1 rounded-sm border px-1 text-left text-[13px] outline-none"

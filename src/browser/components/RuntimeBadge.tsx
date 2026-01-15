@@ -20,8 +20,10 @@ interface RuntimeBadgeProps {
   isWorking?: boolean;
   /** Workspace path to show in tooltip */
   workspacePath?: string;
-  /** Git branch/workspace name to show in tooltip */
-  branchName?: string;
+  /** Workspace name to show in tooltip */
+  workspaceName?: string;
+  /** Tooltip position: "top" (default) or "bottom" */
+  tooltipSide?: "top" | "bottom";
 }
 
 // Runtime-specific color schemes - each type has consistent colors in idle/working states
@@ -60,33 +62,63 @@ const RUNTIME_STYLES = {
  *
  * When isWorking=true, badges brighten and pulse within their color scheme.
  */
-function PathWithCopy({ path }: { path: string }) {
+function TooltipRow({
+  label,
+  value,
+  copyable,
+}: {
+  label: string;
+  value: string;
+  copyable?: boolean;
+}) {
   const { copied, copyToClipboard } = useCopyToClipboard();
 
   return (
-    <div className="mt-1 flex items-center gap-1">
-      <span className="text-muted font-mono text-[10px]">{path}</span>
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          void copyToClipboard(path);
-        }}
-        className="text-muted hover:text-foreground"
-        aria-label="Copy path"
-      >
-        {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-      </button>
+    <div className="flex items-center gap-1.5">
+      <span className="text-muted shrink-0 text-xs">{label}</span>
+      <span className="font-mono text-xs whitespace-nowrap">{value}</span>
+      {copyable && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            void copyToClipboard(value);
+          }}
+          className="text-muted hover:text-foreground shrink-0"
+          aria-label={`Copy ${label.toLowerCase()}`}
+        >
+          {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+        </button>
+      )}
     </div>
   );
 }
 
-function BranchWithLabel({ branchName }: { branchName: string }) {
-  return (
-    <div className="mt-1 flex max-w-80 items-baseline gap-1">
-      <span className="text-muted shrink-0">Branch:</span>
-      <span className="min-w-0 font-mono break-words">{branchName}</span>
-    </div>
-  );
+type RuntimeType = keyof typeof RUNTIME_STYLES;
+
+const RUNTIME_ICONS: Record<RuntimeType, React.ComponentType> = {
+  ssh: SSHIcon,
+  worktree: WorktreeIcon,
+  local: LocalIcon,
+  docker: DockerIcon,
+};
+
+function getRuntimeInfo(
+  runtimeConfig?: RuntimeConfig
+): { type: RuntimeType; label: string } | null {
+  if (isSSHRuntime(runtimeConfig)) {
+    const hostname = extractSshHostname(runtimeConfig);
+    return { type: "ssh", label: `SSH: ${hostname ?? runtimeConfig.host}` };
+  }
+  if (isWorktreeRuntime(runtimeConfig)) {
+    return { type: "worktree", label: "Worktree: isolated git worktree" };
+  }
+  if (isLocalProjectRuntime(runtimeConfig)) {
+    return { type: "local", label: "Local: project directory" };
+  }
+  if (isDockerRuntime(runtimeConfig)) {
+    return { type: "docker", label: `Docker: ${runtimeConfig.image}` };
+  }
+  return null;
 }
 
 export function RuntimeBadge({
@@ -94,108 +126,35 @@ export function RuntimeBadge({
   className,
   isWorking = false,
   workspacePath,
-  branchName,
+  workspaceName,
+  tooltipSide = "top",
 }: RuntimeBadgeProps) {
-  // SSH runtime: show server icon with hostname
-  if (isSSHRuntime(runtimeConfig)) {
-    const hostname = extractSshHostname(runtimeConfig);
-    const styles = isWorking ? RUNTIME_STYLES.ssh.working : RUNTIME_STYLES.ssh.idle;
-    return (
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span
-            className={cn(
-              "inline-flex items-center rounded px-1 py-0.5 border transition-colors",
-              styles,
-              className
-            )}
-          >
-            <SSHIcon />
-          </span>
-        </TooltipTrigger>
-        <TooltipContent align="end">
-          <div>SSH: {hostname ?? runtimeConfig.host}</div>
-          {branchName && <BranchWithLabel branchName={branchName} />}
-          {workspacePath && <PathWithCopy path={workspacePath} />}
-        </TooltipContent>
-      </Tooltip>
-    );
-  }
+  const info = getRuntimeInfo(runtimeConfig);
+  if (!info) return null;
 
-  // Worktree runtime: show git branch icon
-  if (isWorktreeRuntime(runtimeConfig)) {
-    const styles = isWorking ? RUNTIME_STYLES.worktree.working : RUNTIME_STYLES.worktree.idle;
-    return (
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span
-            className={cn(
-              "inline-flex items-center rounded px-1 py-0.5 border transition-colors",
-              styles,
-              className
-            )}
-          >
-            <WorktreeIcon />
-          </span>
-        </TooltipTrigger>
-        <TooltipContent align="end">
-          <div>Worktree: isolated git worktree</div>
-          {branchName && <BranchWithLabel branchName={branchName} />}
-          {workspacePath && <PathWithCopy path={workspacePath} />}
-        </TooltipContent>
-      </Tooltip>
-    );
-  }
+  const styles = isWorking ? RUNTIME_STYLES[info.type].working : RUNTIME_STYLES[info.type].idle;
+  const Icon = RUNTIME_ICONS[info.type];
 
-  // Local project-dir runtime: show folder icon
-  if (isLocalProjectRuntime(runtimeConfig)) {
-    const styles = isWorking ? RUNTIME_STYLES.local.working : RUNTIME_STYLES.local.idle;
-    return (
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span
-            className={cn(
-              "inline-flex items-center rounded px-1 py-0.5 border transition-colors",
-              styles,
-              className
-            )}
-          >
-            <LocalIcon />
-          </span>
-        </TooltipTrigger>
-        <TooltipContent align="end">
-          <div>Local: project directory</div>
-          {branchName && <BranchWithLabel branchName={branchName} />}
-          {workspacePath && <PathWithCopy path={workspacePath} />}
-        </TooltipContent>
-      </Tooltip>
-    );
-  }
-
-  // Docker runtime: show container icon with image name
-  if (isDockerRuntime(runtimeConfig)) {
-    const styles = isWorking ? RUNTIME_STYLES.docker.working : RUNTIME_STYLES.docker.idle;
-    return (
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span
-            className={cn(
-              "inline-flex items-center rounded px-1 py-0.5 border transition-colors",
-              styles,
-              className
-            )}
-          >
-            <DockerIcon />
-          </span>
-        </TooltipTrigger>
-        <TooltipContent align="end">
-          <div>Docker: {runtimeConfig.image}</div>
-          {branchName && <BranchWithLabel branchName={branchName} />}
-          {workspacePath && <PathWithCopy path={workspacePath} />}
-        </TooltipContent>
-      </Tooltip>
-    );
-  }
-
-  return null;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className={cn(
+            "inline-flex items-center rounded px-1 py-0.5 border transition-colors",
+            styles,
+            className
+          )}
+        >
+          <Icon />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side={tooltipSide} align="start" className="max-w-[500px]">
+        <div className="flex flex-col gap-1">
+          <div className="text-xs font-medium">{info.label}</div>
+          {workspaceName && <TooltipRow label="Name" value={workspaceName} />}
+          {workspacePath && <TooltipRow label="Path" value={workspacePath} copyable />}
+        </div>
+      </TooltipContent>
+    </Tooltip>
+  );
 }

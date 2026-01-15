@@ -118,6 +118,8 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
           runtimeConfig={runtimeConfig}
           isWorking={canInterrupt}
           workspacePath={namedWorkspacePath}
+          workspaceName={workspaceName}
+          tooltipSide="bottom"
         />
         <span className="min-w-0 truncate font-mono text-xs">{projectName}</span>
         <div className="flex items-center gap-1">
