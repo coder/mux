@@ -1,6 +1,5 @@
-import React, { useRef } from "react";
+import React from "react";
 import { cn } from "@/common/lib/utils";
-import { useHorizontalWheelScroll } from "@/browser/hooks/useHorizontalWheelScroll";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -78,7 +77,7 @@ const SortableTab: React.FC<{
             {...attributes}
             {...listeners}
             className={cn(
-              "flex items-baseline gap-1.5 whitespace-nowrap rounded-md px-3 py-1 text-xs font-medium transition-all duration-150",
+              "flex min-w-0 max-w-[240px] items-baseline gap-1.5 whitespace-nowrap rounded-md px-3 py-1 text-xs font-medium transition-all duration-150",
               "cursor-grab touch-none active:cursor-grabbing",
               item.selected
                 ? "bg-hover text-foreground"
@@ -137,16 +136,12 @@ export const RightSidebarTabStrip: React.FC<RightSidebarTabStripProps> = ({
   const isDesktop = isDesktopMode();
   const rightInset = getTitlebarRightInset();
 
-  // Enable horizontal scrolling via mouse wheel
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
-  useHorizontalWheelScroll(scrollContainerRef);
-
   return (
     <div
       ref={setNodeRef}
       className={cn(
         "border-border-light flex min-w-0 items-center border-b px-2 transition-colors",
-        isDesktop ? "h-10" : "py-1.5",
+        isDesktop ? "min-h-10" : "py-1.5",
         showDropHighlight && "bg-accent/30",
         isDraggingFromHere && "bg-accent/10",
         // In desktop mode, make header draggable for window movement
@@ -157,11 +152,10 @@ export const RightSidebarTabStrip: React.FC<RightSidebarTabStripProps> = ({
       aria-label={ariaLabel}
     >
       <div
-        ref={scrollContainerRef}
         className={cn(
-          "flex min-w-0 flex-1 items-center gap-1 overflow-x-auto",
+          "flex min-w-0 flex-1 flex-wrap items-center gap-1",
           // In desktop mode, the tab strip sits in the titlebar drag region.
-          // Mark the scroll container as no-drag so horizontal scrolling works.
+          // Mark the tab container as no-drag so tab interaction works.
           isDesktop && "titlebar-no-drag"
         )}
       >

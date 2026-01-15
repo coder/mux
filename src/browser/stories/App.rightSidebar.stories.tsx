@@ -1233,3 +1233,69 @@ export const ReviewTabWithUntrackedFiles: AppStory = {
     blurActiveElement();
   },
 };
+
+/**
+ * Many tabs at a narrow sidebar width should wrap into multiple rows.
+ */
+export const ManyTabsWrap: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const workspaceId = "ws-many-tabs";
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "280");
+        localStorage.setItem(
+          getRightSidebarLayoutKey(workspaceId),
+          JSON.stringify({
+            version: 1,
+            nextId: 2,
+            focusedTabsetId: "tabset-1",
+            root: {
+              type: "tabset",
+              id: "tabset-1",
+              tabs: [
+                "costs",
+                "review",
+                "explorer",
+                "stats",
+                ...Array.from(
+                  { length: 12 },
+                  (_v, i) => `file:src/components/ThisIsAReallyLongFileName${i + 1}.tsx`
+                ),
+              ],
+              activeTab: "review",
+            },
+          })
+        );
+
+        const client = setupSimpleChatStory({
+          workspaceId,
+          workspaceName: "feature/many-tabs",
+          projectName: "my-app",
+          messages: [
+            createUserMessage("msg-1", "Open a lot of tabs", { historySequence: 1 }),
+            createAssistantMessage("msg-2", "Ok.", { historySequence: 2 }),
+          ],
+        });
+        expandRightSidebar();
+        return client;
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    const tablist = await canvas.findByRole(
+      "tablist",
+      { name: /sidebar views/i },
+      { timeout: 10_000 }
+    );
+
+    await waitFor(async () => {
+      const tabs = within(tablist).getAllByRole("tab");
+      const rowTops = new Set(tabs.map((tab) => Math.round(tab.getBoundingClientRect().top)));
+      await expect(rowTops.size).toBeGreaterThan(1);
+    });
+
+    blurActiveElement();
+  },
+};

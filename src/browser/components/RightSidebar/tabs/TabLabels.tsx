@@ -133,7 +133,7 @@ export const TerminalTabLabel: React.FC<TerminalTabLabelProps> = ({
   return (
     <span className="inline-flex items-center gap-1">
       <TerminalIcon className="h-3 w-3 shrink-0" />
-      <span className="truncate">{displayName}</span>
+      <span className="min-w-0 truncate">{displayName}</span>
       <Tooltip>
         <TooltipTrigger asChild>
           <button
