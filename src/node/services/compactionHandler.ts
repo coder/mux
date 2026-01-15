@@ -141,6 +141,16 @@ export class CompactionHandler {
       .map((part) => part.text)
       .join("");
 
+    // Self-healing: Reject empty summaries (stream crashed before producing content)
+    if (!summary.trim()) {
+      log.warn("Compaction summary is empty - aborting compaction to prevent corrupted history", {
+        workspaceId: this.workspaceId,
+        partsCount: event.parts.length,
+      });
+      // Don't mark as processed so user can retry
+      return false;
+    }
+
     // Self-healing: Reject compaction if summary is just a raw JSON object.
     // This happens when tools are disabled but the model still tries to output a tool call.
     // A valid summary should be prose text, not a JSON blob.

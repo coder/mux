@@ -729,6 +729,44 @@ describe("CompactionHandler", () => {
     });
   });
 
+  describe("Empty Summary Validation", () => {
+    it("should reject compaction when summary is empty (stream crashed)", async () => {
+      const compactionRequestMsg = createMuxMessage("compact-req-1", "user", "/compact", {
+        historySequence: 0,
+        timestamp: Date.now() - 1000,
+        muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
+      });
+      mockHistoryService.mockGetHistory(Ok([compactionRequestMsg]));
+
+      // Empty parts array simulates stream crash before producing content
+      const event = createStreamEndEvent("");
+
+      const result = await handler.handleCompletion(event);
+
+      // Should return false and NOT perform compaction
+      expect(result).toBe(false);
+      expect(mockHistoryService.clearHistory).not.toHaveBeenCalled();
+      expect(mockHistoryService.appendToHistory).not.toHaveBeenCalled();
+    });
+
+    it("should reject compaction when summary is only whitespace", async () => {
+      const compactionRequestMsg = createMuxMessage("compact-req-1", "user", "/compact", {
+        historySequence: 0,
+        timestamp: Date.now() - 1000,
+        muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
+      });
+      mockHistoryService.mockGetHistory(Ok([compactionRequestMsg]));
+
+      // Whitespace-only should also be rejected
+      const event = createStreamEndEvent("   \n\t  ");
+
+      const result = await handler.handleCompletion(event);
+
+      expect(result).toBe(false);
+      expect(mockHistoryService.clearHistory).not.toHaveBeenCalled();
+    });
+  });
+
   describe("Raw JSON Object Validation", () => {
     it("should reject compaction when summary is a raw JSON object", async () => {
       const compactionRequestMsg = createMuxMessage("compact-req-1", "user", "/compact", {
