@@ -268,6 +268,8 @@ export interface SimpleChatSetupOptions {
     githubUser: string | null;
     error: { message: string; hasEncryptedKey: boolean } | null;
   };
+  /** Custom slash commands per workspace */
+  slashCommands?: Map<string, Array<{ name: string }>>;
 }
 
 /**
@@ -337,6 +339,7 @@ export function setupSimpleChatStory(opts: SimpleChatSetupOptions): APIClient {
     sessionUsage: sessionUsageMap,
     idleCompactionHours,
     signingCapabilities: opts.signingCapabilities,
+    slashCommands: opts.slashCommands,
   });
 }
 

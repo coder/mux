@@ -122,6 +122,7 @@ export function getSlashCommandSuggestions(
           display: `/${cmd.name}`,
           description: "Custom command",
           replacement: `/${cmd.name} `,
+          isCustom: true,
         }));
 
       // Append custom commands after builtin commands

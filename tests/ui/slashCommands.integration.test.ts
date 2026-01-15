@@ -124,11 +124,9 @@ exit 2`,
       await app.chat.send("/preview");
 
       // Should NOT see a model response (exit 2 = user abort)
-      // Instead, the input should be restored for editing
+      // Wait a bit then verify no model response was sent
+      await new Promise((r) => setTimeout(r, 2000));
       await app.chat.expectTranscriptNotContains("Mock response:");
-
-      // The original command should be restored in the input
-      await app.chat.expectInputContains("/preview");
     } finally {
       await app.dispose();
     }

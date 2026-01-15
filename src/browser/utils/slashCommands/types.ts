@@ -74,6 +74,8 @@ export interface SlashSuggestion {
   display: string;
   description: string;
   replacement: string;
+  /** Whether this is a custom command from .mux/commands/ */
+  isCustom?: boolean;
 }
 
 export interface SlashSuggestionContext {

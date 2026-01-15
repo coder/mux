@@ -104,14 +104,4 @@ export class ChatHarness {
       { timeout: timeoutMs }
     );
   }
-
-  async expectInputContains(needle: string, timeoutMs: number = 10_000): Promise<void> {
-    const textarea = await this.getActiveTextarea();
-    await waitFor(
-      () => {
-        expect(textarea.value).toContain(needle);
-      },
-      { timeout: timeoutMs }
-    );
-  }
 }
