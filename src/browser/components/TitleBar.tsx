@@ -262,7 +262,13 @@ export function TitleBar() {
       )}
       style={leftInset > 0 ? { paddingLeft: leftInset } : undefined}
     >
-      <div className={cn("mr-4 flex min-w-0 items-center gap-2", isDesktop && "titlebar-no-drag")}>
+      <div
+        className={cn(
+          "mr-4 flex min-w-0",
+          leftInset > 0 ? "flex-col" : "items-center gap-2",
+          isDesktop && "titlebar-no-drag"
+        )}
+      >
         <Tooltip>
           <TooltipTrigger asChild>
             <div
@@ -273,9 +279,14 @@ export function TitleBar() {
               onClick={handleUpdateClick}
               onMouseEnter={handleIndicatorHover}
             >
-              <div className="relative h-4 w-[35px] overflow-hidden">
+              <div
+                className={cn(
+                  "relative overflow-hidden",
+                  leftInset > 0 ? "h-3 w-[26px]" : "h-4 w-[35px]"
+                )}
+              >
                 <MuxLogo
-                  className={cn("block h-full w-full", leftInset > 0 && "-translate-y-px")}
+                  className={cn("block h-full w-full", leftInset > 0 || "-translate-y-px")}
                 />
                 {showUpdateShimmer && (
                   <div
@@ -290,7 +301,12 @@ export function TitleBar() {
                   />
                 )}
               </div>
-              <div className="text-accent flex h-3.5 w-3.5 items-center justify-center">
+              <div
+                className={cn(
+                  "text-accent flex items-center justify-center",
+                  leftInset > 0 ? "h-3 w-3" : "h-3.5 w-3.5"
+                )}
+              >
                 {updateBadgeIcon}
               </div>
             </div>
@@ -301,7 +317,12 @@ export function TitleBar() {
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
-            <div className="min-w-0 cursor-text truncate text-xs font-normal tracking-wider select-text">
+            <div
+              className={cn(
+                "min-w-0 cursor-text truncate font-normal tracking-wider select-text",
+                leftInset > 0 ? "text-[10px]" : "text-xs"
+              )}
+            >
               {gitDescribe ?? "(dev)"}
             </div>
           </TooltipTrigger>

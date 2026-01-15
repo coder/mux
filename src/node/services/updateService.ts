@@ -59,6 +59,10 @@ export class UpdateService {
           const debugConfig = parseDebugUpdater(process.env.DEBUG_UPDATER);
           if (!app.isPackaged && !debugConfig.enabled) {
             log.debug("UpdateService: Updates disabled in dev mode");
+            // Ensure status is idle so frontend doesn't show spinner.
+            // Always notify so frontend clears isCheckingOnHover state.
+            this.currentStatus = { type: "idle" };
+            this.notifySubscribers();
             return;
           }
         } catch (err) {

@@ -1,5 +1,5 @@
 ---
-name: React Effects
+name: react-effects
 description: Guidelines for when to use (and avoid) useEffect in React components
 ---
 

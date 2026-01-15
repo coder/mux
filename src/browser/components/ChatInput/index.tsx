@@ -8,6 +8,7 @@ import type { Toast } from "../ChatInputToast";
 import { ConnectionStatusToast } from "../ConnectionStatusToast";
 import { ChatInputToast } from "../ChatInputToast";
 import { createCommandToast, createErrorToast } from "../ChatInputToasts";
+import { ConfirmationModal } from "../ConfirmationModal";
 import { parseCommand } from "@/browser/utils/slashCommands/parser";
 import {
   readPersistedState,
@@ -69,6 +70,7 @@ import {
   KEYBINDS,
   isEditableElement,
 } from "@/browser/utils/ui/keybinds";
+import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { ModelSelector, type ModelSelectorRef } from "../ModelSelector";
 import { useModelsFromSettings } from "@/browser/hooks/useModelsFromSettings";
 import { SendHorizontal, X } from "lucide-react";
@@ -169,6 +171,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const [commandSuggestions, setCommandSuggestions] = useState<SlashSuggestion[]>([]);
   const [providerNames, setProviderNames] = useState<string[]>([]);
   const [toast, setToast] = useState<Toast | null>(null);
+  // State for destructive command confirmation modal
+  const [pendingDestructiveCommand, setPendingDestructiveCommand] = useState<{
+    type: "clear" | "truncate";
+    percentage?: number;
+  } | null>(null);
   const pushToast = useCallback(
     (nextToast: Omit<Toast, "id">) => {
       setToast({ id: Date.now().toString(), ...nextToast });
@@ -1120,6 +1127,46 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     [setImageAttachments]
   );
 
+  // Handle destructive command confirmation
+  const handleDestructiveCommandConfirm = useCallback(async () => {
+    if (!pendingDestructiveCommand || variant !== "workspace") return;
+
+    const { type, percentage } = pendingDestructiveCommand;
+    setPendingDestructiveCommand(null);
+
+    // Save the original input in case we need to restore on error
+    const originalInput = input;
+    setInput("");
+    if (inputRef.current) {
+      inputRef.current.style.height = "";
+    }
+
+    try {
+      if (type === "clear") {
+        await props.onTruncateHistory(1.0);
+        pushToast({ type: "success", message: "Chat history cleared" });
+      } else if (type === "truncate" && percentage !== undefined) {
+        await props.onTruncateHistory(percentage);
+        pushToast({
+          type: "success",
+          message: `Chat history truncated by ${Math.round(percentage * 100)}%`,
+        });
+      }
+    } catch (error) {
+      console.error("Failed to execute destructive command:", error);
+      pushToast({
+        type: "error",
+        message: error instanceof Error ? error.message : "Failed to modify chat history",
+      });
+      // Restore the input so user can retry
+      setInput(originalInput);
+    }
+  }, [pendingDestructiveCommand, variant, props, pushToast, setInput, input]);
+
+  const handleDestructiveCommandCancel = useCallback(() => {
+    setPendingDestructiveCommand(null);
+  }, []);
+
   // Handle drag over to allow drop
   const handleDragOver = useCallback(
     (e: React.DragEvent<HTMLTextAreaElement>) => {
@@ -1257,28 +1304,15 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       const parsed = parseCommand(messageText);
 
       if (parsed) {
-        // Handle /clear command
+        // Handle /clear command - show confirmation modal
         if (parsed.type === "clear") {
-          setInput("");
-          if (inputRef.current) {
-            inputRef.current.style.height = "";
-          }
-          await props.onTruncateHistory(1.0);
-          pushToast({ type: "success", message: "Chat history cleared" });
+          setPendingDestructiveCommand({ type: "clear" });
           return;
         }
 
-        // Handle /truncate command
+        // Handle /truncate command - show confirmation modal
         if (parsed.type === "truncate") {
-          setInput("");
-          if (inputRef.current) {
-            inputRef.current.style.height = "";
-          }
-          await props.onTruncateHistory(parsed.percentage);
-          pushToast({
-            type: "success",
-            message: `Chat history truncated by ${Math.round(parsed.percentage * 100)}%`,
-          });
+          setPendingDestructiveCommand({ type: "truncate", percentage: parsed.percentage });
           return;
         }
 
@@ -1819,7 +1853,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     if (matchesKeybind(e, KEYBINDS.CANCEL_EDIT)) {
       if (variant === "workspace" && editingMessage && props.onCancelEdit && !vimEnabled) {
         e.preventDefault();
-        e.stopPropagation(); // Prevent global handler from interrupting stream
+        stopKeyboardPropagation(e);
         setDraft(preEditDraftRef.current);
         props.onCancelEdit();
         const isFocused = document.activeElement === inputRef.current;
@@ -2208,6 +2242,25 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           </div>
         </div>
       </div>
+
+      {/* Confirmation modal for destructive commands */}
+      <ConfirmationModal
+        isOpen={pendingDestructiveCommand !== null}
+        title={
+          pendingDestructiveCommand?.type === "clear"
+            ? "Clear Chat History?"
+            : `Truncate ${Math.round((pendingDestructiveCommand?.percentage ?? 0) * 100)}% of Chat History?`
+        }
+        description={
+          pendingDestructiveCommand?.type === "clear"
+            ? "This will remove all messages from the conversation."
+            : `This will remove approximately ${Math.round((pendingDestructiveCommand?.percentage ?? 0) * 100)}% of the oldest messages.`
+        }
+        warning="This action cannot be undone."
+        confirmLabel={pendingDestructiveCommand?.type === "clear" ? "Clear" : "Truncate"}
+        onConfirm={handleDestructiveCommandConfirm}
+        onCancel={handleDestructiveCommandCancel}
+      />
     </Wrapper>
   );
 };

@@ -8,6 +8,7 @@ import {
   isEditableElement,
   matchesKeybind,
 } from "@/browser/utils/ui/keybinds";
+import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { getSlashCommandSuggestions } from "@/browser/utils/slashCommands/suggestions";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { filterCommandsByPrefix } from "@/browser/utils/commandPaletteFiltering";
@@ -412,11 +413,11 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
             if (currentField) {
               if (e.key === "Enter" && currentField.type === "text") {
                 e.preventDefault();
-                e.stopPropagation();
+                stopKeyboardPropagation(e);
                 handlePromptTextSubmit();
               } else if (e.key === "Escape") {
                 e.preventDefault();
-                e.stopPropagation();
+                stopKeyboardPropagation(e);
                 resetPaletteState();
                 close();
               }

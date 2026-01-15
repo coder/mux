@@ -1,4 +1,5 @@
 import { useRename } from "@/browser/contexts/WorkspaceRenameContext";
+import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { cn } from "@/common/lib/utils";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
@@ -97,8 +98,8 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
   };
 
   const handleEditKeyDown = (e: React.KeyboardEvent) => {
-    // Always stop propagation to prevent parent div's onKeyDown from interfering
-    e.stopPropagation();
+    // Always stop propagation to prevent parent div's onKeyDown and global handlers from interfering
+    stopKeyboardPropagation(e);
     if (e.key === "Enter") {
       e.preventDefault();
       void handleConfirmEdit();

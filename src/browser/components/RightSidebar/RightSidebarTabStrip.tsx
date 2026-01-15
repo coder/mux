@@ -1,5 +1,6 @@
-import React from "react";
+import React, { useRef } from "react";
 import { cn } from "@/common/lib/utils";
+import { useHorizontalWheelScroll } from "@/browser/hooks/useHorizontalWheelScroll";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -127,6 +128,10 @@ export const RightSidebarTabStrip: React.FC<RightSidebarTabStripProps> = ({
   const isDesktop = isDesktopMode();
   const rightInset = getTitlebarRightInset();
 
+  // Enable horizontal scrolling via mouse wheel
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  useHorizontalWheelScroll(scrollContainerRef);
+
   return (
     <div
       ref={setNodeRef}
@@ -143,6 +148,7 @@ export const RightSidebarTabStrip: React.FC<RightSidebarTabStripProps> = ({
       aria-label={ariaLabel}
     >
       <div
+        ref={scrollContainerRef}
         className={cn(
           "flex min-w-0 flex-1 items-center gap-1 overflow-x-auto",
           // In desktop mode, the tab strip sits in the titlebar drag region.

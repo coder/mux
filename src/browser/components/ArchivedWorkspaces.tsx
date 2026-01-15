@@ -3,7 +3,7 @@ import { cn } from "@/common/lib/utils";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { useAPI } from "@/browser/contexts/API";
-import { Trash2, Search } from "lucide-react";
+import { Trash2, Search, Loader2 } from "lucide-react";
 import { ArchiveIcon, ArchiveRestoreIcon } from "./icons/ArchiveIcon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { RuntimeBadge } from "./RuntimeBadge";
@@ -616,7 +616,7 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
                   </div>
                   {/* Workspaces in this period */}
                   {periodWorkspaces.map((workspace) => {
-                    const isProcessing = processingIds.has(workspace.id);
+                    const isProcessing = processingIds.has(workspace.id) || workspace.isRemoving;
                     const isSelected = selectedIds.has(workspace.id);
                     const branchForTooltip =
                       workspace.title && workspace.title !== workspace.name
@@ -690,7 +690,11 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
                                 className="text-muted rounded p-1.5 transition-colors hover:bg-white/10 hover:text-red-400 disabled:opacity-50"
                                 aria-label={`Delete workspace ${displayTitle}`}
                               >
-                                <Trash2 className="h-4 w-4" />
+                                {isProcessing ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Trash2 className="h-4 w-4" />
+                                )}
                               </button>
                             </TooltipTrigger>
                             <TooltipContent>Delete permanently (local branch too)</TooltipContent>

@@ -138,6 +138,11 @@ export class WorkspaceService extends EventEmitter {
   // Tracks workspaces currently being removed to prevent new sessions/streams during deletion.
   private readonly removingWorkspaces = new Set<string>();
 
+  /** Check if a workspace is currently being removed. */
+  isRemoving(workspaceId: string): boolean {
+    return this.removingWorkspaces.has(workspaceId);
+  }
+
   constructor(
     private readonly config: Config,
     private readonly historyService: HistoryService,
@@ -682,7 +687,10 @@ export class WorkspaceService extends EventEmitter {
   }
 
   async remove(workspaceId: string, force = false): Promise<Result<void>> {
-    const wasRemoving = this.removingWorkspaces.has(workspaceId);
+    // Idempotent: if already removing, return success to prevent race conditions
+    if (this.removingWorkspaces.has(workspaceId)) {
+      return Ok(undefined);
+    }
     this.removingWorkspaces.add(workspaceId);
 
     // Try to remove from runtime (filesystem)
@@ -793,15 +801,18 @@ export class WorkspaceService extends EventEmitter {
       const message = error instanceof Error ? error.message : String(error);
       return Err(`Failed to remove workspace: ${message}`);
     } finally {
-      if (!wasRemoving) {
-        this.removingWorkspaces.delete(workspaceId);
-      }
+      this.removingWorkspaces.delete(workspaceId);
     }
   }
 
   async list(): Promise<FrontendWorkspaceMetadata[]> {
     try {
-      return await this.config.getAllWorkspaceMetadata();
+      const workspaces = await this.config.getAllWorkspaceMetadata();
+      // Enrich with isRemoving status for UI to show deletion spinners
+      return workspaces.map((w) => ({
+        ...w,
+        isRemoving: this.removingWorkspaces.has(w.id) || undefined,
+      }));
     } catch (error) {
       log.error("Failed to list workspaces:", error);
       return [];

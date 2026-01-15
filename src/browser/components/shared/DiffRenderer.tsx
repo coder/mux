@@ -5,6 +5,7 @@
  */
 
 import React, { useEffect, useMemo, useState } from "react";
+import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { cn } from "@/common/lib/utils";
 import { getLanguageFromPath } from "@/common/utils/git/languageDetector";
 import { useOverflowDetection } from "@/browser/hooks/useOverflowDetection";
@@ -747,7 +748,7 @@ const ReviewNoteInput: React.FC<ReviewNoteInputProps> = React.memo(
               onChange={(e) => setNoteText(e.target.value)}
               onClick={(e) => e.stopPropagation()}
               onKeyDown={(e) => {
-                e.stopPropagation();
+                stopKeyboardPropagation(e);
 
                 const isEnter = e.key === "Enter" || e.keyCode === 13;
                 const isEscape = e.key === "Escape" || e.keyCode === 27;
