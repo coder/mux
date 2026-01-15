@@ -16,6 +16,23 @@ describe("getSlashCommandSuggestions", () => {
     expect(labels).toContain("/providers");
   });
 
+  it("includes agent skills when provided in context", () => {
+    const suggestions = getSlashCommandSuggestions("/", {
+      agentSkills: [
+        {
+          name: "test-skill",
+          description: "Test skill description",
+          scope: "project",
+        },
+      ],
+    });
+
+    const skillSuggestion = suggestions.find((s) => s.display === "/test-skill");
+    expect(skillSuggestion).toBeTruthy();
+    expect(skillSuggestion?.replacement).toBe("/test-skill ");
+    expect(skillSuggestion?.description).toContain("(project)");
+  });
+
   it("filters top level commands by partial input", () => {
     const suggestions = getSlashCommandSuggestions("/cl");
     expect(suggestions).toHaveLength(1);

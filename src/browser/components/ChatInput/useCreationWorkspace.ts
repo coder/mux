@@ -18,7 +18,7 @@ import {
 } from "@/common/constants/storage";
 import type { Toast } from "@/browser/components/ChatInputToast";
 import { useAPI } from "@/browser/contexts/API";
-import type { ImagePart } from "@/common/orpc/types";
+import type { ImagePart, SendMessageOptions } from "@/common/orpc/types";
 import {
   useWorkspaceName,
   type WorkspaceNameState,
@@ -96,7 +96,11 @@ interface UseCreationWorkspaceReturn {
   toast: Toast | null;
   setToast: (toast: Toast | null) => void;
   isSending: boolean;
-  handleSend: (message: string, imageParts?: ImagePart[]) => Promise<boolean>;
+  handleSend: (
+    message: string,
+    imageParts?: ImagePart[],
+    optionsOverride?: Partial<SendMessageOptions>
+  ) => Promise<boolean>;
   /** Workspace name/title generation state and actions (for CreationControls) */
   nameState: WorkspaceNameState;
   /** The confirmed identity being used for creation (null until generation resolves) */
@@ -211,7 +215,11 @@ export function useCreationWorkspace({
   }, [projectPath, api]);
 
   const handleSend = useCallback(
-    async (messageText: string, imageParts?: ImagePart[]): Promise<boolean> => {
+    async (
+      messageText: string,
+      imageParts?: ImagePart[],
+      optionsOverride?: Partial<SendMessageOptions>
+    ): Promise<boolean> => {
       if (!messageText.trim() || isSending || !api) return false;
 
       // Build runtime config early (used later for workspace creation)
@@ -303,11 +311,22 @@ export function useCreationWorkspace({
 
         // Fire sendMessage in the background - stream errors will be shown in the workspace UI
         // via the normal stream-error event handling. We don't await this.
+        const additionalSystemInstructions = [
+          sendMessageOptions.additionalSystemInstructions,
+          optionsOverride?.additionalSystemInstructions,
+        ]
+          .filter((part) => typeof part === "string" && part.trim().length > 0)
+          .join("\n\n");
+
         void api.workspace.sendMessage({
           workspaceId: metadata.id,
           message: messageText,
           options: {
             ...sendMessageOptions,
+            ...optionsOverride,
+            additionalSystemInstructions: additionalSystemInstructions.length
+              ? additionalSystemInstructions
+              : undefined,
             imageParts: imageParts && imageParts.length > 0 ? imageParts : undefined,
           },
         });
