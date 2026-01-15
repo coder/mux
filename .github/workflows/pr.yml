@@ -19,10 +19,8 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Permissions for GCP workload identity authentication (Windows code signing on main)
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   # Detect what files changed to determine which jobs/tests to run
@@ -367,6 +365,9 @@ jobs:
     # Windows builds are slow - only run in merge queue and main pushes, not on every PR push
     if: ${{ (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true') }}
     runs-on: windows-latest
+    permissions:
+      contents: read
+      id-token: write # GCP workload identity for Windows code signing
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:

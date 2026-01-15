@@ -10,10 +10,6 @@ on:
         required: false
         type: string
 
-permissions:
-  contents: write # Required for electron-builder to upload release assets
-  id-token: write # Required for GCP workload identity authentication (Windows code signing)
-
 env:
   RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name || github.ref_name }}
 
@@ -47,6 +43,8 @@ jobs:
     name: Build and Release macOS
     needs: preflight
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-macos-15' || 'macos-latest' }}
+    permissions:
+      contents: write # Upload release assets
     steps:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -78,6 +76,8 @@ jobs:
     name: Build and Release Linux
     needs: preflight
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
+    permissions:
+      contents: write # Upload release assets
     steps:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -100,6 +100,8 @@ jobs:
     name: Build and Release VS Code Extension
     needs: preflight
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
+    permissions:
+      contents: write # Upload .vsix to release
     steps:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -153,6 +155,9 @@ jobs:
     name: Build and Release Windows
     needs: preflight
     runs-on: windows-latest
+    permissions:
+      contents: write # Upload release assets
+      id-token: write # GCP workload identity for code signing
     steps:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
