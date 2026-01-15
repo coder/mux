@@ -53,6 +53,23 @@ describe("buildContinueMessage", () => {
     expect(result?.agentId).toBe("plan");
   });
 
+  test("preserves muxMetadata when provided", () => {
+    const muxMetadata = {
+      type: "agent-skill",
+      rawCommand: "/test-skill hello",
+      skillName: "test-skill",
+      scope: "project",
+    } as const;
+
+    const result = buildContinueMessage({
+      text: "hello",
+      muxMetadata,
+      model: "test-model",
+      agentId: "exec",
+    });
+
+    expect(result?.muxMetadata).toEqual(muxMetadata);
+  });
   test("returns message when only reviews provided", () => {
     const result = buildContinueMessage({
       reviews: [makeReview("a.ts")],
@@ -110,6 +127,21 @@ describe("rebuildContinueMessage", () => {
     expect(result?.agentId).toBe("plan");
   });
 
+  test("preserves muxMetadata from persisted data", () => {
+    const muxMetadata = {
+      type: "agent-skill",
+      rawCommand: "/test-skill hello",
+      skillName: "test-skill",
+      scope: "project",
+    } as const;
+
+    const result = rebuildContinueMessage(
+      { text: "continue", muxMetadata },
+      { model: "m", agentId: "exec" }
+    );
+
+    expect(result?.muxMetadata).toEqual(muxMetadata);
+  });
   test("preserves reviews from persisted data", () => {
     const review = makeReview("a.ts");
     const result = rebuildContinueMessage(

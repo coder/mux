@@ -39,6 +39,8 @@ export type ContinueMessage = UserMessageContent & {
   model?: string;
   /** Agent ID for the continue message (determines tool policy via agent definitions). Defaults to 'exec'. */
   agentId?: string;
+  /** Frontend metadata to apply to the queued follow-up user message (e.g., preserve /skill display) */
+  muxMetadata?: MuxFrontendMetadata;
   /** Brand marker - not present at runtime, enforces factory usage at compile time */
   readonly [ContinueMessageBrand]: true;
 };
@@ -51,6 +53,8 @@ export interface BuildContinueMessageOptions {
   text?: string;
   imageParts?: ImagePart[];
   reviews?: ReviewNoteDataForDisplay[];
+  /** Optional frontend metadata to carry through to the queued follow-up user message */
+  muxMetadata?: MuxFrontendMetadata;
   model: string;
   agentId: string;
 }
@@ -75,6 +79,7 @@ export function buildContinueMessage(
     text: opts.text ?? "",
     imageParts: opts.imageParts,
     reviews: opts.reviews,
+    muxMetadata: opts.muxMetadata,
     model: opts.model,
     agentId: opts.agentId,
   } as ContinueMessage;
@@ -119,6 +124,7 @@ export function rebuildContinueMessage(
     text: persisted.text,
     imageParts: persisted.imageParts,
     reviews: persisted.reviews,
+    muxMetadata: persisted.muxMetadata,
     model: persisted.model ?? defaults.model,
     agentId: persistedAgentId ?? legacyAgentId ?? defaults.agentId,
   });

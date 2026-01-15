@@ -605,7 +605,10 @@ export class AgentSession {
       const continueMessage = typedMuxMetadata.parsed.continueMessage;
 
       // Process the continue message content (handles reviews -> text formatting + metadata)
-      const { finalText, metadata } = prepareUserMessageForSend(continueMessage);
+      const { finalText, metadata } = prepareUserMessageForSend(
+        continueMessage,
+        continueMessage.muxMetadata
+      );
 
       // Legacy compatibility: older clients stored `continueMessage.mode` (exec/plan) and compaction
       // requests run with agentId="compact". Avoid falling back to the compact agent for the
