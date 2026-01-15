@@ -45,8 +45,9 @@ export function useContextSwitchWarning(
 
   const [warning, setWarning] = useState<ContextSwitchWarning | null>(null);
   const prevUse1MRef = useRef(use1M);
-  // Track previous model so we can use it as compaction fallback on switch
-  const prevPendingModelRef = useRef(pendingModel);
+  // Track previous model so we can use it as compaction fallback on switch.
+  // Initialize to null so first render triggers check (handles page reload after model switch).
+  const prevPendingModelRef = useRef<string | null>(null);
 
   const getCurrentTokens = useCallback(() => {
     const usage = workspaceUsage?.liveUsage ?? workspaceUsage?.lastContextUsage;
