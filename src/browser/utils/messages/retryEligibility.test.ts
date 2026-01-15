@@ -328,23 +328,12 @@ describe("shouldKeepRetryBarrierVisibleDuringRetry", () => {
         errorType: "network",
         historySequence: 1,
       },
-      {
-        type: "assistant",
-        id: "assistant-2",
-        historyId: "assistant-2",
-        content: "",
-        historySequence: 2,
-        isStreaming: true,
-        isPartial: false,
-        isCompacted: false,
-        isIdleCompacted: false,
-      },
     ];
 
     expect(shouldKeepRetryBarrierVisibleDuringRetry(messages, 0)).toBe(false);
   });
 
-  it("returns true when attempt > 0 and stream has started but no content yet", () => {
+  it("returns true when attempt > 0 and we're still displaying the interrupted message", () => {
     const messages: DisplayedMessage[] = [
       {
         type: "stream-error",
@@ -354,14 +343,21 @@ describe("shouldKeepRetryBarrierVisibleDuringRetry", () => {
         errorType: "network",
         historySequence: 1,
       },
+    ];
+
+    expect(shouldKeepRetryBarrierVisibleDuringRetry(messages, 1)).toBe(true);
+  });
+
+  it("returns true for partial assistant messages", () => {
+    const messages: DisplayedMessage[] = [
       {
         type: "assistant",
-        id: "assistant-2",
-        historyId: "assistant-2",
-        content: "",
-        historySequence: 2,
-        isStreaming: true,
-        isPartial: false,
+        id: "assistant-1",
+        historyId: "assistant-1",
+        content: "Incomplete response",
+        historySequence: 1,
+        isStreaming: false,
+        isPartial: true,
         isCompacted: false,
         isIdleCompacted: false,
       },
@@ -396,7 +392,7 @@ describe("shouldKeepRetryBarrierVisibleDuringRetry", () => {
     expect(shouldKeepRetryBarrierVisibleDuringRetry(messages, 1)).toBe(false);
   });
 
-  it("returns false when the stream was started by a fresh user message", () => {
+  it("returns false for fresh user messages", () => {
     const messages: DisplayedMessage[] = [
       {
         type: "user",
@@ -404,17 +400,6 @@ describe("shouldKeepRetryBarrierVisibleDuringRetry", () => {
         historyId: "user-1",
         content: "Hello",
         historySequence: 1,
-      },
-      {
-        type: "assistant",
-        id: "assistant-2",
-        historyId: "assistant-2",
-        content: "",
-        historySequence: 2,
-        isStreaming: true,
-        isPartial: false,
-        isCompacted: false,
-        isIdleCompacted: false,
       },
     ];
 

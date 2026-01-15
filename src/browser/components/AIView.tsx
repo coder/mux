@@ -460,7 +460,8 @@ const AIViewInner: React.FC<AIViewProps> = ({
   // Track if last message was interrupted or errored (for RetryBarrier)
   // Uses same logic as useResumeManager for DRY
   const showRetryBarrier = workspaceState
-    ? hasInterruptedStream(workspaceState.messages, workspaceState.pendingStreamStartTime) ||
+    ? (!workspaceState.canInterrupt &&
+        hasInterruptedStream(workspaceState.messages, workspaceState.pendingStreamStartTime)) ||
       shouldKeepRetryBarrierVisibleDuringRetry(workspaceState.messages, retryAttempt)
     : false;
 

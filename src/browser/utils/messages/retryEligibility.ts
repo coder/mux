@@ -132,31 +132,52 @@ export function hasInterruptedStream(
  * In that window, AIView previously hid RetryBarrier because canInterrupt flipped to true,
  * causing the banner to flicker on every retry attempt.
  *
- * This helper keeps RetryBarrier visible while the new stream is active but has not produced
- * any visible assistant content yet.
+ * Note: A new stream-start doesn't always immediately produce a new assistant DisplayedMessage
+ * (we don't render empty assistant messages). During TTFT gaps, the last displayed message can
+ * still be the prior interruption.
  */
 export function shouldKeepRetryBarrierVisibleDuringRetry(
   messages: DisplayedMessage[],
   retryAttempt: number
 ): boolean {
   if (retryAttempt <= 0) return false;
-  if (messages.length < 2) return false;
+  if (messages.length === 0) return false;
 
   const lastMessage = messages[messages.length - 1];
-  if (lastMessage.type !== "assistant") return false;
-  if (!lastMessage.isStreaming) return false;
-  if (lastMessage.content.trim().length > 0) return false;
 
-  const previousMessage = messages[messages.length - 2];
+  // If we're still showing the interruption message while a new retry stream is active,
+  // keep the banner visible so it doesn't flicker away on stream-start.
+  if (lastMessage.type === "stream-error") {
+    return true;
+  }
 
-  // Only keep the banner sticky when this stream is a retry/resume attempt.
-  // If the previous message is a fresh user message, we want normal streaming UX.
-  return (
-    previousMessage.type === "stream-error" ||
-    (previousMessage.type === "assistant" && previousMessage.isPartial === true) ||
-    (previousMessage.type === "tool" && previousMessage.isPartial === true) ||
-    (previousMessage.type === "reasoning" && previousMessage.isPartial === true)
-  );
+  if (
+    (lastMessage.type === "assistant" ||
+      lastMessage.type === "tool" ||
+      lastMessage.type === "reasoning") &&
+    lastMessage.isPartial === true
+  ) {
+    return true;
+  }
+
+  // If we do have a streaming assistant block but it hasn't produced any visible content yet,
+  // keep the banner sticky until the first non-empty delta arrives.
+  if (
+    lastMessage.type === "assistant" &&
+    lastMessage.isStreaming &&
+    lastMessage.content.trim().length === 0 &&
+    messages.length >= 2
+  ) {
+    const previousMessage = messages[messages.length - 2];
+    return (
+      previousMessage.type === "stream-error" ||
+      (previousMessage.type === "assistant" && previousMessage.isPartial === true) ||
+      (previousMessage.type === "tool" && previousMessage.isPartial === true) ||
+      (previousMessage.type === "reasoning" && previousMessage.isPartial === true)
+    );
+  }
+
+  return false;
 }
 
 /**
