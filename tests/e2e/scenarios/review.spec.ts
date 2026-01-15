@@ -6,7 +6,7 @@ test.skip(
   "Electron scenario runs on chromium only"
 );
 
-test("review scenario", async ({ ui }) => {
+test("review scenario", async ({ ui, page }) => {
   await ui.projects.openFirstWorkspace();
   await ui.chat.setMode("Plan");
   await ui.chat.setThinkingLevel(2);
@@ -23,7 +23,10 @@ test("review scenario", async ({ ui }) => {
   await ui.chat.sendMessage(MOCK_REVIEW_PROMPTS.SHOW_ONBOARDING_DOC);
   await ui.chat.expectTranscriptContains("Found it. Here’s the quick-start summary:");
 
-  await ui.chat.sendCommandAndExpectStatus("/truncate 50", "Chat history truncated");
+  await ui.chat.sendMessage("/truncate 50");
+  // Confirm the destructive action in the modal
+  await page.getByRole("button", { name: "Truncate" }).click();
+  await ui.chat.expectStatusMessageContains("Chat history truncated");
 
   await ui.metaSidebar.expectVisible();
   await ui.metaSidebar.selectTab("Review");
