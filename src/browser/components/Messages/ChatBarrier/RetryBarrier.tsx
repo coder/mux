@@ -5,6 +5,7 @@ import { usePersistedState, updatePersistedState } from "@/browser/hooks/usePers
 import type { RetryState } from "@/browser/hooks/useResumeManager";
 import { useWorkspaceState } from "@/browser/stores/WorkspaceStore";
 import {
+  getExplicitCompactionSuggestion,
   getHigherContextCompactionSuggestion,
   type CompactionSuggestion,
 } from "@/browser/utils/compaction/suggestion";
@@ -20,7 +21,12 @@ import {
 import { calculateBackoffDelay, createManualRetryState } from "@/browser/utils/messages/retryState";
 import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
-import { getAutoRetryKey, getRetryStateKey, VIM_ENABLED_KEY } from "@/common/constants/storage";
+import {
+  getAutoRetryKey,
+  getRetryStateKey,
+  PREFERRED_COMPACTION_MODEL_KEY,
+  VIM_ENABLED_KEY,
+} from "@/common/constants/storage";
 import { cn } from "@/common/lib/utils";
 import type { ImagePart, ProvidersConfigMap } from "@/common/orpc/types";
 import { buildContinueMessage, type DisplayedMessage } from "@/common/types/message";
@@ -126,7 +132,13 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = ({ workspaceId, classNa
     return workspaceState?.currentModel ?? null;
   }, [showCompactionUI, triggerUserMessage, lastMessage, workspaceState?.currentModel]);
 
-  // Read autoRetry preference from localStorage
+  // Read preferences from localStorage
+
+  const [preferredCompactionModel] = usePersistedState<string>(
+    PREFERRED_COMPACTION_MODEL_KEY,
+    "", // Default to empty (use workspace model)
+    { listener: true }
+  );
   const [autoRetry, setAutoRetry] = usePersistedState<boolean>(
     getAutoRetryKey(workspaceId),
     true, // Default to true
@@ -196,11 +208,36 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = ({ workspaceId, classNa
       return null;
     }
 
+    // If we're retrying a failed compaction request, prefer a larger-context model to recover.
+    if (isCompactionRecoveryFlow) {
+      return getHigherContextCompactionSuggestion({
+        currentModel: compactionTargetModel,
+        providersConfig,
+      });
+    }
+
+    const preferred = preferredCompactionModel.trim();
+    if (preferred.length > 0) {
+      const explicit = getExplicitCompactionSuggestion({
+        modelId: preferred,
+        providersConfig,
+      });
+      if (explicit) {
+        return explicit;
+      }
+    }
+
     return getHigherContextCompactionSuggestion({
       currentModel: compactionTargetModel,
       providersConfig,
     });
-  }, [compactionTargetModel, showCompactionUI, providersConfig]);
+  }, [
+    compactionTargetModel,
+    showCompactionUI,
+    isCompactionRecoveryFlow,
+    providersConfig,
+    preferredCompactionModel,
+  ]);
 
   async function handleRetryWithCompaction(): Promise<void> {
     const insertIntoChatInput = (text: string, imageParts?: ImagePart[]): void => {
@@ -359,12 +396,29 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = ({ workspaceId, classNa
     <div className="font-primary text-foreground/80 pl-8 text-[12px]">
       <span className="text-warning font-semibold">Context window exceeded.</span>{" "}
       {compactionSuggestion ? (
-        <>
-          We&apos;ll compact with{" "}
-          <span className="text-foreground font-semibold">{compactionSuggestion.displayName}</span>{" "}
-          ({formatContextTokens(compactionSuggestion.maxInputTokens)} context) to unblock you with a
-          higher-context model. Your workspace model stays the same.
-        </>
+        compactionSuggestion.kind === "preferred" ? (
+          <>
+            We&apos;ll compact with your configured compaction model{" "}
+            <span className="text-foreground font-semibold">
+              {compactionSuggestion.displayName}
+            </span>
+            {compactionSuggestion.maxInputTokens !== null ? (
+              <> ({formatContextTokens(compactionSuggestion.maxInputTokens)} context)</>
+            ) : null}{" "}
+            to unblock you. Your workspace model stays the same.
+          </>
+        ) : (
+          <>
+            We&apos;ll compact with{" "}
+            <span className="text-foreground font-semibold">
+              {compactionSuggestion.displayName}
+            </span>
+            {compactionSuggestion.maxInputTokens !== null ? (
+              <> ({formatContextTokens(compactionSuggestion.maxInputTokens)} context)</>
+            ) : null}{" "}
+            to unblock you with a higher-context model. Your workspace model stays the same.
+          </>
+        )
       ) : (
         <>Compact this chat to unblock you. Your workspace model stays the same.</>
       )}
