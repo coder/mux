@@ -259,7 +259,12 @@ export function useCoderWorkspace({
         }
       })
       .finally(() => {
-        if (mounted) {
+        // Only clear loading for the active request (not stale ones)
+        if (
+          mounted &&
+          coderConfigRef.current?.template === templateAtRequest &&
+          coderConfigRef.current?.templateOrg === orgAtRequest
+        ) {
           setLoadingPresets(false);
         }
       });
