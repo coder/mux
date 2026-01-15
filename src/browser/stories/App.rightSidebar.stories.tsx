@@ -379,14 +379,15 @@ export const ExplorerTabSelected: AppStory = {
     // Wait for file tree to load
     await waitFor(
       () => {
-        canvas.getByText("package.json");
+        canvas.getByText("src");
       },
       { timeout: 5000 }
     );
 
-    // Click on package.json to select it (will have focus/selected blue background)
-    const packageJson = canvas.getByText("package.json");
-    await userEvent.click(packageJson);
+    // Click on src folder to select it (will have focus/selected blue background)
+    // Using a folder instead of a file to avoid opening a file viewer tab
+    const srcFolder = canvas.getByText("src");
+    await userEvent.click(srcFolder);
 
     // Don't blur - keep the item selected/focused for the screenshot
   },

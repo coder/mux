@@ -123,6 +123,8 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
     );
   }
 
+  const handleRefresh = () => setRefreshCounter((c) => c + 1);
+
   // Route to appropriate viewer
   if (data.type === "text") {
     return (
@@ -131,6 +133,7 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
         filePath={props.relativePath}
         size={data.size}
         diff={state.diff}
+        onRefresh={handleRefresh}
       />
     );
   }

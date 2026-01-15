@@ -5,6 +5,7 @@
 
 import React from "react";
 import { parsePatch } from "diff";
+import { RefreshCw } from "lucide-react";
 import { highlightCode } from "@/browser/utils/highlighting/highlightWorkerClient";
 import { extractShikiLines } from "@/browser/utils/highlighting/shiki-shared";
 import { useTheme } from "@/browser/contexts/ThemeContext";
@@ -16,6 +17,8 @@ interface TextFileViewerProps {
   size: number;
   /** Git diff for uncommitted changes (null if no changes or error) */
   diff: string | null;
+  /** Callback to refresh the file contents */
+  onRefresh?: () => void;
 }
 
 // Format file size for display
@@ -149,9 +152,8 @@ export const TextFileViewer: React.FC<TextFileViewerProps> = (props) => {
   }, [props.content, props.diff]);
 
   // Syntax highlight all unique line contents
-  const [highlightedContent, setHighlightedContent] = React.useState<Map<string, string> | null>(
-    null
-  );
+  // Store highlighted lines by index to preserve context for repeated lines
+  const [highlightedLines, setHighlightedLines] = React.useState<string[] | null>(null);
 
   React.useEffect(() => {
     const linesToHighlight = unifiedLines
@@ -169,15 +171,9 @@ export const TextFileViewer: React.FC<TextFileViewerProps> = (props) => {
         if (cancelled) return;
 
         const highlighted = extractShikiLines(html);
-        const map = new Map<string, string>();
-        linesToHighlight.forEach((line, idx) => {
-          if (highlighted[idx]) {
-            map.set(line, highlighted[idx]);
-          }
-        });
-        setHighlightedContent(map);
+        setHighlightedLines(highlighted);
       } catch {
-        if (!cancelled) setHighlightedContent(null);
+        if (!cancelled) setHighlightedLines(null);
       }
     }
 
@@ -200,7 +196,7 @@ export const TextFileViewer: React.FC<TextFileViewerProps> = (props) => {
     type: LineType,
     key: number
   ) => {
-    const highlighted = highlightedContent?.get(content);
+    const highlighted = highlightedLines?.[key];
     const bgClass =
       type === "added" ? "bg-green-500/20" : type === "removed" ? "bg-red-500/20" : "";
 
@@ -231,7 +227,7 @@ export const TextFileViewer: React.FC<TextFileViewerProps> = (props) => {
   };
 
   return (
-    <div className="bg-background flex h-full flex-col">
+    <div data-testid="text-file-viewer" className="bg-background flex h-full flex-col">
       <div className="min-h-0 flex-1 overflow-auto">
         <div className="code-block-container text-[11px]" style={{ display: "block" }}>
           {unifiedLines
@@ -256,6 +252,16 @@ export const TextFileViewer: React.FC<TextFileViewerProps> = (props) => {
           </span>
         )}
         <span className="ml-auto">{languageDisplayName}</span>
+        {props.onRefresh && (
+          <button
+            type="button"
+            className="text-muted hover:bg-accent/50 hover:text-foreground rounded p-0.5"
+            onClick={props.onRefresh}
+            title="Refresh file"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
     </div>
   );

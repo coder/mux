@@ -268,6 +268,22 @@ export interface SimpleChatSetupOptions {
     githubUser: string | null;
     error: { message: string; hasEncryptedKey: boolean } | null;
   };
+  /** File contents for file viewer (relativePath -> contents) */
+  fileContents?: Map<
+    string,
+    | { type: "text"; content: string; size: number }
+    | {
+        type: "image";
+        base64: string;
+        mimeType: string;
+        size: number;
+        width?: number;
+        height?: number;
+      }
+    | { type: "error"; message: string }
+  >;
+  /** File diffs for file viewer (relativePath -> diff string) */
+  fileDiffs?: Map<string, string>;
 }
 
 /**
@@ -325,6 +341,12 @@ export function setupSimpleChatStory(opts: SimpleChatSetupOptions): APIClient {
       }
     : baseOnChat;
 
+  // Build file contents/diffs maps from options
+  const fileContentsMap = opts.fileContents
+    ? new Map([[workspaceId, opts.fileContents]])
+    : undefined;
+  const fileDiffsMap = opts.fileDiffs ? new Map([[workspaceId, opts.fileDiffs]]) : undefined;
+
   // Return ORPC client
   return createMockORPCClient({
     projects: groupWorkspacesByProject(workspaces),
@@ -337,6 +359,8 @@ export function setupSimpleChatStory(opts: SimpleChatSetupOptions): APIClient {
     sessionUsage: sessionUsageMap,
     idleCompactionHours,
     signingCapabilities: opts.signingCapabilities,
+    fileContents: fileContentsMap,
+    fileDiffs: fileDiffsMap,
   });
 }
 

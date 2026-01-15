@@ -750,7 +750,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   const { api } = useAPI();
 
   // Keyboard shortcut for closing active tab (Ctrl/Cmd+W)
-  // Only closeable tabs (terminal) can be closed this way
+  // Works for terminal tabs and file tabs
   React.useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!matchesKeybind(e, KEYBINDS.CLOSE_TAB)) return;
@@ -759,26 +759,35 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       if (focusedTabset?.type !== "tabset") return;
 
       const activeTab = focusedTabset.activeTab;
-      if (!isTerminalTab(activeTab)) return; // Only terminal tabs are closeable
 
-      e.preventDefault();
+      // Handle terminal tabs
+      if (isTerminalTab(activeTab)) {
+        e.preventDefault();
 
-      // Close the backend session
-      const sessionId = getTerminalSessionId(activeTab);
-      if (sessionId) {
-        void api?.terminal.close({ sessionId });
+        // Close the backend session
+        const sessionId = getTerminalSessionId(activeTab);
+        if (sessionId) {
+          void api?.terminal.close({ sessionId });
+        }
+
+        // Remove the tab from layout
+        setLayout((prev) => removeTabEverywhere(prev, activeTab));
+
+        // Clean up title (and persist)
+        setTerminalTitles((prev) => {
+          const next = new Map(prev);
+          next.delete(activeTab);
+          updatePersistedState(terminalTitlesKey, Object.fromEntries(next));
+          return next;
+        });
+        return;
       }
 
-      // Remove the tab from layout
-      setLayout((prev) => removeTabEverywhere(prev, activeTab));
-
-      // Clean up title (and persist)
-      setTerminalTitles((prev) => {
-        const next = new Map(prev);
-        next.delete(activeTab);
-        updatePersistedState(terminalTitlesKey, Object.fromEntries(next));
-        return next;
-      });
+      // Handle file tabs
+      if (isFileTab(activeTab)) {
+        e.preventDefault();
+        setLayout((prev) => removeTabEverywhere(prev, activeTab));
+      }
     };
 
     window.addEventListener("keydown", handleKeyDown, { capture: true });

@@ -442,10 +442,23 @@ export class ProjectService {
         return Ok({ type: "error", message: "Access denied: path outside workspace" });
       }
 
+      // Resolve symlinks and verify the real path is still within the workspace
+      let realPath: string;
+      try {
+        realPath = await fsPromises.realpath(resolved);
+      } catch {
+        return Ok({ type: "error", message: `File not found: ${relativePath}` });
+      }
+
+      const realWorkspace = await fsPromises.realpath(normalizedWorkspace);
+      if (!realPath.startsWith(realWorkspace + path.sep) && realPath !== realWorkspace) {
+        return Ok({ type: "error", message: "Access denied: path outside workspace" });
+      }
+
       // Check file exists and get size
       let stats;
       try {
-        stats = await fsPromises.stat(resolved);
+        stats = await fsPromises.stat(realPath);
       } catch {
         return Ok({ type: "error", message: `File not found: ${relativePath}` });
       }
@@ -463,7 +476,7 @@ export class ProjectService {
       }
 
       // Read file as buffer to detect type
-      const buffer = await fsPromises.readFile(resolved);
+      const buffer = await fsPromises.readFile(realPath);
       const ext = path.extname(relativePath).toLowerCase();
 
       // Check for known image types by extension

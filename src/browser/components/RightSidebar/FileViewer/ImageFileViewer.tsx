@@ -94,7 +94,8 @@ export const ImageFileViewer: React.FC<ImageFileViewerProps> = (props) => {
 
   const handleZoomIn = () => setZoom((prev) => Math.min(maxZoom, prev + ZOOM_STEP));
   const handleZoomOut = () => setZoom((prev) => Math.max(MIN_ZOOM, prev - ZOOM_STEP));
-  const handleReset = () => setZoom(1);
+  // Reset to 100% or maxZoom if the image doesn't fit at 100%
+  const handleReset = () => setZoom(Math.min(1, maxZoom));
 
   const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
     const img = e.currentTarget;
@@ -104,7 +105,7 @@ export const ImageFileViewer: React.FC<ImageFileViewerProps> = (props) => {
   const dataUrl = `data:${props.mimeType};base64,${props.base64}`;
 
   return (
-    <div className="flex h-full flex-col">
+    <div data-testid="image-file-viewer" className="flex h-full flex-col">
       {/* Toolbar */}
       <div className="border-border-light flex items-center justify-between border-b px-2 py-1">
         <div className="text-muted-foreground flex min-w-0 flex-1 items-center gap-2 text-xs">
