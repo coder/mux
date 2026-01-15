@@ -7,40 +7,70 @@ Add files to `.mux/commands/` to define custom slash commands. The file's conten
 
 ## Quick Start
 
-The simplest command is a text file:
+The simplest command is a markdown file:
 
 ```bash
 mkdir -p .mux/commands
-echo "Refactor the code to follow DRY (Don't Repeat Yourself) principles." > .mux/commands/dry.txt
+cat > .mux/commands/dry.md << 'EOF'
+---
+usage: /dry - refactor code to follow DRY principles
+---
+Refactor the code to follow DRY (Don't Repeat Yourself) principles.
+EOF
 ```
 
-Now type `/dry` in chat - the file contents become your message.
+Now type `/dry` in chat - the file contents (after frontmatter) become your message.
 
 ## File Types
 
-Commands can be either **static files** or **executable scripts**:
+Commands can be either **static markdown files** or **executable scripts**:
 
-| Type       | File                        | Behavior                            |
-| ---------- | --------------------------- | ----------------------------------- |
-| Static     | `<name>.txt` or `<name>.md` | Contents read verbatim              |
-| Executable | `<name>` (no extension)     | Script runs, stdout becomes message |
+| Type       | File                    | Behavior                                      |
+| ---------- | ----------------------- | --------------------------------------------- |
+| Static     | `<name>.md`             | Contents read verbatim (frontmatter stripped) |
+| Executable | `<name>` (no extension) | Script runs, stdout becomes message           |
 
-Static files are checked first (`.txt` before `.md`), so you can override an executable with a text file.
+Static `.md` files take precedence over executables with the same name.
 
 ## File Convention
 
-- **Location**: `<workspacePath>/.mux/commands/<name>[.txt|.md]`
+- **Location**: `<workspacePath>/.mux/commands/<name>.md` or `<name>` (executable)
 - **Name format**: lowercase letters, numbers, and hyphens (e.g., `my-command`)
 - **Executables**: must have shebang (`#!/bin/bash`, `#!/usr/bin/env node`, etc.)
 
+## Usage Comments
+
+Add a `usage:` line to show a description in autocomplete:
+
+**Markdown files** - use YAML frontmatter:
+
+```markdown
+---
+usage: /dry - refactor code to follow DRY principles
+---
+
+Your prompt content here...
+```
+
+**Executable scripts** - use a comment after the shebang:
+
+```bash
+#!/bin/bash
+# usage: /context - show current git context
+```
+
 ## Progressive Examples
 
-### Level 1: Static File
+### Level 1: Static Markdown File
 
-The simplest command is a text file (`.txt` or `.md`):
+The simplest command is a markdown file with optional frontmatter:
 
-```
-# .mux/commands/dry.txt
+```markdown
+# .mux/commands/dry.md
+
+---
+
+## usage: /dry - refactor code to follow DRY principles
 
 Refactor the code to follow DRY (Don't Repeat Yourself) principles.
 Identify repeated patterns and extract them into reusable functions or modules.
@@ -55,7 +85,7 @@ For dynamic content, use an executable:
 ```bash
 #!/usr/bin/env bash
 # .mux/commands/context
-# Usage: /context
+# usage: /context - show current git context
 
 echo "Current directory: $(pwd)"
 echo "Git branch: $(git branch --show-current)"
@@ -72,7 +102,7 @@ Executable commands receive arguments from the same line:
 ```bash
 #!/usr/bin/env bash
 # .mux/commands/pr-review
-# Usage: /pr-review <PR-NUM>
+# usage: /pr-review <PR-NUM> - review a pull request
 
 pr_num="$1"
 if [ -z "$pr_num" ]; then
@@ -109,7 +139,7 @@ Use exit code 2 when a command wants to show a preview without sending:
 ```bash
 #!/usr/bin/env bash
 # .mux/commands/preview-diff
-# Shows staged changes - exit 2 to let user decide
+# usage: /preview-diff - preview staged changes without sending
 
 diff=$(git diff --cached)
 if [ -z "$diff" ]; then
@@ -146,7 +176,7 @@ Custom commands receive the same [environment variables](/hooks/environment-vari
 ````bash
 #!/usr/bin/env bash
 # .mux/commands/review
-# Usage: /review <file>
+# usage: /review <file> - review a specific file
 
 file="${1:-}"
 if [ -z "$file" ]; then
@@ -166,7 +196,7 @@ echo '```'
 ```javascript
 #!/usr/bin/env node
 // .mux/commands/deps
-// Usage: /deps - shows outdated npm dependencies
+// usage: /deps - show outdated npm dependencies
 
 const { execSync } = require("child_process");
 

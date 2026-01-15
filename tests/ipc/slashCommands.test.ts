@@ -288,30 +288,30 @@ describeIntegration("Custom Slash Commands (Backend)", () => {
       await createStaticCommand(
         metadata.namedWorkspacePath,
         "with-desc",
-        "---\ndescription: My cool command\n---\nBody content"
+        "---\nusage: /with-desc - my cool command\n---\nBody content"
       );
 
       const result = await env.orpc.workspace.slashCommands.list({ workspaceId });
 
       const cmd = result.commands.find((c) => c.name === "with-desc");
       expect(cmd).toBeDefined();
-      expect(cmd?.description).toBe("My cool command");
+      expect(cmd?.description).toBe("/with-desc - my cool command");
     });
   }, 30_000);
 
-  test("listSlashCommands extracts description from executable magic comment", async () => {
+  test("listSlashCommands extracts description from executable usage comment", async () => {
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
       await createExecutableCommand(
         metadata.namedWorkspacePath,
-        "magic-desc",
-        '#!/bin/bash\n# mux: Run tests with coverage\necho "test"'
+        "usage-desc",
+        '#!/bin/bash\n# usage: /usage-desc - run tests with coverage\necho "test"'
       );
 
       const result = await env.orpc.workspace.slashCommands.list({ workspaceId });
 
-      const cmd = result.commands.find((c) => c.name === "magic-desc");
+      const cmd = result.commands.find((c) => c.name === "usage-desc");
       expect(cmd).toBeDefined();
-      expect(cmd?.description).toBe("Run tests with coverage");
+      expect(cmd?.description).toBe("/usage-desc - run tests with coverage");
     });
   }, 30_000);
 });

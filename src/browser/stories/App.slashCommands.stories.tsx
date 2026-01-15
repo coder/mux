@@ -73,10 +73,10 @@ export const WithCustomCommands: AppStory = {
             [
               DEFAULT_WORKSPACE_ID,
               [
-                { name: "dry", description: "Do a dry run without making changes" },
-                { name: "review", description: "Review changes before committing" },
-                { name: "context", description: "Summarize project context" },
-                { name: "pr-summary", description: "Generate a PR description" },
+                { name: "dry", description: "/dry - do a dry run without making changes" },
+                { name: "review", description: "/review - review changes before committing" },
+                { name: "context", description: "/context - summarize project context" },
+                { name: "pr-summary", description: "/pr-summary - generate a PR description" },
               ],
             ],
           ]),
@@ -126,9 +126,9 @@ export const FilteredCommands: AppStory = {
             [
               DEFAULT_WORKSPACE_ID,
               [
-                { name: "dry", description: "Do a dry run" },
+                { name: "dry", description: "/dry - do a dry run" },
                 { name: "review" },
-                { name: "context", description: "Summarize project context" },
+                { name: "context", description: "/context - summarize project context" },
               ],
             ],
           ]),

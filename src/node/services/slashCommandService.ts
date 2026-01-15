@@ -20,8 +20,8 @@ const COMMAND_NAME_REGEX = /^[a-z0-9][a-z0-9-]{0,63}$/;
 /** Static file extension (markdown only, supports frontmatter) */
 const STATIC_FILE_EXTENSION = ".md";
 
-/** Regex to match magic comment for description in executables: # mux: <description> */
-const MAGIC_COMMENT_REGEX = /^#\s*mux:\s*(.+)$/;
+/** Regex to match usage comment in executables: # usage: <usage> */
+const USAGE_COMMENT_REGEX = /^#\s*usage:\s*(.+)$/i;
 
 export interface SlashCommand {
   name: string;
@@ -162,26 +162,26 @@ export class SlashCommandService extends EventEmitter {
   }
 
   /**
-   * Parse description from markdown frontmatter.
+   * Parse usage from markdown frontmatter.
    */
   private parseMarkdownDescription(content: string): string | undefined {
     const { frontmatter } = parseSimpleFrontmatter(content);
-    return typeof frontmatter.description === "string" ? frontmatter.description : undefined;
+    return typeof frontmatter.usage === "string" ? frontmatter.usage : undefined;
   }
 
   /**
-   * Parse description from executable magic comment.
-   * Looks for `# mux: <description>` in first few lines after shebang.
+   * Parse usage from executable comment.
+   * Looks for `# usage: <usage>` in first few lines after shebang.
    */
   private parseExecutableDescription(content: string): string | undefined {
     const lines = content.split("\n");
-    // Skip shebang, check next few lines for magic comment
+    // Skip shebang, check next few lines for usage comment
     for (let i = 0; i < Math.min(lines.length, 5); i++) {
       const line = lines[i].trim();
       // Skip shebang
       if (line.startsWith("#!")) continue;
-      // Check for magic comment
-      const match = MAGIC_COMMENT_REGEX.exec(line);
+      // Check for usage comment
+      const match = USAGE_COMMENT_REGEX.exec(line);
       if (match) {
         return match[1].trim();
       }
