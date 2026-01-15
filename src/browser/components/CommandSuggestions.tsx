@@ -280,20 +280,20 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
           {isFileSuggestion && (
             <FileIcon filePath={suggestion.display} className="shrink-0 text-sm" />
           )}
-          {suggestion.isCustom && (
-            <span className="bg-plan-mode/20 text-plan-mode shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium">
-              custom
-            </span>
-          )}
           <div
             className={cn(
-              "font-monospace min-w-0 flex-1 truncate text-xs",
+              "font-monospace shrink-0 text-xs",
               suggestion.isCustom ? "text-plan-mode-light" : "text-foreground"
             )}
           >
             <HighlightedText text={suggestion.display} query={highlightQuery} />
           </div>
-          <div className="text-secondary shrink-0 text-right text-[11px]">
+          {suggestion.isCustom && (
+            <span className="bg-plan-mode/20 text-plan-mode shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium">
+              custom
+            </span>
+          )}
+          <div className="text-secondary min-w-0 flex-1 truncate text-right text-[11px]">
             {suggestion.description}
           </div>
         </div>

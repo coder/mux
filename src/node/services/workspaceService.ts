@@ -2482,10 +2482,12 @@ export class WorkspaceService extends EventEmitter {
    * List available custom slash commands in a workspace.
    * Discovers executables at <workspacePath>/.mux/commands/<name>
    */
-  async listSlashCommands(workspaceId: string): Promise<SlashCommand[]> {
+  async listSlashCommands(
+    workspaceId: string
+  ): Promise<{ commands: SlashCommand[]; skippedInvalidNames: string[] }> {
     const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
     if (!metadataResult.success) {
-      return [];
+      return { commands: [], skippedInvalidNames: [] };
     }
     const metadata = metadataResult.data;
 
@@ -2497,7 +2499,7 @@ export class WorkspaceService extends EventEmitter {
       return await this.getSlashCommandService().listCommands(runtime, workspacePath);
     } catch (error) {
       log.debug(`Failed to list slash commands for ${workspaceId}:`, error);
-      return [];
+      return { commands: [], skippedInvalidNames: [] };
     }
   }
 

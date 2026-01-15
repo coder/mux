@@ -10,17 +10,28 @@ import { EventEmitter } from "events";
 import type { WorkspaceInitEvent } from "@/common/orpc/types";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { LineBuffer } from "@/node/runtime/initHook";
+import { parseSimpleFrontmatter } from "@/node/utils/markdown";
 import { execBuffered } from "@/node/utils/runtime/helpers";
 import { log } from "./log";
 
 /** Regex for valid command names: lowercase alphanumeric with hyphens */
 const COMMAND_NAME_REGEX = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
-/** Static file extensions that are read verbatim (no execution) */
-const STATIC_FILE_EXTENSIONS = [".txt", ".md"];
+/** Static file extension (markdown only, supports frontmatter) */
+const STATIC_FILE_EXTENSION = ".md";
+
+/** Regex to match magic comment for description in executables: # mux: <description> */
+const MAGIC_COMMENT_REGEX = /^#\s*mux:\s*(.+)$/;
 
 export interface SlashCommand {
   name: string;
+  description?: string;
+}
+
+export interface SlashCommandListResult {
+  commands: SlashCommand[];
+  /** Files that were skipped due to invalid names (for user feedback) */
+  skippedInvalidNames: string[];
 }
 
 export interface SlashCommandResult {
@@ -53,65 +64,144 @@ export class SlashCommandService extends EventEmitter {
    *
    * Discovers:
    * - Executable files at <workspacePath>/.mux/commands/<name>
-   * - Static text files at <workspacePath>/.mux/commands/<name>.txt or .md
+   * - Static markdown files at <workspacePath>/.mux/commands/<name>.md
+   *
+   * Extracts descriptions from:
+   * - .md files: YAML frontmatter `description` field
+   * - Executables: Magic comment `# mux: <description>` after shebang
    */
-  async listCommands(runtime: Runtime, workspacePath: string): Promise<SlashCommand[]> {
+  async listCommands(runtime: Runtime, workspacePath: string): Promise<SlashCommandListResult> {
     // Build paths relative to cwd to avoid mixing Windows vs POSIX separators.
     // (workspacePath can be a native Windows path even though we execute via bash.)
     const commandsDir = path.posix.join(".mux", "commands");
 
     try {
-      // Find executables OR static text files (.txt, .md)
-      // -executable finds runnable scripts; the -name patterns find static files
+      // Find executables OR static markdown files
       const result = await execBuffered(
         runtime,
-        `find "${commandsDir}" -maxdepth 1 -type f \\( -executable -o -name "*.txt" -o -name "*.md" \\) 2>/dev/null || true`,
+        `find "${commandsDir}" -maxdepth 1 -type f \\( -executable -o -name "*.md" \\) 2>/dev/null || true`,
         { cwd: workspacePath, timeout: 10 }
       );
 
       if (!result.stdout.trim()) {
-        return [];
+        return { commands: [], skippedInvalidNames: [] };
       }
 
-      const commands: SlashCommand[] = [];
+      // Collect unique command names with their file info, track invalid names
+      const commandFiles = new Map<string, { filename: string; isStatic: boolean }>();
+      const skippedInvalidNames: string[] = [];
+
       for (const filePath of result.stdout.trim().split("\n")) {
-        const basename = path.posix.basename(filePath);
-        // Strip .txt or .md extension to get the command name
-        const name = this.getCommandName(basename);
-        if (COMMAND_NAME_REGEX.test(name)) {
-          commands.push({ name });
+        const filename = path.posix.basename(filePath);
+        const name = this.getCommandName(filename);
+
+        if (!COMMAND_NAME_REGEX.test(name)) {
+          skippedInvalidNames.push(filename);
+          continue;
+        }
+
+        const isStatic = filename.endsWith(STATIC_FILE_EXTENSION);
+        // Static files take precedence over executables
+        if (!commandFiles.has(name) || isStatic) {
+          commandFiles.set(name, { filename, isStatic });
         }
       }
 
-      return commands.sort((a, b) => a.name.localeCompare(b.name));
+      // Extract descriptions in parallel
+      const commands = await Promise.all(
+        Array.from(commandFiles.entries()).map(async ([name, { filename, isStatic }]) => {
+          const description = await this.extractDescription(
+            runtime,
+            workspacePath,
+            filename,
+            isStatic
+          );
+          return { name, description };
+        })
+      );
+
+      return {
+        commands: commands.sort((a, b) => a.name.localeCompare(b.name)),
+        skippedInvalidNames,
+      };
     } catch (error) {
       log.debug("Failed to list slash commands:", error);
-      return [];
+      return { commands: [], skippedInvalidNames: [] };
     }
   }
 
   /**
-   * Extract command name from filename, stripping .txt or .md extensions.
+   * Extract description from a command file.
+   * - For .md files: parse YAML frontmatter
+   * - For executables: look for magic comment `# mux: <description>`
+   */
+  private async extractDescription(
+    runtime: Runtime,
+    workspacePath: string,
+    filename: string,
+    isStatic: boolean
+  ): Promise<string | undefined> {
+    const commandsDir = path.posix.join(".mux", "commands");
+    const filePath = `${commandsDir}/${filename}`;
+
+    try {
+      // Read first few lines (enough for frontmatter or magic comment)
+      const result = await execBuffered(runtime, `head -10 "${filePath}"`, {
+        cwd: workspacePath,
+        timeout: 5,
+      });
+
+      if (isStatic) {
+        return this.parseMarkdownDescription(result.stdout);
+      } else {
+        return this.parseExecutableDescription(result.stdout);
+      }
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Parse description from markdown frontmatter.
+   */
+  private parseMarkdownDescription(content: string): string | undefined {
+    const { frontmatter } = parseSimpleFrontmatter(content);
+    return typeof frontmatter.description === "string" ? frontmatter.description : undefined;
+  }
+
+  /**
+   * Parse description from executable magic comment.
+   * Looks for `# mux: <description>` in first few lines after shebang.
+   */
+  private parseExecutableDescription(content: string): string | undefined {
+    const lines = content.split("\n");
+    // Skip shebang, check next few lines for magic comment
+    for (let i = 0; i < Math.min(lines.length, 5); i++) {
+      const line = lines[i].trim();
+      // Skip shebang
+      if (line.startsWith("#!")) continue;
+      // Check for magic comment
+      const match = MAGIC_COMMENT_REGEX.exec(line);
+      if (match) {
+        return match[1].trim();
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Extract command name from filename, stripping .md extension if present.
    */
   private getCommandName(filename: string): string {
-    for (const ext of STATIC_FILE_EXTENSIONS) {
-      if (filename.endsWith(ext)) {
-        return filename.slice(0, -ext.length);
-      }
+    if (filename.endsWith(STATIC_FILE_EXTENSION)) {
+      return filename.slice(0, -STATIC_FILE_EXTENSION.length);
     }
     return filename;
   }
 
   /**
-   * Check if a filename represents a static text file (read verbatim, not executed).
-   */
-  private isStaticFile(filename: string): boolean {
-    return STATIC_FILE_EXTENSIONS.some((ext) => filename.endsWith(ext));
-  }
-
-  /**
    * Resolve the actual file path for a command name.
-   * Checks for static files (.txt, .md) first, then bare executable.
+   * Checks for static .md file first, then bare executable.
    */
   private async resolveCommandFile(
     runtime: Runtime,
@@ -120,17 +210,15 @@ export class SlashCommandService extends EventEmitter {
   ): Promise<{ filename: string; isStatic: boolean } | null> {
     const commandsDir = path.posix.join(".mux", "commands");
 
-    // Check for static file variants first (prefer .txt over .md)
-    for (const ext of STATIC_FILE_EXTENSIONS) {
-      const filename = `${name}${ext}`;
-      const result = await execBuffered(
-        runtime,
-        `test -f "${commandsDir}/${filename}" && echo "exists" || true`,
-        { cwd: workspacePath, timeout: 5 }
-      );
-      if (result.stdout.trim() === "exists") {
-        return { filename, isStatic: true };
-      }
+    // Check for static .md file first
+    const mdFilename = `${name}${STATIC_FILE_EXTENSION}`;
+    const mdResult = await execBuffered(
+      runtime,
+      `test -f "${commandsDir}/${mdFilename}" && echo "exists" || true`,
+      { cwd: workspacePath, timeout: 5 }
+    );
+    if (mdResult.stdout.trim() === "exists") {
+      return { filename: mdFilename, isStatic: true };
     }
 
     // Check for bare executable
@@ -263,7 +351,7 @@ export class SlashCommandService extends EventEmitter {
   }
 
   /**
-   * Read a static file (.txt, .md) and return its contents.
+   * Read a static markdown file and return its contents (frontmatter stripped).
    */
   private async runStaticFile(
     runtime: Runtime,
@@ -280,7 +368,9 @@ export class SlashCommandService extends EventEmitter {
         timeout: 10,
       });
 
-      const stdout = result.stdout.trimEnd();
+      // Strip frontmatter if present, use body only
+      const { body } = parseSimpleFrontmatter(result.stdout);
+      const stdout = body.trimEnd();
 
       // Emit the content for display
       for (const line of stdout.split("\n")) {

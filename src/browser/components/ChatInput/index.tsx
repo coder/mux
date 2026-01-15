@@ -914,11 +914,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
     const loadCustomCommands = async () => {
       try {
-        const commands = await api.workspace.slashCommands.list({
+        const result = await api.workspace.slashCommands.list({
           workspaceId,
         });
         if (isMounted) {
-          setCustomCommands(commands);
+          setCustomCommands(result.commands);
         }
       } catch (error) {
         console.error("Failed to load custom slash commands:", error);
@@ -1373,10 +1373,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         // Handle unknown commands - check if it's a custom slash command
         if (parsed.type === "unknown-command" && api && props.workspaceId) {
           // Check if this is a custom slash command
-          const customCommands = await api.workspace.slashCommands.list({
+          const result = await api.workspace.slashCommands.list({
             workspaceId: props.workspaceId,
           });
-          const isCustomCommand = customCommands.some((cmd) => cmd.name === parsed.command);
+          const isCustomCommand = result.commands.some((cmd) => cmd.name === parsed.command);
 
           if (isCustomCommand) {
             // Parse rawInput as args (shell-style token splitting)

@@ -79,6 +79,7 @@ function buildSubcommandSuggestions(
 
 export interface CustomSlashCommand {
   name: string;
+  description?: string;
 }
 
 export function getSlashCommandSuggestions(
@@ -120,7 +121,7 @@ export function getSlashCommandSuggestions(
         .map((cmd) => ({
           id: `custom-command:${cmd.name}`,
           display: `/${cmd.name}`,
-          description: "Custom command",
+          description: cmd.description ?? "Custom command",
           replacement: `/${cmd.name} `,
           isCustom: true,
         }));

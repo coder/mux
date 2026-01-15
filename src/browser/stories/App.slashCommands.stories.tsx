@@ -72,7 +72,12 @@ export const WithCustomCommands: AppStory = {
           slashCommands: new Map([
             [
               DEFAULT_WORKSPACE_ID,
-              [{ name: "dry" }, { name: "review" }, { name: "context" }, { name: "pr-summary" }],
+              [
+                { name: "dry", description: "Do a dry run without making changes" },
+                { name: "review", description: "Review changes before committing" },
+                { name: "context", description: "Summarize project context" },
+                { name: "pr-summary", description: "Generate a PR description" },
+              ],
             ],
           ]),
         });
@@ -118,7 +123,14 @@ export const FilteredCommands: AppStory = {
           workspaceId: DEFAULT_WORKSPACE_ID,
           messages: [],
           slashCommands: new Map([
-            [DEFAULT_WORKSPACE_ID, [{ name: "dry" }, { name: "review" }, { name: "context" }]],
+            [
+              DEFAULT_WORKSPACE_ID,
+              [
+                { name: "dry", description: "Do a dry run" },
+                { name: "review" },
+                { name: "context", description: "Summarize project context" },
+              ],
+            ],
           ]),
         });
         setWorkspaceInput(DEFAULT_WORKSPACE_ID, "/co");

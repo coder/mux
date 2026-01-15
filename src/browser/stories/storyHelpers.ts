@@ -269,7 +269,7 @@ export interface SimpleChatSetupOptions {
     error: { message: string; hasEncryptedKey: boolean } | null;
   };
   /** Custom slash commands per workspace */
-  slashCommands?: Map<string, Array<{ name: string }>>;
+  slashCommands?: Map<string, Array<{ name: string; description?: string }>>;
 }
 
 /**

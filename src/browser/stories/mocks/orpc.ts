@@ -146,7 +146,7 @@ export interface MockORPCClientOptions {
     error: { message: string; hasEncryptedKey: boolean } | null;
   };
   /** Custom slash commands per workspace */
-  slashCommands?: Map<string, Array<{ name: string }>>;
+  slashCommands?: Map<string, Array<{ name: string; description?: string }>>;
 }
 
 interface MockBackgroundProcess {
@@ -646,7 +646,10 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       },
       slashCommands: {
         list: (input: { workspaceId: string }) =>
-          Promise.resolve(slashCommands.get(input.workspaceId) ?? []),
+          Promise.resolve({
+            commands: slashCommands.get(input.workspaceId) ?? [],
+            skippedInvalidNames: [],
+          }),
         run: () =>
           Promise.resolve({
             success: false,

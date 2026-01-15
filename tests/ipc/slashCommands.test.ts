@@ -29,16 +29,15 @@ async function createExecutableCommand(
   await fs.chmod(commandPath, 0o755);
 }
 
-// Helper to create a static text file command
+// Helper to create a static markdown file command
 async function createStaticCommand(
   workspacePath: string,
   name: string,
-  content: string,
-  extension: ".txt" | ".md" = ".txt"
+  content: string
 ): Promise<void> {
   const commandsDir = path.join(workspacePath, ".mux", "commands");
   await fs.mkdir(commandsDir, { recursive: true });
-  const commandPath = path.join(commandsDir, `${name}${extension}`);
+  const commandPath = path.join(commandsDir, `${name}.md`);
   await fs.writeFile(commandPath, content);
 }
 
@@ -61,23 +60,21 @@ describeIntegration("Custom Slash Commands (Backend)", () => {
       );
 
       // List commands via API
-      const commands = await env.orpc.workspace.slashCommands.list({ workspaceId });
+      const result = await env.orpc.workspace.slashCommands.list({ workspaceId });
 
-      expect(commands).toContainEqual({ name: "test-cmd" });
+      expect(result.commands.map((c) => c.name)).toContain("test-cmd");
     });
   }, 30_000);
 
-  test("listSlashCommands discovers .txt and .md static files", async () => {
+  test("listSlashCommands discovers .md static files", async () => {
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
-      // Create static file commands
-      await createStaticCommand(metadata.namedWorkspacePath, "txt-cmd", "Text content", ".txt");
-      await createStaticCommand(metadata.namedWorkspacePath, "md-cmd", "# Markdown", ".md");
+      // Create static markdown file
+      await createStaticCommand(metadata.namedWorkspacePath, "md-cmd", "# Markdown");
 
-      const commands = await env.orpc.workspace.slashCommands.list({ workspaceId });
+      const result = await env.orpc.workspace.slashCommands.list({ workspaceId });
 
       // Commands should be listed by name (without extension)
-      expect(commands).toContainEqual({ name: "txt-cmd" });
-      expect(commands).toContainEqual({ name: "md-cmd" });
+      expect(result.commands.map((c) => c.name)).toContain("md-cmd");
     });
   }, 30_000);
 
@@ -94,15 +91,16 @@ describeIntegration("Custom Slash Commands (Backend)", () => {
       await fs.writeFile(path.join(commandsDir, "invalid_cmd"), '#!/bin/bash\necho "invalid"');
       await fs.chmod(path.join(commandsDir, "invalid_cmd"), 0o755);
 
-      const commands = await env.orpc.workspace.slashCommands.list({ workspaceId });
+      const result = await env.orpc.workspace.slashCommands.list({ workspaceId });
 
-      expect(commands).toContainEqual({ name: "valid-cmd" });
-      // Invalid command should not be listed
-      expect(commands.map((c) => c.name)).not.toContain("invalid_cmd");
+      expect(result.commands.map((c) => c.name)).toContain("valid-cmd");
+      // Invalid command should not be listed but should be in skipped list
+      expect(result.commands.map((c) => c.name)).not.toContain("invalid_cmd");
+      expect(result.skippedInvalidNames).toContain("invalid_cmd");
     });
   }, 30_000);
 
-  test("runSlashCommand reads .txt file verbatim", async () => {
+  test("runSlashCommand reads .md file verbatim (plain markdown)", async () => {
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
       await createStaticCommand(
         metadata.namedWorkspacePath,
@@ -123,13 +121,12 @@ describeIntegration("Custom Slash Commands (Backend)", () => {
     });
   }, 30_000);
 
-  test("runSlashCommand reads .md file verbatim", async () => {
+  test("runSlashCommand strips frontmatter from .md file", async () => {
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
       await createStaticCommand(
         metadata.namedWorkspacePath,
         "markdown-test",
-        "# Header\n\n- Item 1\n- Item 2",
-        ".md"
+        "---\ndescription: Test description\n---\n# Header\n\n- Item 1\n- Item 2"
       );
 
       const result = await env.orpc.workspace.slashCommands.run({
@@ -139,6 +136,7 @@ describeIntegration("Custom Slash Commands (Backend)", () => {
 
       expect(result.success).toBe(true);
       if (result.success) {
+        // Frontmatter should be stripped, only body returned
         expect(result.data.stdout).toBe("# Header\n\n- Item 1\n- Item 2");
         expect(result.data.exitCode).toBe(0);
       }
@@ -166,9 +164,9 @@ describeIntegration("Custom Slash Commands (Backend)", () => {
     });
   }, 30_000);
 
-  test("runSlashCommand prefers .txt over executable with same name", async () => {
+  test("runSlashCommand prefers .md over executable with same name", async () => {
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
-      // Create both a static file and an executable with the same base name
+      // Create both a static .md file and an executable with the same base name
       await createStaticCommand(metadata.namedWorkspacePath, "dual", "From static file");
       await createExecutableCommand(
         metadata.namedWorkspacePath,
@@ -183,7 +181,7 @@ describeIntegration("Custom Slash Commands (Backend)", () => {
 
       expect(result.success).toBe(true);
       if (result.success) {
-        // Should prefer the .txt file
+        // Should prefer the .md file
         expect(result.data.stdout).toBe("From static file");
       }
     });
@@ -282,6 +280,38 @@ describeIntegration("Custom Slash Commands (Backend)", () => {
       });
 
       expect(result.success).toBe(false);
+    });
+  }, 30_000);
+
+  test("listSlashCommands extracts description from .md frontmatter", async () => {
+    await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
+      await createStaticCommand(
+        metadata.namedWorkspacePath,
+        "with-desc",
+        "---\ndescription: My cool command\n---\nBody content"
+      );
+
+      const result = await env.orpc.workspace.slashCommands.list({ workspaceId });
+
+      const cmd = result.commands.find((c) => c.name === "with-desc");
+      expect(cmd).toBeDefined();
+      expect(cmd?.description).toBe("My cool command");
+    });
+  }, 30_000);
+
+  test("listSlashCommands extracts description from executable magic comment", async () => {
+    await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
+      await createExecutableCommand(
+        metadata.namedWorkspacePath,
+        "magic-desc",
+        '#!/bin/bash\n# mux: Run tests with coverage\necho "test"'
+      );
+
+      const result = await env.orpc.workspace.slashCommands.list({ workspaceId });
+
+      const cmd = result.commands.find((c) => c.name === "magic-desc");
+      expect(cmd).toBeDefined();
+      expect(cmd?.description).toBe("Run tests with coverage");
     });
   }, 30_000);
 });

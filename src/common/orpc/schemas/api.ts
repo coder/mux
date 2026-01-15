@@ -627,7 +627,16 @@ export const workspace = {
      */
     list: {
       input: z.object({ workspaceId: z.string() }),
-      output: z.array(z.object({ name: z.string() })),
+      output: z.object({
+        commands: z.array(
+          z.object({
+            name: z.string(),
+            description: z.string().optional(),
+          })
+        ),
+        /** Files that were skipped due to invalid names (for user feedback) */
+        skippedInvalidNames: z.array(z.string()),
+      }),
     },
     /**
      * Run a custom slash command.
