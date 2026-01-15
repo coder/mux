@@ -1169,7 +1169,7 @@ export class AIService extends EventEmitter {
       // For Coder workspaces, this may start a stopped workspace and wait for it.
       // If init failed during container creation, ensureReady() will return an error.
       const readyResult = await runtime.ensureReady({
-        signal: abortSignal,
+        signal: combinedAbortSignal,
         statusSink: (status) => {
           // Emit runtime-status events for frontend UX (StreamingBarrier)
           this.emit("runtime-status", {
