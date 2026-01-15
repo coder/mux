@@ -111,11 +111,10 @@ describeIntegration("ReviewPanel manual refresh (UI + ORPC)", () => {
         // Click refresh
         fireEvent.click(refreshButton);
 
-        // Immediate feedback: spinner should become visible
-        const icon = refreshButton.querySelector("svg");
+        // Immediate feedback: loading indicator should become visible
         await waitFor(
           () => {
-            expect(icon?.getAttribute("class") ?? "").toContain("animate-spin");
+            expect(refreshButton.querySelector('[role="status"]')).not.toBeNull();
           },
           { timeout: 5_000 }
         );

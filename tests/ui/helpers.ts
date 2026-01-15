@@ -49,14 +49,7 @@ export async function waitForToolCallEnd(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
- * Get the CSS class of the refresh button's SVG icon.
- */
-export function getRefreshIconClass(refreshButton: HTMLElement): string {
-  return refreshButton.querySelector("svg")?.getAttribute("class") ?? "";
-}
-
-/**
- * Wait for the refresh button to be in idle state (not spinning or stopping).
+ * Wait for the refresh button to be in idle state (not loading).
  */
 export async function waitForRefreshButtonIdle(
   refreshButton: HTMLElement,
@@ -64,10 +57,8 @@ export async function waitForRefreshButtonIdle(
 ): Promise<void> {
   await waitFor(
     () => {
-      const cls = getRefreshIconClass(refreshButton);
-      expect(cls).not.toContain("animate-spin");
-      // Stopping state uses `animate-[spin_0.8s_ease-out_forwards]`.
-      expect(cls).not.toContain("animate-[");
+      expect(refreshButton.querySelector('[role="status"]')).toBeNull();
+      expect(refreshButton.querySelector("svg")).not.toBeNull();
     },
     { timeout: timeoutMs }
   );

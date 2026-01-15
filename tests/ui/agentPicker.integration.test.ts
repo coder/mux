@@ -104,16 +104,20 @@ async function clickRefreshButton(container: HTMLElement): Promise<void> {
 }
 
 /**
- * Wait for refresh to complete (spinning icon stops).
+ * Wait for refresh to complete (loading indicator disappears).
  */
 async function waitForRefreshComplete(container: HTMLElement): Promise<void> {
   await waitFor(
     () => {
-      const svg = container.querySelector('[aria-label="Reload agents"] svg');
-      if (!svg) throw new Error("Refresh icon not found");
-      const classes = svg.getAttribute("class") ?? "";
-      if (classes.includes("animate-spin")) {
+      const btn = container.querySelector('[aria-label="Reload agents"]');
+      if (!btn) throw new Error("Refresh button not found");
+
+      if (btn.querySelector('[role="status"]')) {
         throw new Error("Still refreshing");
+      }
+
+      if (!btn.querySelector("svg")) {
+        throw new Error("Refresh icon not found");
       }
     },
     { timeout: 10_000 }
