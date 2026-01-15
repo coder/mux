@@ -9,11 +9,19 @@ import React, {
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { UI_THEME_KEY } from "@/common/constants/storage";
 
-export type ThemeMode = "light" | "dark" | "solarized-light" | "solarized-dark";
+export type ThemeMode =
+  | "light"
+  | "dark"
+  | "flexoki-light"
+  | "flexoki-dark"
+  | "solarized-light"
+  | "solarized-dark";
 
 export const THEME_OPTIONS: Array<{ value: ThemeMode; label: string }> = [
   { value: "light", label: "Light" },
   { value: "dark", label: "Dark" },
+  { value: "flexoki-light", label: "Flexoki Light" },
+  { value: "flexoki-dark", label: "Flexoki Dark" },
   { value: "solarized-light", label: "Solarized Light" },
   { value: "solarized-dark", label: "Solarized Dark" },
 ];
@@ -31,13 +39,17 @@ const ThemeContext = createContext<ThemeContextValue | null>(null);
 const THEME_COLORS: Record<ThemeMode, string> = {
   dark: "#1e1e1e",
   light: "#f5f6f8",
+  "flexoki-light": "#fffcf0",
+  "flexoki-dark": "#100f0f",
   "solarized-light": "#fdf6e3",
   "solarized-dark": "#002b36",
 };
 
 /** Map theme mode to CSS color-scheme value */
 function getColorScheme(theme: ThemeMode): "light" | "dark" {
-  return theme === "light" || theme === "solarized-light" ? "light" : "dark";
+  return theme === "light" || theme === "flexoki-light" || theme === "solarized-light"
+    ? "light"
+    : "dark";
 }
 
 function resolveSystemTheme(): ThemeMode {

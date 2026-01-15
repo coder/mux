@@ -31,7 +31,7 @@ export const HighlightedCode: React.FC<HighlightedCodeProps> = ({
 
   useEffect(() => {
     let cancelled = false;
-    const theme = themeMode === "light" || themeMode === "solarized-light" ? "light" : "dark";
+    const theme = themeMode === "light" || themeMode.endsWith("-light") ? "light" : "dark";
 
     setHighlightedLines(null);
 

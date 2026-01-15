@@ -51,7 +51,7 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, language }) => {
 
   useEffect(() => {
     let cancelled = false;
-    const isLight = themeMode === "light" || themeMode === "solarized-light";
+    const isLight = themeMode === "light" || themeMode.endsWith("-light");
     const theme = isLight ? "light" : "dark";
 
     setHighlightedLines(null);

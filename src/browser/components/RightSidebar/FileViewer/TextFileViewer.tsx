@@ -160,7 +160,7 @@ export const TextFileViewer: React.FC<TextFileViewerProps> = (props) => {
       ? unifiedLines.map((l) => l.content)
       : fileLines.filter((l, i, arr) => i < arr.length - 1 || l !== "");
 
-    const theme = themeMode === "light" || themeMode === "solarized-light" ? "light" : "dark";
+    const theme = themeMode === "light" || themeMode.endsWith("-light") ? "light" : "dark";
 
     let cancelled = false;
 

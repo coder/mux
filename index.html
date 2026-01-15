@@ -74,7 +74,8 @@
         animation: boot-loader-spin 1s linear infinite;
       }
 
-      :root[data-theme="light"] .boot-loader__spinner {
+      :root[data-theme="light"] .boot-loader__spinner,
+      :root[data-theme$="-light"] .boot-loader__spinner {
         border-color: var(--color-border-light, #d0d7de);
         border-top-color: transparent;
       }
@@ -85,7 +86,8 @@
         color: var(--color-text-secondary, #6b6b6b);
       }
 
-      :root[data-theme="light"] .boot-loader__text {
+      :root[data-theme="light"] .boot-loader__text,
+      :root[data-theme$="-light"] .boot-loader__text {
         color: var(--color-text-secondary, #607081);
       }
 
@@ -104,21 +106,49 @@
     <script>
       (function () {
         const THEME_KEY = "uiTheme";
+        const VALID_THEMES = new Set([
+          "light",
+          "dark",
+          "flexoki-light",
+          "flexoki-dark",
+          "solarized-light",
+          "solarized-dark",
+        ]);
+
+        const THEME_COLORS = {
+          dark: "#1e1e1e",
+          light: "#f5f6f8",
+          "flexoki-light": "#fffcf0",
+          "flexoki-dark": "#100f0f",
+          "solarized-light": "#fdf6e3",
+          "solarized-dark": "#002b36",
+        };
+
+        function getColorScheme(theme) {
+          return theme === "light" || theme.endsWith("-light") ? "light" : "dark";
+        }
+
         try {
           const stored = window.localStorage.getItem(THEME_KEY);
           const parsed = stored ? JSON.parse(stored) : null;
           const prefersLight = window.matchMedia
             ? window.matchMedia("(prefers-color-scheme: light)").matches
             : false;
+
+          const fallbackTheme = prefersLight ? "light" : "dark";
           const theme =
-            parsed === "light" || parsed === "dark" ? parsed : prefersLight ? "light" : "dark";
+            typeof parsed === "string" && VALID_THEMES.has(parsed) ? parsed : fallbackTheme;
+          const colorScheme = getColorScheme(theme);
 
           document.documentElement.dataset.theme = theme;
-          document.documentElement.style.colorScheme = theme;
+          document.documentElement.style.colorScheme = colorScheme;
 
           const metaThemeColor = document.querySelector('meta[name="theme-color"]');
           if (metaThemeColor) {
-            metaThemeColor.setAttribute("content", theme === "light" ? "#f5f6f8" : "#1e1e1e");
+            metaThemeColor.setAttribute(
+              "content",
+              THEME_COLORS[theme] ?? THEME_COLORS[colorScheme] ?? "#1e1e1e"
+            );
           }
         } catch (error) {
           console.warn("Failed to apply preferred theme early", error);
