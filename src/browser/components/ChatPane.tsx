@@ -45,12 +45,15 @@ import { getRuntimeTypeForTelemetry } from "@/common/telemetry";
 import { useAIViewKeybinds } from "@/browser/hooks/useAIViewKeybinds";
 import { QueuedMessage } from "./Messages/QueuedMessage";
 import { CompactionWarning } from "./CompactionWarning";
+import { ContextSwitchWarning as ContextSwitchWarningBanner } from "./ContextSwitchWarning";
 import { ConcurrentLocalWarning } from "./ConcurrentLocalWarning";
 import { BackgroundProcessesBanner } from "./BackgroundProcessesBanner";
 import { checkAutoCompaction } from "@/browser/utils/compaction/autoCompactionCheck";
+import type { ContextSwitchWarning } from "@/browser/utils/compaction/contextSwitchCheck";
 import { executeCompaction } from "@/browser/utils/chatCommands";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { useAutoCompactionSettings } from "../hooks/useAutoCompactionSettings";
+import { useContextSwitchWarning } from "@/browser/hooks/useContextSwitchWarning";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import { useForceCompaction } from "@/browser/hooks/useForceCompaction";
 import { useIdleCompactionHandler } from "@/browser/hooks/useIdleCompactionHandler";
@@ -152,6 +155,21 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     workspaceStateRef.current = workspaceState;
   }, [workspaceState]);
   const { messages, canInterrupt, isCompacting, isStreamStarting, loading } = workspaceState;
+
+  const {
+    warning: contextSwitchWarning,
+    handleModelChange,
+    handleCompact: handleContextSwitchCompact,
+    handleDismiss: handleContextSwitchDismiss,
+  } = useContextSwitchWarning({
+    workspaceId,
+    messages,
+    pendingModel,
+    use1M,
+    workspaceUsage,
+    api: api ?? undefined,
+    pendingSendOptions,
+  });
 
   // Apply message transformations:
   // 1. Merge consecutive identical stream errors
@@ -736,6 +754,10 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
         canInterrupt={canInterrupt}
         autoCompactionResult={autoCompactionResult}
         shouldShowCompactionWarning={shouldShowCompactionWarning}
+        contextSwitchWarning={contextSwitchWarning}
+        onContextSwitchCompact={handleContextSwitchCompact}
+        onContextSwitchDismiss={handleContextSwitchDismiss}
+        onModelChange={handleModelChange}
         onCompactClick={handleCompactClick}
         onMessageSent={handleMessageSent}
         onTruncateHistory={handleClearHistory}
@@ -763,6 +785,10 @@ interface ChatInputPaneProps {
   canInterrupt: boolean;
   autoCompactionResult: ReturnType<typeof checkAutoCompaction>;
   shouldShowCompactionWarning: boolean;
+  contextSwitchWarning: ContextSwitchWarning | null;
+  onContextSwitchCompact: () => void;
+  onContextSwitchDismiss: () => void;
+  onModelChange?: (model: string) => void;
   onCompactClick: () => void;
   onMessageSent: () => void;
   onTruncateHistory: (percentage?: number) => Promise<void>;
@@ -789,6 +815,13 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
           onCompactClick={props.onCompactClick}
         />
       )}
+      {props.contextSwitchWarning && (
+        <ContextSwitchWarningBanner
+          warning={props.contextSwitchWarning}
+          onCompact={props.onContextSwitchCompact}
+          onDismiss={props.onContextSwitchDismiss}
+        />
+      )}
       <BackgroundProcessesBanner workspaceId={props.workspaceId} />
       <ReviewsBanner workspaceId={props.workspaceId} />
       {props.isQueuedAgentTask && (
@@ -804,6 +837,7 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
         onMessageSent={props.onMessageSent}
         onTruncateHistory={props.onTruncateHistory}
         onProviderConfig={props.onProviderConfig}
+        onModelChange={props.onModelChange}
         disabled={!props.projectName || !props.workspaceName || props.isQueuedAgentTask}
         disabledReason={
           props.isQueuedAgentTask
