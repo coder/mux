@@ -36,7 +36,7 @@ const PRE_HOOK_FILENAME = "tool_pre";
 const POST_HOOK_FILENAME = "tool_post";
 const TOOL_ENV_FILENAME = "tool_env";
 const TOOL_INPUT_ENV_LIMIT = 8_000;
-const DEFAULT_HOOK_PHASE_TIMEOUT_MS = 5 * 60_000; // 5 minutes
+const DEFAULT_HOOK_PHASE_TIMEOUT_MS = 10_000; // 10 seconds
 const EXEC_MARKER_PREFIX = "MUX_EXEC_";
 
 /** Shell-escape a string for safe use in bash -c commands */
@@ -217,9 +217,9 @@ async function isFile(runtime: Runtime, filePath: string): Promise<boolean> {
 export interface HookTimingOptions {
   /** Threshold in ms before warning about slow hooks (default: 10000) */
   slowThresholdMs?: number;
-  /** Maximum time allowed for hook pre-logic (until __MUX_EXEC__). Defaults to 5 minutes. */
+  /** Maximum time allowed for hook pre-logic (until __MUX_EXEC__). Defaults to 10 seconds. */
   preHookTimeoutMs?: number;
-  /** Maximum time allowed for hook post-logic (after tool result is sent). Defaults to 5 minutes. */
+  /** Maximum time allowed for hook post-logic (after tool result is sent). Defaults to 10 seconds. */
   postHookTimeoutMs?: number;
   /** Callback when hook phase exceeds threshold */
   onSlowHook?: (phase: "pre" | "post", elapsedMs: number) => void;
