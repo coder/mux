@@ -238,8 +238,9 @@ export function hasInterruptedStream(
  * In that window, ChatPane would hide RetryBarrier because canInterrupt flips to true,
  * causing the banner to flicker on every retry attempt.
  *
- * Note: A new stream-start doesn't always immediately produce a new assistant DisplayedMessage.
- * During TTFT gaps, the last displayed message can still be the prior interruption.
+ * Note: A new stream-start doesn't always immediately produce a new assistant DisplayedMessage
+ * (we don't render empty assistant messages). During TTFT gaps, the last displayed message can
+ * still be the prior interruption.
  */
 export function shouldKeepRetryBarrierVisibleDuringRetry(
   messages: DisplayedMessage[],
@@ -288,8 +289,8 @@ export function shouldKeepRetryBarrierVisibleDuringRetry(
     return false;
   }
 
-  // Only keep the banner sticky when this stream is a retry/resume attempt.
-  // If the previous message is a fresh user message, we want normal streaming UX.
+  // If we do have a streaming assistant block but it hasn't produced any visible content yet,
+  // keep the banner sticky until the first non-empty delta arrives.
   return (
     previousMessage.type === "stream-error" ||
     (previousMessage.type === "assistant" && previousMessage.isPartial === true) ||
