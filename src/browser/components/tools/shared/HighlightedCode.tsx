@@ -9,6 +9,8 @@ interface HighlightedCodeProps {
   language: string;
   className?: string;
   showLineNumbers?: boolean;
+  /** Starting line number (default: 1) */
+  startLineNumber?: number;
 }
 
 /**
@@ -20,6 +22,7 @@ export const HighlightedCode: React.FC<HighlightedCodeProps> = ({
   language,
   className,
   showLineNumbers = false,
+  startLineNumber = 1,
 }) => {
   const [highlightedLines, setHighlightedLines] = useState<string[] | null>(null);
   const { theme: themeMode } = useTheme();
@@ -59,7 +62,7 @@ export const HighlightedCode: React.FC<HighlightedCodeProps> = ({
       <div className="code-block-container text-[11px]">
         {lines.map((content, idx) => (
           <React.Fragment key={idx}>
-            <div className="line-number">{idx + 1}</div>
+            <div className="line-number">{startLineNumber + idx}</div>
             {/* SECURITY AUDIT: dangerouslySetInnerHTML - Shiki escapes all content */}
             <div
               className="code-line"

@@ -139,6 +139,25 @@ export interface MockORPCClientOptions {
   }) => Promise<{ success: true } | { success: false; error: string }>;
   /** Idle compaction hours per project (null = disabled) */
   idleCompactionHours?: Map<string, number | null>;
+  /** File contents per workspace (workspaceId -> relativePath -> contents) */
+  fileContents?: Map<
+    string,
+    Map<
+      string,
+      | { type: "text"; content: string; size: number }
+      | {
+          type: "image";
+          base64: string;
+          mimeType: string;
+          size: number;
+          width?: number;
+          height?: number;
+        }
+      | { type: "error"; message: string }
+    >
+  >;
+  /** File diffs per workspace (workspaceId -> relativePath -> diff string) */
+  fileDiffs?: Map<string, Map<string, string>>;
   /** Override signing capabilities response */
   signingCapabilities?: {
     publicKey: string | null;
@@ -466,6 +485,30 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         });
       },
       ping: (input: string) => Promise.resolve(`Pong: ${input}`),
+      getFileContents: (input: { workspaceId: string; relativePath: string }) => {
+        const workspaceFiles = options.fileContents?.get(input.workspaceId);
+        const fileData = workspaceFiles?.get(input.relativePath);
+        if (fileData) {
+          return Promise.resolve({ success: true as const, data: fileData });
+        }
+        // Default: return a simple text file
+        return Promise.resolve({
+          success: true as const,
+          data: {
+            type: "text" as const,
+            content: `// Contents of ${input.relativePath}\n`,
+            size: 50,
+          },
+        });
+      },
+      getFileDiff: (input: { workspaceId: string; relativePath: string }) => {
+        const workspaceDiffs = options.fileDiffs?.get(input.workspaceId);
+        const diff = workspaceDiffs?.get(input.relativePath);
+        return Promise.resolve({
+          success: true as const,
+          data: { diff: diff ?? "" },
+        });
+      },
       tick: async function* () {
         // No ticks in the mock, but keep the subscription open.
         yield* [];

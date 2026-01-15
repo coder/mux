@@ -26,6 +26,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 interface ExplorerTabProps {
   workspaceId: string;
   workspacePath: string;
+  /** Callback when user clicks a file (not directory) */
+  onOpenFile?: (relativePath: string) => void;
 }
 
 interface ExplorerState {
@@ -210,7 +212,13 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
             isIgnored && "opacity-50"
           )}
           style={{ paddingLeft: `${8 + depth * INDENT_PX}px` }}
-          onClick={() => (node.isDirectory ? toggleExpand(node) : undefined)}
+          onClick={() => {
+            if (node.isDirectory) {
+              toggleExpand(node);
+            } else {
+              props.onOpenFile?.(node.path);
+            }
+          }}
         >
           {node.isDirectory ? (
             <>

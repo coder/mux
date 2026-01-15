@@ -20,9 +20,14 @@ import {
 import { log } from "@/node/services/log";
 import type { BranchListResult } from "@/common/orpc/types";
 import type { FileTreeNode } from "@/common/utils/git/numstatParser";
+import type { FileContentsResponse } from "@/common/orpc/schemas/api";
 import * as path from "path";
 import * as os from "os";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import ignore from "ignore";
+
+const execFileAsync = promisify(execFile);
 
 /**
  * List directory contents for the DirectoryPickerModal.
@@ -409,6 +414,158 @@ export class ProjectService {
 
   async listWorkspaceDirectory(workspacePath: string, relativePath?: string) {
     return listWorkspaceDirectory(workspacePath, relativePath);
+  }
+
+  /**
+   * Get file contents for the file viewer.
+   * Returns text content for text files or base64 for images.
+   * Max file size: 10MB.
+   */
+  async getFileContents(
+    workspacePath: string,
+    relativePath: string
+  ): Promise<Result<FileContentsResponse>> {
+    const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+
+    try {
+      // Validate path doesn't escape workspace
+      if (path.isAbsolute(relativePath)) {
+        return Ok({ type: "error", message: "Absolute paths are not allowed" });
+      }
+
+      const resolved = path.resolve(workspacePath, relativePath);
+      const normalizedWorkspace = path.resolve(workspacePath);
+      if (
+        !resolved.startsWith(normalizedWorkspace + path.sep) &&
+        resolved !== normalizedWorkspace
+      ) {
+        return Ok({ type: "error", message: "Access denied: path outside workspace" });
+      }
+
+      // Resolve symlinks and verify the real path is still within the workspace
+      let realPath: string;
+      try {
+        realPath = await fsPromises.realpath(resolved);
+      } catch {
+        return Ok({ type: "error", message: `File not found: ${relativePath}` });
+      }
+
+      const realWorkspace = await fsPromises.realpath(normalizedWorkspace);
+      if (!realPath.startsWith(realWorkspace + path.sep) && realPath !== realWorkspace) {
+        return Ok({ type: "error", message: "Access denied: path outside workspace" });
+      }
+
+      // Check file exists and get size
+      let stats;
+      try {
+        stats = await fsPromises.stat(realPath);
+      } catch {
+        return Ok({ type: "error", message: `File not found: ${relativePath}` });
+      }
+
+      if (stats.isDirectory()) {
+        return Ok({ type: "error", message: "Cannot display directory contents" });
+      }
+
+      if (stats.size > MAX_FILE_SIZE) {
+        const sizeMB = (stats.size / (1024 * 1024)).toFixed(1);
+        return Ok({
+          type: "error",
+          message: `File is too large to display (${sizeMB} MB). Maximum: 10 MB.`,
+        });
+      }
+
+      // Read file as buffer to detect type
+      const buffer = await fsPromises.readFile(realPath);
+      const ext = path.extname(relativePath).toLowerCase();
+
+      // Check for known image types by extension
+      const imageExtensions: Record<string, string> = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+        ".svg": "image/svg+xml",
+        ".ico": "image/x-icon",
+        ".bmp": "image/bmp",
+      };
+
+      if (imageExtensions[ext]) {
+        return Ok({
+          type: "image",
+          base64: buffer.toString("base64"),
+          mimeType: imageExtensions[ext],
+          size: stats.size,
+        });
+      }
+
+      // Try to detect if it's binary by checking for null bytes in first 8KB
+      const sampleSize = Math.min(buffer.length, 8192);
+      let hasNullByte = false;
+      for (let i = 0; i < sampleSize; i++) {
+        if (buffer[i] === 0) {
+          hasNullByte = true;
+          break;
+        }
+      }
+
+      if (hasNullByte) {
+        return Ok({ type: "error", message: "Unable to display binary file" });
+      }
+
+      // Return as text
+      const content = buffer.toString("utf-8");
+      return Ok({
+        type: "text",
+        content,
+        size: stats.size,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Err(`Failed to read file: ${message}`);
+    }
+  }
+
+  /**
+   * Get git diff for a file in a workspace.
+   * Runs `git diff` to get uncommitted changes.
+   */
+  async getFileDiff(
+    workspacePath: string,
+    relativePath: string
+  ): Promise<Result<{ diff: string }>> {
+    try {
+      // Validate path doesn't escape workspace
+      if (path.isAbsolute(relativePath)) {
+        return Err("Absolute paths are not allowed");
+      }
+
+      const resolved = path.resolve(workspacePath, relativePath);
+      const normalizedWorkspace = path.resolve(workspacePath);
+      if (
+        !resolved.startsWith(normalizedWorkspace + path.sep) &&
+        resolved !== normalizedWorkspace
+      ) {
+        return Err("Access denied: path outside workspace");
+      }
+
+      // Run git diff for the specific file
+      try {
+        const { stdout } = await execFileAsync("git", ["diff", "--", relativePath], {
+          cwd: workspacePath,
+          maxBuffer: 10 * 1024 * 1024, // 10MB
+        });
+        return Ok({ diff: stdout });
+      } catch (execError) {
+        // git diff returns exit code 0 even when no diff, so errors are real errors
+        const message = execError instanceof Error ? execError.message : String(execError);
+        return Err(`Failed to get diff: ${message}`);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Err(`Failed to get file diff: ${message}`);
+    }
   }
 
   async createDirectory(

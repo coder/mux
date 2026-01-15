@@ -9,6 +9,7 @@
 export {
   TAB_CONFIGS,
   TERMINAL_TAB_CONFIG,
+  FILE_TAB_CONFIG,
   getTabConfig,
   getTabName,
   getTabContentClassName,
@@ -23,6 +24,7 @@ export {
 export {
   CostsTabLabel,
   ExplorerTabLabel,
+  FileTabLabel,
   ReviewTabLabel,
   StatsTabLabel,
   TerminalTabLabel,
