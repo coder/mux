@@ -2510,7 +2510,6 @@ export class WorkspaceService extends EventEmitter {
     workspaceId: string,
     name: string,
     args?: string[],
-    stdin?: string,
     abortSignal?: AbortSignal
   ): Promise<Result<SlashCommandResult>> {
     const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
@@ -2540,7 +2539,6 @@ export class WorkspaceService extends EventEmitter {
         workspaceId,
         name,
         args ?? [],
-        stdin ?? "",
         muxEnv,
         abortSignal
       );

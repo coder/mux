@@ -1379,17 +1379,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           const isCustomCommand = customCommands.some((cmd) => cmd.name === parsed.command);
 
           if (isCustomCommand) {
-            // Parse rawInput into args and stdin
-            // First line = args, subsequent lines = stdin
+            // Parse rawInput as args (shell-style token splitting)
             const rawInput = parsed.rawInput ?? "";
-            const lines = rawInput.split("\n");
-            const firstLine = lines[0] ?? "";
-            // Preserve stdin exactly as provided - only strip the first (args) line
-            const stdinContent = lines.slice(1).join("\n");
-
-            // Parse first line as args (shell-style token splitting)
             const args =
-              (firstLine.match(/(?:[^\s"]+|"[^"]*")+/g) ?? []).map((token) =>
+              (rawInput.match(/(?:[^\s"]+|"[^"]*")+/g) ?? []).map((token) =>
                 token.replace(/^"(.*)"$/, "$1")
               ) ?? [];
 
@@ -1400,7 +1393,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                 workspaceId: props.workspaceId,
                 name: parsed.command,
                 args: args.length > 0 ? args : undefined,
-                stdin: stdinContent || undefined,
               });
 
               if (!result.success) {

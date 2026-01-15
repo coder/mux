@@ -1,51 +1,73 @@
 ---
 title: Custom Slash Commands
-description: Create custom executable commands that run in your workspace
+description: Create custom commands that run in your workspace
 ---
 
-Add executable scripts to `.mux/commands/` to define custom slash commands that run in your workspace context. The command's stdout becomes your message to the model.
+Add files to `.mux/commands/` to define custom slash commands. The file's contents (or script output) becomes your message to the model.
 
 ## Quick Start
 
-Create an executable script in your workspace:
+The simplest command is a text file:
 
 ```bash
 mkdir -p .mux/commands
-cat > .mux/commands/dry << 'EOF'
-#!/usr/bin/env bash
-echo "Refactor the code to follow DRY (Don't Repeat Yourself) principles."
-EOF
-chmod +x .mux/commands/dry
+echo "Refactor the code to follow DRY (Don't Repeat Yourself) principles." > .mux/commands/dry.txt
 ```
 
-Now type `/dry` in chat - the output becomes your message.
+Now type `/dry` in chat - the file contents become your message.
+
+## File Types
+
+Commands can be either **static files** or **executable scripts**:
+
+| Type       | File                        | Behavior                            |
+| ---------- | --------------------------- | ----------------------------------- |
+| Static     | `<name>.txt` or `<name>.md` | Contents read verbatim              |
+| Executable | `<name>` (no extension)     | Script runs, stdout becomes message |
+
+Static files are checked first (`.txt` before `.md`), so you can override an executable with a text file.
 
 ## File Convention
 
-- **Location**: `<workspacePath>/.mux/commands/<name>`
+- **Location**: `<workspacePath>/.mux/commands/<name>[.txt|.md]`
 - **Name format**: lowercase letters, numbers, and hyphens (e.g., `my-command`)
-- **Interpreter**: via shebang (`#!/bin/bash`, `#!/usr/bin/env node`, etc.)
+- **Executables**: must have shebang (`#!/bin/bash`, `#!/usr/bin/env node`, etc.)
 
 ## Progressive Examples
 
-### Level 1: Static Message
+### Level 1: Static File
 
-The simplest command outputs a fixed prompt:
+The simplest command is a text file (`.txt` or `.md`):
 
-```bash
-#!/usr/bin/env bash
-# .mux/commands/dry
-# Usage: /dry
+```
+# .mux/commands/dry.txt
 
-echo "Refactor the code to follow DRY (Don't Repeat Yourself) principles."
-echo "Identify repeated patterns and extract them into reusable functions or modules."
+Refactor the code to follow DRY (Don't Repeat Yourself) principles.
+Identify repeated patterns and extract them into reusable functions or modules.
 ```
 
 **Usage:** `/dry`
 
-### Level 2: Using Arguments
+### Level 2: Executable Script
 
-Commands receive arguments from the same line:
+For dynamic content, use an executable:
+
+```bash
+#!/usr/bin/env bash
+# .mux/commands/context
+# Usage: /context
+
+echo "Current directory: $(pwd)"
+echo "Git branch: $(git branch --show-current)"
+echo "Recent commits:"
+git log --oneline -5
+```
+
+**Usage:** `/context`
+
+### Level 3: Using Arguments
+
+Executable commands receive arguments from the same line:
 
 ```bash
 #!/usr/bin/env bash
@@ -71,40 +93,6 @@ gh pr diff "$pr_num" 2>/dev/null || {
 
 → argv: `["123"]`
 
-### Level 3: Using stdin
-
-Content after the first newline becomes stdin:
-
-```bash
-#!/usr/bin/env bash
-# .mux/commands/refine
-# Usage: /refine [--audience <name>]
-# Wraps stdin with a refinement prompt
-
-audience="general"
-while [[ $# -gt 0 ]]; do
-  case $1 in
-    --audience) audience="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-
-echo "Please refine the following text for a $audience audience:"
-echo ""
-cat  # pass through stdin
-```
-
-**Usage:**
-
-```
-/refine --audience developers
-
-Here is some text that needs
-to be made clearer.
-```
-
-→ argv: `["--audience", "developers"]`, stdin: the text after the blank line
-
 ## Result Protocol
 
 | Exit Code | Behavior                                                |
@@ -116,23 +104,22 @@ to be made clearer.
 - **stdout**: becomes the message text sent to the model
 - **stderr**: shown in the progress UI (for debugging), not sent to model
 
-Use exit code 2 when a command wants to show output but let the user decide whether to send it:
+Use exit code 2 when a command wants to show a preview without sending:
 
 ```bash
 #!/usr/bin/env bash
-# .mux/commands/confirm
-# Shows preview and asks for confirmation
+# .mux/commands/preview-diff
+# Shows staged changes - exit 2 to let user decide
 
-echo "This will generate the following prompt:"
-echo "---"
-cat
-echo "---"
-echo ""
-read -p "Send to model? [y/N] " confirm
-if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
-  exit 2  # User abort - don't send
+diff=$(git diff --cached)
+if [ -z "$diff" ]; then
+  echo "No staged changes" >&2
+  exit 1
 fi
-cat  # Send original stdin
+
+echo "Staged changes:"
+echo "$diff"
+exit 2  # Show output but don't send - user can edit and retry
 ```
 
 ## Real-time Output
@@ -159,40 +146,57 @@ Custom commands receive the same [environment variables](/hooks/environment-vari
 ````bash
 #!/usr/bin/env bash
 # .mux/commands/review
-# Usage: /review [file]
+# Usage: /review <file>
 
 file="${1:-}"
-if [ -n "$file" ]; then
-  echo "Please review this file: $file"
-  echo ""
-  echo '```'
-  cat "$file"
-  echo '```'
-else
-  echo "Please review the following code:"
-  echo ""
-  cat
+if [ -z "$file" ]; then
+  echo "Usage: /review <file>" >&2
+  exit 1
 fi
+
+echo "Please review this file: $file"
+echo ""
+echo '```'
+cat "$file"
+echo '```'
 ````
 
 ### Node.js command
 
 ```javascript
 #!/usr/bin/env node
-// .mux/commands/format-json
-// Usage: /format-json (pipe JSON via stdin)
+// .mux/commands/deps
+// Usage: /deps - shows outdated npm dependencies
 
-let input = "";
-process.stdin.on("data", (chunk) => (input += chunk));
-process.stdin.on("end", () => {
-  try {
-    const parsed = JSON.parse(input);
-    console.log(JSON.stringify(parsed, null, 2));
-  } catch (e) {
-    console.error("Invalid JSON:", e.message);
+const { execSync } = require("child_process");
+
+try {
+  const output = execSync("npm outdated --json", { encoding: "utf8" });
+  const deps = JSON.parse(output || "{}");
+  const names = Object.keys(deps);
+
+  if (names.length === 0) {
+    console.log("All dependencies are up to date!");
+  } else {
+    console.log(`Found ${names.length} outdated dependencies:\n`);
+    for (const name of names) {
+      const { current, wanted, latest } = deps[name];
+      console.log(`- ${name}: ${current} → ${latest} (wanted: ${wanted})`);
+    }
+  }
+} catch (e) {
+  // npm outdated exits non-zero when deps are outdated
+  if (e.stdout) {
+    const deps = JSON.parse(e.stdout);
+    console.log(`Found ${Object.keys(deps).length} outdated dependencies:\n`);
+    for (const [name, info] of Object.entries(deps)) {
+      console.log(`- ${name}: ${info.current} → ${info.latest}`);
+    }
+  } else {
+    console.error("Failed to check dependencies:", e.message);
     process.exit(1);
   }
-});
+}
 ```
 
 ## Autocomplete

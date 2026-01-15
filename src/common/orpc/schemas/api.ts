@@ -639,7 +639,6 @@ export const workspace = {
         workspaceId: z.string(),
         name: z.string(),
         args: z.array(z.string()).optional(),
-        stdin: z.string().optional(),
       }),
       output: ResultSchema(
         z.object({

@@ -16,6 +16,9 @@ import { log } from "./log";
 /** Regex for valid command names: lowercase alphanumeric with hyphens */
 const COMMAND_NAME_REGEX = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
+/** Static file extensions that are read verbatim (no execution) */
+const STATIC_FILE_EXTENSIONS = [".txt", ".md"];
+
 export interface SlashCommand {
   name: string;
 }
@@ -48,7 +51,9 @@ export class SlashCommandService extends EventEmitter {
   /**
    * List available custom slash commands in a workspace.
    *
-   * Discovers executables at <workspacePath>/.mux/commands/<name>
+   * Discovers:
+   * - Executable files at <workspacePath>/.mux/commands/<name>
+   * - Static text files at <workspacePath>/.mux/commands/<name>.txt or .md
    */
   async listCommands(runtime: Runtime, workspacePath: string): Promise<SlashCommand[]> {
     // Build paths relative to cwd to avoid mixing Windows vs POSIX separators.
@@ -56,10 +61,11 @@ export class SlashCommandService extends EventEmitter {
     const commandsDir = path.posix.join(".mux", "commands");
 
     try {
-      // Use find to list executable files (works for both local and SSH runtimes)
+      // Find executables OR static text files (.txt, .md)
+      // -executable finds runnable scripts; the -name patterns find static files
       const result = await execBuffered(
         runtime,
-        `find "${commandsDir}" -maxdepth 1 -type f -executable 2>/dev/null || true`,
+        `find "${commandsDir}" -maxdepth 1 -type f \\( -executable -o -name "*.txt" -o -name "*.md" \\) 2>/dev/null || true`,
         { cwd: workspacePath, timeout: 10 }
       );
 
@@ -69,7 +75,9 @@ export class SlashCommandService extends EventEmitter {
 
       const commands: SlashCommand[] = [];
       for (const filePath of result.stdout.trim().split("\n")) {
-        const name = path.posix.basename(filePath);
+        const basename = path.posix.basename(filePath);
+        // Strip .txt or .md extension to get the command name
+        const name = this.getCommandName(basename);
         if (COMMAND_NAME_REGEX.test(name)) {
           commands.push({ name });
         }
@@ -83,10 +91,66 @@ export class SlashCommandService extends EventEmitter {
   }
 
   /**
+   * Extract command name from filename, stripping .txt or .md extensions.
+   */
+  private getCommandName(filename: string): string {
+    for (const ext of STATIC_FILE_EXTENSIONS) {
+      if (filename.endsWith(ext)) {
+        return filename.slice(0, -ext.length);
+      }
+    }
+    return filename;
+  }
+
+  /**
+   * Check if a filename represents a static text file (read verbatim, not executed).
+   */
+  private isStaticFile(filename: string): boolean {
+    return STATIC_FILE_EXTENSIONS.some((ext) => filename.endsWith(ext));
+  }
+
+  /**
+   * Resolve the actual file path for a command name.
+   * Checks for static files (.txt, .md) first, then bare executable.
+   */
+  private async resolveCommandFile(
+    runtime: Runtime,
+    workspacePath: string,
+    name: string
+  ): Promise<{ filename: string; isStatic: boolean } | null> {
+    const commandsDir = path.posix.join(".mux", "commands");
+
+    // Check for static file variants first (prefer .txt over .md)
+    for (const ext of STATIC_FILE_EXTENSIONS) {
+      const filename = `${name}${ext}`;
+      const result = await execBuffered(
+        runtime,
+        `test -f "${commandsDir}/${filename}" && echo "exists" || true`,
+        { cwd: workspacePath, timeout: 5 }
+      );
+      if (result.stdout.trim() === "exists") {
+        return { filename, isStatic: true };
+      }
+    }
+
+    // Check for bare executable
+    const result = await execBuffered(
+      runtime,
+      `test -f "${commandsDir}/${name}" -a -x "${commandsDir}/${name}" && echo "exists" || true`,
+      { cwd: workspacePath, timeout: 5 }
+    );
+    if (result.stdout.trim() === "exists") {
+      return { filename: name, isStatic: false };
+    }
+
+    return null;
+  }
+
+  /**
    * Run a custom slash command.
    *
-   * Streams init-style events (init-start, init-output, init-end) via EventEmitter.
-   * Returns the accumulated stdout when complete.
+   * For static files (.txt, .md): reads contents verbatim.
+   * For executables: streams init-style events and returns stdout.
    */
   async runCommand(
     runtime: Runtime,
@@ -94,7 +158,6 @@ export class SlashCommandService extends EventEmitter {
     workspaceId: string,
     name: string,
     args: string[],
-    stdin: string,
     muxEnv: Record<string, string>,
     abortSignal?: AbortSignal
   ): Promise<SlashCommandResult> {
@@ -103,7 +166,123 @@ export class SlashCommandService extends EventEmitter {
       throw new Error(`Invalid command name: ${name}`);
     }
 
-    const commandPath = path.join(workspacePath, ".mux", "commands", name);
+    // Resolve the actual file (static or executable)
+    const resolved = await this.resolveCommandFile(runtime, workspacePath, name);
+    if (!resolved) {
+      throw new Error(`Command not found: /${name}`);
+    }
+
+    const commandPath = path.join(workspacePath, ".mux", "commands", resolved.filename);
+
+    // For static files, just read and return contents
+    if (resolved.isStatic) {
+      return this.runStaticFile(runtime, workspacePath, workspaceId, name, commandPath);
+    }
+
+    // For executables, run with full streaming support
+    return this.runExecutable(
+      runtime,
+      workspacePath,
+      workspaceId,
+      name,
+      commandPath,
+      args,
+      muxEnv,
+      abortSignal
+    );
+  }
+
+  /**
+   * Read a static file (.txt, .md) and return its contents.
+   */
+  private async runStaticFile(
+    runtime: Runtime,
+    workspacePath: string,
+    workspaceId: string,
+    name: string,
+    commandPath: string
+  ): Promise<SlashCommandResult> {
+    const startTime = Date.now();
+
+    // Emit init-start
+    this.emit("init-start", {
+      type: "init-start",
+      workspaceId,
+      hookPath: commandPath,
+      timestamp: startTime,
+      source: "slash-command",
+      commandName: name,
+    } satisfies WorkspaceInitEvent & { workspaceId: string });
+
+    try {
+      // Read file contents via cat (works for both local and SSH runtimes)
+      const relPath = `./.mux/commands/${path.basename(commandPath)}`;
+      const result = await execBuffered(runtime, `cat "${relPath}"`, {
+        cwd: workspacePath,
+        timeout: 10,
+      });
+
+      const stdout = result.stdout.trimEnd();
+      const endTime = Date.now();
+
+      // Emit the content for display
+      for (const line of stdout.split("\n")) {
+        this.emit("init-output", {
+          type: "init-output",
+          workspaceId,
+          line,
+          isError: false,
+          timestamp: Date.now(),
+        } satisfies WorkspaceInitEvent & { workspaceId: string });
+      }
+
+      // Emit init-end
+      this.emit("init-end", {
+        type: "init-end",
+        workspaceId,
+        exitCode: 0,
+        timestamp: endTime,
+      } satisfies WorkspaceInitEvent & { workspaceId: string });
+
+      log.debug(`Slash command /${name} (static) completed (duration ${endTime - startTime}ms)`);
+
+      return { stdout, exitCode: 0 };
+    } catch (error) {
+      const endTime = Date.now();
+      const errorMessage = error instanceof Error ? error.message : String(error);
+
+      this.emit("init-output", {
+        type: "init-output",
+        workspaceId,
+        line: `Error: ${errorMessage}`,
+        isError: true,
+        timestamp: endTime,
+      } satisfies WorkspaceInitEvent & { workspaceId: string });
+
+      this.emit("init-end", {
+        type: "init-end",
+        workspaceId,
+        exitCode: 1,
+        timestamp: endTime,
+      } satisfies WorkspaceInitEvent & { workspaceId: string });
+
+      throw error;
+    }
+  }
+
+  /**
+   * Run an executable command with full streaming support.
+   */
+  private async runExecutable(
+    runtime: Runtime,
+    workspacePath: string,
+    workspaceId: string,
+    name: string,
+    commandPath: string,
+    args: string[],
+    muxEnv: Record<string, string>,
+    abortSignal?: AbortSignal
+  ): Promise<SlashCommandResult> {
     const commandExecPath = `./.mux/commands/${name}`;
 
     // Build command with args (quote path and args for shell safety)
@@ -174,7 +353,6 @@ export class SlashCommandService extends EventEmitter {
     });
 
     try {
-      // Execute with stdin support
       const stream = await runtime.exec(fullCommand, {
         cwd: workspacePath,
         timeout: 300, // 5 minute timeout for commands
@@ -182,13 +360,8 @@ export class SlashCommandService extends EventEmitter {
         env: muxEnv,
       });
 
-      // Write stdin if provided
-      if (stdin) {
-        const writer = stream.stdin.getWriter();
-        await writer.write(new TextEncoder().encode(stdin));
-        await writer.close();
-      } else {
-        // Close stdin immediately if no input
+      // Close stdin immediately (no input support)
+      {
         const writer = stream.stdin.getWriter();
         await writer.close();
       }

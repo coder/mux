@@ -1606,8 +1606,7 @@ export const router = (authToken?: string) => {
             const result = await context.workspaceService.runSlashCommand(
               input.workspaceId,
               input.name,
-              input.args,
-              input.stdin
+              input.args
             );
             if (!result.success) {
               return { success: false, error: result.error };
