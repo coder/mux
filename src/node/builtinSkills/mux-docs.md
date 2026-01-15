@@ -74,7 +74,7 @@ Use this index to find a page's:
       - Tool Hooks (`/hooks/tools`) → `references/docs/hooks/tools.mdx` — Block dangerous commands, lint after edits, and set up your environment
       - Environment Variables (`/hooks/environment-variables`) → `references/docs/hooks/environment-variables.mdx` — Environment variables available in agent bash commands and hooks
   - **Agents**
-    - AGENTS.md (`/agents`) → `references/docs/agents.md` — Agent instructions for AI assistants working on the Mux codebase
+    - Agents (`/agents`) → `references/docs/agents/index.mdx` — Define custom agents (modes + subagents) with Markdown files
     - Instruction Files (`/agents/instruction-files`) → `references/docs/agents/instruction-files.mdx` — Configure agent behavior with AGENTS.md files
     - Agent Skills (`/agents/agent-skills`) → `references/docs/agents/agent-skills.mdx` — Share reusable workflows and references with skills
     - Plan Mode (`/agents/plan-mode`) → `references/docs/agents/plan-mode.mdx` — Review and collaborate on plans before execution
