@@ -71,10 +71,8 @@ export function useContextSwitchWarning(
     void executeCompaction({
       api,
       workspaceId,
-      sendMessageOptions: {
-        ...pendingSendOptions,
-        model: warning.compactionModel,
-      },
+      model: warning.compactionModel,
+      sendMessageOptions: pendingSendOptions,
     });
     setWarning(null);
   }, [api, workspaceId, pendingSendOptions, warning]);

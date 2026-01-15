@@ -1953,8 +1953,10 @@ export const ContextSwitchWarning: AppStory = {
     // Wait for the chat to load
     await canvas.findByText(/refactoring plan/, {}, { timeout: 10000 });
 
-    // Find and click the model selector to open it
-    const modelButton = await canvas.findByText("Sonnet 4.5", {}, { timeout: 5000 });
+    // Find and click the model selector to open it (use data-tutorial to avoid matching model name in message)
+    const modelSelectorGroup = storyRoot.querySelector('[data-tutorial="model-selector"]');
+    if (!modelSelectorGroup) throw new Error("Model selector not found");
+    const modelButton = within(modelSelectorGroup as HTMLElement).getByText("Sonnet 4.5");
     await userEvent.click(modelButton);
 
     // Wait for the dropdown to appear

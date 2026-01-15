@@ -17,12 +17,11 @@
 
 import type { WorkspaceUsageState } from "@/browser/stores/WorkspaceStore";
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
-import { getModelStats } from "@/common/utils/tokens/modelStats";
-import { supports1MContext } from "@/common/utils/ai/models";
 import {
   DEFAULT_AUTO_COMPACTION_THRESHOLD,
   FORCE_COMPACTION_BUFFER_PERCENT,
 } from "@/common/constants/ui";
+import { getEffectiveContextLimit } from "./contextLimit";
 
 /**
  * Get context window tokens (input only).
@@ -82,8 +81,7 @@ export function checkAutoCompaction(
   }
 
   // Determine max tokens for this model
-  const modelStats = getModelStats(model);
-  const maxTokens = use1M && supports1MContext(model) ? 1_000_000 : modelStats?.max_input_tokens;
+  const maxTokens = getEffectiveContextLimit(model, use1M);
 
   // No max tokens known - safe default (can't calculate percentage)
   if (!maxTokens) {

@@ -6,11 +6,10 @@
  * to a lower-context model (e.g., GPT 272K) when their current context is too large.
  */
 
-import { getModelStats } from "@/common/utils/tokens/modelStats";
-import { supports1MContext } from "@/common/utils/ai/models";
 import { readPersistedString } from "@/browser/hooks/usePersistedState";
 import { PREFERRED_COMPACTION_MODEL_KEY } from "@/common/constants/storage";
 import type { DisplayedMessage } from "@/common/types/message";
+import { getEffectiveContextLimit } from "./contextLimit";
 
 /** Safety buffer - warn if context exceeds 90% of target model's limit */
 const CONTEXT_FIT_THRESHOLD = 0.9;
@@ -24,18 +23,6 @@ export interface ContextSwitchWarning {
   compactionModel: string | null;
   /** Error message when no capable compaction model exists */
   errorMessage: string | null;
-}
-
-/**
- * Get effective context limit for a model, accounting for 1M toggle.
- */
-function getEffectiveLimit(model: string, use1M: boolean): number | null {
-  const stats = getModelStats(model);
-  if (!stats) return null;
-
-  // Sonnet: 1M optional (toggle). Gemini: always 1M (native).
-  if (supports1MContext(model) && use1M) return 1_000_000;
-  return stats.max_input_tokens;
 }
 
 /**
@@ -59,11 +46,11 @@ function resolveCompactionModel(
 ): string | null {
   const preferred = readPersistedString(PREFERRED_COMPACTION_MODEL_KEY);
   if (preferred) {
-    const limit = getEffectiveLimit(preferred, use1M);
+    const limit = getEffectiveContextLimit(preferred, use1M);
     if (limit && limit > currentTokens) return preferred;
   }
   if (previousModel) {
-    const limit = getEffectiveLimit(previousModel, use1M);
+    const limit = getEffectiveContextLimit(previousModel, use1M);
     if (limit && limit > currentTokens) return previousModel;
   }
   return null;
@@ -79,7 +66,7 @@ export function checkContextSwitch(
   previousModel: string | null,
   use1M: boolean
 ): ContextSwitchWarning | null {
-  const targetLimit = getEffectiveLimit(targetModel, use1M);
+  const targetLimit = getEffectiveContextLimit(targetModel, use1M);
 
   // Unknown model or context fits with 10% buffer - no warning
   if (!targetLimit || currentTokens <= targetLimit * CONTEXT_FIT_THRESHOLD) {
