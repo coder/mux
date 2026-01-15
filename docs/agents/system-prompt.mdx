@@ -96,6 +96,15 @@ function buildEnvironmentContext(workspacePath: string, runtimeType: RuntimeMode
       assertNever(runtimeType, `Unknown runtime type: ${String(runtimeType)}`);
   }
 
+  // Remote runtimes: clarify that MUX_PROJECT_PATH is the user's local path
+  const isRemote = runtimeType === RUNTIME_MODE.SSH || runtimeType === RUNTIME_MODE.DOCKER;
+  if (isRemote) {
+    lines = [
+      ...lines,
+      "- $MUX_PROJECT_PATH refers to the user's local machine, not this environment",
+    ];
+  }
+
   return `
 <environment>
 ${description}
