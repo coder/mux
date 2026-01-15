@@ -367,14 +367,16 @@ export function CoderControls(props: CoderControlsProps) {
                     />
                   </SelectTrigger>
                   <SelectContent>
-                    {existingWorkspaces.map((w) => (
-                      <SelectItem key={w.name} value={w.name}>
-                        {w.name}
-                        <span className="text-muted ml-1">
-                          ({w.templateDisplayName} • {w.status})
-                        </span>
-                      </SelectItem>
-                    ))}
+                    {existingWorkspaces
+                      .filter((w) => w.status !== "deleted" && w.status !== "deleting")
+                      .map((w) => (
+                        <SelectItem key={w.name} value={w.name}>
+                          {w.name}
+                          <span className="text-muted ml-1">
+                            ({w.templateDisplayName} • {w.status})
+                          </span>
+                        </SelectItem>
+                      ))}
                   </SelectContent>
                 </Select>
               )}
