@@ -1,6 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Command } from "cmdk";
 import { useCommandRegistry } from "@/browser/contexts/CommandRegistryContext";
+import { useAPI } from "@/browser/contexts/API";
+import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { CommandAction } from "@/browser/contexts/CommandRegistryContext";
 import {
   formatKeybind,
@@ -38,6 +40,13 @@ interface PaletteGroup {
 }
 
 export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext }) => {
+  const { api } = useAPI();
+
+  const slashContext = getSlashContext?.();
+  const slashWorkspaceId = slashContext?.workspaceId;
+
+  const [agentSkills, setAgentSkills] = useState<AgentSkillDescriptor[]>([]);
+  const agentSkillsCacheRef = useRef<Map<string, AgentSkillDescriptor[]>>(new Map());
   const { isOpen, close, getActions, addRecent, recent } = useCommandRegistry();
   const [query, setQuery] = useState("");
   const [activePrompt, setActivePrompt] = useState<null | {
@@ -77,6 +86,36 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
       setQuery("");
     }
   }, [isOpen, resetPaletteState]);
+
+  useEffect(() => {
+    if (!isOpen || !api || !slashWorkspaceId) {
+      setAgentSkills([]);
+      return;
+    }
+
+    const cached = agentSkillsCacheRef.current.get(slashWorkspaceId);
+    if (cached) {
+      setAgentSkills(cached);
+      return;
+    }
+
+    let cancelled = false;
+    api.agentSkills
+      .list({ workspaceId: slashWorkspaceId })
+      .then((skills) => {
+        if (cancelled) return;
+        agentSkillsCacheRef.current.set(slashWorkspaceId, skills);
+        setAgentSkills(skills);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setAgentSkills([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [api, isOpen, slashWorkspaceId]);
 
   const rawActions = getActions();
 
@@ -184,8 +223,12 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
     const q = query.trim();
 
     if (q.startsWith("/")) {
-      const ctx = getSlashContext?.() ?? { providerNames: [] };
-      const suggestions = getSlashCommandSuggestions(q, { providerNames: ctx.providerNames });
+      const ctx = getSlashContext?.() ?? { providerNames: [] as string[] };
+      const suggestions = getSlashCommandSuggestions(q, {
+        providerNames: ctx.providerNames,
+        agentSkills,
+        variant: ctx.workspaceId ? "workspace" : "creation",
+      });
       const section = "Slash Commands";
       const groups: PaletteGroup[] = [
         {
@@ -241,7 +284,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
       groups,
       emptyText: filtered.length ? undefined : "No results",
     } satisfies { groups: PaletteGroup[]; emptyText: string | undefined };
-  }, [query, rawActions, recentIndex, getSlashContext]);
+  }, [query, rawActions, recentIndex, getSlashContext, agentSkills]);
 
   useEffect(() => {
     if (!activePrompt) return;
