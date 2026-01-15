@@ -193,18 +193,16 @@ export class SlashCommandService extends EventEmitter {
   }
 
   /**
-   * Read a static file (.txt, .md) and return its contents.
+   * Wrap command execution with init-start/end lifecycle events and error handling.
    */
-  private async runStaticFile(
-    runtime: Runtime,
-    workspacePath: string,
+  private async withCommandLifecycle(
     workspaceId: string,
     name: string,
-    commandPath: string
+    commandPath: string,
+    executor: () => Promise<SlashCommandResult>
   ): Promise<SlashCommandResult> {
     const startTime = Date.now();
 
-    // Emit init-start
     this.emit("init-start", {
       type: "init-start",
       workspaceId,
@@ -215,6 +213,66 @@ export class SlashCommandService extends EventEmitter {
     } satisfies WorkspaceInitEvent & { workspaceId: string });
 
     try {
+      const result = await executor();
+
+      this.emit("init-end", {
+        type: "init-end",
+        workspaceId,
+        exitCode: result.exitCode,
+        timestamp: Date.now(),
+      } satisfies WorkspaceInitEvent & { workspaceId: string });
+
+      log.debug(
+        `Slash command /${name} completed (exit ${result.exitCode}, duration ${Date.now() - startTime}ms)`
+      );
+
+      return result;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+
+      this.emit("init-output", {
+        type: "init-output",
+        workspaceId,
+        line: `Error: ${errorMessage}`,
+        isError: true,
+        timestamp: Date.now(),
+      } satisfies WorkspaceInitEvent & { workspaceId: string });
+
+      this.emit("init-end", {
+        type: "init-end",
+        workspaceId,
+        exitCode: 1,
+        timestamp: Date.now(),
+      } satisfies WorkspaceInitEvent & { workspaceId: string });
+
+      throw error;
+    }
+  }
+
+  /**
+   * Emit an output line for streaming display.
+   */
+  private emitOutput(workspaceId: string, line: string, isError = false): void {
+    this.emit("init-output", {
+      type: "init-output",
+      workspaceId,
+      line,
+      isError,
+      timestamp: Date.now(),
+    } satisfies WorkspaceInitEvent & { workspaceId: string });
+  }
+
+  /**
+   * Read a static file (.txt, .md) and return its contents.
+   */
+  private async runStaticFile(
+    runtime: Runtime,
+    workspacePath: string,
+    workspaceId: string,
+    name: string,
+    commandPath: string
+  ): Promise<SlashCommandResult> {
+    return this.withCommandLifecycle(workspaceId, name, commandPath, async () => {
       // Read file contents via cat (works for both local and SSH runtimes)
       const relPath = `./.mux/commands/${path.basename(commandPath)}`;
       const result = await execBuffered(runtime, `cat "${relPath}"`, {
@@ -223,51 +281,14 @@ export class SlashCommandService extends EventEmitter {
       });
 
       const stdout = result.stdout.trimEnd();
-      const endTime = Date.now();
 
       // Emit the content for display
       for (const line of stdout.split("\n")) {
-        this.emit("init-output", {
-          type: "init-output",
-          workspaceId,
-          line,
-          isError: false,
-          timestamp: Date.now(),
-        } satisfies WorkspaceInitEvent & { workspaceId: string });
+        this.emitOutput(workspaceId, line);
       }
 
-      // Emit init-end
-      this.emit("init-end", {
-        type: "init-end",
-        workspaceId,
-        exitCode: 0,
-        timestamp: endTime,
-      } satisfies WorkspaceInitEvent & { workspaceId: string });
-
-      log.debug(`Slash command /${name} (static) completed (duration ${endTime - startTime}ms)`);
-
       return { stdout, exitCode: 0 };
-    } catch (error) {
-      const endTime = Date.now();
-      const errorMessage = error instanceof Error ? error.message : String(error);
-
-      this.emit("init-output", {
-        type: "init-output",
-        workspaceId,
-        line: `Error: ${errorMessage}`,
-        isError: true,
-        timestamp: endTime,
-      } satisfies WorkspaceInitEvent & { workspaceId: string });
-
-      this.emit("init-end", {
-        type: "init-end",
-        workspaceId,
-        exitCode: 1,
-        timestamp: endTime,
-      } satisfies WorkspaceInitEvent & { workspaceId: string });
-
-      throw error;
-    }
+    });
   }
 
   /**
@@ -291,68 +312,36 @@ export class SlashCommandService extends EventEmitter {
     const quotedArgs = args.map((arg) => `'${arg.replace(/'/g, "'\\''")}'`).join(" ");
     const fullCommand = quotedArgs ? `${quotedPath} ${quotedArgs}` : quotedPath;
 
-    const startTime = Date.now();
+    return this.withCommandLifecycle(workspaceId, name, commandPath, async () => {
+      // Accumulate raw stdout chunks for return value (preserves empty lines)
+      // Note: We cap stdout to 1MB to avoid holding arbitrarily large command output in memory.
+      const stdoutChunks: Uint8Array[] = [];
+      let stdoutByteLength = 0;
+      let stdoutTruncated = false;
+      const MAX_STDOUT_BYTES = 1024 * 1024;
 
-    // Emit init-start with source="slash-command"
-    this.emit("init-start", {
-      type: "init-start",
-      workspaceId,
-      hookPath: commandPath,
-      timestamp: startTime,
-      source: "slash-command",
-      commandName: name,
-    } satisfies WorkspaceInitEvent & { workspaceId: string });
+      const appendStdoutChunk = (chunk: Uint8Array) => {
+        if (stdoutTruncated) return;
 
-    // Accumulate raw stdout chunks for return value (preserves empty lines)
-    //
-    // Note: We intentionally cap stdout to avoid holding arbitrarily large command output in memory.
-    const stdoutChunks: Uint8Array[] = [];
-    let stdoutByteLength = 0;
-    let stdoutTruncated = false;
-    const MAX_STDOUT_BYTES = 1024 * 1024; // 1MB limit
+        const remaining = MAX_STDOUT_BYTES - stdoutByteLength;
+        if (remaining <= 0) {
+          stdoutTruncated = true;
+          return;
+        }
 
-    const appendStdoutChunk = (chunk: Uint8Array) => {
-      if (stdoutTruncated) return;
+        const slice = chunk.length <= remaining ? chunk : chunk.subarray(0, remaining);
+        stdoutChunks.push(slice);
+        stdoutByteLength += slice.length;
 
-      const remaining = MAX_STDOUT_BYTES - stdoutByteLength;
-      if (remaining <= 0) {
-        stdoutTruncated = true;
-        return;
-      }
+        if (chunk.length > remaining) {
+          stdoutTruncated = true;
+        }
+      };
 
-      const slice = chunk.length <= remaining ? chunk : chunk.subarray(0, remaining);
-      stdoutChunks.push(slice);
-      stdoutByteLength += slice.length;
+      // LineBuffer for streaming display (may drop empty lines, OK for live display)
+      const stdoutBuffer = new LineBuffer((line) => this.emitOutput(workspaceId, line));
+      const stderrBuffer = new LineBuffer((line) => this.emitOutput(workspaceId, line, true));
 
-      if (chunk.length > remaining) {
-        stdoutTruncated = true;
-      }
-    };
-
-    // LineBuffer for streaming display (may drop empty lines, that's OK for live display)
-    const stdoutBuffer = new LineBuffer((line) => {
-      // Emit for live display
-      this.emit("init-output", {
-        type: "init-output",
-        workspaceId,
-        line,
-        isError: false,
-        timestamp: Date.now(),
-      } satisfies WorkspaceInitEvent & { workspaceId: string });
-    });
-
-    const stderrBuffer = new LineBuffer((line) => {
-      // Emit stderr for display (not accumulated for return)
-      this.emit("init-output", {
-        type: "init-output",
-        workspaceId,
-        line,
-        isError: true,
-        timestamp: Date.now(),
-      } satisfies WorkspaceInitEvent & { workspaceId: string });
-    });
-
-    try {
       const stream = await runtime.exec(fullCommand, {
         cwd: workspacePath,
         timeout: 300, // 5 minute timeout for commands
@@ -374,9 +363,7 @@ export class SlashCommandService extends EventEmitter {
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-            // Accumulate raw bytes for final output (preserves empty lines)
             appendStdoutChunk(value);
-            // Stream decoded text for live display (may drop empty lines)
             stdoutBuffer.append(decoder.decode(value, { stream: true }));
           }
           stdoutBuffer.append(decoder.decode());
@@ -405,20 +392,6 @@ export class SlashCommandService extends EventEmitter {
       // Wait for everything
       const [exitCode] = await Promise.all([stream.exitCode, readStdout(), readStderr()]);
 
-      const endTime = Date.now();
-
-      // Emit init-end
-      this.emit("init-end", {
-        type: "init-end",
-        workspaceId,
-        exitCode,
-        timestamp: endTime,
-      } satisfies WorkspaceInitEvent & { workspaceId: string });
-
-      log.debug(
-        `Slash command /${name} completed (exit ${exitCode}, duration ${endTime - startTime}ms)`
-      );
-
       // Combine chunks and decode to string (preserves empty lines)
       const combinedStdout = new Uint8Array(stdoutByteLength);
       let offset = 0;
@@ -428,31 +401,7 @@ export class SlashCommandService extends EventEmitter {
       }
       const stdout = new TextDecoder().decode(combinedStdout).trimEnd();
 
-      return {
-        stdout,
-        exitCode,
-      };
-    } catch (error) {
-      const endTime = Date.now();
-      const errorMessage = error instanceof Error ? error.message : String(error);
-
-      // Emit error line and init-end
-      this.emit("init-output", {
-        type: "init-output",
-        workspaceId,
-        line: `Error: ${errorMessage}`,
-        isError: true,
-        timestamp: endTime,
-      } satisfies WorkspaceInitEvent & { workspaceId: string });
-
-      this.emit("init-end", {
-        type: "init-end",
-        workspaceId,
-        exitCode: 1,
-        timestamp: endTime,
-      } satisfies WorkspaceInitEvent & { workspaceId: string });
-
-      throw error;
-    }
+      return { stdout, exitCode };
+    });
   }
 }
