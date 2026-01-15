@@ -216,6 +216,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
               runtimeConfig={metadata.runtimeConfig}
               isWorking={isWorking}
               workspaceName={metadata.name}
+              workspacePath={namedWorkspacePath}
             />
             {isEditing ? (
               <input

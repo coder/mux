@@ -22,6 +22,8 @@ interface RuntimeBadgeProps {
   workspacePath?: string;
   /** Workspace name to show in tooltip */
   workspaceName?: string;
+  /** Tooltip position: "top" (default) or "bottom" */
+  tooltipSide?: "top" | "bottom";
 }
 
 // Runtime-specific color schemes - each type has consistent colors in idle/working states
@@ -60,31 +62,33 @@ const RUNTIME_STYLES = {
  *
  * When isWorking=true, badges brighten and pulse within their color scheme.
  */
-function PathWithCopy({ path }: { path: string }) {
+function TooltipRow({
+  label,
+  value,
+  copyable,
+}: {
+  label: string;
+  value: string;
+  copyable?: boolean;
+}) {
   const { copied, copyToClipboard } = useCopyToClipboard();
 
   return (
-    <div className="mt-1 flex items-center gap-1">
-      <span className="text-muted font-mono text-[10px]">{path}</span>
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          void copyToClipboard(path);
-        }}
-        className="text-muted hover:text-foreground"
-        aria-label="Copy path"
-      >
-        {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-      </button>
-    </div>
-  );
-}
-
-function WorkspaceNameLabel({ workspaceName }: { workspaceName: string }) {
-  return (
-    <div className="mt-1 flex max-w-80 items-baseline gap-1">
-      <span className="text-muted shrink-0">Workspace:</span>
-      <span className="min-w-0 font-mono break-words">{workspaceName}</span>
+    <div className="flex items-center gap-1.5">
+      <span className="text-muted shrink-0 text-xs">{label}</span>
+      <span className="font-mono text-xs whitespace-nowrap">{value}</span>
+      {copyable && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            void copyToClipboard(value);
+          }}
+          className="text-muted hover:text-foreground shrink-0"
+          aria-label={`Copy ${label.toLowerCase()}`}
+        >
+          {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+        </button>
+      )}
     </div>
   );
 }
@@ -123,6 +127,7 @@ export function RuntimeBadge({
   isWorking = false,
   workspacePath,
   workspaceName,
+  tooltipSide = "top",
 }: RuntimeBadgeProps) {
   const info = getRuntimeInfo(runtimeConfig);
   if (!info) return null;
@@ -143,10 +148,12 @@ export function RuntimeBadge({
           <Icon />
         </span>
       </TooltipTrigger>
-      <TooltipContent align="end">
-        <div>{info.label}</div>
-        {workspaceName && <WorkspaceNameLabel workspaceName={workspaceName} />}
-        {workspacePath && <PathWithCopy path={workspacePath} />}
+      <TooltipContent side={tooltipSide} align="start" className="max-w-[500px]">
+        <div className="flex flex-col gap-1">
+          <div className="text-xs font-medium">{info.label}</div>
+          {workspaceName && <TooltipRow label="Name" value={workspaceName} />}
+          {workspacePath && <TooltipRow label="Path" value={workspacePath} copyable />}
+        </div>
       </TooltipContent>
     </Tooltip>
   );

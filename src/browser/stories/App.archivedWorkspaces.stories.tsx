@@ -130,7 +130,7 @@ export const WorkspaceNameInRuntimeTooltip: AppStory = {
 
         const tooltipWithin = within(tooltip as HTMLElement);
         tooltipWithin.getByText("Worktree: isolated git worktree");
-        tooltipWithin.getByText("Workspace:");
+        tooltipWithin.getByText("Name");
         tooltipWithin.getByText("bugfix/agent-report-rendering");
       },
       { timeout: 2000, interval: 50 }
