@@ -455,6 +455,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       ensureModelInSettings(canonicalModel); // Ensure model exists in Settings
       updatePersistedState(storageKeys.modelKey, canonicalModel); // Update workspace or project-specific
 
+      // Notify parent of model change (for context switch warning)
+      // Called before early returns so warning works even offline or with custom agents
+      onModelChange?.(canonicalModel);
+
       if (variant !== "workspace" || !workspaceId) {
         return;
       }
