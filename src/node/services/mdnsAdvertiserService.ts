@@ -74,8 +74,17 @@ export function buildMuxMdnsServiceOptions(options: BuildMuxMdnsServiceOptions):
     "invalid port"
   );
 
-  const instanceName = options.instanceName.trim();
-  assert(instanceName, "instanceName is required");
+  const rawInstanceName = options.instanceName.trim();
+  assert(rawInstanceName, "instanceName is required");
+
+  // DNS-SD service instance names are encoded as a single DNS label. Dots are legal characters
+  // in a label, but they must be escaped in the DNS wire format. `@homebridge/ciao` does not
+  // appear to escape dots, which results in *multi-label* instance names like:
+  //   mux-host.home._mux-api._tcp.local.
+  // Those don't show up via Apple's DNSServiceBrowse/DNSServiceResolve APIs (e.g. `dns-sd -B/-L`).
+  //
+  // To keep discovery tool/client behavior predictable, replace dots with hyphens.
+  const instanceName = rawInstanceName.replaceAll(".", "-");
 
   const version = options.version.trim();
   assert(version, "version is required");

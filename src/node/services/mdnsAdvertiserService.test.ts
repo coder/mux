@@ -93,6 +93,18 @@ describe("buildMuxMdnsServiceOptions", () => {
     expect(serviceOptions.disabledIpv6).toBeUndefined();
   });
 
+  test("sanitizes dots in instanceName so DNS-SD clients can browse/resolve", () => {
+    const serviceOptions = buildMuxMdnsServiceOptions({
+      bindHost: "192.168.1.10",
+      port: 3000,
+      instanceName: "mux-host.home",
+      version: "0.0.0-test",
+      authRequired: false,
+    });
+
+    expect(serviceOptions.name).toBe("mux-host-home");
+  });
+
   test("specific IP restricts addresses", () => {
     const serviceOptions = buildMuxMdnsServiceOptions({
       bindHost: "192.168.1.10",
