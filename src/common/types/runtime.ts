@@ -39,6 +39,9 @@ export const SSH_RUNTIME_PREFIX = "ssh ";
 /** Runtime string prefix for Docker mode (e.g., "docker ubuntu:22.04") */
 export const DOCKER_RUNTIME_PREFIX = "docker ";
 
+/** Placeholder host for Coder SSH runtimes (where host is derived from Coder config) */
+export const CODER_RUNTIME_PLACEHOLDER = "coder://";
+
 export type RuntimeConfig = z.infer<typeof RuntimeConfigSchema>;
 
 /**

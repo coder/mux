@@ -10,6 +10,7 @@ import {
   parseRuntimeModeAndHost,
   buildRuntimeString,
   RUNTIME_MODE,
+  CODER_RUNTIME_PLACEHOLDER,
 } from "@/common/types/runtime";
 import {
   getModelKey,
@@ -185,12 +186,17 @@ export function useDraftWorkspaceSettings(
     switch (mode) {
       case RUNTIME_MODE.LOCAL:
         return { mode: "local" };
-      case RUNTIME_MODE.SSH:
+      case RUNTIME_MODE.SSH: {
+        // Use placeholder when Coder is enabled with no explicit SSH host
+        // This ensures the runtime string round-trips correctly for Coder-only users
+        const effectiveHost =
+          coderEnabled && coderConfig && !sshHost.trim() ? CODER_RUNTIME_PLACEHOLDER : sshHost;
         return {
           mode: "ssh",
-          host: sshHost,
+          host: effectiveHost,
           coder: coderEnabled && coderConfig ? coderConfig : undefined,
         };
+      }
       case RUNTIME_MODE.DOCKER:
         return { mode: "docker", image: dockerImage, shareCredentials };
       case RUNTIME_MODE.WORKTREE:
