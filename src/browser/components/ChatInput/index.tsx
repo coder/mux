@@ -1033,7 +1033,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
       const discoveryInput =
         variant === "workspace" && workspaceId
-          ? { workspaceId }
+          ? {
+              workspaceId,
+              disableWorkspaceAgents: sendMessageOptions.disableWorkspaceAgents,
+            }
           : variant === "creation" && atMentionProjectPath
             ? { projectPath: atMentionProjectPath }
             : null;
@@ -1063,7 +1066,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     return () => {
       isMounted = false;
     };
-  }, [api, variant, workspaceId, atMentionProjectPath]);
+  }, [api, variant, workspaceId, atMentionProjectPath, sendMessageOptions.disableWorkspaceAgents]);
 
   // Voice input: track whether OpenAI API key is configured (subscribe to provider config changes)
   useEffect(() => {
@@ -1888,6 +1891,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           try {
             const skillPackage = await api.agentSkills.get({
               workspaceId: props.workspaceId,
+              disableWorkspaceAgents: sendMessageOptions.disableWorkspaceAgents,
               skillName: skillInvocation.descriptor.name,
             });
             compactionSkillInstructions =
@@ -1988,6 +1992,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           try {
             const skillPackage = await api.agentSkills.get({
               workspaceId: props.workspaceId,
+              disableWorkspaceAgents: sendMessageOptions.disableWorkspaceAgents,
               skillName: skillInvocation.descriptor.name,
             });
             skillSystemInstructions = buildAgentSkillSystemInstructions(skillPackage);
