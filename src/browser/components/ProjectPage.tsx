@@ -1,5 +1,6 @@
 import React, { useRef, useCallback, useState, useEffect } from "react";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import { cn } from "@/common/lib/utils";
 import { ModeProvider } from "@/browser/contexts/ModeContext";
 import { ProviderOptionsProvider } from "@/browser/contexts/ProviderOptionsContext";
 import { ThinkingProvider } from "@/browser/contexts/ThinkingContext";
@@ -24,6 +25,7 @@ import {
   getProjectScopeId,
 } from "@/common/constants/storage";
 import { SUPPORTED_PROVIDERS } from "@/common/constants/providers";
+import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 
 interface ProjectPageProps {
   projectPath: string;
@@ -235,63 +237,73 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
     <ModeProvider projectPath={projectPath}>
       <ProviderOptionsProvider>
         <ThinkingProvider projectPath={projectPath}>
-          {/* Scrollable content area */}
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            {/* Main content - vertically centered with reduced gaps */}
-            <div className="flex min-h-[50vh] flex-col items-center justify-center px-4 py-6">
-              <div className="flex w-full max-w-3xl flex-col gap-4">
-                {/* Git init banner - shown above ChatInput when not a git repo */}
-                {isNonGitRepo && (
-                  <GitInitBanner projectPath={projectPath} onSuccess={handleGitInitSuccess} />
-                )}
-                {/* Show configure prompt when no providers, otherwise show ChatInput */}
-                {!providersLoading && !hasProviders ? (
-                  <ConfigureProvidersPrompt />
-                ) : (
-                  <>
-                    {shouldShowAgentsInitBanner && (
-                      <AgentsInitBanner
-                        onRunInit={handleRunAgentsInit}
-                        onDismiss={handleDismissAgentsInit}
+          {/* Flex container to fill parent space */}
+          <div className="bg-dark flex flex-1 flex-col overflow-hidden">
+            {/* Draggable header bar - matches WorkspaceHeader for consistency */}
+            <div
+              className={cn(
+                "bg-sidebar border-border-light flex shrink-0 items-center border-b px-[15px]",
+                isDesktopMode() ? "h-10 titlebar-drag" : "h-8"
+              )}
+            />
+            {/* Scrollable content area */}
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              {/* Main content - vertically centered with reduced gaps */}
+              <div className="flex min-h-[50vh] flex-col items-center justify-center px-4 py-6">
+                <div className="flex w-full max-w-3xl flex-col gap-4">
+                  {/* Git init banner - shown above ChatInput when not a git repo */}
+                  {isNonGitRepo && (
+                    <GitInitBanner projectPath={projectPath} onSuccess={handleGitInitSuccess} />
+                  )}
+                  {/* Show configure prompt when no providers, otherwise show ChatInput */}
+                  {!providersLoading && !hasProviders ? (
+                    <ConfigureProvidersPrompt />
+                  ) : (
+                    <>
+                      {shouldShowAgentsInitBanner && (
+                        <AgentsInitBanner
+                          onRunInit={handleRunAgentsInit}
+                          onDismiss={handleDismissAgentsInit}
+                        />
+                      )}
+                      {/* Configured providers bar - compact icon carousel */}
+                      {providersConfig && hasProviders && (
+                        <ConfiguredProvidersBar providersConfig={providersConfig} />
+                      )}
+                      {/* ChatInput for workspace creation - includes section selector */}
+                      <ChatInput
+                        variant="creation"
+                        projectPath={projectPath}
+                        projectName={projectName}
+                        pendingSectionId={pendingSectionId}
+                        onProviderConfig={onProviderConfig}
+                        onReady={handleChatReady}
+                        onWorkspaceCreated={onWorkspaceCreated}
                       />
-                    )}
-                    {/* Configured providers bar - compact icon carousel */}
-                    {providersConfig && hasProviders && (
-                      <ConfiguredProvidersBar providersConfig={providersConfig} />
-                    )}
-                    {/* ChatInput for workspace creation - includes section selector */}
-                    <ChatInput
-                      variant="creation"
-                      projectPath={projectPath}
-                      projectName={projectName}
-                      pendingSectionId={pendingSectionId}
-                      onProviderConfig={onProviderConfig}
-                      onReady={handleChatReady}
-                      onWorkspaceCreated={onWorkspaceCreated}
-                    />
-                  </>
-                )}
-              </div>
-            </div>
-            {/* Archived workspaces: separate section below centered area */}
-            {archivedWorkspaces.length > 0 && (
-              <div className="flex justify-center px-4 pb-4">
-                <div className="w-full max-w-3xl">
-                  <ArchivedWorkspaces
-                    projectPath={projectPath}
-                    projectName={projectName}
-                    workspaces={archivedWorkspaces}
-                    onWorkspacesChanged={() => {
-                      // Refresh archived list after unarchive/delete
-                      if (!api) return;
-                      void api.workspace.list({ archived: true }).then((all) => {
-                        setArchivedWorkspaces(all.filter((w) => w.projectPath === projectPath));
-                      });
-                    }}
-                  />
+                    </>
+                  )}
                 </div>
               </div>
-            )}
+              {/* Archived workspaces: separate section below centered area */}
+              {archivedWorkspaces.length > 0 && (
+                <div className="flex justify-center px-4 pb-4">
+                  <div className="w-full max-w-3xl">
+                    <ArchivedWorkspaces
+                      projectPath={projectPath}
+                      projectName={projectName}
+                      workspaces={archivedWorkspaces}
+                      onWorkspacesChanged={() => {
+                        // Refresh archived list after unarchive/delete
+                        if (!api) return;
+                        void api.workspace.list({ archived: true }).then((all) => {
+                          setArchivedWorkspaces(all.filter((w) => w.projectPath === projectPath));
+                        });
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </ThinkingProvider>
       </ProviderOptionsProvider>
