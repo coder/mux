@@ -495,9 +495,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                 <button
                   onClick={onAddProject}
                   aria-label="Add project"
-                  className="text-secondary hover:bg-hover hover:border-border-light flex h-6 w-6 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent text-lg leading-none transition-all duration-200"
+                  className="text-secondary hover:bg-hover hover:border-border-light flex h-6 cursor-pointer items-center gap-1 rounded border border-transparent bg-transparent px-1.5 text-xs transition-all duration-200"
                 >
-                  +
+                  <span className="text-base leading-none">+</span>
+                  <span>New Project</span>
                 </button>
               </div>
               <div className="flex-1 overflow-y-auto">
