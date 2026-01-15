@@ -11,11 +11,12 @@
       "import": "./dist/index.js"
     },
     "./styles": {
-      "import": "./dist/styles/index.css"
+      "default": "./styles/variables.css"
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "styles/variables.css"
   ],
   "scripts": {
     "build": "vite build",

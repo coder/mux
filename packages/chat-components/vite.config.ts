@@ -27,9 +27,14 @@ export default defineConfig({
     sourcemap: true,
     minify: false, // Keep readable for debugging
   },
+  worker: {
+    // Required because Mux uses Vite workers (Shiki highlighting).
+    // 'iife' is incompatible with code-splitting builds.
+    format: "es",
+  },
   resolve: {
     alias: {
-      "@": resolve(__dirname, "src"),
+      "@": resolve(__dirname, "../../src"),
     },
   },
 });

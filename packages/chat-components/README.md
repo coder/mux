@@ -1,115 +1,57 @@
 # @coder/mux-chat-components
 
-Shared chat components for rendering Mux conversations. Used by the Mux desktop app and mux.md viewer.
+Shared chat UI from Mux, published for reuse in mux.md.
 
-## Installation
-
-```bash
-npm install @coder/mux-chat-components
-# or
-bun add @coder/mux-chat-components
-```
+**Principle:** this package re-exports Mux’s existing chat renderer implementation (messages, tools, markdown, diff rendering) to avoid a parallel rendering stack.
 
 ## Usage
 
-### Basic Example
-
 ```tsx
 import {
-  MessageRenderer,
   ChatHostContextProvider,
   ThemeProvider,
-  createReadOnlyContext,
+  MessageRenderer,
+  createReadOnlyChatHostContext,
   type DisplayedMessage,
 } from "@coder/mux-chat-components";
 
-// Import CSS variables
-import "@coder/mux-chat-components/styles";
-
-function ConversationViewer({ messages }: { messages: DisplayedMessage[] }) {
+function ConversationViewer(props: { messages: DisplayedMessage[] }) {
   return (
-    <ThemeProvider defaultTheme="dark">
-      <ChatHostContextProvider value={createReadOnlyContext()}>
-        <div className="mux-chat-components">
-          {messages.map((message) => (
-            <MessageRenderer key={message.historyId} message={message} />
-          ))}
-        </div>
+    <ThemeProvider>
+      <ChatHostContextProvider value={createReadOnlyChatHostContext()}>
+        {props.messages.map((m) => (
+          <MessageRenderer key={m.historyId} message={m} />
+        ))}
       </ChatHostContextProvider>
     </ThemeProvider>
   );
 }
 ```
 
-### Components
+## Read-only host defaults
 
-| Component          | Description                                                |
-| ------------------ | ---------------------------------------------------------- |
-| `MessageRenderer`  | Routes messages to appropriate components based on type    |
-| `MessageWindow`    | Base window wrapper for messages with buttons and metadata |
-| `UserMessage`      | Renders user messages with copy functionality              |
-| `AssistantMessage` | Renders assistant messages with markdown rendering         |
-| `ReasoningMessage` | Renders thinking/reasoning content (collapsible)           |
-| `GenericToolCall`  | Renders tool invocations with expandable details           |
-| `MarkdownRenderer` | Basic markdown-to-HTML rendering                           |
+`createReadOnlyChatHostContext()` sets most `ChatHostContext.uiSupport` flags to `"unsupported"` and enables:
 
-### Contexts
+- `jsonRawView`
+- `imageAttachments`
 
-| Context                   | Description                                         |
-| ------------------------- | --------------------------------------------------- |
-| `ChatHostContextProvider` | Controls feature availability (editing, copy, etc.) |
-| `ThemeProvider`           | Manages theme state (dark/light/solarized)          |
+You can override individual flags:
 
-### Types
-
-The package exports types for:
-
-- `MuxMessage` - Raw message format from Mux history
-- `DisplayedMessage` - UI-ready message types for rendering
-- `SharedConversation` - Format for sharing conversations via mux.md
-
-## Theme Support
-
-The package supports four themes:
-
-- `dark` (default)
-- `light`
-- `solarized-dark`
-- `solarized-light`
-
-Set the theme via `ThemeProvider`:
-
-```tsx
-<ThemeProvider defaultTheme="light">
-  {/* or */}
-<ThemeProvider forcedTheme="dark">
+```ts
+createReadOnlyChatHostContext({ jsonRawView: "supported" });
 ```
 
-## Read-Only Mode
+## Styling
 
-For static viewers like mux.md, use `createReadOnlyContext()`:
+Mux uses Tailwind + CSS variables for theming.
 
-```tsx
-import { createReadOnlyContext, ChatHostContextProvider } from "@coder/mux-chat-components";
-
-// Disables editing, review notes, command palette
-// Keeps copy and JSON view enabled
-<ChatHostContextProvider value={createReadOnlyContext()}>{children}</ChatHostContextProvider>;
-```
-
-## CSS Variables
-
-The package uses CSS variables for theming. Import the stylesheet:
-
-```css
-@import "@coder/mux-chat-components/styles";
-```
-
-Or import in your JavaScript:
+This package ships a minimal CSS variable set for 4 themes (dark/light/solarized-dark/solarized-light):
 
 ```ts
 import "@coder/mux-chat-components/styles";
 ```
+
+The host app is still responsible for providing Tailwind (or equivalent styles) for layout/typography; the CSS export is primarily for tokens (colors, borders, etc.).
 
 ## Development
 
