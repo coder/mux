@@ -1366,6 +1366,16 @@ export class WorkspaceService extends EventEmitter {
         type: "local",
         srcBaseDir: this.config.srcDir,
       };
+
+      // Block fork for remote runtimes - creates broken workspaces
+      // Sub-agent task spawning uses a different code path (TaskService.create)
+      if (isSSHRuntime(sourceRuntimeConfig)) {
+        return Err("Forking SSH workspaces is not supported. Create a new workspace instead.");
+      }
+      if (isDockerRuntime(sourceRuntimeConfig)) {
+        return Err("Forking Docker workspaces is not supported. Create a new workspace instead.");
+      }
+
       const runtime = createRuntime(sourceRuntimeConfig, {
         projectPath: foundProjectPath,
         workspaceName: sourceMetadata.name,
