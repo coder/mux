@@ -1,0 +1,156 @@
+/**
+ * Mux Chat Components CSS Variables
+ * 
+ * These variables define the color scheme and styling tokens for chat components.
+ * Import this file and set a theme class on the root element (dark, light, solarized-light, solarized-dark).
+ */
+
+:root {
+  /* Base colors - dark theme default */
+  --color-background: #1e1e1e;
+  --color-foreground: #e4e4e7;
+  --color-text: #e4e4e7;
+  --color-muted: #a1a1aa;
+  --color-border: #27272a;
+  --color-card: #27272a;
+  --color-accent: #3f3f46;
+
+  /* Code blocks */
+  --color-code-bg: #0d0d0d;
+  --color-code-border: #27272a;
+
+  /* User messages */
+  --color-user-surface: #27272a;
+  --color-user-border: #3f3f46;
+
+  /* Message debug view */
+  --color-message-debug-bg: #18181b;
+  --color-message-debug-border: #3f3f46;
+  --color-message-debug-text: #a1a1aa;
+
+  /* Mode colors */
+  --color-thinking-mode: #f59e0b;
+  --color-plan-mode: #8b5cf6;
+  --color-exec-mode: #10b981;
+
+  /* Status colors */
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+  --color-info: #3b82f6;
+
+  /* Diff colors */
+  --color-diff-add-bg: rgba(16, 185, 129, 0.1);
+  --color-diff-remove-bg: rgba(239, 68, 68, 0.1);
+}
+
+/* Light theme */
+.light {
+  --color-background: #f5f6f8;
+  --color-foreground: #18181b;
+  --color-text: #18181b;
+  --color-muted: #71717a;
+  --color-border: #e4e4e7;
+  --color-card: #ffffff;
+  --color-accent: #f4f4f5;
+
+  --color-code-bg: #f4f4f5;
+  --color-code-border: #e4e4e7;
+
+  --color-user-surface: #f4f4f5;
+  --color-user-border: #e4e4e7;
+
+  --color-message-debug-bg: #fafafa;
+  --color-message-debug-border: #e4e4e7;
+  --color-message-debug-text: #71717a;
+}
+
+/* Dark theme (explicit) */
+.dark {
+  --color-background: #1e1e1e;
+  --color-foreground: #e4e4e7;
+  --color-text: #e4e4e7;
+  --color-muted: #a1a1aa;
+  --color-border: #27272a;
+  --color-card: #27272a;
+  --color-accent: #3f3f46;
+
+  --color-code-bg: #0d0d0d;
+  --color-code-border: #27272a;
+
+  --color-user-surface: #27272a;
+  --color-user-border: #3f3f46;
+
+  --color-message-debug-bg: #18181b;
+  --color-message-debug-border: #3f3f46;
+  --color-message-debug-text: #a1a1aa;
+}
+
+/* Solarized Light */
+.solarized-light {
+  --color-background: #fdf6e3;
+  --color-foreground: #073642;
+  --color-text: #657b83;
+  --color-muted: #93a1a1;
+  --color-border: #eee8d5;
+  --color-card: #eee8d5;
+  --color-accent: #e4ddc6;
+
+  --color-code-bg: #eee8d5;
+  --color-code-border: #d6d0bb;
+
+  --color-user-surface: #eee8d5;
+  --color-user-border: #d6d0bb;
+
+  --color-thinking-mode: #b58900;
+  --color-plan-mode: #6c71c4;
+  --color-exec-mode: #859900;
+}
+
+/* Solarized Dark */
+.solarized-dark {
+  --color-background: #002b36;
+  --color-foreground: #839496;
+  --color-text: #839496;
+  --color-muted: #586e75;
+  --color-border: #073642;
+  --color-card: #073642;
+  --color-accent: #094857;
+
+  --color-code-bg: #073642;
+  --color-code-border: #094857;
+
+  --color-user-surface: #073642;
+  --color-user-border: #094857;
+
+  --color-thinking-mode: #b58900;
+  --color-plan-mode: #6c71c4;
+  --color-exec-mode: #859900;
+}
+
+/* Base reset styles for chat components */
+.mux-chat-components {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  color: var(--color-foreground);
+  background: var(--color-background);
+  line-height: 1.5;
+}
+
+.mux-chat-components *,
+.mux-chat-components *::before,
+.mux-chat-components *::after {
+  box-sizing: border-box;
+}
+
+/* Typography utility classes */
+.text-foreground { color: var(--color-foreground); }
+.text-muted { color: var(--color-muted); }
+.text-thinking-mode { color: var(--color-thinking-mode); }
+.text-plan-mode { color: var(--color-plan-mode); }
+.text-exec-mode { color: var(--color-exec-mode); }
+.text-secondary { color: var(--color-muted); }
+
+.bg-code-bg { background-color: var(--color-code-bg); }
+.bg-card { background-color: var(--color-card); }
+.bg-accent { background-color: var(--color-accent); }
+.border-border { border-color: var(--color-border); }
