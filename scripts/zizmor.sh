@@ -2,20 +2,19 @@
 
 # Usage: ./zizmor.sh [args...]
 #
-# This script is a wrapper around the zizmor Docker image. Zizmor lints GitHub
-# Actions workflows for security issues.
+# This script lints GitHub Actions workflows with zizmor.
 #
-# We use Docker to run zizmor since it's written in Rust and is difficult to
-# install on Ubuntu runners without building it with a Rust toolchain, which
-# takes a long time.
-#
-# The repo is mounted at /repo and the working directory is set to /repo.
+# Primary execution path: run zizmor via its Docker image (CI-friendly).
+# Fallback: if Docker isn't available/running (common on dev machines), download a
+# prebuilt zizmor binary from GitHub Releases and run it directly.
 
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-image_tag="ghcr.io/zizmorcore/zizmor:1.20.0"
+zizmor_version="1.20.0"
+image_tag="ghcr.io/zizmorcore/zizmor:${zizmor_version}"
+
 docker_args=(
   "--rm"
   "--volume" "$(pwd):/repo"
@@ -40,4 +39,43 @@ if [[ "${GH_TOKEN:-}" != "" ]]; then
   docker_args+=("--env" "GH_TOKEN")
 fi
 
-exec docker run "${docker_args[@]}" "$image_tag" "$@"
+# Prefer Docker when available (faster + consistent in CI).
+if command -v docker &>/dev/null && docker info &>/dev/null; then
+  exec docker run "${docker_args[@]}" "$image_tag" "$@"
+fi
+
+echo "⚠️  Docker unavailable; running zizmor via prebuilt binary..."
+
+os="$(uname -s)"
+arch="$(uname -m)"
+
+target=""
+case "$os-$arch" in
+  Darwin-arm64) target="aarch64-apple-darwin" ;;
+  Darwin-x86_64) target="x86_64-apple-darwin" ;;
+  Linux-x86_64) target="x86_64-unknown-linux-gnu" ;;
+  Linux-aarch64 | Linux-arm64) target="aarch64-unknown-linux-gnu" ;;
+  *)
+    echo "❌ Unsupported platform for zizmor binary fallback: $os/$arch"
+    exit 1
+    ;;
+esac
+
+cache_dir="node_modules/.cache/mux-tools/zizmor/v${zizmor_version}/${target}"
+bin_path="${cache_dir}/zizmor"
+
+if [[ ! -x "$bin_path" ]]; then
+  mkdir -p "$cache_dir"
+
+  tmp_dir="$(mktemp -d)"
+  archive_name="zizmor-${target}.tar.gz"
+  url="https://github.com/zizmorcore/zizmor/releases/download/v${zizmor_version}/${archive_name}"
+
+  curl -fsSL "$url" -o "${tmp_dir}/${archive_name}"
+  tar -xzf "${tmp_dir}/${archive_name}" -C "$tmp_dir"
+  mv "${tmp_dir}/zizmor" "$bin_path"
+  chmod +x "$bin_path"
+  rm -rf "$tmp_dir"
+fi
+
+exec "$bin_path" "$@"

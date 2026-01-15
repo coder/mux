@@ -8,12 +8,52 @@ import {
   type ServiceOptions,
 } from "@homebridge/ciao";
 import * as net from "node:net";
+import * as os from "node:os";
 import { log } from "./log";
 
 // NOTE: Avoid "mux" here: it's an IANA-registered service name ("Multiplexing Protocol"),
 // and some discovery tools will display/handle it specially.
 export const MUX_MDNS_SERVICE_TYPE = "mux-api";
 
+type NetworkInterfaces = NodeJS.Dict<os.NetworkInterfaceInfo[]>;
+
+function getNonInternalInterfaceNames(
+  networkInterfaces: NetworkInterfaces,
+  family?: "IPv4" | "IPv6"
+): string[] {
+  const names: string[] = [];
+  const emptyInfos: os.NetworkInterfaceInfo[] = [];
+
+  for (const name of Object.keys(networkInterfaces)) {
+    const infos: os.NetworkInterfaceInfo[] = networkInterfaces[name] ?? emptyInfos;
+    for (const info of infos) {
+      const infoFamily = info.family;
+
+      if (family && infoFamily !== family) {
+        continue;
+      }
+
+      if (info.internal) {
+        continue;
+      }
+
+      const address = info.address;
+
+      // Filter out link-local addresses (they are rarely what users want to connect to).
+      if (infoFamily === "IPv4" && address.startsWith("169.254.")) {
+        continue;
+      }
+      if (infoFamily === "IPv6" && address.toLowerCase().startsWith("fe80:")) {
+        continue;
+      }
+
+      names.push(name);
+      break;
+    }
+  }
+
+  return Array.from(new Set(names)).sort();
+}
 type ServiceTxtRecord = Record<string, string>;
 
 export interface BuildMuxMdnsServiceOptions {
@@ -22,6 +62,7 @@ export interface BuildMuxMdnsServiceOptions {
   instanceName: string;
   version: string;
   authRequired: boolean;
+  networkInterfaces?: NetworkInterfaces;
 }
 
 export function buildMuxMdnsServiceOptions(options: BuildMuxMdnsServiceOptions): ServiceOptions {
@@ -61,10 +102,25 @@ export function buildMuxMdnsServiceOptions(options: BuildMuxMdnsServiceOptions):
     txt,
   };
 
+  const networkInterfaces = options.networkInterfaces ?? os.networkInterfaces();
+
   // If mux is bound to IPv4 wildcard only, don't advertise IPv6 addresses.
   if (bindHost === "0.0.0.0") {
     serviceOptions.disabledIpv6 = true;
-  } else if (bindHost !== "::" && net.isIP(bindHost)) {
+
+    // Avoid advertising loopback-only addresses (e.g. 127.0.0.1). Clients on other devices may
+    // naively pick the first resolved address and fail to connect.
+    const interfaceNames = getNonInternalInterfaceNames(networkInterfaces, "IPv4");
+    if (interfaceNames.length > 0) {
+      serviceOptions.restrictedAddresses = interfaceNames;
+    }
+  } else if (bindHost === "::") {
+    // Similar: when bound to IPv6 wildcard, don't include loopback-only addresses in DNS-SD records.
+    const interfaceNames = getNonInternalInterfaceNames(networkInterfaces);
+    if (interfaceNames.length > 0) {
+      serviceOptions.restrictedAddresses = interfaceNames;
+    }
+  } else if (net.isIP(bindHost)) {
     // If mux is bound to a specific IP, only advertise that address (otherwise clients may
     // discover an address that doesn't accept connections).
     serviceOptions.restrictedAddresses = [bindHost];
