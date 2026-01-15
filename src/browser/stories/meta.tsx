@@ -60,5 +60,8 @@ export const AppWithMocks: FC<AppWithMocksProps> = ({ setup }) => {
 
   clientRef.current ??= setup();
 
-  return <AppLoader client={clientRef.current} />;
+  // Key on storyId to force AppLoader remount when switching stories.
+  // This ensures MemoryRouter re-reads initialEntries from localStorage
+  // after setup() writes the new workspace selection.
+  return <AppLoader key={storyId} client={clientRef.current} />;
 };
