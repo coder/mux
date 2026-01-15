@@ -42,8 +42,8 @@ function createFileViewerExecuteBash(
 
     // Check if this is a file read script (contains "base64")
     if (script.includes("base64")) {
-      // Extract file path from script - pattern: base64 'path'
-      const match = /base64\s+'([^']+)'/.exec(script);
+      // Extract file path from script - pattern: base64 < 'path'
+      const match = /base64\s+<\s+'([^']+)'/.exec(script);
       if (match) {
         const filePath = match[1];
         const content = fileContents.get(filePath);

@@ -307,10 +307,11 @@ export function parseGitCheckIgnoreOutput(output: string): Set<string> {
 export function buildReadFileScript(relativePath: string): string {
   const file = shellEscape(relativePath);
   // Cross-platform stat: try GNU stat first, fall back to BSD stat (macOS)
+  // Use stdin redirect for base64 - works on both BSD (macOS) and GNU (Linux)
   return `size=$(stat -c %s ${file} 2>/dev/null || stat -f %z ${file})
 [ "$size" -gt ${MAX_FILE_SIZE} ] && exit ${EXIT_CODE_TOO_LARGE}
 echo "$size"
-base64 ${file}`;
+base64 < ${file}`;
 }
 
 /**
@@ -326,15 +327,22 @@ export function buildFileDiffScript(relativePath: string): string {
  */
 export function parseReadFileOutput(output: string): { size: number; base64: string } {
   const firstNewline = output.indexOf("\n");
+
+  // Empty files: base64 produces no output, so there's no newline after size
   if (firstNewline === -1) {
-    throw new Error("Invalid file output format");
+    const size = parseInt(output, 10);
+    if (isNaN(size)) {
+      throw new Error("Invalid file output format");
+    }
+    return { size, base64: "" };
   }
+
   const size = parseInt(output.slice(0, firstNewline), 10);
   if (isNaN(size)) {
     throw new Error("Invalid file size");
   }
-  // base64 output may have line wrapping, strip all newlines
-  const base64 = output.slice(firstNewline + 1).replace(/\n/g, "");
+  // base64 output may have line wrapping, strip all CR/LF (handles Windows CRLF)
+  const base64 = output.slice(firstNewline + 1).replace(/[\r\n]/g, "");
   return { size, base64 };
 }
 
