@@ -458,7 +458,7 @@ export class CoderService {
     } finally {
       // Clean up the token by name
       try {
-        using deleteProc = execAsync(`coder tokens delete ${shescape.quote(tokenName)} --yes`);
+        using deleteProc = execAsync(`coder tokens delete ${shescape.quote(tokenName)}`);
         await deleteProc.result;
       } catch {
         // Best-effort cleanup; token will expire in 5 minutes anyway

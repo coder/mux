@@ -380,19 +380,18 @@ export const CoderNoRunningWorkspaces: AppStory = {
     );
     await userEvent.click(existingButton);
 
-    // Workspace dropdown should show "No workspaces found"
+    // Workspace dropdown should show "No workspaces found" placeholder
+    // Note: Radix UI Select doesn't render native <option> elements - the placeholder
+    // text appears directly in the SelectTrigger element
     const workspaceSelect = await canvas.findByTestId(
       "coder-workspace-select",
       {},
       { timeout: 5000 }
     );
     await waitFor(() => {
-      const options = workspaceSelect.querySelectorAll("option");
-      const hasNoWorkspacesOption = Array.from(options).some((opt) =>
-        opt.textContent?.includes("No workspaces found")
-      );
-      if (!hasNoWorkspacesOption) {
-        throw new Error("Should show 'No workspaces found' option");
+      const triggerText = workspaceSelect.textContent;
+      if (!triggerText?.includes("No workspaces found")) {
+        throw new Error("Should show 'No workspaces found' placeholder");
       }
     });
   },

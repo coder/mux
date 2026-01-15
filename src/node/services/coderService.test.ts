@@ -3,22 +3,39 @@ import { Readable } from "stream";
 import { describe, it, expect, vi, beforeEach, afterEach, spyOn } from "bun:test";
 import { CoderService, compareVersions } from "./coderService";
 import * as childProcess from "child_process";
+import * as disposableExec from "@/node/utils/disposableExec";
 
 // eslint-disable-next-line @typescript-eslint/no-empty-function
 const noop = () => {};
 
-function mockExecOk(stdout: string, stderr = ""): void {
-  mockExecAsync.mockReturnValue({
-    result: Promise.resolve({ stdout, stderr }),
+/**
+ * Mock execAsync for non-streaming tests.
+ * Uses spyOn instead of vi.mock to avoid polluting other test files.
+ */
+let execAsyncSpy: ReturnType<typeof spyOn<typeof disposableExec, "execAsync">> | null = null;
+
+// Minimal mock that satisfies the interface used by CoderService
+// Uses cast via `unknown` because we only implement the subset actually used by tests
+function createMockExecResult(
+  result: Promise<{ stdout: string; stderr: string }>
+): ReturnType<typeof disposableExec.execAsync> {
+  const mock = {
+    result,
+    get promise() {
+      return result;
+    },
+    child: {}, // not used by CoderService
     [Symbol.dispose]: noop,
-  });
+  };
+  return mock as unknown as ReturnType<typeof disposableExec.execAsync>;
+}
+
+function mockExecOk(stdout: string, stderr = ""): void {
+  execAsyncSpy?.mockReturnValue(createMockExecResult(Promise.resolve({ stdout, stderr })));
 }
 
 function mockExecError(error: Error): void {
-  mockExecAsync.mockReturnValue({
-    result: Promise.reject(error),
-    [Symbol.dispose]: noop,
-  });
+  execAsyncSpy?.mockReturnValue(createMockExecResult(Promise.reject(error)));
 }
 
 /**
@@ -50,28 +67,21 @@ function mockCoderCommandResult(options: {
   setTimeout(() => events.emit("close", options.exitCode), 0);
 }
 
-// Mock execAsync (this is safe - it's our own module, not a Node.js built-in)
-void vi.mock("@/node/utils/disposableExec", () => ({
-  execAsync: vi.fn(),
-}));
-
-// Import the mock after vi.mock
-import { execAsync } from "@/node/utils/disposableExec";
-
-const mockExecAsync = execAsync as ReturnType<typeof vi.fn>;
-
 describe("CoderService", () => {
   let service: CoderService;
 
   beforeEach(() => {
     service = new CoderService();
     vi.clearAllMocks();
-    // Set up spawn spy for tests that use mockCoderCommandResult
+    // Set up spies for mocking - uses spyOn instead of vi.mock to avoid polluting other test files
+    execAsyncSpy = spyOn(disposableExec, "execAsync");
     spawnSpy = spyOn(childProcess, "spawn");
   });
 
   afterEach(() => {
     service.clearCache();
+    execAsyncSpy?.mockRestore();
+    execAsyncSpy = null;
     spawnSpy?.mockRestore();
     spawnSpy = null;
   });
@@ -123,27 +133,29 @@ describe("CoderService", () => {
       await service.getCoderInfo();
       await service.getCoderInfo();
 
-      expect(mockExecAsync).toHaveBeenCalledTimes(1);
+      expect(execAsyncSpy).toHaveBeenCalledTimes(1);
     });
   });
 
   describe("listTemplates", () => {
     it("returns templates with display names", async () => {
-      mockExecAsync.mockReturnValue({
-        result: Promise.resolve({
-          stdout: JSON.stringify([
-            {
-              Template: {
-                name: "template-1",
-                display_name: "Template One",
-                organization_name: "org1",
+      execAsyncSpy?.mockReturnValue(
+        createMockExecResult(
+          Promise.resolve({
+            stdout: JSON.stringify([
+              {
+                Template: {
+                  name: "template-1",
+                  display_name: "Template One",
+                  organization_name: "org1",
+                },
               },
-            },
-            { Template: { name: "template-2", display_name: "Template Two" } },
-          ]),
-        }),
-        [Symbol.dispose]: noop,
-      });
+              { Template: { name: "template-2", display_name: "Template Two" } },
+            ]),
+            stderr: "",
+          })
+        )
+      );
 
       const templates = await service.listTemplates();
 
@@ -154,12 +166,14 @@ describe("CoderService", () => {
     });
 
     it("uses name as displayName when display_name not present", async () => {
-      mockExecAsync.mockReturnValue({
-        result: Promise.resolve({
-          stdout: JSON.stringify([{ Template: { name: "my-template" } }]),
-        }),
-        [Symbol.dispose]: noop,
-      });
+      execAsyncSpy?.mockReturnValue(
+        createMockExecResult(
+          Promise.resolve({
+            stdout: JSON.stringify([{ Template: { name: "my-template" } }]),
+            stderr: "",
+          })
+        )
+      );
 
       const templates = await service.listTemplates();
 
@@ -169,10 +183,7 @@ describe("CoderService", () => {
     });
 
     it("returns empty array on error", async () => {
-      mockExecAsync.mockReturnValue({
-        result: Promise.reject(new Error("not logged in")),
-        [Symbol.dispose]: noop,
-      });
+      mockExecError(new Error("not logged in"));
 
       const templates = await service.listTemplates();
 
@@ -180,10 +191,7 @@ describe("CoderService", () => {
     });
 
     it("returns empty array for empty output", async () => {
-      mockExecAsync.mockReturnValue({
-        result: Promise.resolve({ stdout: "" }),
-        [Symbol.dispose]: noop,
-      });
+      mockExecOk("");
 
       const templates = await service.listTemplates();
 
@@ -193,28 +201,25 @@ describe("CoderService", () => {
 
   describe("listPresets", () => {
     it("returns presets for a template", async () => {
-      mockExecAsync.mockReturnValue({
-        result: Promise.resolve({
-          stdout: JSON.stringify([
-            {
-              TemplatePreset: {
-                ID: "preset-1",
-                Name: "Small",
-                Description: "Small instance",
-                Default: true,
-              },
+      mockExecOk(
+        JSON.stringify([
+          {
+            TemplatePreset: {
+              ID: "preset-1",
+              Name: "Small",
+              Description: "Small instance",
+              Default: true,
             },
-            {
-              TemplatePreset: {
-                ID: "preset-2",
-                Name: "Large",
-                Description: "Large instance",
-              },
+          },
+          {
+            TemplatePreset: {
+              ID: "preset-2",
+              Name: "Large",
+              Description: "Large instance",
             },
-          ]),
-        }),
-        [Symbol.dispose]: noop,
-      });
+          },
+        ])
+      );
 
       const presets = await service.listPresets("my-template");
 
@@ -225,10 +230,7 @@ describe("CoderService", () => {
     });
 
     it("returns empty array when template has no presets", async () => {
-      mockExecAsync.mockReturnValue({
-        result: Promise.resolve({ stdout: "" }),
-        [Symbol.dispose]: noop,
-      });
+      mockExecOk("");
 
       const presets = await service.listPresets("no-presets-template");
 
@@ -236,10 +238,7 @@ describe("CoderService", () => {
     });
 
     it("returns empty array on error", async () => {
-      mockExecAsync.mockReturnValue({
-        result: Promise.reject(new Error("template not found")),
-        [Symbol.dispose]: noop,
-      });
+      mockExecError(new Error("template not found"));
 
       const presets = await service.listPresets("nonexistent");
 
@@ -249,31 +248,28 @@ describe("CoderService", () => {
 
   describe("listWorkspaces", () => {
     it("returns all workspaces regardless of status", async () => {
-      mockExecAsync.mockReturnValue({
-        result: Promise.resolve({
-          stdout: JSON.stringify([
-            {
-              name: "ws-1",
-              template_name: "t1",
-              template_display_name: "t1",
-              latest_build: { status: "running" },
-            },
-            {
-              name: "ws-2",
-              template_name: "t2",
-              template_display_name: "t2",
-              latest_build: { status: "stopped" },
-            },
-            {
-              name: "ws-3",
-              template_name: "t3",
-              template_display_name: "t3",
-              latest_build: { status: "starting" },
-            },
-          ]),
-        }),
-        [Symbol.dispose]: noop,
-      });
+      mockExecOk(
+        JSON.stringify([
+          {
+            name: "ws-1",
+            template_name: "t1",
+            template_display_name: "t1",
+            latest_build: { status: "running" },
+          },
+          {
+            name: "ws-2",
+            template_name: "t2",
+            template_display_name: "t2",
+            latest_build: { status: "stopped" },
+          },
+          {
+            name: "ws-3",
+            template_name: "t3",
+            template_display_name: "t3",
+            latest_build: { status: "starting" },
+          },
+        ])
+      );
 
       const workspaces = await service.listWorkspaces();
 
@@ -285,10 +281,7 @@ describe("CoderService", () => {
     });
 
     it("returns empty array on error", async () => {
-      mockExecAsync.mockReturnValue({
-        result: Promise.reject(new Error("not logged in")),
-        [Symbol.dispose]: noop,
-      });
+      mockExecError(new Error("not logged in"));
 
       const workspaces = await service.listWorkspaces();
 
@@ -447,30 +440,30 @@ describe("CoderService", () => {
       // Mock getActiveTemplateVersionId (coder templates list)
       // Mock getPresetParamNames (coder templates presets list)
       // Mock getTemplateRichParameters (coder tokens create + fetch)
-      mockExecAsync.mockImplementation((cmd: string) => {
+      execAsyncSpy?.mockImplementation((cmd: string) => {
         if (cmd === "coder whoami --output json") {
-          return {
-            result: Promise.resolve({
+          return createMockExecResult(
+            Promise.resolve({
               stdout: JSON.stringify([{ url: "https://coder.example.com" }]),
-            }),
-            [Symbol.dispose]: noop,
-          };
+              stderr: "",
+            })
+          );
         }
         if (cmd === "coder templates list --output=json") {
-          return {
-            result: Promise.resolve({
+          return createMockExecResult(
+            Promise.resolve({
               stdout: JSON.stringify([
                 { Template: { name: "my-template", active_version_id: "version-123" } },
                 { Template: { name: "tmpl", active_version_id: "version-456" } },
               ]),
-            }),
-            [Symbol.dispose]: noop,
-          };
+              stderr: "",
+            })
+          );
         }
         if (cmd.startsWith("coder templates presets list")) {
           const paramNames = options?.presetParamNames ?? [];
-          return {
-            result: Promise.resolve({
+          return createMockExecResult(
+            Promise.resolve({
               stdout: JSON.stringify([
                 {
                   TemplatePreset: {
@@ -479,27 +472,18 @@ describe("CoderService", () => {
                   },
                 },
               ]),
-            }),
-            [Symbol.dispose]: noop,
-          };
+              stderr: "",
+            })
+          );
         }
         if (cmd.startsWith("coder tokens create --lifetime 5m --name")) {
-          return {
-            result: Promise.resolve({ stdout: "fake-token-123" }),
-            [Symbol.dispose]: noop,
-          };
+          return createMockExecResult(Promise.resolve({ stdout: "fake-token-123", stderr: "" }));
         }
         if (cmd.startsWith("coder tokens delete")) {
-          return {
-            result: Promise.resolve({ stdout: "" }),
-            [Symbol.dispose]: noop,
-          };
+          return createMockExecResult(Promise.resolve({ stdout: "", stderr: "" }));
         }
         // Fallback for any other command
-        return {
-          result: Promise.reject(new Error(`Unexpected command: ${cmd}`)),
-          [Symbol.dispose]: noop,
-        };
+        return createMockExecResult(Promise.reject(new Error(`Unexpected command: ${cmd}`)));
       });
     }
 
@@ -872,10 +856,16 @@ describe("validateRequiredParams", () => {
 
 describe("deleteWorkspace", () => {
   const service = new CoderService();
-  const mockExec = execAsync as ReturnType<typeof vi.fn>;
+  let mockExec: ReturnType<typeof spyOn<typeof disposableExec, "execAsync">> | null = null;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockExec = spyOn(disposableExec, "execAsync");
+  });
+
+  afterEach(() => {
+    mockExec?.mockRestore();
+    mockExec = null;
   });
 
   it("refuses to delete workspace without mux- prefix", async () => {
@@ -886,10 +876,7 @@ describe("deleteWorkspace", () => {
   });
 
   it("deletes workspace with mux- prefix", async () => {
-    mockExec.mockReturnValue({
-      result: Promise.resolve({ stdout: "", stderr: "" }),
-      [Symbol.dispose]: noop,
-    });
+    mockExec?.mockReturnValue(createMockExecResult(Promise.resolve({ stdout: "", stderr: "" })));
 
     await service.deleteWorkspace("mux-my-workspace");
 

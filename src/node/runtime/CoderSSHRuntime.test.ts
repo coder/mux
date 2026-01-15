@@ -407,7 +407,7 @@ describe("CoderSSHRuntime.validateBeforePersist", () => {
 // =============================================================================
 
 describe("CoderSSHRuntime.postCreateSetup", () => {
-  let execBufferedSpy: ReturnType<typeof spyOn>;
+  let execBufferedSpy: ReturnType<typeof spyOn<typeof runtimeHelpers, "execBuffered">>;
 
   beforeEach(() => {
     execBufferedSpy = spyOn(runtimeHelpers, "execBuffered").mockResolvedValue({
@@ -419,7 +419,7 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
   });
 
   afterEach(() => {
-    mock.restore();
+    execBufferedSpy.mockRestore();
   });
 
   it("creates a new Coder workspace and prepares the directory", async () => {
