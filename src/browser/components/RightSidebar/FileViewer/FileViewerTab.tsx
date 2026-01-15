@@ -10,7 +10,14 @@ import { workspaceStore } from "@/browser/stores/WorkspaceStore";
 import { RefreshCw, AlertCircle } from "lucide-react";
 import { TextFileViewer } from "./TextFileViewer";
 import { ImageFileViewer } from "./ImageFileViewer";
-import type { FileContentsResponse } from "@/common/orpc/schemas/api";
+import {
+  validateRelativePath,
+  buildReadFileScript,
+  buildFileDiffScript,
+  processFileContents,
+  EXIT_CODE_TOO_LARGE,
+  type FileContentsResult,
+} from "@/browser/utils/fileExplorer";
 
 interface FileViewerTabProps {
   workspaceId: string;
@@ -20,7 +27,7 @@ interface FileViewerTabProps {
 type LoadState =
   | { status: "loading" }
   | { status: "error"; message: string }
-  | { status: "loaded"; data: FileContentsResponse; diff: string | null };
+  | { status: "loaded"; data: FileContentsResult; diff: string | null };
 
 const DEBOUNCE_MS = 2000;
 
@@ -50,34 +57,79 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
   React.useEffect(() => {
     if (!api) return;
 
+    // Validate path before making request
+    const pathError = validateRelativePath(props.relativePath);
+    if (pathError) {
+      setState({ status: "error", message: pathError });
+      return;
+    }
+
+    // Empty path is not valid for file viewing
+    if (!props.relativePath) {
+      setState({ status: "error", message: "No file selected" });
+      return;
+    }
+
     let cancelled = false;
     setState({ status: "loading" });
 
     async function fetchFile() {
       try {
-        // Fetch file contents and diff in parallel
-        const [contentsResult, diffResult] = await Promise.all([
-          api!.general.getFileContents({
+        // Fetch file contents and diff in parallel via bash
+        const [fileResult, diffResult] = await Promise.all([
+          api!.workspace.executeBash({
             workspaceId: props.workspaceId,
-            relativePath: props.relativePath,
+            script: buildReadFileScript(props.relativePath),
           }),
-          api!.general.getFileDiff({
+          api!.workspace.executeBash({
             workspaceId: props.workspaceId,
-            relativePath: props.relativePath,
+            script: buildFileDiffScript(props.relativePath),
           }),
         ]);
 
         if (cancelled) return;
 
-        if (!contentsResult.success) {
-          setState({ status: "error", message: contentsResult.error });
+        // Handle ORPC-level errors
+        if (!fileResult.success) {
+          setState({ status: "error", message: fileResult.error });
           return;
         }
 
-        // Diff is optional - don't fail if it errors
-        const diff = diffResult.success ? diffResult.data.diff : null;
+        const bashResult = fileResult.data;
 
-        setState({ status: "loaded", data: contentsResult.data, diff });
+        // Check for "too large" exit code (custom exit code from our script)
+        if (bashResult.exitCode === EXIT_CODE_TOO_LARGE) {
+          setState({
+            status: "loaded",
+            data: { type: "error", message: "File is too large to display. Maximum: 10 MB." },
+            diff: null,
+          });
+          return;
+        }
+
+        // Check for bash command failure with no usable output
+        if (!bashResult.success && !bashResult.output) {
+          const errorMsg = bashResult.error ?? "Failed to read file";
+          setState({
+            status: "error",
+            message: errorMsg.length > 128 ? errorMsg.slice(0, 128) + "..." : errorMsg,
+          });
+          return;
+        }
+
+        // Process file contents - detect image types via magic bytes, text vs binary
+        // Even if bashResult.success is false, try to process if we have output
+        const data = processFileContents(bashResult.output ?? "", bashResult.exitCode);
+
+        if (cancelled) return;
+
+        // Diff is optional - don't fail if it errors
+        let diff: string | null = null;
+        if (diffResult.success && diffResult.data.success) {
+          diff = diffResult.data.output;
+        }
+
+        setState({ status: "loaded", data, diff });
       } catch (err) {
         if (cancelled) return;
         setState({
@@ -139,15 +191,7 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
   }
 
   if (data.type === "image") {
-    return (
-      <ImageFileViewer
-        base64={data.base64}
-        mimeType={data.mimeType}
-        size={data.size}
-        width={data.width}
-        height={data.height}
-      />
-    );
+    return <ImageFileViewer base64={data.base64} mimeType={data.mimeType} size={data.size} />;
   }
 
   // This shouldn't happen, but handle it gracefully

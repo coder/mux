@@ -5,12 +5,86 @@
  */
 
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
-import { setupSimpleChatStory, expandRightSidebar } from "./storyHelpers";
+import {
+  setupSimpleChatStory,
+  expandRightSidebar,
+  type SimpleChatSetupOptions,
+} from "./storyHelpers";
 import { createUserMessage, createAssistantMessage } from "./mockFactory";
 import { within } from "@storybook/test";
 import { blurActiveElement } from "./storyPlayHelpers.js";
 import { RIGHT_SIDEBAR_WIDTH_KEY, getRightSidebarLayoutKey } from "@/common/constants/storage";
 import type { ComponentType } from "react";
+
+/** File content type for mocking */
+type FileContent =
+  | { type: "text"; content: string }
+  | { type: "image"; base64: string }
+  | { type: "binary" }
+  | { type: "too-large" };
+
+/**
+ * Creates an executeBash mock that handles file read and diff scripts.
+ * Parses the script to determine which file is being requested.
+ */
+function createFileViewerExecuteBash(
+  fileContents: Map<string, FileContent>,
+  fileDiffs?: Map<string, string>
+): NonNullable<SimpleChatSetupOptions["executeBash"]> {
+  return (_workspaceId: string, script: string) => {
+    const bashResult = (output: string, exitCode = 0) =>
+      Promise.resolve({
+        success: true as const,
+        output,
+        exitCode,
+        wall_duration_ms: 1,
+      });
+
+    // Check if this is a file read script (contains "base64")
+    if (script.includes("base64")) {
+      // Extract file path from script - pattern: base64 'path'
+      const match = /base64\s+'([^']+)'/.exec(script);
+      if (match) {
+        const filePath = match[1];
+        const content = fileContents.get(filePath);
+        if (content) {
+          if (content.type === "text") {
+            // Use TextEncoder for proper UTF-8 handling (btoa can't handle Unicode)
+            const bytes = new TextEncoder().encode(content.content);
+            const base64 = btoa(String.fromCharCode(...bytes));
+            const size = bytes.length;
+            return bashResult(`${size}\n${base64}`);
+          } else if (content.type === "image") {
+            // For images, we have base64 already
+            const size = Math.ceil(content.base64.length * 0.75); // Approximate decoded size
+            return bashResult(`${size}\n${content.base64}`);
+          } else if (content.type === "binary") {
+            // Binary - return null byte
+            return bashResult(`10\n${btoa("\0binary")}`);
+          } else {
+            // Too large - exit with code 42
+            return bashResult("", 42);
+          }
+        }
+        return bashResult(`No such file: ${filePath}`, 1);
+      }
+    }
+
+    // Check if this is a git diff script
+    if (script.includes("git diff")) {
+      // Extract file path from script - pattern: git diff -- 'path'
+      const match = /git\s+diff\s+--\s+'([^']+)'/.exec(script);
+      if (match) {
+        const filePath = match[1];
+        const diff = fileDiffs?.get(filePath) ?? "";
+        return bashResult(diff);
+      }
+    }
+
+    // Default: empty output
+    return bashResult("");
+  };
+}
 
 export default {
   ...appMeta,
@@ -301,6 +375,9 @@ export const TextFileNoChanges: AppStory = {
         );
         localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "500");
 
+        const fileContents = new Map<string, FileContent>([
+          ["src/components/Button.tsx", { type: "text", content: SAMPLE_TS_CONTENT }],
+        ]);
         const client = setupSimpleChatStory({
           workspaceId,
           workspaceName: "feature/button",
@@ -311,12 +388,7 @@ export const TextFileNoChanges: AppStory = {
               historySequence: 2,
             }),
           ],
-          fileContents: new Map([
-            [
-              "src/components/Button.tsx",
-              { type: "text", content: SAMPLE_TS_CONTENT, size: SAMPLE_TS_CONTENT.length },
-            ],
-          ]),
+          executeBash: createFileViewerExecuteBash(fileContents),
         });
         expandRightSidebar();
         return client;
@@ -351,6 +423,10 @@ export const TextFileWithDiff: AppStory = {
         );
         localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "600");
 
+        const fileContents = new Map<string, FileContent>([
+          ["src/components/Button.tsx", { type: "text", content: SAMPLE_TS_CONTENT_LONG }],
+        ]);
+        const fileDiffs = new Map([["src/components/Button.tsx", SAMPLE_DIFF]]);
         const client = setupSimpleChatStory({
           workspaceId,
           workspaceName: "feature/button-disabled",
@@ -361,17 +437,7 @@ export const TextFileWithDiff: AppStory = {
               historySequence: 2,
             }),
           ],
-          fileContents: new Map([
-            [
-              "src/components/Button.tsx",
-              {
-                type: "text",
-                content: SAMPLE_TS_CONTENT_LONG,
-                size: SAMPLE_TS_CONTENT_LONG.length,
-              },
-            ],
-          ]),
-          fileDiffs: new Map([["src/components/Button.tsx", SAMPLE_DIFF]]),
+          executeBash: createFileViewerExecuteBash(fileContents, fileDiffs),
         });
         expandRightSidebar();
         return client;
@@ -406,6 +472,9 @@ export const ImageFile: AppStory = {
         );
         localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "500");
 
+        const fileContents = new Map<string, FileContent>([
+          ["assets/icon.png", { type: "image", base64: generateTestPng() }],
+        ]);
         const client = setupSimpleChatStory({
           workspaceId,
           workspaceName: "feature/icons",
@@ -416,19 +485,7 @@ export const ImageFile: AppStory = {
               historySequence: 2,
             }),
           ],
-          fileContents: new Map([
-            [
-              "assets/icon.png",
-              {
-                type: "image",
-                base64: generateTestPng(),
-                mimeType: "image/png",
-                size: 1024, // Approximate size
-                width: 256,
-                height: 256,
-              },
-            ],
-          ]),
+          executeBash: createFileViewerExecuteBash(fileContents),
         });
         expandRightSidebar();
         return client;
@@ -440,6 +497,106 @@ export const ImageFile: AppStory = {
 
     // Wait for file tab to appear
     await canvas.findByRole("tab", { name: /icon\.png/i }, { timeout: 10000 });
+
+    // Double-RAF for scroll stabilization
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+    blurActiveElement();
+  },
+};
+
+/**
+ * Binary file error - shows error message for non-text/non-image files
+ */
+export const BinaryFileError: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const workspaceId = "ws-file-viewer-binary";
+        const filePath = "build/app.exe";
+        localStorage.setItem(
+          getRightSidebarLayoutKey(workspaceId),
+          JSON.stringify(createFileTabLayout(filePath))
+        );
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "500");
+
+        const fileContents = new Map<string, FileContent>([["build/app.exe", { type: "binary" }]]);
+        const client = setupSimpleChatStory({
+          workspaceId,
+          workspaceName: "feature/build",
+          projectName: "my-app",
+          messages: [
+            createUserMessage("msg-1", "Build the app", { historySequence: 1 }),
+            createAssistantMessage("msg-2", "Built app.exe successfully.", {
+              historySequence: 2,
+            }),
+          ],
+          executeBash: createFileViewerExecuteBash(fileContents),
+        });
+        expandRightSidebar();
+        return client;
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Wait for file tab to appear
+    await canvas.findByRole("tab", { name: /app\.exe/i }, { timeout: 10000 });
+
+    // Wait for error message
+    await canvas.findByText(/unable to display binary file/i, {}, { timeout: 5000 });
+
+    // Double-RAF for scroll stabilization
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+    blurActiveElement();
+  },
+};
+
+/**
+ * Large file error - shows error message when file exceeds size limit
+ */
+export const LargeFileError: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const workspaceId = "ws-file-viewer-large";
+        const filePath = "data/dump.sql";
+        localStorage.setItem(
+          getRightSidebarLayoutKey(workspaceId),
+          JSON.stringify(createFileTabLayout(filePath))
+        );
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "500");
+
+        const fileContents = new Map<string, FileContent>([
+          ["data/dump.sql", { type: "too-large" }],
+        ]);
+        const client = setupSimpleChatStory({
+          workspaceId,
+          workspaceName: "feature/db",
+          projectName: "my-app",
+          messages: [
+            createUserMessage("msg-1", "Export database", { historySequence: 1 }),
+            createAssistantMessage("msg-2", "Exported to dump.sql.", {
+              historySequence: 2,
+            }),
+          ],
+          executeBash: createFileViewerExecuteBash(fileContents),
+        });
+        expandRightSidebar();
+        return client;
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Wait for file tab to appear
+    await canvas.findByRole("tab", { name: /dump\.sql/i }, { timeout: 10000 });
+
+    // Wait for error message
+    await canvas.findByText(/file is too large/i, {}, { timeout: 5000 });
 
     // Double-RAF for scroll stabilization
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));

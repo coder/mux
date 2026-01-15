@@ -11,8 +11,6 @@ interface ImageFileViewerProps {
   base64: string;
   mimeType: string;
   size: number;
-  width?: number;
-  height?: number;
 }
 
 const MIN_ZOOM = 0.1;
@@ -43,7 +41,7 @@ export const ImageFileViewer: React.FC<ImageFileViewerProps> = (props) => {
   const [imageDimensions, setImageDimensions] = React.useState<{
     width: number;
     height: number;
-  } | null>(props.width && props.height ? { width: props.width, height: props.height } : null);
+  } | null>(null);
 
   // Track container size to compute max zoom
   React.useEffect(() => {

@@ -83,6 +83,8 @@
 
     /* File explorer */
     --color-folder-icon: #dcb67a; /* gold/yellow folder color */
+    --color-git-modified: #e2c08d; /* yellow/gold for modified files */
+    --color-git-untracked: #73c991; /* green for new/untracked files */
 
     /* Background & Layout */
     --color-background: hsl(0 0% 12%);

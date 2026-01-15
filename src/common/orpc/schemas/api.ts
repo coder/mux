@@ -974,71 +974,12 @@ export const features = {
   },
 };
 
-/** File contents response - discriminated union for text, image, or error */
-export const FileContentsResponseSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("text"),
-    content: z.string(),
-    size: z.number(),
-  }),
-  z.object({
-    type: z.literal("image"),
-    base64: z.string(),
-    mimeType: z.string(),
-    size: z.number(),
-    width: z.number().optional(),
-    height: z.number().optional(),
-  }),
-  z.object({
-    type: z.literal("error"),
-    message: z.string(),
-  }),
-]);
-
-export type FileContentsResponse = z.infer<typeof FileContentsResponseSchema>;
-
 // General
 export const general = {
-  /**
-   * List workspace directory contents (files and directories).
-   * Unlike listDirectory (directories only), this returns both files and directories.
-   * Sorted: directories first, then files, both alphabetically. .git is filtered out.
-   */
-  listWorkspaceDirectory: {
-    input: z.object({
-      workspaceId: z.string(),
-      relativePath: z.string().optional(),
-    }),
-    output: ResultSchema(z.array(FileTreeNodeSchema)),
-  },
   listDirectory: {
     input: z.object({ path: z.string() }),
     output: ResultSchema(FileTreeNodeSchema),
-  } /**
-   * Get file contents for viewing in the file viewer pane.
-   * Returns text content for text files (< 10MB) or base64-encoded data for images.
-   * Path is validated to be within the workspace directory.
-   */,
-  getFileContents: {
-    input: z.object({
-      workspaceId: z.string(),
-      relativePath: z.string(),
-    }),
-    output: ResultSchema(FileContentsResponseSchema),
   },
-
-  /**
-   * Get git diff for a file in a workspace.
-   * Returns the unified diff output for uncommitted changes.
-   */
-  getFileDiff: {
-    input: z.object({
-      workspaceId: z.string(),
-      relativePath: z.string(),
-    }),
-    output: ResultSchema(z.object({ diff: z.string() })),
-  },
-
   /**
    * Create a directory at the specified path.
    * Creates parent directories recursively if they don't exist (like mkdir -p).

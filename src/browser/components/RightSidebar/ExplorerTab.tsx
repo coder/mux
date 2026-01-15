@@ -22,6 +22,16 @@ import { FileIcon } from "../FileIcon";
 import { cn } from "@/common/lib/utils";
 import type { FileTreeNode } from "@/common/utils/git/numstatParser";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
+import {
+  validateRelativePath,
+  buildListDirScript,
+  buildGitIgnoredScript,
+  buildGitCheckIgnoreScript,
+  parseLsOutput,
+  parseGitStatus,
+  parseGitCheckIgnoreOutput,
+  type GitStatusResult,
+} from "@/browser/utils/fileExplorer";
 
 interface ExplorerTabProps {
   workspaceId: string;
@@ -35,6 +45,9 @@ interface ExplorerState {
   expanded: Set<string>;
   loading: Set<string>;
   error: string | null;
+  gitStatus: GitStatusResult; // cached from root fetch
+  ignoredDirs: Set<string>; // dirs confirmed ignored via git check-ignore
+  checkedDirPaths: Set<string>; // dirs we've already checked (cache)
 }
 
 const DEBOUNCE_MS = 2000;
@@ -48,6 +61,9 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
     expanded: new Set(),
     loading: new Set(), // starts empty, set when fetch begins
     error: null,
+    gitStatus: { ignored: new Set(), modified: new Set(), untracked: new Set() },
+    ignoredDirs: new Set(),
+    checkedDirPaths: new Set(),
   });
 
   // Track if we've done initial load
@@ -60,6 +76,15 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
 
       const key = relativePath; // empty string = root directory
 
+      // Validate path before making request
+      const pathError = validateRelativePath(relativePath);
+      if (pathError) {
+        if (!suppressErrors) {
+          setState((prev) => ({ ...prev, error: pathError }));
+        }
+        return null;
+      }
+
       setState((prev) => ({
         ...prev,
         loading: new Set(prev.loading).add(key),
@@ -67,12 +92,42 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
       }));
 
       try {
-        const result = await api.general.listWorkspaceDirectory({
+        // Run ls (and git status only for root)
+        const isRoot = relativePath === "";
+        const lsPromise = api.workspace.executeBash({
           workspaceId: props.workspaceId,
-          relativePath: relativePath || undefined,
+          script: buildListDirScript(relativePath),
         });
+        const gitPromise = isRoot
+          ? api.workspace.executeBash({
+              workspaceId: props.workspaceId,
+              script: buildGitIgnoredScript(""),
+            })
+          : null;
 
-        if (!result.success) {
+        const [lsResult, gitResult] = await Promise.all([lsPromise, gitPromise]);
+
+        // Check for ORPC-level failure
+        if (!lsResult.success) {
+          setState((prev) => {
+            const newExpanded = new Set(prev.expanded);
+            newExpanded.delete(key);
+            const newEntries = new Map(prev.entries);
+            newEntries.delete(key);
+            return {
+              ...prev,
+              entries: newEntries,
+              expanded: newExpanded,
+              loading: new Set([...prev.loading].filter((k) => k !== key)),
+              error: suppressErrors ? prev.error : lsResult.error,
+            };
+          });
+          return null;
+        }
+
+        // Check for bash command failure (non-zero exit)
+        if (!lsResult.data.success) {
+          const errorMessage = lsResult.data.error || "Failed to list directory";
           setState((prev) => {
             // On failure, remove from expanded set (dir may have been deleted)
             const newExpanded = new Set(prev.expanded);
@@ -86,23 +141,102 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
               expanded: newExpanded,
               loading: new Set([...prev.loading].filter((k) => k !== key)),
               // Only set error for root or if not suppressing
-              error: suppressErrors ? prev.error : result.error,
+              error: suppressErrors ? prev.error : errorMessage,
             };
           });
           return null;
         }
 
+        // Parse ls output into nodes
+        const nodes = parseLsOutput(lsResult.data.output, relativePath);
+
+        // Update git status cache on root fetch
+        let newGitStatus: GitStatusResult | null = null;
+        if (isRoot && gitResult?.success && gitResult.data.success) {
+          newGitStatus = parseGitStatus(gitResult.data.output, "");
+        }
+
+        // Collect directory paths that need ignore checking:
+        // - Directories we haven't checked yet (or on root refresh, re-check all)
+        // - Not already known to be ignored from git status
+        const dirsToCheck: string[] = [];
         setState((prev) => {
+          const gitStatus = newGitStatus ?? prev.gitStatus;
+          // On root fetch, clear checkedDirPaths to re-check everything
+          // Keep ignoredDirs intact to avoid flicker - we'll update after check-ignore
+          const checkedDirPaths = isRoot ? new Set<string>() : prev.checkedDirPaths;
+
+          for (const node of nodes) {
+            if (
+              node.isDirectory &&
+              !checkedDirPaths.has(node.path) &&
+              !gitStatus.ignored.has(node.path)
+            ) {
+              dirsToCheck.push(node.path);
+            }
+          }
+
           const newEntries = new Map(prev.entries);
-          newEntries.set(key, result.data);
+          newEntries.set(key, nodes);
+
+          // Apply ignored status from git status and ignoredDirs cache
+          for (const node of nodes) {
+            if (gitStatus.ignored.has(node.path) || prev.ignoredDirs.has(node.path)) {
+              node.ignored = true;
+            }
+          }
+
           return {
             ...prev,
             entries: newEntries,
             loading: new Set([...prev.loading].filter((k) => k !== key)),
+            gitStatus,
+            checkedDirPaths,
           };
         });
 
-        return result.data;
+        // Run git check-ignore for unchecked directories (if any)
+        if (dirsToCheck.length > 0) {
+          const checkIgnoreResult = await api.workspace.executeBash({
+            workspaceId: props.workspaceId,
+            script: buildGitCheckIgnoreScript(dirsToCheck),
+          });
+
+          if (checkIgnoreResult.success && checkIgnoreResult.data.success) {
+            const newIgnoredDirs = parseGitCheckIgnoreOutput(checkIgnoreResult.data.output);
+
+            setState((prev) => {
+              // Mark all checked paths as checked
+              const checkedDirPaths = new Set(prev.checkedDirPaths);
+              for (const path of dirsToCheck) {
+                checkedDirPaths.add(path);
+              }
+
+              // Add newly discovered ignored dirs to cache
+              // (dirsToCheck already excludes gitStatus.ignored, so no conflict)
+              const ignoredDirs = new Set(prev.ignoredDirs);
+              for (const path of newIgnoredDirs) {
+                ignoredDirs.add(path);
+              }
+
+              // Update nodes in entries - only set ignored=true, never false
+              // (gitStatus.ignored is authoritative, check-ignore is supplemental)
+              const newEntries = new Map(prev.entries);
+              const existingNodes = newEntries.get(key);
+              if (existingNodes) {
+                for (const node of existingNodes) {
+                  if (node.isDirectory && newIgnoredDirs.has(node.path)) {
+                    node.ignored = true;
+                  }
+                }
+              }
+
+              return { ...prev, checkedDirPaths, ignoredDirs, entries: newEntries };
+            });
+          }
+        }
+
+        return nodes;
       } catch (err) {
         setState((prev) => {
           // On error, remove from expanded set
@@ -200,7 +334,17 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
     const isExpanded = state.expanded.has(key);
     const isLoading = state.loading.has(key);
     const children = state.entries.get(key) ?? [];
-    const isIgnored = node.ignored === true;
+    // Check both node.ignored flag and ignoredDirs cache
+    const isIgnored = node.ignored === true || state.ignoredDirs.has(node.path);
+    const isModified = state.gitStatus.modified.has(node.path);
+    const isUntracked = state.gitStatus.untracked.has(node.path);
+
+    // Determine text color based on git status (modified takes precedence over untracked)
+    const textColor = isModified
+      ? "var(--color-git-modified)"
+      : isUntracked
+        ? "var(--color-git-untracked)"
+        : undefined;
 
     return (
       <div key={key}>
@@ -241,7 +385,9 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
               <FileIcon fileName={node.name} style={{ fontSize: 18 }} className="h-4 w-4" />
             </>
           )}
-          <span className="truncate">{node.name}</span>
+          <span className="truncate" style={textColor ? { color: textColor } : undefined}>
+            {node.name}
+          </span>
         </button>
 
         {node.isDirectory && isExpanded && (

@@ -144,19 +144,57 @@ export interface GitDiffFixture {
   untrackedFiles?: string[];
 }
 
+// Default mock file tree for explorer stories
+// Mock ls output - order doesn't matter, parseLsOutput sorts the result
+const DEFAULT_LS_OUTPUT = `total 40
+drwxr-xr-x  5 user group  160 Jan 15 10:00 .
+drwxr-xr-x  3 user group   96 Jan 15 10:00 ..
+drwxr-xr-x 10 user group  320 Jan 15 10:00 node_modules
+drwxr-xr-x  3 user group   96 Jan 15 10:00 src
+drwxr-xr-x  2 user group   64 Jan 15 10:00 tests
+-rw-r--r--  1 user group  128 Jan 15 10:00 README.md
+-rw-r--r--  1 user group 1024 Jan 15 10:00 package.json
+-rw-r--r--  1 user group  256 Jan 15 10:00 tsconfig.json`;
+
+const DEFAULT_SRC_LS_OUTPUT = `total 24
+drwxr-xr-x  3 user group   96 Jan 15 10:00 .
+drwxr-xr-x  5 user group  160 Jan 15 10:00 ..
+drwxr-xr-x  2 user group   64 Jan 15 10:00 components
+-rw-r--r--  1 user group  256 Jan 15 10:00 App.tsx
+-rw-r--r--  1 user group  512 Jan 15 10:00 index.ts`;
+
 /**
  * Creates an executeBash function that returns git status and diff output for workspaces.
  * Handles: git status, git show-branch, git diff, git diff --numstat, git show (for read-more),
- * git ls-files --others (for untracked files)
+ * git ls-files --others (for untracked files), ls -la (for file explorer), git check-ignore
  */
 export function createGitStatusExecutor(
   gitStatus?: Map<string, GitStatusFixture>,
   gitDiff?: Map<string, GitDiffFixture>
 ) {
   return (workspaceId: string, script: string) => {
+    // Handle ls -la for file explorer
+    if (script.startsWith("ls -la")) {
+      // Check if it's the root or a subdirectory
+      const isRoot = script === "ls -la ." || script === "ls -la";
+      const output = isRoot ? DEFAULT_LS_OUTPUT : DEFAULT_SRC_LS_OUTPUT;
+      return Promise.resolve({ success: true as const, output, exitCode: 0, wall_duration_ms: 50 });
+    }
+
+    // Handle git check-ignore for empty ignored directories
+    if (script.includes("git check-ignore")) {
+      // Return node_modules as ignored if it's in the input
+      const output = script.includes("node_modules") ? "node_modules" : "";
+      return Promise.resolve({ success: true as const, output, exitCode: 0, wall_duration_ms: 50 });
+    }
+
     if (script.includes("git status") || script.includes("git show-branch")) {
       const status = gitStatus?.get(workspaceId) ?? {};
-      const output = createGitStatusOutput(status);
+      // For git status --ignored --porcelain, add !! node_modules to mark it as ignored
+      let output = createGitStatusOutput(status);
+      if (script.includes("--ignored")) {
+        output = output ? `${output}\n!! node_modules/` : "!! node_modules/";
+      }
       return Promise.resolve({ success: true as const, output, exitCode: 0, wall_duration_ms: 50 });
     }
 
@@ -268,22 +306,11 @@ export interface SimpleChatSetupOptions {
     githubUser: string | null;
     error: { message: string; hasEncryptedKey: boolean } | null;
   };
-  /** File contents for file viewer (relativePath -> contents) */
-  fileContents?: Map<
-    string,
-    | { type: "text"; content: string; size: number }
-    | {
-        type: "image";
-        base64: string;
-        mimeType: string;
-        size: number;
-        width?: number;
-        height?: number;
-      }
-    | { type: "error"; message: string }
-  >;
-  /** File diffs for file viewer (relativePath -> diff string) */
-  fileDiffs?: Map<string, string>;
+  /** Custom executeBash mock (for file viewer stories) */
+  executeBash?: (
+    workspaceId: string,
+    script: string
+  ) => Promise<{ success: true; output: string; exitCode: number; wall_duration_ms: number }>;
 }
 
 /**
@@ -341,26 +368,32 @@ export function setupSimpleChatStory(opts: SimpleChatSetupOptions): APIClient {
       }
     : baseOnChat;
 
-  // Build file contents/diffs maps from options
-  const fileContentsMap = opts.fileContents
-    ? new Map([[workspaceId, opts.fileContents]])
-    : undefined;
-  const fileDiffsMap = opts.fileDiffs ? new Map([[workspaceId, opts.fileDiffs]]) : undefined;
+  // Compose executeBash: use custom if provided, otherwise fall back to git status executor
+  const gitStatusExecutor = createGitStatusExecutor(gitStatus, gitDiff);
+  const executeBash = opts.executeBash
+    ? async (wsId: string, script: string) => {
+        // Try custom handler first, fall back to git status executor
+        const customResult = await opts.executeBash!(wsId, script);
+        if (customResult.output || customResult.exitCode !== 0) {
+          return customResult;
+        }
+        // Fall back to git status executor for git commands
+        return gitStatusExecutor(wsId, script);
+      }
+    : gitStatusExecutor;
 
   // Return ORPC client
   return createMockORPCClient({
     projects: groupWorkspacesByProject(workspaces),
     workspaces,
     onChat,
-    executeBash: createGitStatusExecutor(gitStatus, gitDiff),
+    executeBash,
     providersConfig: opts.providersConfig,
     backgroundProcesses: bgProcesses,
     statsTabVariant: opts.statsTabEnabled ? "stats" : "control",
     sessionUsage: sessionUsageMap,
     idleCompactionHours,
     signingCapabilities: opts.signingCapabilities,
-    fileContents: fileContentsMap,
-    fileDiffs: fileDiffsMap,
   });
 }
 
