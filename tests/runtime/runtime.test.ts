@@ -1520,6 +1520,11 @@ describeIntegration("Runtime integration tests", () => {
             ensureSSHConfig: async () => {
               // This SHOULD be called - it's safe and idempotent
             },
+            getWorkspaceStatus: () =>
+              Promise.resolve({ kind: "running" as const, status: "running" as const }),
+            waitForStartupScripts: async function* () {
+              // Yield nothing - workspace is already running
+            },
           } as unknown as InstanceType<typeof CoderService>;
 
           const runtime = new CoderSSHRuntime(
