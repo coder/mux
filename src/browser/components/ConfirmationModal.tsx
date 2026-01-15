@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useCallback } from "react";
 import {
   Dialog,
   DialogContent,
@@ -20,44 +20,65 @@ interface ConfirmationModalProps {
   warning?: string;
   confirmLabel?: string;
   cancelLabel?: string;
-  onConfirm: () => void;
+  /** Called when user confirms. Can be async - buttons will be disabled during execution. */
+  onConfirm: () => void | Promise<void>;
   onCancel: () => void;
 }
 
 /**
  * Reusable confirmation modal for destructive actions
  */
-export const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
-  isOpen,
-  title,
-  description,
-  warning,
-  confirmLabel = "Confirm",
-  cancelLabel = "Cancel",
-  onConfirm,
-  onCancel,
-}) => {
+export const ConfirmationModal: React.FC<ConfirmationModalProps> = (props) => {
+  const [isConfirming, setIsConfirming] = useState(false);
+
+  // Extract callbacks to satisfy exhaustive-deps rule
+  const onConfirm = props.onConfirm;
+  const onCancel = props.onCancel;
+
+  const handleConfirm = useCallback(async () => {
+    if (isConfirming) return;
+    setIsConfirming(true);
+    try {
+      await onConfirm();
+    } finally {
+      setIsConfirming(false);
+    }
+  }, [isConfirming, onConfirm]);
+
+  const handleOpenChange = useCallback(
+    (open: boolean) => {
+      if (!open && !isConfirming) {
+        onCancel();
+      }
+    },
+    [isConfirming, onCancel]
+  );
+
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && onCancel()}>
+    <Dialog open={props.isOpen} onOpenChange={handleOpenChange}>
       <DialogContent maxWidth="450px" showCloseButton={false}>
         <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
-          {description && <DialogDescription>{description}</DialogDescription>}
+          <DialogTitle>{props.title}</DialogTitle>
+          {props.description && <DialogDescription>{props.description}</DialogDescription>}
         </DialogHeader>
 
-        {warning && (
+        {props.warning && (
           <WarningBox>
             <WarningTitle>Warning</WarningTitle>
-            <WarningText>{warning}</WarningText>
+            <WarningText>{props.warning}</WarningText>
           </WarningBox>
         )}
 
         <DialogFooter className="justify-center">
-          <Button variant="secondary" onClick={onCancel}>
-            {cancelLabel}
+          <Button variant="secondary" onClick={onCancel} disabled={isConfirming}>
+            {props.cancelLabel ?? "Cancel"}
           </Button>
-          <Button variant="destructive" onClick={onConfirm}>
-            {confirmLabel}
+          <Button
+            variant="destructive"
+            onClick={() => void handleConfirm()}
+            disabled={isConfirming}
+          >
+            {isConfirming ? "Processing..." : (props.confirmLabel ?? "Confirm")}
           </Button>
         </DialogFooter>
       </DialogContent>

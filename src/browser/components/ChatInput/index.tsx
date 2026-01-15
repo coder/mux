@@ -2257,7 +2257,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         }
         warning="This action cannot be undone."
         confirmLabel={pendingDestructiveCommand?.type === "clear" ? "Clear" : "Truncate"}
-        onConfirm={() => void handleDestructiveCommandConfirm()}
+        onConfirm={handleDestructiveCommandConfirm}
         onCancel={handleDestructiveCommandCancel}
       />
     </Wrapper>
