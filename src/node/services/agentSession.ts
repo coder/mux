@@ -595,7 +595,20 @@ export class AgentSession {
       const continueMessage = typedMuxMetadata.parsed.continueMessage;
 
       // Process the continue message content (handles reviews -> text formatting + metadata)
-      const { finalText, metadata } = prepareUserMessageForSend(continueMessage);
+      const prepared = prepareUserMessageForSend(continueMessage);
+      const { metadata } = prepared;
+      let { finalText } = prepared;
+
+      // Wrap non-default follow-up with context so the model knows this was the message
+      // that triggered compaction. The "Continue" sentinel is excluded since it's just
+      // a resume signal, not meaningful user content.
+      const isDefaultResume =
+        continueMessage.text?.trim() === "Continue" &&
+        !continueMessage.imageParts?.length &&
+        !continueMessage.reviews?.length;
+      if (!isDefaultResume && finalText.trim().length > 0) {
+        finalText = `(This was the message that triggered compaction - context is in the summary above)\n\n${finalText}`;
+      }
 
       // Legacy compatibility: older clients stored `continueMessage.mode` (exec/plan) and compaction
       // requests run with agentId="compact". Avoid falling back to the compact agent for the
