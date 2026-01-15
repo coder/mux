@@ -365,7 +365,7 @@ export const CoderNoRunningWorkspaces: AppStory = {
     );
     await userEvent.click(existingButton);
 
-    // Workspace dropdown should show "No running workspaces"
+    // Workspace dropdown should show "No workspaces found"
     const workspaceSelect = await canvas.findByTestId(
       "coder-workspace-select",
       {},
@@ -374,10 +374,10 @@ export const CoderNoRunningWorkspaces: AppStory = {
     await waitFor(() => {
       const options = workspaceSelect.querySelectorAll("option");
       const hasNoWorkspacesOption = Array.from(options).some((opt) =>
-        opt.textContent?.includes("No running workspaces")
+        opt.textContent?.includes("No workspaces found")
       );
       if (!hasNoWorkspacesOption) {
-        throw new Error("Should show 'No running workspaces' option");
+        throw new Error("Should show 'No workspaces found' option");
       }
     });
   },
