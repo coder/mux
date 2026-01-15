@@ -1,7 +1,8 @@
 /**
- * PR link badge and links dropdown stories
+ * PR status badge stories
  *
  * Shows various PR status states in the workspace header.
+ * PR is detected from the workspace's current branch via `gh pr view`.
  */
 
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";

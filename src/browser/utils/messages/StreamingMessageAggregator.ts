@@ -36,7 +36,6 @@ import { createDeltaStorage, type DeltaRecordStorage } from "./StreamingTPSCalcu
 import { computeRecencyTimestamp } from "./recency";
 import { assert } from "@/common/utils/assert";
 import { getStatusStateKey } from "@/common/constants/storage";
-import { type DetectedLink, extractUrls, categorizeUrl } from "@/common/types/links";
 
 // Maximum number of messages to display in the DOM for performance
 // Full history is still maintained internally for token counting and stats
@@ -198,20 +197,7 @@ export class StreamingMessageAggregator {
   // Last URL set via status_set - kept in memory to reuse when later calls omit url
   private lastStatusUrl: string | undefined = undefined;
 
-  /**
-   * Links are derived from message history and are not persisted separately.
-   *
-   * IMPORTANT: We intentionally treat assistant *text* as "stable" only after the stream
-   * completes (stream-end/abort/error). During streaming, we still surface URLs found in
-   * tool outputs since those are discrete, complete payloads.
-   *
-   * This avoids partial/incorrect URLs from token-level deltas and makes live behavior match
-   * historical reloads by construction.
-   */
-  /** Lazily computed from messages; invalidated on message changes. */
-  private linksCache: DetectedLink[] | null = null;
-
-  // Workspace ID (used for status persistence, not links)
+  // Workspace ID (used for status persistence)
   private readonly workspaceId: string | undefined;
 
   // Workspace init hook state (ephemeral, not persisted to history)
@@ -423,115 +409,6 @@ export class StreamingMessageAggregator {
   }
 
   /**
-   * Get detected links from chat messages.
-   * Includes GitHub PR links and generic URLs.
-   * Derived from messages (not persisted).
-   */
-  getDetectedLinks(): DetectedLink[] {
-    this.linksCache ??= this.computeLinksFromMessages();
-    return this.linksCache;
-  }
-
-  /**
-   * Invalidate the links cache. Call this when:
-   * - Message content changes (add/remove/modify messages)
-   * - Content becomes stable for scanning (stream end, tool output available)
-   *
-   * The links cache is separate from the display cache because link stability
-   * depends on streaming state (assistant text isn't scanned until stream ends),
-   * not just message structure.
-   */
-  private invalidateLinksCache(): void {
-    this.linksCache = null;
-  }
-
-  /**
-   * Invalidate all caches (display + links). Call this when message structure changes.
-   * For content stability changes (stream end, tool output), use invalidateLinksCache() directly.
-   */
-  private invalidateAllCaches(): void {
-    this.invalidateLinksCache();
-    this.invalidateCache();
-  }
-
-  private computeLinksFromMessages(): DetectedLink[] {
-    const detectedLinks: DetectedLink[] = [];
-
-    const addUrl = (url: string, timestamp: number) => {
-      const existingIndex = detectedLinks.findIndex((link) => link.url === url);
-      if (existingIndex !== -1) {
-        // Increment occurrence count and update "last seen" timestamp
-        detectedLinks[existingIndex].occurrenceCount += 1;
-        detectedLinks[existingIndex].detectedAt = timestamp;
-        return;
-      }
-
-      detectedLinks.push(categorizeUrl(url, timestamp));
-    };
-
-    const maybeScanText = (text: string, timestamp: number) => {
-      // Avoid scanning huge blobs that are unlikely to contain useful links.
-      if (text.length >= 100_000) return;
-      if (!text.includes("http://") && !text.includes("https://")) return;
-
-      for (const url of extractUrls(text)) {
-        addUrl(url, timestamp);
-      }
-    };
-
-    // Rescan all messages in chronological order to ensure parity between:
-    // - live streaming (tool outputs arrive mid-stream)
-    // - historical reload (messages are loaded fully-formed)
-    for (const message of this.getAllMessages()) {
-      const messageTimestamp = message.metadata?.timestamp ?? Date.now();
-      const skipAssistantText = message.role === "assistant" && this.activeStreams.has(message.id);
-
-      // Merge adjacent text deltas so URLs split across stream parts are detectable.
-      const parts = mergeAdjacentParts(message.parts);
-
-      for (const part of parts) {
-        if (part.type === "text") {
-          if (!skipAssistantText) {
-            maybeScanText(part.text, messageTimestamp);
-          }
-          continue;
-        }
-
-        if (part.type !== "dynamic-tool") {
-          continue;
-        }
-
-        const toolTimestamp = part.timestamp ?? messageTimestamp;
-
-        if (part.state === "output-available") {
-          const outputStr =
-            typeof part.output === "string" ? part.output : JSON.stringify(part.output);
-          maybeScanText(outputStr, toolTimestamp);
-        }
-
-        if (!part.nestedCalls) {
-          continue;
-        }
-
-        for (const nestedCall of part.nestedCalls) {
-          if (nestedCall.state !== "output-available" || nestedCall.output == null) {
-            continue;
-          }
-
-          const nestedTimestamp = nestedCall.timestamp ?? toolTimestamp;
-          const nestedOutputStr =
-            typeof nestedCall.output === "string"
-              ? nestedCall.output
-              : JSON.stringify(nestedCall.output);
-          maybeScanText(nestedOutputStr, nestedTimestamp);
-        }
-      }
-    }
-
-    return detectedLinks;
-  }
-
-  /**
    * Check if there's an executing ask_user_question tool awaiting user input.
    * Used to show "Awaiting your input" instead of "streaming..." in the UI.
    */
@@ -708,7 +585,7 @@ export class StreamingMessageAggregator {
    */
   removeMessage(messageId: string): void {
     if (this.messages.delete(messageId)) {
-      this.invalidateAllCaches();
+      this.invalidateCache();
     }
   }
 
@@ -761,7 +638,7 @@ export class StreamingMessageAggregator {
       }
     }
 
-    this.invalidateAllCaches();
+    this.invalidateCache();
   }
 
   getAllMessages(): MuxMessage[] {
@@ -1050,7 +927,7 @@ export class StreamingMessageAggregator {
   clear(): void {
     this.messages.clear();
     this.activeStreams.clear();
-    this.invalidateAllCaches();
+    this.invalidateCache();
   }
 
   /**
@@ -1068,7 +945,7 @@ export class StreamingMessageAggregator {
       }
     }
 
-    this.invalidateAllCaches();
+    this.invalidateCache();
   }
 
   // Unified event handlers that encapsulate all complex logic
@@ -1234,7 +1111,7 @@ export class StreamingMessageAggregator {
       this.cleanupStreamState(data.messageId);
     }
     // Assistant message is now stable (completed or reconnected) - invalidate all caches.
-    this.invalidateAllCaches();
+    this.invalidateCache();
   }
 
   handleStreamAbort(data: StreamAbortEvent): void {
@@ -1267,7 +1144,7 @@ export class StreamingMessageAggregator {
       // Clean up stream-scoped state (active stream tracking, TODOs)
       this.cleanupStreamState(data.messageId);
       // Assistant message is now stable (aborted) - invalidate all caches.
-      this.invalidateAllCaches();
+      this.invalidateCache();
     }
   }
 
@@ -1294,7 +1171,7 @@ export class StreamingMessageAggregator {
       // Clean up stream-scoped state (active stream tracking, TODOs)
       this.cleanupStreamState(data.messageId);
       // Assistant message is now stable (errored) - invalidate all caches.
-      this.invalidateAllCaches();
+      this.invalidateCache();
     } else {
       // Pre-stream error (e.g., API key not configured before streaming starts)
       // Create a synthetic error message since there's no active stream to attach to
@@ -1510,7 +1387,7 @@ export class StreamingMessageAggregator {
                 : nc
             );
             message.parts[parentIndex] = { ...parentPart, nestedCalls: updatedNestedCalls };
-            this.invalidateAllCaches();
+            this.invalidateCache();
             return;
           }
         }
@@ -1532,7 +1409,7 @@ export class StreamingMessageAggregator {
         this.processToolResult(data.toolName, toolPart.input, data.result, "streaming");
 
         // Tool output is now stable - invalidate all caches.
-        this.invalidateAllCaches();
+        this.invalidateCache();
       } else {
         // Tool part not found (shouldn't happen normally) - still invalidate display cache.
         this.invalidateCache();
@@ -1694,10 +1571,6 @@ export class StreamingMessageAggregator {
           this.agentStatus = undefined;
           this.clearPersistedAgentStatus();
         }
-
-        // User messages arrive fully-formed, so links should update immediately.
-        // Display cache already invalidated by addMessage(); add links cache.
-        this.invalidateLinksCache();
 
         this.setPendingStreamStartTime(Date.now());
       }
