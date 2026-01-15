@@ -31,7 +31,7 @@ export const ContextSwitchWarning: React.FC<Props> = ({ warning, onCompact, onDi
             <span>Context May Exceed Model Limit</span>
           </div>
           <p className="text-foreground/80 text-[12px] leading-relaxed">
-            Current context ({formatTokens(warning.currentTokens)} tokens) is near the{" "}
+            Current context ({formatTokens(warning.currentTokens)} tokens) may exceed the{" "}
             <span className="font-medium">{targetName}</span> limit (
             {formatTokens(warning.targetLimit)}). Consider compacting before sending.
           </p>

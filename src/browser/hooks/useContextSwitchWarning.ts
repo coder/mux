@@ -16,8 +16,8 @@ import {
   findPreviousModel,
   type ContextSwitchWarning,
 } from "@/browser/utils/compaction/contextSwitchCheck";
-
-// Note: findPreviousModel is still used for 1M toggle changes (effect below)
+import { getHigherContextCompactionSuggestion } from "@/browser/utils/compaction/suggestion";
+import { useProvidersConfig } from "./useProvidersConfig";
 import { executeCompaction } from "@/browser/utils/chatCommands";
 
 interface UseContextSwitchWarningProps {
@@ -48,11 +48,31 @@ export function useContextSwitchWarning(
   // Track previous model so we can use it as compaction fallback on switch.
   // Initialize to null so first render triggers check (handles page reload after model switch).
   const prevPendingModelRef = useRef<string | null>(null);
+  const { config: providersConfig } = useProvidersConfig();
 
   const getCurrentTokens = useCallback(() => {
     const usage = workspaceUsage?.liveUsage ?? workspaceUsage?.lastContextUsage;
     return usage ? usage.input.tokens + usage.cached.tokens + usage.cacheCreate.tokens : 0;
   }, [workspaceUsage]);
+
+  // Enhance warning with smarter model suggestion when basic resolution fails.
+  // Searches all known models for one with larger context that user can access.
+  const enhanceWarning = useCallback(
+    (w: ContextSwitchWarning | null): ContextSwitchWarning | null => {
+      if (!w || w.compactionModel) return w;
+
+      const suggestion = getHigherContextCompactionSuggestion({
+        currentModel: w.targetModel,
+        providersConfig,
+      });
+
+      if (suggestion) {
+        return { ...w, compactionModel: suggestion.modelId, errorMessage: null };
+      }
+      return w;
+    },
+    [providersConfig]
+  );
 
   const handleModelChange = useCallback(
     (newModel: string) => {
@@ -61,9 +81,10 @@ export function useContextSwitchWarning(
       // so compaction fallback works even if user switches without sending
       const previousModel = prevPendingModelRef.current;
       prevPendingModelRef.current = newModel;
-      setWarning(tokens > 0 ? checkContextSwitch(tokens, newModel, previousModel, use1M) : null);
+      const result = tokens > 0 ? checkContextSwitch(tokens, newModel, previousModel, use1M) : null;
+      setWarning(enhanceWarning(result));
     },
-    [getCurrentTokens, use1M]
+    [getCurrentTokens, use1M, enhanceWarning]
   );
 
   const handleCompact = useCallback(() => {
@@ -85,14 +106,23 @@ export function useContextSwitchWarning(
   // Sync with indirect model changes (e.g., WorkspaceModeAISync updating model on mode/agent change).
   // Effect is appropriate: pendingModel comes from usePersistedState (localStorage), and external
   // components like WorkspaceModeAISync can update it without going through handleModelChange.
+  // Also re-check when workspaceUsage changes (tokens may not be available on first render).
+  const tokens = getCurrentTokens();
   useEffect(() => {
     const prevModel = prevPendingModelRef.current;
     if (prevModel !== pendingModel) {
       prevPendingModelRef.current = pendingModel;
-      const tokens = getCurrentTokens();
-      setWarning(tokens > 0 ? checkContextSwitch(tokens, pendingModel, prevModel, use1M) : null);
+      const result = tokens > 0 ? checkContextSwitch(tokens, pendingModel, prevModel, use1M) : null;
+      setWarning(enhanceWarning(result));
+    } else if (tokens > 0 && !warning) {
+      // Re-check if tokens became available after initial render (usage data loaded)
+      // Use findPreviousModel since we don't have a "previous" model in this case
+      const previousModel = findPreviousModel(messages);
+      if (previousModel && previousModel !== pendingModel) {
+        setWarning(enhanceWarning(checkContextSwitch(tokens, pendingModel, previousModel, use1M)));
+      }
     }
-  }, [pendingModel, getCurrentTokens, use1M]);
+  }, [pendingModel, tokens, use1M, warning, messages, enhanceWarning]);
 
   // Sync with 1M toggle changes from ProviderOptionsContext.
   // Effect is appropriate here: we're syncing with an external context (not our own state),
@@ -107,13 +137,14 @@ export function useContextSwitchWarning(
     if (wasEnabled !== use1M) {
       const tokens = getCurrentTokens();
       if (tokens > 0) {
-        setWarning(checkContextSwitch(tokens, pendingModel, findPreviousModel(messages), use1M));
+        const result = checkContextSwitch(tokens, pendingModel, findPreviousModel(messages), use1M);
+        setWarning(enhanceWarning(result));
       } else if (use1M) {
         // No tokens but toggled ON - clear any stale warning
         setWarning(null);
       }
     }
-  }, [use1M, getCurrentTokens, pendingModel, messages]);
+  }, [use1M, getCurrentTokens, pendingModel, messages, enhanceWarning]);
 
   return { warning, handleModelChange, handleCompact, handleDismiss };
 }
