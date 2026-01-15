@@ -81,6 +81,18 @@ export function useContextSwitchWarning(
     setWarning(null);
   }, []);
 
+  // Sync with indirect model changes (e.g., WorkspaceModeAISync updating model on mode/agent change).
+  // Effect is appropriate: pendingModel comes from usePersistedState (localStorage), and external
+  // components like WorkspaceModeAISync can update it without going through handleModelChange.
+  useEffect(() => {
+    const prevModel = prevPendingModelRef.current;
+    if (prevModel !== pendingModel) {
+      prevPendingModelRef.current = pendingModel;
+      const tokens = getCurrentTokens();
+      setWarning(tokens > 0 ? checkContextSwitch(tokens, pendingModel, prevModel, use1M) : null);
+    }
+  }, [pendingModel, getCurrentTokens, use1M]);
+
   // Sync with 1M toggle changes from ProviderOptionsContext.
   // Effect is appropriate here: we're syncing with an external context (not our own state),
   // and the toggle change happens in ModelSettings which can't directly call our handlers.
