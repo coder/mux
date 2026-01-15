@@ -7,6 +7,8 @@
  * is not discoverable in the UI (e.g., no tooltip, placeholder text, or visible hint).
  */
 
+import { stopKeyboardPropagation } from "@/browser/utils/events";
+
 /**
  * Keybind definition type
  */
@@ -351,7 +353,8 @@ export function createEditKeyHandler(options: {
     if (e.key === "Enter") {
       options.onSave();
     } else if (e.key === "Escape") {
-      e.stopPropagation();
+      e.preventDefault();
+      stopKeyboardPropagation(e);
       options.onCancel();
     }
   };

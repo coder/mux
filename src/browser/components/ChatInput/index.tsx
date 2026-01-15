@@ -69,6 +69,7 @@ import {
   KEYBINDS,
   isEditableElement,
 } from "@/browser/utils/ui/keybinds";
+import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { ModelSelector, type ModelSelectorRef } from "../ModelSelector";
 import { useModelsFromSettings } from "@/browser/hooks/useModelsFromSettings";
 import { SendHorizontal, X } from "lucide-react";
@@ -1819,7 +1820,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     if (matchesKeybind(e, KEYBINDS.CANCEL_EDIT)) {
       if (variant === "workspace" && editingMessage && props.onCancelEdit && !vimEnabled) {
         e.preventDefault();
-        e.stopPropagation(); // Prevent global handler from interrupting stream
+        stopKeyboardPropagation(e);
         setDraft(preEditDraftRef.current);
         props.onCancelEdit();
         const isFocused = document.activeElement === inputRef.current;
