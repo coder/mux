@@ -2,6 +2,7 @@ import { describe, it, expect } from "@jest/globals";
 import {
   getLastNonDecorativeMessage,
   hasInterruptedStream,
+  shouldKeepRetryBarrierVisibleDuringRetry,
   isEligibleForAutoRetry,
   isNonRetryableSendError,
   PENDING_STREAM_START_GRACE_PERIOD_MS,
@@ -397,6 +398,111 @@ describe("hasInterruptedStream", () => {
       ];
       expect(hasInterruptedStream(messages)).toBe(true);
     });
+  });
+});
+
+describe("shouldKeepRetryBarrierVisibleDuringRetry", () => {
+  it("returns false when attempt is 0", () => {
+    const messages: DisplayedMessage[] = [
+      {
+        type: "stream-error",
+        id: "error-1",
+        historyId: "assistant-1",
+        error: "Connection failed",
+        errorType: "network",
+        historySequence: 1,
+      },
+      {
+        type: "assistant",
+        id: "assistant-2",
+        historyId: "assistant-2",
+        content: "",
+        historySequence: 2,
+        isStreaming: true,
+        isPartial: false,
+        isCompacted: false,
+        isIdleCompacted: false,
+      },
+    ];
+
+    expect(shouldKeepRetryBarrierVisibleDuringRetry(messages, 0)).toBe(false);
+  });
+
+  it("returns true when attempt > 0 and stream has started but no content yet", () => {
+    const messages: DisplayedMessage[] = [
+      {
+        type: "stream-error",
+        id: "error-1",
+        historyId: "assistant-1",
+        error: "Connection failed",
+        errorType: "network",
+        historySequence: 1,
+      },
+      {
+        type: "assistant",
+        id: "assistant-2",
+        historyId: "assistant-2",
+        content: "",
+        historySequence: 2,
+        isStreaming: true,
+        isPartial: false,
+        isCompacted: false,
+        isIdleCompacted: false,
+      },
+    ];
+
+    expect(shouldKeepRetryBarrierVisibleDuringRetry(messages, 1)).toBe(true);
+  });
+
+  it("returns false once the streaming assistant has visible content", () => {
+    const messages: DisplayedMessage[] = [
+      {
+        type: "stream-error",
+        id: "error-1",
+        historyId: "assistant-1",
+        error: "Connection failed",
+        errorType: "network",
+        historySequence: 1,
+      },
+      {
+        type: "assistant",
+        id: "assistant-2",
+        historyId: "assistant-2",
+        content: "Hello",
+        historySequence: 2,
+        isStreaming: true,
+        isPartial: false,
+        isCompacted: false,
+        isIdleCompacted: false,
+      },
+    ];
+
+    expect(shouldKeepRetryBarrierVisibleDuringRetry(messages, 1)).toBe(false);
+  });
+
+  it("returns false when the stream was started by a fresh user message", () => {
+    const messages: DisplayedMessage[] = [
+      {
+        type: "user",
+        id: "user-1",
+        historyId: "user-1",
+        content: "Hello",
+        historySequence: 1,
+      },
+      {
+        type: "assistant",
+        id: "assistant-2",
+        historyId: "assistant-2",
+        content: "",
+        historySequence: 2,
+        isStreaming: true,
+        isPartial: false,
+        isCompacted: false,
+        isIdleCompacted: false,
+      },
+    ];
+
+    expect(shouldKeepRetryBarrierVisibleDuringRetry(messages, 1)).toBe(false);
   });
 });
 

@@ -233,6 +233,72 @@ export function hasInterruptedStream(
 }
 
 /**
+ * During auto-retry loops we can reach stream-start and then fail again before the first token.
+ *
+ * In that window, ChatPane would hide RetryBarrier because canInterrupt flips to true,
+ * causing the banner to flicker on every retry attempt.
+ *
+ * Note: A new stream-start doesn't always immediately produce a new assistant DisplayedMessage.
+ * During TTFT gaps, the last displayed message can still be the prior interruption.
+ */
+export function shouldKeepRetryBarrierVisibleDuringRetry(
+  messages: DisplayedMessage[],
+  retryAttempt: number
+): boolean {
+  if (retryAttempt <= 0) return false;
+  if (messages.length === 0) return false;
+
+  const lastMessage = getLastNonDecorativeMessage(messages);
+  if (!lastMessage) return false;
+
+  // If we're still showing the interruption message while a new retry stream is active,
+  // keep the banner visible so it doesn't flicker away on stream-start.
+  if (lastMessage.type === "stream-error") {
+    return true;
+  }
+
+  if (
+    (lastMessage.type === "assistant" ||
+      lastMessage.type === "tool" ||
+      lastMessage.type === "reasoning") &&
+    lastMessage.isPartial === true
+  ) {
+    return true;
+  }
+
+  if (
+    lastMessage.type !== "assistant" ||
+    !lastMessage.isStreaming ||
+    lastMessage.content.trim().length > 0
+  ) {
+    return false;
+  }
+
+  let previousMessage: DisplayedMessage | undefined;
+  const lastMessageIndex = messages.lastIndexOf(lastMessage);
+  for (let i = lastMessageIndex - 1; i >= 0; i--) {
+    const candidate = messages[i];
+    if (!isDecorativeTranscriptMessage(candidate)) {
+      previousMessage = candidate;
+      break;
+    }
+  }
+
+  if (!previousMessage) {
+    return false;
+  }
+
+  // Only keep the banner sticky when this stream is a retry/resume attempt.
+  // If the previous message is a fresh user message, we want normal streaming UX.
+  return (
+    previousMessage.type === "stream-error" ||
+    (previousMessage.type === "assistant" && previousMessage.isPartial === true) ||
+    (previousMessage.type === "tool" && previousMessage.isPartial === true) ||
+    (previousMessage.type === "reasoning" && previousMessage.isPartial === true)
+  );
+}
+
+/**
  * Check if messages are eligible for automatic retry
  *
  * Used by useResumeManager to determine if workspace should be auto-retried.
