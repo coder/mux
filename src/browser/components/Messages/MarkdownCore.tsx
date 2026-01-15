@@ -88,7 +88,9 @@ const REHYPE_PLUGINS: Pluggable[] = [
       // links). Data images are allowed explicitly below.
       allowedImagePrefixes: ["*", "/"],
       allowedLinkPrefixes: ["*"],
-      defaultOrigin: undefined,
+      // rehype-harden requires a defaultOrigin when any allowlist is provided.
+      // We use a stable placeholder origin so relative URLs can be resolved.
+      defaultOrigin: "https://mux.invalid",
       allowDataImages: true,
     },
   ],
