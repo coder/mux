@@ -83,11 +83,11 @@ const REHYPE_PLUGINS: Pluggable[] = [
   [
     harden, // Additional URL filtering for links and images
     {
-      // SECURITY: restrict potentially dangerous URL schemes in user/assistant content.
-      // This is especially important in read-only viewers (mux.md) which may render
-      // untrusted content.
-      allowedImagePrefixes: ["http:", "https:"],
-      allowedLinkPrefixes: ["http:", "https:", "mailto:"],
+      // SECURITY: Treat markdown content as untrusted. We rely on rehype-harden to
+      // block dangerous URL schemes (e.g. javascript:, file:, vbscript:, data: in
+      // links). Data images are allowed explicitly below.
+      allowedImagePrefixes: ["*", "/"],
+      allowedLinkPrefixes: ["*"],
       defaultOrigin: undefined,
       allowDataImages: true,
     },
