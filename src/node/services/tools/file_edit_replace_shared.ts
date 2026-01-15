@@ -12,6 +12,8 @@ import {
   NOTE_READ_FILE_AGAIN_RETRY,
 } from "@/common/types/tools";
 
+import { convertNewlines, detectFileEol, normalizeNewlinesToLF } from "./eol";
+
 interface OperationMetadata {
   edits_applied: number;
   lines_replaced?: number;
@@ -56,16 +58,31 @@ export function handleStringReplace(
 ): OperationOutcome {
   const replaceCount = args.replace_count ?? 1;
 
-  if (!originalContent.includes(args.old_string)) {
+  const fileEol = detectFileEol(originalContent);
+  const oldStringExact = args.old_string;
+  const oldStringCoerced = convertNewlines(args.old_string, fileEol);
+  const newStringCoerced = convertNewlines(args.new_string, fileEol);
+
+  // Prefer an exact match, but retry with normalized newline styles so Windows
+  // CRLF files can be edited using model-generated LF strings.
+  let oldStringToMatch = oldStringExact;
+  if (
+    !originalContent.includes(oldStringToMatch) &&
+    oldStringCoerced !== oldStringExact &&
+    originalContent.includes(oldStringCoerced)
+  ) {
+    oldStringToMatch = oldStringCoerced;
+  }
+
+  if (!originalContent.includes(oldStringToMatch)) {
     return {
       success: false,
-      error:
-        "old_string not found in file. The text to replace must exist exactly as written in the file.",
+      error: "old_string not found in file. The text to replace must exist in the file.",
       note: `${EDIT_FAILED_NOTE_PREFIX} The old_string does not exist in the file. ${NOTE_READ_FILE_FIRST_RETRY}`,
     };
   }
 
-  const parts = originalContent.split(args.old_string);
+  const parts = originalContent.split(oldStringToMatch);
   const occurrences = parts.length - 1;
 
   if (replaceCount === 1 && occurrences > 1) {
@@ -88,22 +105,22 @@ export function handleStringReplace(
   let editsApplied: number;
 
   if (replaceCount === -1) {
-    newContent = parts.join(args.new_string);
+    newContent = parts.join(newStringCoerced);
     editsApplied = occurrences;
   } else {
     let replacedCount = 0;
     let currentContent = originalContent;
 
     for (let i = 0; i < replaceCount; i++) {
-      const index = currentContent.indexOf(args.old_string);
+      const index = currentContent.indexOf(oldStringToMatch);
       if (index === -1) {
         break;
       }
 
       currentContent =
         currentContent.substring(0, index) +
-        args.new_string +
-        currentContent.substring(index + args.old_string.length);
+        newStringCoerced +
+        currentContent.substring(index + oldStringToMatch.length);
       replacedCount++;
     }
 
@@ -146,7 +163,8 @@ export function handleLineReplace(
     };
   }
 
-  const lines = originalContent.split("\n");
+  const fileEol = detectFileEol(originalContent);
+  const lines = normalizeNewlinesToLF(originalContent).split("\n");
 
   if (startIndex >= lines.length) {
     return {
@@ -175,7 +193,7 @@ export function handleLineReplace(
 
   return {
     success: true,
-    newContent: updatedLines.join("\n"),
+    newContent: updatedLines.join(fileEol),
     metadata: {
       edits_applied: 1,
       lines_replaced: linesReplaced,
