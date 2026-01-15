@@ -1,14 +1,13 @@
 /**
  * TextFileViewer - Displays text file contents with syntax highlighting.
- * Uses HighlightedCode component for syntax-aware rendering.
- * Shows git diff when available.
+ * Shows inline diff when there are uncommitted changes.
  */
 
 import React from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
 import { parsePatch } from "diff";
-import { HighlightedCode } from "@/browser/components/tools/shared/HighlightedCode";
-import { DiffRenderer } from "@/browser/components/shared/DiffRenderer";
+import { highlightCode } from "@/browser/utils/highlighting/highlightWorkerClient";
+import { extractShikiLines } from "@/browser/utils/highlighting/shiki-shared";
+import { useTheme } from "@/browser/contexts/ThemeContext";
 import { getLanguageFromPath, getLanguageDisplayName } from "@/common/utils/git/languageDetector";
 
 interface TextFileViewerProps {
@@ -26,86 +25,236 @@ const formatSize = (bytes: number): string => {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
+// Line type for unified view
+type LineType = "normal" | "added" | "removed";
+
+interface UnifiedLine {
+  type: LineType;
+  content: string;
+  oldLineNumber: number | null; // line number in old file (null for added lines)
+  newLineNumber: number | null; // line number in new file (null for removed lines)
+}
+
+/**
+ * Build a unified view of the file with diff information.
+ * Returns lines with type annotations for coloring.
+ */
+function buildUnifiedView(content: string, diffText: string): UnifiedLine[] | null {
+  try {
+    const patches = parsePatch(diffText);
+    if (patches.length === 0) return null;
+
+    const patch = patches[0];
+    if (!patch.hunks || patch.hunks.length === 0) return null;
+
+    const fileLines = content.split("\n");
+    const result: UnifiedLine[] = [];
+    let newLineIdx = 0; // 0-based index into new file (current content)
+    let oldLineIdx = 0; // 0-based index into old file
+
+    for (const hunk of patch.hunks) {
+      // Add unchanged lines before this hunk
+      const hunkStartInNew = hunk.newStart - 1; // 0-based
+      const hunkStartInOld = hunk.oldStart - 1; // 0-based
+
+      // Lines before hunk exist in both old and new
+      while (newLineIdx < hunkStartInNew && newLineIdx < fileLines.length) {
+        result.push({
+          type: "normal",
+          content: fileLines[newLineIdx],
+          oldLineNumber: oldLineIdx + 1,
+          newLineNumber: newLineIdx + 1,
+        });
+        newLineIdx++;
+        oldLineIdx++;
+      }
+
+      // Sync old line index to hunk start
+      oldLineIdx = hunkStartInOld;
+
+      // Process hunk lines
+      for (const line of hunk.lines) {
+        const prefix = line[0];
+        const lineContent = line.slice(1);
+
+        if (prefix === "-") {
+          // Removed line - exists in old file only
+          result.push({
+            type: "removed",
+            content: lineContent,
+            oldLineNumber: oldLineIdx + 1,
+            newLineNumber: null,
+          });
+          oldLineIdx++;
+        } else if (prefix === "+") {
+          // Added line - exists in new file only
+          result.push({
+            type: "added",
+            content: lineContent,
+            oldLineNumber: null,
+            newLineNumber: newLineIdx + 1,
+          });
+          newLineIdx++;
+        } else if (prefix === " ") {
+          // Context line - exists in both
+          result.push({
+            type: "normal",
+            content: lineContent,
+            oldLineNumber: oldLineIdx + 1,
+            newLineNumber: newLineIdx + 1,
+          });
+          newLineIdx++;
+          oldLineIdx++;
+        }
+        // Skip other prefixes (like '\')
+      }
+    }
+
+    // Add remaining lines after last hunk
+    while (newLineIdx < fileLines.length) {
+      const line = fileLines[newLineIdx];
+      // Skip trailing empty line
+      if (newLineIdx === fileLines.length - 1 && line === "") {
+        break;
+      }
+      result.push({
+        type: "normal",
+        content: line,
+        oldLineNumber: oldLineIdx + 1,
+        newLineNumber: newLineIdx + 1,
+      });
+      newLineIdx++;
+      oldLineIdx++;
+    }
+
+    return result;
+  } catch {
+    return null;
+  }
+}
+
 export const TextFileViewer: React.FC<TextFileViewerProps> = (props) => {
-  // Detect language from file extension
+  const { theme: themeMode } = useTheme();
   const language = getLanguageFromPath(props.filePath);
   const languageDisplayName = getLanguageDisplayName(language);
 
-  // Count lines - match HighlightedCode's filtering of trailing empty line
-  const lines = props.content.split("\n");
-  const lineCount = lines.length - (lines[lines.length - 1] === "" ? 1 : 0);
+  // Count lines
+  const fileLines = props.content.split("\n");
+  const lineCount = fileLines.length - (fileLines[fileLines.length - 1] === "" ? 1 : 0);
 
-  // Track whether diff section is expanded
-  const [diffExpanded, setDiffExpanded] = React.useState(true);
-
-  // Parse diff to get hunks
-  const diffHunks = React.useMemo(() => {
+  // Build unified view if we have a diff
+  const unifiedLines = React.useMemo(() => {
     if (!props.diff) return null;
-    try {
-      const patches = parsePatch(props.diff);
-      if (patches.length === 0 || patches[0].hunks.length === 0) return null;
-      return patches[0].hunks;
-    } catch {
-      return null;
-    }
-  }, [props.diff]);
+    return buildUnifiedView(props.content, props.diff);
+  }, [props.content, props.diff]);
 
-  const hasDiff = diffHunks && diffHunks.length > 0;
+  // Syntax highlight all unique line contents
+  const [highlightedContent, setHighlightedContent] = React.useState<Map<string, string> | null>(
+    null
+  );
+
+  React.useEffect(() => {
+    const linesToHighlight = unifiedLines
+      ? unifiedLines.map((l) => l.content)
+      : fileLines.filter((l, i, arr) => i < arr.length - 1 || l !== "");
+
+    const theme = themeMode === "light" || themeMode === "solarized-light" ? "light" : "dark";
+
+    let cancelled = false;
+
+    async function highlight() {
+      try {
+        const code = linesToHighlight.join("\n");
+        const html = await highlightCode(code, language, theme);
+        if (cancelled) return;
+
+        const highlighted = extractShikiLines(html);
+        const map = new Map<string, string>();
+        linesToHighlight.forEach((line, idx) => {
+          if (highlighted[idx]) {
+            map.set(line, highlighted[idx]);
+          }
+        });
+        setHighlightedContent(map);
+      } catch {
+        if (!cancelled) setHighlightedContent(null);
+      }
+    }
+
+    void highlight();
+    return () => {
+      cancelled = true;
+    };
+  }, [unifiedLines, fileLines, language, themeMode]);
+
+  const addedCount = unifiedLines?.filter((l) => l.type === "added").length ?? 0;
+  const removedCount = unifiedLines?.filter((l) => l.type === "removed").length ?? 0;
+
+  const hasDiff = unifiedLines !== null;
+
+  // Render a single line (with one or two line number columns)
+  const renderLine = (
+    content: string,
+    oldLineNum: number | null,
+    newLineNum: number | null,
+    type: LineType,
+    key: number
+  ) => {
+    const highlighted = highlightedContent?.get(content);
+    const bgClass =
+      type === "added" ? "bg-green-500/20" : type === "removed" ? "bg-red-500/20" : "";
+
+    return (
+      <div key={key} className={`${bgClass} flex`}>
+        {hasDiff ? (
+          <>
+            <div className="w-10 shrink-0 pr-1 text-right text-[var(--color-muted)] select-none">
+              {oldLineNum ?? ""}
+            </div>
+            <div className="w-10 shrink-0 pr-2 text-right text-[var(--color-muted)] select-none">
+              {newLineNum ?? ""}
+            </div>
+          </>
+        ) : (
+          <div className="line-number w-10 shrink-0 pr-2 text-right text-[var(--color-muted)] select-none">
+            {newLineNum ?? ""}
+          </div>
+        )}
+        <div
+          className="code-line min-w-0 flex-1"
+          {...(highlighted
+            ? { dangerouslySetInnerHTML: { __html: highlighted } }
+            : { children: content || "\u00A0" })}
+        />
+      </div>
+    );
+  };
 
   return (
     <div className="bg-background flex h-full flex-col">
-      {/* Diff section (if there are uncommitted changes) */}
-      {hasDiff && (
-        <div className="border-border-light shrink-0 border-b">
-          <button
-            type="button"
-            className="text-muted-foreground hover:bg-accent/50 flex w-full items-center gap-1 px-2 py-1 text-xs"
-            onClick={() => setDiffExpanded(!diffExpanded)}
-          >
-            {diffExpanded ? (
-              <ChevronDown className="h-3 w-3" />
-            ) : (
-              <ChevronRight className="h-3 w-3" />
-            )}
-            <span className="font-medium">Uncommitted Changes</span>
-            <span className="text-muted">
-              ({diffHunks.length} hunk{diffHunks.length > 1 ? "s" : ""})
-            </span>
-          </button>
-          {diffExpanded && (
-            <div className="max-h-[300px] overflow-auto">
-              {diffHunks.map((hunk, idx) => (
-                <DiffRenderer
-                  key={idx}
-                  content={hunk.lines.join("\n")}
-                  showLineNumbers={true}
-                  oldStart={hunk.oldStart}
-                  newStart={hunk.newStart}
-                  filePath={props.filePath}
-                  fontSize="11px"
-                  maxHeight="none"
-                  className="rounded-none"
-                />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Code content - fills available space */}
       <div className="min-h-0 flex-1 overflow-auto">
-        <HighlightedCode
-          code={props.content}
-          language={language}
-          showLineNumbers={true}
-          className="text-xs"
-        />
+        <div className="code-block-container text-[11px]" style={{ display: "block" }}>
+          {unifiedLines
+            ? unifiedLines.map((line, idx) =>
+                renderLine(line.content, line.oldLineNumber, line.newLineNumber, line.type, idx)
+              )
+            : fileLines
+                .filter((_, i, arr) => i < arr.length - 1 || fileLines[i] !== "")
+                .map((content, idx) => renderLine(content, idx + 1, idx + 1, "normal", idx))}
+        </div>
       </div>
 
       {/* Status line */}
       <div className="border-border-light text-muted-foreground flex shrink-0 items-center gap-3 border-t px-2 py-1 text-xs">
         <span>{formatSize(props.size)}</span>
         <span>{lineCount.toLocaleString()} lines</span>
+        {(addedCount > 0 || removedCount > 0) && (
+          <span>
+            <span className="text-green-600 dark:text-green-500">+{addedCount}</span>
+            <span className="text-muted-foreground">/</span>
+            <span className="text-red-600 dark:text-red-500">-{removedCount}</span>
+          </span>
+        )}
         <span className="ml-auto">{languageDisplayName}</span>
       </div>
     </div>
