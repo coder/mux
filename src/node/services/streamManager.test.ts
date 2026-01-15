@@ -806,6 +806,29 @@ describe("StreamManager - ask_user_question Partial Persistence", () => {
   });
 });
 
+describe("StreamManager - stopStream", () => {
+  test("emits stream-abort when stopping non-existent stream", async () => {
+    const mockHistoryService = createMockHistoryService();
+    const mockPartialService = createMockPartialService();
+    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+
+    // Track emitted events
+    const abortEvents: Array<{ workspaceId: string; messageId: string }> = [];
+    streamManager.on("stream-abort", (data: { workspaceId: string; messageId: string }) => {
+      abortEvents.push(data);
+    });
+
+    // Stop a stream that doesn't exist (simulates interrupt before stream-start)
+    const result = await streamManager.stopStream("test-workspace");
+
+    expect(result.success).toBe(true);
+    expect(abortEvents).toHaveLength(1);
+    expect(abortEvents[0].workspaceId).toBe("test-workspace");
+    // messageId is empty for synthetic abort (no actual stream existed)
+    expect(abortEvents[0].messageId).toBe("");
+  });
+});
+
 // Note: Comprehensive Anthropic cache control tests are in cacheStrategy.test.ts
 // Those unit tests cover all cache control functionality without requiring
 // complex setup. StreamManager integrates those functions directly.

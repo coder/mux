@@ -1929,7 +1929,17 @@ export class StreamManager extends EventEmitter {
     try {
       const streamInfo = this.workspaceStreams.get(typedWorkspaceId);
       if (!streamInfo) {
-        return Ok(undefined); // No active stream
+        // Emit abort event so frontend clears pending stream state.
+        // This handles the case where user interrupts before stream-start arrives.
+        // Use empty messageId - frontend handles gracefully (just clears pendingStreamStartTime).
+        this.emit("stream-abort", {
+          type: "stream-abort",
+          workspaceId,
+          messageId: "",
+          metadata: {},
+          abandonPartial: options?.abandonPartial ?? false,
+        });
+        return Ok(undefined);
       }
 
       const soft = options?.soft ?? false;
