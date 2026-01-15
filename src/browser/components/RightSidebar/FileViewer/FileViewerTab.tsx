@@ -24,16 +24,22 @@ interface FileViewerTabProps {
   relativePath: string;
 }
 
-type LoadState =
-  | { status: "loading" }
-  | { status: "error"; message: string }
-  | { status: "loaded"; data: FileContentsResult; diff: string | null };
+interface LoadedData {
+  data: FileContentsResult;
+  diff: string | null;
+}
 
 const DEBOUNCE_MS = 2000;
 
 export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
   const { api } = useAPI();
-  const [state, setState] = React.useState<LoadState>({ status: "loading" });
+  // Separate loading flag from loaded data - keeps content visible during refresh
+  const [isLoading, setIsLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
+  const [loaded, setLoaded] = React.useState<LoadedData | null>(null);
+  // Track which path the loaded data is for (to detect file switches)
+  // Using ref to avoid effect dep issues - we only read this to decide loading state
+  const loadedPathRef = React.useRef<string | null>(null);
   // Refresh counter to trigger re-fetch
   const [refreshCounter, setRefreshCounter] = React.useState(0);
 
@@ -60,18 +66,25 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
     // Validate path before making request
     const pathError = validateRelativePath(props.relativePath);
     if (pathError) {
-      setState({ status: "error", message: pathError });
+      setError(pathError);
+      setIsLoading(false);
       return;
     }
 
     // Empty path is not valid for file viewing
     if (!props.relativePath) {
-      setState({ status: "error", message: "No file selected" });
+      setError("No file selected");
+      setIsLoading(false);
       return;
     }
 
     let cancelled = false;
-    setState({ status: "loading" });
+    // Show loading spinner on initial load or when switching files, but not on refresh
+    const isSameFile = loadedPathRef.current === props.relativePath;
+    if (!isSameFile) {
+      setIsLoading(true);
+    }
+    setError(null);
 
     async function fetchFile() {
       try {
@@ -91,7 +104,8 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
 
         // Handle ORPC-level errors
         if (!fileResult.success) {
-          setState({ status: "error", message: fileResult.error });
+          setError(fileResult.error);
+          setIsLoading(false);
           return;
         }
 
@@ -99,21 +113,20 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
 
         // Check for "too large" exit code (custom exit code from our script)
         if (bashResult.exitCode === EXIT_CODE_TOO_LARGE) {
-          setState({
-            status: "loaded",
+          setLoaded({
             data: { type: "error", message: "File is too large to display. Maximum: 10 MB." },
             diff: null,
           });
+          loadedPathRef.current = props.relativePath;
+          setIsLoading(false);
           return;
         }
 
         // Check for bash command failure with no usable output
         if (!bashResult.success && !bashResult.output) {
           const errorMsg = bashResult.error ?? "Failed to read file";
-          setState({
-            status: "error",
-            message: errorMsg.length > 128 ? errorMsg.slice(0, 128) + "..." : errorMsg,
-          });
+          setError(errorMsg.length > 128 ? errorMsg.slice(0, 128) + "..." : errorMsg);
+          setIsLoading(false);
           return;
         }
 
@@ -129,13 +142,13 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
           diff = diffResult.data.output;
         }
 
-        setState({ status: "loaded", data, diff });
+        setLoaded({ data, diff });
+        loadedPathRef.current = props.relativePath;
+        setIsLoading(false);
       } catch (err) {
         if (cancelled) return;
-        setState({
-          status: "error",
-          message: err instanceof Error ? err.message : "Failed to load file",
-        });
+        setError(err instanceof Error ? err.message : "Failed to load file");
+        setIsLoading(false);
       }
     }
 
@@ -146,7 +159,11 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
     };
   }, [api, props.workspaceId, props.relativePath, refreshCounter]);
 
-  if (state.status === "loading") {
+  // Check if we have valid cached content for the current file
+  const hasValidCache = loaded && loadedPathRef.current === props.relativePath;
+
+  // Show loading spinner only on initial load or file switch (no valid cached content)
+  if (isLoading && !hasValidCache) {
     return (
       <div className="flex h-full items-center justify-center">
         <RefreshCw className="text-muted h-5 w-5 animate-spin" />
@@ -154,16 +171,26 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
     );
   }
 
-  if (state.status === "error") {
+  // Show error only if we have no content to fall back to
+  if (error && !hasValidCache) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 p-4">
         <AlertCircle className="text-destructive h-8 w-8" />
-        <p className="text-destructive text-center text-sm">{state.message}</p>
+        <p className="text-destructive text-center text-sm">{error}</p>
       </div>
     );
   }
 
-  const { data } = state;
+  // No data at all (shouldn't happen but handle gracefully)
+  if (!hasValidCache) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <p className="text-muted-foreground text-sm">No file loaded</p>
+      </div>
+    );
+  }
+
+  const { data, diff } = loaded;
 
   // Handle error response from API (file too large, binary, etc.)
   if (data.type === "error") {
@@ -184,7 +211,7 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
         content={data.content}
         filePath={props.relativePath}
         size={data.size}
-        diff={state.diff}
+        diff={diff}
         onRefresh={handleRefresh}
       />
     );
