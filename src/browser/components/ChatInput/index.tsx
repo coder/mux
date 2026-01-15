@@ -2062,9 +2062,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           { text: actualMessageText, reviews: reviewsData },
           muxMetadata
         );
+        // When editing /compact, compactionOptions already includes the base sendMessageOptions.
+        // Avoid duplicating additionalSystemInstructions.
         const additionalSystemInstructions = mergeAdditionalSystemInstructions(
-          sendMessageOptions.additionalSystemInstructions,
-          compactionOptions.additionalSystemInstructions,
+          compactionOptions.additionalSystemInstructions ??
+            sendMessageOptions.additionalSystemInstructions,
           skillSystemInstructions
         );
 
