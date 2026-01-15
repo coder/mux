@@ -171,12 +171,13 @@ jobs:
             exit 1
           fi
           # Count timeout errors separately from other errors
-          TIMEOUT_ERRORS=$(find jobs -name 'exception.txt' -exec grep -l "AgentTimeoutError" {} \; 2>/dev/null | wc -l | tr -d ' ')
+          # Both AgentTimeoutError and VerifierTimeoutError are expected for hard tasks
+          TIMEOUT_ERRORS=$(find jobs -name 'exception.txt' -exec grep -lE "(AgentTimeoutError|VerifierTimeoutError)" {} \; 2>/dev/null | wc -l | tr -d ' ')
           OTHER_ERRORS=$((N_ERRORS - TIMEOUT_ERRORS))
           if [ "$OTHER_ERRORS" -gt 0 ]; then
             echo "❌ $OTHER_ERRORS task(s) had non-timeout errors - agent setup or execution failed"
             echo "--- Exception details (excluding timeouts) ---"
-            find jobs -name 'exception.txt' -exec sh -c 'grep -L "AgentTimeoutError" "$1" 2>/dev/null && echo "=== $1 ===" && cat "$1"' _ {} \; 2>/dev/null || true
+            find jobs -name 'exception.txt' -exec sh -c 'grep -qE "(AgentTimeoutError|VerifierTimeoutError)" "$1" || { echo "=== $1 ===" && cat "$1"; }' _ {} \; 2>/dev/null || true
             exit 1
           fi
           if [ "$TIMEOUT_ERRORS" -gt 0 ]; then
