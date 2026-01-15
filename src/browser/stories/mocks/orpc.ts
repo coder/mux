@@ -145,6 +145,8 @@ export interface MockORPCClientOptions {
     githubUser: string | null;
     error: { message: string; hasEncryptedKey: boolean } | null;
   };
+  /** Custom slash commands per workspace */
+  slashCommands?: Map<string, Array<{ name: string; description?: string }>>;
 }
 
 interface MockBackgroundProcess {
@@ -213,6 +215,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     gitInit: customGitInit,
     runtimeAvailability: customRuntimeAvailability,
     signingCapabilities: customSigningCapabilities,
+    slashCommands = new Map<string, Array<{ name: string }>>(),
   } = options;
 
   // Feature flags
@@ -677,6 +680,18 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         get: (input: { workspaceId: string }) =>
           Promise.resolve(mcpOverrides.get(input.workspaceId) ?? {}),
         set: () => Promise.resolve({ success: true, data: undefined }),
+      },
+      slashCommands: {
+        list: (input: { workspaceId: string }) =>
+          Promise.resolve({
+            commands: slashCommands.get(input.workspaceId) ?? [],
+            skippedInvalidNames: [],
+          }),
+        run: () =>
+          Promise.resolve({
+            success: false,
+            error: "Not implemented in mock",
+          }),
       },
       getFileCompletions: (input: { workspaceId: string; query: string; limit?: number }) => {
         // Mock file paths for storybook - simulate typical project structure

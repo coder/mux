@@ -104,4 +104,30 @@ export class ChatHarness {
       { timeout: timeoutMs }
     );
   }
+
+  /**
+   * Wait for init/command progress output to contain a string.
+   * This checks the streaming output panel that appears during slash command execution.
+   */
+  async expectInitOutputContains(needle: string, timeoutMs: number = 30_000): Promise<void> {
+    await waitFor(
+      () => {
+        // Init output is rendered in elements with data-init-output attribute or in the init state panel
+        const initOutputElements = this.container.querySelectorAll("[data-init-output]");
+        const initOutputText = Array.from(initOutputElements)
+          .map((el) => el.textContent ?? "")
+          .join("\n");
+
+        // Also check the general container for streaming output (fallback)
+        const containerText = this.container.textContent ?? "";
+
+        if (!initOutputText.includes(needle) && !containerText.includes(needle)) {
+          throw new Error(
+            `Init output does not contain "${needle}". Init elements: ${initOutputElements.length}, text: "${initOutputText.slice(0, 200)}"`
+          );
+        }
+      },
+      { timeout: timeoutMs }
+    );
+  }
 }

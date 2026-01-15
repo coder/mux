@@ -74,6 +74,12 @@ import {
   type FileCompletionsIndex,
 } from "@/node/services/fileCompletionsIndex";
 import { taskQueueDebug } from "@/node/services/taskQueueDebug";
+import {
+  SlashCommandService,
+  type SlashCommand,
+  type SlashCommandResult,
+} from "@/node/services/slashCommandService";
+import { getMuxEnv, getRuntimeType } from "@/node/runtime/initHook";
 
 /** Maximum number of retry attempts when workspace name collides */
 const MAX_WORKSPACE_NAME_COLLISION_RETRIES = 3;
@@ -2435,6 +2441,120 @@ export class WorkspaceService extends EventEmitter {
     const session = this.sessions.get(workspaceId);
     if (session) {
       session.emitChatEvent({ type: "idle-compaction-needed" });
+    }
+  }
+
+  // ===== Custom Slash Commands =====
+
+  /** Lazy-created slash command service (shared across workspaces) */
+  private slashCommandService?: SlashCommandService;
+
+  private getSlashCommandService(): SlashCommandService {
+    if (!this.slashCommandService) {
+      this.slashCommandService = new SlashCommandService();
+
+      // Forward slash command events to workspace chat streams
+      this.slashCommandService.on("init-start", (event) => {
+        const session = this.sessions.get(event.workspaceId);
+        if (session) {
+          session.emitChatEvent(event);
+        }
+      });
+
+      this.slashCommandService.on("init-output", (event) => {
+        const session = this.sessions.get(event.workspaceId);
+        if (session) {
+          session.emitChatEvent(event);
+        }
+      });
+
+      this.slashCommandService.on("init-end", (event) => {
+        const session = this.sessions.get(event.workspaceId);
+        if (session) {
+          session.emitChatEvent(event);
+        }
+      });
+    }
+    return this.slashCommandService;
+  }
+
+  /**
+   * List available custom slash commands in a workspace.
+   * Discovers executables at <workspacePath>/.mux/commands/<name>
+   */
+  async listSlashCommands(
+    workspaceId: string
+  ): Promise<{ commands: SlashCommand[]; skippedInvalidNames: string[] }> {
+    const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
+    if (!metadataResult.success) {
+      return { commands: [], skippedInvalidNames: [] };
+    }
+    const metadata = metadataResult.data;
+
+    try {
+      const runtime = createRuntime(metadata.runtimeConfig, {
+        projectPath: metadata.projectPath,
+      });
+      const workspacePath = runtime.getWorkspacePath(metadata.projectPath, metadata.name);
+      return await this.getSlashCommandService().listCommands(runtime, workspacePath);
+    } catch (error) {
+      log.debug(`Failed to list slash commands for ${workspaceId}:`, error);
+      return { commands: [], skippedInvalidNames: [] };
+    }
+  }
+
+  /**
+   * Run a custom slash command in a workspace.
+   * Streams init-style events to the workspace's chat stream.
+   * Returns the stdout when complete.
+   */
+  async runSlashCommand(
+    workspaceId: string,
+    name: string,
+    args?: string[],
+    abortSignal?: AbortSignal
+  ): Promise<Result<SlashCommandResult>> {
+    const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
+    if (!metadataResult.success) {
+      return Err(`Workspace not found: ${workspaceId}`);
+    }
+    const metadata = metadataResult.data;
+
+    try {
+      const runtime = createRuntime(metadata.runtimeConfig, {
+        projectPath: metadata.projectPath,
+      });
+      const workspacePath = runtime.getWorkspacePath(metadata.projectPath, metadata.name);
+
+      // Build MUX environment variables
+      const muxEnv = getMuxEnv(
+        metadata.projectPath,
+        getRuntimeType(metadata.runtimeConfig),
+        metadata.name
+      );
+      // Add workspace path (documented in slash-commands.mdx)
+      muxEnv.MUX_WORKSPACE_PATH = workspacePath;
+
+      const result = await this.getSlashCommandService().runCommand(
+        runtime,
+        workspacePath,
+        workspaceId,
+        name,
+        args ?? [],
+        muxEnv,
+        abortSignal
+      );
+
+      // Exit code 2 is a special "user abort" signal - return result so frontend
+      // can show output but not send to model. Other non-zero exits are errors.
+      if (result.exitCode !== 0 && result.exitCode !== 2) {
+        return Err(`Command /${name} failed with exit code ${result.exitCode}`);
+      }
+
+      return Ok(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Err(`Failed to run /${name}: ${message}`);
     }
   }
 }

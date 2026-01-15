@@ -1,0 +1,243 @@
+---
+title: Custom Slash Commands
+description: Create custom commands that run in your workspace
+---
+
+Add files to `.mux/commands/` to define custom slash commands. The file's contents (or script output) becomes your message to the model.
+
+## Quick Start
+
+The simplest command is a markdown file:
+
+```bash
+mkdir -p .mux/commands
+cat > .mux/commands/dry.md << 'EOF'
+---
+usage: /dry - refactor code to follow DRY principles
+---
+Refactor the code to follow DRY (Don't Repeat Yourself) principles.
+EOF
+```
+
+Now type `/dry` in chat - the file contents (after frontmatter) become your message.
+
+## File Types
+
+Commands can be either **static markdown files** or **executable scripts**:
+
+| Type       | File                    | Behavior                                      |
+| ---------- | ----------------------- | --------------------------------------------- |
+| Static     | `<name>.md`             | Contents read verbatim (frontmatter stripped) |
+| Executable | `<name>` (no extension) | Script runs, stdout becomes message           |
+
+Static `.md` files take precedence over executables with the same name.
+
+## File Convention
+
+- **Location**: `<workspacePath>/.mux/commands/<name>.md` or `<name>` (executable)
+- **Name format**: lowercase letters, numbers, and hyphens (e.g., `my-command`)
+- **Executables**: must have shebang (`#!/bin/bash`, `#!/usr/bin/env node`, etc.)
+
+## Usage Comments
+
+Add a `usage:` line to show a description in autocomplete:
+
+**Markdown files** - use YAML frontmatter:
+
+```markdown
+---
+usage: /dry - refactor code to follow DRY principles
+---
+
+Your prompt content here...
+```
+
+**Executable scripts** - use a comment after the shebang:
+
+```bash
+#!/bin/bash
+# usage: /context - show current git context
+```
+
+## Progressive Examples
+
+### Level 1: Static Markdown File
+
+The simplest command is a markdown file with optional frontmatter:
+
+```markdown
+# .mux/commands/dry.md
+
+---
+
+## usage: /dry - refactor code to follow DRY principles
+
+Refactor the code to follow DRY (Don't Repeat Yourself) principles.
+Identify repeated patterns and extract them into reusable functions or modules.
+```
+
+**Usage:** `/dry`
+
+### Level 2: Executable Script
+
+For dynamic content, use an executable:
+
+```bash
+#!/usr/bin/env bash
+# .mux/commands/rebase
+# usage: /rebase - fetch origin and rebase onto main
+
+git fetch origin
+git rebase origin/main
+
+echo "Rebased onto origin/main. Ready for next task."
+```
+
+**Usage:** `/rebase`
+
+### Level 3: Using Arguments
+
+Executable commands receive arguments from the same line:
+
+```bash
+#!/usr/bin/env bash
+# .mux/commands/pr-review
+# usage: /pr-review <PR-NUM> - review a pull request
+
+pr_num="$1"
+if [ -z "$pr_num" ]; then
+  echo "Usage: /pr-review <PR-NUM>" >&2
+  exit 1
+fi
+
+# Fetch PR diff and format as prompt
+echo "Review this pull request (#$pr_num):"
+echo ""
+gh pr diff "$pr_num" 2>/dev/null || {
+  echo "Failed to fetch PR #$pr_num" >&2
+  exit 1
+}
+```
+
+**Usage:** `/pr-review 123`
+
+→ argv: `["123"]`
+
+## Result Protocol
+
+| Exit Code | Behavior                                                |
+| --------- | ------------------------------------------------------- |
+| 0         | Success - stdout sent as your message to the model      |
+| 2         | User abort - output shown but NOT sent (edit and retry) |
+| Other     | Error - shows error message, returns to editing         |
+
+- **stdout**: becomes the message text sent to the model
+- **stderr**: shown in the progress UI (for debugging), not sent to model
+
+Use exit code 2 when a command wants to show a preview without sending:
+
+```bash
+#!/usr/bin/env bash
+# .mux/commands/preview-diff
+# usage: /preview-diff - preview staged changes without sending
+
+diff=$(git diff --cached)
+if [ -z "$diff" ]; then
+  echo "No staged changes" >&2
+  exit 1
+fi
+
+echo "Staged changes:"
+echo "$diff"
+exit 2  # Show output but don't send - user can edit and retry
+```
+
+## Real-time Output
+
+While your command runs, output streams in real-time below the chat input. You can:
+
+- Watch progress as lines arrive
+- Cancel mid-execution (Escape key or cancel button)
+- On cancel: returns to editing with original message preserved
+
+## Environment Variables
+
+Custom commands receive the same [environment variables](/hooks/environment-variables) as init hooks:
+
+- `MUX_PROJECT_PATH` - absolute path to your project
+- `MUX_RUNTIME` - runtime type (local, ssh, docker)
+- `MUX_WORKSPACE_NAME` - name of the current workspace
+- `MUX_WORKSPACE_PATH` - absolute path to the workspace
+
+## More Examples
+
+### Context-aware review
+
+````bash
+#!/usr/bin/env bash
+# .mux/commands/review
+# usage: /review <file> - review a specific file
+
+file="${1:-}"
+if [ -z "$file" ]; then
+  echo "Usage: /review <file>" >&2
+  exit 1
+fi
+
+echo "Please review this file: $file"
+echo ""
+echo '```'
+cat "$file"
+echo '```'
+````
+
+### Node.js command
+
+```javascript
+#!/usr/bin/env node
+// .mux/commands/deps
+// usage: /deps - show outdated npm dependencies
+
+const { execSync } = require("child_process");
+
+try {
+  const output = execSync("npm outdated --json", { encoding: "utf8" });
+  const deps = JSON.parse(output || "{}");
+  const names = Object.keys(deps);
+
+  if (names.length === 0) {
+    console.log("All dependencies are up to date!");
+  } else {
+    console.log(`Found ${names.length} outdated dependencies:\n`);
+    for (const name of names) {
+      const { current, wanted, latest } = deps[name];
+      console.log(`- ${name}: ${current} → ${latest} (wanted: ${wanted})`);
+    }
+  }
+} catch (e) {
+  // npm outdated exits non-zero when deps are outdated
+  if (e.stdout) {
+    const deps = JSON.parse(e.stdout);
+    console.log(`Found ${Object.keys(deps).length} outdated dependencies:\n`);
+    for (const [name, info] of Object.entries(deps)) {
+      console.log(`- ${name}: ${info.current} → ${info.latest}`);
+    }
+  } else {
+    console.error("Failed to check dependencies:", e.message);
+    process.exit(1);
+  }
+}
+```
+
+## Autocomplete
+
+Custom commands appear in slash command suggestions after built-in commands. Type `/` to see available commands.
+
+## Comparison with Built-in Commands
+
+| Feature      | Built-in (`/compact`, `/model`) | Custom (`.mux/commands/*`) |
+| ------------ | ------------------------------- | -------------------------- |
+| Execution    | In-process                      | Subprocess                 |
+| Output       | Immediate action                | Becomes user message       |
+| Customizable | No                              | Yes                        |
+| Streaming    | N/A                             | Real-time                  |

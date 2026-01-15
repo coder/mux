@@ -77,9 +77,15 @@ function buildSubcommandSuggestions(
   });
 }
 
+export interface CustomSlashCommand {
+  name: string;
+  description?: string;
+}
+
 export function getSlashCommandSuggestions(
   input: string,
-  context: SlashSuggestionContext = {}
+  context: SlashSuggestionContext = {},
+  customCommands: CustomSlashCommand[] = []
 ): SlashSuggestion[] {
   if (!input.startsWith("/")) {
     return [];
@@ -98,7 +104,33 @@ export function getSlashCommandSuggestions(
   const stage = completedTokens.length;
 
   if (stage === 0) {
-    return buildTopLevelSuggestions(partialToken, context);
+    const builtinSuggestions = buildTopLevelSuggestions(partialToken, context);
+
+    // Add custom commands (only in workspace mode, and don't duplicate builtins)
+    if (context.variant !== "creation" && customCommands.length > 0) {
+      const builtinNames = new Set(COMMAND_DEFINITIONS.map((d) => d.key));
+      const normalizedPartial = partialToken.trim().toLowerCase();
+
+      const customSuggestions: SlashSuggestion[] = customCommands
+        .filter((cmd) => {
+          // Exclude if it's a builtin command name
+          if (builtinNames.has(cmd.name)) return false;
+          // Filter by partial match
+          return normalizedPartial ? cmd.name.toLowerCase().startsWith(normalizedPartial) : true;
+        })
+        .map((cmd) => ({
+          id: `custom-command:${cmd.name}`,
+          display: `/${cmd.name}`,
+          description: cmd.description ?? "Custom command",
+          replacement: `/${cmd.name} `,
+          isCustom: true,
+        }));
+
+      // Append custom commands after builtin commands
+      return [...builtinSuggestions, ...customSuggestions];
+    }
+
+    return builtinSuggestions;
   }
 
   const rootKey = completedTokens[0] ?? tokens[0];

@@ -70,6 +70,7 @@
                 "group": "Hooks",
                 "pages": [
                   "hooks/init",
+                  "hooks/slash-commands",
                   "hooks/tools",
                   "hooks/environment-variables"
                 ]

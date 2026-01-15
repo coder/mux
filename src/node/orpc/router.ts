@@ -1618,6 +1618,31 @@ export const router = (authToken?: string) => {
             }
           }),
       },
+      slashCommands: {
+        list: t
+          .input(schemas.workspace.slashCommands.list.input)
+          .output(schemas.workspace.slashCommands.list.output)
+          .handler(async ({ context, input }) => {
+            return context.workspaceService.listSlashCommands(input.workspaceId);
+          }),
+        run: t
+          .input(schemas.workspace.slashCommands.run.input)
+          .output(schemas.workspace.slashCommands.run.output)
+          .handler(async ({ context, input }) => {
+            const result = await context.workspaceService.runSlashCommand(
+              input.workspaceId,
+              input.name,
+              input.args
+            );
+            if (!result.success) {
+              return { success: false, error: result.error };
+            }
+            return {
+              success: true,
+              data: { stdout: result.data.stdout, exitCode: result.data.exitCode },
+            };
+          }),
+      },
     },
     tasks: {
       create: t

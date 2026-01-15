@@ -280,17 +280,41 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
           {isFileSuggestion && (
             <FileIcon filePath={suggestion.display} className="shrink-0 text-sm" />
           )}
-          <div className="font-monospace text-foreground min-w-0 flex-1 truncate text-xs">
+          <div
+            className={cn(
+              "font-monospace shrink-0 text-xs",
+              suggestion.isCustom ? "text-plan-mode-light" : "text-foreground"
+            )}
+          >
             <HighlightedText text={suggestion.display} query={highlightQuery} />
           </div>
-          <div className="text-secondary shrink-0 text-right text-[11px]">
+          {suggestion.isCustom && (
+            <span className="bg-plan-mode/20 text-plan-mode shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium">
+              custom
+            </span>
+          )}
+          <div className="text-secondary min-w-0 flex-1 truncate text-right text-[11px]">
             {suggestion.description}
           </div>
         </div>
       ))}
       <div className="border-border-light bg-dark text-placeholder [&_span]:text-medium shrink-0 border-t px-2.5 py-1 text-center text-[10px] [&_span]:font-medium">
-        <span>Enter</span> or <span>Tab</span> to complete • <span>↑↓</span> to navigate •{" "}
-        <span>Esc</span> to dismiss
+        <span>Tab</span> to complete • <span>↑↓</span> to navigate • <span>Esc</span> to dismiss
+        {!isFileSuggestion && (
+          <>
+            {" "}
+            •{" "}
+            <a
+              href="https://mux.coder.com/hooks/slash-commands"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-link hover:underline"
+              onClick={(e) => e.stopPropagation()}
+            >
+              Add custom commands
+            </a>
+          </>
+        )}
       </div>
     </div>
   );

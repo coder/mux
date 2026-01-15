@@ -95,12 +95,14 @@ describe("commandParser", () => {
         type: "unknown-command",
         command: "foo",
         subcommand: undefined,
+        rawInput: "",
       });
 
       expectParse("/foo bar", {
         type: "unknown-command",
         command: "foo",
         subcommand: "bar",
+        rawInput: "bar",
       });
     });
 

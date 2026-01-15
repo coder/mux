@@ -617,6 +617,49 @@ export const workspace = {
       output: ResultSchema(z.void(), z.string()),
     },
   },
+  /**
+   * Custom slash commands - executables in .mux/commands/
+   */
+  slashCommands: {
+    /**
+     * List available custom slash commands in a workspace.
+     * Discovers executables at <workspacePath>/.mux/commands/<name>
+     */
+    list: {
+      input: z.object({ workspaceId: z.string() }),
+      output: z.object({
+        commands: z.array(
+          z.object({
+            name: z.string(),
+            description: z.string().optional(),
+          })
+        ),
+        /** Files that were skipped due to invalid names (for user feedback) */
+        skippedInvalidNames: z.array(z.string()),
+      }),
+    },
+    /**
+     * Run a custom slash command.
+     * Streams init-style events (init-start, init-output, init-end) to onChat.
+     * Returns the stdout as the result message.
+     */
+    run: {
+      input: z.object({
+        workspaceId: z.string(),
+        name: z.string(),
+        args: z.array(z.string()).optional(),
+      }),
+      output: ResultSchema(
+        z.object({
+          /** Stdout from the command - becomes the user message */
+          stdout: z.string(),
+          /** Exit code from the command. 0 = success, 2 = user-abort (don't send to model) */
+          exitCode: z.number(),
+        }),
+        z.string()
+      ),
+    },
+  },
 };
 
 export type WorkspaceSendMessageOutput = z.infer<typeof workspace.sendMessage.output>;
