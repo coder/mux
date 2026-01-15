@@ -75,7 +75,7 @@ export const WithCustomCommands: AppStory = {
               [
                 { name: "dry", description: "/dry - do a dry run without making changes" },
                 { name: "review", description: "/review - review changes before committing" },
-                { name: "context", description: "/context - summarize project context" },
+                { name: "rebase", description: "/rebase - fetch origin and rebase onto main" },
                 { name: "pr-summary", description: "/pr-summary - generate a PR description" },
               ],
             ],
@@ -128,7 +128,7 @@ export const FilteredCommands: AppStory = {
               [
                 { name: "dry", description: "/dry - do a dry run" },
                 { name: "review" },
-                { name: "context", description: "/context - summarize project context" },
+                { name: "rebase", description: "/rebase - fetch and rebase onto main" },
               ],
             ],
           ]),

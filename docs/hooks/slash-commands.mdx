@@ -84,16 +84,16 @@ For dynamic content, use an executable:
 
 ```bash
 #!/usr/bin/env bash
-# .mux/commands/context
-# usage: /context - show current git context
+# .mux/commands/rebase
+# usage: /rebase - fetch origin and rebase onto main
 
-echo "Current directory: $(pwd)"
-echo "Git branch: $(git branch --show-current)"
-echo "Recent commits:"
-git log --oneline -5
+git fetch origin
+git rebase origin/main
+
+echo "Rebased onto origin/main. Ready for next task."
 ```
 
-**Usage:** `/context`
+**Usage:** `/rebase`
 
 ### Level 3: Using Arguments
 
