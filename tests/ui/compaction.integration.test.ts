@@ -65,7 +65,9 @@ describe("Compaction UI (mock AI router)", () => {
       await app.chat.send(`/compact -t 500\n${continueText}`);
 
       await app.chat.expectTranscriptContains("Mock compaction summary:");
-      await app.chat.expectTranscriptContains(`Mock response: ${continueText}`);
+      // Continue message is wrapped with context explaining it triggered compaction
+      await app.chat.expectTranscriptContains(`Mock response:`);
+      await app.chat.expectTranscriptContains(continueText);
 
       // Compaction should replace all previous history.
       await app.chat.expectTranscriptNotContains(seedMessage);
