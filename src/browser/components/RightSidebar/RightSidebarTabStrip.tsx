@@ -29,6 +29,8 @@ export interface RightSidebarTabStripItem {
   disabled?: boolean;
   /** The tab type (used for drag identification) */
   tab: TabType;
+  /** Optional callback to close this tab (for closeable tabs like terminals) */
+  onClose?: () => void;
 }
 
 interface RightSidebarTabStripProps {
@@ -85,6 +87,13 @@ const SortableTab: React.FC<{
               isDragging && "cursor-grabbing opacity-50"
             )}
             onClick={item.onSelect}
+            onAuxClick={(e) => {
+              // Middle-click (button 1) closes closeable tabs
+              if (e.button === 1 && item.onClose) {
+                e.preventDefault();
+                item.onClose();
+              }
+            }}
             id={item.id}
             role="tab"
             type="button"

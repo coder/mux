@@ -343,6 +343,12 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
         label,
         tooltip,
         tab,
+        // Terminal and file tabs are closeable
+        onClose: isTerminal
+          ? () => props.onCloseTerminal(tab)
+          : isFileTab(tab)
+            ? () => props.onCloseFile(tab)
+            : undefined,
       },
     ];
   });
