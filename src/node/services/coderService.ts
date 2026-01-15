@@ -664,6 +664,7 @@ export class CoderService {
       const workspaces = JSON.parse(stdout) as Array<{
         name: string;
         template_name: string;
+        template_display_name: string;
         latest_build: {
           status: string;
         };
@@ -675,6 +676,7 @@ export class CoderService {
         .map((w) => ({
           name: w.name,
           templateName: w.template_name,
+          templateDisplayName: w.template_display_name || w.template_name,
           status: w.latest_build.status as CoderWorkspaceStatus,
         }));
     } catch (error) {

@@ -1,5 +1,6 @@
 import type { DisplayedMessage } from "@/common/types/message";
 import type { StreamErrorType, SendMessageError } from "@/common/types/errors";
+import type { RuntimeStatusEvent } from "@/common/types/stream";
 
 /**
  * Debug flag to force all errors to be retryable
@@ -79,7 +80,8 @@ export function isNonRetryableSendError(error: SendMessageError): boolean {
  */
 export function hasInterruptedStream(
   messages: DisplayedMessage[],
-  pendingStreamStartTime: number | null = null
+  pendingStreamStartTime: number | null = null,
+  runtimeStatus: RuntimeStatusEvent | null = null
 ): boolean {
   if (messages.length === 0) return false;
 
@@ -102,6 +104,13 @@ export function hasInterruptedStream(
     initMessage.status === "running" &&
     lastMessage.type !== "stream-error"
   ) {
+    return false;
+  }
+
+  // Don't show retry barrier if runtime is still starting (e.g., Coder workspace waiting for startup scripts).
+  // The backend's ensureReady() is still running - this happens when reconnecting to a stopped workspace.
+  // runtimeStatus is set during ensureReady() and cleared when ready/error.
+  if (runtimeStatus !== null && lastMessage.type !== "stream-error") {
     return false;
   }
 
@@ -140,10 +149,11 @@ export function hasInterruptedStream(
  */
 export function isEligibleForAutoRetry(
   messages: DisplayedMessage[],
-  pendingStreamStartTime: number | null = null
+  pendingStreamStartTime: number | null = null,
+  runtimeStatus: RuntimeStatusEvent | null = null
 ): boolean {
   // First check if there's an interrupted stream at all
-  if (!hasInterruptedStream(messages, pendingStreamStartTime)) {
+  if (!hasInterruptedStream(messages, pendingStreamStartTime, runtimeStatus)) {
     return false;
   }
 

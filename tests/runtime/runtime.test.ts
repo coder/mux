@@ -1420,8 +1420,11 @@ describeIntegration("Runtime integration tests", () => {
       const { CoderSSHRuntime } = await import("@/node/runtime/CoderSSHRuntime");
       const { CoderService } = await import("@/node/services/coderService");
 
-      // Mock CoderService - forkWorkspace doesn't use it, so minimal mock is fine
-      const mockCoderService = {} as InstanceType<typeof CoderService>;
+      // Mock CoderService with methods that CoderSSHRuntime may call
+      const mockCoderService = {
+        getWorkspaceStatus: () =>
+          Promise.resolve({ kind: "running" as const, status: "running" as const }),
+      } as unknown as InstanceType<typeof CoderService>;
 
       return new CoderSSHRuntime(
         {

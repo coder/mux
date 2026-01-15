@@ -348,6 +348,10 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       track: () => Promise.resolve(undefined),
       status: () => Promise.resolve({ enabled: true, explicit: false }),
     },
+    splashScreens: {
+      getViewedSplashScreens: () => Promise.resolve([]),
+      markSplashScreenViewed: () => Promise.resolve(undefined),
+    },
     signing: {
       capabilities: () =>
         Promise.resolve(

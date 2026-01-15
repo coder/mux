@@ -74,9 +74,24 @@ const mockPresetsK8s: CoderPreset[] = [
 
 /** Mock existing Coder workspaces */
 const mockWorkspaces: CoderWorkspace[] = [
-  { name: "mux-dev", templateName: "coder-on-coder", status: "running" },
-  { name: "api-testing", templateName: "kubernetes-dev", status: "running" },
-  { name: "frontend-v2", templateName: "coder-on-coder", status: "running" },
+  {
+    name: "mux-dev",
+    templateName: "coder-on-coder",
+    templateDisplayName: "Coder on Coder",
+    status: "running",
+  },
+  {
+    name: "api-testing",
+    templateName: "kubernetes-dev",
+    templateDisplayName: "Kubernetes Dev",
+    status: "running",
+  },
+  {
+    name: "frontend-v2",
+    templateName: "coder-on-coder",
+    templateDisplayName: "Coder on Coder",
+    status: "running",
+  },
 ];
 
 /**

@@ -308,7 +308,7 @@ export function CoderControls(props: CoderControlsProps) {
 
           {/* Existing workspace controls - min-h matches New mode (2×h-7 + gap-1 + p-2) */}
           {mode === "existing" && (
-            <div className="flex min-h-[4.75rem] items-center gap-2 p-2 pl-3">
+            <div className="flex min-h-[4.75rem] min-w-[16rem] items-center gap-2 p-2 pl-3">
               <label className="text-muted-foreground text-xs">Workspace</label>
               {loadingWorkspaces ? (
                 <Loader2 className="text-muted h-4 w-4 animate-spin" />
@@ -333,7 +333,10 @@ export function CoderControls(props: CoderControlsProps) {
                   <SelectContent>
                     {existingWorkspaces.map((w) => (
                       <SelectItem key={w.name} value={w.name}>
-                        {w.name} ({w.templateName}) • {w.status}
+                        {w.name}
+                        <span className="text-muted ml-1">
+                          ({w.templateDisplayName} • {w.status})
+                        </span>
                       </SelectItem>
                     ))}
                   </SelectContent>

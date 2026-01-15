@@ -66,6 +66,7 @@ export type CoderWorkspaceStatus = z.infer<typeof CoderWorkspaceStatusSchema>;
 export const CoderWorkspaceSchema = z.object({
   name: z.string(),
   templateName: z.string(),
+  templateDisplayName: z.string(),
   status: CoderWorkspaceStatusSchema,
 });
 

@@ -252,9 +252,24 @@ describe("CoderService", () => {
       mockExecAsync.mockReturnValue({
         result: Promise.resolve({
           stdout: JSON.stringify([
-            { name: "ws-1", template_name: "t1", latest_build: { status: "running" } },
-            { name: "ws-2", template_name: "t2", latest_build: { status: "stopped" } },
-            { name: "ws-3", template_name: "t3", latest_build: { status: "starting" } },
+            {
+              name: "ws-1",
+              template_name: "t1",
+              template_display_name: "t1",
+              latest_build: { status: "running" },
+            },
+            {
+              name: "ws-2",
+              template_name: "t2",
+              template_display_name: "t2",
+              latest_build: { status: "stopped" },
+            },
+            {
+              name: "ws-3",
+              template_name: "t3",
+              template_display_name: "t3",
+              latest_build: { status: "starting" },
+            },
           ]),
         }),
         [Symbol.dispose]: noop,
@@ -263,9 +278,9 @@ describe("CoderService", () => {
       const workspaces = await service.listWorkspaces();
 
       expect(workspaces).toEqual([
-        { name: "ws-1", templateName: "t1", status: "running" },
-        { name: "ws-2", templateName: "t2", status: "stopped" },
-        { name: "ws-3", templateName: "t3", status: "starting" },
+        { name: "ws-1", templateName: "t1", templateDisplayName: "t1", status: "running" },
+        { name: "ws-2", templateName: "t2", templateDisplayName: "t2", status: "stopped" },
+        { name: "ws-3", templateName: "t3", templateDisplayName: "t3", status: "starting" },
       ]);
     });
 

@@ -1544,6 +1544,11 @@ export class StreamingMessageAggregator {
         clearTimeout(this.initOutputThrottleTimer);
         this.initOutputThrottleTimer = null;
       }
+      // Reset pending stream start time so the grace period starts fresh after init completes.
+      // This prevents false retry barriers for slow init (e.g., Coder workspace provisioning).
+      if (this.pendingStreamStartTime !== null) {
+        this.setPendingStreamStartTime(Date.now());
+      }
       this.invalidateCache();
       return;
     }

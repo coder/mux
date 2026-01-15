@@ -171,7 +171,8 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = ({ workspaceId, classNa
     // Check if current state is eligible for auto-retry
     const messagesEligible = isEligibleForAutoRetry(
       workspaceState.messages,
-      workspaceState.pendingStreamStartTime
+      workspaceState.pendingStreamStartTime,
+      workspaceState.runtimeStatus
     );
 
     // Also check RetryState for SendMessageErrors (from resumeStream failures)
