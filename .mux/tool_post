@@ -9,7 +9,9 @@ if [[ "$MUX_TOOL" == file_edit_* ]]; then
       before=$(cat "$file" 2>/dev/null) || exit 0
       bun run prettier --write --log-level silent "$file" 2>/dev/null || true
       # Only output if file changed
-      [[ "$(cat "$file")" != "$before" ]] && echo "Formatted: $file"
+      if [[ "$(cat "$file")" != "$before" ]]; then
+        echo "Formatted: $file"
+      fi
       ;;
   esac
 fi
