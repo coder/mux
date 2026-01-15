@@ -1954,7 +1954,7 @@ export const ContextSwitchWarning: AppStory = {
     await canvas.findByText(/refactoring plan/, {}, { timeout: 10000 });
 
     // Find and click the model selector to open it
-    const modelButton = await canvas.findByText("Claude Sonnet 4", {}, { timeout: 5000 });
+    const modelButton = await canvas.findByText("Sonnet 4.5", {}, { timeout: 5000 });
     await userEvent.click(modelButton);
 
     // Wait for the dropdown to appear
