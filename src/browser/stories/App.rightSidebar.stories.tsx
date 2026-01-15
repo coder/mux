@@ -20,6 +20,7 @@ import {
   RIGHT_SIDEBAR_WIDTH_KEY,
   getRightSidebarLayoutKey,
 } from "@/common/constants/storage";
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import type { ComponentType } from "react";
 import type { MockSessionUsage } from "@/browser/stories/mocks/orpc";
 
@@ -1242,30 +1243,27 @@ export const ManyTabsWrap: AppStory = {
     <AppWithMocks
       setup={() => {
         const workspaceId = "ws-many-tabs";
-        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "280");
-        localStorage.setItem(
-          getRightSidebarLayoutKey(workspaceId),
-          JSON.stringify({
-            version: 1,
-            nextId: 2,
-            focusedTabsetId: "tabset-1",
-            root: {
-              type: "tabset",
-              id: "tabset-1",
-              tabs: [
-                "costs",
-                "review",
-                "explorer",
-                "stats",
-                ...Array.from(
-                  { length: 12 },
-                  (_v, i) => `file:src/components/ThisIsAReallyLongFileName${i + 1}.tsx`
-                ),
-              ],
-              activeTab: "review",
-            },
-          })
-        );
+        updatePersistedState(RIGHT_SIDEBAR_WIDTH_KEY, 280);
+        updatePersistedState(getRightSidebarLayoutKey(workspaceId), {
+          version: 1,
+          nextId: 2,
+          focusedTabsetId: "tabset-1",
+          root: {
+            type: "tabset",
+            id: "tabset-1",
+            tabs: [
+              "costs",
+              "review",
+              "explorer",
+              "stats",
+              ...Array.from(
+                { length: 12 },
+                (_v, i) => `file:src/components/ThisIsAReallyLongFileName${i + 1}.tsx`
+              ),
+            ],
+            activeTab: "review",
+          },
+        });
 
         const client = setupSimpleChatStory({
           workspaceId,
