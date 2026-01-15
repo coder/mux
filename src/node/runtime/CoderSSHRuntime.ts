@@ -23,7 +23,7 @@ import type {
 import { SSHRuntime, type SSHRuntimeConfig } from "./SSHRuntime";
 import type { CoderWorkspaceConfig, RuntimeConfig } from "@/common/types/runtime";
 import { isSSHRuntime } from "@/common/types/runtime";
-import type { CoderService, WorkspaceStatusResult } from "@/node/services/coderService";
+import type { CoderService } from "@/node/services/coderService";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import { log } from "@/node/services/log";
@@ -156,6 +156,13 @@ export class CoderSSHRuntime extends SSHRuntime {
 
   /**
    * Core ensureReady logic - called once (protected by ensureReadyPromise).
+   *
+   * Flow:
+   * 1. Check status via `coder list` - short-circuit for "running" or "not_found"
+   * 2. If "stopping"/"canceling": poll until it clears (coder ssh can't autostart during these)
+   * 3. Run `coder ssh --wait=yes -- true` which handles everything else:
+   *    - stopped: auto-starts, streams build logs, waits for startup scripts
+   *    - starting/pending: waits for build completion + startup scripts
    */
   private async doEnsureReady(
     workspaceName: string,
@@ -174,7 +181,7 @@ export class CoderSSHRuntime extends SSHRuntime {
     const remainingMs = () =>
       Math.max(0, CoderSSHRuntime.ENSURE_READY_TIMEOUT_MS - (Date.now() - startTime));
 
-    // Step 1: Check current status
+    // Step 1: Check current status for short-circuits
     emitStatus("checking");
 
     if (signal?.aborted) {
@@ -182,25 +189,19 @@ export class CoderSSHRuntime extends SSHRuntime {
       return { ready: false, error: "Aborted", errorType: "runtime_start_failed" };
     }
 
-    // Helper to check if an error string indicates workspace not found (for startWorkspaceAndWait errors)
-    const isWorkspaceNotFoundError = (error: string | undefined): boolean =>
-      Boolean(error && /workspace not found/i.test(error));
-
-    const statusResult = await this.coderService.getWorkspaceStatus(workspaceName, {
+    let statusResult = await this.coderService.getWorkspaceStatus(workspaceName, {
       timeoutMs: Math.min(remainingMs(), 10_000),
       signal,
     });
 
-    // Helper to extract status from result, or null if not available
-    const getStatus = (r: WorkspaceStatusResult): string | null =>
-      r.kind === "ok" ? r.status : null;
-
+    // Short-circuit: already running
     if (statusResult.kind === "ok" && statusResult.status === "running") {
       this.lastActivityAtMs = Date.now();
       emitStatus("ready");
       return { ready: true };
     }
 
+    // Short-circuit: workspace doesn't exist
     if (statusResult.kind === "not_found") {
       emitStatus("error");
       return {
@@ -210,59 +211,55 @@ export class CoderSSHRuntime extends SSHRuntime {
       };
     }
 
+    // For status check errors (timeout, auth issues), proceed optimistically
+    // and let SSH fail naturally to avoid blocking the happy path
     if (statusResult.kind === "error") {
-      // Check if this was an abort - don't proceed optimistically if user cancelled
       if (signal?.aborted) {
         emitStatus("error");
         return { ready: false, error: "Aborted", errorType: "runtime_start_failed" };
       }
-      // For other errors (timeout, auth hiccup, Coder CLI issues), proceed optimistically
-      // and let SSH fail naturally to avoid blocking the happy path.
       log.debug("Coder workspace status unknown, proceeding optimistically", {
         workspaceName,
         error: statusResult.error,
       });
-      this.lastActivityAtMs = Date.now();
-      return { ready: true };
     }
 
-    // Step 2: Handle "stopping" status - wait for it to become "stopped"
-    let currentStatus: string | null = getStatus(statusResult);
-
-    if (currentStatus === "stopping") {
+    // Step 2: Wait for "stopping"/"canceling" to clear (coder ssh can't autostart during these)
+    if (
+      statusResult.kind === "ok" &&
+      (statusResult.status === "stopping" || statusResult.status === "canceling")
+    ) {
       emitStatus("waiting", "Waiting for Coder workspace to stop...");
 
-      while (currentStatus === "stopping" && !isTimedOut()) {
+      while (
+        statusResult.kind === "ok" &&
+        (statusResult.status === "stopping" || statusResult.status === "canceling") &&
+        !isTimedOut()
+      ) {
         if (signal?.aborted) {
           emitStatus("error");
           return { ready: false, error: "Aborted", errorType: "runtime_start_failed" };
         }
 
-        await this.sleep(CoderSSHRuntime.STATUS_POLL_INTERVAL_MS);
-        const pollResult = await this.coderService.getWorkspaceStatus(workspaceName, {
+        await this.sleep(CoderSSHRuntime.STATUS_POLL_INTERVAL_MS, signal);
+        statusResult = await this.coderService.getWorkspaceStatus(workspaceName, {
           timeoutMs: Math.min(remainingMs(), 10_000),
           signal,
         });
-        currentStatus = getStatus(pollResult);
 
-        if (currentStatus === "running") {
+        // Check for state changes during polling
+        if (statusResult.kind === "ok" && statusResult.status === "running") {
           this.lastActivityAtMs = Date.now();
           emitStatus("ready");
           return { ready: true };
         }
-
-        // If status unavailable, only fail fast if the workspace is definitively gone.
-        // Otherwise fall through to start attempt (status check might have been flaky).
-        if (pollResult.kind === "not_found") {
+        if (statusResult.kind === "not_found") {
           emitStatus("error");
           return {
             ready: false,
             error: `Coder workspace "${workspaceName}" not found`,
             errorType: "runtime_not_ready",
           };
-        }
-        if (pollResult.kind === "error") {
-          break;
         }
       }
 
@@ -276,120 +273,89 @@ export class CoderSSHRuntime extends SSHRuntime {
       }
     }
 
-    // Step 3: Start the workspace and wait for it to be ready
-    emitStatus("starting", "Starting Coder workspace...");
-    log.debug("Starting Coder workspace", { workspaceName, currentStatus });
+    // Step 3: Use coder ssh --wait=yes to handle all other states
+    // This auto-starts stopped workspaces and waits for startup scripts
+    emitStatus("starting", "Connecting to Coder workspace...");
+    log.debug("Connecting to Coder workspace via SSH", { workspaceName });
 
-    const startResult = await this.coderService.startWorkspaceAndWait(
-      workspaceName,
-      remainingMs(),
-      signal
-    );
+    // Create abort signal that fires on timeout or user abort
+    const controller = new AbortController();
 
-    if (startResult.success) {
+    const checkInterval = setInterval(() => {
+      if (isTimedOut() || signal?.aborted) {
+        controller.abort();
+        clearInterval(checkInterval);
+      }
+    }, 1000);
+    controller.signal.addEventListener("abort", () => clearInterval(checkInterval), { once: true });
+    if (isTimedOut() || signal?.aborted) controller.abort();
+
+    try {
+      for await (const _line of this.coderService.waitForStartupScripts(
+        workspaceName,
+        controller.signal
+      )) {
+        // Consume output for timeout/abort handling
+      }
       this.lastActivityAtMs = Date.now();
       emitStatus("ready");
       return { ready: true };
-    }
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
 
-    if (isWorkspaceNotFoundError(startResult.error)) {
       emitStatus("error");
-      return {
-        ready: false,
-        error: `Coder workspace "${workspaceName}" not found`,
-        errorType: "runtime_not_ready",
-      };
-    }
 
-    // Handle "build already active" - poll until running or stopped
-    if (startResult.error === "build_in_progress") {
-      log.debug("Coder workspace build already active, polling for completion", { workspaceName });
-      emitStatus("waiting", "Waiting for Coder workspace build...");
-
-      while (!isTimedOut()) {
-        if (signal?.aborted) {
-          emitStatus("error");
-          return { ready: false, error: "Aborted", errorType: "runtime_start_failed" };
-        }
-
-        await this.sleep(CoderSSHRuntime.STATUS_POLL_INTERVAL_MS);
-        const pollResult = await this.coderService.getWorkspaceStatus(workspaceName, {
-          timeoutMs: Math.min(remainingMs(), 10_000),
-          signal,
-        });
-
-        if (pollResult.kind === "not_found") {
-          emitStatus("error");
-          return {
-            ready: false,
-            error: `Coder workspace "${workspaceName}" not found`,
-            errorType: "runtime_not_ready",
-          };
-        }
-
-        const pollStatus = getStatus(pollResult);
-
-        if (pollStatus === "running") {
-          this.lastActivityAtMs = Date.now();
-          emitStatus("ready");
-          return { ready: true };
-        }
-
-        if (pollStatus === "stopped") {
-          // Build finished but workspace ended up stopped - retry start once
-          log.debug("Coder workspace stopped after build, retrying start", { workspaceName });
-          emitStatus("starting", "Starting Coder workspace...");
-
-          const retryResult = await this.coderService.startWorkspaceAndWait(
-            workspaceName,
-            remainingMs(),
-            signal
-          );
-
-          if (retryResult.success) {
-            this.lastActivityAtMs = Date.now();
-            emitStatus("ready");
-            return { ready: true };
-          }
-
-          if (isWorkspaceNotFoundError(retryResult.error)) {
-            emitStatus("error");
-            return {
-              ready: false,
-              error: `Coder workspace "${workspaceName}" not found`,
-              errorType: "runtime_not_ready",
-            };
-          }
-
-          emitStatus("error");
-          return {
-            ready: false,
-            error: `Failed to start Coder workspace: ${retryResult.error ?? "unknown error"}`,
-            errorType: "runtime_start_failed",
-          };
-        }
+      if (isTimedOut()) {
+        return {
+          ready: false,
+          error: "Coder workspace start timed out",
+          errorType: "runtime_start_failed",
+        };
       }
 
-      emitStatus("error");
+      if (signal?.aborted) {
+        return { ready: false, error: "Aborted", errorType: "runtime_start_failed" };
+      }
+
+      // Map "not found" errors to runtime_not_ready
+      if (/not found|no access/i.test(errorMsg)) {
+        return {
+          ready: false,
+          error: `Coder workspace "${workspaceName}" not found`,
+          errorType: "runtime_not_ready",
+        };
+      }
+
       return {
         ready: false,
-        error: "Coder workspace is still starting... Please retry shortly.",
+        error: `Failed to connect to Coder workspace: ${errorMsg}`,
         errorType: "runtime_start_failed",
       };
+    } finally {
+      clearInterval(checkInterval);
     }
-
-    // Other start failure
-    emitStatus("error");
-    return {
-      ready: false,
-      error: `Failed to start Coder workspace: ${startResult.error ?? "unknown error"}`,
-      errorType: "runtime_start_failed",
-    };
   }
 
   /** Promise-based sleep helper */
-  private sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+  private sleep(ms: number, abortSignal?: AbortSignal): Promise<void> {
+    if (abortSignal?.aborted) {
+      return Promise.resolve();
+    }
+
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        abortSignal?.removeEventListener("abort", onAbort);
+        resolve();
+      }, ms);
+
+      const onAbort = () => {
+        clearTimeout(timeout);
+        abortSignal?.removeEventListener("abort", onAbort);
+        resolve();
+      };
+
+      abortSignal?.addEventListener("abort", onAbort, { once: true });
+    });
   }
 
   /**
@@ -639,11 +605,62 @@ export class CoderSSHRuntime extends SSHRuntime {
           initLogger.logStdout(line);
         }
         initLogger.logStep("Coder workspace created successfully");
+
+        // Wait for startup scripts to complete
+        initLogger.logStep("Waiting for startup scripts...");
+        for await (const line of this.coderService.waitForStartupScripts(
+          coderWorkspaceName,
+          abortSignal
+        )) {
+          initLogger.logStdout(line);
+        }
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);
         log.error("Failed to create Coder workspace", { error, config: this.coderConfig });
         initLogger.logStderr(`Failed to create Coder workspace: ${errorMsg}`);
         throw new Error(`Failed to create Coder workspace: ${errorMsg}`);
+      }
+    } else if (this.coderConfig.workspaceName) {
+      // For existing workspaces, wait for "stopping"/"canceling" to clear before SSH
+      // (coder ssh --wait=yes can't autostart while a stop/cancel build is in progress)
+      const workspaceName = this.coderConfig.workspaceName;
+      let status = await this.coderService.getWorkspaceStatus(workspaceName, {
+        signal: abortSignal,
+      });
+
+      if (status.kind === "ok" && (status.status === "stopping" || status.status === "canceling")) {
+        initLogger.logStep(`Waiting for Coder workspace "${workspaceName}" to stop...`);
+        while (
+          status.kind === "ok" &&
+          (status.status === "stopping" || status.status === "canceling")
+        ) {
+          if (abortSignal?.aborted) {
+            throw new Error("Aborted while waiting for Coder workspace to stop");
+          }
+          await this.sleep(CoderSSHRuntime.STATUS_POLL_INTERVAL_MS, abortSignal);
+          status = await this.coderService.getWorkspaceStatus(workspaceName, {
+            signal: abortSignal,
+          });
+        }
+      }
+
+      // waitForStartupScripts (coder ssh --wait=yes) handles all other states:
+      // - stopped: auto-starts, streams build logs, waits for scripts
+      // - starting/pending: waits for build + scripts
+      // - running: waits for scripts (fast if already done)
+      initLogger.logStep(`Connecting to Coder workspace "${workspaceName}"...`);
+      try {
+        for await (const line of this.coderService.waitForStartupScripts(
+          workspaceName,
+          abortSignal
+        )) {
+          initLogger.logStdout(line);
+        }
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        log.error("Failed waiting for Coder workspace", { error, config: this.coderConfig });
+        initLogger.logStderr(`Failed connecting to Coder workspace: ${errorMsg}`);
+        throw new Error(`Failed connecting to Coder workspace: ${errorMsg}`);
       }
     }
 

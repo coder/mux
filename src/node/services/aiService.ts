@@ -2047,6 +2047,14 @@ export class AIService extends EventEmitter {
     return this.streamManager.debugTriggerStreamError(workspaceId, errorMessage);
   }
 
+  /**
+   * Wait for workspace initialization to complete (if running).
+   * Public wrapper for agent discovery and other callers.
+   */
+  async waitForInit(workspaceId: string, abortSignal?: AbortSignal): Promise<void> {
+    return this.initStateManager.waitForInit(workspaceId, abortSignal);
+  }
+
   async deleteWorkspace(workspaceId: string): Promise<Result<void>> {
     try {
       const workspaceDir = this.config.getSessionDir(workspaceId);

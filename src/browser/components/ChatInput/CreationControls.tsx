@@ -2,6 +2,13 @@ import React, { useCallback, useEffect } from "react";
 import { RUNTIME_MODE, type RuntimeMode, type ParsedRuntime } from "@/common/types/runtime";
 import type { RuntimeAvailabilityMap } from "./useCreationWorkspace";
 import { Select } from "../Select";
+import {
+  Select as RadixSelect,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../ui/select";
 import { Loader2, Wand2 } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
@@ -144,26 +151,28 @@ function SectionPicker(props: SectionPickerProps) {
           opacity: selectedSection ? 1 : 0.4,
         }}
       />
-      <label htmlFor="workspace-section" className="text-muted-foreground shrink-0 text-xs">
-        Section
-      </label>
-      <select
-        id="workspace-section"
+      <label className="text-muted-foreground shrink-0 text-xs">Section</label>
+      <RadixSelect
         value={selectedSectionId ?? ""}
-        onChange={(e) => onSectionChange(e.target.value || null)}
+        onValueChange={onSectionChange}
         disabled={disabled}
-        className={cn(
-          "bg-transparent text-sm font-medium focus:outline-none cursor-pointer disabled:cursor-not-allowed disabled:opacity-50",
-          selectedSection ? "text-foreground" : "text-muted"
-        )}
       >
-        <option value="">None</option>
-        {sections.map((section) => (
-          <option key={section.id} value={section.id}>
-            {section.name}
-          </option>
-        ))}
-      </select>
+        <SelectTrigger
+          className={cn(
+            "h-auto border-0 bg-transparent px-0 py-0 text-sm font-medium shadow-none focus:ring-0",
+            selectedSection ? "text-foreground" : "text-muted"
+          )}
+        >
+          <SelectValue placeholder="Select..." />
+        </SelectTrigger>
+        <SelectContent>
+          {sections.map((section) => (
+            <SelectItem key={section.id} value={section.id}>
+              {section.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </RadixSelect>
     </div>
   );
 }

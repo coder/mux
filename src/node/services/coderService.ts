@@ -103,6 +103,129 @@ function createGracefulTerminator(
   return { terminate, cleanup };
 }
 
+/**
+ * Stream output from a coder CLI command line by line.
+ * Yields lines as they arrive from stdout/stderr.
+ * Throws on non-zero exit with stderr content in the error message.
+ *
+ * @param args Command arguments (e.g., ["start", "-y", "my-ws"])
+ * @param errorPrefix Prefix for error messages (e.g., "coder start failed")
+ * @param abortSignal Optional signal to cancel the command
+ * @param abortMessage Message to throw when aborted
+ */
+async function* streamCoderCommand(
+  args: string[],
+  errorPrefix: string,
+  abortSignal?: AbortSignal,
+  abortMessage = "Coder command aborted"
+): AsyncGenerator<string, void, unknown> {
+  if (abortSignal?.aborted) {
+    throw new Error(abortMessage);
+  }
+
+  // Yield the command we're about to run so it's visible in UI
+  yield `$ coder ${args.join(" ")}`;
+
+  const child = spawn("coder", args, {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  const terminator = createGracefulTerminator(child);
+
+  const abortHandler = () => {
+    terminator.terminate();
+  };
+  abortSignal?.addEventListener("abort", abortHandler);
+
+  try {
+    // Use an async queue to stream lines as they arrive
+    const lineQueue: string[] = [];
+    const stderrLines: string[] = [];
+    let streamsDone = false;
+    let resolveNext: (() => void) | null = null;
+
+    const pushLine = (line: string) => {
+      lineQueue.push(line);
+      if (resolveNext) {
+        resolveNext();
+        resolveNext = null;
+      }
+    };
+
+    let pending = 2;
+    const markDone = () => {
+      pending--;
+      if (pending === 0) {
+        streamsDone = true;
+        if (resolveNext) {
+          resolveNext();
+          resolveNext = null;
+        }
+      }
+    };
+
+    const processStream = (stream: NodeJS.ReadableStream | null, isStderr: boolean) => {
+      if (!stream) {
+        markDone();
+        return;
+      }
+      let buffer = "";
+      stream.on("data", (chunk: Buffer) => {
+        buffer += chunk.toString();
+        const parts = buffer.split("\n");
+        buffer = parts.pop() ?? "";
+        for (const line of parts) {
+          const trimmed = line.trim();
+          if (trimmed) {
+            pushLine(trimmed);
+            if (isStderr) stderrLines.push(trimmed);
+          }
+        }
+      });
+      stream.on("end", () => {
+        if (buffer.trim()) {
+          pushLine(buffer.trim());
+          if (isStderr) stderrLines.push(buffer.trim());
+        }
+        markDone();
+      });
+      stream.on("error", markDone);
+    };
+
+    processStream(child.stdout, false);
+    processStream(child.stderr, true);
+
+    // Yield lines as they arrive
+    while (!streamsDone || lineQueue.length > 0) {
+      if (lineQueue.length > 0) {
+        yield lineQueue.shift()!;
+      } else if (!streamsDone) {
+        await new Promise<void>((resolve) => {
+          resolveNext = resolve;
+        });
+      }
+    }
+
+    // Wait for process to exit
+    const exitCode = await new Promise<number | null>((resolve) => {
+      child.on("close", resolve);
+      child.on("error", () => resolve(null));
+    });
+
+    if (abortSignal?.aborted) {
+      throw new Error(abortMessage);
+    }
+
+    if (exitCode !== 0) {
+      const errorDetail = stderrLines.length > 0 ? `: ${stderrLines.join(" | ")}` : "";
+      throw new Error(`${errorPrefix} (exit ${String(exitCode)})${errorDetail}`);
+    }
+  } finally {
+    terminator.cleanup();
+    abortSignal?.removeEventListener("abort", abortHandler);
+  }
+}
+
 interface CoderCommandResult {
   exitCode: number | null;
   stdout: string;
@@ -711,42 +834,20 @@ export class CoderService {
   }
 
   /**
-   * Start a workspace and wait for it to be ready.
-   * Blocks until the workspace is running (or timeout).
-   *
-   * @param workspaceName Workspace name
-   * @param timeoutMs Maximum time to wait
-   * @param signal Optional abort signal to cancel
-   * @returns Object with success/error info
+   * Wait for Coder workspace startup scripts to complete.
+   * Runs `coder ssh <workspace> --wait=yes -- true` and streams output.
    */
-  async startWorkspaceAndWait(
+  async *waitForStartupScripts(
     workspaceName: string,
-    timeoutMs: number,
-    signal?: AbortSignal
-  ): Promise<{ success: boolean; error?: string }> {
-    const result = await this.runCoderCommand(["start", "-y", workspaceName], {
-      timeoutMs,
-      signal,
-    });
-
-    const interpreted = interpretCoderResult(result);
-
-    if (interpreted.ok) {
-      return { success: true };
-    }
-
-    if (interpreted.error === "aborted" || interpreted.error === "timeout") {
-      return { success: false, error: interpreted.error };
-    }
-
-    if (interpreted.combined.includes("workspace build is already active")) {
-      return { success: false, error: "build_in_progress" };
-    }
-
-    return {
-      success: false,
-      error: interpreted.error,
-    };
+    abortSignal?: AbortSignal
+  ): AsyncGenerator<string, void, unknown> {
+    log.debug("Waiting for Coder startup scripts", { workspaceName });
+    yield* streamCoderCommand(
+      ["ssh", workspaceName, "--wait=yes", "--", "true"],
+      "coder ssh --wait failed",
+      abortSignal,
+      "Coder startup script wait aborted"
+    );
   }
 
   /**
@@ -809,101 +910,12 @@ export class CoderService {
       args.push("--parameter", p.encoded);
     }
 
-    // Yield the command we're about to run so it's visible in UI
-    yield `$ coder ${args.join(" ")}`;
-
-    const child = spawn("coder", args, {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    const terminator = createGracefulTerminator(child);
-
-    const abortHandler = () => {
-      terminator.terminate();
-    };
-    abortSignal?.addEventListener("abort", abortHandler);
-
-    try {
-      // Use an async queue to stream lines as they arrive (not buffer until end)
-      const lineQueue: string[] = [];
-      let streamsDone = false;
-      let resolveNext: (() => void) | null = null;
-
-      const pushLine = (line: string) => {
-        lineQueue.push(line);
-        if (resolveNext) {
-          resolveNext();
-          resolveNext = null;
-        }
-      };
-
-      // Set up stream processing
-      let pending = 2;
-      const markDone = () => {
-        pending--;
-        if (pending === 0) {
-          streamsDone = true;
-          if (resolveNext) {
-            resolveNext();
-            resolveNext = null;
-          }
-        }
-      };
-
-      const processStream = (stream: NodeJS.ReadableStream | null) => {
-        if (!stream) {
-          markDone();
-          return;
-        }
-        let buffer = "";
-        stream.on("data", (chunk: Buffer) => {
-          buffer += chunk.toString();
-          const parts = buffer.split("\n");
-          buffer = parts.pop() ?? "";
-          for (const line of parts) {
-            const trimmed = line.trim();
-            if (trimmed) pushLine(trimmed);
-          }
-        });
-        stream.on("end", () => {
-          if (buffer.trim()) pushLine(buffer.trim());
-          markDone();
-        });
-        stream.on("error", markDone);
-      };
-
-      processStream(child.stdout);
-      processStream(child.stderr);
-
-      // Yield lines as they arrive
-      while (!streamsDone || lineQueue.length > 0) {
-        if (lineQueue.length > 0) {
-          yield lineQueue.shift()!;
-        } else if (!streamsDone) {
-          // Wait for more data
-          await new Promise<void>((resolve) => {
-            resolveNext = resolve;
-          });
-        }
-      }
-
-      // Wait for process to exit
-      const exitCode = await new Promise<number | null>((resolve) => {
-        child.on("close", resolve);
-        child.on("error", () => resolve(null));
-      });
-
-      if (abortSignal?.aborted) {
-        throw new Error("Coder workspace creation aborted");
-      }
-
-      if (exitCode !== 0) {
-        throw new Error(`coder create failed with exit code ${String(exitCode)}`);
-      }
-    } finally {
-      terminator.cleanup();
-      abortSignal?.removeEventListener("abort", abortHandler);
-    }
+    yield* streamCoderCommand(
+      args,
+      "coder create failed",
+      abortSignal,
+      "Coder workspace creation aborted"
+    );
   }
 
   /**

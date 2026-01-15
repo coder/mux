@@ -116,7 +116,10 @@ function getRuntimeInfo(
     // Coder-backed SSH runtime gets special treatment
     if (runtimeConfig.coder) {
       const coderWorkspaceName = runtimeConfig.coder.workspaceName;
-      return { type: "coder", label: `Coder: ${coderWorkspaceName ?? runtimeConfig.host}` };
+      return {
+        type: "coder",
+        label: `Coder Workspace: ${coderWorkspaceName ?? runtimeConfig.host}`,
+      };
     }
     const hostname = extractSshHostname(runtimeConfig);
     return { type: "ssh", label: `SSH: ${hostname ?? runtimeConfig.host}` };

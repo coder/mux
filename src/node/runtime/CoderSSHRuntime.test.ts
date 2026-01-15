@@ -31,7 +31,15 @@ function createMockCoderService(overrides?: Partial<CoderService>): CoderService
       Promise.resolve({ kind: "ok" as const, status: "running" as const })
     ),
     listWorkspaces: mock(() => Promise.resolve([])),
-    startWorkspaceAndWait: mock(() => Promise.resolve({ success: true })),
+    waitForStartupScripts: mock(() =>
+      (async function* (): AsyncGenerator<string, void, unknown> {
+        await Promise.resolve();
+        // default: no output (startup scripts completed)
+        for (const line of [] as string[]) {
+          yield line;
+        }
+      })()
+    ),
     workspaceExists: mock(() => Promise.resolve(false)),
     ...overrides,
   } as unknown as CoderService;
@@ -493,16 +501,30 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
     expect(steps.join("\n")).toContain("Preparing workspace directory");
   });
 
-  it("skips workspace creation when existingWorkspace=true", async () => {
+  it("skips workspace creation when existingWorkspace=true and workspace is running", async () => {
     const createWorkspace = mock(() =>
       (async function* (): AsyncGenerator<string, void, unknown> {
         await Promise.resolve();
         yield "should not happen";
       })()
     );
+    const waitForStartupScripts = mock(() =>
+      (async function* (): AsyncGenerator<string, void, unknown> {
+        await Promise.resolve();
+        yield "Already running";
+      })()
+    );
     const ensureSSHConfig = mock(() => Promise.resolve());
+    const getWorkspaceStatus = mock(() =>
+      Promise.resolve({ kind: "ok" as const, status: "running" as const })
+    );
 
-    const coderService = createMockCoderService({ createWorkspace, ensureSSHConfig });
+    const coderService = createMockCoderService({
+      createWorkspace,
+      waitForStartupScripts,
+      ensureSSHConfig,
+      getWorkspaceStatus,
+    });
     const runtime = createRuntime(
       { existingWorkspace: true, workspaceName: "existing-ws" },
       coderService
@@ -522,8 +544,117 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
     });
 
     expect(createWorkspace).not.toHaveBeenCalled();
+    // waitForStartupScripts is called (it handles running workspaces quickly)
+    expect(waitForStartupScripts).toHaveBeenCalled();
     expect(ensureSSHConfig).toHaveBeenCalled();
     expect(execBufferedSpy).toHaveBeenCalled();
+  });
+
+  it("uses waitForStartupScripts for existing stopped workspace (auto-starts via coder ssh)", async () => {
+    const createWorkspace = mock(() =>
+      (async function* (): AsyncGenerator<string, void, unknown> {
+        await Promise.resolve();
+        yield "should not happen";
+      })()
+    );
+    const waitForStartupScripts = mock(() =>
+      (async function* (): AsyncGenerator<string, void, unknown> {
+        await Promise.resolve();
+        yield "Starting workspace...";
+        yield "Build complete";
+        yield "Startup scripts finished";
+      })()
+    );
+    const ensureSSHConfig = mock(() => Promise.resolve());
+    const getWorkspaceStatus = mock(() =>
+      Promise.resolve({ kind: "ok" as const, status: "stopped" as const })
+    );
+
+    const coderService = createMockCoderService({
+      createWorkspace,
+      waitForStartupScripts,
+      ensureSSHConfig,
+      getWorkspaceStatus,
+    });
+    const runtime = createRuntime(
+      { existingWorkspace: true, workspaceName: "existing-ws" },
+      coderService
+    );
+
+    const loggedStdout: string[] = [];
+    await runtime.postCreateSetup({
+      initLogger: {
+        logStep: noop,
+        logStdout: (line) => loggedStdout.push(line),
+        logStderr: noop,
+        logComplete: noop,
+      },
+      projectPath: "/project",
+      branchName: "branch",
+      trunkBranch: "main",
+      workspacePath: "/home/user/src/my-project/existing-ws",
+    });
+
+    expect(createWorkspace).not.toHaveBeenCalled();
+    expect(waitForStartupScripts).toHaveBeenCalled();
+    expect(loggedStdout).toContain("Starting workspace...");
+    expect(loggedStdout).toContain("Startup scripts finished");
+    expect(ensureSSHConfig).toHaveBeenCalled();
+  });
+
+  it("polls until stopping workspace becomes stopped before connecting", async () => {
+    let pollCount = 0;
+    const getWorkspaceStatus = mock(() => {
+      pollCount++;
+      // First 2 calls return "stopping", then "stopped"
+      if (pollCount <= 2) {
+        return Promise.resolve({ kind: "ok" as const, status: "stopping" as const });
+      }
+      return Promise.resolve({ kind: "ok" as const, status: "stopped" as const });
+    });
+    const waitForStartupScripts = mock(() =>
+      (async function* (): AsyncGenerator<string, void, unknown> {
+        await Promise.resolve();
+        yield "Ready";
+      })()
+    );
+    const ensureSSHConfig = mock(() => Promise.resolve());
+
+    const coderService = createMockCoderService({
+      getWorkspaceStatus,
+      waitForStartupScripts,
+      ensureSSHConfig,
+    });
+
+    const runtime = createRuntime(
+      { existingWorkspace: true, workspaceName: "stopping-ws" },
+      coderService
+    );
+
+    // Avoid real sleeps in this polling test
+    interface RuntimeWithSleep {
+      sleep: (ms: number, abortSignal?: AbortSignal) => Promise<void>;
+    }
+    spyOn(runtime as unknown as RuntimeWithSleep, "sleep").mockResolvedValue(undefined);
+
+    const loggedSteps: string[] = [];
+    await runtime.postCreateSetup({
+      initLogger: {
+        logStep: (step) => loggedSteps.push(step),
+        logStdout: noop,
+        logStderr: noop,
+        logComplete: noop,
+      },
+      projectPath: "/project",
+      branchName: "branch",
+      trunkBranch: "main",
+      workspacePath: "/home/user/src/my-project/stopping-ws",
+    });
+
+    // Should have polled status multiple times
+    expect(pollCount).toBeGreaterThan(2);
+    expect(loggedSteps.some((s) => s.includes("Waiting for Coder workspace"))).toBe(true);
+    expect(waitForStartupScripts).toHaveBeenCalled();
   });
 
   it("throws when workspaceName is missing", () => {
@@ -579,8 +710,13 @@ describe("CoderSSHRuntime.ensureReady", () => {
     const getWorkspaceStatus = mock(() =>
       Promise.resolve({ kind: "ok" as const, status: "running" as const })
     );
-    const startWorkspaceAndWait = mock(() => Promise.resolve({ success: true }));
-    const coderService = createMockCoderService({ getWorkspaceStatus, startWorkspaceAndWait });
+    const waitForStartupScripts = mock(() =>
+      (async function* (): AsyncGenerator<string, void, unknown> {
+        await Promise.resolve();
+        yield "should not be called";
+      })()
+    );
+    const coderService = createMockCoderService({ getWorkspaceStatus, waitForStartupScripts });
 
     const runtime = createRuntime(
       { existingWorkspace: true, workspaceName: "my-ws" },
@@ -594,17 +730,24 @@ describe("CoderSSHRuntime.ensureReady", () => {
 
     expect(result).toEqual({ ready: true });
     expect(getWorkspaceStatus).toHaveBeenCalled();
-    expect(startWorkspaceAndWait).not.toHaveBeenCalled();
+    // Short-circuited because status is already "running"
+    expect(waitForStartupScripts).not.toHaveBeenCalled();
     expect(events.map((e) => e.phase)).toEqual(["checking", "ready"]);
     expect(events[0]?.runtimeType).toBe("ssh");
   });
 
-  it("starts the workspace when status is stopped", async () => {
+  it("connects via waitForStartupScripts when status is stopped (auto-starts)", async () => {
     const getWorkspaceStatus = mock(() =>
       Promise.resolve({ kind: "ok" as const, status: "stopped" as const })
     );
-    const startWorkspaceAndWait = mock(() => Promise.resolve({ success: true }));
-    const coderService = createMockCoderService({ getWorkspaceStatus, startWorkspaceAndWait });
+    const waitForStartupScripts = mock(() =>
+      (async function* (): AsyncGenerator<string, void, unknown> {
+        await Promise.resolve();
+        yield "Starting workspace...";
+        yield "Workspace started";
+      })()
+    );
+    const coderService = createMockCoderService({ getWorkspaceStatus, waitForStartupScripts });
 
     const runtime = createRuntime(
       { existingWorkspace: true, workspaceName: "my-ws" },
@@ -617,16 +760,25 @@ describe("CoderSSHRuntime.ensureReady", () => {
     });
 
     expect(result).toEqual({ ready: true });
-    expect(startWorkspaceAndWait).toHaveBeenCalled();
-    expect(events.map((e) => e.phase)).toEqual(["checking", "starting", "ready"]);
+    expect(waitForStartupScripts).toHaveBeenCalled();
+    // We should see checking, then starting, then ready
+    expect(events[0]?.phase).toBe("checking");
+    expect(events.some((e) => e.phase === "starting")).toBe(true);
+    expect(events.at(-1)?.phase).toBe("ready");
   });
 
-  it("returns runtime_start_failed when start fails", async () => {
+  it("returns runtime_start_failed when waitForStartupScripts fails", async () => {
     const getWorkspaceStatus = mock(() =>
       Promise.resolve({ kind: "ok" as const, status: "stopped" as const })
     );
-    const startWorkspaceAndWait = mock(() => Promise.resolve({ success: false, error: "boom" }));
-    const coderService = createMockCoderService({ getWorkspaceStatus, startWorkspaceAndWait });
+    const waitForStartupScripts = mock(() =>
+      (async function* (): AsyncGenerator<string, void, unknown> {
+        await Promise.resolve();
+        yield "Starting workspace...";
+        throw new Error("connection failed");
+      })()
+    );
+    const coderService = createMockCoderService({ getWorkspaceStatus, waitForStartupScripts });
 
     const runtime = createRuntime(
       { existingWorkspace: true, workspaceName: "my-ws" },
@@ -641,7 +793,7 @@ describe("CoderSSHRuntime.ensureReady", () => {
     expect(result.ready).toBe(false);
     if (!result.ready) {
       expect(result.errorType).toBe("runtime_start_failed");
-      expect(result.error).toContain("Failed to start");
+      expect(result.error).toContain("Failed to connect");
     }
 
     expect(events.at(-1)?.phase).toBe("error");

@@ -449,6 +449,10 @@ export const router = (authToken?: string) => {
         .input(schemas.agents.list.input)
         .output(schemas.agents.list.output)
         .handler(async ({ context, input }) => {
+          // Wait for workspace init before agent discovery (SSH may not be ready yet)
+          if (input.workspaceId) {
+            await context.aiService.waitForInit(input.workspaceId);
+          }
           const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
           const descriptors = await discoverAgentDefinitions(runtime, discoveryPath);
 
@@ -483,6 +487,10 @@ export const router = (authToken?: string) => {
         .input(schemas.agents.get.input)
         .output(schemas.agents.get.output)
         .handler(async ({ context, input }) => {
+          // Wait for workspace init before agent discovery (SSH may not be ready yet)
+          if (input.workspaceId) {
+            await context.aiService.waitForInit(input.workspaceId);
+          }
           const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
           return readAgentDefinition(runtime, discoveryPath, input.agentId);
         }),

@@ -351,26 +351,69 @@ describe("CoderService", () => {
     });
   });
 
-  describe("startWorkspaceAndWait", () => {
-    it("returns success true on exit code 0", async () => {
-      mockCoderCommandResult({ exitCode: 0 });
+  describe("waitForStartupScripts", () => {
+    it("streams stdout/stderr lines while waiting", async () => {
+      const stdout = Readable.from([Buffer.from("Waiting for agent...\nAgent ready\n")]);
+      const stderr = Readable.from([]);
+      const events = new EventEmitter();
 
-      const result = await service.startWorkspaceAndWait("ws-1", 1000);
+      spawnSpy!.mockReturnValue({
+        stdout,
+        stderr,
+        kill: vi.fn(),
+        on: events.on.bind(events),
+      } as never);
 
-      expect(result).toEqual({ success: true });
+      setTimeout(() => events.emit("close", 0), 0);
+
+      const lines: string[] = [];
+      for await (const line of service.waitForStartupScripts("my-ws")) {
+        lines.push(line);
+      }
+
+      expect(lines).toContain("$ coder ssh my-ws --wait=yes -- true");
+      expect(lines).toContain("Waiting for agent...");
+      expect(lines).toContain("Agent ready");
+      expect(spawnSpy).toHaveBeenCalledWith("coder", ["ssh", "my-ws", "--wait=yes", "--", "true"], {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
     });
 
-    it("maps build already active errors to build_in_progress", async () => {
-      mockCoderCommandResult({
-        exitCode: 1,
-        stderr: "workspace build is already active",
-      });
+    it("throws when exit code is non-zero", async () => {
+      const stdout = Readable.from([]);
+      const stderr = Readable.from([Buffer.from("Connection refused\n")]);
+      const events = new EventEmitter();
 
-      const result = await service.startWorkspaceAndWait("ws-1", 1000);
+      spawnSpy!.mockReturnValue({
+        stdout,
+        stderr,
+        kill: vi.fn(),
+        on: events.on.bind(events),
+      } as never);
 
-      expect(result).toEqual({ success: false, error: "build_in_progress" });
+      setTimeout(() => events.emit("close", 1), 0);
+
+      const lines: string[] = [];
+      const run = async () => {
+        for await (const line of service.waitForStartupScripts("my-ws")) {
+          lines.push(line);
+        }
+      };
+
+      let thrown: unknown;
+      try {
+        await run();
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeTruthy();
+      expect(thrown instanceof Error ? thrown.message : String(thrown)).toBe(
+        "coder ssh --wait failed (exit 1): Connection refused"
+      );
     });
   });
+
   describe("createWorkspace", () => {
     // Capture original fetch once per describe block to avoid nested mock issues
     let originalFetch: typeof fetch;
@@ -591,7 +634,9 @@ describe("CoderService", () => {
       }
 
       expect(thrown).toBeTruthy();
-      expect(thrown instanceof Error ? thrown.message : String(thrown)).toContain("exit code 42");
+      expect(thrown instanceof Error ? thrown.message : String(thrown)).toContain(
+        "coder create failed (exit 42)"
+      );
     });
 
     it("aborts before spawn when already aborted", async () => {

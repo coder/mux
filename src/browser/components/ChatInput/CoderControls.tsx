@@ -13,6 +13,7 @@ import type { CoderWorkspaceConfig } from "@/common/types/runtime";
 import { cn } from "@/common/lib/utils";
 import { Loader2 } from "lucide-react";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 
 export interface CoderControlsProps {
   /** Whether to use Coder workspace (checkbox state) */
@@ -174,7 +175,7 @@ export function CoderControls(props: CoderControlsProps) {
       ? undefined
       : presets.length === 1
         ? presets[0]?.name
-        : (coderConfig?.preset ?? defaultPresetName);
+        : (coderConfig?.preset ?? defaultPresetName ?? presets[0]?.name);
 
   return (
     <div className="flex flex-col gap-1.5" data-testid="coder-controls">
@@ -245,20 +246,35 @@ export function CoderControls(props: CoderControlsProps) {
                 {loadingTemplates ? (
                   <Loader2 className="text-muted h-4 w-4 animate-spin" />
                 ) : (
-                  <select
+                  <Select
                     value={coderConfig?.template ?? ""}
-                    onChange={(e) => handleTemplateChange(e.target.value)}
+                    onValueChange={handleTemplateChange}
                     disabled={disabled || templates.length === 0}
-                    className="bg-bg-dark text-foreground border-border-medium focus:border-accent h-7 w-[180px] rounded-md border px-2 text-sm focus:outline-none disabled:opacity-50"
-                    data-testid="coder-template-select"
                   >
-                    {templates.length === 0 && <option value="">No templates</option>}
-                    {templates.map((t) => (
-                      <option key={t.name} value={t.name}>
-                        {t.displayName || t.name}
-                      </option>
-                    ))}
-                  </select>
+                    <SelectTrigger
+                      className="h-7 w-[180px] text-xs"
+                      data-testid="coder-template-select"
+                    >
+                      <SelectValue placeholder="No templates" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {templates.map((t) => {
+                        // Show org name only if there are duplicate template names
+                        const hasDuplicate = templates.some(
+                          (other) =>
+                            other.name === t.name && other.organizationName !== t.organizationName
+                        );
+                        return (
+                          <SelectItem key={`${t.organizationName}/${t.name}`} value={t.name}>
+                            {t.displayName || t.name}
+                            {hasDuplicate && (
+                              <span className="text-muted ml-1">({t.organizationName})</span>
+                            )}
+                          </SelectItem>
+                        );
+                      })}
+                    </SelectContent>
+                  </Select>
                 )}
               </div>
               <div className="flex h-7 items-center gap-2">
@@ -266,21 +282,25 @@ export function CoderControls(props: CoderControlsProps) {
                 {loadingPresets ? (
                   <Loader2 className="text-muted h-4 w-4 animate-spin" />
                 ) : (
-                  <select
+                  <Select
                     value={effectivePreset ?? ""}
-                    onChange={(e) => handlePresetChange(e.target.value)}
+                    onValueChange={handlePresetChange}
                     disabled={disabled || presets.length === 0}
-                    className="bg-bg-dark text-foreground border-border-medium focus:border-accent h-7 w-[180px] rounded-md border px-2 text-sm focus:outline-none disabled:opacity-50"
-                    data-testid="coder-preset-select"
                   >
-                    {presets.length === 0 && <option value="">No presets</option>}
-                    {presets.length > 0 && <option value="">Select preset...</option>}
-                    {presets.map((p) => (
-                      <option key={p.id} value={p.name}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
+                    <SelectTrigger
+                      className="h-7 w-[180px] text-xs"
+                      data-testid="coder-preset-select"
+                    >
+                      <SelectValue placeholder="No presets" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {presets.map((p) => (
+                        <SelectItem key={p.id} value={p.name}>
+                          {p.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 )}
               </div>
             </div>
@@ -293,21 +313,31 @@ export function CoderControls(props: CoderControlsProps) {
               {loadingWorkspaces ? (
                 <Loader2 className="text-muted h-4 w-4 animate-spin" />
               ) : (
-                <select
+                <Select
                   value={coderConfig?.workspaceName ?? ""}
-                  onChange={(e) => handleExistingWorkspaceChange(e.target.value)}
+                  onValueChange={handleExistingWorkspaceChange}
                   disabled={disabled || existingWorkspaces.length === 0}
-                  className="bg-bg-dark text-foreground border-border-medium focus:border-accent h-7 w-[180px] rounded-md border px-2 text-sm focus:outline-none disabled:opacity-50"
-                  data-testid="coder-workspace-select"
                 >
-                  {existingWorkspaces.length === 0 && <option value="">No workspaces found</option>}
-                  {existingWorkspaces.length > 0 && <option value="">Select workspace...</option>}
-                  {existingWorkspaces.map((w) => (
-                    <option key={w.name} value={w.name}>
-                      {w.name} ({w.templateName}) • {w.status}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger
+                    className="h-7 w-[180px] text-xs"
+                    data-testid="coder-workspace-select"
+                  >
+                    <SelectValue
+                      placeholder={
+                        existingWorkspaces.length === 0
+                          ? "No workspaces found"
+                          : "Select workspace..."
+                      }
+                    />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {existingWorkspaces.map((w) => (
+                      <SelectItem key={w.name} value={w.name}>
+                        {w.name} ({w.templateName}) • {w.status}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               )}
             </div>
           )}
