@@ -7,12 +7,12 @@ import type { UpdateStatus } from "@/common/orpc/types";
 import { Download, Loader2, RefreshCw } from "lucide-react";
 
 import { useTutorial } from "@/browser/contexts/TutorialContext";
-import MuxLogoDark from "@/browser/assets/logos/mux-logo-dark.svg?react";
-import MuxLogoLight from "@/browser/assets/logos/mux-logo-light.svg?react";
-import { useTheme } from "@/browser/contexts/ThemeContext";
-
 import { useAPI } from "@/browser/contexts/API";
-import { isDesktopMode, getTitlebarLeftInset } from "@/browser/hooks/useDesktopTitlebar";
+import {
+  isDesktopMode,
+  getTitlebarLeftInset,
+  DESKTOP_TITLEBAR_HEIGHT_CLASS,
+} from "@/browser/hooks/useDesktopTitlebar";
 
 // Update check intervals
 const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
@@ -75,11 +75,8 @@ function parseBuildInfo(version: unknown) {
 
 export function TitleBar() {
   const { api } = useAPI();
-  const { extendedTimestamp, gitDescribe } = parseBuildInfo(VERSION satisfies unknown);
+  const { buildDate, extendedTimestamp, gitDescribe } = parseBuildInfo(VERSION satisfies unknown);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ type: "idle" });
-
-  const { theme } = useTheme();
-  const MuxLogo = theme === "dark" || theme === "solarized-dark" ? MuxLogoDark : MuxLogoLight;
   const [isCheckingOnHover, setIsCheckingOnHover] = useState(false);
   const lastHoverCheckTime = useRef<number>(0);
 
@@ -175,7 +172,11 @@ export function TitleBar() {
 
   const getUpdateTooltip = () => {
     const currentVersion = gitDescribe ?? "dev";
-    const lines: React.ReactNode[] = [`Current: ${currentVersion}`];
+    const lines: React.ReactNode[] = [
+      `Current: ${currentVersion}`,
+      `Built: ${buildDate}`,
+      `Built at: ${extendedTimestamp}`,
+    ];
 
     if (!window.api) {
       lines.push("Desktop updates are available in the Electron app only.");
@@ -223,8 +224,6 @@ export function TitleBar() {
     );
   };
 
-  const showUpdateShimmer = updateStatus.type === "available";
-
   const updateBadgeIcon = (() => {
     if (updateStatus.type === "available") {
       return <Download className="size-3.5" />;
@@ -256,7 +255,7 @@ export function TitleBar() {
     <div
       className={cn(
         "bg-sidebar border-border-light font-primary text-muted flex shrink-0 items-center justify-between border-b px-4 text-[11px] select-none",
-        isDesktop ? "h-10" : "h-8",
+        isDesktop ? DESKTOP_TITLEBAR_HEIGHT_CLASS : "h-8",
         // In desktop mode, make header draggable for window movement
         isDesktop && "titlebar-drag"
       )}
@@ -273,7 +272,7 @@ export function TitleBar() {
           <TooltipTrigger asChild>
             <div
               className={cn(
-                "flex items-center gap-1",
+                "flex items-center gap-1.5",
                 isUpdateActionable ? "cursor-pointer hover:opacity-70" : "cursor-default"
               )}
               onClick={handleUpdateClick}
@@ -281,53 +280,21 @@ export function TitleBar() {
             >
               <div
                 className={cn(
-                  "relative overflow-hidden",
-                  leftInset > 0 ? "h-3 w-[26px]" : "h-4 w-[35px]"
+                  "min-w-0 cursor-text truncate font-normal tracking-wider select-text",
+                  leftInset > 0 ? "text-[10px]" : "text-xs"
                 )}
               >
-                <MuxLogo
-                  className={cn("block h-full w-full", leftInset > 0 || "-translate-y-px")}
-                />
-                {showUpdateShimmer && (
-                  <div
-                    className="pointer-events-none absolute inset-0 animate-[shimmer-slide_2.5s_infinite_linear]"
-                    data-chromatic="ignore"
-                    style={{
-                      background:
-                        "linear-gradient(90deg, transparent 0%, transparent 40%, color-mix(in srgb, var(--color-accent) 35%, transparent) 50%, transparent 60%, transparent 100%)",
-                      width: "300%",
-                      marginLeft: "-180%",
-                    }}
-                  />
-                )}
+                {gitDescribe ?? "(dev)"}
               </div>
-              <div
-                className={cn(
-                  "text-accent flex items-center justify-center",
-                  leftInset > 0 ? "h-3 w-3" : "h-3.5 w-3.5"
-                )}
-              >
-                {updateBadgeIcon}
-              </div>
+              {updateBadgeIcon && (
+                <div className="text-accent flex h-3.5 w-3.5 items-center justify-center">
+                  {updateBadgeIcon}
+                </div>
+              )}
             </div>
           </TooltipTrigger>
           <TooltipContent align="start" className="pointer-events-auto">
             {getUpdateTooltip()}
-          </TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <div
-              className={cn(
-                "min-w-0 cursor-text truncate font-normal tracking-wider select-text",
-                leftInset > 0 ? "text-[10px]" : "text-xs"
-              )}
-            >
-              {gitDescribe ?? "(dev)"}
-            </div>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" align="start">
-            Built at {extendedTimestamp}
           </TooltipContent>
         </Tooltip>
       </div>

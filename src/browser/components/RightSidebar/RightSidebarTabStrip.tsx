@@ -6,7 +6,11 @@ import { CSS } from "@dnd-kit/utilities";
 import { useDroppable, useDndContext } from "@dnd-kit/core";
 import { Plus } from "lucide-react";
 import type { TabType } from "@/browser/types/rightSidebar";
-import { isDesktopMode, getTitlebarRightInset } from "@/browser/hooks/useDesktopTitlebar";
+import {
+  isDesktopMode,
+  getTitlebarRightInset,
+  DESKTOP_TITLEBAR_MIN_HEIGHT_CLASS,
+} from "@/browser/hooks/useDesktopTitlebar";
 
 // Re-export for consumers that import from this file
 export { getTabName } from "./tabs";
@@ -141,7 +145,7 @@ export const RightSidebarTabStrip: React.FC<RightSidebarTabStripProps> = ({
       ref={setNodeRef}
       className={cn(
         "border-border-light flex min-w-0 items-center border-b px-2 transition-colors",
-        isDesktop ? "min-h-10" : "py-1.5",
+        isDesktop ? DESKTOP_TITLEBAR_MIN_HEIGHT_CLASS : "py-1.5",
         showDropHighlight && "bg-accent/30",
         isDraggingFromHere && "bg-accent/10",
         // In desktop mode, make header draggable for window movement
