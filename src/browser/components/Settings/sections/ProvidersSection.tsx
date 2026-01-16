@@ -3,16 +3,16 @@ import { ChevronDown, ChevronRight, Check, X, Eye, EyeOff, ExternalLink } from "
 
 import { createEditKeyHandler } from "@/browser/utils/ui/keybinds";
 import { SUPPORTED_PROVIDERS } from "@/common/constants/providers";
-import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import type { ProviderName } from "@/common/constants/providers";
 import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
-import { useSettings } from "@/browser/contexts/SettingsContext";
-import { useAPI } from "@/browser/contexts/API";
-import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { getStoredAuthToken } from "@/browser/components/AuthTokenModal";
+import { useAPI } from "@/browser/contexts/API";
+import { useSettings } from "@/browser/contexts/SettingsContext";
+import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
-import { isProviderSupported, useGateway } from "@/browser/hooks/useGatewayModels";
+import { useGateway } from "@/browser/hooks/useGatewayModels";
+import { getEligibleGatewayModels } from "@/browser/utils/gatewayModels";
 import { Button } from "@/browser/components/ui/button";
 import {
   Select,
@@ -49,29 +49,6 @@ function getBackendBaseUrl(): string {
   return import.meta.env.VITE_BACKEND_URL ?? window.location.origin;
 }
 const GATEWAY_MODELS_KEY = "gateway-models";
-
-const BUILT_IN_MODELS: string[] = Object.values(KNOWN_MODELS).map((model) => model.id);
-
-function getEligibleGatewayModels(config: ProvidersConfigMap | null): string[] {
-  const customModels: string[] = [];
-
-  if (config) {
-    for (const [provider, providerConfig] of Object.entries(config)) {
-      if (provider === "mux-gateway") continue;
-      for (const modelId of providerConfig.models ?? []) {
-        customModels.push(`${provider}:${modelId}`);
-      }
-    }
-  }
-
-  const unique = new Set<string>();
-  for (const modelId of [...customModels, ...BUILT_IN_MODELS]) {
-    if (!isProviderSupported(modelId)) continue;
-    unique.add(modelId);
-  }
-
-  return Array.from(unique).sort((a, b) => a.localeCompare(b));
-}
 
 interface FieldConfig {
   key: string;
