@@ -68,31 +68,38 @@ export function consumeMuxRootFromArgv(
 ): { muxRoot?: string; error?: string } {
   let muxRoot: string | undefined;
 
+  // Matches:
+  // - --mux-root <path>
+  // - --root <path>
+  // - --mux-root=<path>
+  // - --root=<path>
+  const rootFlagRe = /^--(mux-root|root)(?:=(.*))?$/;
+
   for (let i = env.firstArgIndex; i < argv.length; i++) {
     const arg = argv[i];
+    const match = rootFlagRe.exec(arg);
+    if (!match) continue;
 
-    if (arg === "--mux-root" || arg === "--root") {
-      const value = argv[i + 1];
-      if (value === undefined || value.startsWith("-")) {
+    const equalsValue = match[2];
+    if (equalsValue !== undefined) {
+      if (!equalsValue) {
         return { error: `Missing value for ${arg}` };
       }
 
-      muxRoot = value;
-      argv.splice(i, 2);
+      muxRoot = equalsValue;
+      argv.splice(i, 1);
       i -= 1;
       continue;
     }
 
-    if (arg.startsWith("--mux-root=") || arg.startsWith("--root=")) {
-      const [, value] = arg.split("=", 2);
-      if (!value) {
-        return { error: `Missing value for ${arg}` };
-      }
-
-      muxRoot = value;
-      argv.splice(i, 1);
-      i -= 1;
+    const value = argv[i + 1];
+    if (value === undefined || value.startsWith("-")) {
+      return { error: `Missing value for ${arg}` };
     }
+
+    muxRoot = value;
+    argv.splice(i, 2);
+    i -= 1;
   }
 
   return { muxRoot };

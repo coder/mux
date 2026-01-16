@@ -1085,7 +1085,7 @@ export const debug = {
    * Launch a new mux desktop instance under an isolated root (for QA).
    */
   launchTestInstance: {
-    input: z.object({}),
+    input: z.void(),
     output: ResultSchema(z.object({ rootDir: z.string() }), z.string()),
   },
 
@@ -1093,7 +1093,7 @@ export const debug = {
    * Delete all test instance roots under <muxHome>/instances.
    */
   deleteTestInstances: {
-    input: z.object({}),
+    input: z.void(),
     output: ResultSchema(
       z.object({ instancesDir: z.string(), deletedCount: z.number() }),
       z.string()
