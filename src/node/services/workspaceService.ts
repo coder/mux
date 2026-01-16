@@ -446,7 +446,12 @@ export class WorkspaceService extends EventEmitter {
     // Check both new and legacy plan paths, prefer new path
     const newPlanExists = await fileExists(runtime, planPath);
     const legacyPlanExists = !newPlanExists && (await fileExists(runtime, legacyPlanPath));
-    const activePlanPath = newPlanExists ? planPath : legacyPlanExists ? legacyPlanPath : null;
+    // Return expanded path to frontend (~ doesn't work in editor deep links)
+    const activePlanPath = newPlanExists
+      ? expandedPlanPath
+      : legacyPlanExists
+        ? expandedLegacyPlanPath
+        : null;
 
     // Load exclusions
     const exclusions = await this.getPostCompactionExclusions(workspaceId);
