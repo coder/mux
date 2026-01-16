@@ -20,10 +20,10 @@ Usage:
     # Then submit with hf CLI:
     hf upload alexgshaw/terminal-bench-2-leaderboard \\
         ./leaderboard_submission/submissions submissions \\
-        --repo-type dataset --create-pr --commit-message "mux submission"
+        --repo-type dataset --create-pr --commit-message "Mux submission"
 
 Output structure (per leaderboard requirements):
-    submissions/terminal-bench/2.0/mux__<Model>/
+    submissions/terminal-bench/2.0/Mux__<Model>/
         metadata.yaml
         <job-folder>/               # Timestamp-named (e.g., 2026-01-16__00-15-05)
             config.json
@@ -62,7 +62,7 @@ MUX_METADATA = {
 }
 
 # Model metadata lookup
-# folder_name: Used in submission folder path (e.g., mux__Claude-Opus-4.5)
+# folder_name: Used in submission folder path (e.g., Mux__Claude-Opus-4.5)
 MODEL_METADATA = {
     "anthropic/claude-sonnet-4-5": {
         "model_name": "claude-sonnet-4-5",
@@ -359,10 +359,10 @@ def prepare_submission(
 
     # Create submissions for each model
     for model, trials in model_trials.items():
-        # Create submission directory: mux__<Model>
+        # Create submission directory: Mux__<Model>
         model_info = MODEL_METADATA.get(model, {})
         model_folder_name = model_info.get("folder_name", model.split("/")[-1].title())
-        submission_name = f"mux__{model_folder_name}"
+        submission_name = f"Mux__{model_folder_name}"
 
         submission_dir = (
             output_dir / "submissions" / "terminal-bench" / "2.0" / submission_name
@@ -400,7 +400,14 @@ def prepare_submission(
                 dest_trial_dir = dest_job_folder / trial_src.name
                 if dest_trial_dir.exists():
                     shutil.rmtree(dest_trial_dir)
-                shutil.copytree(trial_src, dest_trial_dir)
+                shutil.copytree(
+                    trial_src,
+                    dest_trial_dir,
+                    ignore=shutil.ignore_patterns(
+                        "mux-app.tar.gz",  # Large agent binary (~5MB each)
+                        "mux-tokens.json",  # Token usage (not needed for leaderboard)
+                    ),
+                )
                 total_trials += 1
 
         print(f"  {model}: copied {total_trials} trial(s)")
@@ -501,7 +508,7 @@ def main():
     print(f"  hf upload {LEADERBOARD_REPO} \\")
     print(f"    {args.output_dir}/submissions submissions \\")
     print(f"    --repo-type dataset --create-pr \\")
-    print(f'    --commit-message "mux submission ({run_date})"')
+    print(f'    --commit-message "Mux submission ({run_date})"')
 
     # Clean up temp directory if we created one
     if not args.artifacts_dir and artifacts_dir.exists():
