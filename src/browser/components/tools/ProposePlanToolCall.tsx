@@ -286,7 +286,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
       : { top: 100, left: 100 };
 
     try {
-      const result = await openInEditor(workspaceId, planPath, runtimeConfig);
+      const result = await openInEditor(workspaceId, planPath, runtimeConfig, { isFile: true });
       if (!result.success && result.error) {
         editorError.showError("plan-editor", result.error, anchorPosition);
       }

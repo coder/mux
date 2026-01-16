@@ -29,12 +29,23 @@ function openUrl(url: string): void {
   }
 }
 
+/**
+ * Get parent directory from a path.
+ */
+function getParentDirectory(path: string): string {
+  const lastSlash = path.lastIndexOf("/");
+  const isRootLevelPath = lastSlash === 0; // e.g., /file.txt at root
+  return isRootLevelPath ? "/" : path.substring(0, lastSlash) || "/";
+}
+
 export async function openInEditor(args: {
   api: APIClient | null | undefined;
   openSettings?: (section?: string) => void;
   workspaceId: string;
   targetPath: string;
   runtimeConfig?: RuntimeConfig;
+  /** When true, indicates targetPath is a file (used for SSH/Docker which only support opening folders) */
+  isFile?: boolean;
 }): Promise<OpenInEditorResult> {
   const editorConfig = readPersistedState<EditorConfig>(EDITOR_CONFIG_KEY, DEFAULT_EDITOR_CONFIG);
 
@@ -75,15 +86,8 @@ export async function openInEditor(args: {
     }
 
     // VS Code's attached-container URI scheme only supports opening folders as workspaces,
-    // not individual files. Attempting to open a file path results in VS Code treating it
-    // as a workspace root and failing with "chdir failed: not a directory".
-    // For file paths: open the parent directory so the file is visible in the file tree.
-    // For directory paths (e.g., /src): open as-is.
-    const lastSlash = args.targetPath.lastIndexOf("/");
-    const isRootLevelPath = lastSlash === 0; // e.g., /src, /var
-    const targetDir = isRootLevelPath
-      ? args.targetPath
-      : args.targetPath.substring(0, lastSlash) || "/";
+    // not individual files. Open the parent directory so the file is visible in the file tree.
+    const targetDir = args.isFile ? getParentDirectory(args.targetPath) : args.targetPath;
     const deepLink = getDockerDeepLink({
       editor: editorConfig.editor as DeepLinkEditor,
       containerName,
@@ -115,9 +119,14 @@ export async function openInEditor(args: {
     }
     // else: localhost access to local workspace → no SSH needed
 
+    // VS Code/Cursor SSH deep links only support opening folders, not individual files.
+    // Zed SSH deep links can open files directly.
+    const needsParentDir = args.isFile && isSSH && editorConfig.editor !== "zed";
+    const targetPath = needsParentDir ? getParentDirectory(args.targetPath) : args.targetPath;
+
     const deepLink = getEditorDeepLink({
       editor: editorConfig.editor as DeepLinkEditor,
-      path: args.targetPath,
+      path: targetPath,
       sshHost,
     });
 

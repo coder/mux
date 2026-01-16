@@ -446,7 +446,13 @@ export class WorkspaceService extends EventEmitter {
     // Check both new and legacy plan paths, prefer new path
     const newPlanExists = await fileExists(runtime, planPath);
     const legacyPlanExists = !newPlanExists && (await fileExists(runtime, legacyPlanPath));
-    const activePlanPath = newPlanExists ? planPath : legacyPlanExists ? legacyPlanPath : null;
+    // Resolve plan path via runtime to get correct absolute path for deep links.
+    // Local: expands ~ to local home. SSH: expands ~ on remote host.
+    const activePlanPath = newPlanExists
+      ? await runtime.resolvePath(planPath)
+      : legacyPlanExists
+        ? await runtime.resolvePath(legacyPlanPath)
+        : null;
 
     // Load exclusions
     const exclusions = await this.getPostCompactionExclusions(workspaceId);

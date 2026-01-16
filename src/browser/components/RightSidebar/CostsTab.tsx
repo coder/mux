@@ -23,6 +23,7 @@ import { PostCompactionSection } from "./PostCompactionSection";
 import { usePostCompactionState } from "@/browser/hooks/usePostCompactionState";
 import { useExperimentValue } from "@/browser/contexts/ExperimentsContext";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import { useOptionalWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 
 /**
  * Calculate cost with elevated pricing for 1M context (200k-1M tokens)
@@ -60,6 +61,10 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
   // Post-compaction context state for UI display (gated by experiment)
   const postCompactionEnabled = useExperimentValue(EXPERIMENT_IDS.POST_COMPACTION_CONTEXT);
   const postCompactionState = usePostCompactionState(workspaceId);
+
+  // Get runtimeConfig for SSH-aware editor opening
+  const workspaceContext = useOptionalWorkspaceContext();
+  const runtimeConfig = workspaceContext?.workspaceMetadata.get(workspaceId)?.runtimeConfig;
 
   // Get model from context usage for per-model threshold storage
   // Use lastContextUsage for context window display (last step's usage)
@@ -137,6 +142,7 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
               trackedFilePaths={postCompactionState.trackedFilePaths}
               excludedItems={postCompactionState.excludedItems}
               onToggleExclusion={postCompactionState.toggleExclusion}
+              runtimeConfig={runtimeConfig}
             />
           )}
         </div>
