@@ -115,9 +115,58 @@ See `.github/workflows/terminal-bench.yml` and `.github/workflows/nightly-termin
 
 **Nightly workflow** runs both Claude and GPT models on the full task suite, uploading results as artifacts.
 
+## Leaderboard Submission
+
+To submit mux results to the [Terminal-Bench 2.0 leaderboard](https://tbench.ai/leaderboard/terminal-bench/2.0):
+
+### Step 1: Prepare Submission
+
+```bash
+# Download latest successful nightly run and prepare submission folder
+python benchmarks/terminal_bench/prepare_leaderboard_submission.py
+
+# Use a specific run ID
+python benchmarks/terminal_bench/prepare_leaderboard_submission.py --run-id 20939412042
+
+# Only prepare specific models
+python benchmarks/terminal_bench/prepare_leaderboard_submission.py --models anthropic/claude-opus-4-5
+```
+
+This creates a properly structured submission folder at `leaderboard_submission/` containing:
+
+```
+submissions/terminal-bench/2.0/mux__<model>/
+  metadata.yaml       # Agent and model info
+  <job-folder>/       # Results from the run
+    config.json
+    <trial-1>/result.json
+    ...
+```
+
+### Step 2: Submit via HuggingFace CLI
+
+```bash
+# Install hf CLI (via uv or pip)
+uv tool install huggingface_hub
+# or: pip install huggingface_hub
+
+# Authenticate (one-time setup)
+hf auth login
+
+# Upload and create PR
+hf upload alexgshaw/terminal-bench-2-leaderboard \
+  ./leaderboard_submission/submissions submissions \
+  --repo-type dataset \
+  --create-pr \
+  --commit-message "mux submission (YYYY-MM-DD)"
+```
+
+The PR will be automatically validated by the leaderboard bot. Once merged, results appear on the leaderboard.
+
 ## Files
 
 - `mux_agent.py`: Main agent adapter implementing Harbor's `BaseInstalledAgent` interface
 - `mux-run.sh`: Shell script that sets up environment and invokes mux CLI
 - `mux_payload.py`: Helper to package mux app for containerized execution
 - `mux_setup.sh.j2`: Jinja2 template for agent installation script
+- `prepare_leaderboard_submission.py`: Script to prepare results for leaderboard submission
