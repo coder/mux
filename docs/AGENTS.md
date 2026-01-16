@@ -19,7 +19,12 @@ description: Agent instructions for AI assistants working on the Mux codebase
 
   Always check `$MUX_MODEL_STRING`, `$MUX_THINKING_LEVEL`, and `$MUX_COSTS_USD` via bash before creating or updating PRs—include them in the footer if set.
 
+
+## External Submissions
+
+- **Do not submit updates to the Terminal-Bench leaderboard repo directly.** Only provide the user with commands they can run themselves.
 ## PR + Release Workflow
+
 
 - Reuse existing PRs; never close or recreate without instruction. Force-push updates.
 - After every push run `./scripts/wait_pr_checks.sh <pr_number>` to ensure CI passes.
