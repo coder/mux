@@ -276,7 +276,10 @@ def find_job_folders(artifacts_dir: Path) -> list[Path]:
 
 
 def prepare_submission(
-    artifacts_dir: Path, output_dir: Path, run_date: str | None = None
+    artifacts_dir: Path,
+    output_dir: Path,
+    run_date: str | None = None,
+    models_filter: list[str] | None = None,
 ) -> dict[str, Path]:
     """
     Prepare submission folders from downloaded artifacts.
@@ -328,6 +331,10 @@ def prepare_submission(
             if model not in model_trials:
                 model_trials[model] = []
             model_trials[model].append((trial_folder, job_folder))
+
+    # Filter models if specified
+    if models_filter:
+        model_trials = {m: t for m, t in model_trials.items() if m in models_filter}
 
     # Create submissions for each model
     for model, trials in model_trials.items():
@@ -452,7 +459,9 @@ def main():
 
     # Prepare submission
     print(f"\nPreparing submission in {args.output_dir}...")
-    submissions = prepare_submission(artifacts_dir, args.output_dir, run_date)
+    submissions = prepare_submission(
+        artifacts_dir, args.output_dir, run_date, args.models
+    )
 
     if not submissions:
         print("No valid submissions created")
