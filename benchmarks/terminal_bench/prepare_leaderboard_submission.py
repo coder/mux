@@ -25,7 +25,9 @@ Usage:
 Output structure (per leaderboard requirements):
     submissions/terminal-bench/2.0/mux__<Model>/
         metadata.yaml
-        <job-folder>/               # Date-named (e.g., 2026-01-16)
+        <job-folder>/               # Timestamp-named (e.g., 2026-01-16__00-15-05)
+            config.json
+            result.json
             <trial-1>/              # e.g., chess-best-move__ABC123
                 config.json
                 result.json
@@ -301,7 +303,9 @@ def prepare_submission(
     Leaderboard structure:
         submissions/terminal-bench/2.0/<agent>__<model>/
             metadata.yaml
-            <job-folder>/           # Date-named (e.g., 2026-01-16)
+            <job-folder>/           # Timestamp-named (e.g., 2026-01-16__00-15-05)
+                config.json
+                result.json
                 <trial-folder>/     # e.g., chess-best-move__ABC123
                     config.json
                     result.json
@@ -324,6 +328,7 @@ def prepare_submission(
     model_trials: dict[
         str, list[tuple[Path, Path]]
     ] = {}  # model -> [(trial_src, job_folder)]
+    model_jobs: dict[str, dict[str, Path]] = {}  # model -> {job_name: job_folder}
 
     for job_folder in job_folders:
         for trial_folder in job_folder.iterdir():
@@ -344,7 +349,9 @@ def prepare_submission(
 
             if model not in model_trials:
                 model_trials[model] = []
+                model_jobs[model] = {}
             model_trials[model].append((trial_folder, job_folder))
+            model_jobs[model][job_folder.name] = job_folder
 
     # Filter models if specified
     if models_filter:
@@ -378,12 +385,16 @@ def prepare_submission(
         # Copy trials into job folders
         total_trials = 0
         for job_name, trial_paths in trials_by_job.items():
-            # Use run_date for job folder name, or original job name
-            dest_job_name = (
-                run_date or job_name.split("__")[0]
-            )  # Extract date from YYYY-MM-DD__HH-MM-SS
-            dest_job_folder = submission_dir / dest_job_name
+            dest_job_folder = submission_dir / job_name
             dest_job_folder.mkdir(parents=True, exist_ok=True)
+
+            # Copy job-level config/result if present
+            job_root = model_jobs[model].get(job_name)
+            if job_root:
+                for filename in ("config.json", "result.json"):
+                    source_file = job_root / filename
+                    if source_file.exists():
+                        shutil.copy2(source_file, dest_job_folder / filename)
 
             for trial_src in trial_paths:
                 dest_trial_dir = dest_job_folder / trial_src.name
