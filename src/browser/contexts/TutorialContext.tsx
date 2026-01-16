@@ -10,14 +10,6 @@ import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePer
 
 // Tutorial step definitions for each sequence
 const TUTORIAL_SEQUENCES: Record<TutorialSequence, TutorialStep[]> = {
-  settings: [
-    {
-      target: "settings-button",
-      title: "Settings",
-      content: "Configure providers, models and other settings here.",
-      position: "bottom",
-    },
-  ],
   creation: [
     {
       target: "model-selector",

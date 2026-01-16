@@ -264,11 +264,11 @@ export const DEFAULT_EDITOR_CONFIG: EditorConfig = {
 
 /**
  * Tutorial state storage key (global)
- * Stores: { disabled: boolean, completed: { settings?: true, creation?: true, workspace?: true } }
+ * Stores: { disabled: boolean, completed: { creation?: true, workspace?: true } }
  */
 export const TUTORIAL_STATE_KEY = "tutorialState";
 
-export type TutorialSequence = "settings" | "creation" | "workspace";
+export type TutorialSequence = "creation" | "workspace";
 
 export interface TutorialState {
   disabled: boolean;

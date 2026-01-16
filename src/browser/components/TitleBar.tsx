@@ -6,7 +6,6 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import type { UpdateStatus } from "@/common/orpc/types";
 import { Download, Loader2, RefreshCw } from "lucide-react";
 
-import { useTutorial } from "@/browser/contexts/TutorialContext";
 import { useAPI } from "@/browser/contexts/API";
 import {
   isDesktopMode,
@@ -68,17 +67,6 @@ export function TitleBar() {
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ type: "idle" });
   const [isCheckingOnHover, setIsCheckingOnHover] = useState(false);
   const lastHoverCheckTime = useRef<number>(0);
-
-  const { startSequence } = useTutorial();
-
-  // Start settings tutorial on first launch
-  useEffect(() => {
-    // Small delay to ensure UI is rendered before showing tutorial
-    const timer = setTimeout(() => {
-      startSequence("settings");
-    }, 500);
-    return () => clearTimeout(timer);
-  }, [startSequence]);
 
   useEffect(() => {
     // Skip update checks in browser mode - app updates only apply to Electron

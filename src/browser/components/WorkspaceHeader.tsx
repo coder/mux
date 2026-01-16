@@ -49,7 +49,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   const openInEditor = useOpenInEditor();
   const gitStatus = useGitStatus(workspaceId);
   const { canInterrupt } = useWorkspaceSidebarState(workspaceId);
-  const { startSequence: startTutorial, isSequenceCompleted } = useTutorial();
+  const { startSequence: startTutorial } = useTutorial();
   const [editorError, setEditorError] = useState<string | null>(null);
   const [debugLlmRequestOpen, setDebugLlmRequestOpen] = useState(false);
   const [mcpModalOpen, setMcpModalOpen] = useState(false);
@@ -78,19 +78,14 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     }
   }, [workspaceId, namedWorkspacePath, openInEditor, runtimeConfig]);
 
-  // Start workspace tutorial on first entry (only if settings tutorial is done)
+  // Start workspace tutorial on first entry
   useEffect(() => {
-    // Don't show workspace tutorial until settings tutorial is completed
-    // This prevents both tutorials from competing on first launch
-    if (!isSequenceCompleted("settings")) {
-      return;
-    }
     // Small delay to ensure UI is rendered
     const timer = setTimeout(() => {
       startTutorial("workspace");
     }, 300);
     return () => clearTimeout(timer);
-  }, [startTutorial, isSequenceCompleted]);
+  }, [startTutorial]);
 
   // Listen for /debug-llm-request command to open modal
   useEffect(() => {

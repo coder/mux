@@ -9,7 +9,6 @@ import {
 } from "../src/common/constants/storage";
 import { NOW } from "../src/browser/stories/mockFactory";
 
-
 const STORYBOOK_FONTS_READY_TIMEOUT_MS = 2500;
 
 let fontsReadyPromise: Promise<void> | null = null;
@@ -46,7 +45,7 @@ function disableTutorials() {
   if (typeof localStorage !== "undefined") {
     const disabledState: TutorialState = {
       disabled: true,
-      completed: { settings: true, creation: true, workspace: true },
+      completed: { creation: true, workspace: true },
     };
     localStorage.setItem(TUTORIAL_STATE_KEY, JSON.stringify(disabledState));
   }
