@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Pencil, Server } from "lucide-react";
+import { Menu, Pencil, Server } from "lucide-react";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { cn } from "@/common/lib/utils";
 import { RIGHT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
@@ -32,6 +32,8 @@ interface WorkspaceHeaderProps {
   workspaceName: string;
   namedWorkspacePath: string;
   runtimeConfig?: RuntimeConfig;
+  leftSidebarCollapsed: boolean;
+  onToggleLeftSidebarCollapsed: () => void;
   /** Callback to open integrated terminal in sidebar (optional, falls back to popout) */
   onOpenTerminal?: () => void;
 }
@@ -43,6 +45,8 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   workspaceName,
   namedWorkspacePath,
   runtimeConfig,
+  leftSidebarCollapsed,
+  onToggleLeftSidebarCollapsed,
   onOpenTerminal,
 }) => {
   const openTerminalPopout = useOpenTerminal();
@@ -112,7 +116,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
       style={headerRightPadding > 0 ? { paddingRight: headerRightPadding } : undefined}
       data-testid="workspace-header"
       className={cn(
-        "bg-sidebar border-border-light flex items-center justify-between border-b px-[15px] [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:flex-wrap [@media(max-width:768px)]:gap-2 [@media(max-width:768px)]:py-2 [@media(max-width:768px)]:pl-[60px]",
+        "bg-sidebar border-border-light flex items-center justify-between border-b px-[15px] [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:flex-wrap [@media(max-width:768px)]:gap-2 [@media(max-width:768px)]:py-2",
         isDesktop ? DESKTOP_TITLEBAR_HEIGHT_CLASS : "h-8",
         // In desktop mode, make header draggable for window movement
         isDesktop && "titlebar-drag"
@@ -124,6 +128,18 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
           isDesktop && "titlebar-no-drag"
         )}
       >
+        {leftSidebarCollapsed && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onToggleLeftSidebarCollapsed}
+            title="Open sidebar"
+            aria-label="Open sidebar menu"
+            className="mobile-menu-btn text-muted hover:text-foreground hidden h-6 w-6 shrink-0"
+          >
+            <Menu className="h-4 w-4" />
+          </Button>
+        )}
         <RuntimeBadge
           runtimeConfig={runtimeConfig}
           isWorking={canInterrupt}

@@ -80,6 +80,8 @@ interface AIViewProps {
   projectName: string;
   workspaceName: string;
   namedWorkspacePath: string; // User-friendly path for display and terminal
+  leftSidebarCollapsed: boolean;
+  onToggleLeftSidebarCollapsed: () => void;
   runtimeConfig?: RuntimeConfig;
   className?: string;
   /** If set, workspace is incompatible (from newer mux version) and this error should be displayed */
@@ -94,6 +96,8 @@ const AIViewInner: React.FC<AIViewProps> = ({
   projectName,
   workspaceName,
   namedWorkspacePath,
+  leftSidebarCollapsed,
+  onToggleLeftSidebarCollapsed,
   runtimeConfig,
   className,
   status,
@@ -579,6 +583,8 @@ const AIViewInner: React.FC<AIViewProps> = ({
           projectName={projectName}
           projectPath={projectPath}
           workspaceName={workspaceName}
+          leftSidebarCollapsed={leftSidebarCollapsed}
+          onToggleLeftSidebarCollapsed={onToggleLeftSidebarCollapsed}
           namedWorkspacePath={namedWorkspacePath}
           runtimeConfig={runtimeConfig}
           onOpenTerminal={handleOpenTerminal}

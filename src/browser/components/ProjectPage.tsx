@@ -1,4 +1,5 @@
 import React, { useRef, useCallback, useState, useEffect } from "react";
+import { Menu } from "lucide-react";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { cn } from "@/common/lib/utils";
 import { ModeProvider } from "@/browser/contexts/ModeContext";
@@ -25,11 +26,14 @@ import {
   getProjectScopeId,
 } from "@/common/constants/storage";
 import { SUPPORTED_PROVIDERS } from "@/common/constants/providers";
+import { Button } from "@/browser/components/ui/button";
 import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 
 interface ProjectPageProps {
   projectPath: string;
   projectName: string;
+  leftSidebarCollapsed: boolean;
+  onToggleLeftSidebarCollapsed: () => void;
   /** Section ID to pre-select when creating (from sidebar section "+" button) */
   pendingSectionId?: string | null;
   onProviderConfig: (provider: string, keyPath: string[], value: string) => Promise<void>;
@@ -59,6 +63,8 @@ function hasConfiguredProvider(config: ProvidersConfigMap | null): boolean {
 export const ProjectPage: React.FC<ProjectPageProps> = ({
   projectPath,
   projectName,
+  leftSidebarCollapsed,
+  onToggleLeftSidebarCollapsed,
   pendingSectionId,
   onProviderConfig,
   onWorkspaceCreated,
@@ -242,10 +248,26 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
             {/* Draggable header bar - matches WorkspaceHeader for consistency */}
             <div
               className={cn(
-                "bg-sidebar border-border-light flex shrink-0 items-center border-b px-[15px]",
+                "bg-sidebar border-border-light flex shrink-0 items-center border-b px-[15px] [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:py-2",
                 isDesktopMode() ? "h-10 titlebar-drag" : "h-8"
               )}
-            />
+            >
+              {leftSidebarCollapsed && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={onToggleLeftSidebarCollapsed}
+                  title="Open sidebar"
+                  aria-label="Open sidebar menu"
+                  className={cn(
+                    "hidden mobile-menu-btn h-6 w-6 shrink-0 text-muted hover:text-foreground",
+                    isDesktopMode() && "titlebar-no-drag"
+                  )}
+                >
+                  <Menu className="h-4 w-4" />
+                </Button>
+              )}
+            </div>
             {/* Scrollable content area */}
             <div className="min-h-0 flex-1 overflow-y-auto">
               {/* Main content - vertically centered with reduced gaps */}

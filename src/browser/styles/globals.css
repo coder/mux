@@ -1029,15 +1029,7 @@ body,
 
   /* Show mobile menu button only on touch devices */
   .mobile-menu-btn {
-    display: flex !important;
-
-    /*
-     * The chat header lives inside #root, which is safe-area padded on iOS.
-     * The hamburger is position: fixed, so we need to add safe-area insets
-     * explicitly to keep it aligned with the header.
-     */
-    top: calc(env(safe-area-inset-top, 0px) + 0.75rem) !important;
-    left: calc(env(safe-area-inset-left, 0px) + 0.75rem) !important;
+    display: inline-flex !important;
   }
 
   /* Show mobile overlay only on touch devices */

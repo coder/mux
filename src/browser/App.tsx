@@ -678,6 +678,8 @@ function AppInner() {
                       workspaceId={selectedWorkspace.workspaceId}
                       projectPath={selectedWorkspace.projectPath}
                       projectName={selectedWorkspace.projectName}
+                      leftSidebarCollapsed={sidebarCollapsed}
+                      onToggleLeftSidebarCollapsed={handleToggleSidebar}
                       workspaceName={workspaceName}
                       namedWorkspacePath={workspacePath}
                       runtimeConfig={currentMetadata.runtimeConfig}
@@ -696,6 +698,8 @@ function AppInner() {
                   <ProjectPage
                     projectPath={projectPath}
                     projectName={projectName}
+                    leftSidebarCollapsed={sidebarCollapsed}
+                    onToggleLeftSidebarCollapsed={handleToggleSidebar}
                     pendingSectionId={pendingNewWorkspaceSectionId}
                     onProviderConfig={handleProviderConfig}
                     onWorkspaceCreated={(metadata) => {
