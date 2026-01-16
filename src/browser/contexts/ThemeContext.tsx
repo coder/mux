@@ -12,7 +12,7 @@ import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { UI_THEME_KEY } from "@/common/constants/storage";
 
 /** Concrete theme applied to the document */
-export type ThemeMode = "light" | "dark";
+export type ThemeMode = "light" | "dark" | "flexoki-light" | "flexoki-dark";
 
 /** User preference: explicit theme or follow system */
 export type ThemePreference = ThemeMode | "system";
@@ -21,6 +21,8 @@ export const THEME_PREFERENCE_OPTIONS: Array<{ value: ThemePreference; label: st
   { value: "system", label: "System" },
   { value: "light", label: "Light" },
   { value: "dark", label: "Dark" },
+  { value: "flexoki-light", label: "Flexoki Light" },
+  { value: "flexoki-dark", label: "Flexoki Dark" },
 ];
 
 const PREFERENCE_VALUES = THEME_PREFERENCE_OPTIONS.map((t) => t.value);
@@ -49,7 +51,14 @@ const ThemeContext = createContext<ThemeContextValue | null>(null);
 const THEME_COLORS: Record<ThemeMode, string> = {
   dark: "#1e1e1e",
   light: "#f5f6f8",
+  "flexoki-light": "#fffcf0",
+  "flexoki-dark": "#100f0f",
 };
+
+/** Map theme mode to CSS color-scheme value */
+function getColorScheme(theme: ThemeMode): "light" | "dark" {
+  return theme === "light" || theme === "flexoki-light" ? "light" : "dark";
+}
 
 function getSystemTheme(): ThemeMode {
   if (typeof window === "undefined" || !window.matchMedia) {
@@ -65,7 +74,7 @@ function applyThemeToDocument(theme: ThemeMode) {
 
   const root = document.documentElement;
   root.dataset.theme = theme;
-  root.style.colorScheme = theme;
+  root.style.colorScheme = getColorScheme(theme);
 
   const themeColor = THEME_COLORS[theme];
   const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
@@ -152,11 +161,17 @@ export function ThemeProvider({
     [setRawPreference, isNestedUnderForcedProvider]
   );
 
-  // Toggle between light and dark based on current resolved theme.
+  // Toggle between light and dark variants of the current theme family.
   // This gives intuitive behavior: if it looks light, toggle to dark (and vice versa).
   const toggleTheme = useCallback(() => {
     if (!isNestedUnderForcedProvider) {
-      setRawPreference(theme === "light" ? "dark" : "light");
+      const themeMap: Record<ThemeMode, ThemeMode> = {
+        light: "dark",
+        dark: "light",
+        "flexoki-light": "flexoki-dark",
+        "flexoki-dark": "flexoki-light",
+      };
+      setRawPreference(themeMap[theme]);
     }
   }, [theme, setRawPreference, isNestedUnderForcedProvider]);
 

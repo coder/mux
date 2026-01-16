@@ -23,8 +23,23 @@
     <script>
       (function () {
         const THEME_KEY = "uiTheme";
-        const VALID_PREFERENCES = new Set(["system", "light", "dark"]);
-        const THEME_COLORS = { dark: "#1e1e1e", light: "#f5f6f8" };
+        const VALID_PREFERENCES = new Set([
+          "system",
+          "light",
+          "dark",
+          "flexoki-light",
+          "flexoki-dark",
+        ]);
+        const THEME_COLORS = {
+          dark: "#1e1e1e",
+          light: "#f5f6f8",
+          "flexoki-light": "#fffcf0",
+          "flexoki-dark": "#100f0f",
+        };
+
+        function getColorScheme(theme) {
+          return theme === "light" || theme === "flexoki-light" ? "light" : "dark";
+        }
 
         try {
           const stored = window.localStorage.getItem(THEME_KEY);
@@ -43,9 +58,10 @@
               ? "light"
               : "dark";
           const theme = preference === "system" ? systemTheme : preference;
+          const colorScheme = getColorScheme(theme);
 
           document.documentElement.dataset.theme = theme;
-          document.documentElement.style.colorScheme = theme;
+          document.documentElement.style.colorScheme = colorScheme;
 
           const metaThemeColor = document.querySelector('meta[name="theme-color"]');
           if (metaThemeColor) {
