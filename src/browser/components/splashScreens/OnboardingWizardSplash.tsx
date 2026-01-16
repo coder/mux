@@ -1,5 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Bot, Boxes, Command as CommandIcon, Server, Sparkles } from "lucide-react";
+import {
+  ArrowLeft,
+  Bot,
+  Boxes,
+  Briefcase,
+  Command as CommandIcon,
+  Server,
+  Sparkles,
+} from "lucide-react";
 import { SplashScreen } from "./SplashScreen";
 import { DocsLink } from "@/browser/components/DocsLink";
 import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
@@ -10,6 +18,9 @@ import {
   SSHIcon,
   WorktreeIcon,
 } from "@/browser/components/icons/RuntimeIcons";
+import { ProjectCreateForm } from "@/browser/components/ProjectCreateModal";
+import { useProjectContext } from "@/browser/contexts/ProjectContext";
+import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { Button } from "@/browser/components/ui/button";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { getStoredAuthToken } from "@/browser/components/AuthTokenModal";
@@ -19,6 +30,7 @@ import { getEligibleGatewayModels } from "@/browser/utils/gatewayModels";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
+import { getAgentsInitNudgeKey } from "@/common/constants/storage";
 import { PROVIDER_DISPLAY_NAMES, SUPPORTED_PROVIDERS } from "@/common/constants/providers";
 
 interface OAuthMessage {
@@ -170,6 +182,9 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
 
   const { open: openSettings } = useSettings();
   const { config: providersConfig, loading: providersLoading } = useProvidersConfig();
+  const { addProject, projects } = useProjectContext();
+  const { beginWorkspaceCreation } = useWorkspaceContext();
+
   const [direction, setDirection] = useState<Direction>("forward");
 
   const { api } = useAPI();
@@ -635,6 +650,41 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
     });
 
     nextSteps.push({
+      key: "projects",
+      title: "Add your first project",
+      icon: <Briefcase className="h-4 w-4" />,
+      body: (
+        <>
+          <p>
+            Projects are the folders you want Mux to work in. Add one now to start creating
+            workspaces.
+          </p>
+
+          {projects.size > 0 ? (
+            <p className="mt-3 text-xs">
+              <span className="text-foreground font-medium">Configured:</span> {projects.size}{" "}
+              project
+              {projects.size === 1 ? "" : "s"}
+            </p>
+          ) : (
+            <p className="mt-3 text-xs">No projects added yet.</p>
+          )}
+
+          <div className="mt-3">
+            <ProjectCreateForm
+              autoFocus={projects.size === 0}
+              onSuccess={(normalizedPath, projectConfig) => {
+                addProject(normalizedPath, projectConfig);
+                updatePersistedState(getAgentsInitNudgeKey(normalizedPath), true);
+                beginWorkspaceCreation(normalizedPath);
+              }}
+            />
+          </div>
+        </>
+      ),
+    });
+
+    nextSteps.push({
       key: "agents",
       title: "Agents: Plan, Exec, and custom",
       icon: <Bot className="h-4 w-4" />,
@@ -763,7 +813,9 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
 
     return nextSteps;
   }, [
+    addProject,
     agentPickerShortcut,
+    beginWorkspaceCreation,
     cancelMuxGatewayLogin,
     commandPaletteShortcut,
     configuredProviders.length,
@@ -775,6 +827,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
     muxGatewayLoginInProgress,
     muxGatewayLoginStatus,
     openSettings,
+    projects.size,
     providersConfig,
     startMuxGatewayLogin,
   ]);
