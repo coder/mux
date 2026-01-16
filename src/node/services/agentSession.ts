@@ -399,10 +399,10 @@ export class AgentSession {
     const trimmedMessage = message.trim();
     const imageParts = options?.imageParts;
 
-    // Edits are implemented as truncate+replace. If the frontend forgets to re-send
-    // imageParts, we should preserve the original message's attachments.
+    // Edits are implemented as truncate+replace. If the frontend omits imageParts,
+    // preserve the original message's attachments.
     let preservedEditImageParts: MuxImagePart[] | undefined;
-    if (options?.editMessageId && (!imageParts || imageParts.length === 0)) {
+    if (options?.editMessageId && imageParts === undefined) {
       const historyResult = await this.historyService.getHistory(this.workspaceId);
       if (historyResult.success) {
         const targetMessage: MuxMessage | undefined = historyResult.data.find(
