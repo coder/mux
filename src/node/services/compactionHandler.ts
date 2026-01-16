@@ -143,9 +143,17 @@ export class CompactionHandler {
 
     // Self-healing: Reject empty summaries (stream crashed before producing content)
     if (!summary.trim()) {
+      // Log detailed part info to help debug why no text was produced
+      const partsSummary = event.parts.map((p) => ({
+        type: p.type,
+        // Include preview for text-like parts to understand what the model produced
+        preview: "text" in p && typeof p.text === "string" ? p.text.slice(0, 100) : undefined,
+      }));
       log.warn("Compaction summary is empty - aborting compaction to prevent corrupted history", {
         workspaceId: this.workspaceId,
+        model: event.metadata.model,
         partsCount: event.parts.length,
+        parts: partsSummary,
       });
       // Don't mark as processed so user can retry
       return false;
