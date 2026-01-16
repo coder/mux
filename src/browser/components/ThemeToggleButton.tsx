@@ -4,7 +4,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 
 export function ThemeToggleButton() {
   const { theme, toggleTheme } = useTheme();
-  const isLightTheme = theme === "light" || theme.endsWith("-light");
+  const isLightTheme = theme === "light";
   const label = isLightTheme ? "Switch to dark theme" : "Switch to light theme";
   const Icon = isLightTheme ? MoonStar : SunMedium;
 
