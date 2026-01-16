@@ -35,7 +35,7 @@ import {
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { MessageQueue } from "./messageQueue";
 import type { StreamEndEvent } from "@/common/types/stream";
-import { CompactionHandler } from "./compactionHandler";
+import { CompactionHandler, type CompactionResult } from "./compactionHandler";
 import type { TelemetryService } from "./telemetryService";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
 import { computeDiff } from "@/node/utils/diff";
@@ -809,16 +809,27 @@ export class AgentSession {
     forward("runtime-status", (payload) => this.emitChatEvent(payload));
 
     forward("stream-end", async (payload) => {
-      const handled = await this.compactionHandler.handleCompletion(payload as StreamEndEvent);
-      if (!handled) {
+      const compactionResult: CompactionResult = await this.compactionHandler.handleCompletion(
+        payload as StreamEndEvent
+      );
+      if (compactionResult === "not-compaction") {
         this.emitChatEvent(payload);
-      } else {
+      } else if (compactionResult === "success") {
         // Compaction completed - notify to trigger metadata refresh
         // This allows the frontend to get updated postCompaction state
         this.onCompactionComplete?.();
       }
-      // Stream end: auto-send queued messages
-      this.sendQueuedMessages();
+      // else: compactionResult === "failed" - compaction was attempted but failed
+      // (model didn't produce valid summary, e.g., Gemini "completing" without compacting)
+
+      // Only send queued messages if:
+      // 1. This wasn't a compaction stream (normal message flow)
+      // 2. Compaction succeeded (safe to continue with follow-up)
+      // Do NOT send if compaction failed - the queued message would go into
+      // the non-compacted chat, potentially hitting context limits again.
+      if (compactionResult !== "failed") {
+        this.sendQueuedMessages();
+      }
     });
 
     const errorHandler = (...args: unknown[]) => {

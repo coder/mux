@@ -43,6 +43,14 @@ function looksLikeRawJsonObject(text: string): boolean {
 
 import { computeRecencyFromMessages } from "@/common/utils/recency";
 
+/**
+ * Result of handleCompletion:
+ * - "not-compaction": Normal stream end, not a compaction request - proceed normally
+ * - "success": Compaction completed successfully - proceed with queued messages
+ * - "failed": Compaction was attempted but failed - do NOT send queued messages
+ */
+export type CompactionResult = "not-compaction" | "success" | "failed";
+
 interface CompactionHandlerOptions {
   workspaceId: string;
   historyService: HistoryService;
@@ -115,12 +123,17 @@ export class CompactionHandler {
    *
    * Detects when a compaction stream finishes, extracts the summary,
    * and performs history replacement atomically.
+   *
+   * @returns CompactionResult indicating what happened:
+   *   - "not-compaction": Not a compaction stream, proceed normally
+   *   - "success": Compaction completed successfully
+   *   - "failed": Compaction was attempted but failed (model didn't produce valid summary)
    */
-  async handleCompletion(event: StreamEndEvent): Promise<boolean> {
+  async handleCompletion(event: StreamEndEvent): Promise<CompactionResult> {
     // Check if the last user message is a compaction-request
     const historyResult = await this.historyService.getHistory(this.workspaceId);
     if (!historyResult.success) {
-      return false;
+      return "not-compaction";
     }
 
     const messages = historyResult.data;
@@ -128,12 +141,12 @@ export class CompactionHandler {
     const isCompaction = lastUserMsg?.metadata?.muxMetadata?.type === "compaction-request";
 
     if (!isCompaction || !lastUserMsg) {
-      return false;
+      return "not-compaction";
     }
 
     // Dedupe: If we've already processed this compaction-request, skip
     if (this.processedCompactionRequestIds.has(lastUserMsg.id)) {
-      return true;
+      return "success";
     }
 
     const summary = event.parts
@@ -148,7 +161,7 @@ export class CompactionHandler {
         partsCount: event.parts.length,
       });
       // Don't mark as processed so user can retry
-      return false;
+      return "failed";
     }
 
     // Self-healing: Reject compaction if summary is just a raw JSON object.
@@ -163,7 +176,7 @@ export class CompactionHandler {
         }
       );
       // Don't mark as processed so user can retry
-      return false;
+      return "failed";
     }
 
     // Check if this was an idle-compaction (auto-triggered due to inactivity)
@@ -182,7 +195,7 @@ export class CompactionHandler {
     );
     if (!result.success) {
       log.error("Compaction failed:", result.error);
-      return false;
+      return "failed";
     }
 
     const durationSecs =
@@ -208,7 +221,7 @@ export class CompactionHandler {
 
     // Emit stream-end to frontend so UI knows compaction is complete
     this.emitChatEvent(event);
-    return true;
+    return "success";
   }
 
   /**
