@@ -2,6 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
 import type { ProjectsConfig, ProjectConfig } from "@/common/types/project";
+import { Err, Ok, type Result } from "@/common/types/result";
 import { Config } from "@/node/config";
 
 function sanitizeProjectConfigForTestInstance(project: ProjectConfig): ProjectConfig {
@@ -34,44 +35,38 @@ function isMissingFileError(err: unknown): boolean {
   return (err as { code?: unknown }).code === "ENOENT";
 }
 
-function stripArgWithOptionalValue(args: string[], matcher: (arg: string) => boolean): string[] {
-  const result: string[] = [];
+function buildSpawnArgsForNewRoot(newRoot: string): string[] {
+  const baseArgs = process.argv.slice(1);
+  const filtered: string[] = [];
 
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
+  for (let i = 0; i < baseArgs.length; i++) {
+    const arg = baseArgs[i];
 
-    if (matcher(arg)) {
-      // Handle `--flag value` and `--flag=value`.
-      if (!arg.includes("=") && args[i + 1] && !args[i + 1].startsWith("-")) {
+    const isMuxRootFlag = arg === "--mux-root" || arg === "--root";
+    const isRemoteDebuggingFlag = arg === "--remote-debugging-port";
+
+    if (isMuxRootFlag || isRemoteDebuggingFlag) {
+      // Handle `--flag value`.
+      const maybeValue = baseArgs[i + 1];
+      if (maybeValue && !maybeValue.startsWith("-")) {
         i += 1;
       }
       continue;
     }
 
-    result.push(arg);
+    // Handle `--flag=value`.
+    if (
+      arg.startsWith("--mux-root=") ||
+      arg.startsWith("--root=") ||
+      arg.startsWith("--remote-debugging-port=")
+    ) {
+      continue;
+    }
+
+    filtered.push(arg);
   }
 
-  return result;
-}
-
-function buildSpawnArgsForNewRoot(newRoot: string): string[] {
-  const baseArgs = process.argv.slice(1);
-
-  const withoutMuxRoot = stripArgWithOptionalValue(baseArgs, (arg) => {
-    return (
-      arg === "--mux-root" ||
-      arg === "--root" ||
-      arg.startsWith("--mux-root=") ||
-      arg.startsWith("--root=")
-    );
-  });
-
-  // Avoid debug port collisions when spawning a second Electron instance in dev.
-  const withoutRemoteDebugPort = stripArgWithOptionalValue(withoutMuxRoot, (arg) => {
-    return arg === "--remote-debugging-port" || arg.startsWith("--remote-debugging-port=");
-  });
-
-  return [...withoutRemoteDebugPort, "--mux-root", newRoot];
+  return [...filtered, "--mux-root", newRoot];
 }
 
 export class TestInstanceService {
@@ -81,13 +76,9 @@ export class TestInstanceService {
     const instancesDir = path.join(this.config.rootDir, "instances");
     await fs.mkdir(instancesDir, { recursive: true });
 
-    // Keep it Windows-safe (no ':'), but also readable.
-    const stamp = new Date().toISOString().replaceAll(":", "-").replaceAll(".", "-");
-    const rand = Math.random().toString(16).slice(2, 8);
-    const rootDir = path.join(instancesDir, `${stamp}-${rand}`);
-
-    await fs.mkdir(rootDir, { recursive: true });
-    return rootDir;
+    // node:fs mkdtemp always appends 6 random characters.
+    // Keep the prefix Windows-safe (no ':'), but human-readable.
+    return fs.mkdtemp(path.join(instancesDir, "test-instance-"));
   }
 
   private async copyIfExists(src: string, dest: string): Promise<void> {
@@ -99,33 +90,21 @@ export class TestInstanceService {
     }
   }
 
-  async launchTestInstance(): Promise<
-    { success: true; data: { rootDir: string } } | { success: false; error: string }
-  > {
+  async launchTestInstance(): Promise<Result<{ rootDir: string }>> {
     if (!process.versions.electron) {
-      return {
-        success: false,
-        error: "Launch Test Instance is only available in the desktop app.",
-      };
+      return Err("Launch Test Instance is only available in the desktop app.");
     }
 
     const rootDir = await this.createInstanceRoot();
 
     // Copy provider setup (API keys, endpoints), but not workspaces/sessions.
-    await this.copyIfExists(
-      path.join(this.config.rootDir, "providers.jsonc"),
-      path.join(rootDir, "providers.jsonc")
-    );
-    await this.copyIfExists(
-      path.join(this.config.rootDir, "secrets.json"),
-      path.join(rootDir, "secrets.json")
-    );
+    for (const file of ["providers.jsonc", "secrets.json"] as const) {
+      await this.copyIfExists(path.join(this.config.rootDir, file), path.join(rootDir, file));
+    }
 
     const sourceConfig = this.config.loadConfigOrDefault();
-    const isolatedConfig = createIsolatedConfigForTestInstance(sourceConfig);
-
     const instanceConfig = new Config(rootDir);
-    await instanceConfig.saveConfig(isolatedConfig);
+    await instanceConfig.saveConfig(createIsolatedConfigForTestInstance(sourceConfig));
 
     try {
       // Intentionally lazy import (rare debug action).
@@ -145,35 +124,32 @@ export class TestInstanceService {
       });
       child.unref();
 
-      return { success: true, data: { rootDir } };
+      return Ok({ rootDir });
     } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : String(err) };
+      return Err(err instanceof Error ? err.message : String(err));
     }
   }
 
-  async deleteTestInstances(): Promise<
-    | { success: true; data: { instancesDir: string; deletedCount: number } }
-    | { success: false; error: string }
-  > {
+  async deleteTestInstances(): Promise<Result<{ instancesDir: string; deletedCount: number }>> {
     const instancesDir = path.join(this.config.rootDir, "instances");
 
-    let entries: Array<{ name: string; isDirectory: () => boolean }>;
+    let entries;
     try {
       entries = await fs.readdir(instancesDir, { withFileTypes: true });
     } catch (err) {
       if (isMissingFileError(err)) {
-        return { success: true, data: { instancesDir, deletedCount: 0 } };
+        return Ok({ instancesDir, deletedCount: 0 });
       }
-      return { success: false, error: err instanceof Error ? err.message : String(err) };
+      return Err(err instanceof Error ? err.message : String(err));
     }
 
     const dirs = entries.filter((e) => e.isDirectory()).map((e) => path.join(instancesDir, e.name));
 
     try {
       await Promise.all(dirs.map((dir) => fs.rm(dir, { recursive: true, force: true })));
-      return { success: true, data: { instancesDir, deletedCount: dirs.length } };
+      return Ok({ instancesDir, deletedCount: dirs.length });
     } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : String(err) };
+      return Err(err instanceof Error ? err.message : String(err));
     }
   }
 }

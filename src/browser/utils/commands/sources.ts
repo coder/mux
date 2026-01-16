@@ -691,7 +691,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         section: section.debug,
         run: async () => {
           try {
-            const result = await api.debug.launchTestInstance({});
+            const result = await api.debug.launchTestInstance();
             if (result.success) {
               alert(`Launched test instance at:\n${result.data.rootDir}`);
             } else {
@@ -716,7 +716,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
           if (!ok) return;
 
           try {
-            const result = await api.debug.deleteTestInstances({});
+            const result = await api.debug.deleteTestInstances();
             if (result.success) {
               alert(
                 `Deleted ${result.data.deletedCount} test instance(s).\n\n${result.data.instancesDir}`
