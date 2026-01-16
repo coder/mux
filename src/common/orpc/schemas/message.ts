@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { AgentModeSchema } from "../../types/mode";
 import { StreamErrorTypeSchema } from "./errors";
+import { AgentSkillScopeSchema, SkillNameSchema } from "./agentSkill";
 
 export const ImagePartSchema = z.object({
   url: z.string(),
@@ -112,6 +113,14 @@ export const MuxMessageSchema = z.object({
       mode: AgentModeSchema.optional().catch(undefined),
       partial: z.boolean().optional(),
       synthetic: z.boolean().optional(),
+
+      agentSkillSnapshot: z
+        .object({
+          skillName: SkillNameSchema,
+          scope: AgentSkillScopeSchema,
+          sha256: z.string(),
+        })
+        .optional(),
       error: z.string().optional(),
       errorType: StreamErrorTypeSchema.optional(),
     })

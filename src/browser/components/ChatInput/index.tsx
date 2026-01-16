@@ -83,7 +83,7 @@ import {
   processImageFiles,
 } from "@/browser/utils/imageHandling";
 
-import type { AgentSkillDescriptor, AgentSkillPackage } from "@/common/types/agentSkill";
+import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { ModeAiDefaults } from "@/common/types/modeAiDefaults";
 import type { ParsedRuntime } from "@/common/types/runtime";
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
@@ -112,44 +112,11 @@ import initMessage from "@/browser/assets/initMessage.txt?raw";
 // Be conservative here so we can warn the user before writes start failing.
 const MAX_PERSISTED_IMAGE_DRAFT_CHARS = 4_000_000;
 
-// Guardrail: prevent accidental mega-prompts when injecting skill bodies.
+// Unknown slash commands are used for agent-skill invocations (/{skillName} ...).
 type UnknownSlashCommand = Extract<ParsedCommand, { type: "unknown-command" }>;
 
 function isUnknownSlashCommand(value: ParsedCommand): value is UnknownSlashCommand {
   return value !== null && value.type === "unknown-command";
-}
-
-const MAX_AGENT_SKILL_BODY_CHARS = 50_000;
-
-function mergeAdditionalSystemInstructions(
-  ...parts: Array<string | undefined>
-): string | undefined {
-  const filtered = parts.filter((part) => typeof part === "string" && part.trim().length > 0);
-  if (filtered.length === 0) {
-    return undefined;
-  }
-  return filtered.join("\n\n");
-}
-
-function buildAgentSkillSystemInstructionsForAutoCompaction(skill: AgentSkillPackage): string {
-  return (
-    "The following skill instructions are for the user's next message after compaction. " +
-    "If you are currently summarizing/compacting, ignore them.\n\n" +
-    buildAgentSkillSystemInstructions(skill)
-  );
-}
-function buildAgentSkillSystemInstructions(skill: AgentSkillPackage): string {
-  const scopeLabel = skill.scope === "global" ? "user" : skill.scope;
-  const skillName = skill.frontmatter.name;
-  const header = `Agent Skill applied: ${skillName} (${scopeLabel})`;
-  const invocationHint = `If the user's message starts with /${skillName}, ignore that leading token.`;
-
-  const body =
-    skill.body.length > MAX_AGENT_SKILL_BODY_CHARS
-      ? `${skill.body.slice(0, MAX_AGENT_SKILL_BODY_CHARS)}\n\n[Skill body truncated to ${MAX_AGENT_SKILL_BODY_CHARS} characters]`
-      : skill.body;
-
-  return `${header}\n${invocationHint}\n\n${body}`;
 }
 
 // Import types from local types file
@@ -1467,32 +1434,15 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                 return;
               }
 
-              try {
-                const skillPackage = await api.agentSkills.get({
-                  projectPath: props.projectPath,
+              creationMessageTextForSend = userText;
+              creationOptionsOverride = {
+                muxMetadata: {
+                  type: "agent-skill",
+                  rawCommand: messageText,
                   skillName: maybeSkill.name,
-                });
-                creationMessageTextForSend = userText;
-                creationOptionsOverride = {
-                  additionalSystemInstructions: buildAgentSkillSystemInstructions(skillPackage),
-                  muxMetadata: {
-                    type: "agent-skill",
-                    rawCommand: messageText,
-                    skillName: maybeSkill.name,
-                    scope: maybeSkill.scope,
-                  },
-                };
-              } catch (error) {
-                console.error("Failed to load agent skill:", error);
-                pushToast({
-                  type: "error",
-                  message:
-                    error instanceof Error
-                      ? error.message
-                      : `Failed to load agent skill ${maybeSkill.name}`,
-                });
-                return;
-              }
+                  scope: maybeSkill.scope,
+                },
+              };
             }
           }
         }
@@ -1886,38 +1836,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         // Clear input immediately for responsive UX
         setInput("");
 
-        let compactionSkillInstructions: string | undefined;
-        if (skillInvocation) {
-          try {
-            const skillPackage = await api.agentSkills.get({
-              workspaceId: props.workspaceId,
-              disableWorkspaceAgents: sendMessageOptions.disableWorkspaceAgents,
-              skillName: skillInvocation.descriptor.name,
-            });
-            compactionSkillInstructions =
-              buildAgentSkillSystemInstructionsForAutoCompaction(skillPackage);
-          } catch (error) {
-            console.error("Failed to load agent skill:", error);
-            setDraft(preSendDraft);
-            pushToast({
-              type: "error",
-              title: "Auto-Compaction Failed",
-              message:
-                error instanceof Error
-                  ? error.message
-                  : `Failed to load agent skill ${skillInvocation.descriptor.name}`,
-            });
-            setIsSending(false);
-            return;
-          }
-        }
-
         const compactionSendMessageOptions: SendMessageOptions = {
           ...sendMessageOptions,
-          additionalSystemInstructions: mergeAdditionalSystemInstructions(
-            sendMessageOptions.additionalSystemInstructions,
-            compactionSkillInstructions
-          ),
         };
 
         setImageAttachments([]);
@@ -1994,29 +1914,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         const reviewsData =
           attachedReviews.length > 0 ? attachedReviews.map((r) => r.data) : undefined;
 
-        // Load agent skill content (if invoked via /{skillName})
-        let skillSystemInstructions: string | undefined;
-        if (skillInvocation) {
-          try {
-            const skillPackage = await api.agentSkills.get({
-              workspaceId: props.workspaceId,
-              disableWorkspaceAgents: sendMessageOptions.disableWorkspaceAgents,
-              skillName: skillInvocation.descriptor.name,
-            });
-            skillSystemInstructions = buildAgentSkillSystemInstructions(skillPackage);
-          } catch (error) {
-            console.error("Failed to load agent skill:", error);
-            pushToast({
-              type: "error",
-              message:
-                error instanceof Error
-                  ? error.message
-                  : `Failed to load agent skill ${skillInvocation.descriptor.name}`,
-            });
-            return;
-          }
-        }
-
         // When editing a /compact command, regenerate the actual summarization request
         let actualMessageText = messageTextForSend;
         let muxMetadata: MuxFrontendMetadata | undefined = skillInvocation
@@ -2064,11 +1961,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         );
         // When editing /compact, compactionOptions already includes the base sendMessageOptions.
         // Avoid duplicating additionalSystemInstructions.
-        const additionalSystemInstructions = mergeAdditionalSystemInstructions(
+        const additionalSystemInstructions =
           compactionOptions.additionalSystemInstructions ??
-            sendMessageOptions.additionalSystemInstructions,
-          skillSystemInstructions
-        );
+          sendMessageOptions.additionalSystemInstructions;
 
         muxMetadata = reviewMetadata;
 
