@@ -20,7 +20,6 @@ import {
 } from "@/browser/components/icons/RuntimeIcons";
 import { ProjectCreateForm } from "@/browser/components/ProjectCreateModal";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
-import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { Button } from "@/browser/components/ui/button";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { getStoredAuthToken } from "@/browser/components/AuthTokenModal";
@@ -183,7 +182,6 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
   const { open: openSettings } = useSettings();
   const { config: providersConfig, loading: providersLoading } = useProvidersConfig();
   const { addProject, projects } = useProjectContext();
-  const { beginWorkspaceCreation } = useWorkspaceContext();
 
   const [direction, setDirection] = useState<Direction>("forward");
 
@@ -649,6 +647,8 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
       ),
     });
 
+    const projectStepIndex = nextSteps.length;
+
     nextSteps.push({
       key: "projects",
       title: "Add your first project",
@@ -676,7 +676,8 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
               onSuccess={(normalizedPath, projectConfig) => {
                 addProject(normalizedPath, projectConfig);
                 updatePersistedState(getAgentsInitNudgeKey(normalizedPath), true);
-                beginWorkspaceCreation(normalizedPath);
+                setDirection("forward");
+                setStepIndex(projectStepIndex + 1);
               }}
             />
           </div>
@@ -815,7 +816,6 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
   }, [
     addProject,
     agentPickerShortcut,
-    beginWorkspaceCreation,
     cancelMuxGatewayLogin,
     commandPaletteShortcut,
     configuredProviders.length,
