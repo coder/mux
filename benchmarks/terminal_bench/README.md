@@ -123,23 +123,28 @@ To submit mux results to the [Terminal-Bench 2.0 leaderboard](https://tbench.ai/
 
 ```bash
 # Download latest successful nightly run and prepare submission folder
-python benchmarks/terminal_bench/prepare_leaderboard_submission.py
+python3 benchmarks/terminal_bench/prepare_leaderboard_submission.py
 
 # Use a specific run ID
-python benchmarks/terminal_bench/prepare_leaderboard_submission.py --run-id 20939412042
+python3 benchmarks/terminal_bench/prepare_leaderboard_submission.py --run-id 20939412042
 
 # Only prepare specific models
-python benchmarks/terminal_bench/prepare_leaderboard_submission.py --models anthropic/claude-opus-4-5
+python3 benchmarks/terminal_bench/prepare_leaderboard_submission.py --models anthropic/claude-opus-4-5
 ```
 
 This creates a properly structured submission folder at `leaderboard_submission/` containing:
 
 ```
-submissions/terminal-bench/2.0/mux__<model>/
+submissions/terminal-bench/2.0/Mux__<model>/
   metadata.yaml       # Agent and model info
   <job-folder>/       # Results from the run
     config.json
-    <trial-1>/result.json
+    result.json
+    <trial-1>/
+      config.json
+      result.json
+      agent/
+      verifier/
     ...
 ```
 
@@ -158,7 +163,7 @@ hf upload alexgshaw/terminal-bench-2-leaderboard \
   ./leaderboard_submission/submissions submissions \
   --repo-type dataset \
   --create-pr \
-  --commit-message "mux submission (YYYY-MM-DD)"
+  --commit-message "Mux submission (YYYY-MM-DD)"
 ```
 
 The PR will be automatically validated by the leaderboard bot. Once merged, results appear on the leaderboard.

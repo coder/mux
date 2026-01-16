@@ -54,10 +54,10 @@ LEADERBOARD_REPO = "alexgshaw/terminal-bench-2-leaderboard"
 GITHUB_REPO = "coder/mux"
 
 
-# Agent metadata for mux
+# Agent metadata for Mux
 MUX_METADATA = {
     "agent_url": "https://github.com/coder/mux",
-    "agent_display_name": "mux",
+    "agent_display_name": "Mux",
     "agent_org_display_name": "Coder",
 }
 
@@ -198,32 +198,6 @@ def download_artifacts(
     return True
 
 
-def parse_model_from_artifact_name(name: str) -> str | None:
-    """Extract model name from artifact name like 'terminal-bench-results-anthropic-claude-opus-4-5-12345'."""
-    # Pattern: terminal-bench-results-<model>-<run_id>
-    # Model can be: anthropic-claude-opus-4-5, openai-gpt-5.2, etc.
-
-    prefix = "terminal-bench-results-"
-    if not name.startswith(prefix):
-        return None
-
-    remainder = name[len(prefix) :]
-
-    # Try to match known model patterns
-    model_patterns = {
-        "anthropic-claude-sonnet-4-5": "anthropic/claude-sonnet-4-5",
-        "anthropic-claude-opus-4-5": "anthropic/claude-opus-4-5",
-        "openai-gpt-5.2": "openai/gpt-5.2",
-        "openai-gpt-5-codex": "openai/gpt-5-codex",
-    }
-
-    for pattern, model in model_patterns.items():
-        if remainder.startswith(pattern):
-            return model
-
-    return None
-
-
 def create_metadata_yaml(model: str) -> str:
     """Create the metadata.yaml content for a submission."""
     model_info = MODEL_METADATA.get(model)
@@ -294,7 +268,6 @@ def find_job_folders(artifacts_dir: Path) -> list[Path]:
 def prepare_submission(
     artifacts_dir: Path,
     output_dir: Path,
-    run_date: str | None = None,
     models_filter: list[str] | None = None,
 ) -> dict[str, Path]:
     """
@@ -491,9 +464,7 @@ def main():
 
     # Prepare submission
     print(f"\nPreparing submission in {args.output_dir}...")
-    submissions = prepare_submission(
-        artifacts_dir, args.output_dir, run_date, args.models
-    )
+    submissions = prepare_submission(artifacts_dir, args.output_dir, args.models)
 
     if not submissions:
         print("No valid submissions created")
