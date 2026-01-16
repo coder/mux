@@ -122,6 +122,24 @@ describe("getThinkingPolicyForModel", () => {
       "xhigh",
     ]);
   });
+
+  test("returns default levels for gpt-5.2-pro-mini", () => {
+    expect(getThinkingPolicyForModel("openai:gpt-5.2-pro-mini")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+    ]);
+  });
+
+  test("returns default levels for gpt-5.2-codex-mini", () => {
+    expect(getThinkingPolicyForModel("openai:gpt-5.2-codex-mini")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+    ]);
+  });
   test("returns medium/high/xhigh for gpt-5.2-pro with version suffix", () => {
     expect(getThinkingPolicyForModel("openai:gpt-5.2-pro-2025-12-11")).toEqual([
       "medium",

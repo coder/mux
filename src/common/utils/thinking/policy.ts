@@ -65,8 +65,8 @@ export function getThinkingPolicyForModel(modelString: string): ThinkingPolicy {
   }
 
   // gpt-5.2 supports 5 reasoning levels including xhigh (Extra High)
-  // Allow version suffixes like -2025-12-11-preview, but exclude mini variants.
-  if (/^gpt-5\.2(?!-mini\b)/.test(withoutProviderNamespace)) {
+  // Allow version suffixes like -2025-12-11-preview, but exclude any mini variants.
+  if (/^gpt-5\.2(?!.*-mini\b)/.test(withoutProviderNamespace)) {
     return ["off", "low", "medium", "high", "xhigh"];
   }
 

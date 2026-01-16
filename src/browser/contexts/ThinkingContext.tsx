@@ -22,6 +22,7 @@ import { useAPI } from "@/browser/contexts/API";
 import { KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
 
 interface ThinkingContextType {
+  model: string;
   thinkingLevel: ThinkingLevel;
   setThinkingLevel: (level: ThinkingLevel) => void;
 }
@@ -152,13 +153,16 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
 
   // Memoize context value to prevent unnecessary re-renders of consumers.
   const contextValue = useMemo(
-    () => ({ thinkingLevel, setThinkingLevel }),
-    [thinkingLevel, setThinkingLevel]
+    () => ({ model: canonicalModel, thinkingLevel, setThinkingLevel }),
+    [canonicalModel, thinkingLevel, setThinkingLevel]
   );
 
   return <ThinkingContext.Provider value={contextValue}>{props.children}</ThinkingContext.Provider>;
 };
 
+export const useThinkingModel = () => {
+  return useThinking().model;
+};
 export const useThinking = () => {
   const context = useContext(ThinkingContext);
   if (!context) {
