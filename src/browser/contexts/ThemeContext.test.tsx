@@ -19,13 +19,12 @@ import { UI_THEME_KEY } from "@/common/constants/storage";
 
 // Helper to access internals
 const TestComponent = () => {
-  const { theme, toggleTheme } = useTheme();
+  const { theme, resolvedTheme, toggleTheme } = useTheme();
   return (
     <div>
-      <span data-testid="theme-value">{theme}</span>
-      <button onClick={toggleTheme} data-testid="toggle-btn">
-        Toggle
-      </button>
+      <span data-testid="theme">{theme}</span>
+      <span data-testid="resolved">{resolvedTheme}</span>
+      <button onClick={toggleTheme}>Toggle</button>
     </div>
   );
 };
@@ -66,44 +65,26 @@ describe("ThemeContext", () => {
     }
   });
 
-  test("uses persisted state by default", () => {
+  test("defaults to system theme", () => {
     const { getByTestId } = render(
       <ThemeProvider>
         <TestComponent />
       </ThemeProvider>
     );
-    // If matchMedia matches is false (default mock), resolveSystemTheme returns 'dark' (since it checks prefers-color-scheme: light)
-    // resolveSystemTheme logic: window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"
-    expect(getByTestId("theme-value").textContent).toBe("dark");
+    // Default is "system", which resolves to "dark" when matchMedia returns false for prefers-color-scheme: light
+    expect(getByTestId("theme").textContent).toBe("system");
+    expect(getByTestId("resolved").textContent).toBe("dark");
   });
 
-  test("respects forcedTheme prop", () => {
-    const { getByTestId, rerender } = render(
-      <ThemeProvider forcedTheme="light">
-        <TestComponent />
-      </ThemeProvider>
-    );
-    expect(getByTestId("theme-value").textContent).toBe("light");
-
-    rerender(
-      <ThemeProvider forcedTheme="dark">
-        <TestComponent />
-      </ThemeProvider>
-    );
-    expect(getByTestId("theme-value").textContent).toBe("dark");
-  });
-
-  test("forcedTheme overrides persisted state", () => {
+  test("forcedTheme overrides resolved theme without changing preference", () => {
     window.localStorage.setItem(UI_THEME_KEY, JSON.stringify("light"));
-
     const { getByTestId } = render(
       <ThemeProvider forcedTheme="dark">
         <TestComponent />
       </ThemeProvider>
     );
-    expect(getByTestId("theme-value").textContent).toBe("dark");
-
-    // Check that localStorage is still light (since forcedTheme doesn't write to storage by itself)
-    expect(JSON.parse(window.localStorage.getItem(UI_THEME_KEY)!)).toBe("light");
+    // Preference unchanged, but resolved theme is forced
+    expect(getByTestId("theme").textContent).toBe("light");
+    expect(getByTestId("resolved").textContent).toBe("dark");
   });
 });

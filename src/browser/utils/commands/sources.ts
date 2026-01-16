@@ -1,4 +1,4 @@
-import { THEME_PREFERENCE_OPTIONS, type ThemePreference } from "@/browser/contexts/ThemeContext";
+import { THEME_OPTIONS, type ThemeMode } from "@/browser/contexts/ThemeContext";
 import type { CommandAction } from "@/browser/contexts/CommandRegistryContext";
 import type { APIClient } from "@/browser/contexts/API";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
@@ -32,7 +32,7 @@ export interface BuildSourcesParams {
   projects: Map<string, ProjectConfig>;
   /** Map of workspace ID to workspace metadata (keyed by metadata.id, not path) */
   workspaceMetadata: Map<string, FrontendWorkspaceMetadata>;
-  themePreference: ThemePreference;
+  theme: ThemeMode;
   selectedWorkspaceState?: WorkspaceState | null;
   selectedWorkspace: {
     projectPath: string;
@@ -64,7 +64,7 @@ export interface BuildSourcesParams {
   onNavigateWorkspace: (dir: "next" | "prev") => void;
   onOpenWorkspaceInTerminal: (workspaceId: string, runtimeConfig?: RuntimeConfig) => void;
   onToggleTheme: () => void;
-  onSetThemePreference: (preference: ThemePreference) => void;
+  onSetTheme: (theme: ThemeMode) => void;
   onOpenSettings?: (section?: string) => void;
   onClearTimingStats?: (workspaceId: string) => void;
 }
@@ -490,14 +490,14 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
       },
     ];
 
-    // Add command for each theme preference the user isn't currently using
-    for (const opt of THEME_PREFERENCE_OPTIONS) {
-      if (p.themePreference !== opt.value) {
+    // Add command for each theme the user isn't currently using
+    for (const opt of THEME_OPTIONS) {
+      if (p.theme !== opt.value) {
         list.push({
           id: CommandIds.themeSet(opt.value),
           title: `Use ${opt.label} Theme`,
           section: section.appearance,
-          run: () => p.onSetThemePreference(opt.value),
+          run: () => p.onSetTheme(opt.value),
         });
       }
     }
