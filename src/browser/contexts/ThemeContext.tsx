@@ -152,13 +152,13 @@ export function ThemeProvider({
     [setRawPreference, isNestedUnderForcedProvider]
   );
 
+  // Toggle between light and dark based on current resolved theme.
+  // This gives intuitive behavior: if it looks light, toggle to dark (and vice versa).
   const toggleTheme = useCallback(() => {
     if (!isNestedUnderForcedProvider) {
-      const currentIndex = PREFERENCE_VALUES.indexOf(themePreference);
-      const nextIndex = (currentIndex + 1) % PREFERENCE_VALUES.length;
-      setRawPreference(PREFERENCE_VALUES[nextIndex]);
+      setRawPreference(theme === "light" ? "dark" : "light");
     }
-  }, [themePreference, setRawPreference, isNestedUnderForcedProvider]);
+  }, [theme, setRawPreference, isNestedUnderForcedProvider]);
 
   const value = useMemo<ThemeContextValue>(
     () => ({
