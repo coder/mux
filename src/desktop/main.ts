@@ -387,23 +387,20 @@ async function loadServices(): Promise<void> {
     }
   });
   electronIpcMain.handle("mux:get-is-windows-wsl-shell", async () => {
-    if (process.platform !== "win32") {
-      return false;
-    }
+    if (process.platform !== "win32") return false;
+
+    const normalize = (p: string) => p.replace(/\//g, "\\").toLowerCase();
+    const isWslLauncher = (p: string) =>
+      p === "wsl" ||
+      p === "wsl.exe" ||
+      p === "bash" ||
+      p === "bash.exe" ||
+      p.endsWith("\\windows\\system32\\bash.exe") ||
+      p.endsWith("\\windows\\system32\\wsl.exe");
 
     const envShell = process.env.SHELL?.trim();
-    if (envShell) {
-      const normalized = envShell.replace(/\//g, "\\").toLowerCase();
-      if (
-        normalized === "wsl" ||
-        normalized === "wsl.exe" ||
-        normalized === "bash" ||
-        normalized === "bash.exe" ||
-        normalized.endsWith("\\windows\\system32\\bash.exe") ||
-        normalized.endsWith("\\windows\\system32\\wsl.exe")
-      ) {
-        return true;
-      }
+    if (envShell && isWslLauncher(normalize(envShell))) {
+      return true;
     }
 
     try {
@@ -419,15 +416,7 @@ async function loadServices(): Promise<void> {
         .map((line) => line.trim())
         .find((line) => line.length > 0);
 
-      if (!firstPath) {
-        return false;
-      }
-
-      const normalized = firstPath.replace(/\//g, "\\").toLowerCase();
-      return (
-        normalized.endsWith("\\windows\\system32\\bash.exe") ||
-        normalized.endsWith("\\windows\\system32\\wsl.exe")
-      );
+      return firstPath ? isWslLauncher(normalize(firstPath)) : false;
     } catch {
       return false;
     }

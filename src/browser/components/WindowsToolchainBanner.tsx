@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { AlertTriangle, X } from "lucide-react";
-import { cn } from "@/common/lib/utils";
+
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 
 const WINDOWS_TOOLCHAIN_BANNER_DISMISSED_KEY = "windowsToolchainBannerDismissedAt";
@@ -10,7 +10,7 @@ const DISMISS_DURATION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
  * Banner shown on Windows when the default shell appears to be WSL.
  * Users can dismiss it, but it will re-appear after 30 days.
  */
-export const WindowsToolchainBanner: React.FC = () => {
+export function WindowsToolchainBanner() {
   const [dismissedAt, setDismissedAt] = usePersistedState<number | null>(
     WINDOWS_TOOLCHAIN_BANNER_DISMISSED_KEY,
     null
@@ -20,58 +20,45 @@ export const WindowsToolchainBanner: React.FC = () => {
     if (window.api?.platform && window.api.platform !== "win32") {
       return false;
     }
-    if (window.api?.isWindowsWslShell === true) {
-      return true;
-    }
-    if (window.api?.isWindowsWslShell === false) {
-      return false;
-    }
+
+    // Prefer the sync preload signal if present.
+    if (window.api?.isWindowsWslShell === true) return true;
+    if (window.api?.isWindowsWslShell === false) return false;
+
     return null;
   });
 
   useEffect(() => {
-    if (isWslShell !== null) {
-      return;
-    }
+    if (isWslShell !== null) return;
 
     let cancelled = false;
 
-    const load = async () => {
+    (async () => {
       try {
         const result = await window.api?.getIsWindowsWslShell?.();
-        if (cancelled) return;
-        setIsWslShell(result === true);
+        if (!cancelled) setIsWslShell(result === true);
       } catch {
-        if (cancelled) return;
-        setIsWslShell(false);
+        if (!cancelled) setIsWslShell(false);
       }
-    };
-
-    void load();
+    })();
 
     return () => {
       cancelled = true;
     };
   }, [isWslShell]);
 
-  // Check if dismissal has expired (30 days)
-  const isDismissed = dismissedAt !== null && Date.now() - dismissedAt < DISMISS_DURATION_MS;
+  const now = Date.now();
+  const isDismissed = dismissedAt !== null && now < dismissedAt + DISMISS_DURATION_MS;
 
-  if (isWslShell !== true || isDismissed) {
-    return null;
-  }
+  if (isWslShell !== true || isDismissed) return null;
 
   return (
-    <div
-      className={cn(
-        "bg-warning/10 border-warning/30 text-warning flex items-center justify-between gap-3 border-b px-4 py-2 text-sm"
-      )}
-    >
+    <div className="bg-warning/10 border-warning/30 text-warning flex items-center justify-between gap-3 border-b px-4 py-2 text-sm">
       <div className="flex items-center gap-2">
         <AlertTriangle className="text-warning size-4 shrink-0" />
         <span>
           Your default shell appears to be WSL. Mux requires Git for Windows (Git Bash) on Windows
-          for reliable git + path handling.{" "}
+          for reliable git + path handling.
           <a
             href="https://mux.coder.com/install#windows"
             target="_blank"
@@ -85,7 +72,7 @@ export const WindowsToolchainBanner: React.FC = () => {
       </div>
       <button
         type="button"
-        onClick={() => setDismissedAt(Date.now())}
+        onClick={() => setDismissedAt(now)}
         className="hover:text-warning/80 shrink-0 p-1 transition-colors"
         aria-label="Dismiss Windows toolchain warning"
       >
@@ -93,4 +80,4 @@ export const WindowsToolchainBanner: React.FC = () => {
       </button>
     </div>
   );
-};
+}
