@@ -38,16 +38,19 @@ function getScopeId(workspaceId: string | undefined, projectPath: string | undef
   return workspaceId ?? (projectPath ? getProjectScopeId(projectPath) : GLOBAL_SCOPE_ID);
 }
 
-function getCanonicalModelForScope(scopeId: string, fallbackModel: string): string {
-  const rawModel = readPersistedState<string>(getModelKey(scopeId), fallbackModel);
-  return migrateGatewayModel(rawModel || fallbackModel);
-}
-
 export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
   const { api } = useAPI();
   const defaultModel = getDefaultModel();
   const scopeId = getScopeId(props.workspaceId, props.projectPath);
   const thinkingKey = getThinkingLevelKey(scopeId);
+
+  const [rawModel] = usePersistedState<string>(getModelKey(scopeId), defaultModel, {
+    listener: true,
+  });
+  const canonicalModel = useMemo(
+    () => migrateGatewayModel(rawModel || defaultModel),
+    [rawModel, defaultModel]
+  );
 
   // Workspace-scoped thinking. (No longer per-model.)
   const [thinkingLevel, setThinkingLevelInternal] = usePersistedState<ThinkingLevel>(
@@ -63,21 +66,19 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
       return;
     }
 
-    const model = getCanonicalModelForScope(scopeId, defaultModel);
-    const legacyKey = getThinkingLevelByModelKey(model);
+    const legacyKey = getThinkingLevelByModelKey(canonicalModel);
     const legacy = readPersistedState<ThinkingLevel | undefined>(legacyKey, undefined);
     if (legacy === undefined) {
       return;
     }
 
-    const effective = enforceThinkingPolicy(model, legacy);
+    const effective = enforceThinkingPolicy(canonicalModel, legacy);
     updatePersistedState(thinkingKey, effective);
-  }, [defaultModel, scopeId, thinkingKey]);
+  }, [canonicalModel, thinkingKey]);
 
   const setThinkingLevel = useCallback(
     (level: ThinkingLevel) => {
-      const model = getCanonicalModelForScope(scopeId, defaultModel);
-      const effective = enforceThinkingPolicy(model, level);
+      const effective = enforceThinkingPolicy(canonicalModel, level);
 
       setThinkingLevelInternal(effective);
 
@@ -99,7 +100,7 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
             prev && typeof prev === "object" ? prev : {};
           return {
             ...record,
-            [agentId]: { model, thinkingLevel: effective },
+            [agentId]: { model: canonicalModel, thinkingLevel: effective },
           };
         },
         {}
@@ -115,13 +116,13 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
         .updateModeAISettings({
           workspaceId: props.workspaceId,
           mode: agentId,
-          aiSettings: { model, thinkingLevel: effective },
+          aiSettings: { model: canonicalModel, thinkingLevel: effective },
         })
         .catch(() => {
           // Best-effort only. If offline or backend is old, the next sendMessage will persist.
         });
     },
-    [api, defaultModel, props.workspaceId, scopeId, setThinkingLevelInternal]
+    [api, canonicalModel, props.workspaceId, scopeId, setThinkingLevelInternal]
   );
 
   // Global keybind: cycle thinking level (Ctrl/Cmd+Shift+T).
@@ -135,8 +136,7 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
 
       e.preventDefault();
 
-      const model = getCanonicalModelForScope(scopeId, defaultModel);
-      const allowed = getThinkingPolicyForModel(model);
+      const allowed = getThinkingPolicyForModel(canonicalModel);
       if (allowed.length <= 1) {
         return;
       }
@@ -148,7 +148,7 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [defaultModel, scopeId, thinkingLevel, setThinkingLevel]);
+  }, [canonicalModel, thinkingLevel, setThinkingLevel]);
 
   // Memoize context value to prevent unnecessary re-renders of consumers.
   const contextValue = useMemo(
