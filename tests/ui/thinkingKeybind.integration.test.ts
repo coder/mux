@@ -1,19 +1,24 @@
 import { act, waitFor } from "@testing-library/react";
 
-import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getModelKey, getThinkingLevelKey } from "@/common/constants/storage";
 
 import { createAppHarness } from "./harness";
 
 describe("Thinking keybind (UI)", () => {
-  test("cycles to xhigh for gpt-5.2-codex", async () => {
+  test("cycles to xhigh for gpt-5.2-codex (selected via /model)", async () => {
     const app = await createAppHarness({ branchPrefix: "thinking-keybind" });
 
     try {
-      const model = "openai:gpt-5.2-codex-2025-12-11-preview";
+      await app.chat.send("/model codex");
 
+      await waitFor(() => {
+        const model = readPersistedState<string>(getModelKey(app.workspaceId), "");
+        expect(model).toBe("openai:gpt-5.2-codex");
+      });
+
+      // Start from a deterministic thinking level so we can assert the next step.
       act(() => {
-        updatePersistedState(getModelKey(app.workspaceId), model);
         updatePersistedState(getThinkingLevelKey(app.workspaceId), "high");
       });
 
@@ -25,6 +30,9 @@ describe("Thinking keybind (UI)", () => {
         if (slider.getAttribute("aria-valuetext") !== "high") {
           throw new Error("Thinking level has not updated to high");
         }
+
+        // 5 allowed levels means max index 4.
+        expect(slider.getAttribute("aria-valuemax")).toBe("4");
       });
 
       act(() => {
