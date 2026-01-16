@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Code2Icon, Pencil, Server } from "lucide-react";
+import { Pencil, Server } from "lucide-react";
+import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { cn } from "@/common/lib/utils";
 import { RIGHT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
 import { GitStatusIndicator } from "./GitStatusIndicator";
@@ -91,6 +92,13 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     return () => clearTimeout(timer);
   }, [startTutorial, isSequenceCompleted]);
 
+  // Listen for /debug-llm-request command to open modal
+  useEffect(() => {
+    const handler = () => setDebugLlmRequestOpen(true);
+    window.addEventListener(CUSTOM_EVENTS.OPEN_DEBUG_LLM_REQUEST, handler);
+    return () => window.removeEventListener(CUSTOM_EVENTS.OPEN_DEBUG_LLM_REQUEST, handler);
+  }, []);
+
   // On Windows/Linux, the native window controls overlay the top-right of the app.
   // When the right sidebar is collapsed (20px), this header stretches underneath
   // those controls and the MCP/editor/terminal buttons become unclickable.
@@ -136,24 +144,6 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
         </div>
       </div>
       <div className={cn("flex items-center gap-2", isDesktop && "titlebar-no-drag")}>
-        {window.api?.debugLlmRequest === true && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setDebugLlmRequestOpen(true)}
-                className="text-muted hover:text-foreground h-6 w-6 shrink-0"
-                data-testid="workspace-llm-request-button"
-              >
-                <Code2Icon className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" align="center">
-              Debug: last LLM request
-            </TooltipContent>
-          </Tooltip>
-        )}
         <WorkspaceLinks workspaceId={workspaceId} />
         {editorError && <span className="text-danger-soft text-xs">{editorError}</span>}
         <Tooltip>

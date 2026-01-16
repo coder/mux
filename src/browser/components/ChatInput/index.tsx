@@ -50,7 +50,7 @@ import {
   type CommandHandlerContext,
 } from "@/browser/utils/chatCommands";
 import { shouldTriggerAutoCompaction } from "@/browser/utils/compaction/shouldTriggerAutoCompaction";
-import { CUSTOM_EVENTS } from "@/common/constants/events";
+import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { findAtMentionAtCursor } from "@/common/utils/atMentions";
 import {
   getSlashCommandSuggestions,
@@ -1425,6 +1425,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         if (parsed.type === "mcp-open") {
           setInput("");
           open("projects");
+          return;
+        }
+
+        if (parsed.type === "debug-llm-request") {
+          setInput("");
+          window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.OPEN_DEBUG_LLM_REQUEST));
           return;
         }
 

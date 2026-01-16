@@ -665,6 +665,13 @@ const idleCommandDefinition: SlashCommandDefinition = {
   },
 };
 
+const debugLlmRequestCommandDefinition: SlashCommandDefinition = {
+  key: "debug-llm-request",
+  description: "Show the last LLM request sent (debug)",
+  appendSpace: false,
+  handler: (): ParsedCommand => ({ type: "debug-llm-request" }),
+};
+
 const mcpCommandDefinition: SlashCommandDefinition = {
   key: "mcp",
   description: "Manage MCP servers for this project",
@@ -709,6 +716,7 @@ export const SLASH_COMMAND_DEFINITIONS: readonly SlashCommandDefinition[] = [
   mcpCommandDefinition,
   idleCommandDefinition,
   initCommandDefinition,
+  debugLlmRequestCommandDefinition,
 ];
 
 export const SLASH_COMMAND_DEFINITION_MAP = new Map(
