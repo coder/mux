@@ -1173,7 +1173,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       // When editing an existing message, we only allow changing the text.
       // Don't preventDefault here so any clipboard text can still paste normally.
       if (editingMessage) {
-        pushToast({ type: "error", message: "Images cannot be changed while editing a message." });
+        pushToast({ type: "error", message: "Images cannot be added while editing a message." });
         return;
       }
 
@@ -1260,7 +1260,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       if (imageFiles.length === 0) return;
 
       if (editingMessage) {
-        pushToast({ type: "error", message: "Images cannot be changed while editing a message." });
+        pushToast({ type: "error", message: "Images cannot be added while editing a message." });
         return;
       }
 
