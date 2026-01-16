@@ -85,8 +85,32 @@ export interface DescendantAgentTaskInfo {
 
 type AgentTaskWorkspaceEntry = WorkspaceConfigEntry & { projectPath: string };
 
+const POST_COMPACTION_PARENT_AWAIT_DELAY_MS = 50;
+const POST_COMPACTION_PARENT_AWAIT_MAX_RETRIES = 10;
 const COMPLETED_REPORT_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 const COMPLETED_REPORT_CACHE_MAX_ENTRIES = 128;
+
+const AGENT_TASK_STATUS_TRANSITIONS: Record<AgentTaskStatus, readonly AgentTaskStatus[]> = {
+  queued: ["queued", "running", "awaiting_report", "reported"],
+  running: ["running", "awaiting_report", "reported"],
+  awaiting_report: ["awaiting_report", "running", "reported"],
+  reported: ["reported"],
+};
+
+function isAllowedAgentTaskStatusTransition(from: AgentTaskStatus, to: AgentTaskStatus): boolean {
+  return AGENT_TASK_STATUS_TRANSITIONS[from].includes(to);
+}
+
+function normalizeAgentTaskStatus(status: WorkspaceConfigEntry["taskStatus"]): AgentTaskStatus {
+  // Backward compatibility: older task workspaces may omit taskStatus.
+  // Treat missing as running so parallelism accounting is conservative.
+  return (status ?? "running") as AgentTaskStatus;
+}
+const ACTIVE_AGENT_TASK_STATUSES: ReadonlySet<AgentTaskStatus> = new Set([
+  "queued",
+  "running",
+  "awaiting_report",
+]);
 
 interface AgentTaskIndex {
   byId: Map<string, AgentTaskWorkspaceEntry>;
@@ -178,6 +202,49 @@ function buildAgentWorkspaceName(agentType: string, workspaceId: string): string
   return name.length <= 64 ? name : `agent_${workspaceId}`.slice(0, 64);
 }
 
+function shouldDeferParentResumeForCompaction(messages: MuxMessage[]): boolean {
+  if (messages.length === 0) {
+    return true;
+  }
+
+  const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
+  const muxMeta = lastUserMsg?.metadata?.muxMetadata;
+  const type = muxMeta && typeof muxMeta === "object" ? (muxMeta as { type?: unknown }).type : null;
+  return type === "compaction-request";
+}
+
+function buildParentAwaitSystemInstructions(activeTaskIds: string[]): string {
+  const taskIdsJson = JSON.stringify(activeTaskIds);
+
+  return (
+    `You have active background sub-agent task(s) (${activeTaskIds.join(", ")}). ` +
+    "Before writing your final response, wait for these sub-agent tasks to finish and report. " +
+    `Call task_await with task_ids=${taskIdsJson} (do not omit task_ids; omitting may include long-running bash/background processes like dev servers). ` +
+    "If any are still queued/running/awaiting_report after that, call task_await again with the same task_ids. " +
+    "Once all are completed, write your final response integrating their reports."
+  );
+}
+
+// Shared helper for walking up the task ancestry chain with a fixed hop limit.
+// Keeping this centralized ensures consistent cycle detection across callers.
+function* iterateAncestorWorkspaceIds(
+  parentById: Map<string, string>,
+  taskId: string
+): Generator<string, void> {
+  let current = taskId;
+  for (let i = 0; i < 32; i++) {
+    const parent = parentById.get(current);
+    if (!parent) {
+      return;
+    }
+    yield parent;
+    current = parent;
+  }
+
+  throw new Error(
+    `iterateAncestorWorkspaceIds: possible parentWorkspaceId cycle starting at ${taskId}`
+  );
+}
 function getIsoNow(): string {
   return new Date().toISOString();
 }
@@ -197,6 +264,7 @@ export class TaskService {
   // Bounded by TTL + max entries (see COMPLETED_REPORT_CACHE_*).
   private readonly completedReportsByTaskId = new Map<string, CompletedAgentReportCacheEntry>();
   private readonly remindedAwaitingReport = new Set<string>();
+  private readonly postCompactionAwaitTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(
     private readonly config: Config,
@@ -231,6 +299,19 @@ export class TaskService {
         .catch((error: unknown) => {
           log.error("TaskService.handleStreamEnd failed", { error });
         });
+    });
+
+    this.workspaceService.on("metadata", (event) => {
+      // If the parent workspace is removed, any descendant tasks become unreachable/unawaitable.
+      // Clean them up to avoid leaving orphaned sub-agent workspaces around.
+      if (event.metadata !== null) return;
+
+      void this.handleWorkspaceRemoved(event.workspaceId).catch((error: unknown) => {
+        log.error("TaskService.handleWorkspaceRemoved failed", {
+          workspaceId: event.workspaceId,
+          error,
+        });
+      });
     });
   }
 
@@ -269,7 +350,172 @@ export class TaskService {
     return found;
   }
 
+  private async cleanupOrphanedAgentTasks(): Promise<void> {
+    const config = this.config.loadConfigOrDefault();
+
+    const orphanRoots: Array<{ taskId: string; parentWorkspaceId: string }> = [];
+
+    for (const task of this.listAgentTaskWorkspaces(config)) {
+      const taskId = coerceNonEmptyString(task.id);
+      const parentWorkspaceId = coerceNonEmptyString(task.parentWorkspaceId);
+      if (!taskId || !parentWorkspaceId) continue;
+
+      if (this.config.findWorkspace(parentWorkspaceId)) {
+        continue;
+      }
+
+      orphanRoots.push({ taskId, parentWorkspaceId });
+    }
+
+    if (orphanRoots.length === 0) {
+      return;
+    }
+
+    log.warn("Cleaning up orphaned agent tasks (parent workspace missing)", {
+      count: orphanRoots.length,
+      taskIds: orphanRoots.map((t) => t.taskId),
+    });
+
+    for (const orphan of orphanRoots) {
+      const terminateResult = await this.terminateDescendantAgentTask(
+        orphan.parentWorkspaceId,
+        orphan.taskId
+      );
+      if (!terminateResult.success) {
+        if (/not found/i.test(terminateResult.error)) {
+          continue;
+        }
+        log.error("Failed to clean up orphaned agent task", {
+          taskId: orphan.taskId,
+          parentWorkspaceId: orphan.parentWorkspaceId,
+          error: terminateResult.error,
+        });
+      }
+    }
+  }
+
+  private clearPostCompactionAwaitTimer(workspaceId: string): void {
+    const trimmed = workspaceId.trim();
+    if (trimmed.length === 0) {
+      return;
+    }
+
+    const existingTimer = this.postCompactionAwaitTimers.get(trimmed);
+    if (!existingTimer) {
+      return;
+    }
+
+    clearTimeout(existingTimer);
+    this.postCompactionAwaitTimers.delete(trimmed);
+  }
+
+  private async handleWorkspaceRemoved(workspaceId: string): Promise<void> {
+    assert(workspaceId.length > 0, "handleWorkspaceRemoved: workspaceId must be non-empty");
+
+    this.clearPostCompactionAwaitTimer(workspaceId);
+
+    const config = this.config.loadConfigOrDefault();
+    const directChildTaskIds =
+      this.buildAgentTaskIndex(config).childrenByParent.get(workspaceId) ?? [];
+
+    if (directChildTaskIds.length === 0) {
+      return;
+    }
+
+    for (const taskId of directChildTaskIds) {
+      const terminateResult = await this.terminateDescendantAgentTask(workspaceId, taskId);
+      if (!terminateResult.success) {
+        if (/not found/i.test(terminateResult.error)) {
+          continue;
+        }
+        log.error("Failed to terminate descendant agent task for removed workspace", {
+          workspaceId,
+          taskId,
+          error: terminateResult.error,
+        });
+      }
+    }
+  }
+
+  private scheduleParentAwaitAfterCompaction(workspaceId: string, retryCount = 0): void {
+    const trimmed = workspaceId.trim();
+    if (trimmed.length === 0) {
+      return;
+    }
+
+    this.clearPostCompactionAwaitTimer(trimmed);
+
+    const timer = setTimeout(() => {
+      this.postCompactionAwaitTimers.delete(trimmed);
+      void this.ensureParentAwaitingTasksPostCompaction(trimmed, retryCount).catch(
+        (error: unknown) => {
+          log.error("ensureParentAwaitingTasksPostCompaction failed", {
+            workspaceId: trimmed,
+            error,
+          });
+        }
+      );
+    }, POST_COMPACTION_PARENT_AWAIT_DELAY_MS);
+
+    this.postCompactionAwaitTimers.set(trimmed, timer);
+  }
+
+  private async ensureParentAwaitingTasksPostCompaction(
+    workspaceId: string,
+    retryCount: number
+  ): Promise<void> {
+    // Only relevant for root/parent workspaces.
+    const cfg = this.config.loadConfigOrDefault();
+    const entry = this.findWorkspaceEntry(cfg, workspaceId);
+    if (!entry) {
+      return;
+    }
+    if (entry.workspace.parentWorkspaceId) {
+      return;
+    }
+
+    // Skip if workspace is gone (or being removed) or already streaming again.
+    if (!this.config.findWorkspace(workspaceId)) {
+      return;
+    }
+    if (this.aiService.isStreaming(workspaceId)) {
+      return;
+    }
+
+    // If compaction is still in progress (history empty or last user message is still the
+    // compaction-request), wait and retry.
+    const historyResult = await this.historyService.getHistory(workspaceId);
+    if (historyResult.success && shouldDeferParentResumeForCompaction(historyResult.data)) {
+      if (retryCount < POST_COMPACTION_PARENT_AWAIT_MAX_RETRIES) {
+        this.scheduleParentAwaitAfterCompaction(workspaceId, retryCount + 1);
+      }
+      return;
+    }
+
+    const freshCfg = this.config.loadConfigOrDefault();
+    const hasActiveDescendants = this.hasActiveDescendantAgentTasks(freshCfg, workspaceId);
+    if (!hasActiveDescendants) {
+      return;
+    }
+
+    const activeTaskIds = this.listActiveDescendantAgentTaskIds(workspaceId);
+    const model = entry.workspace.aiSettings?.model ?? defaultModel;
+
+    const resumeResult = await this.workspaceService.resumeStream(workspaceId, {
+      model,
+      thinkingLevel: entry.workspace.aiSettings?.thinkingLevel,
+      additionalSystemInstructions: buildParentAwaitSystemInstructions(activeTaskIds),
+    });
+    if (!resumeResult.success) {
+      log.error("Failed to resume parent after compaction with active background tasks", {
+        workspaceId,
+        error: resumeResult.error,
+      });
+    }
+  }
+
   async initialize(): Promise<void> {
+    await this.cleanupOrphanedAgentTasks();
     await this.maybeStartQueuedTasks();
 
     const config = this.config.loadConfigOrDefault();
@@ -811,35 +1057,42 @@ export class TaskService {
     };
   }
 
-  waitForAgentReport(
+  async waitForAgentReport(
     taskId: string,
     options?: { timeoutMs?: number; abortSignal?: AbortSignal; requestingWorkspaceId?: string }
   ): Promise<{ reportMarkdown: string; title?: string }> {
     assert(taskId.length > 0, "waitForAgentReport: taskId must be non-empty");
 
-    const cached = this.completedReportsByTaskId.get(taskId);
+    const cached = this.getCompletedReportCacheEntry(taskId);
     if (cached) {
-      const nowMs = Date.now();
-      if (cached.expiresAtMs > nowMs) {
-        return Promise.resolve({ reportMarkdown: cached.reportMarkdown, title: cached.title });
-      }
-      this.completedReportsByTaskId.delete(taskId);
+      return { reportMarkdown: cached.reportMarkdown, title: cached.title };
     }
 
     const timeoutMs = options?.timeoutMs ?? 10 * 60 * 1000; // 10 minutes
     assert(Number.isFinite(timeoutMs) && timeoutMs > 0, "waitForAgentReport: timeoutMs invalid");
 
+    // Validate existence early to avoid waiting on never-resolving task IDs.
+    const cfg = this.config.loadConfigOrDefault();
+    const taskWorkspaceEntry = this.findWorkspaceEntry(cfg, taskId);
+    if (!taskWorkspaceEntry) {
+      throw new Error("Task not found");
+    }
+
+    // If the task already reported but we missed caching the report (e.g. restart + TTL expiry),
+    // avoid blocking until timeout (task_await should not hang on already-reported tasks).
+    // Instead, best-effort fetch the report payload from persisted history/partial and return immediately.
+    if (taskWorkspaceEntry.workspace.taskStatus === "reported") {
+      const reportArgs = await this.readLatestAgentReportArgs(taskId);
+      if (!reportArgs) {
+        throw new Error("Task already reported (agent_report payload not found)");
+      }
+      this.cacheCompletedReport(taskId, reportArgs);
+      return reportArgs;
+    }
+
     const requestingWorkspaceId = coerceNonEmptyString(options?.requestingWorkspaceId);
 
     return new Promise<{ reportMarkdown: string; title?: string }>((resolve, reject) => {
-      // Validate existence early to avoid waiting on never-resolving task IDs.
-      const cfg = this.config.loadConfigOrDefault();
-      const taskWorkspaceEntry = this.findWorkspaceEntry(cfg, taskId);
-      if (!taskWorkspaceEntry) {
-        reject(new Error("Task not found"));
-        return;
-      }
-
       let timeout: ReturnType<typeof setTimeout> | null = null;
       let startWaiter: PendingTaskStartWaiter | null = null;
       let abortListener: (() => void) | null = null;
@@ -986,6 +1239,34 @@ export class TaskService {
     return this.hasActiveDescendantAgentTasks(cfg, workspaceId);
   }
 
+  private *iterateDescendantAgentTasksFromIndex(
+    index: AgentTaskIndex,
+    workspaceId: string
+  ): Generator<{ taskId: string; entry: AgentTaskWorkspaceEntry; depth: number }, void> {
+    assert(
+      workspaceId.length > 0,
+      "iterateDescendantAgentTasksFromIndex: workspaceId must be non-empty"
+    );
+
+    const stack: Array<{ taskId: string; depth: number }> = [];
+    for (const childTaskId of index.childrenByParent.get(workspaceId) ?? []) {
+      stack.push({ taskId: childTaskId, depth: 1 });
+    }
+
+    while (stack.length > 0) {
+      const next = stack.pop()!;
+
+      const entry = index.byId.get(next.taskId);
+      if (entry) {
+        yield { taskId: next.taskId, entry, depth: next.depth };
+      }
+
+      for (const childTaskId of index.childrenByParent.get(next.taskId) ?? []) {
+        stack.push({ taskId: childTaskId, depth: next.depth + 1 });
+      }
+    }
+  }
+
   listActiveDescendantAgentTaskIds(workspaceId: string): string[] {
     assert(
       workspaceId.length > 0,
@@ -995,20 +1276,11 @@ export class TaskService {
     const cfg = this.config.loadConfigOrDefault();
     const index = this.buildAgentTaskIndex(cfg);
 
-    const activeStatuses = new Set<AgentTaskStatus>(["queued", "running", "awaiting_report"]);
     const result: string[] = [];
-    const stack: string[] = [...(index.childrenByParent.get(workspaceId) ?? [])];
-    while (stack.length > 0) {
-      const next = stack.pop()!;
-      const status = index.byId.get(next)?.taskStatus;
-      if (status && activeStatuses.has(status)) {
-        result.push(next);
-      }
-      const children = index.childrenByParent.get(next);
-      if (children) {
-        for (const child of children) {
-          stack.push(child);
-        }
+    for (const { taskId, entry } of this.iterateDescendantAgentTasksFromIndex(index, workspaceId)) {
+      const status = entry.taskStatus;
+      if (status && ACTIVE_AGENT_TASK_STATUSES.has(status)) {
+        result.push(taskId);
       }
     }
     return result;
@@ -1028,25 +1300,19 @@ export class TaskService {
 
     const result: DescendantAgentTaskInfo[] = [];
 
-    const stack: Array<{ taskId: string; depth: number }> = [];
-    for (const childTaskId of index.childrenByParent.get(workspaceId) ?? []) {
-      stack.push({ taskId: childTaskId, depth: 1 });
-    }
-
-    while (stack.length > 0) {
-      const next = stack.pop()!;
-      const entry = index.byId.get(next.taskId);
-      if (!entry) continue;
-
+    for (const { taskId, entry, depth } of this.iterateDescendantAgentTasksFromIndex(
+      index,
+      workspaceId
+    )) {
       assert(
         entry.parentWorkspaceId,
-        `listDescendantAgentTasks: task ${next.taskId} is missing parentWorkspaceId`
+        `listDescendantAgentTasks: task ${taskId} is missing parentWorkspaceId`
       );
 
-      const status: AgentTaskStatus = entry.taskStatus ?? "running";
+      const status = normalizeAgentTaskStatus(entry.taskStatus);
       if (!statusFilter || statusFilter.has(status)) {
         result.push({
-          taskId: next.taskId,
+          taskId,
           status,
           parentWorkspaceId: entry.parentWorkspaceId,
           agentType: entry.agentType,
@@ -1055,12 +1321,8 @@ export class TaskService {
           createdAt: entry.createdAt,
           modelString: entry.aiSettings?.model,
           thinkingLevel: entry.aiSettings?.thinkingLevel,
-          depth: next.depth,
+          depth,
         });
-      }
-
-      for (const childTaskId of index.childrenByParent.get(next.taskId) ?? []) {
-        stack.push({ taskId: childTaskId, depth: next.depth + 1 });
       }
     }
 
@@ -1087,7 +1349,6 @@ export class TaskService {
     const parentById = this.buildAgentTaskIndex(cfg).parentById;
 
     const nowMs = Date.now();
-    this.cleanupExpiredCompletedReports(nowMs);
 
     const result: string[] = [];
     for (const taskId of taskIds) {
@@ -1098,11 +1359,9 @@ export class TaskService {
       }
 
       // Preserve scope checks for tasks whose workspace was cleaned up after completion.
-      const cached = this.completedReportsByTaskId.get(taskId);
-      if (cached && cached.expiresAtMs > nowMs) {
-        if (cached.ancestorWorkspaceIds.includes(ancestorWorkspaceId)) {
-          result.push(taskId);
-        }
+      const cached = this.getCompletedReportCacheEntry(taskId, nowMs);
+      if (cached?.ancestorWorkspaceIds.includes(ancestorWorkspaceId)) {
+        result.push(taskId);
       }
     }
 
@@ -1145,10 +1404,8 @@ export class TaskService {
 
     // The task workspace may have been removed after it reported (cleanup). Preserve scope checks
     // by consulting the completed-report cache, which tracks the task's ancestor chain.
-    const nowMs = Date.now();
-    this.cleanupExpiredCompletedReports(nowMs);
-    const cached = this.completedReportsByTaskId.get(taskId);
-    if (cached && cached.expiresAtMs > nowMs) {
+    const cached = this.getCompletedReportCacheEntry(taskId);
+    if (cached) {
       return cached.ancestorWorkspaceIds.includes(ancestorWorkspaceId);
     }
 
@@ -1160,17 +1417,13 @@ export class TaskService {
     ancestorWorkspaceId: string,
     taskId: string
   ): boolean {
-    let current = taskId;
-    for (let i = 0; i < 32; i++) {
-      const parent = parentById.get(current);
-      if (!parent) return false;
-      if (parent === ancestorWorkspaceId) return true;
-      current = parent;
+    for (const parent of iterateAncestorWorkspaceIds(parentById, taskId)) {
+      if (parent === ancestorWorkspaceId) {
+        return true;
+      }
     }
 
-    throw new Error(
-      `isDescendantAgentTaskUsingParentById: possible parentWorkspaceId cycle starting at ${taskId}`
-    );
+    return false;
   }
 
   // --- Internal orchestration ---
@@ -1179,19 +1432,7 @@ export class TaskService {
     parentById: Map<string, string>,
     taskId: string
   ): string[] {
-    const ancestors: string[] = [];
-
-    let current = taskId;
-    for (let i = 0; i < 32; i++) {
-      const parent = parentById.get(current);
-      if (!parent) return ancestors;
-      ancestors.push(parent);
-      current = parent;
-    }
-
-    throw new Error(
-      `listAncestorWorkspaceIdsUsingParentById: possible parentWorkspaceId cycle starting at ${taskId}`
-    );
+    return [...iterateAncestorWorkspaceIds(parentById, taskId)];
   }
 
   private listAgentTaskWorkspaces(
@@ -1232,7 +1473,7 @@ export class TaskService {
   private countActiveAgentTasks(config: ReturnType<Config["loadConfigOrDefault"]>): number {
     let activeCount = 0;
     for (const task of this.listAgentTaskWorkspaces(config)) {
-      const status: AgentTaskStatus = task.taskStatus ?? "running";
+      const status = normalizeAgentTaskStatus(task.taskStatus);
       // If this task workspace is blocked in a foreground wait, do not count it towards parallelism.
       // This prevents deadlocks where a task spawns a nested task in the foreground while
       // maxParallelAgentTasks is low (e.g. 1).
@@ -1265,19 +1506,10 @@ export class TaskService {
 
     const index = this.buildAgentTaskIndex(config);
 
-    const activeStatuses = new Set<AgentTaskStatus>(["queued", "running", "awaiting_report"]);
-    const stack: string[] = [...(index.childrenByParent.get(workspaceId) ?? [])];
-    while (stack.length > 0) {
-      const next = stack.pop()!;
-      const status = index.byId.get(next)?.taskStatus;
-      if (status && activeStatuses.has(status)) {
+    for (const { entry } of this.iterateDescendantAgentTasksFromIndex(index, workspaceId)) {
+      const status = entry.taskStatus;
+      if (status && ACTIVE_AGENT_TASK_STATUSES.has(status)) {
         return true;
-      }
-      const children = index.childrenByParent.get(next);
-      if (children) {
-        for (const child of children) {
-          stack.push(child);
-        }
       }
     }
 
@@ -1600,28 +1832,64 @@ export class TaskService {
     }
   }
 
-  private async setTaskStatus(workspaceId: string, status: AgentTaskStatus): Promise<void> {
+  // Centralized taskStatus mutation point.
+  // Keeping lifecycle side-effects here (clearing taskPrompt, stamping reportedAt, waking start waiters)
+  // prevents ad-hoc status edits from breaking task_await / scheduling invariants.
+  private async setTaskStatus(
+    workspaceId: string,
+    nextStatus: AgentTaskStatus,
+    options?: { allowMissing?: boolean }
+  ): Promise<void> {
     assert(workspaceId.length > 0, "setTaskStatus: workspaceId must be non-empty");
 
-    await this.editWorkspaceEntry(workspaceId, (ws) => {
-      ws.taskStatus = status;
-      if (status === "running") {
-        ws.taskPrompt = undefined;
-      }
-    });
+    let shouldStartWaiters = false;
+
+    const found = await this.editWorkspaceEntry(
+      workspaceId,
+      (ws) => {
+        const currentStatus = normalizeAgentTaskStatus(ws.taskStatus);
+        if (!isAllowedAgentTaskStatusTransition(currentStatus, nextStatus)) {
+          log.error("Invalid agent task status transition", {
+            workspaceId,
+            currentStatus,
+            nextStatus,
+            parentWorkspaceId: ws.parentWorkspaceId ?? null,
+            persistedStatus: ws.taskStatus ?? null,
+          });
+          return;
+        }
+
+        ws.taskStatus = nextStatus;
+        shouldStartWaiters = nextStatus === "running";
+
+        if (nextStatus !== "queued") {
+          ws.taskPrompt = undefined;
+        }
+
+        if (nextStatus === "reported") {
+          ws.reportedAt ??= getIsoNow();
+        } else if (ws.reportedAt !== undefined) {
+          // Defensive: reportedAt is only meaningful when taskStatus is reported.
+          ws.reportedAt = undefined;
+        }
+      },
+      { allowMissing: options?.allowMissing }
+    );
 
     await this.emitWorkspaceMetadata(workspaceId);
 
-    if (status === "running") {
-      const waiters = this.pendingStartWaitersByTaskId.get(workspaceId);
-      if (!waiters || waiters.length === 0) return;
-      this.pendingStartWaitersByTaskId.delete(workspaceId);
-      for (const waiter of waiters) {
-        try {
-          waiter.start();
-        } catch (error: unknown) {
-          log.error("Task start waiter callback failed", { workspaceId, error });
-        }
+    if (!found || !shouldStartWaiters) {
+      return;
+    }
+
+    const waiters = this.pendingStartWaitersByTaskId.get(workspaceId);
+    if (!waiters || waiters.length === 0) return;
+    this.pendingStartWaitersByTaskId.delete(workspaceId);
+    for (const waiter of waiters) {
+      try {
+        waiter.start();
+      } catch (error: unknown) {
+        log.error("Task start waiter callback failed", { workspaceId, error });
       }
     }
   }
@@ -1645,18 +1913,21 @@ export class TaskService {
         return;
       }
 
+      const historyResult = await this.historyService.getHistory(workspaceId);
+      // If the parent is undergoing compaction, avoid resuming mid-compaction (history is being
+      // rewritten). Instead, schedule a follow-up nudge after compaction completes.
+      if (historyResult.success && shouldDeferParentResumeForCompaction(historyResult.data)) {
+        this.scheduleParentAwaitAfterCompaction(workspaceId);
+        return;
+      }
+
       const activeTaskIds = this.listActiveDescendantAgentTaskIds(workspaceId);
       const model = entry.workspace.aiSettings?.model ?? defaultModel;
 
       const resumeResult = await this.workspaceService.resumeStream(workspaceId, {
         model,
         thinkingLevel: entry.workspace.aiSettings?.thinkingLevel,
-        additionalSystemInstructions:
-          `You have active background sub-agent task(s) (${activeTaskIds.join(", ")}). ` +
-          "You MUST NOT end your turn while any sub-agent tasks are queued/running/awaiting_report. " +
-          "Call task_await now to wait for them to finish (omit timeout_secs to wait up to 10 minutes). " +
-          "If any tasks are still queued/running/awaiting_report after that, call task_await again. " +
-          "Only once all tasks are completed should you write your final response, integrating their reports.",
+        additionalSystemInstructions: buildParentAwaitSystemInstructions(activeTaskIds),
       });
       if (!resumeResult.success) {
         log.error("Failed to resume parent with active background tasks", {
@@ -1713,8 +1984,7 @@ export class TaskService {
     workspace: WorkspaceConfigEntry;
   }): Promise<void> {
     const childWorkspaceId = entry.workspace.id;
-    const parentWorkspaceId = entry.workspace.parentWorkspaceId;
-    if (!childWorkspaceId || !parentWorkspaceId) {
+    if (!childWorkspaceId) {
       return;
     }
 
@@ -1726,44 +1996,10 @@ export class TaskService {
       "posting its last assistant output as a fallback.)*\n\n" +
       (lastText?.trim().length ? lastText : "(No assistant output found.)");
 
-    // Notify clients immediately even if we can't delete the workspace yet.
-    await this.editWorkspaceEntry(
-      childWorkspaceId,
-      (ws) => {
-        ws.taskStatus = "reported";
-        ws.reportedAt = getIsoNow();
-      },
-      { allowMissing: true }
-    );
-
-    await this.emitWorkspaceMetadata(childWorkspaceId);
-
-    await this.deliverReportToParent(parentWorkspaceId, entry, {
+    await this.finalizeAgentTaskReport(childWorkspaceId, entry, {
       reportMarkdown,
       title: `Subagent (${agentType}) report (fallback)`,
     });
-
-    this.resolveWaiters(childWorkspaceId, {
-      reportMarkdown,
-      title: `Subagent (${agentType}) report (fallback)`,
-    });
-
-    await this.maybeStartQueuedTasks();
-    await this.cleanupReportedLeafTask(childWorkspaceId);
-
-    const postCfg = this.config.loadConfigOrDefault();
-    const hasActiveDescendants = this.hasActiveDescendantAgentTasks(postCfg, parentWorkspaceId);
-    if (!hasActiveDescendants && !this.aiService.isStreaming(parentWorkspaceId)) {
-      const resumeResult = await this.workspaceService.resumeStream(parentWorkspaceId, {
-        model: entry.workspace.taskModelString ?? defaultModel,
-      });
-      if (!resumeResult.success) {
-        log.error("Failed to auto-resume parent after fallback report", {
-          parentWorkspaceId,
-          error: resumeResult.error,
-        });
-      }
-    }
   }
 
   private async readLatestAssistantText(workspaceId: string): Promise<string | null> {
@@ -1865,16 +2101,7 @@ export class TaskService {
     }
 
     // Notify clients immediately even if we can't delete the workspace yet.
-    await this.editWorkspaceEntry(
-      childWorkspaceId,
-      (ws) => {
-        ws.taskStatus = "reported";
-        ws.reportedAt = getIsoNow();
-      },
-      { allowMissing: true }
-    );
-
-    await this.emitWorkspaceMetadata(childWorkspaceId);
+    await this.setTaskStatus(childWorkspaceId, "reported", { allowMissing: true });
 
     if (options?.stopStream) {
       // `agent_report` is terminal. Stop the child stream immediately to prevent any further token
@@ -1955,6 +2182,23 @@ export class TaskService {
     }
   }
 
+  private getCompletedReportCacheEntry(
+    taskId: string,
+    nowMs = Date.now()
+  ): CompletedAgentReportCacheEntry | null {
+    const cached = this.completedReportsByTaskId.get(taskId);
+    if (!cached) {
+      return null;
+    }
+
+    if (cached.expiresAtMs <= nowMs) {
+      this.completedReportsByTaskId.delete(taskId);
+      return null;
+    }
+
+    return cached;
+  }
+
   private enforceCompletedReportCacheLimit(): void {
     while (this.completedReportsByTaskId.size > COMPLETED_REPORT_CACHE_MAX_ENTRIES) {
       const first = this.completedReportsByTaskId.keys().next();
@@ -1963,12 +2207,17 @@ export class TaskService {
     }
   }
 
-  private resolveWaiters(taskId: string, report: { reportMarkdown: string; title?: string }): void {
+  private cacheCompletedReport(
+    taskId: string,
+    report: { reportMarkdown: string; title?: string }
+  ): void {
     const nowMs = Date.now();
     this.cleanupExpiredCompletedReports(nowMs);
 
     const cfg = this.config.loadConfigOrDefault();
     const parentById = this.buildAgentTaskIndex(cfg).parentById;
+
+    // Capture ancestor chain so scope checks keep working even if we later clean up the task workspace.
     const ancestorWorkspaceIds = this.listAncestorWorkspaceIdsUsingParentById(parentById, taskId);
 
     this.completedReportsByTaskId.set(taskId, {
@@ -1978,6 +2227,10 @@ export class TaskService {
       ancestorWorkspaceIds,
     });
     this.enforceCompletedReportCacheLimit();
+  }
+
+  private resolveWaiters(taskId: string, report: { reportMarkdown: string; title?: string }): void {
+    this.cacheCompletedReport(taskId, report);
 
     const waiters = this.pendingWaitersByTaskId.get(taskId);
     if (!waiters || waiters.length === 0) {
@@ -2242,9 +2495,8 @@ export class TaskService {
       if (!parentWorkspaceId) return;
       if (ws.taskStatus !== "reported") return;
 
-      const hasChildren = this.listAgentTaskWorkspaces(config).some(
-        (t) => t.parentWorkspaceId === currentWorkspaceId
-      );
+      const index = this.buildAgentTaskIndex(config);
+      const hasChildren = (index.childrenByParent.get(currentWorkspaceId) ?? []).length > 0;
       if (hasChildren) return;
 
       const removeResult = await this.workspaceService.remove(currentWorkspaceId, true);
