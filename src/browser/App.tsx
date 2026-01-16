@@ -76,7 +76,7 @@ function AppInner() {
     pendingNewWorkspaceSectionId,
     beginWorkspaceCreation,
   } = useWorkspaceContext();
-  const { themePreference, setThemePreference, toggleTheme } = useTheme();
+  const { theme, setTheme, toggleTheme } = useTheme();
   const { open: openSettings } = useSettings();
   const { api, status, error, authenticate } = useAPI();
 
@@ -432,7 +432,7 @@ function AppInner() {
     projects,
     workspaceMetadata,
     selectedWorkspace,
-    themePreference,
+    theme,
     getThinkingLevel: getThinkingLevelForWorkspace,
     onSetThinkingLevel: setThinkingLevelFromPalette,
     onStartWorkspaceCreation: openNewWorkspaceFromPalette,
@@ -451,7 +451,7 @@ function AppInner() {
       });
     },
     onToggleTheme: toggleTheme,
-    onSetThemePreference: setThemePreference,
+    onSetTheme: setTheme,
     onOpenSettings: openSettings,
     onClearTimingStats: (workspaceId: string) => workspaceStore.clearTimingStats(workspaceId),
     api,
