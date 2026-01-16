@@ -5,6 +5,7 @@ import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import type { ImagePart, MuxToolPartSchema } from "@/common/orpc/schemas";
 import type { AgentMode } from "@/common/types/mode";
 import type { z } from "zod";
+import type { AgentSkillScope } from "./agentSkill";
 import { type ReviewNoteData, formatReviewForModel } from "./review";
 
 /**
@@ -238,6 +239,15 @@ export interface MuxMetadata {
    * preserving prompt cache stability across turns.
    */
   fileAtMentionSnapshot?: string[];
+
+  /**
+   * Agent skill snapshot metadata for synthetic messages that inject skill bodies.
+   */
+  agentSkillSnapshot?: {
+    skillName: string;
+    scope: AgentSkillScope;
+    sha256: string;
+  };
 }
 
 // Extended tool part type that supports interrupted tool calls (input-available state)
