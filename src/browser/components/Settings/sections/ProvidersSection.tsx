@@ -7,6 +7,7 @@ import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import type { ProviderName } from "@/common/constants/providers";
 import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
+import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useAPI } from "@/browser/contexts/API";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { getStoredAuthToken } from "@/browser/components/AuthTokenModal";
@@ -144,6 +145,8 @@ const PROVIDER_KEY_URLS: Partial<Record<ProviderName, string>> = {
 };
 
 export function ProvidersSection() {
+  const { providersExpandedProvider, setProvidersExpandedProvider } = useSettings();
+
   const { api } = useAPI();
   const { config, updateOptimistically } = useProvidersConfig();
 
@@ -437,6 +440,15 @@ export function ProvidersSection() {
           : "Login to Mux Gateway";
 
   const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!providersExpandedProvider) {
+      return;
+    }
+
+    setExpandedProvider(providersExpandedProvider);
+    setProvidersExpandedProvider(null);
+  }, [providersExpandedProvider, setProvidersExpandedProvider]);
   const [editingField, setEditingField] = useState<{
     provider: string;
     field: string;

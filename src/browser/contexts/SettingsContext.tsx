@@ -7,12 +7,21 @@ import React, {
   type ReactNode,
 } from "react";
 
+interface OpenSettingsOptions {
+  /** When opening the Providers settings, expand the given provider. */
+  expandProvider?: string;
+}
+
 interface SettingsContextValue {
   isOpen: boolean;
   activeSection: string;
-  open: (section?: string) => void;
+  open: (section?: string, options?: OpenSettingsOptions) => void;
   close: () => void;
   setActiveSection: (section: string) => void;
+
+  /** One-shot hint for ProvidersSection to expand a provider. */
+  providersExpandedProvider: string | null;
+  setProvidersExpandedProvider: (provider: string | null) => void;
 }
 
 const SettingsContext = createContext<SettingsContextValue | null>(null);
@@ -28,14 +37,34 @@ const DEFAULT_SECTION = "general";
 export function SettingsProvider(props: { children: ReactNode }) {
   const [isOpen, setIsOpen] = useState(false);
   const [activeSection, setActiveSection] = useState(DEFAULT_SECTION);
+  const [providersExpandedProvider, setProvidersExpandedProvider] = useState<string | null>(null);
 
-  const open = useCallback((section?: string) => {
-    if (section) setActiveSection(section);
-    setIsOpen(true);
+  const setSection = useCallback((section: string) => {
+    setActiveSection(section);
+
+    if (section !== "providers") {
+      setProvidersExpandedProvider(null);
+    }
   }, []);
+
+  const open = useCallback(
+    (section?: string, options?: OpenSettingsOptions) => {
+      if (section) {
+        setSection(section);
+      }
+
+      if (section === "providers") {
+        setProvidersExpandedProvider(options?.expandProvider ?? null);
+      }
+
+      setIsOpen(true);
+    },
+    [setSection]
+  );
 
   const close = useCallback(() => {
     setIsOpen(false);
+    setProvidersExpandedProvider(null);
   }, []);
 
   const value = useMemo<SettingsContextValue>(
@@ -44,9 +73,11 @@ export function SettingsProvider(props: { children: ReactNode }) {
       activeSection,
       open,
       close,
-      setActiveSection,
+      setActiveSection: setSection,
+      providersExpandedProvider,
+      setProvidersExpandedProvider,
     }),
-    [isOpen, activeSection, open, close]
+    [isOpen, activeSection, open, close, providersExpandedProvider, setSection]
   );
 
   return <SettingsContext.Provider value={value}>{props.children}</SettingsContext.Provider>;

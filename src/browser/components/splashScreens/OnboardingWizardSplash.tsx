@@ -303,10 +303,12 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
                 const configured = providersConfig?.[provider]?.isConfigured === true;
 
                 return (
-                  <div
+                  <button
                     key={provider}
-                    className="bg-background-secondary border-border-medium text-foreground flex items-center justify-between rounded-md border px-2 py-1 text-xs"
+                    type="button"
+                    className="bg-background-secondary border-border-medium text-foreground hover:bg-hover flex w-full cursor-pointer items-center justify-between rounded-md border px-2 py-1 text-left text-xs"
                     title={configured ? "Configured" : "Not configured"}
+                    onClick={() => openSettings("providers", { expandProvider: provider })}
                   >
                     <ProviderWithIcon provider={provider} displayName iconClassName="text-accent" />
                     <span
@@ -314,7 +316,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
                         configured ? "bg-green-500" : "bg-border-medium"
                       }`}
                     />
-                  </div>
+                  </button>
                 );
               })}
             </div>
