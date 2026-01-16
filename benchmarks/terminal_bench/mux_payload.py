@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import io
 import tarfile
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 
 def build_app_archive(repo_root: Path, include_paths: Iterable[str]) -> bytes:

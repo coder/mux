@@ -3,8 +3,9 @@ from __future__ import annotations
 import json
 import os
 import shlex
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from harbor.agents.installed.base import BaseInstalledAgent, ExecInput
 from harbor.environments.base import BaseEnvironment
