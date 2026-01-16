@@ -142,6 +142,7 @@ export function CoderControls(props: CoderControlsProps) {
           )
         : false;
       onCoderConfigChange({
+        existingWorkspace: false,
         template: firstTemplate?.name,
         templateOrg: firstIsDuplicate ? firstTemplate?.organizationName : undefined,
       });

@@ -14,10 +14,11 @@ export const CoderWorkspaceConfigSchema = z.object({
     description: "Template organization (for disambiguation when templates have same name)",
   }),
   preset: z.string().optional().meta({ description: "Preset used during creation" }),
-  existingWorkspace: z
-    .boolean()
-    .optional()
-    .meta({ description: "True if connected to pre-existing Coder workspace" }),
+
+  /** True if connected to pre-existing Coder workspace (vs mux creating one). */
+  existingWorkspace: z.boolean().optional().meta({
+    description: "True if connected to pre-existing Coder workspace",
+  }),
 });
 
 export type CoderWorkspaceConfig = z.infer<typeof CoderWorkspaceConfigSchema>;

@@ -138,6 +138,7 @@ export function useCoderWorkspace({
                 t.organizationName !== firstTemplate.organizationName
             );
             onCoderConfigChange({
+              existingWorkspace: false,
               template: firstTemplate.name,
               templateOrg: firstIsDuplicate ? firstTemplate.organizationName : undefined,
             });
@@ -295,6 +296,7 @@ export function useCoderWorkspace({
             )
           : false;
         onCoderConfigChange({
+          existingWorkspace: false,
           template: firstTemplate?.name,
           templateOrg: firstIsDuplicate ? firstTemplate?.organizationName : undefined,
         });

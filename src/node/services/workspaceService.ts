@@ -27,6 +27,7 @@ import { getPlanFilePath, getLegacyPlanFilePath } from "@/common/utils/planStora
 import { shellQuote } from "@/node/runtime/backgroundCommands";
 import { extractEditedFilePaths } from "@/common/utils/messages/extractEditedFiles";
 import { fileExists } from "@/node/utils/runtime/fileExists";
+import { applyForkRuntimeUpdates } from "@/node/services/utils/forkRuntimeUpdates";
 import { expandTilde, expandTildeForSSH } from "@/node/runtime/tildeExpansion";
 
 import type { PostCompactionExclusions } from "@/common/types/attachment";
@@ -1525,12 +1526,12 @@ export class WorkspaceService extends EventEmitter {
       await copyPlanFile(runtime, sourceMetadata.name, sourceWorkspaceId, newName, projectName);
 
       // Apply runtime-provided config updates (e.g., Coder marks shared workspaces)
-      const forkedRuntimeConfig = forkResult.forkedRuntimeConfig ?? sourceRuntimeConfig;
-      if (forkResult.sourceRuntimeConfig) {
-        await this.config.updateWorkspaceMetadata(sourceWorkspaceId, {
-          runtimeConfig: forkResult.sourceRuntimeConfig,
-        });
-      }
+      const { forkedRuntimeConfig } = await applyForkRuntimeUpdates(
+        this.config,
+        sourceWorkspaceId,
+        sourceRuntimeConfig,
+        forkResult
+      );
 
       // Compute namedWorkspacePath for frontend metadata
       const namedWorkspacePath = runtime.getWorkspacePath(foundProjectPath, newName);

@@ -170,6 +170,7 @@ export function useDraftWorkspaceSettings(
 
   const defaultSshHost =
     parsedDefault?.mode === RUNTIME_MODE.SSH ? parsedDefault.host : lastSshHost;
+
   const defaultDockerImage =
     parsedDefault?.mode === RUNTIME_MODE.DOCKER ? parsedDefault.image : lastDockerImage;
 
@@ -191,6 +192,7 @@ export function useDraftWorkspaceSettings(
         // This ensures the runtime string round-trips correctly for Coder-only users
         const effectiveHost =
           coderEnabled && coderConfig && !sshHost.trim() ? CODER_RUNTIME_PLACEHOLDER : sshHost;
+
         return {
           mode: "ssh",
           host: effectiveHost,

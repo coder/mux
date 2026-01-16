@@ -49,7 +49,11 @@ function createMockCoderService(overrides?: Partial<CoderService>): CoderService
  * Create a CoderSSHRuntime with minimal config for testing.
  */
 function createRuntime(
-  coderConfig: { existingWorkspace?: boolean; workspaceName?: string; template?: string },
+  coderConfig: {
+    existingWorkspace?: boolean;
+    workspaceName?: string;
+    template?: string;
+  },
   coderService: CoderService
 ): CoderSSHRuntime {
   const template = "template" in coderConfig ? coderConfig.template : "default-template";
