@@ -23,11 +23,20 @@ export const CoderWorkspaceConfigSchema = z.object({
 
 export type CoderWorkspaceConfig = z.infer<typeof CoderWorkspaceConfigSchema>;
 
-// Coder CLI availability info
-export const CoderInfoSchema = z.object({
-  available: z.boolean(),
-  version: z.string().optional(),
-});
+// Coder CLI unavailable reason - "missing" or error with message
+export const CoderUnavailableReasonSchema = z.union([
+  z.literal("missing"),
+  z.object({ kind: z.literal("error"), message: z.string() }),
+]);
+
+export type CoderUnavailableReason = z.infer<typeof CoderUnavailableReasonSchema>;
+
+// Coder CLI availability info - discriminated union by state
+export const CoderInfoSchema = z.discriminatedUnion("state", [
+  z.object({ state: z.literal("available"), version: z.string() }),
+  z.object({ state: z.literal("outdated"), version: z.string(), minVersion: z.string() }),
+  z.object({ state: z.literal("unavailable"), reason: CoderUnavailableReasonSchema }),
+]);
 
 export type CoderInfo = z.infer<typeof CoderInfoSchema>;
 

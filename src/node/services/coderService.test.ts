@@ -87,28 +87,28 @@ describe("CoderService", () => {
   });
 
   describe("getCoderInfo", () => {
-    it("returns available: true with valid version", async () => {
+    it("returns available state with valid version", async () => {
       mockExecOk(JSON.stringify({ version: "2.28.2" }));
 
       const info = await service.getCoderInfo();
 
-      expect(info).toEqual({ available: true, version: "2.28.2" });
+      expect(info).toEqual({ state: "available", version: "2.28.2" });
     });
 
-    it("returns available: true for exact minimum version", async () => {
+    it("returns available state for exact minimum version", async () => {
       mockExecOk(JSON.stringify({ version: "2.25.0" }));
 
       const info = await service.getCoderInfo();
 
-      expect(info).toEqual({ available: true, version: "2.25.0" });
+      expect(info).toEqual({ state: "available", version: "2.25.0" });
     });
 
-    it("returns available: false for version below minimum", async () => {
+    it("returns outdated state for version below minimum", async () => {
       mockExecOk(JSON.stringify({ version: "2.24.9" }));
 
       const info = await service.getCoderInfo();
 
-      expect(info).toEqual({ available: false });
+      expect(info).toEqual({ state: "outdated", version: "2.24.9", minVersion: "2.25.0" });
     });
 
     it("handles version with dev suffix", async () => {
@@ -116,15 +116,37 @@ describe("CoderService", () => {
 
       const info = await service.getCoderInfo();
 
-      expect(info).toEqual({ available: true, version: "2.28.2-devel+903c045b9" });
+      expect(info).toEqual({ state: "available", version: "2.28.2-devel+903c045b9" });
     });
 
-    it("returns available: false when CLI not installed", async () => {
+    it("returns unavailable state with reason missing when CLI not installed", async () => {
       mockExecError(new Error("command not found: coder"));
 
       const info = await service.getCoderInfo();
 
-      expect(info).toEqual({ available: false });
+      expect(info).toEqual({ state: "unavailable", reason: "missing" });
+    });
+
+    it("returns unavailable state with error reason for other errors", async () => {
+      mockExecError(new Error("Connection refused"));
+
+      const info = await service.getCoderInfo();
+
+      expect(info).toEqual({
+        state: "unavailable",
+        reason: { kind: "error", message: "Connection refused" },
+      });
+    });
+
+    it("returns unavailable state with error when version is missing from output", async () => {
+      mockExecOk(JSON.stringify({}));
+
+      const info = await service.getCoderInfo();
+
+      expect(info).toEqual({
+        state: "unavailable",
+        reason: { kind: "error", message: "Version output missing from CLI" },
+      });
     });
 
     it("caches the result", async () => {

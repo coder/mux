@@ -106,7 +106,7 @@ export const SSHWithCoderAvailable: AppStory = {
         return createMockORPCClient({
           projects: new Map([projectWithNoWorkspaces("/Users/dev/my-project")]),
           workspaces: [],
-          coderInfo: { available: true, version: "2.28.0" },
+          coderInfo: { state: "available", version: "2.28.0" },
           coderTemplates: mockTemplates,
           coderPresets: new Map([
             ["coder-on-coder", mockPresetsCoderOnCoder],
@@ -152,7 +152,7 @@ export const CoderNewWorkspace: AppStory = {
         return createMockORPCClient({
           projects: new Map([projectWithNoWorkspaces("/Users/dev/my-project")]),
           workspaces: [],
-          coderInfo: { available: true, version: "2.28.0" },
+          coderInfo: { state: "available", version: "2.28.0" },
           coderTemplates: mockTemplates,
           coderPresets: new Map([
             ["coder-on-coder", mockPresetsCoderOnCoder],
@@ -199,7 +199,7 @@ export const CoderExistingWorkspace: AppStory = {
         return createMockORPCClient({
           projects: new Map([projectWithNoWorkspaces("/Users/dev/my-project")]),
           workspaces: [],
-          coderInfo: { available: true, version: "2.28.0" },
+          coderInfo: { state: "available", version: "2.28.0" },
           coderTemplates: mockTemplates,
           coderPresets: new Map([
             ["coder-on-coder", mockPresetsCoderOnCoder],
@@ -250,7 +250,7 @@ export const CoderNotAvailable: AppStory = {
         return createMockORPCClient({
           projects: new Map([projectWithNoWorkspaces("/Users/dev/my-project")]),
           workspaces: [],
-          coderInfo: { available: false },
+          coderInfo: { state: "unavailable", reason: "missing" },
         });
       }}
     />
@@ -284,6 +284,68 @@ export const CoderNotAvailable: AppStory = {
 };
 
 /**
+ * Coder CLI outdated - checkbox appears but is disabled with tooltip.
+ * When Coder CLI is installed but version is below minimum, shows explanation.
+ */
+export const CoderOutdated: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        expandProjects(["/Users/dev/my-project"]);
+        return createMockORPCClient({
+          projects: new Map([projectWithNoWorkspaces("/Users/dev/my-project")]),
+          workspaces: [],
+          coderInfo: { state: "outdated", version: "2.20.0", minVersion: "2.25.0" },
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    const canvas = within(storyRoot);
+
+    // Wait for runtime controls
+    await canvas.findByRole("group", { name: "Runtime type" }, { timeout: 10000 });
+
+    // Click SSH runtime button
+    const sshButton = canvas.getByRole("button", { name: /SSH/i });
+    await userEvent.click(sshButton);
+
+    // Coder checkbox should appear but be disabled
+    const coderCheckbox = await canvas.findByTestId("coder-checkbox", {}, { timeout: 5000 });
+    await waitFor(() => {
+      if (!(coderCheckbox instanceof HTMLInputElement)) {
+        throw new Error("Coder checkbox should be an input element");
+      }
+      if (!coderCheckbox.disabled) {
+        throw new Error("Coder checkbox should be disabled when CLI is outdated");
+      }
+      if (coderCheckbox.checked) {
+        throw new Error("Coder checkbox should be unchecked when CLI is outdated");
+      }
+    });
+
+    // Hover over checkbox to trigger tooltip
+    await userEvent.hover(coderCheckbox.parentElement!);
+
+    // Wait for tooltip to appear with version info
+    await waitFor(
+      () => {
+        const tooltip = document.querySelector('[role="tooltip"]');
+        if (!tooltip) throw new Error("Tooltip not found");
+        if (!tooltip.textContent?.includes("2.20.0")) {
+          throw new Error("Tooltip should mention the current CLI version");
+        }
+        if (!tooltip.textContent?.includes("2.25.0")) {
+          throw new Error("Tooltip should mention the minimum required version");
+        }
+      },
+      { timeout: 5000 }
+    );
+  },
+};
+
+/**
  * Coder with template that has no presets.
  * When selecting a template with 0 presets, the preset dropdown is visible but disabled.
  */
@@ -295,7 +357,7 @@ export const CoderNoPresets: AppStory = {
         return createMockORPCClient({
           projects: new Map([projectWithNoWorkspaces("/Users/dev/my-project")]),
           workspaces: [],
-          coderInfo: { available: true, version: "2.28.0" },
+          coderInfo: { state: "available", version: "2.28.0" },
           coderTemplates: [
             { name: "simple-vm", displayName: "Simple VM", organizationName: "default" },
           ],
@@ -349,7 +411,7 @@ export const CoderNoRunningWorkspaces: AppStory = {
         return createMockORPCClient({
           projects: new Map([projectWithNoWorkspaces("/Users/dev/my-project")]),
           workspaces: [],
-          coderInfo: { available: true, version: "2.28.0" },
+          coderInfo: { state: "available", version: "2.28.0" },
           coderTemplates: mockTemplates,
           coderPresets: new Map([
             ["coder-on-coder", mockPresetsCoderOnCoder],

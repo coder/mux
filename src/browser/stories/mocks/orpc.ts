@@ -227,7 +227,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     gitInit: customGitInit,
     runtimeAvailability: customRuntimeAvailability,
     signingCapabilities: customSigningCapabilities,
-    coderInfo = { available: false },
+    coderInfo = { state: "unavailable" as const, reason: "missing" as const },
     coderTemplates = [],
     coderPresets = new Map<string, CoderPreset[]>(),
     coderWorkspaces = [],

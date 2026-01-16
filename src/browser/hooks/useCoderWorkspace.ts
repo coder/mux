@@ -23,7 +23,7 @@ interface UseCoderWorkspaceOptions {
 }
 
 interface UseCoderWorkspaceReturn {
-  /** Whether Coder is enabled (derived: coderConfig != null) */
+  /** Whether Coder is enabled (derived: coderConfig != null AND coderInfo available) */
   enabled: boolean;
   /** Toggle Coder on/off (calls onCoderConfigChange with config or null) */
   setEnabled: (enabled: boolean) => void;
@@ -67,17 +67,20 @@ export function useCoderWorkspace({
 }: UseCoderWorkspaceOptions): UseCoderWorkspaceReturn {
   const { api } = useAPI();
 
-  // Derived state: enabled when coderConfig is present
-  const enabled = coderConfig != null;
-
-  // Ref to access current coderConfig in async callbacks (avoids stale closures)
-  const coderConfigRef = useRef(coderConfig);
-  useEffect(() => {
-    coderConfigRef.current = coderConfig;
-  }, [coderConfig]);
-
   // Async-fetched data (owned by this hook)
   const [coderInfo, setCoderInfo] = useState<CoderInfo | null>(null);
+
+  // Derived state: enabled when coderConfig is present AND CLI is confirmed available
+  // Loading (null) and outdated/unavailable all result in enabled=false
+  const enabled = coderConfig != null && coderInfo?.state === "available";
+
+  // Refs to access current values in async callbacks (avoids stale closures)
+  const coderConfigRef = useRef(coderConfig);
+  const onCoderConfigChangeRef = useRef(onCoderConfigChange);
+  useEffect(() => {
+    coderConfigRef.current = coderConfig;
+    onCoderConfigChangeRef.current = onCoderConfigChange;
+  }, [coderConfig, onCoderConfigChange]);
   const [templates, setTemplates] = useState<CoderTemplate[]>([]);
   const [presets, setPresets] = useState<CoderPreset[]>([]);
   const [existingWorkspaces, setExistingWorkspaces] = useState<CoderWorkspace[]>([]);
@@ -98,11 +101,22 @@ export function useCoderWorkspace({
       .then((info) => {
         if (mounted) {
           setCoderInfo(info);
+          // Clear Coder config when CLI is not available (outdated or unavailable)
+          if (info.state !== "available" && coderConfigRef.current != null) {
+            onCoderConfigChangeRef.current(null);
+          }
         }
       })
       .catch(() => {
         if (mounted) {
-          setCoderInfo({ available: false });
+          setCoderInfo({
+            state: "unavailable",
+            reason: { kind: "error", message: "Failed to fetch" },
+          });
+          // Clear Coder config on fetch failure
+          if (coderConfigRef.current != null) {
+            onCoderConfigChangeRef.current(null);
+          }
         }
       });
 
@@ -113,7 +127,7 @@ export function useCoderWorkspace({
 
   // Fetch templates when Coder is enabled
   useEffect(() => {
-    if (!api || !enabled || !coderInfo?.available) {
+    if (!api || !enabled || coderInfo?.state !== "available") {
       setTemplates([]);
       setLoadingTemplates(false);
       return;
@@ -159,12 +173,12 @@ export function useCoderWorkspace({
     return () => {
       mounted = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- Intentionally only re-fetch on enable/available changes, not on coderConfig changes
-  }, [api, enabled, coderInfo?.available]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- Intentionally only re-fetch on enable/state changes, not on coderConfig changes
+  }, [api, enabled, coderInfo?.state]);
 
   // Fetch existing workspaces when Coder is enabled
   useEffect(() => {
-    if (!api || !enabled || !coderInfo?.available) {
+    if (!api || !enabled || coderInfo?.state !== "available") {
       setExistingWorkspaces([]);
       setLoadingWorkspaces(false);
       return;
@@ -195,7 +209,7 @@ export function useCoderWorkspace({
     return () => {
       mounted = false;
     };
-  }, [api, enabled, coderInfo?.available]);
+  }, [api, enabled, coderInfo?.state]);
 
   // Fetch presets when template changes (only for "new" mode)
   useEffect(() => {

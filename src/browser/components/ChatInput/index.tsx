@@ -611,9 +611,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           selectedSectionId,
           onSectionChange: setSelectedSectionId,
           runtimeFieldError,
-          // Pass coderProps when CLI is available, Coder is enabled, or still checking (so "Checking…" UI renders)
+          // Pass coderProps when CLI is available/outdated, Coder is enabled, or still checking (so "Checking…" UI renders)
           coderProps:
-            coderState.coderInfo?.available || coderState.enabled || coderState.coderInfo === null
+            coderState.coderInfo === null ||
+            coderState.enabled ||
+            coderState.coderInfo?.state !== "unavailable"
               ? {
                   enabled: coderState.enabled,
                   onEnabledChange: coderState.setEnabled,

@@ -272,7 +272,7 @@ export class CoderService {
 
   /**
    * Get Coder CLI info. Caches result for the session.
-   * Returns { available: false } if CLI not installed or version too old.
+   * Returns discriminated union: available | outdated | unavailable.
    */
   async getCoderInfo(): Promise<CoderInfo> {
     if (this.cachedInfo) {
@@ -288,24 +288,52 @@ export class CoderService {
       const version = data.version;
 
       if (!version) {
-        this.cachedInfo = { available: false };
+        this.cachedInfo = {
+          state: "unavailable",
+          reason: { kind: "error", message: "Version output missing from CLI" },
+        };
         return this.cachedInfo;
       }
 
       // Check minimum version
       if (compareVersions(version, MIN_CODER_VERSION) < 0) {
         log.debug(`Coder CLI version ${version} is below minimum ${MIN_CODER_VERSION}`);
-        this.cachedInfo = { available: false };
+        this.cachedInfo = { state: "outdated", version, minVersion: MIN_CODER_VERSION };
         return this.cachedInfo;
       }
 
-      this.cachedInfo = { available: true, version };
+      this.cachedInfo = { state: "available", version };
       return this.cachedInfo;
     } catch (error) {
       log.debug("Coder CLI not available", { error });
-      this.cachedInfo = { available: false };
+      this.cachedInfo = this.classifyCoderError(error);
       return this.cachedInfo;
     }
+  }
+
+  /**
+   * Classify an error from the Coder CLI as missing or error with message.
+   */
+  private classifyCoderError(error: unknown): CoderInfo {
+    // ENOENT or "command not found" = CLI not installed
+    if (error instanceof Error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      const message = error.message.toLowerCase();
+      if (
+        code === "ENOENT" ||
+        message.includes("command not found") ||
+        message.includes("enoent")
+      ) {
+        return { state: "unavailable", reason: "missing" };
+      }
+      // Other errors: include sanitized message (single line, capped length)
+      const sanitized = error.message.split("\n")[0].slice(0, 200).trim();
+      return {
+        state: "unavailable",
+        reason: { kind: "error", message: sanitized || "Unknown error" },
+      };
+    }
+    return { state: "unavailable", reason: { kind: "error", message: "Unknown error" } };
   }
 
   /**
