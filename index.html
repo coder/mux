@@ -106,23 +106,8 @@
     <script>
       (function () {
         const THEME_KEY = "uiTheme";
-        const VALID_THEMES = new Set([
-          "light",
-          "dark",
-          "flexoki-light",
-          "flexoki-dark",
-        ]);
-
-        const THEME_COLORS = {
-          dark: "#1e1e1e",
-          light: "#f5f6f8",
-          "flexoki-light": "#fffcf0",
-          "flexoki-dark": "#100f0f",
-        };
-
-        function getColorScheme(theme) {
-          return theme === "light" || theme.endsWith("-light") ? "light" : "dark";
-        }
+        const VALID_PREFERENCES = new Set(["system", "light", "dark"]);
+        const THEME_COLORS = { dark: "#1e1e1e", light: "#f5f6f8" };
 
         try {
           const stored = window.localStorage.getItem(THEME_KEY);
@@ -137,34 +122,23 @@
             }
           }
 
-          const prefersLight = window.matchMedia
-            ? window.matchMedia("(prefers-color-scheme: light)").matches
-            : false;
+          // Normalize preference: "system" | "light" | "dark" (unknown → "system")
+          const preference =
+            typeof parsed === "string" && VALID_PREFERENCES.has(parsed) ? parsed : "system";
 
-          const fallbackTheme = prefersLight ? "light" : "dark";
-          let theme = fallbackTheme;
-
-          if (typeof parsed === "string") {
-            if (VALID_THEMES.has(parsed)) {
-              theme = parsed;
-            } else if (parsed.endsWith("-light")) {
-              theme = "light";
-            } else if (parsed.endsWith("-dark")) {
-              theme = "dark";
-            }
-          }
-
-          const colorScheme = getColorScheme(theme);
+          // Resolve system preference to actual theme
+          const systemTheme =
+            window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+              ? "light"
+              : "dark";
+          const theme = preference === "system" ? systemTheme : preference;
 
           document.documentElement.dataset.theme = theme;
-          document.documentElement.style.colorScheme = colorScheme;
+          document.documentElement.style.colorScheme = theme;
 
           const metaThemeColor = document.querySelector('meta[name="theme-color"]');
           if (metaThemeColor) {
-            metaThemeColor.setAttribute(
-              "content",
-              THEME_COLORS[theme] ?? THEME_COLORS[colorScheme] ?? "#1e1e1e"
-            );
+            metaThemeColor.setAttribute("content", THEME_COLORS[theme] ?? "#1e1e1e");
           }
         } catch (error) {
           console.warn("Failed to apply preferred theme early", error);
