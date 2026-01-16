@@ -21,6 +21,16 @@ import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking
 import type { ModeAiDefaults } from "@/common/types/modeAiDefaults";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 
+const normalizeModelString = (model: string, fallback: string): string => {
+  const trimmed = model.trim();
+  if (!trimmed) {
+    return fallback;
+  }
+
+  const canonical = migrateGatewayModel(resolveModelAlias(trimmed)).trim();
+  return canonical.length > 0 ? canonical : fallback;
+};
+
 type WorkspaceAISettingsCache = Partial<
   Record<string, { model: string; thinkingLevel: ThinkingLevel }>
 >;
@@ -77,8 +87,7 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
       typeof candidateModel === "string" && candidateModel.trim().length > 0
         ? candidateModel
         : fallbackModel;
-    const canonicalModel = migrateGatewayModel(resolveModelAlias(resolvedModel.trim()));
-    const effectiveModel = canonicalModel.trim().length > 0 ? canonicalModel : fallbackModel;
+    const effectiveModel = normalizeModelString(resolvedModel, fallbackModel);
 
     const existingThinking = readPersistedState<ThinkingLevel>(thinkingKey, "off");
     const candidateThinking =
