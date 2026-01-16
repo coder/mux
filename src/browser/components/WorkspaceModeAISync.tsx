@@ -14,6 +14,8 @@ import {
   MODE_AI_DEFAULTS_KEY,
 } from "@/common/constants/storage";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
+import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
+import { resolveModelAlias } from "@/common/utils/ai/models";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
 import type { ModeAiDefaults } from "@/common/types/modeAiDefaults";
@@ -75,6 +77,8 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
       typeof candidateModel === "string" && candidateModel.trim().length > 0
         ? candidateModel
         : fallbackModel;
+    const canonicalModel = migrateGatewayModel(resolveModelAlias(resolvedModel.trim()));
+    const effectiveModel = canonicalModel.trim().length > 0 ? canonicalModel : fallbackModel;
 
     const existingThinking = readPersistedState<ThinkingLevel>(thinkingKey, "off");
     const candidateThinking =
@@ -86,10 +90,10 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
       "off";
     const resolvedThinking = coerceThinkingLevel(candidateThinking) ?? "off";
 
-    const effectiveThinking = enforceThinkingPolicy(resolvedModel, resolvedThinking);
+    const effectiveThinking = enforceThinkingPolicy(effectiveModel, resolvedThinking);
 
-    if (existingModel !== resolvedModel) {
-      updatePersistedState(modelKey, resolvedModel);
+    if (existingModel !== effectiveModel) {
+      updatePersistedState(modelKey, effectiveModel);
     }
 
     if (existingThinking !== effectiveThinking) {
