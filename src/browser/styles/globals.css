@@ -1009,8 +1009,19 @@ body,
   overflow: hidden;
 }
 
+/* Sidebar toggle button positioning
+   On desktop: positioned after the collapsed sidebar strip (w-8 = 32px)
+   On mobile: positioned at top-left (sidebar slides off-screen) */
+.sidebar-toggle-btn {
+  left: calc(2rem + 12px); /* 32px sidebar + 12px gap */
+}
+
 /* Mobile improvements - only apply to touch devices */
 @media (max-width: 768px) and (pointer: coarse) {
+  /* On mobile, sidebar slides off-screen, so position toggle at top-left */
+  .sidebar-toggle-btn {
+    left: 12px;
+  }
   html {
     -webkit-text-size-adjust: 100%;
     touch-action: manipulation;

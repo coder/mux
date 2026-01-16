@@ -20,14 +20,16 @@ export function LeftSidebar(props: LeftSidebarProps) {
 
   return (
     <>
-      {/* Hamburger menu button - only visible on mobile */}
+      {/* Hamburger menu button - visible when sidebar is collapsed
+          On mobile: positioned at top-left (sidebar slides off-screen)
+          On desktop: positioned after the collapsed sidebar strip */}
       {collapsed && (
         <button
           onClick={onToggleCollapsed}
           title="Open sidebar"
           aria-label="Open sidebar menu"
           className={cn(
-            "hidden mobile-menu-btn fixed top-3 left-3 z-30",
+            "sidebar-toggle-btn fixed top-3 z-30 flex",
             "w-10 h-10 bg-sidebar border border-border-light rounded-md cursor-pointer",
             "items-center justify-center text-foreground text-xl transition-all duration-200",
             "shadow-[0_2px_4px_rgba(0,0,0,0.3)]",
