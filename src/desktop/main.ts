@@ -399,14 +399,8 @@ async function loadServices(): Promise<void> {
       p.endsWith("\\windows\\system32\\wsl.exe");
 
     const envShell = process.env.SHELL?.trim();
-    if (envShell) {
-      if (envShell.startsWith("/")) {
-        return true;
-      }
-
-      if (isWslLauncher(normalize(envShell))) {
-        return true;
-      }
+    if (envShell && isWslLauncher(normalize(envShell))) {
+      return true;
     }
 
     try {
