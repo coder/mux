@@ -1,3 +1,4 @@
+import { Menu } from "lucide-react";
 import { useEffect, useCallback, useRef } from "react";
 import "./styles/globals.css";
 import { useWorkspaceContext, toWorkspaceSelection } from "./contexts/WorkspaceContext";
@@ -47,6 +48,7 @@ import { getRuntimeTypeForTelemetry } from "@/common/telemetry";
 import { useStartWorkspaceCreation, getFirstProjectPath } from "./hooks/useStartWorkspaceCreation";
 import { useAPI } from "@/browser/contexts/API";
 import { AuthTokenModal } from "@/browser/components/AuthTokenModal";
+import { Button } from "./components/ui/button";
 import { ProjectPage } from "@/browser/components/ProjectPage";
 
 import { SettingsProvider, useSettings } from "./contexts/SettingsContext";
@@ -736,17 +738,33 @@ function AppInner() {
                 );
               })()
             ) : (
-              <div
-                className="[&_p]:text-muted [&_h2]:text-foreground mx-auto w-full max-w-3xl text-center [&_h2]:mb-4 [&_h2]:font-bold [&_h2]:tracking-tight [&_p]:leading-[1.6]"
-                style={{
-                  padding: "clamp(40px, 10vh, 100px) 20px",
-                  fontSize: "clamp(14px, 2vw, 16px)",
-                }}
-              >
-                <h2 style={{ fontSize: "clamp(24px, 5vw, 36px)", letterSpacing: "-1px" }}>
-                  Welcome to Mux
-                </h2>
-                <p>Select a workspace from the sidebar or add a new one to get started.</p>
+              <div className="bg-dark flex flex-1 flex-col overflow-hidden">
+                <div className="bg-sidebar border-border-light flex h-8 shrink-0 items-center border-b px-[15px] [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:py-2">
+                  {sidebarCollapsed && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={handleToggleSidebar}
+                      title="Open sidebar"
+                      aria-label="Open sidebar menu"
+                      className="mobile-menu-btn text-muted hover:text-foreground hidden h-6 w-6 shrink-0"
+                    >
+                      <Menu className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
+                <div
+                  className="[&_p]:text-muted [&_h2]:text-foreground mx-auto w-full max-w-3xl flex-1 text-center [&_h2]:mb-4 [&_h2]:font-bold [&_h2]:tracking-tight [&_p]:leading-[1.6]"
+                  style={{
+                    padding: "clamp(40px, 10vh, 100px) 20px",
+                    fontSize: "clamp(14px, 2vw, 16px)",
+                  }}
+                >
+                  <h2 style={{ fontSize: "clamp(24px, 5vw, 36px)", letterSpacing: "-1px" }}>
+                    Welcome to Mux
+                  </h2>
+                  <p>Select a workspace from the sidebar or add a new one to get started.</p>
+                </div>
               </div>
             )}
           </div>
