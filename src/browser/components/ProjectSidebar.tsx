@@ -245,8 +245,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   } = useProjectContext();
 
   // Theme for logo variant
-  const { theme } = useTheme();
-  const MuxLogo = theme === "dark" || theme.endsWith("-dark") ? MuxLogoDark : MuxLogoLight;
+  const { resolvedTheme } = useTheme();
+  const MuxLogo =
+    resolvedTheme === "dark" || resolvedTheme.endsWith("-dark") ? MuxLogoDark : MuxLogoLight;
 
   // Mobile breakpoint for auto-closing sidebar
   const MOBILE_BREAKPOINT = 768;

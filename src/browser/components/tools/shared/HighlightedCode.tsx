@@ -25,13 +25,13 @@ export const HighlightedCode: React.FC<HighlightedCodeProps> = ({
   startLineNumber = 1,
 }) => {
   const [highlightedLines, setHighlightedLines] = useState<string[] | null>(null);
-  const { theme: themeMode } = useTheme();
+  const { resolvedTheme } = useTheme();
 
   const plainLines = code.split("\n").filter((line, i, arr) => i < arr.length - 1 || line !== "");
 
   useEffect(() => {
     let cancelled = false;
-    const theme = themeMode === "light" || themeMode.endsWith("-light") ? "light" : "dark";
+    const theme = resolvedTheme === "light" || resolvedTheme.endsWith("-light") ? "light" : "dark";
 
     setHighlightedLines(null);
 
@@ -53,7 +53,7 @@ export const HighlightedCode: React.FC<HighlightedCodeProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [code, language, themeMode]);
+  }, [code, language, resolvedTheme]);
 
   const lines = highlightedLines ?? plainLines;
 

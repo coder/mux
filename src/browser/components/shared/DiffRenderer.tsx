@@ -500,13 +500,19 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
   className,
 }) => {
   // Detect language for syntax highlighting (memoized to prevent repeated detection)
-  const { theme } = useTheme();
+  const { resolvedTheme } = useTheme();
   const language = React.useMemo(
     () => (filePath ? getLanguageFromPath(filePath) : "text"),
     [filePath]
   );
 
-  const highlightedChunks = useHighlightedDiff(content, language, oldStart, newStart, theme);
+  const highlightedChunks = useHighlightedDiff(
+    content,
+    language,
+    oldStart,
+    newStart,
+    resolvedTheme
+  );
 
   const lineNumberWidths = React.useMemo(() => {
     if (!showLineNumbers || !highlightedChunks) {
@@ -866,7 +872,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
         window.removeEventListener("blur", stopDragging);
       };
     }, []);
-    const { theme } = useTheme();
+    const { resolvedTheme } = useTheme();
     const [selection, setSelection] = React.useState<LineSelection | null>(null);
 
     // Notify parent when composition state changes
@@ -895,7 +901,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
       enableHighlighting ? language : "text",
       oldStart,
       newStart,
-      theme
+      resolvedTheme
     );
 
     // Parse raw lines once for use in lineData
