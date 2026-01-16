@@ -333,6 +333,21 @@ export {
 } from "./coder";
 
 // Workspace
+const DebugLlmRequestSnapshotSchema = z
+  .object({
+    capturedAt: z.number(),
+    workspaceId: z.string(),
+    model: z.string(),
+    providerName: z.string(),
+    thinkingLevel: z.string(),
+    mode: z.string().optional(),
+    agentId: z.string().optional(),
+    maxOutputTokens: z.number().optional(),
+    systemMessage: z.string(),
+    messages: z.array(z.unknown()),
+  })
+  .strict();
+
 export const workspace = {
   list: {
     input: z
@@ -472,6 +487,10 @@ export const workspace = {
   getInfo: {
     input: z.object({ workspaceId: z.string() }),
     output: FrontendWorkspaceMetadataSchema.nullable(),
+  },
+  getLastLlmRequest: {
+    input: z.object({ workspaceId: z.string() }),
+    output: ResultSchema(DebugLlmRequestSnapshotSchema.nullable(), z.string()),
   },
   getFullReplay: {
     input: z.object({ workspaceId: z.string() }),

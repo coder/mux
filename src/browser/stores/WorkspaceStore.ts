@@ -1594,7 +1594,9 @@ export class WorkspaceStore {
   ): StreamingMessageAggregator {
     if (!this.aggregators.has(workspaceId)) {
       // Create new aggregator with required createdAt and workspaceId for localStorage persistence
-      const aggregator = new StreamingMessageAggregator(createdAt, workspaceId, unarchivedAt);
+      const aggregator = new StreamingMessageAggregator(createdAt, workspaceId, unarchivedAt, {
+        debugShowAllMessages: window.api?.debugShowAllMessages === true,
+      });
       // Wire up navigation callback for notification clicks
       if (this.navigateToWorkspaceCallback) {
         aggregator.onNavigateToWorkspace = this.navigateToWorkspaceCallback;

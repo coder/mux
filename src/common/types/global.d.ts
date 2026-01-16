@@ -15,6 +15,9 @@ declare global {
       chrome?: string;
       electron?: string;
     };
+    // Debug flags (dev-only, passed through preload)
+    debugShowAllMessages?: boolean;
+    debugLlmRequest?: boolean;
     // Allow maintainers to opt into telemetry while running the dev server.
     enableTelemetryInDev?: boolean;
     // E2E test mode flag - used to adjust UI behavior (e.g., longer toast durations)

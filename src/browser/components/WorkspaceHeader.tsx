@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Pencil, Server } from "lucide-react";
+import { Code2Icon, Pencil, Server } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import { RIGHT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
 import { GitStatusIndicator } from "./GitStatusIndicator";
@@ -21,6 +21,7 @@ import {
   isDesktopMode,
   DESKTOP_TITLEBAR_HEIGHT_CLASS,
 } from "@/browser/hooks/useDesktopTitlebar";
+import { DebugLlmRequestModal } from "./DebugLlmRequestModal";
 import { WorkspaceLinks } from "./WorkspaceLinks";
 
 interface WorkspaceHeaderProps {
@@ -49,6 +50,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   const { canInterrupt } = useWorkspaceSidebarState(workspaceId);
   const { startSequence: startTutorial, isSequenceCompleted } = useTutorial();
   const [editorError, setEditorError] = useState<string | null>(null);
+  const [debugLlmRequestOpen, setDebugLlmRequestOpen] = useState(false);
   const [mcpModalOpen, setMcpModalOpen] = useState(false);
 
   const [rightSidebarCollapsed] = usePersistedState<boolean>(RIGHT_SIDEBAR_COLLAPSED_KEY, false, {
@@ -134,6 +136,24 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
         </div>
       </div>
       <div className={cn("flex items-center gap-2", isDesktop && "titlebar-no-drag")}>
+        {window.api?.debugLlmRequest === true && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setDebugLlmRequestOpen(true)}
+                className="text-muted hover:text-foreground h-6 w-6 shrink-0"
+                data-testid="workspace-llm-request-button"
+              >
+                <Code2Icon className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" align="center">
+              Debug: last LLM request
+            </TooltipContent>
+          </Tooltip>
+        )}
         <WorkspaceLinks workspaceId={workspaceId} />
         {editorError && <span className="text-danger-soft text-xs">{editorError}</span>}
         <Tooltip>
@@ -191,6 +211,11 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
         projectPath={projectPath}
         open={mcpModalOpen}
         onOpenChange={setMcpModalOpen}
+      />
+      <DebugLlmRequestModal
+        workspaceId={workspaceId}
+        open={debugLlmRequestOpen}
+        onOpenChange={setDebugLlmRequestOpen}
       />
     </div>
   );

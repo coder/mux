@@ -1,4 +1,5 @@
 import { describe, test, expect } from "bun:test";
+import { createMuxMessage } from "@/common/types/message";
 import { StreamingMessageAggregator } from "./StreamingMessageAggregator";
 
 // Test helper: create aggregator with default createdAt for tests
@@ -151,6 +152,89 @@ describe("StreamingMessageAggregator", () => {
 
       // When no state changes, cache should return same reference
       expect(messages1).toBe(messages2);
+    });
+  });
+
+  describe("debugShowAllMessages", () => {
+    test("should hide synthetic messages by default", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      const synthetic = createMuxMessage("s1", "user", "synthetic", {
+        timestamp: 1,
+        historySequence: 1,
+        synthetic: true,
+      });
+      const user = createMuxMessage("u1", "user", "hello", {
+        timestamp: 2,
+        historySequence: 2,
+      });
+
+      aggregator.loadHistoricalMessages([synthetic, user], false);
+
+      const displayed = aggregator.getDisplayedMessages();
+      const contents = displayed.filter((m) => m.type === "user").map((m) => m.content);
+
+      expect(contents).toEqual(["hello"]);
+    });
+
+    test("should show synthetic messages when enabled", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT, undefined, undefined, {
+        debugShowAllMessages: true,
+      });
+
+      const synthetic = createMuxMessage("s1", "user", "synthetic", {
+        timestamp: 1,
+        historySequence: 1,
+        synthetic: true,
+      });
+      const user = createMuxMessage("u1", "user", "hello", {
+        timestamp: 2,
+        historySequence: 2,
+      });
+
+      aggregator.loadHistoricalMessages([synthetic, user], false);
+
+      const displayed = aggregator.getDisplayedMessages();
+      const userMessages = displayed.filter((m) => m.type === "user");
+
+      expect(userMessages).toHaveLength(2);
+      expect(userMessages[0].content).toBe("synthetic");
+      expect(userMessages[0].isSynthetic).toBe(true);
+      expect(userMessages[1].content).toBe("hello");
+      expect(userMessages[1].isSynthetic).toBeUndefined();
+    });
+
+    test("should disable displayed message cap when enabled", () => {
+      const manyMessages = Array.from({ length: 200 }, (_, i) =>
+        createMuxMessage(`u${i}`, "user", `msg-${i}`, {
+          timestamp: i,
+          historySequence: i,
+        })
+      );
+
+      const defaultAggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      defaultAggregator.loadHistoricalMessages(manyMessages, false);
+
+      const defaultDisplayed = defaultAggregator.getDisplayedMessages();
+      expect(defaultDisplayed).toHaveLength(129);
+      expect(defaultDisplayed[0]?.type).toBe("history-hidden");
+      if (defaultDisplayed[0]?.type === "history-hidden") {
+        expect(defaultDisplayed[0].hiddenCount).toBe(72);
+      }
+
+      const debugAggregator = new StreamingMessageAggregator(
+        TEST_CREATED_AT,
+        undefined,
+        undefined,
+        {
+          debugShowAllMessages: true,
+        }
+      );
+      debugAggregator.loadHistoricalMessages(manyMessages, false);
+
+      const debugDisplayed = debugAggregator.getDisplayedMessages();
+      expect(debugDisplayed).toHaveLength(200);
+      expect(debugDisplayed.some((m) => m.type === "history-hidden")).toBe(false);
     });
   });
 

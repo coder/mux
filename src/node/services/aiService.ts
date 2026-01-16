@@ -19,6 +19,7 @@ import {
   type ProviderName,
 } from "@/common/constants/providers";
 
+import type { DebugLlmRequestSnapshot } from "@/common/types/debugLlmRequest";
 import type { MuxMessage, MuxTextPart } from "@/common/types/message";
 import { createMuxMessage } from "@/common/types/message";
 import type { Config, ProviderConfig } from "@/node/config";
@@ -410,6 +411,9 @@ export class AIService extends EventEmitter {
     string,
     { abortController: AbortController; startTime: number; syntheticMessageId: string }
   >();
+
+  // Debug: captured LLM request payloads for last send per workspace
+  private lastLlmRequestByWorkspace = new Map<string, DebugLlmRequestSnapshot>();
   private taskService?: TaskService;
   private extraTools?: Record<string, Tool>;
 
@@ -1899,7 +1903,34 @@ export class AIService extends EventEmitter {
         return Ok(undefined);
       }
 
-      // Delegate to StreamManager with model instance, system message, tools, historySequence, and initial metadata
+      // Capture request payload for debugging (optional), then delegate to StreamManager.
+
+      if (process.env.MUX_DEBUG_LLM_REQUEST === "1") {
+        const snapshot: DebugLlmRequestSnapshot = {
+          capturedAt: Date.now(),
+          workspaceId,
+          model: modelString,
+          providerName,
+          thinkingLevel: effectiveThinkingLevel,
+          mode: effectiveMode,
+          agentId: effectiveAgentId,
+          maxOutputTokens,
+          systemMessage,
+          messages: finalMessages,
+        };
+
+        try {
+          const cloned =
+            typeof structuredClone === "function"
+              ? structuredClone(snapshot)
+              : (JSON.parse(JSON.stringify(snapshot)) as DebugLlmRequestSnapshot);
+
+          this.lastLlmRequestByWorkspace.set(workspaceId, cloned);
+        } catch (error) {
+          const errMsg = error instanceof Error ? error.message : String(error);
+          log.warn("Failed to capture debug LLM request snapshot", { workspaceId, error: errMsg });
+        }
+      }
       const streamResult = await this.streamManager.startStream(
         workspaceId,
         finalMessages,
@@ -2033,6 +2064,18 @@ export class AIService extends EventEmitter {
       return;
     }
     await this.streamManager.replayStream(workspaceId);
+  }
+
+  debugGetLastLlmRequest(workspaceId: string): Result<DebugLlmRequestSnapshot | null> {
+    if (typeof workspaceId !== "string" || workspaceId.trim().length === 0) {
+      return Err("debugGetLastLlmRequest: workspaceId is required");
+    }
+
+    if (process.env.MUX_DEBUG_LLM_REQUEST !== "1") {
+      return Ok(null);
+    }
+
+    return Ok(this.lastLlmRequestByWorkspace.get(workspaceId) ?? null);
   }
 
   /**

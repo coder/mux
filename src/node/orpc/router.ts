@@ -1254,6 +1254,12 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           return context.workspaceService.getInfo(input.workspaceId);
         }),
+      getLastLlmRequest: t
+        .input(schemas.workspace.getLastLlmRequest.input)
+        .output(schemas.workspace.getLastLlmRequest.output)
+        .handler(({ context, input }) => {
+          return context.aiService.debugGetLastLlmRequest(input.workspaceId);
+        }),
       getFullReplay: t
         .input(schemas.workspace.getFullReplay.input)
         .output(schemas.workspace.getFullReplay.output)

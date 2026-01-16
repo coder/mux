@@ -198,6 +198,8 @@ export class StreamingMessageAggregator {
   // Last URL set via status_set - kept in memory to reuse when later calls omit url
   private lastStatusUrl: string | undefined = undefined;
 
+  // Debug: show synthetic messages + disable displayed message cap
+  private readonly debugShowAllMessages: boolean;
   // Workspace ID (used for status persistence)
   private readonly workspaceId: string | undefined;
 
@@ -274,10 +276,16 @@ export class StreamingMessageAggregator {
   // Used for notification click handling in browser mode
   onNavigateToWorkspace?: (workspaceId: string) => void;
 
-  constructor(createdAt: string, workspaceId?: string, unarchivedAt?: string) {
+  constructor(
+    createdAt: string,
+    workspaceId?: string,
+    unarchivedAt?: string,
+    options?: { debugShowAllMessages?: boolean }
+  ) {
     this.createdAt = createdAt;
     this.workspaceId = workspaceId;
     this.unarchivedAt = unarchivedAt;
+    this.debugShowAllMessages = options?.debugShowAllMessages === true;
     // Load persisted agent status from localStorage
     if (workspaceId) {
       const persistedStatus = this.loadPersistedAgentStatus();
@@ -1631,8 +1639,10 @@ export class StreamingMessageAggregator {
       const allMessages = this.getAllMessages();
 
       for (const message of allMessages) {
-        // Skip synthetic messages - they're for model context only, not UI display
-        if (message.metadata?.synthetic) {
+        const isSynthetic = message.metadata?.synthetic === true;
+
+        // Synthetic messages are typically for model context only, but can be shown in debug mode.
+        if (isSynthetic && !this.debugShowAllMessages) {
           continue;
         }
 
@@ -1700,6 +1710,7 @@ export class StreamingMessageAggregator {
             content: compactionRequest ? compactionRequest.rawCommand : content,
             imageParts: imageParts.length > 0 ? imageParts : undefined,
             historySequence,
+            isSynthetic: isSynthetic ? true : undefined,
             timestamp: baseTimestamp,
             compactionRequest,
             reviews,
@@ -1884,7 +1895,7 @@ export class StreamingMessageAggregator {
 
       // Limit to last N messages for DOM performance
       // Full history is still maintained internally for token counting
-      if (displayedMessages.length > MAX_DISPLAYED_MESSAGES) {
+      if (!this.debugShowAllMessages && displayedMessages.length > MAX_DISPLAYED_MESSAGES) {
         const hiddenCount = displayedMessages.length - MAX_DISPLAYED_MESSAGES;
         const slicedMessages = displayedMessages.slice(-MAX_DISPLAYED_MESSAGES);
 

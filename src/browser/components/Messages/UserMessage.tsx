@@ -28,6 +28,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
   isCompacting,
   clipboardWriteText = copyToClipboard,
 }) => {
+  const isSynthetic = message.isSynthetic === true;
   const content = message.content;
   const [vimEnabled] = usePersistedState<boolean>(VIM_ENABLED_KEY, false, { listener: true });
 
@@ -49,7 +50,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
   const { copied, copyToClipboard } = useCopyToClipboard(clipboardWriteText);
 
   const handleEdit = () => {
-    if (onEdit && !isLocalCommandOutput) {
+    if (onEdit && !isLocalCommandOutput && !isSynthetic) {
       const editText = getEditableUserMessageText(message);
       onEdit(message.historyId, editText, message.imageParts);
     }
@@ -58,7 +59,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
   // Keep Copy and Edit buttons visible (most common actions)
   // Kebab menu saves horizontal space by collapsing less-used actions
   const buttons: ButtonConfig[] = [
-    ...(onEdit && !isLocalCommandOutput
+    ...(onEdit && !isLocalCommandOutput && !isSynthetic
       ? [
           {
             label: "Edit",
@@ -79,10 +80,16 @@ export const UserMessage: React.FC<UserMessageProps> = ({
   ];
 
   // If it's a local command output, render with TerminalOutput
+
+  const label = isSynthetic ? (
+    <span className="bg-muted/20 text-muted rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
+      synthetic
+    </span>
+  ) : null;
   if (isLocalCommandOutput) {
     return (
       <MessageWindow
-        label={null}
+        label={label}
         message={message}
         buttons={buttons}
         className={className}
@@ -95,7 +102,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
 
   return (
     <MessageWindow
-      label={null}
+      label={label}
       message={message}
       buttons={buttons}
       className={className}

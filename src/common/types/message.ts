@@ -289,6 +289,7 @@ export type DisplayedMessage =
       content: string;
       imageParts?: ImagePart[]; // Optional image attachments
       historySequence: number; // Global ordering across all messages
+      isSynthetic?: boolean;
       timestamp?: number;
       compactionRequest?: {
         // Present if this is a /compact command
