@@ -52,6 +52,15 @@ if command -v docker &>/dev/null && docker info &>/dev/null; then
     exit 0
   fi
 
+  # Exit code 125 indicates the docker invocation failed (image pull, daemon issues, etc.).
+  # Only in that case do we fall back to the prebuilt binary.
+  #
+  # For other non-zero exit codes, zizmor itself failed (e.g., it found issues) and we should
+  # propagate that failure rather than masking it.
+  if [[ $status -ne 125 ]]; then
+    exit $status
+  fi
+
   echo "⚠️  Docker zizmor failed (exit $status); running prebuilt binary..."
 else
   echo "⚠️  Docker unavailable; running zizmor via prebuilt binary..."
