@@ -58,6 +58,7 @@ import { useFeatureFlags } from "./contexts/FeatureFlagsContext";
 import { FeatureFlagsProvider } from "./contexts/FeatureFlagsContext";
 import { ExperimentsProvider } from "./contexts/ExperimentsContext";
 import { getWorkspaceSidebarKey } from "./utils/workspace";
+import { WindowsToolchainBanner } from "./components/WindowsToolchainBanner";
 import { RosettaBanner } from "./components/RosettaBanner";
 
 const THINKING_LEVELS: ThinkingLevel[] = ["off", "low", "medium", "high", "xhigh"];
@@ -646,6 +647,7 @@ function AppInner() {
           workspaceRecency={workspaceRecency}
         />
         <div className="mobile-main-content flex min-w-0 flex-1 flex-col overflow-hidden">
+          <WindowsToolchainBanner />
           <RosettaBanner />
           <div className="mobile-layout flex flex-1 overflow-hidden">
             {selectedWorkspace ? (

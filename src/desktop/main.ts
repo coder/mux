@@ -386,6 +386,42 @@ async function loadServices(): Promise<void> {
       return false;
     }
   });
+  electronIpcMain.handle("mux:get-is-windows-wsl-shell", async () => {
+    if (process.platform !== "win32") return false;
+
+    const normalize = (p: string) => p.replace(/\//g, "\\").toLowerCase();
+    const isWslLauncher = (p: string) =>
+      p === "wsl" ||
+      p === "wsl.exe" ||
+      p === "bash" ||
+      p === "bash.exe" ||
+      p.endsWith("\\windows\\system32\\bash.exe") ||
+      p.endsWith("\\windows\\system32\\wsl.exe");
+
+    const envShell = process.env.SHELL?.trim();
+    if (envShell && isWslLauncher(normalize(envShell))) {
+      return true;
+    }
+
+    try {
+      // Intentionally lazy import to keep startup fast and avoid bundling concerns.
+      // eslint-disable-next-line no-restricted-syntax -- main-process-only builtin
+      const { execSync } = await import("node:child_process");
+      const result = execSync("where bash", {
+        encoding: "utf8",
+        stdio: ["pipe", "pipe", "ignore"],
+      });
+      const firstPath = result
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .find((line) => line.length > 0);
+
+      return firstPath ? isWslLauncher(normalize(firstPath)) : false;
+    } catch {
+      return false;
+    }
+  });
+
   electronIpcMain.on("start-orpc-server", (event) => {
     const [serverPort] = event.ports;
     orpcHandler.upgrade(serverPort, {

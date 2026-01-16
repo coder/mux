@@ -30,6 +30,33 @@ describe("resolveLocalPtyShell", () => {
     });
   });
 
+  it("on Windows, ignores POSIX-y SHELL paths and prefers Git Bash", () => {
+    const result = resolveLocalPtyShell({
+      platform: "win32",
+      env: { SHELL: "/bin/bash" },
+      isCommandAvailable: () => false,
+      getBashPath: () => "C:\\Program Files\\Git\\bin\\bash.exe",
+    });
+
+    expect(result).toEqual({
+      command: "C:\\Program Files\\Git\\bin\\bash.exe",
+      args: ["--login", "-i"],
+    });
+  });
+  it("on Windows, ignores WSL SHELL and prefers Git Bash", () => {
+    const result = resolveLocalPtyShell({
+      platform: "win32",
+      env: { SHELL: "C:\\Windows\\System32\\bash.exe" },
+      isCommandAvailable: () => false,
+      getBashPath: () => "C:\\Program Files\\Git\\bin\\bash.exe",
+    });
+
+    expect(result).toEqual({
+      command: "C:\\Program Files\\Git\\bin\\bash.exe",
+      args: ["--login", "-i"],
+    });
+  });
+
   it("on Windows, falls back to pwsh when Git Bash is unavailable", () => {
     const result = resolveLocalPtyShell({
       platform: "win32",
