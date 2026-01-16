@@ -43,9 +43,9 @@ describe("AppLoader", () => {
   });
 
   test("renders AuthTokenModal when API status is auth_required (before workspaces load)", () => {
-    const { getByTestId, queryByText } = render(<AppLoader />);
+    const { getByTestId, queryByTestId } = render(<AppLoader />);
 
-    expect(queryByText("Loading workspaces...")).toBeNull();
+    expect(queryByTestId("LoadingScreen")).toBeNull();
     expect(getByTestId("AuthTokenModalMock").textContent).toContain("Authentication required");
   });
 });
