@@ -1388,16 +1388,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
     // Route to creation handler for creation variant
     if (variant === "creation") {
-      // Validate runtime fields before creating workspace
-      if (isDockerMissingImage) {
-        setRuntimeFieldError("docker");
-        return;
-      }
-      if (isSshMissingHost) {
-        setRuntimeFieldError("ssh");
-        return;
-      }
-
       let creationMessageTextForSend = messageText;
       let creationOptionsOverride: Partial<SendMessageOptions> | undefined;
 
