@@ -1,5 +1,5 @@
-import React, { useEffect, useRef } from "react";
-import { Layers } from "lucide-react";
+import React, { useEffect, useRef, useState } from "react";
+import { Layers, FileText } from "lucide-react";
 import type { BashToolArgs, BashToolResult } from "@/common/types/tools";
 import { BASH_DEFAULT_TIMEOUT_SECS } from "@/common/constants/toolLimits";
 import {
@@ -23,6 +23,7 @@ import {
 } from "./shared/toolUtils";
 import { cn } from "@/common/lib/utils";
 import { useBashToolLiveOutput, useLatestStreamingBashId } from "@/browser/stores/WorkspaceStore";
+import { BackgroundBashOutputDialog } from "../BackgroundBashOutputDialog";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 
 interface BashToolCallProps {
@@ -113,6 +114,7 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
   canSendToBackground,
   onSendToBackground,
 }) => {
+  const [outputDialogOpen, setOutputDialogOpen] = useState(false);
   const { expanded, setExpanded, toggleExpanded } = useToolExpansion();
 
   const liveOutput = useBashToolLiveOutput(workspaceId, toolCallId);
@@ -180,7 +182,9 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
   }, [isLatestStreamingBash, latestStreamingBashId, status, setExpanded]);
 
   const isPending = status === "executing" || status === "pending";
-  const isBackground = args.run_in_background ?? (result && "backgroundProcessId" in result);
+  const backgroundProcessId =
+    result && "backgroundProcessId" in result ? result.backgroundProcessId : null;
+  const isBackground = args.run_in_background ?? Boolean(backgroundProcessId);
 
   // Override status for backgrounded processes: the aggregator sees success=true and marks "completed",
   // but for a foreground→background migration we want to show "backgrounded"
@@ -204,6 +208,23 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
         <ExpandIcon expanded={expanded}>▶</ExpandIcon>
         <ToolIcon emoji="🔧" toolName="bash" />
         <span className="text-text font-monospace max-w-96 truncate">{args.script}</span>
+        {isBackground && backgroundProcessId && workspaceId && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setOutputDialogOpen(true);
+                }}
+                className="text-muted hover:text-secondary ml-2 rounded p-1 transition-colors"
+              >
+                <FileText size={12} />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>View output</TooltipContent>
+          </Tooltip>
+        )}
         {isBackground && (
           // Background mode: show icon and display name
           <span className="text-muted ml-2 flex items-center gap-1 text-[10px] whitespace-nowrap">
@@ -256,6 +277,15 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
               Send to background — process continues but agent stops waiting
             </TooltipContent>
           </Tooltip>
+        )}
+        {backgroundProcessId && workspaceId && (
+          <BackgroundBashOutputDialog
+            open={outputDialogOpen}
+            onOpenChange={setOutputDialogOpen}
+            workspaceId={workspaceId}
+            processId={backgroundProcessId}
+            displayName={args.display_name}
+          />
         )}
       </ToolHeader>
 

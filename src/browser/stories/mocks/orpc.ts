@@ -643,6 +643,11 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           await new Promise<void>(() => undefined);
         },
         terminate: () => Promise.resolve({ success: true, data: undefined }),
+        getOutput: () =>
+          Promise.resolve({
+            success: true,
+            data: { status: "running" as const, output: "", nextOffset: 0, truncatedStart: false },
+          }),
         sendToBackground: () => Promise.resolve({ success: true, data: undefined }),
       },
       stats: {

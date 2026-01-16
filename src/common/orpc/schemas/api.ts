@@ -589,6 +589,26 @@ export const workspace = {
       input: z.object({ workspaceId: z.string(), toolCallId: z.string() }),
       output: ResultSchema(z.void(), z.string()),
     },
+    /**
+     * Peek output for a background bash process without consuming the bash_output cursor.
+     */
+    getOutput: {
+      input: z.object({
+        workspaceId: z.string(),
+        processId: z.string(),
+        fromOffset: z.number().int().nonnegative().optional(),
+        tailBytes: z.number().int().positive().max(1_000_000).optional(),
+      }),
+      output: ResultSchema(
+        z.object({
+          status: z.enum(["running", "exited", "killed", "failed"]),
+          output: z.string(),
+          nextOffset: z.number().int().nonnegative(),
+          truncatedStart: z.boolean(),
+        }),
+        z.string()
+      ),
+    },
   },
   /**
    * Get post-compaction context state for a workspace.

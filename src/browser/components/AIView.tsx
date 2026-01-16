@@ -745,6 +745,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
           />
         )}
         <BackgroundProcessesBanner
+          workspaceId={workspaceId}
           processes={backgroundBashes}
           terminatingIds={backgroundBashTerminatingIds}
           onTerminate={handleTerminateBackgroundBash}
