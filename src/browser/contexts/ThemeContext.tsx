@@ -18,6 +18,29 @@ export const THEME_OPTIONS: Array<{ value: ThemeMode; label: string }> = [
   { value: "flexoki-dark", label: "Flexoki Dark" },
 ];
 
+const THEME_VALUES = THEME_OPTIONS.map((t) => t.value);
+
+function normalizeThemeMode(value: unknown): ThemeMode | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  if (THEME_VALUES.includes(value as ThemeMode)) {
+    return value as ThemeMode;
+  }
+
+  // Preserve intent for removed themes (e.g. legacy solarized-light/dark).
+  if (value.endsWith("-light")) {
+    return "light";
+  }
+
+  if (value.endsWith("-dark")) {
+    return "dark";
+  }
+
+  return undefined;
+}
+
 interface ThemeContextValue {
   theme: ThemeMode;
   setTheme: React.Dispatch<React.SetStateAction<ThemeMode>>;
@@ -88,29 +111,46 @@ export function ThemeProvider({
     }
   );
 
+  const parsedPersistedTheme = normalizeThemeMode(persistedTheme);
+  const normalizedPersistedTheme = parsedPersistedTheme ?? resolveSystemTheme();
+
   // If nested under a forced provider, use parent's theme
   // Otherwise, use forcedTheme (if provided) or persistedTheme
   const theme =
     isNestedUnderForcedProvider && parentContext
       ? parentContext.theme
-      : (forcedTheme ?? persistedTheme);
+      : (forcedTheme ?? normalizedPersistedTheme);
 
   const isForced = forcedTheme !== undefined || isNestedUnderForcedProvider;
 
   // Only apply to document if we're the authoritative provider
   useLayoutEffect(() => {
-    if (!isNestedUnderForcedProvider) {
-      applyThemeToDocument(theme);
+    if (isNestedUnderForcedProvider) {
+      return;
     }
-  }, [theme, isNestedUnderForcedProvider]);
+
+    // Self-heal legacy or invalid themes persisted in localStorage.
+    if (forcedTheme === undefined && parsedPersistedTheme !== persistedTheme) {
+      setTheme(normalizedPersistedTheme);
+    }
+
+    applyThemeToDocument(theme);
+  }, [
+    forcedTheme,
+    isNestedUnderForcedProvider,
+    normalizedPersistedTheme,
+    parsedPersistedTheme,
+    persistedTheme,
+    setTheme,
+    theme,
+  ]);
 
   const toggleTheme = useCallback(() => {
     if (!isNestedUnderForcedProvider) {
       setTheme((current) => {
-        const themeValues = THEME_OPTIONS.map((t) => t.value);
-        const currentIndex = themeValues.indexOf(current);
-        const nextIndex = (currentIndex + 1) % themeValues.length;
-        return themeValues[nextIndex];
+        const currentIndex = THEME_VALUES.indexOf(current);
+        const nextIndex = (currentIndex + 1) % THEME_VALUES.length;
+        return THEME_VALUES[nextIndex];
       });
     }
   }, [setTheme, isNestedUnderForcedProvider]);

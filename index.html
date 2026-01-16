@@ -126,14 +126,34 @@
 
         try {
           const stored = window.localStorage.getItem(THEME_KEY);
-          const parsed = stored ? JSON.parse(stored) : null;
+          let parsed = null;
+
+          // Tolerate legacy values that were written as raw strings (not JSON).
+          if (stored) {
+            try {
+              parsed = JSON.parse(stored);
+            } catch {
+              parsed = stored;
+            }
+          }
+
           const prefersLight = window.matchMedia
             ? window.matchMedia("(prefers-color-scheme: light)").matches
             : false;
 
           const fallbackTheme = prefersLight ? "light" : "dark";
-          const theme =
-            typeof parsed === "string" && VALID_THEMES.has(parsed) ? parsed : fallbackTheme;
+          let theme = fallbackTheme;
+
+          if (typeof parsed === "string") {
+            if (VALID_THEMES.has(parsed)) {
+              theme = parsed;
+            } else if (parsed.endsWith("-light")) {
+              theme = "light";
+            } else if (parsed.endsWith("-dark")) {
+              theme = "dark";
+            }
+          }
+
           const colorScheme = getColorScheme(theme);
 
           document.documentElement.dataset.theme = theme;
