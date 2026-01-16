@@ -2476,6 +2476,44 @@ export class WorkspaceService extends EventEmitter {
   }
 
   /**
+   * Peek output for a background bash process.
+   *
+   * This must not consume the output cursor used by bash_output/task_await.
+   */
+  async getBackgroundProcessOutput(
+    workspaceId: string,
+    processId: string,
+    options?: { fromOffset?: number; tailBytes?: number }
+  ): Promise<
+    Result<{
+      status: "running" | "exited" | "killed" | "failed";
+      output: string;
+      nextOffset: number;
+      truncatedStart: boolean;
+    }>
+  > {
+    const proc = await this.backgroundProcessManager.getProcess(processId);
+    if (!proc) {
+      return Err(`Process not found: ${processId}`);
+    }
+    if (proc.workspaceId !== workspaceId) {
+      return Err(`Process ${processId} does not belong to workspace ${workspaceId}`);
+    }
+
+    const result = await this.backgroundProcessManager.peekOutput(processId, options);
+    if (!result.success) {
+      return Err(result.error);
+    }
+
+    return Ok({
+      status: result.status,
+      output: result.output,
+      nextOffset: result.nextOffset,
+      truncatedStart: result.truncatedStart,
+    });
+  }
+
+  /**
    * Get the tool call IDs of foreground bash processes for a workspace.
    * Returns empty array if no foreground bashes are running.
    */

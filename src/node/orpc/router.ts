@@ -1524,6 +1524,20 @@ export const router = (authToken?: string) => {
             }
             return { success: true, data: undefined };
           }),
+        getOutput: t
+          .input(schemas.workspace.backgroundBashes.getOutput.input)
+          .output(schemas.workspace.backgroundBashes.getOutput.output)
+          .handler(async ({ context, input }) => {
+            const result = await context.workspaceService.getBackgroundProcessOutput(
+              input.workspaceId,
+              input.processId,
+              { fromOffset: input.fromOffset, tailBytes: input.tailBytes }
+            );
+            if (!result.success) {
+              return { success: false, error: result.error };
+            }
+            return { success: true, data: result.data };
+          }),
       },
       getPostCompactionState: t
         .input(schemas.workspace.getPostCompactionState.input)

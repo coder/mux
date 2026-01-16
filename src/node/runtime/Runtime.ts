@@ -103,6 +103,12 @@ export interface BackgroundHandle {
   writeMeta(metaJson: string): Promise<void>;
 
   /**
+   * Get the current size of output.log in bytes.
+   * Used to tail output without reading the entire file.
+   */
+  getOutputFileSize(): Promise<number>;
+
+  /**
    * Read output from output.log at the given byte offset.
    * Returns the content read and the new offset (for incremental reads).
    * Works on both local and SSH runtimes by using runtime.exec() internally.

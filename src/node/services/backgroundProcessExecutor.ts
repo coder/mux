@@ -283,6 +283,22 @@ class RuntimeBackgroundHandle implements BackgroundHandle {
     }
   }
 
+  async getOutputFileSize(): Promise<number> {
+    try {
+      const filePath = this.quotePath(`${this.outputDir}/${OUTPUT_FILENAME}`);
+      const sizeResult = await execBuffered(
+        this.runtime,
+        `wc -c < ${filePath} 2>/dev/null || echo 0`,
+        { cwd: FALLBACK_CWD, timeout: 10 }
+      );
+
+      return parseInt(sizeResult.stdout.trim(), 10) || 0;
+    } catch (error) {
+      log.debug(`RuntimeBackgroundHandle.getOutputFileSize: Error: ${errorMsg(error)}`);
+      return 0;
+    }
+  }
+
   /**
    * Read output from output.log at the given byte offset.
    * Uses tail -c to read from offset - works on both Linux and macOS.
@@ -290,14 +306,7 @@ class RuntimeBackgroundHandle implements BackgroundHandle {
   async readOutput(offset: number): Promise<{ content: string; newOffset: number }> {
     try {
       const filePath = this.quotePath(`${this.outputDir}/${OUTPUT_FILENAME}`);
-      // Get file size first to know how much we read
-      // Use wc -c - works on both Linux and macOS (unlike stat flags which differ)
-      const sizeResult = await execBuffered(
-        this.runtime,
-        `wc -c < ${filePath} 2>/dev/null || echo 0`,
-        { cwd: FALLBACK_CWD, timeout: 10 }
-      );
-      const fileSize = parseInt(sizeResult.stdout.trim(), 10) || 0;
+      const fileSize = await this.getOutputFileSize();
 
       if (offset >= fileSize) {
         return { content: "", newOffset: offset };
@@ -313,7 +322,7 @@ class RuntimeBackgroundHandle implements BackgroundHandle {
 
       return {
         content: readResult.stdout,
-        newOffset: offset + readResult.stdout.length,
+        newOffset: offset + Buffer.byteLength(readResult.stdout),
       };
     } catch (error) {
       log.debug(`RuntimeBackgroundHandle.readOutput: Error: ${errorMsg(error)}`);
@@ -516,6 +525,16 @@ class MigratedBackgroundHandle implements BackgroundHandle {
     });
   }
 
+  async getOutputFileSize(): Promise<number> {
+    try {
+      const stat = await fs.stat(this.outputPath);
+      return stat.size;
+    } catch (error) {
+      log.debug(`MigratedBackgroundHandle.getOutputFileSize: ${errorMsg(error)}`);
+      return 0;
+    }
+  }
+
   async writeMeta(metaJson: string): Promise<void> {
     try {
       const metaPath = path.join(this.outputDir, "meta.json");
@@ -527,8 +546,7 @@ class MigratedBackgroundHandle implements BackgroundHandle {
 
   async readOutput(offset: number): Promise<{ content: string; newOffset: number }> {
     try {
-      const stat = await fs.stat(this.outputPath);
-      const fileSize = stat.size;
+      const fileSize = await this.getOutputFileSize();
 
       if (offset >= fileSize) {
         return { content: "", newOffset: offset };
