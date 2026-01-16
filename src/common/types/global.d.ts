@@ -26,6 +26,10 @@ declare global {
     isRosetta?: boolean;
     // Async getter (used in Electron) for environments where preload cannot use Node builtins
     getIsRosetta?: () => Promise<boolean>;
+    // True if Windows appears to be configured to use WSL as the default shell.
+    isWindowsWslShell?: boolean;
+    // Async getter (Electron) for Windows environments where WSL may win PATH.
+    getIsWindowsWslShell?: () => Promise<boolean>;
     // Register a callback for notification clicks (navigates to workspace)
     // Returns an unsubscribe function.
     onNotificationClicked?: (callback: (data: { workspaceId: string }) => void) => () => void;

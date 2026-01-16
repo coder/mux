@@ -2,81 +2,222 @@
  * Platform-specific bash path resolution
  *
  * On Unix/Linux/macOS, bash is in PATH by default.
- * On Windows, bash comes from Git Bash and needs to be located.
+ * On Windows, mux requires Git for Windows' Git Bash (WSL is not supported).
  */
 
-import { execSync } from "child_process";
+import { execSync, type ExecSyncOptionsWithStringEncoding } from "child_process";
 import { existsSync } from "fs";
 import path from "path";
 
+const WIN_PATH = path.win32;
+
 let cachedBashPath: string | null = null;
 
+type ExecSyncFn = (command: string, options: ExecSyncOptionsWithStringEncoding) => string;
+type ExistsSyncFn = (path: string) => boolean;
+
+interface FindWindowsBashParams {
+  env: NodeJS.ProcessEnv;
+  execSyncFn: ExecSyncFn;
+  existsSyncFn: ExistsSyncFn;
+}
+
+const defaultExecSync: ExecSyncFn = (command, options) => execSync(command, options);
+
+function parseWhereOutput(output: string): string[] {
+  return output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
+function isWslLauncherPath(p: string): boolean {
+  const normalized = WIN_PATH.normalize(p).toLowerCase();
+  return (
+    normalized.endsWith("\\windows\\system32\\bash.exe") ||
+    normalized.endsWith("\\windows\\system32\\wsl.exe")
+  );
+}
+
 /**
- * Find bash executable path on Windows
- * Checks common Git Bash installation locations
+ * Ensure the bash we found appears to come from a Git for Windows install.
+ *
+ * (We avoid launching WSL shells via `C:\\Windows\\System32\\bash.exe`.)
  */
-function findWindowsBash(): string | null {
-  // Common Git Bash installation paths
-  const commonPaths = [
-    // Git for Windows default paths
-    "C:\\Program Files\\Git\\bin\\bash.exe",
-    "C:\\Program Files (x86)\\Git\\bin\\bash.exe",
-    // User-local Git installation
-    path.join(process.env.LOCALAPPDATA ?? "", "Programs", "Git", "bin", "bash.exe"),
-    // Portable Git
-    path.join(process.env.USERPROFILE ?? "", "scoop", "apps", "git", "current", "bin", "bash.exe"),
-    // Chocolatey installation
-    "C:\\tools\\git\\bin\\bash.exe",
-  ];
-
-  // Check if bash is in PATH first
-  try {
-    const result = execSync("where bash", { encoding: "utf8", stdio: ["pipe", "pipe", "ignore"] });
-    const firstPath = result.split("\n")[0].trim();
-    if (firstPath && existsSync(firstPath)) {
-      return firstPath;
-    }
-  } catch {
-    // Not in PATH, continue to check common locations
+function looksLikeGitForWindowsBash(bashPath: string, existsSyncFn: ExistsSyncFn): boolean {
+  if (isWslLauncherPath(bashPath)) {
+    return false;
   }
 
-  // Check common installation paths
-  for (const bashPath of commonPaths) {
-    if (existsSync(bashPath)) {
-      return bashPath;
-    }
+  const normalized = WIN_PATH.normalize(bashPath);
+  const lower = normalized.toLowerCase();
+
+  if (lower.endsWith("\\usr\\bin\\bash.exe")) {
+    const root = WIN_PATH.dirname(WIN_PATH.dirname(WIN_PATH.dirname(normalized)));
+    return existsSyncFn(WIN_PATH.join(root, "cmd", "git.exe"));
   }
 
-  // Also check if Git is in PATH and derive bash path from it
-  try {
-    const gitPath = execSync("where git", { encoding: "utf8", stdio: ["pipe", "pipe", "ignore"] });
-    const firstGitPath = gitPath.split("\n")[0].trim();
-    if (firstGitPath) {
-      // Git is usually in Git/cmd/git.exe, bash is in Git/bin/bash.exe
-      const gitDir = path.dirname(path.dirname(firstGitPath));
-      const bashPath = path.join(gitDir, "bin", "bash.exe");
-      if (existsSync(bashPath)) {
-        return bashPath;
-      }
-      // Also try usr/bin/bash.exe (newer Git for Windows structure)
-      const usrBashPath = path.join(gitDir, "usr", "bin", "bash.exe");
-      if (existsSync(usrBashPath)) {
-        return usrBashPath;
-      }
+  if (lower.endsWith("\\bin\\bash.exe")) {
+    const root = WIN_PATH.dirname(WIN_PATH.dirname(normalized));
+    return existsSyncFn(WIN_PATH.join(root, "cmd", "git.exe"));
+  }
+
+  // Best-effort: walk up a few levels looking for `cmd/git.exe`.
+  let dir = WIN_PATH.dirname(normalized);
+  for (let i = 0; i < 4; i++) {
+    if (existsSyncFn(WIN_PATH.join(dir, "cmd", "git.exe"))) {
+      return true;
     }
-  } catch {
-    // Git not in PATH
+
+    const parent = WIN_PATH.dirname(dir);
+    if (parent === dir) {
+      break;
+    }
+    dir = parent;
+  }
+
+  return false;
+}
+
+function findGitRootFromGitExePath(gitExePath: string, existsSyncFn: ExistsSyncFn): string | null {
+  let dir = WIN_PATH.dirname(WIN_PATH.dirname(WIN_PATH.normalize(gitExePath)));
+
+  for (let i = 0; i < 4; i++) {
+    if (existsSyncFn(WIN_PATH.join(dir, "cmd", "git.exe"))) {
+      return dir;
+    }
+
+    const parent = WIN_PATH.dirname(dir);
+    if (parent === dir) {
+      break;
+    }
+    dir = parent;
   }
 
   return null;
 }
 
 /**
+ * Find bash executable path on Windows.
+ *
+ * We strongly prefer Git Bash (Git for Windows) and explicitly avoid WSL launchers.
+ */
+function findWindowsBash(params: FindWindowsBashParams): string | null {
+  const { env, execSyncFn, existsSyncFn } = params;
+
+  const gitRoots: string[] = [
+    // Git for Windows default paths
+    "C:\\Program Files\\Git",
+    "C:\\Program Files (x86)\\Git",
+    // Chocolatey installation
+    "C:\\tools\\git",
+  ];
+
+  // User-local Git installation
+  if (env.LOCALAPPDATA) {
+    gitRoots.push(WIN_PATH.join(env.LOCALAPPDATA, "Programs", "Git"));
+  }
+
+  // Scoop installation
+  if (env.USERPROFILE) {
+    gitRoots.push(WIN_PATH.join(env.USERPROFILE, "scoop", "apps", "git", "current"));
+  }
+
+  // Prefer known Git for Windows install locations.
+  const commonPaths = gitRoots.flatMap((root) => [
+    WIN_PATH.join(root, "bin", "bash.exe"),
+    WIN_PATH.join(root, "usr", "bin", "bash.exe"),
+  ]);
+
+  for (const bashPath of commonPaths) {
+    if (existsSyncFn(bashPath) && looksLikeGitForWindowsBash(bashPath, existsSyncFn)) {
+      return bashPath;
+    }
+  }
+
+  // Also check if Git is in PATH and derive bash path from it.
+  try {
+    const result = execSyncFn("where git", { encoding: "utf8", stdio: ["pipe", "pipe", "ignore"] });
+    for (const gitExePath of parseWhereOutput(result)) {
+      if (!existsSyncFn(gitExePath)) {
+        continue;
+      }
+
+      const gitRoot = findGitRootFromGitExePath(gitExePath, existsSyncFn);
+      if (!gitRoot) {
+        continue;
+      }
+
+      const candidateBashPaths = [
+        WIN_PATH.join(gitRoot, "bin", "bash.exe"),
+        WIN_PATH.join(gitRoot, "usr", "bin", "bash.exe"),
+      ];
+
+      for (const bashPath of candidateBashPaths) {
+        if (existsSyncFn(bashPath) && looksLikeGitForWindowsBash(bashPath, existsSyncFn)) {
+          return bashPath;
+        }
+      }
+    }
+  } catch {
+    // Git not in PATH
+  }
+
+  // Fall back to searching for bash in PATH, skipping WSL.
+  try {
+    const result = execSyncFn("where bash", {
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "ignore"],
+    });
+    for (const bashPath of parseWhereOutput(result)) {
+      if (!existsSyncFn(bashPath)) {
+        continue;
+      }
+
+      if (looksLikeGitForWindowsBash(bashPath, existsSyncFn)) {
+        return bashPath;
+      }
+    }
+  } catch {
+    // Not in PATH
+  }
+
+  return null;
+}
+
+export interface GetBashPathForPlatformParams {
+  platform: NodeJS.Platform;
+  env?: NodeJS.ProcessEnv;
+  execSyncFn?: ExecSyncFn;
+  existsSyncFn?: ExistsSyncFn;
+}
+
+export function getBashPathForPlatform(params: GetBashPathForPlatformParams): string {
+  if (params.platform !== "win32") {
+    return "bash";
+  }
+
+  const bashPath = findWindowsBash({
+    env: params.env ?? process.env,
+    execSyncFn: params.execSyncFn ?? defaultExecSync,
+    existsSyncFn: params.existsSyncFn ?? existsSync,
+  });
+
+  if (!bashPath) {
+    throw new Error(
+      "Git Bash not found. On Windows, mux requires Git for Windows (Git Bash). WSL is not supported. Install Git for Windows from https://git-scm.com/download/win"
+    );
+  }
+
+  return bashPath;
+}
+
+/**
  * Get the bash executable path for the current platform
  *
  * @returns Path to bash executable. On Unix/macOS returns "bash",
- *          on Windows returns full path to bash.exe if found.
- * @throws Error if bash cannot be found on Windows
+ *          on Windows returns full path to Git Bash if found.
+ * @throws Error if Git Bash cannot be found on Windows
  */
 export function getBashPath(): string {
   // On Unix/Linux/macOS, bash is in PATH
@@ -89,16 +230,8 @@ export function getBashPath(): string {
     return cachedBashPath;
   }
 
-  // Find bash on Windows
-  const bashPath = findWindowsBash();
-  if (!bashPath) {
-    throw new Error(
-      "Git Bash not found. Please install Git for Windows from https://git-scm.com/download/win"
-    );
-  }
-
-  cachedBashPath = bashPath;
-  return bashPath;
+  cachedBashPath = getBashPathForPlatform({ platform: process.platform });
+  return cachedBashPath;
 }
 
 /**

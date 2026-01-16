@@ -29,6 +29,18 @@ function defaultIsCommandAvailable(platform: NodeJS.Platform): (command: string)
   };
 }
 
+function looksLikeWslShell(envShell: string): boolean {
+  const normalized = envShell.replace(/\//g, "\\").toLowerCase();
+  return (
+    normalized === "wsl" ||
+    normalized === "wsl.exe" ||
+    normalized === "bash" ||
+    normalized === "bash.exe" ||
+    normalized.endsWith("\\windows\\system32\\bash.exe") ||
+    normalized.endsWith("\\windows\\system32\\wsl.exe")
+  );
+}
+
 /**
  * Resolve the best shell to use for a *local* PTY session.
  *
@@ -47,7 +59,11 @@ export function resolveLocalPtyShell(
   // Treat empty/whitespace as "unset".
   const envShell = env.SHELL?.trim();
   if (envShell) {
-    return { command: envShell, args: [] };
+    // On Windows, `SHELL=bash` often routes to WSL (via System32\\bash.exe).
+    // Ignore WSL shells and fall back to Git Bash/pwsh/cmd selection below.
+    if (platform !== "win32" || !looksLikeWslShell(envShell)) {
+      return { command: envShell, args: [] };
+    }
   }
 
   if (platform === "win32") {

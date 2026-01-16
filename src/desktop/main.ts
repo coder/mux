@@ -386,6 +386,53 @@ async function loadServices(): Promise<void> {
       return false;
     }
   });
+  electronIpcMain.handle("mux:get-is-windows-wsl-shell", async () => {
+    if (process.platform !== "win32") {
+      return false;
+    }
+
+    const envShell = process.env.SHELL?.trim();
+    if (envShell) {
+      const normalized = envShell.replace(/\//g, "\\").toLowerCase();
+      if (
+        normalized === "wsl" ||
+        normalized === "wsl.exe" ||
+        normalized === "bash" ||
+        normalized === "bash.exe" ||
+        normalized.endsWith("\\windows\\system32\\bash.exe") ||
+        normalized.endsWith("\\windows\\system32\\wsl.exe")
+      ) {
+        return true;
+      }
+    }
+
+    try {
+      // Intentionally lazy import to keep startup fast and avoid bundling concerns.
+      // eslint-disable-next-line no-restricted-syntax -- main-process-only builtin
+      const { execSync } = await import("node:child_process");
+      const result = execSync("where bash", {
+        encoding: "utf8",
+        stdio: ["pipe", "pipe", "ignore"],
+      });
+      const firstPath = result
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .find((line) => line.length > 0);
+
+      if (!firstPath) {
+        return false;
+      }
+
+      const normalized = firstPath.replace(/\//g, "\\").toLowerCase();
+      return (
+        normalized.endsWith("\\windows\\system32\\bash.exe") ||
+        normalized.endsWith("\\windows\\system32\\wsl.exe")
+      );
+    } catch {
+      return false;
+    }
+  });
+
   electronIpcMain.on("start-orpc-server", (event) => {
     const [serverPort] = event.ports;
     orpcHandler.upgrade(serverPort, {
