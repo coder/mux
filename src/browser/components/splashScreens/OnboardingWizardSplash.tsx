@@ -510,12 +510,6 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
                   Cancel
                 </Button>
               )}
-
-              <Button variant="secondary" asChild>
-                <a href="https://gateway.mux.coder.com" target="_blank" rel="noopener noreferrer">
-                  Open Mux Gateway
-                </a>
-              </Button>
             </div>
 
             {muxGatewayLoginStatus === "success" && <p className="mt-3">Login successful.</p>}
