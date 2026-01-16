@@ -135,6 +135,10 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
         return;
       }
 
+      if (e.repeat) {
+        return;
+      }
+
       e.preventDefault();
 
       const allowed = getThinkingPolicyForModel(canonicalModel);
