@@ -854,6 +854,75 @@ describe("validateRequiredParams", () => {
   });
 });
 
+describe("non-string parameter defaults", () => {
+  let service: CoderService;
+
+  beforeEach(() => {
+    service = new CoderService();
+  });
+
+  it("validateRequiredParams passes when required param has numeric default 0", () => {
+    // After parseRichParameters, numeric 0 becomes "0" (not "")
+    const params = [
+      { name: "count", defaultValue: "0", type: "number", ephemeral: false, required: true },
+    ];
+    const covered = new Set<string>();
+
+    expect(() => service.validateRequiredParams(params, covered)).not.toThrow();
+  });
+
+  it("validateRequiredParams passes when required param has boolean default false", () => {
+    // After parseRichParameters, boolean false becomes "false" (not "")
+    const params = [
+      { name: "enabled", defaultValue: "false", type: "bool", ephemeral: false, required: true },
+    ];
+    const covered = new Set<string>();
+
+    expect(() => service.validateRequiredParams(params, covered)).not.toThrow();
+  });
+
+  it("computeExtraParams emits numeric default correctly", () => {
+    const params = [
+      { name: "count", defaultValue: "42", type: "number", ephemeral: false, required: false },
+    ];
+    const covered = new Set<string>();
+
+    expect(service.computeExtraParams(params, covered)).toEqual([
+      { name: "count", encoded: "count=42" },
+    ]);
+  });
+
+  it("computeExtraParams emits boolean default correctly", () => {
+    const params = [
+      { name: "enabled", defaultValue: "true", type: "bool", ephemeral: false, required: false },
+    ];
+    const covered = new Set<string>();
+
+    expect(service.computeExtraParams(params, covered)).toEqual([
+      { name: "enabled", encoded: "enabled=true" },
+    ]);
+  });
+
+  it("computeExtraParams emits array default as JSON with CSV encoding", () => {
+    // After parseRichParameters, array becomes JSON string
+    const params = [
+      {
+        name: "tags",
+        defaultValue: '["a","b"]',
+        type: "list(string)",
+        ephemeral: false,
+        required: false,
+      },
+    ];
+    const covered = new Set<string>();
+
+    // JSON array with quotes gets CSV-encoded (quotes escaped as "")
+    expect(service.computeExtraParams(params, covered)).toEqual([
+      { name: "tags", encoded: '"tags=[""a"",""b""]"' },
+    ]);
+  });
+});
+
 describe("deleteWorkspace", () => {
   const service = new CoderService();
   let mockExec: ReturnType<typeof spyOn<typeof disposableExec, "execAsync">> | null = null;

@@ -24,6 +24,18 @@ export type WorkspaceStatusResult =
   | { kind: "not_found" }
   | { kind: "error"; error: string };
 
+/**
+ * Serialize a Coder parameter default_value to string.
+ * Preserves numeric/boolean/array values instead of coercing to "".
+ */
+function serializeParameterDefault(value: unknown): string {
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  // Arrays/objects (e.g., list(string) type) → JSON
+  return JSON.stringify(value);
+}
+
 // Minimum supported Coder CLI version
 const MIN_CODER_VERSION = "2.25.0";
 
@@ -412,7 +424,7 @@ export class CoderService {
       })
       .map((p) => ({
         name: p.name as string,
-        defaultValue: typeof p.default_value === "string" ? p.default_value : "",
+        defaultValue: serializeParameterDefault(p.default_value),
         type: typeof p.type === "string" ? p.type : "string",
         ephemeral: Boolean(p.ephemeral),
         required: Boolean(p.required),
