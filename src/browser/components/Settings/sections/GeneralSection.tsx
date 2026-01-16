@@ -1,5 +1,9 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { useTheme, THEME_OPTIONS, type ThemeMode } from "@/browser/contexts/ThemeContext";
+import {
+  useTheme,
+  THEME_PREFERENCE_OPTIONS,
+  type ThemePreference,
+} from "@/browser/contexts/ThemeContext";
 import {
   Select,
   SelectContent,
@@ -28,7 +32,7 @@ const EDITOR_OPTIONS: Array<{ value: EditorType; label: string }> = [
 const isBrowserMode = typeof window !== "undefined" && !window.api;
 
 export function GeneralSection() {
-  const { theme, setTheme } = useTheme();
+  const { themePreference, setThemePreference } = useTheme();
   const { api } = useAPI();
   const [editorConfig, setEditorConfig] = usePersistedState<EditorConfig>(
     EDITOR_CONFIG_KEY,
@@ -73,12 +77,15 @@ export function GeneralSection() {
             <div className="text-foreground text-sm">Theme</div>
             <div className="text-muted text-xs">Choose your preferred theme</div>
           </div>
-          <Select value={theme} onValueChange={(value) => setTheme(value as ThemeMode)}>
+          <Select
+            value={themePreference}
+            onValueChange={(value) => setThemePreference(value as ThemePreference)}
+          >
             <SelectTrigger className="border-border-medium bg-background-secondary hover:bg-hover h-9 w-auto cursor-pointer rounded-md border px-3 text-sm transition-colors">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {THEME_OPTIONS.map((option) => (
+              {THEME_PREFERENCE_OPTIONS.map((option) => (
                 <SelectItem key={option.value} value={option.value}>
                   {option.label}
                 </SelectItem>

@@ -29,7 +29,7 @@ const mk = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
   });
   const params: Parameters<typeof buildCoreSources>[0] = {
     projects,
-    theme: "dark",
+    themePreference: "dark",
     workspaceMetadata,
     selectedWorkspace: {
       projectPath: "/repo/a",
@@ -50,7 +50,7 @@ const mk = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
     onNavigateWorkspace: () => undefined,
     onOpenWorkspaceInTerminal: () => undefined,
     onToggleTheme: () => undefined,
-    onSetTheme: () => undefined,
+    onSetThemePreference: () => undefined,
     api: {
       workspace: {
         truncateHistory: () => Promise.resolve({ success: true, data: undefined }),

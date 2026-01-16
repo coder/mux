@@ -2,48 +2,43 @@ import React, {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useLayoutEffect,
   useMemo,
+  useState,
   type ReactNode,
 } from "react";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { UI_THEME_KEY } from "@/common/constants/storage";
 
-export type ThemeMode = "light" | "dark" | "flexoki-light" | "flexoki-dark";
+/** Concrete theme applied to the document */
+export type ThemeMode = "light" | "dark";
 
-export const THEME_OPTIONS: Array<{ value: ThemeMode; label: string }> = [
+/** User preference: explicit theme or follow system */
+export type ThemePreference = ThemeMode | "system";
+
+export const THEME_PREFERENCE_OPTIONS: Array<{ value: ThemePreference; label: string }> = [
+  { value: "system", label: "System" },
   { value: "light", label: "Light" },
   { value: "dark", label: "Dark" },
-  { value: "flexoki-light", label: "Flexoki Light" },
-  { value: "flexoki-dark", label: "Flexoki Dark" },
 ];
 
-const THEME_VALUES = THEME_OPTIONS.map((t) => t.value);
+const PREFERENCE_VALUES = THEME_PREFERENCE_OPTIONS.map((t) => t.value);
 
-function normalizeThemeMode(value: unknown): ThemeMode | undefined {
-  if (typeof value !== "string") {
-    return undefined;
+function normalizeThemePreference(value: unknown): ThemePreference {
+  if (typeof value === "string" && PREFERENCE_VALUES.includes(value as ThemePreference)) {
+    return value as ThemePreference;
   }
-
-  if (THEME_VALUES.includes(value as ThemeMode)) {
-    return value as ThemeMode;
-  }
-
-  // Preserve intent for removed themes (e.g. legacy solarized-light/dark).
-  if (value.endsWith("-light")) {
-    return "light";
-  }
-
-  if (value.endsWith("-dark")) {
-    return "dark";
-  }
-
-  return undefined;
+  // Self-heal: unknown/legacy values become "system"
+  return "system";
 }
 
 interface ThemeContextValue {
+  /** The resolved theme applied to the document */
   theme: ThemeMode;
-  setTheme: React.Dispatch<React.SetStateAction<ThemeMode>>;
+  /** The user's preference (system, light, or dark) */
+  themePreference: ThemePreference;
+  setThemePreference: (preference: ThemePreference) => void;
   toggleTheme: () => void;
   /** True if this provider has a forcedTheme - nested providers should not override */
   isForced: boolean;
@@ -54,20 +49,12 @@ const ThemeContext = createContext<ThemeContextValue | null>(null);
 const THEME_COLORS: Record<ThemeMode, string> = {
   dark: "#1e1e1e",
   light: "#f5f6f8",
-  "flexoki-light": "#fffcf0",
-  "flexoki-dark": "#100f0f",
 };
 
-/** Map theme mode to CSS color-scheme value */
-function getColorScheme(theme: ThemeMode): "light" | "dark" {
-  return theme === "light" || theme === "flexoki-light" ? "light" : "dark";
-}
-
-function resolveSystemTheme(): ThemeMode {
+function getSystemTheme(): ThemeMode {
   if (typeof window === "undefined" || !window.matchMedia) {
     return "dark";
   }
-
   return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
 }
 
@@ -78,7 +65,7 @@ function applyThemeToDocument(theme: ThemeMode) {
 
   const root = document.documentElement;
   root.dataset.theme = theme;
-  root.style.colorScheme = getColorScheme(theme);
+  root.style.colorScheme = theme;
 
   const themeColor = THEME_COLORS[theme];
   const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
@@ -103,66 +90,85 @@ export function ThemeProvider({
   const parentContext = useContext(ThemeContext);
   const isNestedUnderForcedProvider = parentContext?.isForced ?? false;
 
-  const [persistedTheme, setTheme] = usePersistedState<ThemeMode>(
+  // Track OS theme for "system" preference
+  const [systemTheme, setSystemTheme] = useState<ThemeMode>(getSystemTheme);
+
+  // Persist the user's preference (system | light | dark)
+  const [rawPreference, setRawPreference] = usePersistedState<ThemePreference>(
     UI_THEME_KEY,
-    resolveSystemTheme(),
-    {
-      listener: true,
-    }
+    "system",
+    { listener: true }
   );
 
-  const parsedPersistedTheme = normalizeThemeMode(persistedTheme);
-  const normalizedPersistedTheme = parsedPersistedTheme ?? resolveSystemTheme();
+  const themePreference = normalizeThemePreference(rawPreference);
 
-  // If nested under a forced provider, use parent's theme
-  // Otherwise, use forcedTheme (if provided) or persistedTheme
-  const theme =
-    isNestedUnderForcedProvider && parentContext
-      ? parentContext.theme
-      : (forcedTheme ?? normalizedPersistedTheme);
+  // Self-heal invalid persisted values
+  useEffect(() => {
+    if (rawPreference !== themePreference) {
+      setRawPreference(themePreference);
+    }
+  }, [rawPreference, themePreference, setRawPreference]);
 
-  const isForced = forcedTheme !== undefined || isNestedUnderForcedProvider;
-
-  // Only apply to document if we're the authoritative provider
-  useLayoutEffect(() => {
-    if (isNestedUnderForcedProvider) {
+  // Subscribe to OS theme changes (only when authoritative provider)
+  useEffect(() => {
+    if (isNestedUnderForcedProvider || typeof window === "undefined" || !window.matchMedia) {
       return;
     }
 
-    // Self-heal legacy or invalid themes persisted in localStorage.
-    if (forcedTheme === undefined && parsedPersistedTheme !== persistedTheme) {
-      setTheme(normalizedPersistedTheme);
-    }
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: light)");
+    const handleChange = () => {
+      setSystemTheme(mediaQuery.matches ? "light" : "dark");
+    };
 
-    applyThemeToDocument(theme);
-  }, [
-    forcedTheme,
-    isNestedUnderForcedProvider,
-    normalizedPersistedTheme,
-    parsedPersistedTheme,
-    persistedTheme,
-    setTheme,
-    theme,
-  ]);
+    mediaQuery.addEventListener("change", handleChange);
+    return () => mediaQuery.removeEventListener("change", handleChange);
+  }, [isNestedUnderForcedProvider]);
+
+  // Resolve the actual theme to apply
+  const resolvedTheme: ThemeMode = themePreference === "system" ? systemTheme : themePreference;
+
+  // If nested under a forced provider, use parent's theme
+  // Otherwise, use forcedTheme (if provided) or resolved preference
+  const theme =
+    isNestedUnderForcedProvider && parentContext
+      ? parentContext.theme
+      : (forcedTheme ?? resolvedTheme);
+
+  const isForced = forcedTheme !== undefined || isNestedUnderForcedProvider;
+
+  // Apply theme to document (authoritative provider only)
+  useLayoutEffect(() => {
+    if (!isNestedUnderForcedProvider) {
+      applyThemeToDocument(theme);
+    }
+  }, [theme, isNestedUnderForcedProvider]);
+
+  const setThemePreference = useCallback(
+    (preference: ThemePreference) => {
+      if (!isNestedUnderForcedProvider) {
+        setRawPreference(preference);
+      }
+    },
+    [setRawPreference, isNestedUnderForcedProvider]
+  );
 
   const toggleTheme = useCallback(() => {
     if (!isNestedUnderForcedProvider) {
-      setTheme((current) => {
-        const currentIndex = THEME_VALUES.indexOf(current);
-        const nextIndex = (currentIndex + 1) % THEME_VALUES.length;
-        return THEME_VALUES[nextIndex];
-      });
+      const currentIndex = PREFERENCE_VALUES.indexOf(themePreference);
+      const nextIndex = (currentIndex + 1) % PREFERENCE_VALUES.length;
+      setRawPreference(PREFERENCE_VALUES[nextIndex]);
     }
-  }, [setTheme, isNestedUnderForcedProvider]);
+  }, [themePreference, setRawPreference, isNestedUnderForcedProvider]);
 
   const value = useMemo<ThemeContextValue>(
     () => ({
       theme,
-      setTheme,
+      themePreference,
+      setThemePreference,
       toggleTheme,
       isForced,
     }),
-    [setTheme, theme, toggleTheme, isForced]
+    [theme, themePreference, setThemePreference, toggleTheme, isForced]
   );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

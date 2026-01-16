@@ -3,12 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#1e1e1e" />
     <style>
       body {
         margin: 0;
         padding: 0;
         overflow: hidden;
-        background: #1e1e1e;
+        background: var(--color-background, #1e1e1e);
+      }
+      :root[data-theme="light"] body {
+        background: #f5f6f8;
       }
       #root {
         height: 100vh;
@@ -16,6 +20,43 @@
         overflow: hidden;
       }
     </style>
+    <script>
+      (function () {
+        const THEME_KEY = "uiTheme";
+        const VALID_PREFERENCES = new Set(["system", "light", "dark"]);
+        const THEME_COLORS = { dark: "#1e1e1e", light: "#f5f6f8" };
+
+        try {
+          const stored = window.localStorage.getItem(THEME_KEY);
+          let parsed = null;
+          if (stored) {
+            try {
+              parsed = JSON.parse(stored);
+            } catch {
+              parsed = stored;
+            }
+          }
+          const preference =
+            typeof parsed === "string" && VALID_PREFERENCES.has(parsed) ? parsed : "system";
+          const systemTheme =
+            window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+              ? "light"
+              : "dark";
+          const theme = preference === "system" ? systemTheme : preference;
+
+          document.documentElement.dataset.theme = theme;
+          document.documentElement.style.colorScheme = theme;
+
+          const metaThemeColor = document.querySelector('meta[name="theme-color"]');
+          if (metaThemeColor) {
+            metaThemeColor.setAttribute("content", THEME_COLORS[theme] ?? "#1e1e1e");
+          }
+        } catch {
+          document.documentElement.dataset.theme = "dark";
+          document.documentElement.style.colorScheme = "dark";
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
