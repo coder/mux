@@ -600,9 +600,9 @@
   --color-foreground: #100f0f;
   --color-text: #100f0f;
   --color-text-light: #6f6e69;
-  --color-text-secondary: #878580;
+  --color-text-secondary: #6f6e69;
   --color-muted-foreground: #6f6e69;
-  --color-secondary: #878580;
+  --color-secondary: #6f6e69;
 
   --color-code-bg: #f2f0e5;
 
@@ -620,7 +620,7 @@
   --color-message-hidden-bg: color-mix(in srgb, var(--color-foreground), transparent 96%);
   --color-attachment-border: #dad8ce;
   --color-line-number-bg: #f2f0e5;
-  --color-line-number-text: #878580;
+  --color-line-number-text: #6f6e69;
   --color-line-number-border: #dad8ce;
   --color-assistant-border: #205ea6;
   --color-hover-foreground: #100f0f;
@@ -640,7 +640,7 @@
   --color-token-fixed: #6f6e69;
   --color-token-input: #66800b; /* Flexoki green-600 */
   --color-token-output: #205ea6;
-  --color-token-cached: #878580;
+  --color-token-cached: #6f6e69;
   --color-token-cache-create: #66800b;
 
   --color-toggle-bg: #f2f0e5;
@@ -667,17 +667,17 @@
   --color-scrollbar-thumb-hover: #cecdc3;
 
   --color-muted: #6f6e69;
-  --color-muted-light: #878580;
+  --color-muted-light: #6f6e69;
   --color-muted-dark: #6f6e69;
-  --color-placeholder: #b7b5ac;
-  --color-subtle: #878580;
+  --color-placeholder: #6f6e69;
+  --color-subtle: #6f6e69;
   --color-dim: #6f6e69;
   --color-light: #100f0f;
   --color-lighter: #6f6e69;
   --color-bright: #100f0f;
-  --color-subdued: #878580;
+  --color-subdued: #6f6e69;
   --color-label: #6f6e69;
-  --color-gray: #878580;
+  --color-gray: #6f6e69;
   --color-medium: #6f6e69;
 
   --color-border-light: #dad8ce;
