@@ -127,6 +127,60 @@ export function hasInterruptedStream(
 }
 
 /**
+ * During auto-retry loops we can reach stream-start and then fail again before the first token.
+ *
+ * In that window, AIView previously hid RetryBarrier because canInterrupt flipped to true,
+ * causing the banner to flicker on every retry attempt.
+ *
+ * Note: A new stream-start doesn't always immediately produce a new assistant DisplayedMessage
+ * (we don't render empty assistant messages). During TTFT gaps, the last displayed message can
+ * still be the prior interruption.
+ */
+export function shouldKeepRetryBarrierVisibleDuringRetry(
+  messages: DisplayedMessage[],
+  retryAttempt: number
+): boolean {
+  if (retryAttempt <= 0) return false;
+  if (messages.length === 0) return false;
+
+  const lastMessage = messages[messages.length - 1];
+
+  // If we're still showing the interruption message while a new retry stream is active,
+  // keep the banner visible so it doesn't flicker away on stream-start.
+  if (lastMessage.type === "stream-error") {
+    return true;
+  }
+
+  if (
+    (lastMessage.type === "assistant" ||
+      lastMessage.type === "tool" ||
+      lastMessage.type === "reasoning") &&
+    lastMessage.isPartial === true
+  ) {
+    return true;
+  }
+
+  // If we do have a streaming assistant block but it hasn't produced any visible content yet,
+  // keep the banner sticky until the first non-empty delta arrives.
+  if (
+    lastMessage.type === "assistant" &&
+    lastMessage.isStreaming &&
+    lastMessage.content.trim().length === 0 &&
+    messages.length >= 2
+  ) {
+    const previousMessage = messages[messages.length - 2];
+    return (
+      previousMessage.type === "stream-error" ||
+      (previousMessage.type === "assistant" && previousMessage.isPartial === true) ||
+      (previousMessage.type === "tool" && previousMessage.isPartial === true) ||
+      (previousMessage.type === "reasoning" && previousMessage.isPartial === true)
+    );
+  }
+
+  return false;
+}
+
+/**
  * Check if messages are eligible for automatic retry
  *
  * Used by useResumeManager to determine if workspace should be auto-retried.
