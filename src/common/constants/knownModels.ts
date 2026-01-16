@@ -61,14 +61,14 @@ const MODEL_DEFINITIONS = {
   GPT_52_CODEX: {
     provider: "openai",
     providerModelId: "gpt-5.2-codex",
-    aliases: ["codex-5.2"],
+    aliases: ["codex"],
     warm: true,
     tokenizerOverride: "openai/gpt-5",
   },
   GPT_CODEX: {
     provider: "openai",
     providerModelId: "gpt-5.1-codex",
-    aliases: ["codex"],
+    aliases: ["codex-5.1"],
     warm: true,
     tokenizerOverride: "openai/gpt-5",
   },
