@@ -349,7 +349,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       status: () => Promise.resolve({ enabled: true, explicit: false }),
     },
     splashScreens: {
-      getViewedSplashScreens: () => Promise.resolve([]),
+      getViewedSplashScreens: () => Promise.resolve(["onboarding-wizard-v1"]),
       markSplashScreenViewed: () => Promise.resolve(undefined),
     },
     signing: {
