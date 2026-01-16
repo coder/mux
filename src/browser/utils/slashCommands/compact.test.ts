@@ -178,7 +178,7 @@ describe("compact command parser", () => {
       type: "compact",
       maxOutputTokens: undefined,
       continueMessage: undefined,
-      model: KNOWN_MODELS.GPT_CODEX.id,
+      model: KNOWN_MODELS.GPT_52_CODEX.id,
     });
   });
 

@@ -101,7 +101,8 @@ describe("resolveModelAlias", () => {
     expect(resolveModelAlias("sonnet")).toBe("anthropic:claude-sonnet-4-5");
     expect(resolveModelAlias("opus")).toBe("anthropic:claude-opus-4-5");
     expect(resolveModelAlias("grok")).toBe("xai:grok-4-1-fast");
-    expect(resolveModelAlias("codex")).toBe("openai:gpt-5.1-codex");
+    expect(resolveModelAlias("codex")).toBe("openai:gpt-5.2-codex");
+    expect(resolveModelAlias("codex-5.1")).toBe("openai:gpt-5.1-codex");
   });
 
   it("returns non-alias strings unchanged", () => {
