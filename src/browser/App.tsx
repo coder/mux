@@ -22,7 +22,7 @@ import { useStableReference, compareMaps } from "./hooks/useStableReference";
 import { CommandRegistryProvider, useCommandRegistry } from "./contexts/CommandRegistryContext";
 import { useOpenTerminal } from "./hooks/useOpenTerminal";
 import type { CommandAction } from "./contexts/CommandRegistryContext";
-import { ThemeProvider, useTheme, type ThemeMode } from "./contexts/ThemeContext";
+import { useTheme, type ThemeMode } from "./contexts/ThemeContext";
 import { CommandPalette } from "./components/CommandPalette";
 import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sources";
 
@@ -770,23 +770,21 @@ function AppInner() {
 
 function App() {
   return (
-    <ThemeProvider>
-      <ExperimentsProvider>
-        <FeatureFlagsProvider>
-          <TooltipProvider delayDuration={200}>
-            <SettingsProvider>
-              <SplashScreenProvider>
-                <TutorialProvider>
-                  <CommandRegistryProvider>
-                    <AppInner />
-                  </CommandRegistryProvider>
-                </TutorialProvider>
-              </SplashScreenProvider>
-            </SettingsProvider>
-          </TooltipProvider>
-        </FeatureFlagsProvider>
-      </ExperimentsProvider>
-    </ThemeProvider>
+    <ExperimentsProvider>
+      <FeatureFlagsProvider>
+        <TooltipProvider delayDuration={200}>
+          <SettingsProvider>
+            <SplashScreenProvider>
+              <TutorialProvider>
+                <CommandRegistryProvider>
+                  <AppInner />
+                </CommandRegistryProvider>
+              </TutorialProvider>
+            </SplashScreenProvider>
+          </SettingsProvider>
+        </TooltipProvider>
+      </FeatureFlagsProvider>
+    </ExperimentsProvider>
   );
 }
 

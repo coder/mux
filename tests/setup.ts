@@ -13,6 +13,24 @@ if (process.env.MUX_FORCE_REAL_TOKENIZER !== "1") {
   process.env.MUX_APPROX_TOKENIZER ??= "1";
 }
 
+// Some deps (e.g. json-schema-ref-parser) treat `window` existence as "browser"
+// and then read from the global `location` object. Some Happy DOM-based tests
+// attach `globalThis.window` without defining global `location`, which can crash
+// code paths that only check `typeof window !== "undefined"`.
+if (!Object.getOwnPropertyDescriptor(globalThis, "location")) {
+  let fallbackLocation: { href: string } | undefined = { href: "file:///" };
+
+  Object.defineProperty(globalThis, "location", {
+    configurable: true,
+    get() {
+      const win = (globalThis as any).window;
+      return win?.location ?? win?.window?.location ?? fallbackLocation;
+    },
+    set(value) {
+      fallbackLocation = value;
+    },
+  });
+}
 assert.equal(typeof Symbol.asyncDispose, "symbol");
 
 // Polyfill File for undici in jest environment
