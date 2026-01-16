@@ -1115,6 +1115,11 @@ body,
     z-index: 1000 !important;
     transition: transform 0.3s !important;
     box-shadow: 2px 0 8px rgba(0, 0, 0, 0.5) !important;
+
+    /* Account for iOS safe areas (the sidebar is position: fixed) */
+    padding-top: env(safe-area-inset-top, 0px) !important;
+    padding-bottom: env(safe-area-inset-bottom, 0px) !important;
+    padding-left: env(safe-area-inset-left, 0px) !important;
   }
 
   .mobile-sidebar-collapsed {
