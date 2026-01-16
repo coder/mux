@@ -181,9 +181,14 @@ jobs:
 
           echo "Updated package.json to version ${NPM_VERSION}"
 
+      - name: Install chat-components deps
+        working-directory: packages/chat-components
+        run: bun install
+
       - name: Build chat-components package
         working-directory: packages/chat-components
         run: bun run build
+
 
       - name: Check if chat-components version exists
         id: chat-components-check-exists
