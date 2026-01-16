@@ -32,15 +32,6 @@ function hasBuildInfo(value: unknown): value is VersionMetadata {
   return typeof candidate.buildTime === "string";
 }
 
-function formatLocalDate(isoDate: string): string {
-  const date = new Date(isoDate);
-  return date.toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
-}
-
 function formatExtendedTimestamp(isoDate: string): string {
   const date = new Date(isoDate);
   return date.toLocaleString("en-US", {
@@ -60,14 +51,12 @@ function parseBuildInfo(version: unknown) {
     const gitDescribe = typeof git_describe === "string" ? git_describe : undefined;
 
     return {
-      buildDate: formatLocalDate(buildTime),
       extendedTimestamp: formatExtendedTimestamp(buildTime),
       gitDescribe,
     };
   }
 
   return {
-    buildDate: "unknown",
     extendedTimestamp: "Unknown build time",
     gitDescribe: undefined,
   };
@@ -75,7 +64,7 @@ function parseBuildInfo(version: unknown) {
 
 export function TitleBar() {
   const { api } = useAPI();
-  const { buildDate, extendedTimestamp, gitDescribe } = parseBuildInfo(VERSION satisfies unknown);
+  const { extendedTimestamp, gitDescribe } = parseBuildInfo(VERSION satisfies unknown);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ type: "idle" });
   const [isCheckingOnHover, setIsCheckingOnHover] = useState(false);
   const lastHoverCheckTime = useRef<number>(0);
@@ -172,11 +161,7 @@ export function TitleBar() {
 
   const getUpdateTooltip = () => {
     const currentVersion = gitDescribe ?? "dev";
-    const lines: React.ReactNode[] = [
-      `Current: ${currentVersion}`,
-      `Built: ${buildDate}`,
-      `Built at: ${extendedTimestamp}`,
-    ];
+    const lines: React.ReactNode[] = [`Current: ${currentVersion}`, `Built: ${extendedTimestamp}`];
 
     if (!window.api) {
       lines.push("Desktop updates are available in the Electron app only.");
