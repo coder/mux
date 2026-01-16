@@ -23,12 +23,16 @@ Usage:
         --repo-type dataset --create-pr --commit-message "mux submission"
 
 Output structure (per leaderboard requirements):
-    submissions/terminal-bench/2.0/mux__<model>/
+    submissions/terminal-bench/2.0/mux__<Model>/
         metadata.yaml
-        <job-folder>/
-            config.json
-            <trial-1>/result.json
-            ...
+        <job-folder>/               # Date-named (e.g., 2026-01-16)
+            <trial-1>/              # e.g., chess-best-move__ABC123
+                config.json
+                result.json
+                agent/
+                verifier/
+            <trial-2>/
+                ...
 """
 
 import argparse
@@ -53,30 +57,35 @@ MUX_METADATA = {
 }
 
 # Model metadata lookup
+# folder_name: Used in submission folder path (e.g., mux__Claude-Opus-4.5)
 MODEL_METADATA = {
     "anthropic/claude-sonnet-4-5": {
         "model_name": "claude-sonnet-4-5",
         "model_provider": "anthropic",
         "model_display_name": "Claude Sonnet 4.5",
         "model_org_display_name": "Anthropic",
+        "folder_name": "Claude-Sonnet-4.5",
     },
     "anthropic/claude-opus-4-5": {
         "model_name": "claude-opus-4-5",
         "model_provider": "anthropic",
         "model_display_name": "Claude Opus 4.5",
         "model_org_display_name": "Anthropic",
+        "folder_name": "Claude-Opus-4.5",
     },
     "openai/gpt-5.2": {
         "model_name": "gpt-5.2",
         "model_provider": "openai",
         "model_display_name": "GPT-5.2",
         "model_org_display_name": "OpenAI",
+        "folder_name": "GPT-5.2",
     },
     "openai/gpt-5-codex": {
         "model_name": "gpt-5-codex",
         "model_provider": "openai",
         "model_display_name": "GPT-5 Codex",
         "model_org_display_name": "OpenAI",
+        "folder_name": "GPT-5-Codex",
     },
 }
 
@@ -235,73 +244,79 @@ def prepare_submission(
     """
     Prepare submission folders from downloaded artifacts.
 
+    Leaderboard structure:
+        submissions/terminal-bench/2.0/<agent>__<model>/
+            metadata.yaml
+            <job-folder>/           # Date-named (e.g., 2026-01-16)
+                <trial-folder>/     # e.g., chess-best-move__ABC123
+                    config.json
+                    result.json
+                    agent/
+                    verifier/
+
     Returns a dict mapping model names to their submission directories.
     """
-    submissions = {}
+    submissions: dict[str, Path] = {}
 
-    # Find all jobs directories in the artifacts
-    for item in artifacts_dir.iterdir():
-        if not item.is_dir():
+    # Find all downloaded artifact directories
+    for artifact_dir in artifacts_dir.iterdir():
+        if not artifact_dir.is_dir():
             continue
 
         # Look for jobs/ subdirectory (Harbor output structure)
-        jobs_dir = item / "jobs" if (item / "jobs").exists() else item
+        jobs_dir = artifact_dir / "jobs" if (artifact_dir / "jobs").exists() else artifact_dir
 
-        # Find job folders (timestamp-named directories)
-        for job_folder in jobs_dir.iterdir():
-            if not job_folder.is_dir():
+        # Determine model from artifact name
+        model = parse_model_from_artifact_name(artifact_dir.name)
+        if not model:
+            print(f"Warning: Could not determine model from artifact {artifact_dir.name}")
+            continue
+
+        # Create submission directory: mux__<Model>
+        # Use folder_name from metadata for consistent naming with other submissions
+        model_info = MODEL_METADATA.get(model, {})
+        model_folder_name = model_info.get("folder_name", model.split("/")[-1].title())
+        submission_name = f"mux__{model_folder_name}"
+
+        submission_dir = (
+            output_dir / "submissions" / "terminal-bench" / "2.0" / submission_name
+        )
+        submission_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create metadata.yaml
+        metadata_path = submission_dir / "metadata.yaml"
+        if not metadata_path.exists():
+            metadata_path.write_text(create_metadata_yaml(model))
+
+        # Create job folder (date-named, groups all trials)
+        job_folder_name = run_date or datetime.now().strftime("%Y-%m-%d")
+        job_folder = submission_dir / job_folder_name
+        job_folder.mkdir(parents=True, exist_ok=True)
+
+        # Copy each trial folder into the job folder
+        trial_count = 0
+        for trial_folder in jobs_dir.iterdir():
+            if not trial_folder.is_dir():
                 continue
 
-            # Check for config.json or result.json to identify valid job
-            config_path = job_folder / "config.json"
-            result_path = job_folder / "result.json"
-
-            if not (config_path.exists() or result_path.exists()):
+            # Check for result.json to identify valid trial
+            result_path = trial_folder / "result.json"
+            if not result_path.exists():
                 continue
 
-            # Try to determine model from config or artifact name
-            model = None
-            if config_path.exists():
-                try:
-                    config = json.loads(config_path.read_text())
-                    model = config.get("model_name") or config.get(
-                        "agent_kwargs", {}
-                    ).get("model_name")
-                except (json.JSONDecodeError, KeyError):
-                    pass
+            # Copy trial folder into job folder
+            dest_trial_dir = job_folder / trial_folder.name
+            if dest_trial_dir.exists():
+                shutil.rmtree(dest_trial_dir)
 
-            if not model:
-                model = parse_model_from_artifact_name(item.name)
+            shutil.copytree(trial_folder, dest_trial_dir)
+            trial_count += 1
 
-            if not model:
-                print(f"Warning: Could not determine model for {job_folder}, skipping")
-                continue
-
-            # Create submission directory name: mux__<model>
-            model_slug = model.replace("/", "-")
-            submission_name = f"mux__{model_slug}"
-
-            submission_dir = (
-                output_dir / "submissions" / "terminal-bench" / "2.0" / submission_name
-            )
-            submission_dir.mkdir(parents=True, exist_ok=True)
-
-            # Create metadata.yaml
-            metadata_path = submission_dir / "metadata.yaml"
-            if not metadata_path.exists():
-                metadata_path.write_text(create_metadata_yaml(model))
-
-            # Copy the job folder
-            job_name = run_date or job_folder.name if run_date else job_folder.name
-            dest_job_dir = submission_dir / job_name
-
-            if dest_job_dir.exists():
-                shutil.rmtree(dest_job_dir)
-
-            shutil.copytree(job_folder, dest_job_dir)
-            print(f"  Copied {job_folder.name} -> {dest_job_dir}")
-
+        if trial_count > 0:
+            print(f"  {model}: copied {trial_count} trial(s) to {job_folder}")
             submissions[model] = submission_dir
+        else:
+            print(f"  {model}: no valid trials found, skipping")
 
     return submissions
 
