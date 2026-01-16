@@ -447,6 +447,45 @@ describe("file_read tool", () => {
     }
   });
 
+  it("should allow reading the configured plan file via ~/.mux path when planFilePath is canonical", async () => {
+    const previousMuxRoot = process.env.MUX_ROOT;
+    const muxHome = await fs.mkdtemp(path.join(os.tmpdir(), "planFile-muxHome-"));
+
+    try {
+      process.env.MUX_ROOT = muxHome;
+
+      const planPath = path.join(muxHome, "plans", "proj", "plan.md");
+      await fs.mkdir(path.dirname(planPath), { recursive: true });
+      await fs.writeFile(planPath, "# Plan\n\n- Step 1\n");
+
+      const tool = createFileReadTool({
+        ...getTestDeps(),
+        cwd: testDir,
+        runtime: new LocalRuntime(testDir),
+        runtimeTempDir: testDir,
+        mode: "exec",
+        planFilePath: planPath,
+      });
+
+      const result = (await tool.execute!(
+        { filePath: "~/.mux/plans/proj/plan.md" },
+        mockToolCallOptions
+      )) as FileReadToolResult;
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.content).toContain("# Plan");
+      }
+    } finally {
+      if (previousMuxRoot === undefined) {
+        delete process.env.MUX_ROOT;
+      } else {
+        process.env.MUX_ROOT = previousMuxRoot;
+      }
+      await fs.rm(muxHome, { recursive: true, force: true });
+    }
+  });
+
   it("should allow reading the configured plan file outside cwd in exec mode", async () => {
     const planDir = await fs.mkdtemp(path.join(os.tmpdir(), "planFile-exec-read-"));
     const planPath = path.join(planDir, "plan.md");
