@@ -349,7 +349,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       status: () => Promise.resolve({ enabled: true, explicit: false }),
     },
     splashScreens: {
-      getViewedSplashScreens: () => Promise.resolve(["mux-gateway-login"]),
+      getViewedSplashScreens: () => Promise.resolve([]),
       markSplashScreenViewed: () => Promise.resolve(undefined),
     },
     signing: {

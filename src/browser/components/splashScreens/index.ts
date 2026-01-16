@@ -1,4 +1,3 @@
-import { LoginWithMuxGatewaySplash } from "./LoginWithMuxGateway";
 import { OnboardingWizardSplash } from "./OnboardingWizardSplash";
 
 export interface SplashConfig {
@@ -14,7 +13,6 @@ export interface SplashConfig {
 // Priority 3+ = Higher priority (shown first)
 export const SPLASH_REGISTRY: SplashConfig[] = [
   { id: "onboarding-wizard-v1", priority: 5, component: OnboardingWizardSplash },
-  { id: "mux-gateway-login", priority: 4, component: LoginWithMuxGatewaySplash },
   // Future: { id: "new-feature-xyz", priority: 2, component: NewFeatureSplash },
 ];
 

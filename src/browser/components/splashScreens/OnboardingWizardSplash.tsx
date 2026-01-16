@@ -1,20 +1,30 @@
-import React, { useMemo, useState } from "react";
-import { ArrowLeft, Bot, Command as CommandIcon, Server, Boxes, Sparkles } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
+import { ArrowLeft, Bot, Boxes, Command as CommandIcon, Server, Sparkles } from "lucide-react";
 import { SplashScreen } from "./SplashScreen";
-import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
 import { DocsLink } from "@/browser/components/DocsLink";
+import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
 import {
-  LocalIcon,
-  WorktreeIcon,
-  SSHIcon,
+  CoderIcon,
   DockerIcon,
+  LocalIcon,
+  SSHIcon,
+  WorktreeIcon,
 } from "@/browser/components/icons/RuntimeIcons";
+import { Button } from "@/browser/components/ui/button";
+import { useSettings } from "@/browser/contexts/SettingsContext";
+import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
-import { SUPPORTED_PROVIDERS } from "@/common/constants/providers";
+import { PROVIDER_DISPLAY_NAMES, SUPPORTED_PROVIDERS } from "@/common/constants/providers";
 
 const KBD_CLASSNAME =
   "bg-background-secondary text-foreground border-border-medium rounded border px-2 py-0.5 font-mono text-xs";
 
+interface WizardStep {
+  key: string;
+  title: string;
+  icon: React.ReactNode;
+  body: React.ReactNode;
+}
 type Direction = "forward" | "back";
 
 function ProgressDots(props: { count: number; activeIndex: number }) {
@@ -35,32 +45,13 @@ function ProgressDots(props: { count: number; activeIndex: number }) {
   );
 }
 
-function WizardHeader(props: {
-  stepIndex: number;
-  totalSteps: number;
-  onBack: () => void;
-  hasBack: boolean;
-}) {
+function WizardHeader(props: { stepIndex: number; totalSteps: number }) {
   return (
-    <div className="flex items-center justify-between gap-2">
-      {props.hasBack ? (
-        <button
-          type="button"
-          className="text-muted hover:text-foreground inline-flex items-center gap-1 text-xs"
-          onClick={props.onBack}
-        >
-          <ArrowLeft className="h-3.5 w-3.5" />
-          Back
-        </button>
-      ) : (
-        <span />
-      )}
-      <div className="flex items-center gap-2">
-        <span className="text-muted text-xs">
-          {props.stepIndex + 1} / {props.totalSteps}
-        </span>
-        <ProgressDots count={props.totalSteps} activeIndex={props.stepIndex} />
-      </div>
+    <div className="flex items-center justify-end gap-2">
+      <span className="text-muted text-xs">
+        {props.stepIndex + 1} / {props.totalSteps}
+      </span>
+      <ProgressDots count={props.totalSteps} activeIndex={props.stepIndex} />
     </div>
   );
 }
@@ -152,179 +143,358 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
   const [stepIndex, setStepIndex] = useState(0);
   const [direction, setDirection] = useState<Direction>("forward");
 
+  const { open: openSettings } = useSettings();
+  const { config: providersConfig, loading: providersLoading } = useProvidersConfig();
+
+  const configuredProviders = useMemo(
+    () =>
+      SUPPORTED_PROVIDERS.filter((provider) => providersConfig?.[provider]?.isConfigured === true),
+    [providersConfig]
+  );
+
+  const configuredProvidersSummary = useMemo(() => {
+    if (configuredProviders.length === 0) {
+      return null;
+    }
+
+    return configuredProviders.map((p) => PROVIDER_DISPLAY_NAMES[p]).join(", ");
+  }, [configuredProviders]);
+
+  const [hasConfiguredProvidersAtStart, setHasConfiguredProvidersAtStart] = useState<
+    boolean | null
+  >(null);
+
+  useEffect(() => {
+    if (hasConfiguredProvidersAtStart !== null) {
+      return;
+    }
+
+    if (providersLoading) {
+      return;
+    }
+
+    setHasConfiguredProvidersAtStart(configuredProviders.length > 0);
+  }, [configuredProviders.length, hasConfiguredProvidersAtStart, providersLoading]);
+
   const commandPaletteShortcut = formatKeybind(KEYBINDS.OPEN_COMMAND_PALETTE);
   const agentPickerShortcut = formatKeybind(KEYBINDS.TOGGLE_MODE);
   const cycleAgentShortcut = formatKeybind(KEYBINDS.CYCLE_AGENT);
 
-  const steps = useMemo(
-    () =>
-      [
+  const steps = useMemo((): WizardStep[] => {
+    if (hasConfiguredProvidersAtStart === null) {
+      return [
         {
-          key: "providers",
-          title: "Choose your own AI providers",
+          key: "loading",
+          title: "Getting started",
           icon: <Sparkles className="h-4 w-4" />,
           body: (
             <>
-              <p>
-                Mux is provider-agnostic: bring your own keys, mix and match models, or run locally.
-              </p>
-
-              <div className="mt-3">
-                <div className="text-foreground mb-2 text-xs font-medium">Available providers</div>
-                <div className="grid grid-cols-2 gap-2">
-                  {SUPPORTED_PROVIDERS.map((provider) => (
-                    <div
-                      key={provider}
-                      className="bg-background-secondary border-border-medium text-foreground flex items-center gap-2 rounded-md border px-2 py-1 text-xs"
-                    >
-                      <ProviderWithIcon
-                        provider={provider}
-                        displayName
-                        iconClassName="text-accent"
-                      />
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <p className="mt-3">
-                Configure keys and endpoints in{" "}
-                <span className="text-foreground">Settings → Providers</span>.
-              </p>
+              <p>Checking your provider configuration…</p>
             </>
           ),
         },
-        {
-          key: "agents",
-          title: "Agents: Plan, Exec, and custom",
-          icon: <Bot className="h-4 w-4" />,
-          body: (
-            <>
-              <p>
-                Agents are file-based definitions (system prompt + tool policy). You can create
-                project-local agents in <code className="text-accent">.mux/agents/*.md</code> or
-                global agents in <code className="text-accent">~/.mux/agents/*.md</code>.
-              </p>
+      ];
+    }
 
-              <div className="mt-3 grid gap-2">
-                <Card icon={<Sparkles className="h-4 w-4" />} title="Use Plan to design the spec">
-                  When the change is complex, switch to a plan-like agent first: write an explicit
-                  plan (files, steps, risks), then execute.
-                </Card>
+    const nextSteps: WizardStep[] = [];
 
-                <Card icon={<Bot className="h-4 w-4" />} title="Quick shortcuts">
-                  <div className="mt-1 flex flex-wrap items-center gap-2">
-                    <span>Agent picker</span>
-                    <kbd className={KBD_CLASSNAME}>{agentPickerShortcut}</kbd>
-                    <span className="text-muted mx-1">•</span>
-                    <span>Cycle agent</span>
-                    <kbd className={KBD_CLASSNAME}>{cycleAgentShortcut}</kbd>
+    if (hasConfiguredProvidersAtStart === false) {
+      nextSteps.push({
+        key: "mux-gateway",
+        title: "Mux Gateway (evaluation credits)",
+        icon: <Sparkles className="h-4 w-4" />,
+        body: (
+          <>
+            <p>
+              Mux Gateway enables you to use free AI tokens from{" "}
+              <a
+                href="https://coder.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-accent hover:underline"
+              >
+                Coder
+              </a>
+              .
+            </p>
+
+            <p>
+              OSS contributors with GitHub accounts older than 12 months (or GitHub Pro members) can
+              use this to get free evaluation credits.
+            </p>
+
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button asChild>
+                <a href="https://gateway.mux.coder.com" target="_blank" rel="noopener noreferrer">
+                  Open Mux Gateway
+                </a>
+              </Button>
+              <Button variant="secondary" onClick={() => openSettings("providers")}>
+                Open Provider Settings
+              </Button>
+            </div>
+
+            <p className="mt-3">You can also receive those credits through:</p>
+
+            <ul className="ml-4 list-disc space-y-1">
+              <li>
+                early adopters can request credits tied to their GH logins on our{" "}
+                <a
+                  href="https://discord.gg/VfZXvtnR"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-accent hover:underline"
+                >
+                  Discord
+                </a>
+              </li>
+              <li>
+                vouchers which you can{" "}
+                <a
+                  href="https://gateway.mux.coder.com"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-accent hover:underline"
+                >
+                  claim here
+                </a>
+              </li>
+            </ul>
+
+            <p className="mt-3">
+              You can enable this in{" "}
+              <button
+                type="button"
+                className="text-accent hover:underline"
+                onClick={() => openSettings("providers")}
+              >
+                Settings → Providers
+              </button>
+              .
+            </p>
+          </>
+        ),
+      });
+    }
+
+    nextSteps.push({
+      key: "providers",
+      title: "Choose your own AI providers",
+      icon: <Sparkles className="h-4 w-4" />,
+      body: (
+        <>
+          <p>
+            Mux is provider-agnostic: bring your own keys, mix and match models, or run locally.
+          </p>
+
+          {configuredProviders.length > 0 && configuredProvidersSummary ? (
+            <p className="mt-3 text-xs">
+              <span className="text-foreground font-medium">Configured:</span>{" "}
+              {configuredProvidersSummary}
+            </p>
+          ) : (
+            <p className="mt-3 text-xs">No providers configured yet.</p>
+          )}
+
+          <div className="mt-3">
+            <div className="text-foreground mb-2 text-xs font-medium">Available providers</div>
+            <div className="grid grid-cols-2 gap-2">
+              {SUPPORTED_PROVIDERS.map((provider) => {
+                const configured = providersConfig?.[provider]?.isConfigured === true;
+
+                return (
+                  <div
+                    key={provider}
+                    className="bg-background-secondary border-border-medium text-foreground flex items-center justify-between rounded-md border px-2 py-1 text-xs"
+                    title={configured ? "Configured" : "Not configured"}
+                  >
+                    <ProviderWithIcon provider={provider} displayName iconClassName="text-accent" />
+                    <span
+                      className={`h-2 w-2 rounded-full ${
+                        configured ? "bg-green-500" : "bg-border-medium"
+                      }`}
+                    />
                   </div>
-                </Card>
+                );
+              })}
+            </div>
+
+            <div className="text-muted mt-2 flex items-center gap-2 text-xs">
+              <span className="h-2 w-2 rounded-full bg-green-500" />
+              <span>Configured</span>
+              <span className="bg-border-medium h-2 w-2 rounded-full" />
+              <span>Not configured</span>
+            </div>
+          </div>
+
+          <p className="mt-3">
+            Configure keys and endpoints in{" "}
+            <button
+              type="button"
+              className="text-accent hover:underline"
+              onClick={() => openSettings("providers")}
+            >
+              Settings → Providers
+            </button>
+            .
+          </p>
+        </>
+      ),
+    });
+
+    nextSteps.push({
+      key: "agents",
+      title: "Agents: Plan, Exec, and custom",
+      icon: <Bot className="h-4 w-4" />,
+      body: (
+        <>
+          <p>
+            Agents are file-based definitions (system prompt + tool policy). You can create
+            project-local agents in <code className="text-accent">.mux/agents/*.md</code> or global
+            agents in <code className="text-accent">~/.mux/agents/*.md</code>.
+          </p>
+
+          <div className="mt-3 grid gap-2">
+            <Card icon={<Sparkles className="h-4 w-4" />} title="Use Plan to design the spec">
+              When the change is complex, switch to a plan-like agent first: write an explicit plan
+              (files, steps, risks), then execute.
+            </Card>
+
+            <Card icon={<Bot className="h-4 w-4" />} title="Quick shortcuts">
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <span>Agent picker</span>
+                <kbd className={KBD_CLASSNAME}>{agentPickerShortcut}</kbd>
+                <span className="text-muted mx-1">•</span>
+                <span>Cycle agent</span>
+                <kbd className={KBD_CLASSNAME}>{cycleAgentShortcut}</kbd>
               </div>
+            </Card>
+          </div>
 
-              <div className="mt-3 flex items-center gap-3">
-                <DocsLink path="/agents">Agent docs</DocsLink>
-                <DocsLink path="/agents/plan-mode">Plan mode</DocsLink>
-              </div>
-            </>
-          ),
-        },
-        {
-          key: "runtimes",
-          title: "Multiple runtimes",
-          icon: <Boxes className="h-4 w-4" />,
-          body: (
-            <>
-              <p>
-                Each workspace can run in the environment that fits the job: keep it local, isolate
-                with a git worktree, run remotely over SSH, or use a per-workspace Docker container.
-              </p>
+          <div className="mt-3 flex items-center gap-3">
+            <DocsLink path="/agents">Agent docs</DocsLink>
+            <DocsLink path="/agents/plan-mode">Plan mode</DocsLink>
+          </div>
+        </>
+      ),
+    });
 
-              <div className="mt-3 grid gap-2">
-                <Card icon={<LocalIcon size={14} />} title="Local">
-                  Work directly in your project directory.
-                </Card>
-                <Card icon={<WorktreeIcon size={14} />} title="Worktree">
-                  Isolated git worktree under <code className="text-accent">~/.mux/src</code>.
-                </Card>
-                <Card icon={<SSHIcon size={14} />} title="SSH">
-                  Remote clone and commands run on an SSH host.
-                </Card>
-                <Card icon={<DockerIcon size={14} />} title="Docker">
-                  Isolated container per workspace.
-                </Card>
-              </div>
+    nextSteps.push({
+      key: "runtimes",
+      title: "Multiple runtimes",
+      icon: <Boxes className="h-4 w-4" />,
+      body: (
+        <>
+          <p>
+            Each workspace can run in the environment that fits the job: keep it local, isolate with
+            a git worktree, run remotely over SSH, or use a per-workspace Docker container.
+          </p>
 
-              <p className="mt-3">
-                You can set a project default runtime in the workspace creation controls.
-              </p>
-            </>
-          ),
-        },
-        {
-          key: "mcp",
-          title: "MCP servers",
-          icon: <Server className="h-4 w-4" />,
-          body: (
-            <>
-              <p>
-                MCP servers extend Mux with tools (memory, ticketing, databases, internal APIs).
-                Configure them per project and optionally override per workspace.
-              </p>
+          <div className="mt-3 grid gap-2">
+            <Card icon={<LocalIcon size={14} />} title="Local">
+              Work directly in your project directory.
+            </Card>
+            <Card icon={<WorktreeIcon size={14} />} title="Worktree">
+              Isolated git worktree under <code className="text-accent">~/.mux/src</code>.
+            </Card>
+            <Card icon={<SSHIcon size={14} />} title="SSH">
+              Remote clone and commands run on an SSH host.
+            </Card>
+            <Card icon={<CoderIcon size={14} />} title="Coder (SSH)">
+              Use Coder workspaces over SSH for a managed remote dev environment.
+            </Card>
+            <Card icon={<DockerIcon size={14} />} title="Docker">
+              Isolated container per workspace.
+            </Card>
+          </div>
 
-              <div className="mt-3 grid gap-2">
-                <Card icon={<Server className="h-4 w-4" />} title="Project config">
-                  <code className="text-accent">.mux/mcp.jsonc</code>
-                </Card>
-                <Card icon={<Server className="h-4 w-4" />} title="Workspace overrides">
-                  <code className="text-accent">.mux/mcp.local.jsonc</code>
-                </Card>
-              </div>
+          <p className="mt-3">You can set a project default runtime in the workspace controls.</p>
+        </>
+      ),
+    });
 
-              <p className="mt-3">
-                Manage servers in <span className="text-foreground">Settings → Projects</span> or
-                via <code className="text-accent">/mcp</code>.
-              </p>
-            </>
-          ),
-        },
-        {
-          key: "palette",
-          title: "Command palette",
-          icon: <CommandIcon className="h-4 w-4" />,
-          body: (
-            <>
-              <p>
-                The command palette is the fastest way to navigate, create workspaces, and discover
-                features.
-              </p>
+    nextSteps.push({
+      key: "mcp",
+      title: "MCP servers",
+      icon: <Server className="h-4 w-4" />,
+      body: (
+        <>
+          <p>
+            MCP servers extend Mux with tools (memory, ticketing, databases, internal APIs).
+            Configure them per project and optionally override per workspace.
+          </p>
 
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <span className="text-muted text-sm">Open command palette</span>
-                <kbd className={KBD_CLASSNAME}>{commandPaletteShortcut}</kbd>
-              </div>
+          <div className="mt-3 grid gap-2">
+            <Card icon={<Server className="h-4 w-4" />} title="Project config">
+              <code className="text-accent">.mux/mcp.jsonc</code>
+            </Card>
+            <Card icon={<Server className="h-4 w-4" />} title="Workspace overrides">
+              <code className="text-accent">.mux/mcp.local.jsonc</code>
+            </Card>
+          </div>
 
-              <div className="mt-3">
-                <CommandPalettePreview shortcut={commandPaletteShortcut} />
-              </div>
+          <p className="mt-3">
+            Manage servers in <span className="text-foreground">Settings → Projects</span> or via{" "}
+            <code className="text-accent">/mcp</code>.
+          </p>
+        </>
+      ),
+    });
 
-              <p className="mt-3">
-                Tip: type <code className="text-accent">&gt;</code> for commands and{" "}
-                <code className="text-accent">/</code> for slash commands.
-              </p>
-            </>
-          ),
-        },
-      ] as const,
-    [agentPickerShortcut, cycleAgentShortcut, commandPaletteShortcut]
-  );
+    nextSteps.push({
+      key: "palette",
+      title: "Command palette",
+      icon: <CommandIcon className="h-4 w-4" />,
+      body: (
+        <>
+          <p>
+            The command palette is the fastest way to navigate, create workspaces, and discover
+            features.
+          </p>
+
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className="text-muted text-sm">Open command palette</span>
+            <kbd className={KBD_CLASSNAME}>{commandPaletteShortcut}</kbd>
+          </div>
+
+          <div className="mt-3">
+            <CommandPalettePreview shortcut={commandPaletteShortcut} />
+          </div>
+
+          <p className="mt-3">
+            Tip: type <code className="text-accent">&gt;</code> for commands and{" "}
+            <code className="text-accent">/</code> for slash commands.
+          </p>
+        </>
+      ),
+    });
+
+    return nextSteps;
+  }, [
+    agentPickerShortcut,
+    commandPaletteShortcut,
+    configuredProviders.length,
+    configuredProvidersSummary,
+    cycleAgentShortcut,
+    hasConfiguredProvidersAtStart,
+    openSettings,
+    providersConfig,
+  ]);
+
+  useEffect(() => {
+    setStepIndex((index) => Math.min(index, steps.length - 1));
+  }, [steps.length]);
 
   const totalSteps = steps.length;
-  const currentStep = steps[stepIndex];
+  const currentStep = steps[stepIndex] ?? steps[0];
 
-  const canGoBack = stepIndex > 0;
-  const canGoForward = stepIndex < totalSteps - 1;
+  if (!currentStep) {
+    return null;
+  }
+
+  const isLoading = hasConfiguredProvidersAtStart === null;
+  const canGoBack = !isLoading && stepIndex > 0;
+  const canGoForward = !isLoading && stepIndex < totalSteps - 1;
 
   const goBack = () => {
     if (!canGoBack) {
@@ -342,30 +512,54 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
     setStepIndex((i) => Math.min(totalSteps - 1, i + 1));
   };
 
+  const primaryLabel = isLoading ? "Next" : canGoForward ? "Next" : "Done";
+
   return (
     <SplashScreen
       title={currentStep.title}
       onDismiss={props.onDismiss}
-      dismissLabel="Skip"
-      dismissOnPrimaryAction={false}
-      primaryAction={{
-        label: canGoForward ? "Next" : "Done",
-        onClick: () => {
-          if (canGoForward) {
-            goForward();
-            return;
-          }
-          props.onDismiss();
-        },
-      }}
+      dismissLabel={null}
+      footerClassName="justify-between"
+      footer={
+        <>
+          <div>
+            {canGoBack && (
+              <Button variant="secondary" onClick={goBack} className="min-w-24">
+                <ArrowLeft className="h-4 w-4" />
+                Back
+              </Button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-3">
+            <Button
+              className="min-w-24"
+              onClick={() => {
+                if (isLoading) {
+                  return;
+                }
+
+                if (canGoForward) {
+                  goForward();
+                  return;
+                }
+
+                props.onDismiss();
+              }}
+              disabled={isLoading}
+            >
+              {primaryLabel}
+            </Button>
+
+            <Button variant="secondary" onClick={props.onDismiss} className="min-w-24">
+              Skip
+            </Button>
+          </div>
+        </>
+      }
     >
       <div className="text-muted flex flex-col gap-4">
-        <WizardHeader
-          stepIndex={stepIndex}
-          totalSteps={totalSteps}
-          hasBack={canGoBack}
-          onBack={goBack}
-        />
+        <WizardHeader stepIndex={stepIndex} totalSteps={totalSteps} />
 
         <div
           key={currentStep.key}
