@@ -30,6 +30,12 @@ function defaultIsCommandAvailable(platform: NodeJS.Platform): (command: string)
 }
 
 function looksLikeWslShell(envShell: string): boolean {
+  // WSL (and other Unix-like environments) often surface POSIX-y paths like `/bin/bash`.
+  // Those paths don't exist on Windows hosts, so treat them as WSL and ignore.
+  if (envShell.startsWith("/")) {
+    return true;
+  }
+
   const normalized = envShell.replace(/\//g, "\\").toLowerCase();
   return (
     normalized === "wsl" ||
