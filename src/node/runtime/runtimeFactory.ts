@@ -1,17 +1,73 @@
 import * as fs from "fs/promises";
 import * as path from "path";
-import type { Runtime, RuntimeAvailability } from "./Runtime";
+import type {
+  Runtime,
+  RuntimeAvailability,
+  WorkspaceInitParams,
+  WorkspaceInitResult,
+} from "./Runtime";
 import { LocalRuntime } from "./LocalRuntime";
 import { WorktreeRuntime } from "./WorktreeRuntime";
 import { SSHRuntime } from "./SSHRuntime";
+import { CoderSSHRuntime } from "./CoderSSHRuntime";
 import { DockerRuntime, getContainerName } from "./DockerRuntime";
 import type { RuntimeConfig, RuntimeMode } from "@/common/types/runtime";
 import { hasSrcBaseDir } from "@/common/types/runtime";
 import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility";
 import { execAsync } from "@/node/utils/disposableExec";
+import type { CoderService } from "@/node/services/coderService";
 
 // Re-export for backward compatibility with existing imports
 export { isIncompatibleRuntimeConfig };
+
+// Global CoderService singleton - set during app init so all createRuntime calls can use it
+let globalCoderService: CoderService | undefined;
+
+/**
+ * Set the global CoderService instance for runtime factory.
+ * Call this during app initialization so createRuntime() can create CoderSSHRuntime
+ * without requiring callers to pass coderService explicitly.
+ */
+export function setGlobalCoderService(service: CoderService): void {
+  globalCoderService = service;
+}
+
+/**
+ * Run the full init sequence: postCreateSetup (if present) then initWorkspace.
+ * Use this everywhere instead of calling initWorkspace directly to ensure
+ * runtimes with provisioning steps (Docker, CoderSSH) work correctly.
+ */
+export async function runFullInit(
+  runtime: Runtime,
+  params: WorkspaceInitParams
+): Promise<WorkspaceInitResult> {
+  if (runtime.postCreateSetup) {
+    await runtime.postCreateSetup(params);
+  }
+  return runtime.initWorkspace(params);
+}
+
+/**
+ * Fire-and-forget init with standardized error handling.
+ * Use this for background init after workspace creation (workspaceService, taskService).
+ */
+export function runBackgroundInit(
+  runtime: Runtime,
+  params: WorkspaceInitParams,
+  workspaceId: string,
+  logger?: { error: (msg: string, ctx: object) => void }
+): void {
+  void (async () => {
+    try {
+      await runFullInit(runtime, params);
+    } catch (error: unknown) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      logger?.error(`Workspace init failed for ${workspaceId}:`, { error });
+      params.initLogger.logStderr(`Initialization failed: ${errorMsg}`);
+      params.initLogger.logComplete(-1);
+    }
+  })();
+}
 
 /**
  * Error thrown when a workspace has an incompatible runtime configuration,
@@ -39,6 +95,11 @@ export interface CreateRuntimeOptions {
    * Used together with projectPath to derive the container name.
    */
   workspaceName?: string;
+  /**
+   * Coder service - required for SSH runtimes with Coder configuration.
+   * When provided and config has coder field, returns CoderSSHRuntime instead of SSHRuntime.
+   */
+  coderService?: CoderService;
 }
 
 /**
@@ -79,14 +140,27 @@ export function createRuntime(config: RuntimeConfig, options?: CreateRuntimeOpti
     case "worktree":
       return new WorktreeRuntime(config.srcBaseDir);
 
-    case "ssh":
-      return new SSHRuntime({
+    case "ssh": {
+      const sshConfig = {
         host: config.host,
         srcBaseDir: config.srcBaseDir,
         bgOutputDir: config.bgOutputDir,
         identityFile: config.identityFile,
         port: config.port,
-      });
+      };
+
+      // Use CoderSSHRuntime for SSH+Coder when coderService is available (explicit or global)
+      const coderService = options?.coderService ?? globalCoderService;
+
+      if (config.coder) {
+        if (!coderService) {
+          throw new Error("Coder runtime requested but CoderService is not initialized");
+        }
+        return new CoderSSHRuntime({ ...sshConfig, coder: config.coder }, coderService);
+      }
+
+      return new SSHRuntime(sshConfig);
+    }
 
     case "docker": {
       // For existing workspaces, derive container name from project+workspace

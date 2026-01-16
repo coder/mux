@@ -17,12 +17,17 @@ import type { TelemetryService } from "@/node/services/telemetryService";
 import type { ExperimentsService } from "@/node/services/experimentsService";
 import { EXPERIMENT_IDS, EXPERIMENTS } from "@/common/constants/experiments";
 import type { MCPServerManager } from "@/node/services/mcpServerManager";
-import { createRuntime, IncompatibleRuntimeError } from "@/node/runtime/runtimeFactory";
+import {
+  createRuntime,
+  IncompatibleRuntimeError,
+  runBackgroundInit,
+} from "@/node/runtime/runtimeFactory";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
 import { getPlanFilePath, getLegacyPlanFilePath } from "@/common/utils/planStorage";
 import { shellQuote } from "@/node/runtime/backgroundCommands";
 import { extractEditedFilePaths } from "@/common/utils/messages/extractEditedFiles";
 import { fileExists } from "@/node/utils/runtime/fileExists";
+import { applyForkRuntimeUpdates } from "@/node/services/utils/forkRuntimeUpdates";
 import { expandTilde, expandTildeForSSH } from "@/node/runtime/tildeExpansion";
 
 import type { PostCompactionExclusions } from "@/common/types/attachment";
@@ -574,9 +579,11 @@ export class WorkspaceService extends EventEmitter {
     let runtime;
     try {
       runtime = createRuntime(finalRuntimeConfig, { projectPath });
-      // Resolve srcBaseDir path if the config has one
+
+      // Resolve srcBaseDir path if the config has one.
+      // Skip if runtime has deferredHost flag (host doesn't exist yet, e.g., Coder).
       const srcBaseDir = getSrcBaseDir(finalRuntimeConfig);
-      if (srcBaseDir) {
+      if (srcBaseDir && !runtime.createFlags?.deferredHost) {
         const resolvedSrcBaseDir = await runtime.resolvePath(srcBaseDir);
         if (resolvedSrcBaseDir !== srcBaseDir && hasSrcBaseDir(finalRuntimeConfig)) {
           finalRuntimeConfig = {
@@ -599,6 +606,24 @@ export class WorkspaceService extends EventEmitter {
       // Create workspace with automatic collision retry
       let finalBranchName = branchName;
       let createResult: { success: boolean; workspacePath?: string; error?: string };
+
+      // If runtime uses config-level collision detection (e.g., Coder - can't reach host),
+      // check against existing workspace names before createWorkspace.
+      if (runtime.createFlags?.configLevelCollisionDetection) {
+        const existingNames = new Set(
+          (this.config.loadConfigOrDefault().projects.get(projectPath)?.workspaces ?? []).map(
+            (w) => w.name
+          )
+        );
+        for (
+          let i = 0;
+          i < MAX_WORKSPACE_NAME_COLLISION_RETRIES && existingNames.has(finalBranchName);
+          i++
+        ) {
+          log.debug(`Workspace name collision for "${finalBranchName}", adding suffix`);
+          finalBranchName = appendCollisionSuffix(branchName);
+        }
+      }
 
       for (let attempt = 0; attempt <= MAX_WORKSPACE_NAME_COLLISION_RETRIES; attempt++) {
         createResult = await runtime.createWorkspace({
@@ -626,6 +651,29 @@ export class WorkspaceService extends EventEmitter {
       if (!createResult!.success || !createResult!.workspacePath) {
         initLogger.logComplete(-1);
         return Err(createResult!.error ?? "Failed to create workspace");
+      }
+
+      // Let runtime finalize config (e.g., derive names, compute host) after collision handling
+      if (runtime.finalizeConfig) {
+        const finalizeResult = await runtime.finalizeConfig(finalBranchName, finalRuntimeConfig);
+        if (!finalizeResult.success) {
+          initLogger.logComplete(-1);
+          return Err(finalizeResult.error);
+        }
+        finalRuntimeConfig = finalizeResult.data;
+        runtime = createRuntime(finalRuntimeConfig, { projectPath });
+      }
+
+      // Let runtime validate before persisting (e.g., external collision checks)
+      if (runtime.validateBeforePersist) {
+        const validateResult = await runtime.validateBeforePersist(
+          finalBranchName,
+          finalRuntimeConfig
+        );
+        if (!validateResult.success) {
+          initLogger.logComplete(-1);
+          return Err(validateResult.error);
+        }
       }
 
       const projectName =
@@ -667,22 +715,22 @@ export class WorkspaceService extends EventEmitter {
 
       session.emitMetadata(completeMetadata);
 
+      // Background init: run postCreateSetup (if present) then initWorkspace
       const secrets = secretsToRecord(this.config.getProjectSecrets(projectPath));
-      void runtime
-        .initWorkspace({
+      // Background init: postCreateSetup (provisioning) + initWorkspace (sync/checkout/hook)
+      runBackgroundInit(
+        runtime,
+        {
           projectPath,
           branchName: finalBranchName,
           trunkBranch: normalizedTrunkBranch,
           workspacePath: createResult!.workspacePath,
           initLogger,
           env: secrets,
-        })
-        .catch((error: unknown) => {
-          const errorMsg = error instanceof Error ? error.message : String(error);
-          log.error(`initWorkspace failed for ${workspaceId}:`, error);
-          initLogger.logStderr(`Initialization failed: ${errorMsg}`);
-          initLogger.logComplete(-1);
-        });
+        },
+        workspaceId,
+        log
+      );
 
       return Ok({ metadata: completeMetadata });
     } catch (error) {
@@ -741,6 +789,8 @@ export class WorkspaceService extends EventEmitter {
             `Failed to delete workspace from disk, but force=true. Removing from config. Error: ${deleteResult.error}`
           );
         }
+
+        // Note: Coder workspace deletion is handled by CoderSSHRuntime.deleteWorkspace()
 
         // If this workspace is a sub-agent/task, roll its accumulated usage into the parent BEFORE
         // deleting ~/.mux/sessions/<workspaceId>/session-usage.json.
@@ -1405,22 +1455,22 @@ export class WorkspaceService extends EventEmitter {
         return Err(forkResult.error ?? "Failed to fork workspace");
       }
 
-      // Run init hook for forked workspace (fire-and-forget like create())
+      // Run init for forked workspace (fire-and-forget like create())
       // Use sourceBranch as trunk since fork is based on source workspace's branch
-      void runtime
-        .initWorkspace({
+      const secrets = secretsToRecord(this.config.getProjectSecrets(foundProjectPath));
+      runBackgroundInit(
+        runtime,
+        {
           projectPath: foundProjectPath,
           branchName: newName,
           trunkBranch: forkResult.sourceBranch ?? "main",
           workspacePath: forkResult.workspacePath!,
           initLogger,
-        })
-        .catch((error: unknown) => {
-          const errorMsg = error instanceof Error ? error.message : String(error);
-          log.error(`initWorkspace failed for forked workspace ${newWorkspaceId}:`, error);
-          initLogger.logStderr(`Initialization failed: ${errorMsg}`);
-          initLogger.logComplete(-1);
-        });
+          env: secrets,
+        },
+        newWorkspaceId,
+        log
+      );
 
       const sourceSessionDir = this.config.getSessionDir(sourceWorkspaceId);
       const newSessionDir = this.config.getSessionDir(newWorkspaceId);
@@ -1481,6 +1531,14 @@ export class WorkspaceService extends EventEmitter {
       // Copy plan file if it exists (checks both new and legacy paths)
       await copyPlanFile(runtime, sourceMetadata.name, sourceWorkspaceId, newName, projectName);
 
+      // Apply runtime-provided config updates (e.g., Coder marks shared workspaces)
+      const { forkedRuntimeConfig } = await applyForkRuntimeUpdates(
+        this.config,
+        sourceWorkspaceId,
+        sourceRuntimeConfig,
+        forkResult
+      );
+
       // Compute namedWorkspacePath for frontend metadata
       const namedWorkspacePath = runtime.getWorkspacePath(foundProjectPath, newName);
 
@@ -1490,7 +1548,7 @@ export class WorkspaceService extends EventEmitter {
         projectName,
         projectPath: foundProjectPath,
         createdAt: new Date().toISOString(),
-        runtimeConfig: sourceRuntimeConfig,
+        runtimeConfig: forkedRuntimeConfig,
         namedWorkspacePath,
       };
 

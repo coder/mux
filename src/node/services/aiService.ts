@@ -1166,14 +1166,30 @@ export class AIService extends EventEmitter {
 
       // Verify runtime is actually reachable after init completes.
       // For Docker workspaces, this checks the container exists and starts it if stopped.
+      // For Coder workspaces, this may start a stopped workspace and wait for it.
       // If init failed during container creation, ensureReady() will return an error.
-      const readyResult = await runtime.ensureReady();
+      const readyResult = await runtime.ensureReady({
+        signal: combinedAbortSignal,
+        statusSink: (status) => {
+          // Emit runtime-status events for frontend UX (StreamingBarrier)
+          this.emit("runtime-status", {
+            type: "runtime-status",
+            workspaceId,
+            phase: status.phase,
+            runtimeType: status.runtimeType,
+            detail: status.detail,
+          });
+        },
+      });
       if (!readyResult.ready) {
         // Generate message ID for the error event (frontend needs this for synthetic message)
         const errorMessageId = `assistant-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
         const runtimeType = metadata.runtimeConfig?.type ?? "local";
         const runtimeLabel = runtimeType === "docker" ? "Container" : "Runtime";
-        const errorMessage = `${runtimeLabel} unavailable.`;
+        const errorMessage = readyResult.error || `${runtimeLabel} unavailable.`;
+
+        // Use the errorType from ensureReady result (runtime_not_ready vs runtime_start_failed)
+        const errorType = readyResult.errorType;
 
         // Emit error event so frontend receives it via stream subscription.
         // This mirrors the context_exceeded pattern - the fire-and-forget sendMessage
@@ -1184,11 +1200,11 @@ export class AIService extends EventEmitter {
           workspaceId,
           messageId: errorMessageId,
           error: errorMessage,
-          errorType: "runtime_not_ready",
+          errorType,
         });
 
         return Err({
-          type: "runtime_not_ready",
+          type: errorType,
           message: errorMessage,
         });
       }
@@ -2029,6 +2045,14 @@ export class AIService extends EventEmitter {
     errorMessage = "Test-triggered stream error"
   ): Promise<boolean> {
     return this.streamManager.debugTriggerStreamError(workspaceId, errorMessage);
+  }
+
+  /**
+   * Wait for workspace initialization to complete (if running).
+   * Public wrapper for agent discovery and other callers.
+   */
+  async waitForInit(workspaceId: string, abortSignal?: AbortSignal): Promise<void> {
+    return this.initStateManager.waitForInit(workspaceId, abortSignal);
   }
 
   async deleteWorkspace(workspaceId: string): Promise<Result<void>> {

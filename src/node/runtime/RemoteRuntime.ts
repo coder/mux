@@ -27,6 +27,7 @@ import type {
   WorkspaceInitResult,
   WorkspaceForkParams,
   WorkspaceForkResult,
+  EnsureReadyResult,
 } from "./Runtime";
 import { RuntimeError } from "./Runtime";
 import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
@@ -479,8 +480,9 @@ export abstract class RemoteRuntime implements Runtime {
 
   /**
    * Remote runtimes are always ready (SSH connections are re-established as needed).
+   * Subclasses (CoderSSHRuntime, DockerRuntime) may override for provisioning checks.
    */
-  ensureReady(): Promise<{ ready: boolean; error?: string }> {
+  ensureReady(): Promise<EnsureReadyResult> {
     return Promise.resolve({ ready: true });
   }
 

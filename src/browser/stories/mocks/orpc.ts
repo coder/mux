@@ -28,6 +28,12 @@ import {
 import { normalizeModeAiDefaults, type ModeAiDefaults } from "@/common/types/modeAiDefaults";
 import { normalizeAgentAiDefaults, type AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
+import type {
+  CoderInfo,
+  CoderTemplate,
+  CoderPreset,
+  CoderWorkspace,
+} from "@/common/orpc/schemas/coder";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 
 /** Session usage data structure matching SessionUsageFileSchema */
@@ -145,6 +151,14 @@ export interface MockORPCClientOptions {
     githubUser: string | null;
     error: { message: string; hasEncryptedKey: boolean } | null;
   };
+  /** Coder CLI availability info */
+  coderInfo?: CoderInfo;
+  /** Coder templates available for workspace creation */
+  coderTemplates?: CoderTemplate[];
+  /** Coder presets per template name */
+  coderPresets?: Map<string, CoderPreset[]>;
+  /** Existing Coder workspaces */
+  coderWorkspaces?: CoderWorkspace[];
 }
 
 interface MockBackgroundProcess {
@@ -213,6 +227,10 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     gitInit: customGitInit,
     runtimeAvailability: customRuntimeAvailability,
     signingCapabilities: customSigningCapabilities,
+    coderInfo = { available: false },
+    coderTemplates = [],
+    coderPresets = new Map<string, CoderPreset[]>(),
+    coderWorkspaces = [],
   } = options;
 
   // Feature flags
@@ -329,6 +347,10 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     telemetry: {
       track: () => Promise.resolve(undefined),
       status: () => Promise.resolve({ enabled: true, explicit: false }),
+    },
+    splashScreens: {
+      getViewedSplashScreens: () => Promise.resolve(["mux-gateway-login"]),
+      markSplashScreenViewed: () => Promise.resolve(undefined),
     },
     signing: {
       capabilities: () =>
@@ -663,6 +685,20 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     },
     window: {
       setTitle: () => Promise.resolve(undefined),
+    },
+    coder: {
+      getInfo: () => Promise.resolve(coderInfo),
+      listTemplates: () => Promise.resolve(coderTemplates),
+      listPresets: (input: { template: string }) =>
+        Promise.resolve(coderPresets.get(input.template) ?? []),
+      listWorkspaces: () => Promise.resolve(coderWorkspaces),
+    },
+    nameGeneration: {
+      generate: () =>
+        Promise.resolve({
+          success: true,
+          data: { name: "generated-workspace", title: "Generated Workspace", modelUsed: "mock" },
+        }),
     },
     terminal: {
       listSessions: (_input: { workspaceId: string }) => Promise.resolve([]),

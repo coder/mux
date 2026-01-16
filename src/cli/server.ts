@@ -117,6 +117,7 @@ const mockWindow: BrowserWindow = {
     experimentsService: serviceContainer.experimentsService,
     sessionUsageService: serviceContainer.sessionUsageService,
     signingService: serviceContainer.signingService,
+    coderService: serviceContainer.coderService,
   };
 
   const mdnsAdvertiser = new MdnsAdvertiserService();

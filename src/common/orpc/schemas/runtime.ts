@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CoderWorkspaceConfigSchema } from "./coder";
 
 export const RuntimeModeSchema = z.enum(["local", "worktree", "ssh", "docker"]);
 
@@ -55,6 +56,9 @@ export const RuntimeConfigSchema = z.union([
       .optional()
       .meta({ description: "Path to SSH private key (if not using ~/.ssh/config or ssh-agent)" }),
     port: z.number().optional().meta({ description: "SSH port (default: 22)" }),
+    coder: CoderWorkspaceConfigSchema.optional().meta({
+      description: "Coder workspace configuration (when using Coder as SSH backend)",
+    }),
   }),
   // Docker runtime - each workspace runs in its own container
   z.object({

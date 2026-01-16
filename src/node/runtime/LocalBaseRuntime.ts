@@ -16,6 +16,7 @@ import type {
   WorkspaceForkParams,
   WorkspaceForkResult,
   InitLogger,
+  EnsureReadyResult,
 } from "./Runtime";
 import { RuntimeError as RuntimeErrorClass } from "./Runtime";
 import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
@@ -383,7 +384,7 @@ export abstract class LocalBaseRuntime implements Runtime {
   /**
    * Local runtimes are always ready.
    */
-  ensureReady(): Promise<{ ready: boolean; error?: string }> {
+  ensureReady(): Promise<EnsureReadyResult> {
     return Promise.resolve({ ready: true });
   }
 

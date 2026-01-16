@@ -1,5 +1,5 @@
 import { describe, it, expect } from "@jest/globals";
-import { parseRuntimeModeAndHost, buildRuntimeString } from "./runtime";
+import { parseRuntimeModeAndHost, buildRuntimeString, CODER_RUNTIME_PLACEHOLDER } from "./runtime";
 
 describe("parseRuntimeModeAndHost", () => {
   it("parses SSH mode with host", () => {
@@ -100,5 +100,12 @@ describe("round-trip parsing and building", () => {
     const built = buildRuntimeString({ mode: "worktree" });
     const parsed = parseRuntimeModeAndHost(built);
     expect(parsed).toEqual({ mode: "worktree" });
+  });
+
+  it("preserves SSH mode with Coder placeholder", () => {
+    // Coder SSH runtimes use placeholder host when no explicit SSH host is set
+    const built = buildRuntimeString({ mode: "ssh", host: CODER_RUNTIME_PLACEHOLDER });
+    const parsed = parseRuntimeModeAndHost(built);
+    expect(parsed).toEqual({ mode: "ssh", host: CODER_RUNTIME_PLACEHOLDER });
   });
 });

@@ -793,6 +793,7 @@ export class AgentSession {
     forward("reasoning-end", (payload) => this.emitChatEvent(payload));
     forward("usage-delta", (payload) => this.emitChatEvent(payload));
     forward("stream-abort", (payload) => this.emitChatEvent(payload));
+    forward("runtime-status", (payload) => this.emitChatEvent(payload));
 
     forward("stream-end", async (payload) => {
       const handled = await this.compactionHandler.handleCompletion(payload as StreamEndEvent);

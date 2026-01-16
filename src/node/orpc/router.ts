@@ -449,6 +449,10 @@ export const router = (authToken?: string) => {
         .input(schemas.agents.list.input)
         .output(schemas.agents.list.output)
         .handler(async ({ context, input }) => {
+          // Wait for workspace init before agent discovery (SSH may not be ready yet)
+          if (input.workspaceId) {
+            await context.aiService.waitForInit(input.workspaceId);
+          }
           const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
           const descriptors = await discoverAgentDefinitions(runtime, discoveryPath);
 
@@ -483,6 +487,10 @@ export const router = (authToken?: string) => {
         .input(schemas.agents.get.input)
         .output(schemas.agents.get.output)
         .handler(async ({ context, input }) => {
+          // Wait for workspace init before agent discovery (SSH may not be ready yet)
+          if (input.workspaceId) {
+            await context.aiService.waitForInit(input.workspaceId);
+          }
           const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
           return readAgentDefinition(runtime, discoveryPath, input.agentId);
         }),
@@ -1013,6 +1021,32 @@ export const router = (authToken?: string) => {
             success: true,
             data: { name: result.data.name, title: result.data.title, modelUsed: model },
           };
+        }),
+    },
+    coder: {
+      getInfo: t
+        .input(schemas.coder.getInfo.input)
+        .output(schemas.coder.getInfo.output)
+        .handler(async ({ context }) => {
+          return context.coderService.getCoderInfo();
+        }),
+      listTemplates: t
+        .input(schemas.coder.listTemplates.input)
+        .output(schemas.coder.listTemplates.output)
+        .handler(async ({ context }) => {
+          return context.coderService.listTemplates();
+        }),
+      listPresets: t
+        .input(schemas.coder.listPresets.input)
+        .output(schemas.coder.listPresets.output)
+        .handler(async ({ context, input }) => {
+          return context.coderService.listPresets(input.template, input.org);
+        }),
+      listWorkspaces: t
+        .input(schemas.coder.listWorkspaces.input)
+        .output(schemas.coder.listWorkspaces.output)
+        .handler(async ({ context }) => {
+          return context.coderService.listWorkspaces();
         }),
     },
     workspace: {

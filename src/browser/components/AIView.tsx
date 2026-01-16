@@ -441,7 +441,11 @@ const AIViewInner: React.FC<AIViewProps> = ({
   // Uses same logic as useResumeManager for DRY
   const showRetryBarrier = workspaceState
     ? !workspaceState.canInterrupt &&
-      hasInterruptedStream(workspaceState.messages, workspaceState.pendingStreamStartTime)
+      hasInterruptedStream(
+        workspaceState.messages,
+        workspaceState.pendingStreamStartTime,
+        workspaceState.runtimeStatus
+      )
     : false;
 
   // Handle keyboard shortcuts (using optional refs that are safe even if not initialized)

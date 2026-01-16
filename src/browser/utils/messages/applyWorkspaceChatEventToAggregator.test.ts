@@ -4,6 +4,7 @@ import type { DeleteMessage, StreamErrorMessage, WorkspaceChatMessage } from "@/
 import type {
   ReasoningDeltaEvent,
   ReasoningEndEvent,
+  RuntimeStatusEvent,
   StreamAbortEvent,
   StreamDeltaEvent,
   StreamEndEvent,
@@ -74,6 +75,10 @@ class StubAggregator implements WorkspaceChatEventAggregator {
     this.calls.push(`handleMessage:${data.type}`);
   }
 
+  handleRuntimeStatus(data: RuntimeStatusEvent): void {
+    this.calls.push(`handleRuntimeStatus:${data.phase}:${data.runtimeType}`);
+  }
+
   clearTokenState(messageId: string): void {
     this.calls.push(`clearTokenState:${messageId}`);
   }
@@ -133,6 +138,22 @@ describe("applyWorkspaceChatEventToAggregator", () => {
     expect(aggregator.calls).toEqual(["handleStreamEnd:msg-1", "clearTokenState:msg-1"]);
   });
 
+  test("runtime-status routes to handleRuntimeStatus", () => {
+    const aggregator = new StubAggregator();
+
+    const event: WorkspaceChatMessage = {
+      type: "runtime-status",
+      workspaceId: "ws-1",
+      phase: "starting",
+      runtimeType: "ssh",
+      detail: "Starting Coder workspace...",
+    };
+
+    const hint = applyWorkspaceChatEventToAggregator(aggregator, event);
+
+    expect(hint).toBe("immediate");
+    expect(aggregator.calls).toEqual(["handleRuntimeStatus:starting:ssh"]);
+  });
   test("stream-abort clears token state before calling handleStreamAbort", () => {
     const aggregator = new StubAggregator();
 
