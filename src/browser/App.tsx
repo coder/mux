@@ -22,7 +22,7 @@ import { useStableReference, compareMaps } from "./hooks/useStableReference";
 import { CommandRegistryProvider, useCommandRegistry } from "./contexts/CommandRegistryContext";
 import { useOpenTerminal } from "./hooks/useOpenTerminal";
 import type { CommandAction } from "./contexts/CommandRegistryContext";
-import { ThemeProvider, useTheme, type ThemeMode } from "./contexts/ThemeContext";
+import { ThemeProvider, useTheme } from "./contexts/ThemeContext";
 import { CommandPalette } from "./components/CommandPalette";
 import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sources";
 
@@ -78,12 +78,6 @@ function AppInner() {
   } = useWorkspaceContext();
   const { theme, setTheme, toggleTheme } = useTheme();
   const { open: openSettings } = useSettings();
-  const setThemePreference = useCallback(
-    (nextTheme: ThemeMode) => {
-      setTheme(nextTheme);
-    },
-    [setTheme]
-  );
   const { api, status, error, authenticate } = useAPI();
 
   const {
@@ -457,7 +451,7 @@ function AppInner() {
       });
     },
     onToggleTheme: toggleTheme,
-    onSetTheme: setThemePreference,
+    onSetTheme: setTheme,
     onOpenSettings: openSettings,
     onClearTimingStats: (workspaceId: string) => workspaceStore.clearTimingStats(workspaceId),
     api,

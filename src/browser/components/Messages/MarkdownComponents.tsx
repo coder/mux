@@ -42,7 +42,7 @@ interface CodeBlockProps {
  */
 const CodeBlock: React.FC<CodeBlockProps> = ({ code, language }) => {
   const [highlightedLines, setHighlightedLines] = useState<string[] | null>(null);
-  const { theme: themeMode } = useTheme();
+  const { resolvedTheme } = useTheme();
 
   // Split code into lines, removing trailing empty line
   const plainLines = code
@@ -51,7 +51,7 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, language }) => {
 
   useEffect(() => {
     let cancelled = false;
-    const isLight = themeMode === "light" || themeMode.endsWith("-light");
+    const isLight = resolvedTheme === "light" || resolvedTheme.endsWith("-light");
     const theme = isLight ? "light" : "dark";
 
     setHighlightedLines(null);
@@ -78,7 +78,7 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, language }) => {
     return () => {
       cancelled = true;
     };
-  }, [code, language, themeMode]);
+  }, [code, language, resolvedTheme]);
 
   const lines = highlightedLines ?? plainLines;
   const isSingleLine = lines.length === 1;
