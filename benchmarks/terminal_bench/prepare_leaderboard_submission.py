@@ -154,7 +154,9 @@ def list_artifacts_for_run(run_id: int) -> list[dict]:
     return artifacts
 
 
-def download_artifacts(run_id: int, artifact_names: list[str], output_dir: Path) -> bool:
+def download_artifacts(
+    run_id: int, artifact_names: list[str], output_dir: Path
+) -> bool:
     """Download artifacts for a run using gh run download."""
     print(f"Downloading {len(artifact_names)} artifact(s) to {output_dir}...")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -302,7 +304,9 @@ def prepare_submission(
     print(f"Found {len(job_folders)} job folder(s)")
 
     # Group trials by model
-    model_trials: dict[str, list[tuple[Path, Path]]] = {}  # model -> [(trial_src, job_folder)]
+    model_trials: dict[
+        str, list[tuple[Path, Path]]
+    ] = {}  # model -> [(trial_src, job_folder)]
 
     for job_folder in job_folders:
         for trial_folder in job_folder.iterdir():
@@ -354,7 +358,9 @@ def prepare_submission(
         total_trials = 0
         for job_name, trial_paths in trials_by_job.items():
             # Use run_date for job folder name, or original job name
-            dest_job_name = run_date or job_name.split("__")[0]  # Extract date from YYYY-MM-DD__HH-MM-SS
+            dest_job_name = (
+                run_date or job_name.split("__")[0]
+            )  # Extract date from YYYY-MM-DD__HH-MM-SS
             dest_job_folder = submission_dir / dest_job_name
             dest_job_folder.mkdir(parents=True, exist_ok=True)
 
