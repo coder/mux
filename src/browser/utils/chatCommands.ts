@@ -985,6 +985,7 @@ export async function handlePlanOpenCommand(
     workspaceId,
     targetPath: planResult.data.path,
     runtimeConfig: workspaceInfo?.runtimeConfig,
+    isFile: true,
   });
 
   if (!openResult.success) {

@@ -3,6 +3,7 @@ import { ChevronRight, FileText, ExternalLink, Check, Eye, EyeOff } from "lucide
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui/tooltip";
+import type { RuntimeConfig } from "@/common/types/runtime";
 
 interface PostCompactionSectionProps {
   workspaceId: string;
@@ -10,6 +11,7 @@ interface PostCompactionSectionProps {
   trackedFilePaths: string[];
   excludedItems: Set<string>;
   onToggleExclusion: (itemId: string) => Promise<void>;
+  runtimeConfig?: RuntimeConfig;
 }
 
 /** Extract just the filename from a full path */
@@ -40,7 +42,7 @@ export const PostCompactionSection: React.FC<PostCompactionSectionProps> = (prop
   const handleOpenPlan = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!props.planPath) return;
-    void openInEditor(props.workspaceId, props.planPath);
+    void openInEditor(props.workspaceId, props.planPath, props.runtimeConfig, { isFile: true });
   };
 
   // Derive values from props

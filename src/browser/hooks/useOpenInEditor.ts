@@ -17,13 +17,19 @@ export function useOpenInEditor() {
   const { open: openSettings } = useSettings();
 
   return useCallback(
-    async (workspaceId: string, targetPath: string, runtimeConfig?: RuntimeConfig) => {
+    async (
+      workspaceId: string,
+      targetPath: string,
+      runtimeConfig?: RuntimeConfig,
+      options?: { isFile?: boolean }
+    ) => {
       return openInEditor({
         api,
         openSettings,
         workspaceId,
         targetPath,
         runtimeConfig,
+        isFile: options?.isFile,
       });
     },
     [api, openSettings]
