@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import App from "../App";
 import { AuthTokenModal } from "./AuthTokenModal";
+import { ThemeProvider } from "../contexts/ThemeContext";
 import { LoadingScreen } from "./LoadingScreen";
 import { useWorkspaceStoreRaw, workspaceStore } from "../stores/WorkspaceStore";
 import { useGitStatusStoreRaw } from "../stores/GitStatusStore";
@@ -31,15 +32,17 @@ interface AppLoaderProps {
  */
 export function AppLoader(props: AppLoaderProps) {
   return (
-    <APIProvider client={props.client}>
-      <RouterProvider>
-        <ProjectProvider>
-          <WorkspaceProvider>
-            <AppLoaderInner />
-          </WorkspaceProvider>
-        </ProjectProvider>
-      </RouterProvider>
-    </APIProvider>
+    <ThemeProvider>
+      <APIProvider client={props.client}>
+        <RouterProvider>
+          <ProjectProvider>
+            <WorkspaceProvider>
+              <AppLoaderInner />
+            </WorkspaceProvider>
+          </ProjectProvider>
+        </RouterProvider>
+      </APIProvider>
+    </ThemeProvider>
   );
 }
 
