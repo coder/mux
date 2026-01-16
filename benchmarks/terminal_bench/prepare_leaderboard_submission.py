@@ -48,6 +48,9 @@ from pathlib import Path
 # HuggingFace leaderboard repo
 LEADERBOARD_REPO = "alexgshaw/terminal-bench-2-leaderboard"
 
+# GitHub repository for fetching artifacts
+GITHUB_REPO = "coder/mux"
+
 
 # Agent metadata for mux
 MUX_METADATA = {
@@ -104,6 +107,7 @@ def get_latest_successful_nightly_run() -> dict | None:
             "gh",
             "run",
             "list",
+            f"--repo={GITHUB_REPO}",
             "--workflow=nightly-terminal-bench.yml",
             "--status=success",
             "--limit=1",
@@ -131,7 +135,7 @@ def list_artifacts_for_run(run_id: int) -> list[dict]:
         [
             "gh",
             "api",
-            f"repos/coder/mux/actions/runs/{run_id}/artifacts",
+            f"repos/{GITHUB_REPO}/actions/runs/{run_id}/artifacts",
             "--jq",
             '.artifacts[] | select(.name | startswith("terminal-bench-results")) | {name, id, size_in_bytes}',
         ],
@@ -150,39 +154,30 @@ def list_artifacts_for_run(run_id: int) -> list[dict]:
     return artifacts
 
 
-def download_artifact(artifact_id: int, output_dir: Path) -> Path | None:
-    """Download an artifact and extract it."""
-    print(f"Downloading artifact {artifact_id}...")
+def download_artifacts(run_id: int, artifact_names: list[str], output_dir: Path) -> bool:
+    """Download artifacts for a run using gh run download."""
+    print(f"Downloading {len(artifact_names)} artifact(s) to {output_dir}...")
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Download using gh cli
-    result = run_command(
-        [
-            "gh",
-            "api",
-            f"repos/coder/mux/actions/artifacts/{artifact_id}/zip",
-            "--output",
-            str(output_dir / "artifact.zip"),
-        ],
-        check=False,
-    )
+    # Build download command with all artifact names
+    cmd = [
+        "gh",
+        "run",
+        "download",
+        str(run_id),
+        f"--repo={GITHUB_REPO}",
+        f"--dir={output_dir}",
+    ]
+    for name in artifact_names:
+        cmd.extend(["--name", name])
+
+    result = run_command(cmd, check=False)
 
     if result.returncode != 0:
-        print(f"Error downloading artifact: {result.stderr}")
-        return None
+        print(f"Error downloading artifacts: {result.stderr}")
+        return False
 
-    # Extract the zip
-    zip_path = output_dir / "artifact.zip"
-    result = run_command(
-        ["unzip", "-o", "-q", str(zip_path), "-d", str(output_dir)], check=False
-    )
-
-    if result.returncode != 0:
-        print(f"Error extracting artifact: {result.stderr}")
-        return None
-
-    zip_path.unlink()  # Clean up zip file
-    return output_dir
+    return True
 
 
 def parse_model_from_artifact_name(name: str) -> str | None:
@@ -238,6 +233,46 @@ def create_metadata_yaml(model: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+def get_model_from_config(config_path: Path) -> str | None:
+    """Extract model name from config.json."""
+    try:
+        config = json.loads(config_path.read_text())
+        return config.get("agent", {}).get("model_name")
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def find_job_folders(artifacts_dir: Path) -> list[Path]:
+    """
+    Find all job folders (containing trial directories) in the artifacts.
+
+    Handles two structures:
+    1. Direct: artifacts_dir/jobs/YYYY-MM-DD__HH-MM-SS/trials/
+    2. Per-artifact: artifacts_dir/<artifact-name>/jobs/YYYY-MM-DD__HH-MM-SS/trials/
+    """
+    job_folders = []
+
+    # Check for direct jobs/ folder
+    direct_jobs = artifacts_dir / "jobs"
+    if direct_jobs.exists():
+        for item in direct_jobs.iterdir():
+            if item.is_dir():
+                job_folders.append(item)
+        return job_folders
+
+    # Check for per-artifact structure
+    for artifact_dir in artifacts_dir.iterdir():
+        if not artifact_dir.is_dir():
+            continue
+        jobs_dir = artifact_dir / "jobs"
+        if jobs_dir.exists():
+            for item in jobs_dir.iterdir():
+                if item.is_dir():
+                    job_folders.append(item)
+
+    return job_folders
+
+
 def prepare_submission(
     artifacts_dir: Path, output_dir: Path, run_date: str | None = None
 ) -> dict[str, Path]:
@@ -258,22 +293,41 @@ def prepare_submission(
     """
     submissions: dict[str, Path] = {}
 
-    # Find all downloaded artifact directories
-    for artifact_dir in artifacts_dir.iterdir():
-        if not artifact_dir.is_dir():
-            continue
+    # Find all job folders in the artifacts
+    job_folders = find_job_folders(artifacts_dir)
+    if not job_folders:
+        print("No job folders found in artifacts")
+        return submissions
 
-        # Look for jobs/ subdirectory (Harbor output structure)
-        jobs_dir = artifact_dir / "jobs" if (artifact_dir / "jobs").exists() else artifact_dir
+    print(f"Found {len(job_folders)} job folder(s)")
 
-        # Determine model from artifact name
-        model = parse_model_from_artifact_name(artifact_dir.name)
-        if not model:
-            print(f"Warning: Could not determine model from artifact {artifact_dir.name}")
-            continue
+    # Group trials by model
+    model_trials: dict[str, list[tuple[Path, Path]]] = {}  # model -> [(trial_src, job_folder)]
 
+    for job_folder in job_folders:
+        for trial_folder in job_folder.iterdir():
+            if not trial_folder.is_dir():
+                continue
+
+            config_path = trial_folder / "config.json"
+            result_path = trial_folder / "result.json"
+
+            if not result_path.exists():
+                continue
+
+            # Get model from config
+            model = get_model_from_config(config_path) if config_path.exists() else None
+            if not model:
+                print(f"  Warning: Could not determine model for {trial_folder.name}")
+                continue
+
+            if model not in model_trials:
+                model_trials[model] = []
+            model_trials[model].append((trial_folder, job_folder))
+
+    # Create submissions for each model
+    for model, trials in model_trials.items():
         # Create submission directory: mux__<Model>
-        # Use folder_name from metadata for consistent naming with other submissions
         model_info = MODEL_METADATA.get(model, {})
         model_folder_name = model_info.get("folder_name", model.split("/")[-1].title())
         submission_name = f"mux__{model_folder_name}"
@@ -288,35 +342,31 @@ def prepare_submission(
         if not metadata_path.exists():
             metadata_path.write_text(create_metadata_yaml(model))
 
-        # Create job folder (date-named, groups all trials)
-        job_folder_name = run_date or datetime.now().strftime("%Y-%m-%d")
-        job_folder = submission_dir / job_folder_name
-        job_folder.mkdir(parents=True, exist_ok=True)
+        # Group trials by source job folder (preserve original job structure)
+        trials_by_job: dict[str, list[Path]] = {}
+        for trial_src, job_folder in trials:
+            job_name = job_folder.name
+            if job_name not in trials_by_job:
+                trials_by_job[job_name] = []
+            trials_by_job[job_name].append(trial_src)
 
-        # Copy each trial folder into the job folder
-        trial_count = 0
-        for trial_folder in jobs_dir.iterdir():
-            if not trial_folder.is_dir():
-                continue
+        # Copy trials into job folders
+        total_trials = 0
+        for job_name, trial_paths in trials_by_job.items():
+            # Use run_date for job folder name, or original job name
+            dest_job_name = run_date or job_name.split("__")[0]  # Extract date from YYYY-MM-DD__HH-MM-SS
+            dest_job_folder = submission_dir / dest_job_name
+            dest_job_folder.mkdir(parents=True, exist_ok=True)
 
-            # Check for result.json to identify valid trial
-            result_path = trial_folder / "result.json"
-            if not result_path.exists():
-                continue
+            for trial_src in trial_paths:
+                dest_trial_dir = dest_job_folder / trial_src.name
+                if dest_trial_dir.exists():
+                    shutil.rmtree(dest_trial_dir)
+                shutil.copytree(trial_src, dest_trial_dir)
+                total_trials += 1
 
-            # Copy trial folder into job folder
-            dest_trial_dir = job_folder / trial_folder.name
-            if dest_trial_dir.exists():
-                shutil.rmtree(dest_trial_dir)
-
-            shutil.copytree(trial_folder, dest_trial_dir)
-            trial_count += 1
-
-        if trial_count > 0:
-            print(f"  {model}: copied {trial_count} trial(s) to {job_folder}")
-            submissions[model] = submission_dir
-        else:
-            print(f"  {model}: no valid trials found, skipping")
+        print(f"  {model}: copied {total_trials} trial(s)")
+        submissions[model] = submission_dir
 
     return submissions
 
@@ -389,11 +439,10 @@ def main():
 
         # Download artifacts
         artifacts_dir = Path(tempfile.mkdtemp(prefix="tbench-"))
-        print(f"Downloading to {artifacts_dir}")
-
-        for artifact in artifacts:
-            artifact_dir = artifacts_dir / artifact["name"]
-            download_artifact(artifact["id"], artifact_dir)
+        artifact_names = [a["name"] for a in artifacts]
+        if not download_artifacts(run_id, artifact_names, artifacts_dir):
+            print("Failed to download artifacts")
+            sys.exit(1)
 
     # Prepare submission
     print(f"\nPreparing submission in {args.output_dir}...")
