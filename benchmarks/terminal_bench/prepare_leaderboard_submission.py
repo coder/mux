@@ -128,8 +128,16 @@ def get_latest_successful_nightly_run() -> dict | None:
     return runs[0]
 
 
-def list_artifacts_for_run(run_id: int) -> list[dict]:
-    """List all terminal-bench artifacts for a given run."""
+# Smoke test model - excluded from submissions by default
+SMOKE_TEST_MODEL = "anthropic/claude-sonnet-4-5"
+
+
+def list_artifacts_for_run(run_id: int, include_smoke_test: bool = False) -> list[dict]:
+    """List all terminal-bench artifacts for a given run.
+
+    By default, excludes the smoke test artifact (claude-sonnet-4-5) since it
+    only runs a single task and isn't suitable for leaderboard submission.
+    """
     print(f"Listing artifacts for run {run_id}...")
     result = run_command(
         [
@@ -149,7 +157,13 @@ def list_artifacts_for_run(run_id: int) -> list[dict]:
     artifacts = []
     for line in result.stdout.strip().split("\n"):
         if line:
-            artifacts.append(json.loads(line))
+            artifact = json.loads(line)
+            # Filter out smoke test artifact unless explicitly included
+            if not include_smoke_test:
+                smoke_test_pattern = SMOKE_TEST_MODEL.replace("/", "-")
+                if smoke_test_pattern in artifact["name"]:
+                    continue
+            artifacts.append(artifact)
 
     return artifacts
 
