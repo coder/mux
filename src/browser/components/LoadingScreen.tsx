@@ -1,5 +1,8 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
+import { useTheme } from "@/browser/contexts/ThemeContext";
 import MuxLogoDark from "@/browser/assets/logos/mux-logo-dark.svg?react";
+import MuxLogoLight from "@/browser/assets/logos/mux-logo-light.svg?react";
+import muxLogoMaskUrl from "@/browser/assets/logos/mux-logo-dark.svg";
 
 const LOADING_PHRASES = [
   "Parallelizing agents…",
@@ -11,13 +14,20 @@ const LOADING_PHRASES = [
 ];
 
 export function LoadingScreen() {
+  const { theme } = useTheme();
+  const MuxLogo = theme === "dark" || theme === "flexoki-dark" ? MuxLogoDark : MuxLogoLight;
+
   const [phraseIndex, setPhraseIndex] = useState(0);
   const [opacity, setOpacity] = useState(1);
+  const [prefersReducedMotion] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+  });
 
   useEffect(() => {
-    // Check for reduced motion preference
-    const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
-    if (mediaQuery.matches) return;
+    if (prefersReducedMotion) {
+      return;
+    }
 
     const interval = setInterval(() => {
       setOpacity(0);
@@ -28,7 +38,7 @@ export function LoadingScreen() {
     }, 1500);
 
     return () => clearInterval(interval);
-  }, []);
+  }, [prefersReducedMotion]);
 
   return (
     <div
@@ -36,20 +46,31 @@ export function LoadingScreen() {
       data-testid="LoadingScreen"
     >
       <div className="flex flex-col items-center gap-6">
-        {/* Logo with shimmer */}
-        <div className="relative h-[62px] w-[135px] overflow-hidden">
-          <MuxLogoDark className="block h-full w-full" />
-          <div
-            className="pointer-events-none absolute inset-0 animate-[shimmer-slide_2.5s_infinite_linear] motion-reduce:animate-none"
-            style={{
-              background:
-                "linear-gradient(90deg, transparent 0%, transparent 40%, hsla(207 100% 60% / 0.35) 50%, transparent 60%, transparent 100%)",
-              width: "300%",
-              marginLeft: "-180%",
-            }}
-          />
+        <div className="relative h-[62px] w-[135px]">
+          <MuxLogo className="block h-full w-full" />
+
+          {!prefersReducedMotion && (
+            <div
+              className="pointer-events-none absolute inset-0"
+              data-chromatic="ignore"
+              style={{
+                WebkitMaskImage: `url(${muxLogoMaskUrl})`,
+                WebkitMaskRepeat: "no-repeat",
+                WebkitMaskPosition: "center",
+                WebkitMaskSize: "contain",
+                maskImage: `url(${muxLogoMaskUrl})`,
+                maskRepeat: "no-repeat",
+                maskPosition: "center",
+                maskSize: "contain",
+                background:
+                  "linear-gradient(90deg, transparent 0%, transparent 35%, color-mix(in srgb, var(--color-foreground) 25%, black) 50%, transparent 65%, transparent 100%)",
+                backgroundSize: "300% 100%",
+                animation: "shimmer-text-sweep 2s steps(42, end) infinite",
+              }}
+            />
+          )}
         </div>
-        {/* Rotating loading text */}
+
         <p
           className="text-text-secondary min-w-[28ch] text-center text-sm transition-opacity duration-150"
           style={{ opacity }}
