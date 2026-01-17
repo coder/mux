@@ -635,7 +635,7 @@ function AppInner() {
 
   return (
     <>
-      <div className="bg-bg-dark mobile-layout flex h-screen overflow-hidden">
+      <div className="bg-bg-dark mobile-layout flex h-full min-h-0 overflow-hidden">
         <LeftSidebar
           lastReadTimestamps={lastReadTimestamps}
           onToggleUnread={onToggleUnread}
@@ -644,10 +644,10 @@ function AppInner() {
           sortedWorkspacesByProject={sortedWorkspacesByProject}
           workspaceRecency={workspaceRecency}
         />
-        <div className="mobile-main-content flex min-w-0 flex-1 flex-col overflow-hidden">
+        <div className="mobile-main-content flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <WindowsToolchainBanner />
           <RosettaBanner />
-          <div className="mobile-layout flex flex-1 overflow-hidden">
+          <div className="mobile-layout flex min-h-0 flex-1 overflow-hidden">
             {selectedWorkspace ? (
               (() => {
                 const currentMetadata = workspaceMetadata.get(selectedWorkspace.workspaceId);

@@ -524,7 +524,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   return (
     <div
       ref={chatAreaRef}
-      className="flex min-w-96 flex-1 flex-col [@media(max-width:768px)]:max-h-full [@media(max-width:768px)]:w-full [@media(max-width:768px)]:min-w-0"
+      className="flex min-h-0 min-w-96 flex-1 flex-col [@media(max-width:768px)]:max-h-full [@media(max-width:768px)]:w-full [@media(max-width:768px)]:min-w-0"
     >
       <WorkspaceHeader
         workspaceId={workspaceId}
@@ -538,7 +538,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
         onOpenTerminal={onOpenTerminal}
       />
 
-      <div className="relative flex-1 overflow-hidden">
+      <div className="relative min-h-0 flex-1 overflow-hidden">
         <div
           ref={contentRef}
           onWheel={markUserInteraction}

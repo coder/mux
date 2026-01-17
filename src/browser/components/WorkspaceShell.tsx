@@ -32,7 +32,7 @@ const WorkspacePlaceholder: React.FC<{
 }> = (props) => (
   <div
     className={cn(
-      "flex flex-1 flex-row bg-dark text-light overflow-x-auto overflow-y-hidden [@media(max-width:768px)]:flex-col",
+      "flex flex-1 min-h-0 flex-row bg-dark text-light overflow-x-auto overflow-y-hidden [@media(max-width:768px)]:flex-col",
       props.className
     )}
     style={{ containerType: "inline-size" }}
@@ -88,7 +88,7 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
   return (
     <div
       className={cn(
-        "flex flex-1 flex-row bg-dark text-light overflow-x-auto overflow-y-hidden [@media(max-width:768px)]:flex-col",
+        "flex flex-1 min-h-0 flex-row bg-dark text-light overflow-x-auto overflow-y-hidden [@media(max-width:768px)]:flex-col",
         props.className
       )}
       style={{ containerType: "inline-size" }}
