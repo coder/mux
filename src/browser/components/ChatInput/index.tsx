@@ -106,7 +106,6 @@ import {
 } from "./draftImagesStorage";
 import { RecordingOverlay } from "./RecordingOverlay";
 import { ReviewBlockFromData } from "../shared/ReviewBlock";
-import initMessage from "@/browser/assets/initMessage.txt?raw";
 
 // localStorage quotas are environment-dependent and relatively small.
 // Be conservative here so we can warn the user before writes start failing.
@@ -1391,15 +1390,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       let creationMessageTextForSend = messageText;
       let creationOptionsOverride: Partial<SendMessageOptions> | undefined;
 
-      // Handle /init command in creation variant - populate input with init message
       if (messageText.startsWith("/")) {
         const parsed = parseCommand(messageText);
-
-        if (parsed?.type === "init") {
-          setInput(initMessage);
-          focusMessageInput();
-          return;
-        }
 
         if (isUnknownSlashCommand(parsed)) {
           const command = parsed.command;
@@ -1410,14 +1402,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             const hasSeparator = afterPrefix.length === 0 || /^\s/.test(afterPrefix);
 
             if (hasSeparator) {
-              const userText = afterPrefix.trimStart();
-              if (!userText) {
-                pushToast({
-                  type: "error",
-                  message: `Please add a message after ${prefix}`,
-                });
-                return;
-              }
+              const userText = afterPrefix.trimStart() || `Run the "${maybeSkill.name}" skill.`;
 
               if (!api) {
                 pushToast({ type: "error", message: "Not connected to server" });
@@ -1485,14 +1470,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           const hasSeparator = afterPrefix.length === 0 || /^\s/.test(afterPrefix);
 
           if (hasSeparator) {
-            const userText = afterPrefix.trimStart();
-            if (!userText) {
-              pushToast({
-                type: "error",
-                message: `Please add a message after ${prefix}`,
-              });
-              return;
-            }
+            const userText = afterPrefix.trimStart() || `Run the "${maybeSkill.name}" skill.`;
 
             skillInvocation = { descriptor: maybeSkill, userText };
             parsed = null;
@@ -1562,13 +1540,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         if (parsed.type === "vim-toggle") {
           setInput(""); // Clear input immediately
           setVimEnabled((prev) => !prev);
-          return;
-        }
-
-        // Handle /init command - populate input with init message
-        if (parsed.type === "init") {
-          setInput(initMessage);
-          focusMessageInput();
           return;
         }
 

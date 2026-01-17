@@ -16,7 +16,6 @@ import { ConfigureProvidersPrompt } from "./ConfigureProvidersPrompt";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { AgentsInitBanner } from "./AgentsInitBanner";
-import initMessage from "@/browser/assets/initMessage.txt?raw";
 import { usePersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import {
   getAgentIdKey,
@@ -201,16 +200,16 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
     // Switch project-scope mode to exec.
     updatePersistedState(getAgentIdKey(getProjectScopeId(projectPath)), "exec");
 
-    // Prefill the AGENTS bootstrap prompt and start the creation chat.
+    // Run the /init skill and start the creation chat.
     if (chatInputRef.current) {
-      chatInputRef.current.restoreText(initMessage);
+      chatInputRef.current.restoreText("/init");
       requestAnimationFrame(() => {
         void chatInputRef.current?.send();
       });
     } else {
       pendingAgentsInitSendRef.current = true;
       const pendingScopeId = getPendingScopeId(projectPath);
-      updatePersistedState(getInputKey(pendingScopeId), initMessage);
+      updatePersistedState(getInputKey(pendingScopeId), "/init");
     }
 
     setShowAgentsInitNudge(false);
@@ -222,7 +221,7 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
     if (pendingAgentsInitSendRef.current) {
       pendingAgentsInitSendRef.current = false;
       didAutoFocusRef.current = true;
-      api.restoreText(initMessage);
+      api.restoreText("/init");
       requestAnimationFrame(() => {
         void api.send();
       });

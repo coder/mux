@@ -228,11 +228,15 @@ describe("plan commands", () => {
 });
 
 describe("init command", () => {
-  it("should parse /init", () => {
-    expectParse("/init", { type: "init" });
+  it("should parse /init as unknown-command (handled as a skill invocation)", () => {
+    expectParse("/init", {
+      type: "unknown-command",
+      command: "init",
+      subcommand: undefined,
+    });
   });
 
-  it("should reject /init with arguments", () => {
+  it("should parse /init with arguments as unknown-command", () => {
     expectParse("/init extra", {
       type: "unknown-command",
       command: "init",
