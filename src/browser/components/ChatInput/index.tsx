@@ -1395,14 +1395,33 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
         if (isUnknownSlashCommand(parsed)) {
           const command = parsed.command;
-          const maybeSkill = agentSkillDescriptors.find((skill) => skill.name === command);
-          if (maybeSkill) {
-            const prefix = `/${maybeSkill.name}`;
-            const afterPrefix = messageText.slice(prefix.length);
-            const hasSeparator = afterPrefix.length === 0 || /^\s/.test(afterPrefix);
+          const prefix = `/${command}`;
+          const afterPrefix = messageText.slice(prefix.length);
+          const hasSeparator = afterPrefix.length === 0 || /^\s/.test(afterPrefix);
 
-            if (hasSeparator) {
-              const userText = afterPrefix.trimStart() || `Run the "${maybeSkill.name}" skill.`;
+          if (hasSeparator) {
+            let skill: AgentSkillDescriptor | undefined = agentSkillDescriptors.find(
+              (candidate) => candidate.name === command
+            );
+
+            if (!skill && api && atMentionProjectPath) {
+              try {
+                const pkg = await api.agentSkills.get({
+                  projectPath: atMentionProjectPath,
+                  skillName: command,
+                });
+                skill = {
+                  name: pkg.frontmatter.name,
+                  description: pkg.frontmatter.description,
+                  scope: pkg.scope,
+                };
+              } catch {
+                // Not a skill (or not available yet) - fall through.
+              }
+            }
+
+            if (skill) {
+              const userText = afterPrefix.trimStart() || `Run the "${skill.name}" skill.`;
 
               if (!api) {
                 pushToast({ type: "error", message: "Not connected to server" });
@@ -1414,8 +1433,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                 muxMetadata: {
                   type: "agent-skill",
                   rawCommand: messageText,
-                  skillName: maybeSkill.name,
-                  scope: maybeSkill.scope,
+                  skillName: skill.name,
+                  scope: skill.scope,
                 },
               };
             }
@@ -1463,16 +1482,36 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
       if (isUnknownSlashCommand(parsed)) {
         const command = parsed.command;
-        const maybeSkill = agentSkillDescriptors.find((skill) => skill.name === command);
-        if (maybeSkill) {
-          const prefix = `/${maybeSkill.name}`;
-          const afterPrefix = messageText.slice(prefix.length);
-          const hasSeparator = afterPrefix.length === 0 || /^\s/.test(afterPrefix);
+        const prefix = `/${command}`;
+        const afterPrefix = messageText.slice(prefix.length);
+        const hasSeparator = afterPrefix.length === 0 || /^\s/.test(afterPrefix);
 
-          if (hasSeparator) {
-            const userText = afterPrefix.trimStart() || `Run the "${maybeSkill.name}" skill.`;
+        if (hasSeparator) {
+          let skill: AgentSkillDescriptor | undefined = agentSkillDescriptors.find(
+            (candidate) => candidate.name === command
+          );
 
-            skillInvocation = { descriptor: maybeSkill, userText };
+          if (!skill && api && workspaceId) {
+            try {
+              const pkg = await api.agentSkills.get({
+                workspaceId,
+                disableWorkspaceAgents: sendMessageOptions.disableWorkspaceAgents,
+                skillName: command,
+              });
+              skill = {
+                name: pkg.frontmatter.name,
+                description: pkg.frontmatter.description,
+                scope: pkg.scope,
+              };
+            } catch {
+              // Not a skill (or not available yet) - fall through.
+            }
+          }
+
+          if (skill) {
+            const userText = afterPrefix.trimStart() || `Run the "${skill.name}" skill.`;
+
+            skillInvocation = { descriptor: skill, userText };
             parsed = null;
           }
         }

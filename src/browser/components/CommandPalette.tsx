@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Command } from "cmdk";
 import { useCommandRegistry } from "@/browser/contexts/CommandRegistryContext";
 import { useAPI } from "@/browser/contexts/API";
+import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { CommandAction } from "@/browser/contexts/CommandRegistryContext";
 import {
@@ -13,6 +14,7 @@ import {
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { getSlashCommandSuggestions } from "@/browser/utils/slashCommands/suggestions";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
+import { getDisableWorkspaceAgentsKey, GLOBAL_SCOPE_ID } from "@/common/constants/storage";
 import { filterCommandsByPrefix } from "@/browser/utils/commandPaletteFiltering";
 
 interface CommandPaletteProps {
@@ -44,6 +46,12 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
 
   const slashContext = getSlashContext?.();
   const slashWorkspaceId = slashContext?.workspaceId;
+
+  const [disableWorkspaceAgents] = usePersistedState<boolean>(
+    getDisableWorkspaceAgentsKey(slashWorkspaceId ?? GLOBAL_SCOPE_ID),
+    false,
+    { listener: true }
+  );
 
   const [agentSkills, setAgentSkills] = useState<AgentSkillDescriptor[]>([]);
   const agentSkillsCacheRef = useRef<Map<string, AgentSkillDescriptor[]>>(new Map());
@@ -93,7 +101,9 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
       return;
     }
 
-    const cached = agentSkillsCacheRef.current.get(slashWorkspaceId);
+    const cacheKey = `${slashWorkspaceId}:${disableWorkspaceAgents ? "project" : "worktree"}`;
+
+    const cached = agentSkillsCacheRef.current.get(cacheKey);
     if (cached) {
       setAgentSkills(cached);
       return;
@@ -101,10 +111,13 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
 
     let cancelled = false;
     api.agentSkills
-      .list({ workspaceId: slashWorkspaceId })
+      .list({
+        workspaceId: slashWorkspaceId,
+        disableWorkspaceAgents: disableWorkspaceAgents || undefined,
+      })
       .then((skills) => {
         if (cancelled) return;
-        agentSkillsCacheRef.current.set(slashWorkspaceId, skills);
+        agentSkillsCacheRef.current.set(cacheKey, skills);
         setAgentSkills(skills);
       })
       .catch(() => {
@@ -115,7 +128,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
     return () => {
       cancelled = true;
     };
-  }, [api, isOpen, slashWorkspaceId]);
+  }, [api, isOpen, slashWorkspaceId, disableWorkspaceAgents]);
 
   const rawActions = getActions();
 
