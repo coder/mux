@@ -13,7 +13,7 @@ import {
   updatePersistedState,
   readPersistedState,
 } from "./hooks/usePersistedState";
-import { getEffectiveSlotKeybind } from "@/browser/utils/uiLayouts";
+import { getEffectiveSlotKeybind, getPresetForSlot } from "@/browser/utils/uiLayouts";
 import { matchesKeybind, KEYBINDS } from "./utils/ui/keybinds";
 import { buildSortedWorkspacesByProject } from "./utils/ui/workspaceFiltering";
 import { useResumeManager } from "./hooks/useResumeManager";
@@ -573,14 +573,21 @@ function AppInner() {
       }
 
       for (const slot of [1, 2, 3, 4, 5, 6, 7, 8, 9] as const) {
-        const keybind = getEffectiveSlotKeybind(layoutPresets, slot);
-        if (matchesKeybind(e, keybind)) {
-          e.preventDefault();
-          void applySlotToWorkspace(selectedWorkspace.workspaceId, slot).catch(() => {
-            // Best-effort only.
-          });
-          return;
+        const preset = getPresetForSlot(layoutPresets, slot);
+        if (!preset) {
+          continue;
         }
+
+        const keybind = getEffectiveSlotKeybind(layoutPresets, slot);
+        if (!matchesKeybind(e, keybind)) {
+          continue;
+        }
+
+        e.preventDefault();
+        void applySlotToWorkspace(selectedWorkspace.workspaceId, slot).catch(() => {
+          // Best-effort only.
+        });
+        return;
       }
     };
 
