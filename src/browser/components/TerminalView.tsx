@@ -39,6 +39,7 @@ export function TerminalView({
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const [terminalError, setTerminalError] = useState<string | null>(null);
+  const pendingAutoFocusRef = useRef(false);
   const [terminalReady, setTerminalReady] = useState(false);
   // Track whether we've received the initial screen state from backend
   const [isLoading, setIsLoading] = useState(true);
@@ -64,6 +65,34 @@ export function TerminalView({
     };
     void setWindowDetails();
   }, [api, workspaceId, setDocumentTitle]);
+
+  // RightSidebar clears autoFocus immediately, but ghostty init is async.
+  // Stash the intent so we can focus once the terminal is ready.
+  useEffect(() => {
+    if (autoFocus) {
+      pendingAutoFocusRef.current = true;
+    }
+  }, [autoFocus]);
+
+  useEffect(() => {
+    if (!pendingAutoFocusRef.current || !visible || !terminalReady) {
+      return;
+    }
+
+    const term = termRef.current;
+    if (!term) {
+      return;
+    }
+
+    pendingAutoFocusRef.current = false;
+    const rafId = requestAnimationFrame(() => {
+      term.focus();
+      // Surface focus state for e2e (Playwright can be flaky querying ghostty focus).
+      containerRef.current?.setAttribute("data-terminal-autofocus", "true");
+    });
+
+    return () => cancelAnimationFrame(rafId);
+  }, [terminalReady, visible]);
 
   // Reset loading state when session changes
   useEffect(() => {
