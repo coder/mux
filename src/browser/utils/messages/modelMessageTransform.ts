@@ -518,6 +518,7 @@ function splitMixedContentMessages(messages: ModelMessage[]): ModelMessage[] {
 
   return result;
 }
+
 function filterReasoningOnlyMessages(messages: ModelMessage[]): ModelMessage[] {
   return messages.filter((msg) => {
     if (msg.role !== "assistant") {
@@ -534,6 +535,121 @@ function filterReasoningOnlyMessages(messages: ModelMessage[]): ModelMessage[] {
 
     return hasNonReasoningContent;
   });
+}
+
+/**
+ * Remove tool-call/tool-result parts that do not have a matching counterpart.
+ *
+ * Some providers (e.g., OpenAI responses) reject requests when a tool call is
+ * present without its tool output. If history is interrupted or corrupted, we
+ * can end up with orphaned tool-call/tool-result parts. Drop them to keep the
+ * request valid and self-healing.
+ */
+export function stripOrphanedToolCalls(messages: ModelMessage[]): ModelMessage[] {
+  const toolCallIds = new Set<string>();
+  const toolResultIds = new Set<string>();
+
+  for (const msg of messages) {
+    if (msg.role === "assistant") {
+      const assistantMsg = msg;
+      if (typeof assistantMsg.content === "string") {
+        continue;
+      }
+      for (const part of assistantMsg.content) {
+        if (part.type === "tool-call") {
+          toolCallIds.add(part.toolCallId);
+        }
+        if (part.type === "tool-result") {
+          toolResultIds.add(part.toolCallId);
+        }
+      }
+      continue;
+    }
+
+    if (msg.role === "tool") {
+      const toolMsg = msg;
+      for (const part of toolMsg.content) {
+        if (part.type === "tool-result") {
+          toolResultIds.add(part.toolCallId);
+        }
+      }
+    }
+  }
+
+  const missingResults = new Set(
+    [...toolCallIds].filter((toolCallId) => !toolResultIds.has(toolCallId))
+  );
+  const orphanResults = new Set(
+    [...toolResultIds].filter((toolCallId) => !toolCallIds.has(toolCallId))
+  );
+
+  if (missingResults.size === 0 && orphanResults.size === 0) {
+    return messages;
+  }
+
+  const cleaned: ModelMessage[] = [];
+
+  for (const msg of messages) {
+    if (msg.role === "assistant") {
+      const assistantMsg = msg;
+      if (typeof assistantMsg.content === "string") {
+        cleaned.push(msg);
+        continue;
+      }
+
+      const filteredContent = assistantMsg.content.filter((part) => {
+        if (part.type === "tool-call") {
+          return !missingResults.has(part.toolCallId);
+        }
+        if (part.type === "tool-result") {
+          return !orphanResults.has(part.toolCallId);
+        }
+        return true;
+      });
+
+      if (filteredContent.length === 0) {
+        continue;
+      }
+
+      if (filteredContent.length === assistantMsg.content.length) {
+        cleaned.push(msg);
+      } else {
+        cleaned.push({
+          ...assistantMsg,
+          content: filteredContent,
+        });
+      }
+      continue;
+    }
+
+    if (msg.role === "tool") {
+      const toolMsg = msg;
+      const filteredContent = toolMsg.content.filter((part) => {
+        if (part.type !== "tool-result") {
+          return true;
+        }
+        return !orphanResults.has(part.toolCallId);
+      });
+
+      if (filteredContent.length === 0) {
+        continue;
+      }
+
+      if (filteredContent.length === toolMsg.content.length) {
+        cleaned.push(msg);
+      } else {
+        cleaned.push({
+          ...toolMsg,
+          content: filteredContent,
+        });
+      }
+      continue;
+    }
+
+    cleaned.push(msg);
+  }
+
+  return cleaned;
 }
 
 /**
@@ -818,10 +934,11 @@ function ensureAnthropicThinkingBeforeToolCalls(messages: ModelMessage[]): Model
  * Applies multiple transformation passes based on provider requirements:
  * 0. Coalesce consecutive parts (text/reasoning) - all providers, reduces JSON overhead
  * 1. Split mixed content messages (text + tool calls) - all providers
- * 2. Filter reasoning-only messages:
+ * 2. Drop orphaned tool calls/results (self-healing)
+ * 3. Filter reasoning-only messages:
  *    - OpenAI: Keep reasoning parts (managed via previousResponseId), filter reasoning-only messages
  *    - Anthropic: Filter out reasoning-only messages (API rejects them)
- * 3. Merge consecutive user messages - all providers
+ * 4. Merge consecutive user messages - all providers
  *
  * Note: encryptedContent stripping happens earlier in streamManager when tool results
  * are first stored, not during message transformation.
@@ -840,28 +957,31 @@ export function transformModelMessages(
   // Pass 1: Split mixed content messages (applies to all providers)
   const split = splitMixedContentMessages(coalesced);
 
-  // Pass 2: Provider-specific reasoning handling
+  // Pass 2: Drop orphaned tool-call/tool-result pairs (applies to all providers)
+  const toolPaired = stripOrphanedToolCalls(split);
+
+  // Pass 3: Provider-specific reasoning handling
   let reasoningHandled: ModelMessage[];
   if (provider === "openai") {
     // OpenAI: Keep reasoning parts - managed via previousResponseId
     // Only filter out reasoning-only messages (messages with no text/tool-call content)
-    reasoningHandled = filterReasoningOnlyMessages(split);
+    reasoningHandled = filterReasoningOnlyMessages(toolPaired);
   } else if (provider === "anthropic") {
     // Anthropic: When extended thinking is enabled, preserve reasoning-only messages and ensure
     // tool-call messages start with reasoning. When it's disabled, filter reasoning-only messages.
     if (options?.anthropicThinkingEnabled) {
       // First strip reasoning without signatures (SDK will drop them anyway, causing empty messages)
-      const signedReasoning = stripUnsignedAnthropicReasoning(split);
+      const signedReasoning = stripUnsignedAnthropicReasoning(toolPaired);
       reasoningHandled = ensureAnthropicThinkingBeforeToolCalls(signedReasoning);
     } else {
-      reasoningHandled = filterReasoningOnlyMessages(split);
+      reasoningHandled = filterReasoningOnlyMessages(toolPaired);
     }
   } else {
     // Unknown provider: no reasoning handling
-    reasoningHandled = split;
+    reasoningHandled = toolPaired;
   }
 
-  // Pass 3: Merge consecutive user messages (applies to all providers)
+  // Pass 4: Merge consecutive user messages (applies to all providers)
   const merged = mergeConsecutiveUserMessages(reasoningHandled);
 
   return merged;
