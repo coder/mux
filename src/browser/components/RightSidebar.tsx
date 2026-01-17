@@ -226,6 +226,10 @@ interface RightSidebarTabsetNodeProps {
   fileDirtyMap: Map<TabType, boolean>;
   /** Handler to update file dirty state */
   onFileDirtyChange: (tab: TabType, dirty: boolean) => void;
+  /** Draft contents for file tabs */
+  fileDrafts: Record<string, string>;
+  /** Handler to update file draft content */
+  onFileDraftChange: (tab: TabType, content: string | null) => void;
   /** Handler to close a file tab */
   onCloseFile: (tab: TabType) => void;
 }
@@ -527,6 +531,8 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
                 <FileViewerTab
                   workspaceId={props.workspaceId}
                   relativePath={filePath}
+                  draftContent={props.fileDrafts[fileTab]}
+                  onDraftChange={(content) => props.onFileDraftChange(fileTab, content)}
                   onDirtyChange={(dirty) => props.onFileDirtyChange(fileTab, dirty)}
                 />
               )}
@@ -636,6 +642,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     () => parseRightSidebarLayoutState(layoutDraft ?? layoutRaw, initialActiveTab),
     [layoutDraft, layoutRaw, initialActiveTab]
   );
+  const fileDrafts = React.useMemo(() => layout.fileDrafts ?? {}, [layout.fileDrafts]);
 
   // If the Stats tab feature is enabled, ensure it exists in the layout.
   // If disabled, ensure it doesn't linger in persisted layouts.
@@ -761,7 +768,25 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   // Terminal titles from OSC sequences (e.g., shell setting window title)
   // Persisted to localStorage so they survive reload
   const terminalTitlesKey = getTerminalTitlesKey(workspaceId);
+
   const [fileDirtyMap, setFileDirtyMap] = React.useState<Map<TabType, boolean>>(() => new Map());
+
+  React.useEffect(() => {
+    const draftTabs = Object.keys(fileDrafts);
+    if (draftTabs.length === 0) return;
+    setFileDirtyMap((prev) => {
+      let next = prev;
+      for (const tab of draftTabs) {
+        if (!next.has(tab as TabType)) {
+          if (next === prev) {
+            next = new Map(prev);
+          }
+          next.set(tab as TabType, true);
+        }
+      }
+      return next;
+    });
+  }, [fileDrafts]);
 
   const [terminalTitles, setTerminalTitles] = React.useState<Map<TabType, string>>(() => {
     const stored = readPersistedState<Record<string, string>>(terminalTitlesKey, {});
@@ -970,6 +995,26 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       });
     },
     [workspaceId, api, setLayout, terminalTitlesKey]
+  );
+
+  const handleFileDraftChange = React.useCallback(
+    (tab: TabType, content: string | null) => {
+      setLayout((prev) => {
+        const openTabs = collectAllTabs(prev.root);
+        if (!openTabs.includes(tab)) {
+          return prev;
+        }
+        const fileDrafts = prev.fileDrafts ?? {};
+        if (content === null) {
+          if (!(tab in fileDrafts)) return prev;
+          const { [tab]: _removed, ...rest } = fileDrafts;
+          return { ...prev, fileDrafts: rest };
+        }
+        if (fileDrafts[tab] === content) return prev;
+        return { ...prev, fileDrafts: { ...fileDrafts, [tab]: content } };
+      });
+    },
+    [setLayout]
   );
 
   const handleFileDirtyChange = React.useCallback((tab: TabType, dirty: boolean) => {
@@ -1181,6 +1226,8 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         onTerminalTitleChange={handleTerminalTitleChange}
         tabPositions={tabPositions}
         autoFocusTerminalSession={autoFocusTerminalSession}
+        fileDrafts={fileDrafts}
+        onFileDraftChange={handleFileDraftChange}
         fileDirtyMap={fileDirtyMap}
         onFileDirtyChange={handleFileDirtyChange}
         onAutoFocusConsumed={() => setAutoFocusTerminalSession(null)}

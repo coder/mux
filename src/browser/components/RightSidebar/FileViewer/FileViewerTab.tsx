@@ -25,6 +25,8 @@ interface FileViewerTabProps {
   workspaceId: string;
   relativePath: string;
   onDirtyChange?: (dirty: boolean) => void;
+  draftContent?: string | null;
+  onDraftChange?: (content: string | null) => void;
 }
 
 interface LoadedData {
@@ -32,9 +34,11 @@ interface LoadedData {
   diff: string | null;
 }
 
+const DRAFT_DEBOUNCE_MS = 300;
 const DEBOUNCE_MS = 2000;
 const ENCODE_CHUNK_SIZE = 0x8000;
 
+const normalizeLineEndings = (content: string): string => content.replace(/\r\n/g, "\n");
 function encodeTextToBase64(content: string): { base64: string; size: number } {
   const bytes = new TextEncoder().encode(content);
   let binary = "";
@@ -47,6 +51,7 @@ function encodeTextToBase64(content: string): { base64: string; size: number } {
 
 export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
   const { api } = useAPI();
+  const { workspaceId, relativePath, onDirtyChange, draftContent, onDraftChange } = props;
   // Separate loading flag from loaded data - keeps content visible during refresh
   const [isLoading, setIsLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -57,9 +62,55 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
   const [contentVersion, setContentVersion] = React.useState(0);
   const [pendingExternalChange, setPendingExternalChange] = React.useState(false);
   const [isSaving, setIsSaving] = React.useState(false);
+  const draftRef = React.useRef<string | null>(draftContent ?? null);
+  const draftTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dirtyRef = React.useRef(false);
   const lineEndingRef = React.useRef<"lf" | "crlf">("lf");
   const [saveError, setSaveError] = React.useState<string | null>(null);
-  const dirtyRef = React.useRef(false);
+  const clearDraftTimeout = React.useCallback(() => {
+    if (draftTimeoutRef.current) {
+      clearTimeout(draftTimeoutRef.current);
+      draftTimeoutRef.current = null;
+    }
+  }, []);
+
+  const clearDraft = React.useCallback(() => {
+    if (draftRef.current === null && !draftTimeoutRef.current) return;
+    clearDraftTimeout();
+    draftRef.current = null;
+    onDraftChange?.(null);
+  }, [clearDraftTimeout, onDraftChange]);
+
+  const scheduleDraftPersist = React.useCallback(
+    (content: string) => {
+      draftRef.current = content;
+      if (!onDraftChange) return;
+      clearDraftTimeout();
+      draftTimeoutRef.current = setTimeout(() => {
+        draftTimeoutRef.current = null;
+        onDraftChange?.(content);
+      }, DRAFT_DEBOUNCE_MS);
+    },
+    [clearDraftTimeout, onDraftChange]
+  );
+
+  React.useEffect(() => {
+    draftRef.current = draftContent ?? null;
+    clearDraftTimeout();
+  }, [clearDraftTimeout, draftContent, relativePath]);
+
+  React.useEffect(() => {
+    return () => {
+      if (!onDraftChange) return;
+      if (draftTimeoutRef.current) {
+        clearTimeout(draftTimeoutRef.current);
+        draftTimeoutRef.current = null;
+        if (dirtyRef.current && draftRef.current !== null) {
+          onDraftChange(draftRef.current);
+        }
+      }
+    };
+  }, [onDraftChange]);
   // Refresh counter to trigger re-fetch
   const [refreshCounter, setRefreshCounter] = React.useState(0);
 
@@ -69,7 +120,7 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
     setPendingExternalChange(false);
     setIsSaving(false);
     setSaveError(null);
-  }, [props.relativePath]);
+  }, [relativePath]);
 
   // Subscribe to file-modifying tool events and debounce refresh
   React.useEffect(() => {
@@ -85,19 +136,19 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
         setPendingExternalChange(false);
         setRefreshCounter((c) => c + 1);
       }, DEBOUNCE_MS);
-    }, props.workspaceId);
+    }, workspaceId);
 
     return () => {
       unsubscribe();
       if (timeoutId) clearTimeout(timeoutId);
     };
-  }, [props.workspaceId]);
+  }, [workspaceId]);
 
   React.useEffect(() => {
     if (!api) return;
 
     // Validate path before making request
-    const pathError = validateRelativePath(props.relativePath);
+    const pathError = validateRelativePath(relativePath);
     if (pathError) {
       setError(pathError);
       setIsLoading(false);
@@ -105,7 +156,7 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
     }
 
     // Empty path is not valid for file viewing
-    if (!props.relativePath) {
+    if (!relativePath) {
       setError("No file selected");
       setIsLoading(false);
       return;
@@ -113,7 +164,7 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
 
     let cancelled = false;
     // Show loading spinner on initial load or when switching files, but not on refresh
-    const isSameFile = loadedPathRef.current === props.relativePath;
+    const isSameFile = loadedPathRef.current === relativePath;
     if (!isSameFile) {
       setIsLoading(true);
     }
@@ -124,12 +175,12 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
         // Fetch file contents and diff in parallel via bash
         const [fileResult, diffResult] = await Promise.all([
           api!.workspace.executeBash({
-            workspaceId: props.workspaceId,
-            script: buildReadFileScript(props.relativePath),
+            workspaceId,
+            script: buildReadFileScript(relativePath),
           }),
           api!.workspace.executeBash({
-            workspaceId: props.workspaceId,
-            script: buildFileDiffScript(props.relativePath),
+            workspaceId,
+            script: buildFileDiffScript(relativePath),
           }),
         ]);
 
@@ -150,7 +201,7 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
             data: { type: "error", message: "File is too large to display. Maximum: 10 MB." },
             diff: null,
           });
-          loadedPathRef.current = props.relativePath;
+          loadedPathRef.current = relativePath;
           setIsLoading(false);
           setSaveError(null);
           setPendingExternalChange(false);
@@ -183,13 +234,19 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
         }
 
         setLoaded({ data, diff });
-        loadedPathRef.current = props.relativePath;
+        loadedPathRef.current = relativePath;
         setIsLoading(false);
         setSaveError(null);
         setPendingExternalChange(false);
-        dirtyRef.current = false;
         if (data.type === "text") {
+          const draftContent = draftRef.current;
+          const hasDraft =
+            draftContent !== null &&
+            normalizeLineEndings(draftContent) !== normalizeLineEndings(data.content);
+          dirtyRef.current = hasDraft;
           setContentVersion((version) => version + 1);
+        } else {
+          dirtyRef.current = false;
         }
       } catch (err) {
         if (cancelled) return;
@@ -203,10 +260,28 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
     return () => {
       cancelled = true;
     };
-  }, [api, props.workspaceId, props.relativePath, refreshCounter]);
+  }, [api, workspaceId, relativePath, refreshCounter]);
+
+  const handleDirtyChange = (dirty: boolean) => {
+    dirtyRef.current = dirty;
+    if (!dirty) {
+      setSaveError(null);
+      clearDraft();
+    }
+    onDirtyChange?.(dirty);
+  };
+
+  const handleContentChange = React.useCallback(
+    (nextContent: string) => {
+      draftRef.current = nextContent;
+      if (!dirtyRef.current) return;
+      scheduleDraftPersist(nextContent);
+    },
+    [scheduleDraftPersist]
+  );
 
   // Check if we have valid cached content for the current file
-  const hasValidCache = loaded && loadedPathRef.current === props.relativePath;
+  const hasValidCache = loaded && loadedPathRef.current === relativePath;
 
   // Show loading spinner only on initial load or file switch (no valid cached content)
   if (isLoading && !hasValidCache) {
@@ -248,14 +323,6 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
     );
   }
 
-  const handleDirtyChange = (dirty: boolean) => {
-    dirtyRef.current = dirty;
-    if (!dirty) {
-      setSaveError(null);
-    }
-    props.onDirtyChange?.(dirty);
-  };
-
   const handleDismissExternal = () => {
     setPendingExternalChange(false);
   };
@@ -264,6 +331,7 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
     setPendingExternalChange(false);
     dirtyRef.current = false;
     setSaveError(null);
+    clearDraft();
     setRefreshCounter((c) => c + 1);
   };
   const handleRefresh = () => {
@@ -296,8 +364,8 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
         }
 
         const writeResult = await api.workspace.executeBash({
-          workspaceId: props.workspaceId,
-          script: buildWriteFileScript(props.relativePath, base64),
+          workspaceId,
+          script: buildWriteFileScript(relativePath, base64),
         });
 
         if (!writeResult.success) {
@@ -314,8 +382,8 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
 
         let updatedDiff: string | null = null;
         const diffResult = await api.workspace.executeBash({
-          workspaceId: props.workspaceId,
-          script: buildFileDiffScript(props.relativePath),
+          workspaceId,
+          script: buildFileDiffScript(relativePath),
         });
         if (diffResult.success && diffResult.data.success) {
           updatedDiff = diffResult.data.output;
@@ -325,10 +393,11 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
           data: { type: "text", content: contentToWrite, size },
           diff: updatedDiff,
         });
-        loadedPathRef.current = props.relativePath;
+        loadedPathRef.current = relativePath;
         setContentVersion((version) => version + 1);
         dirtyRef.current = false;
         setPendingExternalChange(false);
+        clearDraft();
       } catch (err) {
         setSaveError(err instanceof Error ? err.message : "Failed to save file");
       } finally {
@@ -339,14 +408,16 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
     return (
       <TextFileEditor
         content={data.content}
+        draftContent={draftContent}
         contentVersion={contentVersion}
-        filePath={props.relativePath}
+        filePath={relativePath}
         size={data.size}
         diff={diff}
         externalChange={pendingExternalChange}
         isSaving={isSaving}
         saveError={saveError}
         onDirtyChange={handleDirtyChange}
+        onContentChange={handleContentChange}
         onRefresh={handleRefresh}
         onSave={handleSave}
         onReloadExternal={handleReloadExternal}

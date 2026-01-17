@@ -21,13 +21,14 @@ import { xml } from "@codemirror/lang-xml";
 import { yaml } from "@codemirror/lang-yaml";
 import { cpp } from "@codemirror/lang-cpp";
 import {
+  HighlightStyle,
   bracketMatching,
-  defaultHighlightStyle,
   foldGutter,
   foldKeymap,
   indentOnInput,
   syntaxHighlighting,
 } from "@codemirror/language";
+import { tags } from "@lezer/highlight";
 import { highlightSelectionMatches } from "@codemirror/search";
 import { php } from "@codemirror/lang-php";
 import type { Extension, Range } from "@codemirror/state";
@@ -53,6 +54,8 @@ import { getLanguageFromPath, getLanguageDisplayName } from "@/common/utils/git/
 
 interface TextFileEditorProps {
   content: string;
+  /** Unsaved draft content to rehydrate (optional) */
+  draftContent?: string | null;
   filePath: string;
   size: number;
   /** Git diff for uncommitted changes (null if no changes or error) */
@@ -67,6 +70,8 @@ interface TextFileEditorProps {
   onRefresh?: () => void;
   /** Callback when editor dirty state changes */
   onDirtyChange?: (dirty: boolean) => void;
+  /** Callback when editor content changes */
+  onContentChange?: (content: string) => void;
   /** Callback when save is requested */
   onSave?: (content: string) => Promise<void> | void;
   /** File changed on disk while dirty */
@@ -86,6 +91,136 @@ interface DiffHighlights {
   removedLines: RemovedLineMarker[];
 }
 
+interface MinThemePalette {
+  foreground: string;
+  keyword: string;
+  string: string;
+  comment: string;
+  number: string;
+  variable: string;
+  function: string;
+  type: string;
+  tag: string;
+  attribute: string;
+  property: string;
+}
+
+const MIN_DARK_COLORS: MinThemePalette = {
+  foreground: "#B392F0",
+  keyword: "#F97583",
+  string: "#9DB1C5",
+  comment: "#6B737C",
+  number: "#F8F8F8",
+  variable: "#79B8FF",
+  function: "#B392F0",
+  type: "#B392F0",
+  tag: "#FFAB70",
+  attribute: "#B392F0",
+  property: "#79B8FF",
+};
+
+const MIN_LIGHT_COLORS: MinThemePalette = {
+  foreground: "#24292E",
+  keyword: "#D32F2F",
+  string: "#2B5581",
+  comment: "#C2C3C5",
+  number: "#1976D2",
+  variable: "#1976D2",
+  function: "#6F42C1",
+  type: "#6F42C1",
+  tag: "#22863A",
+  attribute: "#6F42C1",
+  property: "#1976D2",
+};
+
+const createMinHighlightStyle = (colors: MinThemePalette): HighlightStyle =>
+  HighlightStyle.define([
+    {
+      tag: [tags.comment, tags.lineComment, tags.blockComment, tags.docComment],
+      color: colors.comment,
+    },
+    {
+      tag: [
+        tags.string,
+        tags.docString,
+        tags.character,
+        tags.attributeValue,
+        tags.special(tags.string),
+        tags.regexp,
+      ],
+      color: colors.string,
+    },
+    {
+      tag: [tags.number, tags.integer, tags.float],
+      color: colors.number,
+    },
+    {
+      tag: [tags.bool, tags.null, tags.atom, tags.unit],
+      color: colors.variable,
+    },
+    {
+      tag: [
+        tags.keyword,
+        tags.controlKeyword,
+        tags.definitionKeyword,
+        tags.moduleKeyword,
+        tags.modifier,
+        tags.operatorKeyword,
+      ],
+      color: colors.keyword,
+    },
+    {
+      tag: [
+        tags.operator,
+        tags.compareOperator,
+        tags.logicOperator,
+        tags.bitwiseOperator,
+        tags.arithmeticOperator,
+        tags.updateOperator,
+        tags.definitionOperator,
+        tags.typeOperator,
+        tags.controlOperator,
+      ],
+      color: colors.keyword,
+    },
+    {
+      tag: [tags.variableName, tags.self, tags.special(tags.variableName)],
+      color: colors.variable,
+    },
+    {
+      tag: [tags.propertyName],
+      color: colors.property,
+    },
+    {
+      tag: [tags.function(tags.variableName), tags.function(tags.propertyName)],
+      color: colors.function,
+    },
+    {
+      tag: [tags.typeName, tags.className],
+      color: colors.type,
+    },
+    {
+      tag: [tags.tagName],
+      color: colors.tag,
+    },
+    {
+      tag: [tags.attributeName],
+      color: colors.attribute,
+    },
+    {
+      tag: [tags.link, tags.url],
+      color: colors.string,
+    },
+  ]);
+
+const MIN_DARK_HIGHLIGHT_STYLE = createMinHighlightStyle(MIN_DARK_COLORS);
+const MIN_LIGHT_HIGHLIGHT_STYLE = createMinHighlightStyle(MIN_LIGHT_COLORS);
+
+const getMinThemePalette = (isDark: boolean): MinThemePalette =>
+  isDark ? MIN_DARK_COLORS : MIN_LIGHT_COLORS;
+
+const getMinHighlightStyle = (isDark: boolean): HighlightStyle =>
+  isDark ? MIN_DARK_HIGHLIGHT_STYLE : MIN_LIGHT_HIGHLIGHT_STYLE;
 // Normalize line endings for consistent dirty tracking
 const normalizeLineEndings = (content: string): string => content.replace(/\r\n/g, "\n");
 
@@ -105,7 +240,6 @@ const baseExtensions: Extension = [
   dropCursor(),
   EditorState.allowMultipleSelections.of(true),
   indentOnInput(),
-  syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
   bracketMatching(),
   foldGutter(),
   highlightActiveLine(),
@@ -301,97 +435,107 @@ function getLanguageExtension(language: string): Extension {
 }
 
 function createEditorTheme(isDark: boolean): Extension {
-  return EditorView.theme(
-    {
-      "&": {
-        backgroundColor: "var(--color-code-bg)",
-        color: "var(--color-foreground)",
-        height: "100%",
-        fontFamily: "var(--font-monospace)",
-        "--mux-editor-gutter-width": "3.5rem",
+  const palette = getMinThemePalette(isDark);
+
+  return [
+    EditorView.theme(
+      {
+        "&": {
+          backgroundColor: "var(--color-code-bg)",
+          color: palette.foreground,
+          height: "100%",
+          fontFamily: "var(--font-monospace)",
+          "--mux-editor-gutter-width": "3.5rem",
+        },
+        ".cm-scroller": {
+          fontFamily: "var(--font-monospace)",
+          fontSize: "11px",
+          lineHeight: "1.6",
+        },
+        ".cm-content": {
+          padding: "6px 0",
+          caretColor: palette.foreground,
+        },
+        ".cm-line": {
+          padding: "0 8px",
+        },
+        ".cm-gutters": {
+          backgroundColor: "var(--color-line-number-bg)",
+          color: "var(--color-line-number-text)",
+          borderRight: "1px solid var(--color-line-number-border)",
+        },
+        ".cm-lineNumbers .cm-gutterElement": {
+          padding: "0 8px 0 6px",
+        },
+        ".cm-activeLine": {
+          backgroundColor: "color-mix(in srgb, var(--color-foreground) 6%, transparent)",
+        },
+        ".cm-activeLineGutter": {
+          backgroundColor: "color-mix(in srgb, var(--color-foreground) 6%, transparent)",
+        },
+        ".cm-selectionBackground": {
+          backgroundColor: "color-mix(in srgb, var(--color-accent) 35%, transparent)",
+        },
+        "&.cm-focused .cm-selectionBackground": {
+          backgroundColor: "color-mix(in srgb, var(--color-accent) 45%, transparent)",
+        },
+        ".cm-cursor": {
+          borderLeftColor: palette.foreground,
+        },
+        ".cm-diff-added-line": {
+          backgroundColor: "color-mix(in srgb, var(--color-success) 20%, transparent)",
+        },
+        ".cm-diff-removed-line": {
+          display: "grid",
+          gridTemplateColumns: "var(--mux-editor-gutter-width) 16px 1fr",
+          alignItems: "center",
+          padding: "0 8px 0 0",
+          fontFamily: "var(--font-monospace)",
+          fontSize: "11px",
+          lineHeight: "1.6",
+          backgroundColor: "color-mix(in srgb, var(--color-danger) 18%, transparent)",
+        },
+        ".cm-diff-removed-gutter": {
+          padding: "0 8px 0 6px",
+          textAlign: "right",
+          color: "var(--color-line-number-text)",
+          borderRight: "1px solid var(--color-line-number-border)",
+        },
+        ".cm-diff-removed-marker": {
+          textAlign: "center",
+          color: "var(--color-danger)",
+          fontWeight: "600",
+        },
+        ".cm-diff-removed-content": {
+          paddingLeft: "8px",
+          whiteSpace: "pre-wrap",
+        },
       },
-      ".cm-scroller": {
-        fontFamily: "var(--font-monospace)",
-        fontSize: "11px",
-        lineHeight: "1.6",
-      },
-      ".cm-content": {
-        padding: "6px 0",
-        caretColor: "var(--color-foreground)",
-      },
-      ".cm-line": {
-        padding: "0 8px",
-      },
-      ".cm-gutters": {
-        backgroundColor: "var(--color-line-number-bg)",
-        color: "var(--color-line-number-text)",
-        borderRight: "1px solid var(--color-line-number-border)",
-      },
-      ".cm-lineNumbers .cm-gutterElement": {
-        padding: "0 8px 0 6px",
-      },
-      ".cm-activeLine": {
-        backgroundColor: "color-mix(in srgb, var(--color-foreground) 6%, transparent)",
-      },
-      ".cm-activeLineGutter": {
-        backgroundColor: "color-mix(in srgb, var(--color-foreground) 6%, transparent)",
-      },
-      ".cm-selectionBackground": {
-        backgroundColor: "color-mix(in srgb, var(--color-accent) 35%, transparent)",
-      },
-      "&.cm-focused .cm-selectionBackground": {
-        backgroundColor: "color-mix(in srgb, var(--color-accent) 45%, transparent)",
-      },
-      ".cm-cursor": {
-        borderLeftColor: "var(--color-foreground)",
-      },
-      ".cm-diff-added-line": {
-        backgroundColor: "color-mix(in srgb, var(--color-success) 20%, transparent)",
-      },
-      ".cm-diff-removed-line": {
-        display: "grid",
-        gridTemplateColumns: "var(--mux-editor-gutter-width) 16px 1fr",
-        alignItems: "center",
-        padding: "0 8px 0 0",
-        fontFamily: "var(--font-monospace)",
-        fontSize: "11px",
-        lineHeight: "1.6",
-        backgroundColor: "color-mix(in srgb, var(--color-danger) 18%, transparent)",
-      },
-      ".cm-diff-removed-gutter": {
-        padding: "0 8px 0 6px",
-        textAlign: "right",
-        color: "var(--color-line-number-text)",
-        borderRight: "1px solid var(--color-line-number-border)",
-      },
-      ".cm-diff-removed-marker": {
-        textAlign: "center",
-        color: "var(--color-danger)",
-        fontWeight: "600",
-      },
-      ".cm-diff-removed-content": {
-        paddingLeft: "8px",
-        whiteSpace: "pre-wrap",
-      },
-    },
-    { dark: isDark }
-  );
+      { dark: isDark }
+    ),
+    syntaxHighlighting(getMinHighlightStyle(isDark), { fallback: true }),
+  ];
 }
 
 export const TextFileEditor: React.FC<TextFileEditorProps> = (props) => {
   const { theme: themeMode } = useTheme();
   const { copied, copyToClipboard } = useCopyToClipboard();
-  const normalizedInitialContent = normalizeLineEndings(props.content);
+  const normalizedBaseContent = normalizeLineEndings(props.content);
+  const draftContent = props.draftContent;
+  const normalizedInitialContent =
+    draftContent !== null && draftContent !== undefined
+      ? normalizeLineEndings(draftContent)
+      : normalizedBaseContent;
   const language = getLanguageFromPath(props.filePath);
   const languageDisplayName = getLanguageDisplayName(language);
   const isDark = themeMode !== "light" && !themeMode.endsWith("-light");
 
   const editorRootRef = React.useRef<HTMLDivElement | null>(null);
   const viewRef = React.useRef<EditorView | null>(null);
-  const baseDocRef = React.useRef<Text>(Text.of(normalizedInitialContent.split("\n")));
+  const baseDocRef = React.useRef<Text>(Text.of(normalizedBaseContent.split("\n")));
   const contentRef = React.useRef(normalizedInitialContent);
   const dirtyRef = React.useRef(false);
-  const lineCountRef = React.useRef(getDocLineCount(baseDocRef.current));
+  const lineCountRef = React.useRef(getDocLineCount(Text.of(normalizedInitialContent.split("\n"))));
 
   const [lineCount, setLineCount] = React.useState(lineCountRef.current);
   const [isDirty, setIsDirty] = React.useState(false);
@@ -406,15 +550,17 @@ export const TextFileEditor: React.FC<TextFileEditorProps> = (props) => {
 
   const callbacksRef = React.useRef({
     onDirtyChange: props.onDirtyChange,
+    onContentChange: props.onContentChange,
     onSave: props.onSave,
   });
 
   React.useEffect(() => {
     callbacksRef.current = {
       onDirtyChange: props.onDirtyChange,
+      onContentChange: props.onContentChange,
       onSave: props.onSave,
     };
-  }, [props.onDirtyChange, props.onSave]);
+  }, [props.onContentChange, props.onDirtyChange, props.onSave]);
 
   const diffHighlights = parseDiffHighlights(props.diff);
   const addedCount = diffHighlights.addedLines.length;
@@ -463,6 +609,7 @@ export const TextFileEditor: React.FC<TextFileEditorProps> = (props) => {
       contentRef.current = nextDoc.toString();
       updateLineCount(nextDoc);
       updateDirtyState(!nextDoc.eq(baseDocRef.current));
+      callbacksRef.current.onContentChange?.(contentRef.current);
     });
 
     const saveKeymap = Prec.highest(
@@ -496,7 +643,7 @@ export const TextFileEditor: React.FC<TextFileEditorProps> = (props) => {
     const view = new EditorView({ state, parent: editorRootRef.current });
     viewRef.current = view;
     updateLineCount(state.doc);
-    updateDirtyState(false);
+    updateDirtyState(!state.doc.eq(baseDocRef.current));
     requestAnimationFrame(syncGutterWidth);
 
     return () => {
@@ -510,17 +657,23 @@ export const TextFileEditor: React.FC<TextFileEditorProps> = (props) => {
     const view = viewRef.current;
     if (!view) return;
 
-    const normalizedContent = normalizeLineEndings(props.content);
-    baseDocRef.current = Text.of(normalizedContent.split("\n"));
+    const normalizedBase = normalizeLineEndings(props.content);
+    const draftContentValue = props.draftContent;
+    const normalizedDraft =
+      draftContentValue !== null && draftContentValue !== undefined
+        ? normalizeLineEndings(draftContentValue)
+        : null;
+    const normalizedContent = normalizedDraft ?? normalizedBase;
+    baseDocRef.current = Text.of(normalizedBase.split("\n"));
     contentRef.current = normalizedContent;
 
     const nextState = createEditorState(normalizedContent);
     view.setState(nextState);
     updateLineCount(nextState.doc);
-    updateDirtyState(false);
+    updateDirtyState(!nextState.doc.eq(baseDocRef.current));
     requestAnimationFrame(syncGutterWidth);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- rebase only on content changes.
-  }, [props.contentVersion, props.content]);
+  }, [props.contentVersion, props.content, props.draftContent]);
 
   React.useEffect(() => {
     themeExtensionRef.current = createEditorTheme(isDark);

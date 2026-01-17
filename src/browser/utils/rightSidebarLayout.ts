@@ -1,5 +1,7 @@
 import { isTabType, type TabType } from "@/browser/types/rightSidebar";
 
+export type FileDrafts = Record<string, string>;
+
 export type RightSidebarLayoutNode =
   | {
       type: "split";
@@ -54,6 +56,7 @@ export interface RightSidebarLayoutState {
   nextId: number;
   focusedTabsetId: string;
   root: RightSidebarLayoutNode;
+  fileDrafts?: FileDrafts;
 }
 
 export function getDefaultRightSidebarLayoutState(activeTab: TabType): RightSidebarLayoutState {
@@ -71,6 +74,7 @@ export function getDefaultRightSidebarLayoutState(activeTab: TabType): RightSide
       tabs,
       activeTab,
     },
+    fileDrafts: {},
   };
 }
 
@@ -88,6 +92,24 @@ function injectTabIntoLayout(node: RightSidebarLayoutNode, tab: TabType): boolea
   }
   // Split node - try first child, then second
   return injectTabIntoLayout(node.children[0], tab) || injectTabIntoLayout(node.children[1], tab);
+}
+
+/**
+ * Prune file draft entries to tabs that still exist in the layout.
+ */
+function normalizeFileDrafts(root: RightSidebarLayoutNode, drafts: unknown): FileDrafts {
+  if (!drafts || typeof drafts !== "object") return {};
+  const entries = Object.entries(drafts as Record<string, unknown>);
+  if (entries.length === 0) return {};
+  const openTabs = new Set(collectAllTabs(root));
+  const nextDrafts: FileDrafts = {};
+  for (const [tab, content] of entries) {
+    if (!openTabs.has(tab as TabType)) continue;
+    if (typeof content === "string") {
+      nextDrafts[tab] = content;
+    }
+  }
+  return nextDrafts;
 }
 
 /**
@@ -109,7 +131,10 @@ export function parseRightSidebarLayoutState(
     if (!layoutContainsTab(raw.root, "explorer")) {
       injectTabIntoLayout(raw.root, "explorer");
     }
-    return raw;
+    return {
+      ...raw,
+      fileDrafts: normalizeFileDrafts(raw.root, raw.fileDrafts),
+    };
   }
 
   return getDefaultRightSidebarLayoutState(activeTabFallback);
@@ -188,10 +213,17 @@ export function removeTabEverywhere(
     ? state.focusedTabsetId
     : (findFirstTabsetId(nextRoot) ?? "tabset-1");
 
+  let fileDrafts = state.fileDrafts;
+  if (fileDrafts && tab in fileDrafts) {
+    const { [tab]: _removed, ...rest } = fileDrafts;
+    fileDrafts = rest;
+  }
+
   return {
     ...state,
     root: nextRoot,
     focusedTabsetId,
+    fileDrafts,
   };
 }
 function updateNode(
