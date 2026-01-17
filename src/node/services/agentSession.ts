@@ -795,6 +795,16 @@ export class AgentSession {
     return undefined;
   }
 
+  private async finalizeCompactionRetry(messageId: string): Promise<void> {
+    this.activeCompactionRequest = undefined;
+    this.emitChatEvent({
+      type: "stream-abort",
+      workspaceId: this.workspaceId,
+      messageId,
+    });
+    await this.clearFailedCompaction(messageId);
+  }
+
   private async clearFailedCompaction(messageId: string): Promise<void> {
     const [partialResult, deleteMessageResult] = await Promise.all([
       this.partialService.deletePartial(this.workspaceId),
@@ -851,20 +861,14 @@ export class AgentSession {
     }
 
     this.compactionRetryAttempts.add(context.id);
-    this.activeCompactionRequest = undefined;
 
-    this.emitChatEvent({
-      type: "stream-abort",
-      workspaceId: this.workspaceId,
-      messageId: data.messageId,
-    });
     log.info("Compaction hit context limit; retrying once with OpenAI truncation", {
       workspaceId: this.workspaceId,
       model: context.modelString,
       compactionRequestId: context.id,
     });
 
-    await this.clearFailedCompaction(data.messageId);
+    await this.finalizeCompactionRetry(data.messageId);
 
     const retryResult = await this.streamWithHistory(context.modelString, context.options, "auto");
     if (!retryResult.success) {
