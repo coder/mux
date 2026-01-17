@@ -136,11 +136,22 @@ export class LocalRuntime extends LocalBaseRuntime {
    *
    * This enables conversation branching without git worktree overhead.
    */
-  // eslint-disable-next-line @typescript-eslint/require-await
   async forkWorkspace(params: WorkspaceForkParams): Promise<WorkspaceForkResult> {
     const { initLogger } = params;
 
     initLogger.logStep("Creating conversation fork (no worktree isolation)");
+
+    // Verify the project directory exists (same check as createWorkspace)
+    try {
+      await this.stat(this.projectPath);
+    } catch {
+      return {
+        success: false,
+        error: `Project directory does not exist: ${this.projectPath}`,
+      };
+    }
+
+    initLogger.logStep("Project directory verified");
 
     // Return success - the workspace service will copy chat history
     // and create a new workspace entry pointing to this project directory

@@ -162,8 +162,25 @@ describe("LocalRuntime", () => {
       expect(result.workspacePath).toBe(testDir);
       // sourceBranch is undefined for LocalRuntime (no git operations)
       expect(result.sourceBranch).toBeUndefined();
-      // Should have logged a step
+      // Should have logged steps
       expect(logger.steps.some((s) => s.includes("fork"))).toBe(true);
+      expect(logger.steps.some((s) => s.includes("verified"))).toBe(true);
+    });
+
+    it("fails when project directory does not exist", async () => {
+      const nonExistentPath = path.join(testDir, "does-not-exist");
+      const runtime = new LocalRuntime(nonExistentPath);
+      const logger = createMockLogger();
+
+      const result = await runtime.forkWorkspace({
+        projectPath: nonExistentPath,
+        sourceWorkspaceName: "main",
+        newWorkspaceName: "feature",
+        initLogger: logger,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("does not exist");
     });
   });
 
