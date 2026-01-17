@@ -1023,6 +1023,7 @@ export class AIService extends EventEmitter {
    * @param changedFileAttachments Optional attachments for files that were edited externally
    * @param postCompactionAttachments Optional attachments to inject after compaction
    * @param disableWorkspaceAgents When true, read agent definitions from project path instead of workspace worktree
+   * @param openaiTruncationModeOverride Optional OpenAI truncation override (e.g., compaction retry)
    * @returns Promise that resolves when streaming completes or fails
    */
   async streamMessage(
@@ -1042,7 +1043,8 @@ export class AIService extends EventEmitter {
     postCompactionAttachments?: PostCompactionAttachment[] | null,
     experiments?: { programmaticToolCalling?: boolean; programmaticToolCallingExclusive?: boolean },
     disableWorkspaceAgents?: boolean,
-    hasQueuedMessage?: () => boolean
+    hasQueuedMessage?: () => boolean,
+    openaiTruncationModeOverride?: "auto" | "disabled"
   ): Promise<Result<void, SendMessageError>> {
     // Support interrupts during startup (before StreamManager emits stream-start).
     // We register an AbortController up-front and let stopStream() abort it.
@@ -1852,7 +1854,7 @@ export class AIService extends EventEmitter {
       }
 
       // Build provider options based on thinking level and message history
-      const truncationMode = agentDefinition.frontmatter.providerOptions?.truncationMode;
+      const truncationMode = openaiTruncationModeOverride;
       // Pass filtered messages so OpenAI can extract previousResponseId for persistence
       // Also pass callback to filter out lost responseIds (OpenAI invalidated them)
       // Pass workspaceId to derive stable promptCacheKey for OpenAI caching

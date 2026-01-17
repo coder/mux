@@ -44,7 +44,7 @@ import type { TodoItem } from "@/common/types/tools";
 import type { PostCompactionAttachment, PostCompactionExclusions } from "@/common/types/attachment";
 import { TURNS_BETWEEN_ATTACHMENTS } from "@/common/constants/attachments";
 import { extractEditedFileDiffs } from "@/common/utils/messages/extractEditedFiles";
-import { isValidModelFormat } from "@/common/utils/ai/models";
+import { getModelName, getModelProvider, isValidModelFormat } from "@/common/utils/ai/models";
 import { materializeFileAtMentions } from "@/node/services/fileAtMentions";
 
 /**
@@ -146,6 +146,16 @@ export class AgentSession {
    * Cache the last-known experiment state so we don't spam metadata refresh
    * when post-compaction context is disabled.
    */
+  /** Track compaction requests that already retried with truncation. */
+  private readonly compactionRetryAttempts = new Set<string>();
+  /**
+   * Active compaction request metadata for retry decisions (cleared on stream end/abort).
+   */
+  private activeCompactionRequest?: {
+    id: string;
+    modelString: string;
+    options?: SendMessageOptions;
+  };
   private postCompactionContextEnabled = false;
 
   constructor(options: AgentSessionOptions) {
@@ -684,7 +694,8 @@ export class AgentSession {
 
   private async streamWithHistory(
     modelString: string,
-    options?: SendMessageOptions
+    options?: SendMessageOptions,
+    openaiTruncationModeOverride?: "auto" | "disabled"
   ): Promise<Result<void, SendMessageError>> {
     if (this.disposed) {
       return Ok(undefined);
@@ -711,6 +722,12 @@ export class AgentSession {
       );
     }
 
+    this.activeCompactionRequest = this.resolveCompactionRequest(
+      historyResult.data,
+      modelString,
+      options
+    );
+
     // Check for external file edits (timestamp-based polling)
     const changedFileAttachments = await this.getChangedFileAttachments();
 
@@ -728,7 +745,7 @@ export class AgentSession {
     // Bind recordFileState to this session for the propose_plan tool
     const recordFileState = this.recordFileState.bind(this);
 
-    return this.aiService.streamMessage(
+    const streamResult = await this.aiService.streamMessage(
       historyResult.data,
       this.workspaceId,
       modelString,
@@ -745,8 +762,136 @@ export class AgentSession {
       postCompactionAttachments,
       options?.experiments,
       options?.disableWorkspaceAgents,
-      () => !this.messageQueue.isEmpty()
+      () => !this.messageQueue.isEmpty(),
+      openaiTruncationModeOverride
     );
+
+    if (!streamResult.success) {
+      this.activeCompactionRequest = undefined;
+    }
+
+    return streamResult;
+  }
+
+  private resolveCompactionRequest(
+    history: MuxMessage[],
+    modelString: string,
+    options?: SendMessageOptions
+  ): { id: string; modelString: string; options?: SendMessageOptions } | undefined {
+    for (let index = history.length - 1; index >= 0; index -= 1) {
+      const message = history[index];
+      if (message.role !== "user") {
+        continue;
+      }
+      if (!isCompactionRequestMetadata(message.metadata?.muxMetadata)) {
+        return undefined;
+      }
+      return {
+        id: message.id,
+        modelString,
+        options,
+      };
+    }
+    return undefined;
+  }
+
+  private async clearFailedCompaction(messageId: string): Promise<void> {
+    const [partialResult, deleteMessageResult] = await Promise.all([
+      this.partialService.deletePartial(this.workspaceId),
+      this.historyService.deleteMessage(this.workspaceId, messageId),
+    ]);
+
+    if (!partialResult.success) {
+      log.warn("Failed to clear partial before compaction retry", {
+        workspaceId: this.workspaceId,
+        error: partialResult.error,
+      });
+    }
+
+    if (
+      !deleteMessageResult.success &&
+      !(
+        typeof deleteMessageResult.error === "string" &&
+        deleteMessageResult.error.includes("not found in history")
+      )
+    ) {
+      log.warn("Failed to delete failed compaction placeholder", {
+        workspaceId: this.workspaceId,
+        error: deleteMessageResult.error,
+      });
+    }
+  }
+
+  private isGptClassModel(modelString: string): boolean {
+    return (
+      getModelProvider(modelString) === "openai" &&
+      getModelName(modelString).toLowerCase().startsWith("gpt-")
+    );
+  }
+
+  private async maybeRetryCompactionOnContextExceeded(data: {
+    messageId: string;
+    errorType?: string;
+  }): Promise<boolean> {
+    if (data.errorType !== "context_exceeded") {
+      return false;
+    }
+
+    const context = this.activeCompactionRequest;
+    if (!context) {
+      return false;
+    }
+
+    if (!this.isGptClassModel(context.modelString)) {
+      return false;
+    }
+
+    if (this.compactionRetryAttempts.has(context.id)) {
+      return false;
+    }
+
+    this.compactionRetryAttempts.add(context.id);
+    this.activeCompactionRequest = undefined;
+
+    log.info("Compaction hit context limit; retrying once with OpenAI truncation", {
+      workspaceId: this.workspaceId,
+      model: context.modelString,
+      compactionRequestId: context.id,
+    });
+
+    await this.clearFailedCompaction(data.messageId);
+
+    const retryResult = await this.streamWithHistory(context.modelString, context.options, "auto");
+    if (!retryResult.success) {
+      log.error("Compaction retry failed to start", {
+        workspaceId: this.workspaceId,
+        error: retryResult.error,
+      });
+      return false;
+    }
+
+    return true;
+  }
+
+  private async handleStreamError(data: {
+    workspaceId: string;
+    messageId: string;
+    error: string;
+    errorType?: string;
+  }): Promise<void> {
+    if (await this.maybeRetryCompactionOnContextExceeded(data)) {
+      return;
+    }
+
+    this.activeCompactionRequest = undefined;
+
+    const streamError: StreamErrorMessage = {
+      type: "stream-error",
+      messageId: data.messageId,
+      error: data.error,
+      errorType: (data.errorType ?? "unknown") as StreamErrorMessage["errorType"],
+    };
+    this.emitChatEvent(streamError);
   }
 
   private attachAiListeners(): void {
@@ -792,10 +937,14 @@ export class AgentSession {
     forward("reasoning-delta", (payload) => this.emitChatEvent(payload));
     forward("reasoning-end", (payload) => this.emitChatEvent(payload));
     forward("usage-delta", (payload) => this.emitChatEvent(payload));
-    forward("stream-abort", (payload) => this.emitChatEvent(payload));
+    forward("stream-abort", (payload) => {
+      this.activeCompactionRequest = undefined;
+      this.emitChatEvent(payload);
+    });
     forward("runtime-status", (payload) => this.emitChatEvent(payload));
 
     forward("stream-end", async (payload) => {
+      this.activeCompactionRequest = undefined;
       const handled = await this.compactionHandler.handleCompletion(payload as StreamEndEvent);
       if (!handled) {
         this.emitChatEvent(payload);
@@ -824,13 +973,7 @@ export class AgentSession {
         error: string;
         errorType?: string;
       };
-      const streamError: StreamErrorMessage = {
-        type: "stream-error",
-        messageId: data.messageId,
-        error: data.error,
-        errorType: (data.errorType ?? "unknown") as StreamErrorMessage["errorType"],
-      };
-      this.emitChatEvent(streamError);
+      void this.handleStreamError(data);
     };
 
     this.aiListeners.push({ event: "error", handler: errorHandler });

@@ -13,8 +13,6 @@ description: Does stuff
 base: exec
 tools:
   add: ["file_read", "bash.*"]
-providerOptions:
-  truncationMode: auto
 unknownTopLevel: 123
 ui:
   hidden: false
@@ -33,7 +31,6 @@ Do the thing.
     expect(result.frontmatter.name).toBe("My Agent");
     expect(result.frontmatter.description).toBe("Does stuff");
     expect(result.frontmatter.base).toBe("exec");
-    expect(result.frontmatter.providerOptions?.truncationMode).toBe("auto");
     expect(result.frontmatter.tools).toEqual({ add: ["file_read", "bash.*"] });
     expect(result.frontmatter.ui?.hidden).toBe(false);
     expect(result.frontmatter.ui?.color).toBe("#ff00ff");
