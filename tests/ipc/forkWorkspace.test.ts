@@ -362,4 +362,136 @@ describeIntegration("Workspace fork", () => {
     },
     15000
   );
+
+  test.concurrent(
+    "should fork local (project-dir) workspace successfully",
+    async () => {
+      const env = await createTestEnvironment();
+      const tempGitRepo = await createTempGitRepo();
+
+      try {
+        // Create source workspace with LocalRuntime (project-dir mode)
+        // This means type: "local" without srcBaseDir
+        const localRuntimeConfig = { type: "local" as const };
+
+        const client = resolveOrpcClient(env);
+        const createResult = await client.workspace.create({
+          projectPath: tempGitRepo,
+          branchName: "local-source",
+          trunkBranch: "main", // Not used for local runtime
+          runtimeConfig: localRuntimeConfig,
+        });
+        expect(createResult.success).toBe(true);
+        if (!createResult.success) return;
+        const sourceWorkspaceId = createResult.metadata.id;
+
+        // Verify source workspace uses local runtime (project-dir mode)
+        expect(createResult.metadata.runtimeConfig.type).toBe("local");
+        expect("srcBaseDir" in createResult.metadata.runtimeConfig).toBe(false);
+
+        // Fork the local workspace
+        const forkResult = await client.workspace.fork({
+          sourceWorkspaceId,
+          newName: "local-forked",
+        });
+        expect(forkResult.success).toBe(true);
+        if (!forkResult.success) return;
+        const forkedWorkspaceId = forkResult.metadata.id;
+
+        // Forked workspace should also use local runtime (project-dir mode)
+        expect(forkResult.metadata.runtimeConfig.type).toBe("local");
+        expect("srcBaseDir" in forkResult.metadata.runtimeConfig).toBe(false);
+
+        // Both workspaces should point to the same project path
+        expect(forkResult.metadata.namedWorkspacePath).toBe(
+          createResult.metadata.namedWorkspacePath
+        );
+        expect(forkResult.metadata.projectPath).toBe(createResult.metadata.projectPath);
+
+        // User expects: both workspaces appear in workspace list
+        const workspaces = await client.workspace.list();
+        const workspaceIds = workspaces.map((w: { id: string }) => w.id);
+        expect(workspaceIds).toContain(sourceWorkspaceId);
+        expect(workspaceIds).toContain(forkedWorkspaceId);
+
+        // Cleanup
+        await client.workspace.remove({ workspaceId: sourceWorkspaceId });
+        await client.workspace.remove({ workspaceId: forkedWorkspaceId });
+      } finally {
+        await cleanupTestEnvironment(env);
+        await cleanupTempGitRepo(tempGitRepo);
+      }
+    },
+    15000
+  );
+
+  test.concurrent(
+    "should preserve chat history when forking local (project-dir) workspace",
+    async () => {
+      const env = await createTestEnvironment();
+      const tempGitRepo = await createTempGitRepo();
+
+      try {
+        // Create source workspace with LocalRuntime (project-dir mode)
+        const localRuntimeConfig = { type: "local" as const };
+
+        const client = resolveOrpcClient(env);
+        const createResult = await client.workspace.create({
+          projectPath: tempGitRepo,
+          branchName: "local-source-history",
+          trunkBranch: "main",
+          runtimeConfig: localRuntimeConfig,
+        });
+        expect(createResult.success).toBe(true);
+        if (!createResult.success) return;
+        const sourceWorkspaceId = createResult.metadata.id;
+
+        // Add history to source workspace
+        const historyService = new HistoryService(env.config);
+        const uniqueWord = `localtest-${Date.now()}`;
+        const historyMessages = [
+          createMuxMessage("msg-1", "user", `Remember this local word: ${uniqueWord}`, {}),
+          createMuxMessage(
+            "msg-2",
+            "assistant",
+            `I will remember the local word "${uniqueWord}".`,
+            {}
+          ),
+        ];
+
+        for (const msg of historyMessages) {
+          const result = await historyService.appendToHistory(sourceWorkspaceId, msg);
+          expect(result.success).toBe(true);
+        }
+
+        // Fork the local workspace
+        const forkResult = await client.workspace.fork({
+          sourceWorkspaceId,
+          newName: "local-forked-history",
+        });
+        expect(forkResult.success).toBe(true);
+        if (!forkResult.success) return;
+        const forkedWorkspaceId = forkResult.metadata.id;
+
+        // Verify forked workspace has copied history
+        const forkedHistoryResult = await historyService.getHistory(forkedWorkspaceId);
+        expect(forkedHistoryResult.success).toBe(true);
+        if (!forkedHistoryResult.success) return;
+
+        // Check that history contains our unique word
+        const historyContent = forkedHistoryResult.data
+          .map((msg) => ("content" in msg ? msg.content : ""))
+          .join(" ");
+        expect(historyContent).toContain(uniqueWord);
+
+        // Cleanup
+        await client.workspace.remove({ workspaceId: sourceWorkspaceId });
+        await client.workspace.remove({ workspaceId: forkedWorkspaceId });
+      } finally {
+        await cleanupTestEnvironment(env);
+        await cleanupTempGitRepo(tempGitRepo);
+      }
+    },
+    15000
+  );
 });

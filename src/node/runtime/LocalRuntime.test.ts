@@ -147,7 +147,7 @@ describe("LocalRuntime", () => {
   });
 
   describe("forkWorkspace", () => {
-    it("returns error - operation not supported", async () => {
+    it("succeeds and returns project path (no worktree isolation)", async () => {
       const runtime = new LocalRuntime(testDir);
       const logger = createMockLogger();
 
@@ -158,9 +158,12 @@ describe("LocalRuntime", () => {
         initLogger: logger,
       });
 
-      expect(result.success).toBe(false);
-      expect(result.error).toContain("Cannot fork");
-      expect(result.error).toContain("project-dir");
+      expect(result.success).toBe(true);
+      expect(result.workspacePath).toBe(testDir);
+      // sourceBranch is undefined for LocalRuntime (no git operations)
+      expect(result.sourceBranch).toBeUndefined();
+      // Should have logged a step
+      expect(logger.steps.some((s) => s.includes("fork"))).toBe(true);
     });
   });
 
