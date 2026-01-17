@@ -221,11 +221,11 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
         // Even if bashResult.success is false, try to process if we have output
         const data = processFileContents(bashResult.output ?? "", bashResult.exitCode);
 
+        if (cancelled) return;
+
         if (data.type === "text") {
           lineEndingRef.current = data.content.includes("\r\n") ? "crlf" : "lf";
         }
-
-        if (cancelled) return;
 
         // Diff is optional - don't fail if it errors
         let diff: string | null = null;
