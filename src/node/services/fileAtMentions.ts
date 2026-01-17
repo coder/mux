@@ -194,16 +194,18 @@ export async function materializeFileAtMentions(
   const results: MaterializedFileMention[] = [];
   const seenTokens = new Set<string>();
   let totalBytes = 0;
-  let totalBlocks = 0;
+  let totalMentions = 0;
 
   for (const mention of mentions) {
-    if (totalBlocks >= MAX_MENTION_FILES || totalBytes >= MAX_TOTAL_BYTES) {
+    if (totalMentions >= MAX_MENTION_FILES || totalBytes >= MAX_TOTAL_BYTES) {
       break;
     }
 
     if (seenTokens.has(mention.token)) {
       continue;
     }
+
+    totalMentions += 1;
 
     const displayPath = mention.path;
 
@@ -333,7 +335,6 @@ export async function materializeFileAtMentions(
       modifiedTimeMs: stat.modifiedTime.getTime(),
     });
     seenTokens.add(mention.token);
-    totalBlocks++;
     totalBytes += blockBytes;
   }
 
@@ -380,8 +381,8 @@ export async function injectFileAtMentions(
     }
   }
 
-  let totalBlocks = 0;
   let totalBytes = 0;
+  let totalMentions = 0;
 
   const createdAt = Date.now();
 
@@ -395,14 +396,13 @@ export async function injectFileAtMentions(
     existing.push(block);
     blocksByTargetIndex.set(targetIndex, existing);
 
-    totalBlocks += 1;
     totalBytes += blockBytes;
     return true;
   };
 
   // Iterate newest → oldest so the current turn wins if we hit caps.
   for (let targetIndex = messages.length - 1; targetIndex >= 0; targetIndex--) {
-    if (totalBlocks >= MAX_MENTION_FILES || totalBytes >= MAX_TOTAL_BYTES) {
+    if (totalMentions >= MAX_MENTION_FILES || totalBytes >= MAX_TOTAL_BYTES) {
       break;
     }
 
@@ -438,13 +438,15 @@ export async function injectFileAtMentions(
     });
 
     for (const mention of mentions) {
-      if (totalBlocks >= MAX_MENTION_FILES || totalBytes >= MAX_TOTAL_BYTES) {
+      if (totalMentions >= MAX_MENTION_FILES || totalBytes >= MAX_TOTAL_BYTES) {
         break;
       }
 
       if (seenTokens.has(mention.token)) {
         continue;
       }
+
+      totalMentions += 1;
 
       const displayPath = mention.path;
 
