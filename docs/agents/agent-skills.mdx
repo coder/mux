@@ -16,12 +16,13 @@ This keeps the system prompt small while still making skills discoverable.
 
 ## Where skills live
 
-mux discovers skills from two roots:
+mux discovers skills from three roots:
 
 - **Project-local**: `<projectRoot>/.mux/skills/<skill-name>/SKILL.md`
 - **Global**: `~/.mux/skills/<skill-name>/SKILL.md`
+- **Built-in**: shipped with mux
 
-If a skill exists in both locations, **project-local overrides global**.
+If a skill exists in multiple locations, the precedence order is: **project-local > global > built-in**.
 
 <Info>
   mux reads skills using the active workspace runtime. For SSH workspaces, skills are read from the
@@ -82,7 +83,8 @@ mux injects an `<agent-skills>` block into the system prompt listing the availab
 
 You can apply a skill in two ways:
 
-- **Explicit (slash command)**: type `/{skill-name} ...` in the chat input. mux will send your message normally, but inject the skill content into the system context for that send.
+- **Explicit (slash command)**: type `/{skill-name}` (optionally followed by a message: `/{skill-name} ...`) in the chat input. mux will send your message normally (or a small default message if you omit one), and inject the skill content into the system context for that send.
+  - Example: `/init` runs the built-in `init` skill to bootstrap `AGENTS.md`. You can override it with `~/.mux/skills/init/SKILL.md` (or `.mux/skills/init/SKILL.md` for a single project).
   - Type `/` to see skills in the suggestions list.
 - **Agent-initiated (tool call)**: the agent can load skills on-demand.
 
@@ -107,7 +109,7 @@ agent_skill_read_file({ name: "my-skill", filePath: "references/template.md" });
 
 ## Current limitations
 
-- Slash command invocation supports only a single skill as the first token (for example `/{skill-name} ...`).
+- Slash command invocation supports only a single skill as the first token (for example `/{skill-name}` or `/{skill-name} ...`).
 - Skill bodies may be truncated when injected to avoid accidental mega-prompts.
 - `allowed-tools` is not enforced by mux (it is tolerated in frontmatter, but ignored).
 

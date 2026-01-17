@@ -561,7 +561,10 @@ export class AgentSession {
     const snapshotResult = await this.materializeFileAtMentionsSnapshot(trimmedMessage);
     let skillSnapshotResult: { snapshotMessage: MuxMessage } | null = null;
     try {
-      skillSnapshotResult = await this.materializeAgentSkillSnapshot(typedMuxMetadata);
+      skillSnapshotResult = await this.materializeAgentSkillSnapshot(
+        typedMuxMetadata,
+        options?.disableWorkspaceAgents
+      );
     } catch (error) {
       return Err(
         createUnknownSendMessageError(error instanceof Error ? error.message : String(error))
@@ -663,6 +666,7 @@ export class AgentSession {
         additionalSystemInstructions: options.additionalSystemInstructions,
         providerOptions: options.providerOptions,
         experiments: options.experiments,
+        disableWorkspaceAgents: options.disableWorkspaceAgents,
       };
 
       // Add image parts if present
@@ -1366,7 +1370,8 @@ export class AgentSession {
   }
 
   private async materializeAgentSkillSnapshot(
-    muxMetadata: MuxFrontendMetadata | undefined
+    muxMetadata: MuxFrontendMetadata | undefined,
+    disableWorkspaceAgents: boolean | undefined
   ): Promise<{ snapshotMessage: MuxMessage } | null> {
     if (!muxMetadata || muxMetadata.type !== "agent-skill") {
       return null;
@@ -1392,9 +1397,19 @@ export class AgentSession {
       metadata.runtimeConfig ?? { type: "local", srcBaseDir: this.config.srcDir },
       { projectPath: metadata.projectPath, workspaceName: metadata.name }
     );
-    const workspacePath = runtime.getWorkspacePath(metadata.projectPath, metadata.name);
 
-    const resolved = await readAgentSkill(runtime, workspacePath, parsedName.data);
+    // In-place workspaces (CLI/benchmarks) have projectPath === name.
+    // Use the path directly instead of reconstructing via getWorkspacePath.
+    const isInPlace = metadata.projectPath === metadata.name;
+    const workspacePath = isInPlace
+      ? metadata.projectPath
+      : runtime.getWorkspacePath(metadata.projectPath, metadata.name);
+
+    // When workspace agents are disabled, resolve skills from the project path instead of
+    // the worktree so skill invocation uses the same precedence/discovery root as the UI.
+    const skillDiscoveryPath = disableWorkspaceAgents ? metadata.projectPath : workspacePath;
+
+    const resolved = await readAgentSkill(runtime, skillDiscoveryPath, parsedName.data);
     const skill = resolved.package;
 
     const body =

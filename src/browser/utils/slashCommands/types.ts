@@ -38,7 +38,6 @@ export type ParsedCommand =
   | { type: "plan-show" }
   | { type: "plan-open" }
   | { type: "debug-llm-request" }
-  | { type: "init" }
   | { type: "unknown-command"; command: string; subcommand?: string }
   | { type: "idle-compaction"; hours: number | null }
   | null;

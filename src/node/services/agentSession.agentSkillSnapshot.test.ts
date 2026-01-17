@@ -140,6 +140,109 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
     expect(userText).toBe("do X");
   });
 
+  it("honors disableWorkspaceAgents when resolving skill snapshots", async () => {
+    const workspaceId = "ws-test";
+
+    const { workspacePath: projectPath } = await createTestWorkspaceWithSkill({
+      // Built-in: use a project-local override to ensure we don't accidentally fall back.
+      skillName: "init",
+      skillBody: "Project override for init skill.",
+    });
+
+    const srcBaseDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-agent-skill-src-"));
+
+    const config = {
+      srcDir: "/tmp",
+      getSessionDir: (_workspaceId: string) => "/tmp",
+    } as unknown as Config;
+
+    const messages: MuxMessage[] = [];
+    let nextSeq = 0;
+
+    const appendToHistory = mock((_workspaceId: string, message: MuxMessage) => {
+      message.metadata = { ...(message.metadata ?? {}), historySequence: nextSeq++ };
+      messages.push(message);
+      return Promise.resolve(Ok(undefined));
+    });
+
+    const historyService = {
+      appendToHistory,
+      truncateAfterMessage: mock((_workspaceId: string, _messageId: string) => {
+        void _messageId;
+        return Promise.resolve(Ok(undefined));
+      }),
+      getHistory: mock((_workspaceId: string): Promise<Result<MuxMessage[], string>> => {
+        return Promise.resolve(Ok([...messages]));
+      }),
+    } as unknown as HistoryService;
+
+    const partialService = {
+      commitToHistory: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
+    } as unknown as PartialService;
+
+    const aiEmitter = new EventEmitter();
+
+    const workspaceMeta: FrontendWorkspaceMetadata = {
+      id: workspaceId,
+      name: "ws",
+      projectName: "proj",
+      projectPath,
+      namedWorkspacePath: projectPath,
+      runtimeConfig: { type: "worktree", srcBaseDir },
+    } as unknown as FrontendWorkspaceMetadata;
+
+    const streamMessage = mock((_messages: MuxMessage[]) => {
+      return Promise.resolve(Ok(undefined));
+    });
+
+    const aiService = Object.assign(aiEmitter, {
+      isStreaming: mock((_workspaceId: string) => false),
+      stopStream: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
+      getWorkspaceMetadata: mock((_workspaceId: string) => Promise.resolve(Ok(workspaceMeta))),
+      streamMessage: streamMessage as unknown as (
+        ...args: Parameters<AIService["streamMessage"]>
+      ) => Promise<Result<void, SendMessageError>>,
+    }) as unknown as AIService;
+
+    const initStateManager = new EventEmitter() as unknown as InitStateManager;
+
+    const backgroundProcessManager = {
+      cleanup: mock((_workspaceId: string) => Promise.resolve()),
+      setMessageQueued: mock((_workspaceId: string, _queued: boolean) => {
+        void _queued;
+      }),
+    } as unknown as BackgroundProcessManager;
+
+    const session = new AgentSession({
+      workspaceId,
+      config,
+      historyService,
+      partialService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+
+    const result = await session.sendMessage("do X", {
+      model: "anthropic:claude-3-5-sonnet-latest",
+      disableWorkspaceAgents: true,
+      muxMetadata: {
+        type: "agent-skill",
+        rawCommand: "/init",
+        skillName: "init",
+        scope: "project",
+      },
+    });
+
+    expect(result.success).toBe(true);
+
+    expect(appendToHistory.mock.calls).toHaveLength(2);
+    const [snapshotMessage] = messages;
+
+    const snapshotText = snapshotMessage.parts.find((p) => p.type === "text")?.text;
+    expect(snapshotText).toContain("Project override for init skill.");
+  });
+
   it("dedupes identical skill snapshots when recently inserted", async () => {
     const workspaceId = "ws-test";
 
