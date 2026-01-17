@@ -45,6 +45,7 @@ import {
   dockTabToEdge,
   findTabset,
   getDefaultRightSidebarLayoutState,
+  getFocusedActiveTab,
   isRightSidebarLayoutState,
   moveTabToTabset,
   parseRightSidebarLayoutState,
@@ -658,6 +659,26 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     }
   }, [layout, layoutRaw, setLayoutRaw]);
 
+  const getBaseLayout = React.useCallback(() => {
+    return (
+      layoutDraftRef.current ?? parseRightSidebarLayoutState(layoutRawRef.current, initialActiveTab)
+    );
+  }, [initialActiveTab]);
+
+  const focusActiveTerminal = React.useCallback(
+    (state: RightSidebarLayoutState) => {
+      const activeTab = getFocusedActiveTab(state, initialActiveTab);
+      if (!isTerminalTab(activeTab)) {
+        return;
+      }
+      const sessionId = getTerminalSessionId(activeTab);
+      if (sessionId) {
+        setAutoFocusTerminalSession(sessionId);
+      }
+    },
+    [initialActiveTab, setAutoFocusTerminalSession]
+  );
+
   const setLayout = React.useCallback(
     (updater: (prev: RightSidebarLayoutState) => RightSidebarLayoutState) => {
       if (isSidebarTabDragInProgressRef.current) {
@@ -799,8 +820,9 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
           void api?.terminal.close({ sessionId });
         }
 
-        // Remove the tab from layout
-        setLayout((prev) => removeTabEverywhere(prev, activeTab));
+        const nextLayout = removeTabEverywhere(layout, activeTab);
+        setLayout(() => nextLayout);
+        focusActiveTerminal(nextLayout);
 
         // Clean up title (and persist)
         setTerminalTitles((prev) => {
@@ -815,13 +837,15 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       // Handle file tabs
       if (isFileTab(activeTab)) {
         e.preventDefault();
-        setLayout((prev) => removeTabEverywhere(prev, activeTab));
+        const nextLayout = removeTabEverywhere(layout, activeTab);
+        setLayout(() => nextLayout);
+        focusActiveTerminal(nextLayout);
       }
     };
 
     window.addEventListener("keydown", handleKeyDown, { capture: true });
     return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
-  }, [api, layout.root, layout.focusedTabsetId, setLayout, terminalTitlesKey]);
+  }, [api, focusActiveTerminal, layout, setLayout, terminalTitlesKey]);
 
   // Sync terminal tabs with backend sessions on workspace mount.
   // - Adds tabs for backend sessions that don't have tabs (restore after reload)
@@ -932,8 +956,9 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         void api?.terminal.close({ sessionId });
       }
 
-      // Remove the tab from layout
-      setLayout((prev) => removeTabEverywhere(prev, tab));
+      const nextLayout = removeTabEverywhere(getBaseLayout(), tab);
+      setLayout(() => nextLayout);
+      focusActiveTerminal(nextLayout);
 
       // Clean up title (and persist)
       setTerminalTitles((prev) => {
@@ -943,7 +968,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         return next;
       });
     },
-    [api, setLayout, terminalTitlesKey]
+    [api, focusActiveTerminal, getBaseLayout, setLayout, terminalTitlesKey]
   );
 
   // Handler to pop out a terminal to a separate window, then remove the tab
@@ -1005,9 +1030,11 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   // Handler to close a file tab
   const handleCloseFile = React.useCallback(
     (tab: TabType) => {
-      setLayout((prev) => removeTabEverywhere(prev, tab));
+      const nextLayout = removeTabEverywhere(getBaseLayout(), tab);
+      setLayout(() => nextLayout);
+      focusActiveTerminal(nextLayout);
     },
-    [setLayout]
+    [focusActiveTerminal, getBaseLayout, setLayout]
   );
 
   const sensors = useSensors(
