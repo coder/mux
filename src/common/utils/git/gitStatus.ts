@@ -9,10 +9,14 @@
  *
  * @param baseRef - The ref to compare against (e.g., "origin/main").
  *                  If not provided or not an origin/ ref, auto-detects.
+ *                  "origin/HEAD" is treated as auto-detect because it can be stale
+ *                  (e.g. in repos cloned from bundles).
  */
 export function generateGitStatusScript(baseRef?: string): string {
-  // Extract branch name if it's an origin/ ref, otherwise empty for auto-detect
-  const preferredBranch = baseRef?.startsWith("origin/") ? baseRef.replace(/^origin\//, "") : "";
+  // Extract branch name if it's an origin/ ref, otherwise empty for auto-detect.
+  // Note: origin/HEAD is ignored because it may point at a stale feature branch.
+  const rawPreferredBranch = baseRef?.startsWith("origin/") ? baseRef.replace(/^origin\//, "") : "";
+  const preferredBranch = rawPreferredBranch === "HEAD" ? "" : rawPreferredBranch;
 
   return `
 # Determine primary branch to compare against
@@ -20,25 +24,36 @@ PRIMARY_BRANCH=""
 PREFERRED_BRANCH="${preferredBranch}"
 
 # Try preferred branch first if specified
-if [ -n "$PREFERRED_BRANCH" ]; then
-  if git rev-parse --verify "refs/remotes/origin/$PREFERRED_BRANCH" >/dev/null 2>&1; then
-    PRIMARY_BRANCH="$PREFERRED_BRANCH"
-  fi
+if [ -n "$PREFERRED_BRANCH" ] && git rev-parse --verify "refs/remotes/origin/$PREFERRED_BRANCH" >/dev/null 2>&1; then
+  PRIMARY_BRANCH="$PREFERRED_BRANCH"
 fi
 
 # Fall back to auto-detection
 if [ -z "$PRIMARY_BRANCH" ]; then
-  # Method 1: symbolic-ref (fastest)
-  PRIMARY_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+  # symbolic-ref can be stale (e.g., when cloned from a bundle)
+  SYMREF_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
 
-  # Method 2: remote show origin (fallback)
+  # Trust symbolic-ref only if it looks like a default branch name
+  case "$SYMREF_BRANCH" in
+    main|master|develop|trunk|default|release)
+      if git rev-parse --verify "refs/remotes/origin/$SYMREF_BRANCH" >/dev/null 2>&1; then
+        PRIMARY_BRANCH="$SYMREF_BRANCH"
+      fi
+      ;;
+  esac
+
+  # Prefer origin/main or origin/master if present (handles stale origin/HEAD)
   if [ -z "$PRIMARY_BRANCH" ]; then
-    PRIMARY_BRANCH=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | cut -d' ' -f5)
+    if git rev-parse --verify "refs/remotes/origin/main" >/dev/null 2>&1; then
+      PRIMARY_BRANCH="main"
+    elif git rev-parse --verify "refs/remotes/origin/master" >/dev/null 2>&1; then
+      PRIMARY_BRANCH="master"
+    fi
   fi
 
-  # Method 3: check for main or master
+  # Fallback: ask origin (may require network)
   if [ -z "$PRIMARY_BRANCH" ]; then
-    PRIMARY_BRANCH=$(git branch -r 2>/dev/null | grep -E 'origin/(main|master)$' | head -1 | sed 's@^.*origin/@@')
+    PRIMARY_BRANCH=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | cut -d' ' -f5)
   fi
 fi
 
@@ -48,8 +63,10 @@ if [ -z "$PRIMARY_BRANCH" ]; then
   exit 1
 fi
 
+BASE_REF="origin/$PRIMARY_BRANCH"
+
 # Get show-branch output for ahead/behind counts
-SHOW_BRANCH=$(git show-branch --sha1-name HEAD "origin/$PRIMARY_BRANCH" 2>/dev/null)
+SHOW_BRANCH=$(git show-branch --sha1-name HEAD "$BASE_REF" 2>/dev/null)
 
 if [ $? -ne 0 ]; then
   echo "ERROR: git show-branch failed"
@@ -62,7 +79,7 @@ DIRTY_COUNT=$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')
 # Compute line deltas (additions/deletions) vs merge-base with origin's primary branch.
 #
 # We emit *only* totals to keep output tiny (avoid output truncation in large repos).
-MERGE_BASE=$(git merge-base HEAD "origin/$PRIMARY_BRANCH" 2>/dev/null || echo "")
+MERGE_BASE=$(git merge-base HEAD "$BASE_REF" 2>/dev/null || echo "")
 
 # Outgoing: local changes vs merge-base (working tree vs base, includes uncommitted changes)
 OUTGOING_STATS="0 0"
@@ -76,7 +93,7 @@ fi
 # Incoming: remote primary branch changes vs merge-base
 INCOMING_STATS="0 0"
 if [ -n "$MERGE_BASE" ]; then
-  INCOMING_STATS=$(git diff --numstat "$MERGE_BASE" "origin/$PRIMARY_BRANCH" 2>/dev/null | awk '{ if ($1 == "-" || $2 == "-") next; add += $1; del += $2 } END { printf "%d %d", add+0, del+0 }')
+  INCOMING_STATS=$(git diff --numstat "$MERGE_BASE" "$BASE_REF" 2>/dev/null | awk '{ if ($1 == "-" || $2 == "-") next; add += $1; del += $2 } END { printf "%d %d", add+0, del+0 }')
   if [ -z "$INCOMING_STATS" ]; then
     INCOMING_STATS="0 0"
   fi
@@ -153,10 +170,10 @@ export function parseGitStatusScriptOutput(output: string): ParsedGitStatusOutpu
  * (e.g., IDE or user already fetched).
  *
  * Flow:
- * 1. ls-remote to get remote SHA (no lock, network only)
- * 2. cat-file to check if SHA exists locally (no lock)
- * 3. If local: skip fetch (no lock needed)
- * 4. If not local: fetch to get new commits (lock, but rare)
+ * 1. ls-remote --symref origin HEAD to get default branch + SHA (no lock, network only)
+ * 2. rev-parse to check local remote-tracking SHA (no lock)
+ * 3. If local already matches: skip fetch (no lock needed)
+ * 4. If not: fetch updates (lock, but rare)
  */
 export const GIT_FETCH_SCRIPT = `
 # Disable ALL prompts
@@ -165,19 +182,13 @@ export GIT_ASKPASS=echo
 export SSH_ASKPASS=echo
 export GIT_SSH_COMMAND="\${GIT_SSH_COMMAND:-ssh} -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
 
-# Get primary branch name
-PRIMARY_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
-if [ -z "$PRIMARY_BRANCH" ]; then
-  PRIMARY_BRANCH=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | cut -d' ' -f5)
-fi
-if [ -z "$PRIMARY_BRANCH" ]; then
-  PRIMARY_BRANCH="main"
-fi
+# Determine remote default branch + SHA via ls-remote (no lock, network only)
+REMOTE_INFO=$(git ls-remote --symref origin HEAD 2>/dev/null || echo "")
+PRIMARY_BRANCH=$(printf '%s\n' "$REMOTE_INFO" | awk '$1=="ref:" && $3=="HEAD" {sub("^refs/heads/","",$2); print $2; exit}')
+REMOTE_SHA=$(printf '%s\n' "$REMOTE_INFO" | awk '$2=="HEAD" && $1!="ref:" {print $1; exit}')
 
-# Check remote SHA via ls-remote (no lock, network only)
-REMOTE_SHA=$(git ls-remote origin "refs/heads/$PRIMARY_BRANCH" 2>/dev/null | cut -f1)
-if [ -z "$REMOTE_SHA" ]; then
-  echo "SKIP: Could not get remote SHA"
+if [ -z "$PRIMARY_BRANCH" ] || [ -z "$REMOTE_SHA" ]; then
+  echo "SKIP: Could not get remote HEAD"
   exit 0
 fi
 

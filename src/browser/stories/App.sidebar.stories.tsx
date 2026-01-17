@@ -113,7 +113,7 @@ function createGitStatusExecutor(gitStatus?: Map<string, GitStatusFixture>) {
     }
 
     // GitStatusStore consolidated status script
-    if (script.includes("PRIMARY_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD")) {
+    if (script.includes("---PRIMARY---") && script.includes("---SHOW_BRANCH---")) {
       const output = createGitStatusOutput(status);
       return Promise.resolve({ success: true as const, output, exitCode: 0, wall_duration_ms: 50 });
     }
