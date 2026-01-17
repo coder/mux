@@ -13,6 +13,12 @@ import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePer
 import { CommandIds } from "@/browser/utils/commandIds";
 import { isTabType, type TabType } from "@/browser/types/rightSidebar";
 import {
+  getEffectiveSlotKeybind,
+  getLayoutsConfigOrDefault,
+  getPresetForSlot,
+} from "@/browser/utils/uiLayouts";
+import type { LayoutPresetsConfig, LayoutSlotNumber } from "@/common/types/uiLayouts";
+import {
   addToolToFocusedTabset,
   getDefaultRightSidebarLayoutState,
   parseRightSidebarLayoutState,
@@ -66,6 +72,16 @@ export interface BuildSourcesParams {
   onToggleTheme: () => void;
   onSetTheme: (theme: ThemeMode) => void;
   onOpenSettings?: (section?: string) => void;
+
+  // Layout presets
+  layoutPresets?: LayoutPresetsConfig | null;
+  onApplyLayoutSlot?: (workspaceId: string, slot: LayoutSlotNumber) => void;
+  onApplyLayoutPreset?: (workspaceId: string, presetId: string) => void;
+  onSaveLayoutPreset?: (
+    workspaceId: string,
+    name: string,
+    slot?: LayoutSlotNumber | null
+  ) => Promise<void>;
   onClearTimingStats?: (workspaceId: string) => void;
 }
 
@@ -75,6 +91,7 @@ export interface BuildSourcesParams {
  */
 export const COMMAND_SECTIONS = {
   WORKSPACES: "Workspaces",
+  LAYOUTS: "Layouts",
   NAVIGATION: "Navigation",
   CHAT: "Chat",
   MODE: "Modes & Model",
@@ -85,6 +102,7 @@ export const COMMAND_SECTIONS = {
 } as const;
 
 const section = {
+  layouts: COMMAND_SECTIONS.LAYOUTS,
   workspaces: COMMAND_SECTIONS.WORKSPACES,
   navigation: COMMAND_SECTIONS.NAVIGATION,
   chat: COMMAND_SECTIONS.CHAT,
@@ -474,6 +492,96 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
           },
         }
       );
+    }
+
+    return list;
+  });
+
+  // Layout presets
+  actions.push(() => {
+    const list: CommandAction[] = [];
+    const selected = p.selectedWorkspace;
+    if (!selected) {
+      return list;
+    }
+
+    const config = getLayoutsConfigOrDefault(p.layoutPresets);
+
+    for (const slot of [1, 2, 3, 4, 5, 6, 7, 8, 9] as const) {
+      const preset = getPresetForSlot(config, slot);
+      const shortcutHint = formatKeybind(getEffectiveSlotKeybind(config, slot));
+
+      list.push({
+        id: CommandIds.layoutApplySlot(slot),
+        title: `Layout: Apply Slot ${slot}`,
+        subtitle: preset ? preset.name : "Empty",
+        section: section.layouts,
+        shortcutHint,
+        enabled: () => Boolean(preset) && Boolean(p.onApplyLayoutSlot),
+        run: () => {
+          if (!preset) return;
+          void p.onApplyLayoutSlot?.(selected.workspaceId, slot);
+        },
+      });
+    }
+
+    if (p.onSaveLayoutPreset) {
+      list.push({
+        id: CommandIds.layoutSavePreset(),
+        title: "Layout: Save current as preset…",
+        section: section.layouts,
+        run: () => undefined,
+        prompt: {
+          title: "Save Layout Preset",
+          fields: [
+            {
+              type: "text",
+              name: "name",
+              label: "Name",
+              placeholder: "Enter preset name",
+              validate: (v) => (!v.trim() ? "Name is required" : null),
+            },
+            {
+              type: "select",
+              name: "slot",
+              label: "Assign to slot (optional)",
+              placeholder: "Don't assign",
+              getOptions: () => [
+                { id: "none", label: "Don't assign" },
+                ...([1, 2, 3, 4, 5, 6, 7, 8, 9] as const).map((slot) => {
+                  const assigned = getPresetForSlot(config, slot);
+                  return {
+                    id: String(slot),
+                    label: `Slot ${slot}${assigned ? ` • ${assigned.name}` : ""}`,
+                    keywords: assigned ? [assigned.name] : [],
+                  };
+                }),
+              ],
+            },
+          ],
+          onSubmit: async (vals) => {
+            const name = vals.name.trim();
+            const slotRaw = vals.slot;
+            const slot =
+              slotRaw && slotRaw !== "none" ? (Number(slotRaw) as LayoutSlotNumber) : null;
+            await p.onSaveLayoutPreset?.(selected.workspaceId, name, slot);
+          },
+        },
+      });
+    }
+
+    if (p.onApplyLayoutPreset && config.presets.length > 0) {
+      for (const preset of config.presets) {
+        list.push({
+          id: CommandIds.layoutApplyPreset(preset.id),
+          title: `Layout: Apply Preset ${preset.name}`,
+          section: section.layouts,
+          keywords: [preset.name],
+          run: () => {
+            void p.onApplyLayoutPreset?.(selected.workspaceId, preset.id);
+          },
+        });
+      }
     }
 
     return list;

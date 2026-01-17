@@ -1,5 +1,6 @@
 import { describe, it, expect } from "bun:test";
-import { matchesKeybind, type Keybind } from "./keybinds";
+import { matchesKeybind } from "./keybinds";
+import type { Keybind } from "@/common/types/keybind";
 
 // Helper to create a minimal keyboard event
 function createEvent(overrides: Partial<KeyboardEvent> = {}): KeyboardEvent {

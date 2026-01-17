@@ -587,7 +587,9 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   );
 
   // Manual collapse state (persisted globally)
-  const [collapsed, setCollapsed] = usePersistedState<boolean>(RIGHT_SIDEBAR_COLLAPSED_KEY, false);
+  const [collapsed, setCollapsed] = usePersistedState<boolean>(RIGHT_SIDEBAR_COLLAPSED_KEY, false, {
+    listener: true,
+  });
 
   // Stats tab feature flag
   const { statsTabState } = useFeatureFlags();

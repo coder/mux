@@ -20,6 +20,11 @@ import { readPlanFile } from "@/node/utils/runtime/helpers";
 import { secretsToRecord } from "@/common/types/secrets";
 import { roundToBase2 } from "@/common/telemetry/utils";
 import { createAsyncEventQueue } from "@/common/utils/asyncEventIterator";
+import {
+  DEFAULT_LAYOUT_PRESETS_CONFIG,
+  isLayoutPresetsConfigEmpty,
+  normalizeLayoutPresetsConfig,
+} from "@/common/types/uiLayouts";
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { normalizeModeAiDefaults } from "@/common/types/modeAiDefaults";
 import {
@@ -446,6 +451,27 @@ export const router = (authToken?: string) => {
 
           // Re-evaluate task queue in case more slots opened up
           await context.taskService.maybeStartQueuedTasks();
+        }),
+    },
+    uiLayouts: {
+      getAll: t
+        .input(schemas.uiLayouts.getAll.input)
+        .output(schemas.uiLayouts.getAll.output)
+        .handler(({ context }) => {
+          const config = context.config.loadConfigOrDefault();
+          return config.layoutPresets ?? DEFAULT_LAYOUT_PRESETS_CONFIG;
+        }),
+      saveAll: t
+        .input(schemas.uiLayouts.saveAll.input)
+        .output(schemas.uiLayouts.saveAll.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => {
+            const normalized = normalizeLayoutPresetsConfig(input.layoutPresets);
+            return {
+              ...config,
+              layoutPresets: isLayoutPresetsConfigEmpty(normalized) ? undefined : normalized,
+            };
+          });
         }),
     },
     agents: {

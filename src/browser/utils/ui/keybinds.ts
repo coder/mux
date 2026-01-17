@@ -8,25 +8,9 @@
  */
 
 import { stopKeyboardPropagation } from "@/browser/utils/events";
+import type { Keybind } from "@/common/types/keybind";
 
-/**
- * Keybind definition type
- */
-export interface Keybind {
-  key: string;
-  ctrl?: boolean;
-  shift?: boolean;
-  alt?: boolean;
-  meta?: boolean;
-  /**
-   * On macOS, Ctrl-based shortcuts traditionally use Cmd instead.
-   * Use this field to control that behavior:
-   * - "either" (default): accept Ctrl or Cmd
-   * - "command": require Cmd specifically
-   * - "control": require the Control key specifically
-   */
-  macCtrlBehavior?: "either" | "command" | "control";
-}
+export type { Keybind };
 
 /**
  * Detect if running on macOS

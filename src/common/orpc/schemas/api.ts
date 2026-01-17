@@ -9,6 +9,7 @@ import { ResultSchema } from "./result";
 import { RuntimeConfigSchema, RuntimeModeSchema } from "./runtime";
 import { SecretSchema } from "./secrets";
 import { SendMessageOptionsSchema, UpdateStatusSchema, WorkspaceChatMessageSchema } from "./stream";
+import { LayoutPresetsConfigSchema } from "./uiLayouts";
 import {
   TerminalCreateParamsSchema,
   TerminalResizeParamsSchema,
@@ -972,6 +973,22 @@ export const config = {
     input: z.object({
       modeAiDefaults: ModeAiDefaultsSchema,
     }),
+    output: z.void(),
+  },
+};
+
+// UI Layouts (global settings)
+export const uiLayouts = {
+  getAll: {
+    input: z.void(),
+    output: LayoutPresetsConfigSchema,
+  },
+  saveAll: {
+    input: z
+      .object({
+        layoutPresets: LayoutPresetsConfigSchema,
+      })
+      .strict(),
     output: z.void(),
   },
 };

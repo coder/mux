@@ -18,6 +18,7 @@ import {
   normalizeTaskSettings,
 } from "@/common/types/tasks";
 import { normalizeModeAiDefaults } from "@/common/types/modeAiDefaults";
+import { isLayoutPresetsConfigEmpty, normalizeLayoutPresetsConfig } from "@/common/types/uiLayouts";
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility";
@@ -120,6 +121,7 @@ export class Config {
           serverSshHost?: string;
           viewedSplashScreens?: string[];
           featureFlagOverrides?: Record<string, "default" | "on" | "off">;
+          layoutPresets?: unknown;
           taskSettings?: unknown;
           agentAiDefaults?: unknown;
           subagentAiDefaults?: unknown;
@@ -157,6 +159,11 @@ export class Config {
                   ...(legacyModeAiDefaults as Record<string, unknown>),
                 });
 
+          const layoutPresetsRaw = normalizeLayoutPresetsConfig(parsed.layoutPresets);
+          const layoutPresets = isLayoutPresetsConfigEmpty(layoutPresetsRaw)
+            ? undefined
+            : layoutPresetsRaw;
+
           return {
             projects: projectsMap,
             apiServerBindHost: parseOptionalNonEmptyString(parsed.apiServerBindHost),
@@ -168,6 +175,7 @@ export class Config {
             mdnsServiceName: parseOptionalNonEmptyString(parsed.mdnsServiceName),
             serverSshHost: parsed.serverSshHost,
             viewedSplashScreens: parsed.viewedSplashScreens,
+            layoutPresets,
             taskSettings,
             agentAiDefaults,
             // Legacy fields are still parsed and returned for downgrade compatibility.
@@ -206,6 +214,7 @@ export class Config {
         mdnsServiceName?: string;
         serverSshHost?: string;
         viewedSplashScreens?: string[];
+        layoutPresets?: ProjectsConfig["layoutPresets"];
         featureFlagOverrides?: ProjectsConfig["featureFlagOverrides"];
         taskSettings?: ProjectsConfig["taskSettings"];
         agentAiDefaults?: ProjectsConfig["agentAiDefaults"];
@@ -245,6 +254,12 @@ export class Config {
       }
       if (config.featureFlagOverrides) {
         data.featureFlagOverrides = config.featureFlagOverrides;
+      }
+      if (config.layoutPresets) {
+        const normalized = normalizeLayoutPresetsConfig(config.layoutPresets);
+        if (!isLayoutPresetsConfigEmpty(normalized)) {
+          data.layoutPresets = normalized;
+        }
       }
       if (config.viewedSplashScreens) {
         data.viewedSplashScreens = config.viewedSplashScreens;

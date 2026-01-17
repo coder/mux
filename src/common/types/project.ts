@@ -11,6 +11,7 @@ import type {
 } from "../orpc/schemas";
 import type { TaskSettings, SubagentAiDefaults } from "./tasks";
 import type { ModeAiDefaults } from "./modeAiDefaults";
+import type { LayoutPresetsConfig } from "./uiLayouts";
 import type { AgentAiDefaults } from "./agentAiDefaults";
 
 export type Workspace = z.infer<typeof WorkspaceConfigSchema>;
@@ -58,6 +59,8 @@ export interface ProjectsConfig {
   featureFlagOverrides?: Record<string, FeatureFlagOverride>;
   /** Global task settings (agent sub-workspaces, queue limits, nesting depth) */
   taskSettings?: TaskSettings;
+  /** UI layout presets + hotkeys (shared via ~/.mux/config.json). */
+  layoutPresets?: LayoutPresetsConfig;
   /** Default model + thinking overrides per agentId (applies to UI agents and subagents). */
   agentAiDefaults?: AgentAiDefaults;
   /** @deprecated Legacy per-subagent default model + thinking overrides. */
