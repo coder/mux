@@ -165,6 +165,7 @@ export const ModeProvider: React.FC<ModeProviderProps> = (props) => {
 
   // Initial fetch and re-fetch when toggle changes
   useEffect(() => {
+    setAgents([]);
     setLoaded(false);
     setLoadFailed(false);
     void fetchAgents(props.projectPath, props.workspaceId, disableWorkspaceAgents);
