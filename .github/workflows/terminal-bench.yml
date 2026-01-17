@@ -43,12 +43,19 @@ on:
         required: false
         type: string
         default: ""
+      max_tasks:
+        description: "Maximum number of tasks to run (for faster iteration)"
+        required: false
+        type: string
+        default: ""
     secrets:
       ANTHROPIC_API_KEY:
         required: true
       OPENAI_API_KEY:
         required: true
       DAYTONA_API_KEY:
+        required: false
+      GCP_SA_KEY:
         required: false
   workflow_dispatch:
     inputs:
@@ -89,6 +96,10 @@ on:
         type: string
       timeout:
         description: "Agent timeout in seconds (default: 1800 = 30 min)"
+        required: false
+        type: string
+      max_tasks:
+        description: "Maximum number of tasks to run (for faster iteration)"
         required: false
         type: string
 
@@ -133,6 +144,7 @@ jobs:
           TB_TIMEOUT: ${{ inputs.timeout }}
           TB_ARGS: >-
             ${{ inputs.thinking_level && format('--agent-kwarg thinking_level={0}', inputs.thinking_level) || '' }}
+            ${{ inputs.max_tasks && format('--n-tasks {0}', inputs.max_tasks) || '' }}
             ${{ inputs.extra_args || '' }}
           MUX_EXPERIMENTS: ${{ inputs.experiments }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -200,6 +212,24 @@ jobs:
           fi
           echo "name=$ARTIFACT_NAME" >> "$GITHUB_OUTPUT"
           echo "Artifact name: $ARTIFACT_NAME"
+
+      - name: Upload results to BigQuery
+        if: always() && github.repository == 'coder/mux'
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          GCP_PROJECT_ID: mux-benchmarks
+          BQ_DATASET: benchmarks
+          MUX_EXPERIMENTS: ${{ inputs.experiments }}
+        run: |
+          if [ -z "$GCP_SA_KEY" ]; then
+            echo "GCP_SA_KEY not set, skipping BigQuery upload"
+            exit 0
+          fi
+          echo "$GCP_SA_KEY" > /tmp/gcp-sa.json
+          export GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-sa.json
+          pip install --quiet google-cloud-bigquery
+          python scripts/upload-tbench-results.py
+          rm -f /tmp/gcp-sa.json
 
       - name: Upload benchmark results
         if: always()
