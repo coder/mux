@@ -1910,33 +1910,30 @@ export class AIService extends EventEmitter {
         return Ok(undefined);
       }
 
-      // Capture request payload for debugging (optional), then delegate to StreamManager.
+      // Capture request payload for the debug modal, then delegate to StreamManager.
+      const snapshot: DebugLlmRequestSnapshot = {
+        capturedAt: Date.now(),
+        workspaceId,
+        model: modelString,
+        providerName,
+        thinkingLevel: effectiveThinkingLevel,
+        mode: effectiveMode,
+        agentId: effectiveAgentId,
+        maxOutputTokens,
+        systemMessage,
+        messages: finalMessages,
+      };
 
-      if (process.env.MUX_DEBUG_LLM_REQUEST === "1") {
-        const snapshot: DebugLlmRequestSnapshot = {
-          capturedAt: Date.now(),
-          workspaceId,
-          model: modelString,
-          providerName,
-          thinkingLevel: effectiveThinkingLevel,
-          mode: effectiveMode,
-          agentId: effectiveAgentId,
-          maxOutputTokens,
-          systemMessage,
-          messages: finalMessages,
-        };
+      try {
+        const cloned =
+          typeof structuredClone === "function"
+            ? structuredClone(snapshot)
+            : (JSON.parse(JSON.stringify(snapshot)) as DebugLlmRequestSnapshot);
 
-        try {
-          const cloned =
-            typeof structuredClone === "function"
-              ? structuredClone(snapshot)
-              : (JSON.parse(JSON.stringify(snapshot)) as DebugLlmRequestSnapshot);
-
-          this.lastLlmRequestByWorkspace.set(workspaceId, cloned);
-        } catch (error) {
-          const errMsg = error instanceof Error ? error.message : String(error);
-          log.warn("Failed to capture debug LLM request snapshot", { workspaceId, error: errMsg });
-        }
+        this.lastLlmRequestByWorkspace.set(workspaceId, cloned);
+      } catch (error) {
+        const errMsg = error instanceof Error ? error.message : String(error);
+        log.warn("Failed to capture debug LLM request snapshot", { workspaceId, error: errMsg });
       }
       const streamResult = await this.streamManager.startStream(
         workspaceId,
@@ -2076,10 +2073,6 @@ export class AIService extends EventEmitter {
   debugGetLastLlmRequest(workspaceId: string): Result<DebugLlmRequestSnapshot | null> {
     if (typeof workspaceId !== "string" || workspaceId.trim().length === 0) {
       return Err("debugGetLastLlmRequest: workspaceId is required");
-    }
-
-    if (process.env.MUX_DEBUG_LLM_REQUEST !== "1") {
-      return Ok(null);
     }
 
     return Ok(this.lastLlmRequestByWorkspace.get(workspaceId) ?? null);
