@@ -142,6 +142,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
     handleMessageSentBackground,
     error: backgroundBashError,
   } = useBackgroundBashHandlers(api, workspaceId);
+  const { clearError: clearBackgroundBashError } = backgroundBashError;
   const { options } = useProviderOptions();
   const use1M = options.anthropic?.use1MContext ?? false;
   // Get pending model for auto-compaction settings (threshold is per-model)
@@ -259,9 +260,31 @@ const AIViewInner: React.FC<AIViewProps> = ({
 
   // ChatInput API for focus management
   const chatInputAPI = useRef<ChatInputAPI | null>(null);
-  const handleChatInputReady = useCallback((api: ChatInputAPI) => {
-    chatInputAPI.current = api;
-  }, []);
+  const chatInputWorkspaceIdRef = useRef(workspaceId);
+  const previousWorkspaceIdRef = useRef(workspaceId);
+
+  // Reset per-workspace UI state now that AIView stays mounted across workspace switches.
+  useEffect(() => {
+    if (previousWorkspaceIdRef.current === workspaceId) {
+      return;
+    }
+
+    previousWorkspaceIdRef.current = workspaceId;
+    setEditingMessage(undefined);
+    setExpandedBashGroups(new Set());
+    if (chatInputWorkspaceIdRef.current !== workspaceId) {
+      chatInputAPI.current = null;
+    }
+    setAutoScroll(true);
+    clearBackgroundBashError();
+  }, [workspaceId, setAutoScroll, clearBackgroundBashError]);
+  const handleChatInputReady = useCallback(
+    (api: ChatInputAPI) => {
+      chatInputAPI.current = api;
+      chatInputWorkspaceIdRef.current = workspaceId;
+    },
+    [workspaceId]
+  );
 
   // Handler for review notes from Code Review tab - adds review (starts attached)
   // Depend only on addReview (not whole reviews object) to keep callback stable
@@ -757,6 +780,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
           </div>
         )}
         <ChatInput
+          key={workspaceId}
           variant="workspace"
           workspaceId={workspaceId}
           runtimeType={getRuntimeTypeForTelemetry(runtimeConfig)}
