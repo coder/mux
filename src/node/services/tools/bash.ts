@@ -36,17 +36,6 @@ function validateScript(script: string, config: ToolConfiguration): BashToolResu
     };
   }
 
-  // Block sleep at the beginning of commands - they waste time waiting
-  if (/^\s*sleep\s/.test(script)) {
-    return {
-      success: false,
-      error:
-        "do not start commands with sleep; prefer <10s sleeps in busy loops (e.g., 'while ! condition; do sleep 1; done' or 'until condition; do sleep 1; done').",
-      exitCode: -1,
-      wall_duration_ms: 0,
-    };
-  }
-
   // Detect redundant cd to working directory
   const cdPattern = /^\s*cd\s+['"]?([^'";&|]+)['"]?\s*[;&|]/;
   const match = cdPattern.exec(script);

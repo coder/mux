@@ -1009,25 +1009,22 @@ describe("bash tool", () => {
     }
   });
 
-  it("should block sleep command at start of script", async () => {
+  it("should allow sleep command at start of script", async () => {
     using testEnv = createTestBashTool();
     const tool = testEnv.tool;
     const args: BashToolArgs = {
-      script: "sleep 5",
-      timeout_secs: 10,
+      script: "sleep 0.1; echo done",
+      timeout_secs: 5,
       run_in_background: false,
       display_name: "test",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
 
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error).toContain("do not start commands with sleep");
-      expect(result.error).toContain("prefer <10s sleeps in busy loops");
-      expect(result.error).toContain("while ! condition");
-      expect(result.exitCode).toBe(-1);
-      expect(result.wall_duration_ms).toBe(0);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.output).toBe("done");
+      expect(result.exitCode).toBe(0);
     }
   });
 
@@ -1096,7 +1093,6 @@ describe("zombie process cleanup", () => {
 
     // Spawn a background sleep process that would become a zombie if not cleaned up
     // Use a unique marker to identify our test process
-    // Note: Start with echo to avoid triggering standalone sleep blocker
     const marker = `zombie-test-${Date.now()}`;
     const args: BashToolArgs = {
       script: `echo "${marker}"; sleep 100 & echo $!`,
