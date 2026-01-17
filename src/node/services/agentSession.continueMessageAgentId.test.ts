@@ -106,7 +106,9 @@ describe("AgentSession continue-message agentId fallback", () => {
     expect(result.success).toBe(true);
 
     const queued = internals.messageQueue.produceMessage();
-    expect(queued.message).toBe("follow up");
+    // Message is wrapped with context explaining it triggered compaction
+    expect(queued.message).toContain("follow up");
+    expect(queued.message).toContain("triggered compaction");
     expect(queued.options?.agentId).toBe("plan");
 
     session.dispose();

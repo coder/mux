@@ -157,17 +157,17 @@ describe("CompactionHandler", () => {
       const event = createStreamEndEvent("Summary");
       const result = await handler.handleCompletion(event);
 
-      expect(result).toBe(false);
+      expect(result).toBe("not-compaction");
       expect(mockHistoryService.clearHistory.mock.calls).toHaveLength(0);
     });
 
-    it("should return false when historyService fails", async () => {
+    it("should return not-compaction when historyService fails", async () => {
       mockHistoryService.mockGetHistory(Err("Database error"));
 
       const event = createStreamEndEvent("Summary");
       const result = await handler.handleCompletion(event);
 
-      expect(result).toBe(false);
+      expect(result).toBe("not-compaction");
     });
 
     it("should capture compaction_completed telemetry on successful compaction", async () => {
@@ -210,7 +210,7 @@ describe("CompactionHandler", () => {
       const event = createStreamEndEvent("Complete summary");
       const result = await handler.handleCompletion(event);
 
-      expect(result).toBe(true);
+      expect(result).toBe("success");
     });
 
     it("should join multiple text parts from event.parts", async () => {
@@ -394,8 +394,8 @@ describe("CompactionHandler", () => {
       const result1 = await handler.handleCompletion(event);
       const result2 = await handler.handleCompletion(event);
 
-      expect(result1).toBe(true);
-      expect(result2).toBe(true);
+      expect(result1).toBe("success");
+      expect(result2).toBe("success");
       expect(mockHistoryService.clearHistory.mock.calls).toHaveLength(1);
     });
 
@@ -439,11 +439,11 @@ describe("CompactionHandler", () => {
       const event = createStreamEndEvent("Summary");
       const result = await handler.handleCompletion(event);
 
-      expect(result).toBe(false);
+      expect(result).toBe("failed");
       expect(mockHistoryService.appendToHistory.mock.calls).toHaveLength(0);
     });
 
-    it("should return false when appendToHistory() fails", async () => {
+    it("should return failed when appendToHistory() fails", async () => {
       const compactionReq = createCompactionRequest();
       mockHistoryService.mockGetHistory(Ok([compactionReq]));
       mockHistoryService.mockClearHistory(Ok([0]));
@@ -452,7 +452,7 @@ describe("CompactionHandler", () => {
       const event = createStreamEndEvent("Summary");
       const result = await handler.handleCompletion(event);
 
-      expect(result).toBe(false);
+      expect(result).toBe("failed");
     });
 
     it("should log errors but not throw", async () => {
@@ -464,7 +464,7 @@ describe("CompactionHandler", () => {
 
       // Should not throw
       const result = await handler.handleCompletion(event);
-      expect(result).toBe(false);
+      expect(result).toBe("failed");
     });
 
     it("should not emit events when compaction fails mid-process", async () => {
@@ -743,8 +743,8 @@ describe("CompactionHandler", () => {
 
       const result = await handler.handleCompletion(event);
 
-      // Should return false and NOT perform compaction
-      expect(result).toBe(false);
+      // Should return "failed" and NOT perform compaction
+      expect(result).toBe("failed");
       expect(mockHistoryService.clearHistory).not.toHaveBeenCalled();
       expect(mockHistoryService.appendToHistory).not.toHaveBeenCalled();
     });
@@ -762,7 +762,7 @@ describe("CompactionHandler", () => {
 
       const result = await handler.handleCompletion(event);
 
-      expect(result).toBe(false);
+      expect(result).toBe("failed");
       expect(mockHistoryService.clearHistory).not.toHaveBeenCalled();
     });
   });
@@ -787,8 +787,8 @@ describe("CompactionHandler", () => {
 
       const result = await handler.handleCompletion(event);
 
-      // Should return false and NOT perform compaction
-      expect(result).toBe(false);
+      // Should return "failed" and NOT perform compaction
+      expect(result).toBe("failed");
       expect(mockHistoryService.clearHistory).not.toHaveBeenCalled();
       expect(mockHistoryService.appendToHistory).not.toHaveBeenCalled();
     });
@@ -809,7 +809,7 @@ describe("CompactionHandler", () => {
       const event = createStreamEndEvent(arbitraryJson);
 
       const result = await handler.handleCompletion(event);
-      expect(result).toBe(false);
+      expect(result).toBe("failed");
     });
 
     it("should accept valid compaction summary text", async () => {
@@ -828,7 +828,7 @@ describe("CompactionHandler", () => {
       );
 
       const result = await handler.handleCompletion(event);
-      expect(result).toBe(true);
+      expect(result).toBe("success");
       expect(mockHistoryService.clearHistory).toHaveBeenCalled();
     });
 
@@ -848,7 +848,7 @@ describe("CompactionHandler", () => {
       );
 
       const result = await handler.handleCompletion(event);
-      expect(result).toBe(true);
+      expect(result).toBe("success");
     });
 
     it("should not reject JSON arrays (only objects)", async () => {
@@ -865,7 +865,7 @@ describe("CompactionHandler", () => {
       const event = createStreamEndEvent('["item1", "item2"]');
 
       const result = await handler.handleCompletion(event);
-      expect(result).toBe(true);
+      expect(result).toBe("success");
     });
   });
 });
