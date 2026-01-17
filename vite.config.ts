@@ -100,125 +100,136 @@ const basePlugins = [
   tailwindcss(),
 ];
 
-export default defineConfig(({ mode }) => ({
-  // This prevents mermaid initialization errors in production while allowing dev to work
-  plugins: mode === "development" ? [...basePlugins, topLevelAwait()] : basePlugins,
-  resolve: {
-    alias,
-  },
-  base: "./",
-  build: {
-    outDir: "dist",
-    assetsDir: ".",
-    emptyOutDir: false,
-    sourcemap: true,
-    minify: "esbuild",
-    rollupOptions: {
-      input: {
-        main: path.resolve(__dirname, "index.html"),
-        terminal: path.resolve(__dirname, "terminal.html"),
-      },
-      output: {
-        format: "es",
-        inlineDynamicImports: false,
-        sourcemapExcludeSources: false,
-        manualChunks(id) {
-          const normalizedId = id.split(path.sep).join("/");
-          if (normalizedId.includes("node_modules/ai-tokenizer/encoding/")) {
-            const chunkName = path.basename(id, path.extname(id));
-            return `tokenizer-encoding-${chunkName}`;
-          }
-          if (normalizedId.includes("node_modules/ai-tokenizer/")) {
-            return "tokenizer-base";
-          }
-          return undefined;
+export default defineConfig(({ mode }) => {
+  const isProfiling = mode === "profiling";
+  const aliasMap: Record<string, string> = { ...alias };
+
+  if (isProfiling) {
+    aliasMap["react-dom$"] = "react-dom/profiling";
+    aliasMap["scheduler/tracing"] = "scheduler/tracing-profiling";
+  }
+
+  return {
+    // This prevents mermaid initialization errors in production while allowing dev to work
+    plugins: mode === "development" ? [...basePlugins, topLevelAwait()] : basePlugins,
+    resolve: {
+      alias: aliasMap,
+    },
+    ...(isProfiling ? { define: { __PROFILE__: "true" } } : {}),
+    base: "./",
+    build: {
+      outDir: "dist",
+      assetsDir: ".",
+      emptyOutDir: false,
+      sourcemap: true,
+      minify: "esbuild",
+      rollupOptions: {
+        input: {
+          main: path.resolve(__dirname, "index.html"),
+          terminal: path.resolve(__dirname, "terminal.html"),
+        },
+        output: {
+          format: "es",
+          inlineDynamicImports: false,
+          sourcemapExcludeSources: false,
+          manualChunks(id) {
+            const normalizedId = id.split(path.sep).join("/");
+            if (normalizedId.includes("node_modules/ai-tokenizer/encoding/")) {
+              const chunkName = path.basename(id, path.extname(id));
+              return `tokenizer-encoding-${chunkName}`;
+            }
+            if (normalizedId.includes("node_modules/ai-tokenizer/")) {
+              return "tokenizer-base";
+            }
+            return undefined;
+          },
         },
       },
-    },
-    chunkSizeWarningLimit: 2000,
-    target: "esnext",
-  },
-  worker: {
-    format: "es",
-    plugins: () => [topLevelAwait()],
-  },
-  server: {
-    host: devServerHost, // Configurable via MUX_VITE_HOST (defaults to 127.0.0.1 for security)
-    port: devServerPort,
-    strictPort: true,
-    allowedHosts: devServerAllowedHosts,
-
-    proxy: {
-      "/orpc": {
-        target: backendProxyTarget,
-        changeOrigin: true,
-        ws: true,
-      },
-      "/api": {
-        target: backendProxyTarget,
-        changeOrigin: true,
-      },
-      "/auth": {
-        target: backendProxyTarget,
-        // Preserve the original Host so mux can generate OAuth redirect URLs that
-        // point back to the public dev-server origin (not 127.0.0.1:3000).
-        changeOrigin: false,
-      },
-      "/health": {
-        target: backendProxyTarget,
-        changeOrigin: true,
-      },
-      "/version": {
-        target: backendProxyTarget,
-        changeOrigin: true,
-      },
-    },
-    sourcemapIgnoreList: () => false, // Show all sources in DevTools
-
-    watch: {
-      // Ignore node_modules to drastically reduce file handle usage
-      ignored: ["**/node_modules/**", "**/dist/**", "**/.git/**"],
-
-      // Use polling on Windows to avoid file handle exhaustion
-      // This is slightly less efficient but much more stable
-      usePolling: process.platform === "win32",
-
-      // If using polling, set a reasonable interval (in milliseconds)
-      interval: 1000,
-
-      // Additional options for Windows specifically
-      ...(process.platform === "win32" && {
-        // Increase the binary interval for better Windows performance
-        binaryInterval: 1000,
-        // Use a more conservative approach to watching
-        awaitWriteFinish: {
-          stabilityThreshold: 500,
-          pollInterval: 100,
-        },
-      }),
-    },
-
-    // Note: leave `server.hmr` unset so Vite derives the websocket URL from the
-    // served script URL (works when accessed via reverse proxy / custom domain).
-  },
-  preview: {
-    host: "127.0.0.1",
-    port: previewPort,
-    strictPort: true,
-    allowedHosts: ["localhost", "127.0.0.1"],
-  },
-  optimizeDeps: {
-    esbuildOptions: {
+      chunkSizeWarningLimit: 2000,
       target: "esnext",
     },
+    worker: {
+      format: "es",
+      plugins: () => [topLevelAwait()],
+    },
+    server: {
+      host: devServerHost, // Configurable via MUX_VITE_HOST (defaults to 127.0.0.1 for security)
+      port: devServerPort,
+      strictPort: true,
+      allowedHosts: devServerAllowedHosts,
 
-    // Limit dependency pre-bundling scans to the renderer entrypoints.
-    // Scanning all of src/ includes backend-only code (src/node, src/cli), which can
-    // pull in Node-only deps and break Vite's dep-scan (notably on Windows).
-    entries: ["index.html", "terminal.html"],
+      proxy: {
+        "/orpc": {
+          target: backendProxyTarget,
+          changeOrigin: true,
+          ws: true,
+        },
+        "/api": {
+          target: backendProxyTarget,
+          changeOrigin: true,
+        },
+        "/auth": {
+          target: backendProxyTarget,
+          // Preserve the original Host so mux can generate OAuth redirect URLs that
+          // point back to the public dev-server origin (not 127.0.0.1:3000).
+          changeOrigin: false,
+        },
+        "/health": {
+          target: backendProxyTarget,
+          changeOrigin: true,
+        },
+        "/version": {
+          target: backendProxyTarget,
+          changeOrigin: true,
+        },
+      },
+      sourcemapIgnoreList: () => false, // Show all sources in DevTools
 
-    // Force re-optimize dependencies
-    force: false,
-  },
-  assetsInclude: ["**/*.wasm"],
-}));
+      watch: {
+        // Ignore node_modules to drastically reduce file handle usage
+        ignored: ["**/node_modules/**", "**/dist/**", "**/.git/**"],
+
+        // Use polling on Windows to avoid file handle exhaustion
+        // This is slightly less efficient but much more stable
+        usePolling: process.platform === "win32",
+
+        // If using polling, set a reasonable interval (in milliseconds)
+        interval: 1000,
+
+        // Additional options for Windows specifically
+        ...(process.platform === "win32" && {
+          // Increase the binary interval for better Windows performance
+          binaryInterval: 1000,
+          // Use a more conservative approach to watching
+          awaitWriteFinish: {
+            stabilityThreshold: 500,
+            pollInterval: 100,
+          },
+        }),
+      },
+
+      // Note: leave `server.hmr` unset so Vite derives the websocket URL from the
+      // served script URL (works when accessed via reverse proxy / custom domain).
+    },
+    preview: {
+      host: "127.0.0.1",
+      port: previewPort,
+      strictPort: true,
+      allowedHosts: ["localhost", "127.0.0.1"],
+    },
+    optimizeDeps: {
+      esbuildOptions: {
+        target: "esnext",
+      },
+
+      // Limit dependency pre-bundling scans to the renderer entrypoints.
+      // Scanning all of src/ includes backend-only code (src/node, src/cli), which can
+      // pull in Node-only deps and break Vite's dep-scan (notably on Windows).
+      entries: ["index.html", "terminal.html"],
+
+      // Force re-optimize dependencies
+      force: false,
+    },
+    assetsInclude: ["**/*.wasm"],
+  };
+});
