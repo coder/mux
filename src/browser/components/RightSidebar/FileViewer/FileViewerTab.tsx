@@ -1,7 +1,7 @@
 /**
  * FileViewerTab - Main orchestrator for the file viewer pane.
  * Fetches file data via ORPC and routes to appropriate viewer component.
- * Auto-refreshes on file-modifying tool completion (debounced).
+ * Surfaces a reload banner when file-modifying tools complete.
  */
 
 import React from "react";
@@ -148,7 +148,6 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
   const [isSaving, setIsSaving] = React.useState(false);
   const [saveError, setSaveError] = React.useState<string | null>(null);
   const dirtyRef = React.useRef(false);
-  const fileModifyingIgnoreRef = React.useRef(0);
   const lineEndingRef = React.useRef<"lf" | "crlf">("lf");
 
   const { draftRef, scheduleDraftPersist, clearDraft, setDraftHistory } = useDraftPersistence({
@@ -173,10 +172,6 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
   // Subscribe to file-modifying tool events and surface a reload banner.
   React.useEffect(() => {
     const unsubscribe = workspaceStore.subscribeFileModifyingTool(() => {
-      if (fileModifyingIgnoreRef.current > 0) {
-        fileModifyingIgnoreRef.current = Math.max(0, fileModifyingIgnoreRef.current - 1);
-        return;
-      }
       setPendingExternalChange(true);
     }, workspaceId);
 
