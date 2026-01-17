@@ -18,6 +18,7 @@ import {
   processFileContents,
   EXIT_CODE_TOO_LARGE,
   MAX_FILE_SIZE,
+  MAX_FILE_SIZE_LABEL,
   type FileContentsResult,
 } from "@/browser/utils/fileExplorer";
 
@@ -65,6 +66,7 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
   const draftRef = React.useRef<string | null>(draftContent ?? null);
   const draftTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const dirtyRef = React.useRef(false);
+  const fileModifyingIgnoreRef = React.useRef(0);
   const lineEndingRef = React.useRef<"lf" | "crlf">("lf");
   const [saveError, setSaveError] = React.useState<string | null>(null);
   const clearDraftTimeout = React.useCallback(() => {
@@ -127,6 +129,10 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
     const unsubscribe = workspaceStore.subscribeFileModifyingTool(() => {
+      if (fileModifyingIgnoreRef.current > 0) {
+        fileModifyingIgnoreRef.current = Math.max(0, fileModifyingIgnoreRef.current - 1);
+        return;
+      }
       if (dirtyRef.current) {
         setPendingExternalChange(true);
         return;
@@ -172,6 +178,7 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
 
     async function fetchFile() {
       try {
+        fileModifyingIgnoreRef.current += 2;
         // Fetch file contents and diff in parallel via bash
         const [fileResult, diffResult] = await Promise.all([
           api!.workspace.executeBash({
@@ -198,7 +205,10 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
         // Check for "too large" exit code (custom exit code from our script)
         if (bashResult.exitCode === EXIT_CODE_TOO_LARGE) {
           setLoaded({
-            data: { type: "error", message: "File is too large to display. Maximum: 10 MB." },
+            data: {
+              type: "error",
+              message: `File is too large to display. Maximum: ${MAX_FILE_SIZE_LABEL}.`,
+            },
             diff: null,
           });
           loadedPathRef.current = relativePath;
@@ -359,9 +369,10 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
           lineEndingRef.current === "crlf" ? nextContent.replace(/\n/g, "\r\n") : nextContent;
         const { base64, size } = encodeTextToBase64(contentToWrite);
         if (size > MAX_FILE_SIZE) {
-          setSaveError("File is too large to save. Maximum: 10 MB.");
+          setSaveError(`File is too large to save. Maximum: ${MAX_FILE_SIZE_LABEL}.`);
           return;
         }
+        fileModifyingIgnoreRef.current += 1;
 
         const writeResult = await api.workspace.executeBash({
           workspaceId,
@@ -380,6 +391,7 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
           return;
         }
 
+        fileModifyingIgnoreRef.current += 1;
         let updatedDiff: string | null = null;
         const diffResult = await api.workspace.executeBash({
           workspaceId,

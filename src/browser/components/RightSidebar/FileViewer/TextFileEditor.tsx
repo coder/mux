@@ -719,8 +719,8 @@ export const TextFileEditor: React.FC<TextFileEditorProps> = (props) => {
     updateDirtyState(!nextState.doc.eq(baseDocRef.current));
     updateHistoryState(nextState);
     requestAnimationFrame(syncGutterWidth);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- rebase only on content changes.
-  }, [props.contentVersion, props.content, props.draftContent]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- avoid reinitializing on draft persistence.
+  }, [props.contentVersion, props.content]);
 
   React.useEffect(() => {
     themeExtensionRef.current = createEditorTheme(isDark, isMarkdown);
