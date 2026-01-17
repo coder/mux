@@ -4,6 +4,7 @@
 
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import type { WorkspaceChatMessage, ChatMuxMessage } from "@/common/orpc/types";
+import type { DebugLlmRequestSnapshot } from "@/common/types/debugLlmRequest";
 import {
   STABLE_TIMESTAMP,
   createWorkspace,
@@ -16,10 +17,12 @@ import {
 } from "./mockFactory";
 import { getAutoRetryKey } from "@/common/constants/storage";
 import {
-  selectWorkspace,
-  setupSimpleChatStory,
-  setupCustomChatStory,
+  collapseRightSidebar,
+  createOnChatAdapter,
   expandProjects,
+  selectWorkspace,
+  setupCustomChatStory,
+  setupSimpleChatStory,
 } from "./storyHelpers";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import { userEvent, waitFor } from "@storybook/test";
@@ -99,6 +102,38 @@ const LARGE_DIFF = [
 ].join("\n");
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// DEBUG LLM REQUEST FIXTURE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const createDebugLlmRequestSnapshot = (workspaceId: string): DebugLlmRequestSnapshot => ({
+  capturedAt: STABLE_TIMESTAMP - 45000,
+  workspaceId,
+  model: "anthropic:claude-3-5-sonnet-20241022",
+  providerName: "anthropic",
+  thinkingLevel: "medium",
+  mode: "exec",
+  agentId: "exec",
+  maxOutputTokens: 2048,
+  systemMessage:
+    "You are Mux, a focused coding agent. Follow the user’s instructions and keep answers short.",
+  messages: [
+    {
+      role: "user",
+      content: "We hit a rate limit while refactoring. Summarize the plan and retry.",
+    },
+    {
+      role: "assistant",
+      content: "Here’s a concise summary and the next steps to resume safely.",
+    },
+    {
+      role: "tool",
+      name: "write_summary",
+      content: "Summarized 3 tasks, trimmed history, and queued a retry.",
+    },
+  ],
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // STORIES
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -159,6 +194,88 @@ export const ContextExceededSuggestion: AppStory = {
       }}
     />
   ),
+};
+
+export const DebugLlmRequestModal: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const workspaceId = "ws-debug-request";
+        localStorage.setItem(getAutoRetryKey(workspaceId), JSON.stringify(false));
+
+        const workspaces = [
+          createWorkspace({ id: workspaceId, name: "debug", projectName: "my-app" }),
+        ];
+        selectWorkspace(workspaces[0]);
+        collapseRightSidebar();
+
+        const chatHandlers = new Map([
+          [
+            workspaceId,
+            (callback: (event: WorkspaceChatMessage) => void) => {
+              setTimeout(() => {
+                callback(
+                  createUserMessage("msg-1", "Can you summarize what just happened?", {
+                    historySequence: 1,
+                    timestamp: STABLE_TIMESTAMP - 100000,
+                  })
+                );
+                callback({ type: "caught-up" });
+                callback({
+                  type: "stream-error",
+                  messageId: "error-msg",
+                  error: "Rate limit exceeded. Please wait before making more requests.",
+                  errorType: "rate_limit",
+                });
+              }, 50);
+              // eslint-disable-next-line @typescript-eslint/no-empty-function
+              return () => {};
+            },
+          ],
+        ]);
+
+        const lastLlmRequestSnapshots = new Map([
+          [workspaceId, createDebugLlmRequestSnapshot(workspaceId)],
+        ]);
+
+        return createMockORPCClient({
+          projects: groupWorkspacesByProject(workspaces),
+          workspaces,
+          onChat: createOnChatAdapter(chatHandlers),
+          lastLlmRequestSnapshots,
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await waitFor(
+      () => {
+        const debugButton = canvasElement.querySelector(
+          'button[aria-label="Open last LLM request debug modal"]'
+        );
+        if (!debugButton) throw new Error("Debug button not found");
+      },
+      { timeout: 5000 }
+    );
+
+    const debugButton = canvasElement.querySelector(
+      'button[aria-label="Open last LLM request debug modal"]'
+    );
+    if (!debugButton) {
+      throw new Error("Debug button not found");
+    }
+    await userEvent.click(debugButton);
+
+    await waitFor(
+      () => {
+        const dialog = document.querySelector('[role="dialog"]');
+        if (!dialog?.textContent?.includes("Last LLM request")) {
+          throw new Error("Debug modal did not open");
+        }
+      },
+      { timeout: 5000 }
+    );
+  },
 };
 export const StreamError: AppStory = {
   render: () => (

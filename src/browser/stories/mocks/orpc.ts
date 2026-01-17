@@ -15,6 +15,7 @@ import type {
   ProvidersConfigMap,
   WorkspaceStatsSnapshot,
 } from "@/common/orpc/types";
+import type { DebugLlmRequestSnapshot } from "@/common/types/debugLlmRequest";
 import type { Secret } from "@/common/types/secrets";
 import type { ChatStats } from "@/common/types/chatStats";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
@@ -109,6 +110,8 @@ export interface MockORPCClientOptions {
   /** Project secrets per project */
   projectSecrets?: Map<string, Secret[]>;
   sessionUsage?: Map<string, MockSessionUsage>;
+  /** Debug snapshot per workspace for the last LLM request modal */
+  lastLlmRequestSnapshots?: Map<string, DebugLlmRequestSnapshot | null>;
   /** MCP server configuration per project */
   mcpServers?: Map<
     string,
@@ -212,6 +215,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     onProjectRemove,
     backgroundProcesses = new Map<string, MockBackgroundProcess[]>(),
     sessionUsage = new Map<string, MockSessionUsage>(),
+    lastLlmRequestSnapshots = new Map<string, DebugLlmRequestSnapshot | null>(),
     workspaceStatsSnapshots = new Map<string, WorkspaceStatsSnapshot>(),
     statsTabVariant = "control",
     projectSecrets = new Map<string, Secret[]>(),
@@ -572,6 +576,11 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       replaceChatHistory: () => Promise.resolve({ success: true, data: undefined }),
       getInfo: (input: { workspaceId: string }) =>
         Promise.resolve(workspaceMap.get(input.workspaceId) ?? null),
+      getLastLlmRequest: (input: { workspaceId: string }) =>
+        Promise.resolve({
+          success: true,
+          data: lastLlmRequestSnapshots.get(input.workspaceId) ?? null,
+        }),
       executeBash: async (input: { workspaceId: string; script: string }) => {
         if (executeBash) {
           const result = await executeBash(input.workspaceId, input.script);
