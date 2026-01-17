@@ -84,15 +84,16 @@ export function TerminalView({
       return;
     }
 
-    pendingAutoFocusRef.current = false;
     const rafId = requestAnimationFrame(() => {
       term.focus();
+      // Clear after we attempt focus so rapid autoFocus resets don't drop the request.
+      pendingAutoFocusRef.current = false;
       // Surface focus state for e2e (Playwright can be flaky querying ghostty focus).
       containerRef.current?.setAttribute("data-terminal-autofocus", "true");
     });
 
     return () => cancelAnimationFrame(rafId);
-  }, [terminalReady, visible]);
+  }, [terminalReady, visible, autoFocus]);
 
   // Reset loading state when session changes
   useEffect(() => {
@@ -196,6 +197,9 @@ export function TerminalView({
     if (!containerEl) {
       return;
     }
+
+    // Snapshot the pending focus request so one-shot autoFocus updates don't restart init.
+    const shouldAutoFocusOnInit = pendingAutoFocusRef.current;
 
     // StrictMode will run this effect twice in dev (setup → cleanup → setup).
     // If the first async init completes after cleanup, we can end up with two ghostty-web
@@ -308,7 +312,7 @@ export function TerminalView({
         // It also schedules a delayed focus with setTimeout(0) as "backup".
         // If autoFocus is disabled, blur immediately AND with a delayed blur to counteract.
         // If autoFocus is enabled, focus the hidden textarea to avoid browser caret.
-        if (autoFocus) {
+        if (shouldAutoFocusOnInit) {
           const textarea = containerEl.querySelector("textarea");
           if (textarea instanceof HTMLTextAreaElement) {
             textarea.focus();
@@ -369,7 +373,7 @@ export function TerminalView({
       containerEl.replaceChildren();
       initInProgressRef.current = false;
     };
-  }, [visible, workspaceId, router, sessionId, autoFocus]);
+  }, [visible, workspaceId, router, sessionId]);
 
   // Track focus/blur on the terminal container to control cursor blinking
   useEffect(() => {

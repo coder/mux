@@ -218,6 +218,8 @@ interface RightSidebarTabsetNodeProps {
   tabPositions: Map<TabType, number>;
   /** Terminal session ID that should be auto-focused (consumed and cleared on mount) */
   autoFocusTerminalSession: string | null;
+  /** Callback to request terminal focus when a tab is selected */
+  onRequestTerminalFocus: (sessionId: string) => void;
   /** Callback to clear the auto-focus state after it's been consumed */
   onAutoFocusConsumed: () => void;
   /** Handler to open a file in a new tab */
@@ -270,6 +272,13 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
   };
 
   const selectTab = (tab: TabType) => {
+    if (isTerminalTab(tab)) {
+      const sessionId = getTerminalSessionId(tab);
+      if (sessionId) {
+        props.onRequestTerminalFocus(sessionId);
+      }
+    }
+
     props.setLayout((prev) => {
       const withFocus = setFocusedTabset(prev, props.node.id);
       return selectTabInTabset(withFocus, props.node.id, tab);
@@ -556,7 +565,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   // Review stats reported by ReviewPanel
   const [reviewStats, setReviewStats] = React.useState<ReviewStats | null>(null);
 
-  // Terminal session ID that should be auto-focused (set when opened via keybind like Cmd+T)
+  // Terminal session ID that should be auto-focused (new terminal or explicit tab focus).
   const [autoFocusTerminalSession, setAutoFocusTerminalSession] = React.useState<string | null>(
     null
   );
@@ -686,6 +695,20 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       for (let i = 0; i < tabKeybinds.length; i++) {
         if (matchesKeybind(e, tabKeybinds[i])) {
           e.preventDefault();
+
+          const currentLayout = parseRightSidebarLayoutState(
+            layoutRawRef.current,
+            initialActiveTab
+          );
+          const allTabs = collectAllTabsWithTabset(currentLayout.root);
+          const target = allTabs[i];
+          if (target && isTerminalTab(target.tab)) {
+            const sessionId = getTerminalSessionId(target.tab);
+            if (sessionId) {
+              setAutoFocusTerminalSession(sessionId);
+            }
+          }
+
           setLayout((prev) => selectTabByIndex(prev, i));
           setCollapsed(false);
           return;
@@ -695,7 +718,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [setLayout, setCollapsed]);
+  }, [initialActiveTab, setAutoFocusTerminalSession, setCollapsed, setLayout]);
 
   const usage = useWorkspaceUsage(workspaceId);
 
@@ -1137,6 +1160,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         terminalTitles={terminalTitles}
         onTerminalTitleChange={handleTerminalTitleChange}
         tabPositions={tabPositions}
+        onRequestTerminalFocus={setAutoFocusTerminalSession}
         autoFocusTerminalSession={autoFocusTerminalSession}
         onAutoFocusConsumed={() => setAutoFocusTerminalSession(null)}
         onOpenFile={handleOpenFile}
