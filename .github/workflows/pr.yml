@@ -254,6 +254,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: ./.github/actions/setup-mux
+      - run: ./scripts/generate-npm-shrinkwrap.sh
       - run: make build
       - run: npm pack
       - env:

@@ -237,6 +237,7 @@
     "dist/**/*.png",
     "dist/assets/**/*",
     "scripts/postinstall.sh",
+    "npm-shrinkwrap.json",
     "README.md",
     "LICENSE"
   ],

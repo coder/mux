@@ -79,6 +79,9 @@ jobs:
       - name: Generate version file
         run: ./scripts/generate-version.sh
 
+      - name: Generate npm shrinkwrap
+        run: ./scripts/generate-npm-shrinkwrap.sh
+
       - name: Build application
         run: make build
 
