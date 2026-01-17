@@ -9,6 +9,7 @@ import { Check, Copy, Save, RefreshCw, Undo2, Redo2 } from "lucide-react";
 import {
   defaultKeymap,
   history,
+  historyField,
   historyKeymap,
   indentWithTab,
   redo,
@@ -58,6 +59,7 @@ import {
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import type { DecorationSet } from "@codemirror/view";
 import { useTheme } from "@/browser/contexts/ThemeContext";
+import type { FileDraftHistory } from "@/browser/utils/rightSidebarLayout";
 import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 import { getLanguageFromPath, getLanguageDisplayName } from "@/common/utils/git/languageDetector";
 
@@ -65,6 +67,8 @@ interface TextFileEditorProps {
   content: string;
   /** Unsaved draft content to rehydrate (optional) */
   draftContent?: string | null;
+  /** Serialized history state to restore (optional) */
+  draftHistory?: FileDraftHistory | null;
   filePath: string;
   size: number;
   /** Git diff for uncommitted changes (null if no changes or error) */
@@ -79,6 +83,8 @@ interface TextFileEditorProps {
   onRefresh?: () => void;
   /** Callback when editor dirty state changes */
   onDirtyChange?: (dirty: boolean) => void;
+  /** Callback when editor history changes */
+  onHistoryChange?: (history: FileDraftHistory | null) => void;
   /** Callback when editor content changes */
   onContentChange?: (content: string) => void;
   /** Callback when save is requested */
@@ -565,6 +571,7 @@ export const TextFileEditor: React.FC<TextFileEditorProps> = (props) => {
 
   const callbacksRef = React.useRef({
     onDirtyChange: props.onDirtyChange,
+    onHistoryChange: props.onHistoryChange,
     onContentChange: props.onContentChange,
     onSave: props.onSave,
   });
@@ -572,10 +579,11 @@ export const TextFileEditor: React.FC<TextFileEditorProps> = (props) => {
   React.useEffect(() => {
     callbacksRef.current = {
       onDirtyChange: props.onDirtyChange,
+      onHistoryChange: props.onHistoryChange,
       onContentChange: props.onContentChange,
       onSave: props.onSave,
     };
-  }, [props.onContentChange, props.onDirtyChange, props.onSave]);
+  }, [props.onContentChange, props.onDirtyChange, props.onHistoryChange, props.onSave]);
 
   const diffHighlights = parseDiffHighlights(props.diff);
   const addedCount = diffHighlights.addedLines.length;
@@ -646,7 +654,7 @@ export const TextFileEditor: React.FC<TextFileEditorProps> = (props) => {
     return true;
   };
 
-  const createEditorState = (doc: string): EditorState => {
+  const createEditorState = (doc: string, historyState?: FileDraftHistory | null): EditorState => {
     const updateListener = EditorView.updateListener.of((update) => {
       updateHistoryState(update.state);
       if (!update.docChanged) return;
@@ -655,6 +663,9 @@ export const TextFileEditor: React.FC<TextFileEditorProps> = (props) => {
       updateLineCount(nextDoc);
       updateDirtyState(!nextDoc.eq(baseDocRef.current));
       callbacksRef.current.onContentChange?.(contentRef.current);
+      callbacksRef.current.onHistoryChange?.(
+        update.state.toJSON({ history: historyField }) as FileDraftHistory
+      );
     });
 
     const saveKeymap = Prec.highest(
@@ -666,17 +677,30 @@ export const TextFileEditor: React.FC<TextFileEditorProps> = (props) => {
       ])
     );
 
+    const extensions = [
+      baseExtensions,
+      EditorView.lineWrapping,
+      saveKeymap,
+      updateListener,
+      themeCompartmentRef.current.of(themeExtensionRef.current),
+      languageCompartmentRef.current.of(languageExtensionRef.current),
+      diffCompartmentRef.current.of(diffExtensionRef.current),
+    ];
+
+    if (historyState && typeof historyState === "object") {
+      try {
+        const historyDoc = historyState.doc;
+        if (typeof historyDoc === "string" && normalizeLineEndings(historyDoc) === doc) {
+          return EditorState.fromJSON(historyState, { extensions }, { history: historyField });
+        }
+      } catch {
+        // Fall back to fresh state if history cannot be restored.
+      }
+    }
+
     return EditorState.create({
       doc,
-      extensions: [
-        baseExtensions,
-        EditorView.lineWrapping,
-        saveKeymap,
-        updateListener,
-        themeCompartmentRef.current.of(themeExtensionRef.current),
-        languageCompartmentRef.current.of(languageExtensionRef.current),
-        diffCompartmentRef.current.of(diffExtensionRef.current),
-      ],
+      extensions,
     });
   };
 
@@ -684,7 +708,7 @@ export const TextFileEditor: React.FC<TextFileEditorProps> = (props) => {
     if (!editorRootRef.current) return;
     if (viewRef.current) return;
 
-    const state = createEditorState(normalizedInitialContent);
+    const state = createEditorState(normalizedInitialContent, props.draftHistory);
     const view = new EditorView({ state, parent: editorRootRef.current });
     viewRef.current = view;
     updateLineCount(state.doc);
@@ -713,13 +737,13 @@ export const TextFileEditor: React.FC<TextFileEditorProps> = (props) => {
     baseDocRef.current = Text.of(normalizedBase.split("\n"));
     contentRef.current = normalizedContent;
 
-    const nextState = createEditorState(normalizedContent);
+    const nextState = createEditorState(normalizedContent, props.draftHistory);
     view.setState(nextState);
     updateLineCount(nextState.doc);
     updateDirtyState(!nextState.doc.eq(baseDocRef.current));
     updateHistoryState(nextState);
     requestAnimationFrame(syncGutterWidth);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- avoid reinitializing on draft persistence.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- avoid reinitializing on draft/history persistence.
   }, [props.contentVersion, props.content]);
 
   React.useEffect(() => {

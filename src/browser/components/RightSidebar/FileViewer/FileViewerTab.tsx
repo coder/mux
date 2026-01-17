@@ -10,6 +10,7 @@ import { workspaceStore } from "@/browser/stores/WorkspaceStore";
 import { RefreshCw, AlertCircle } from "lucide-react";
 import { TextFileEditor } from "./TextFileEditor";
 import { ImageFileViewer } from "./ImageFileViewer";
+import type { FileDraftHistory } from "@/browser/utils/rightSidebarLayout";
 import {
   validateRelativePath,
   buildReadFileScript,
@@ -27,7 +28,9 @@ interface FileViewerTabProps {
   relativePath: string;
   onDirtyChange?: (dirty: boolean) => void;
   draftContent?: string | null;
+  draftHistory?: FileDraftHistory | null;
   onDraftChange?: (content: string | null) => void;
+  onDraftHistoryChange?: (history: FileDraftHistory | null) => void;
 }
 
 interface LoadedData {
@@ -40,6 +43,79 @@ const DEBOUNCE_MS = 2000;
 const ENCODE_CHUNK_SIZE = 0x8000;
 
 const normalizeLineEndings = (content: string): string => content.replace(/\r\n/g, "\n");
+
+interface DraftPersistenceParams {
+  draftContent?: string | null;
+  draftHistory?: FileDraftHistory | null;
+  relativePath: string;
+  onDraftChange?: (content: string | null) => void;
+  onDraftHistoryChange?: (history: FileDraftHistory | null) => void;
+}
+
+const useDraftPersistence = (params: DraftPersistenceParams) => {
+  const { draftContent, draftHistory, relativePath, onDraftChange, onDraftHistoryChange } = params;
+  const draftRef = React.useRef<string | null>(draftContent ?? null);
+  const draftHistoryRef = React.useRef<FileDraftHistory | null>(draftHistory ?? null);
+  const draftTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearDraftTimeout = React.useCallback(() => {
+    if (draftTimeoutRef.current) {
+      clearTimeout(draftTimeoutRef.current);
+      draftTimeoutRef.current = null;
+    }
+  }, []);
+
+  const clearDraft = React.useCallback(() => {
+    if (draftRef.current === null && !draftTimeoutRef.current && draftHistoryRef.current === null) {
+      return;
+    }
+    clearDraftTimeout();
+    draftRef.current = null;
+    draftHistoryRef.current = null;
+    onDraftChange?.(null);
+    onDraftHistoryChange?.(null);
+  }, [clearDraftTimeout, onDraftChange, onDraftHistoryChange]);
+
+  const scheduleDraftPersist = React.useCallback(
+    (content: string) => {
+      draftRef.current = content;
+      if (!onDraftChange && !onDraftHistoryChange) return;
+      clearDraftTimeout();
+      draftTimeoutRef.current = setTimeout(() => {
+        draftTimeoutRef.current = null;
+        onDraftChange?.(draftRef.current);
+        onDraftHistoryChange?.(draftHistoryRef.current);
+      }, DRAFT_DEBOUNCE_MS);
+    },
+    [clearDraftTimeout, onDraftChange, onDraftHistoryChange]
+  );
+
+  const setDraftHistory = React.useCallback((history: FileDraftHistory | null) => {
+    draftHistoryRef.current = history;
+  }, []);
+
+  React.useEffect(() => {
+    draftRef.current = draftContent ?? null;
+    draftHistoryRef.current = draftHistory ?? null;
+    clearDraftTimeout();
+  }, [clearDraftTimeout, draftContent, draftHistory, relativePath]);
+
+  React.useEffect(() => {
+    return () => {
+      if (!onDraftChange && !onDraftHistoryChange) return;
+      if (draftTimeoutRef.current) {
+        clearTimeout(draftTimeoutRef.current);
+        draftTimeoutRef.current = null;
+        if (draftRef.current !== null) {
+          onDraftChange?.(draftRef.current);
+          onDraftHistoryChange?.(draftHistoryRef.current);
+        }
+      }
+    };
+  }, [onDraftChange, onDraftHistoryChange]);
+
+  return { draftRef, scheduleDraftPersist, clearDraft, setDraftHistory };
+};
 function encodeTextToBase64(content: string): { base64: string; size: number } {
   const bytes = new TextEncoder().encode(content);
   let binary = "";
@@ -52,7 +128,15 @@ function encodeTextToBase64(content: string): { base64: string; size: number } {
 
 export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
   const { api } = useAPI();
-  const { workspaceId, relativePath, onDirtyChange, draftContent, onDraftChange } = props;
+  const {
+    workspaceId,
+    relativePath,
+    onDirtyChange,
+    draftContent,
+    draftHistory,
+    onDraftChange,
+    onDraftHistoryChange,
+  } = props;
   // Separate loading flag from loaded data - keeps content visible during refresh
   const [isLoading, setIsLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -63,56 +147,19 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
   const [contentVersion, setContentVersion] = React.useState(0);
   const [pendingExternalChange, setPendingExternalChange] = React.useState(false);
   const [isSaving, setIsSaving] = React.useState(false);
-  const draftRef = React.useRef<string | null>(draftContent ?? null);
-  const draftTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [saveError, setSaveError] = React.useState<string | null>(null);
   const dirtyRef = React.useRef(false);
   const fileModifyingIgnoreRef = React.useRef(0);
   const lineEndingRef = React.useRef<"lf" | "crlf">("lf");
-  const [saveError, setSaveError] = React.useState<string | null>(null);
-  const clearDraftTimeout = React.useCallback(() => {
-    if (draftTimeoutRef.current) {
-      clearTimeout(draftTimeoutRef.current);
-      draftTimeoutRef.current = null;
-    }
-  }, []);
 
-  const clearDraft = React.useCallback(() => {
-    if (draftRef.current === null && !draftTimeoutRef.current) return;
-    clearDraftTimeout();
-    draftRef.current = null;
-    onDraftChange?.(null);
-  }, [clearDraftTimeout, onDraftChange]);
+  const { draftRef, scheduleDraftPersist, clearDraft, setDraftHistory } = useDraftPersistence({
+    draftContent,
+    draftHistory,
+    relativePath,
+    onDraftChange,
+    onDraftHistoryChange,
+  });
 
-  const scheduleDraftPersist = React.useCallback(
-    (content: string) => {
-      draftRef.current = content;
-      if (!onDraftChange) return;
-      clearDraftTimeout();
-      draftTimeoutRef.current = setTimeout(() => {
-        draftTimeoutRef.current = null;
-        onDraftChange?.(content);
-      }, DRAFT_DEBOUNCE_MS);
-    },
-    [clearDraftTimeout, onDraftChange]
-  );
-
-  React.useEffect(() => {
-    draftRef.current = draftContent ?? null;
-    clearDraftTimeout();
-  }, [clearDraftTimeout, draftContent, relativePath]);
-
-  React.useEffect(() => {
-    return () => {
-      if (!onDraftChange) return;
-      if (draftTimeoutRef.current) {
-        clearTimeout(draftTimeoutRef.current);
-        draftTimeoutRef.current = null;
-        if (dirtyRef.current && draftRef.current !== null) {
-          onDraftChange(draftRef.current);
-        }
-      }
-    };
-  }, [onDraftChange]);
   // Refresh counter to trigger re-fetch
   const [refreshCounter, setRefreshCounter] = React.useState(0);
 
@@ -270,7 +317,7 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
     return () => {
       cancelled = true;
     };
-  }, [api, workspaceId, relativePath, refreshCounter]);
+  }, [api, workspaceId, relativePath, refreshCounter, draftRef]);
 
   const handleDirtyChange = (dirty: boolean) => {
     dirtyRef.current = dirty;
@@ -281,13 +328,20 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
     onDirtyChange?.(dirty);
   };
 
+  const handleHistoryChange = React.useCallback(
+    (nextHistory: FileDraftHistory | null) => {
+      setDraftHistory(nextHistory);
+    },
+    [setDraftHistory]
+  );
+
   const handleContentChange = React.useCallback(
     (nextContent: string) => {
       draftRef.current = nextContent;
       if (!dirtyRef.current) return;
       scheduleDraftPersist(nextContent);
     },
-    [scheduleDraftPersist]
+    [draftRef, scheduleDraftPersist]
   );
 
   // Check if we have valid cached content for the current file
@@ -420,6 +474,7 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
     return (
       <TextFileEditor
         content={data.content}
+        draftHistory={draftHistory}
         draftContent={draftContent}
         contentVersion={contentVersion}
         filePath={relativePath}
@@ -429,6 +484,7 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
         isSaving={isSaving}
         saveError={saveError}
         onDirtyChange={handleDirtyChange}
+        onHistoryChange={handleHistoryChange}
         onContentChange={handleContentChange}
         onRefresh={handleRefresh}
         onSave={handleSave}
