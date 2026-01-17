@@ -225,7 +225,6 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
 
     async function fetchFile() {
       try {
-        fileModifyingIgnoreRef.current += 2;
         // Fetch file contents and diff in parallel via bash
         const [fileResult, diffResult] = await Promise.all([
           api!.workspace.executeBash({
@@ -301,6 +300,10 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
             draftContent !== null &&
             normalizeLineEndings(draftContent) !== normalizeLineEndings(data.content);
           dirtyRef.current = hasDraft;
+          if (!hasDraft && draftContent !== null) {
+            draftRef.current = null;
+            onDraftChange?.(null);
+          }
           setContentVersion((version) => version + 1);
         } else {
           dirtyRef.current = false;
@@ -317,7 +320,7 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
     return () => {
       cancelled = true;
     };
-  }, [api, workspaceId, relativePath, refreshCounter, draftRef]);
+  }, [api, workspaceId, relativePath, refreshCounter, draftRef, onDraftChange]);
 
   const handleDirtyChange = (dirty: boolean) => {
     dirtyRef.current = dirty;
@@ -426,8 +429,6 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
           setSaveError(`File is too large to save. Maximum: ${MAX_FILE_SIZE_LABEL}.`);
           return;
         }
-        fileModifyingIgnoreRef.current += 1;
-
         const writeResult = await api.workspace.executeBash({
           workspaceId,
           script: buildWriteFileScript(relativePath, base64),
@@ -445,7 +446,6 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
           return;
         }
 
-        fileModifyingIgnoreRef.current += 1;
         let updatedDiff: string | null = null;
         const diffResult = await api.workspace.executeBash({
           workspaceId,
