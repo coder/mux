@@ -140,8 +140,9 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
   const [isLoading, setIsLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [loaded, setLoaded] = React.useState<LoadedData | null>(null);
-  // Track which path the loaded data is for (to detect file switches)
-  // Using ref to avoid effect dep issues - we only read this to decide loading state
+  // Track which path/type the loaded data is for (to detect file switches).
+  // Using refs to avoid effect dep issues - we only read these to decide loading state.
+  const loadedTypeRef = React.useRef<FileContentsResult["type"] | null>(null);
   const loadedPathRef = React.useRef<string | null>(null);
   const [contentVersion, setContentVersion] = React.useState(0);
   const [pendingExternalChange, setPendingExternalChange] = React.useState(false);
@@ -169,9 +170,13 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
     setSaveError(null);
   }, [relativePath]);
 
-  // Subscribe to file-modifying tool events and surface a reload banner.
+  // Subscribe to file-modifying tool events: refresh non-text files, banner for text.
   React.useEffect(() => {
     const unsubscribe = workspaceStore.subscribeFileModifyingTool(() => {
+      if (loadedTypeRef.current && loadedTypeRef.current !== "text") {
+        setRefreshCounter((count) => count + 1);
+        return;
+      }
       setPendingExternalChange(true);
     }, workspaceId);
 
@@ -240,6 +245,7 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
             },
             diff: null,
           });
+          loadedTypeRef.current = "error";
           loadedPathRef.current = relativePath;
           setIsLoading(false);
           setSaveError(null);
@@ -273,6 +279,7 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
         }
 
         setLoaded({ data, diff });
+        loadedTypeRef.current = data.type;
         loadedPathRef.current = relativePath;
         setIsLoading(false);
         setSaveError(null);
@@ -441,6 +448,7 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
           data: { type: "text", content: contentToWrite, size },
           diff: updatedDiff,
         });
+        loadedTypeRef.current = "text";
         loadedPathRef.current = relativePath;
         setContentVersion((version) => version + 1);
         dirtyRef.current = false;
