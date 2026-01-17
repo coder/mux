@@ -134,8 +134,10 @@ class MuxAgent(BaseInstalledAgent):
 
         thinking_value = self._thinking_level or env["MUX_THINKING_LEVEL"]
         normalized_thinking = thinking_value.strip().lower()
-        if normalized_thinking not in {"off", "low", "medium", "high"}:
-            raise ValueError("MUX_THINKING_LEVEL must be one of off, low, medium, high")
+        if normalized_thinking not in {"off", "low", "medium", "high", "xhigh"}:
+            raise ValueError(
+                "MUX_THINKING_LEVEL must be one of off, low, medium, high, xhigh"
+            )
         env["MUX_THINKING_LEVEL"] = normalized_thinking
 
         mode_value = self._mode or env["MUX_MODE"]
