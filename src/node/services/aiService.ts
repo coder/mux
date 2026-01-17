@@ -672,8 +672,8 @@ export class AIService extends EventEmitter {
 
         const baseFetch = getProviderFetch(providerConfig);
 
-        // Wrap fetch to force truncation: "disabled" for OpenAI Responses API calls.
-        // This guarantees OpenAI never truncates server-side (mux handles context).
+        // Wrap fetch to default truncation to "disabled" for OpenAI Responses API calls.
+        // This preserves our compaction handling while still allowing explicit truncation (e.g., auto).
         const fetchWithOpenAITruncation = Object.assign(
           async (
             input: Parameters<typeof fetch>[0],
@@ -708,7 +708,10 @@ export class AIService extends EventEmitter {
 
                 try {
                   const json = JSON.parse(body) as Record<string, unknown>;
-                  json.truncation = "disabled";
+                  const truncation = json.truncation;
+                  if (truncation !== "auto" && truncation !== "disabled") {
+                    json.truncation = "disabled";
+                  }
                   const newBody = JSON.stringify(json);
                   const newInit: RequestInit = { ...init, headers, body: newBody };
                   return baseFetch(input, newInit);
@@ -1849,6 +1852,7 @@ export class AIService extends EventEmitter {
       }
 
       // Build provider options based on thinking level and message history
+      const truncationMode = agentDefinition.frontmatter.providerOptions?.truncationMode;
       // Pass filtered messages so OpenAI can extract previousResponseId for persistence
       // Also pass callback to filter out lost responseIds (OpenAI invalidated them)
       // Pass workspaceId to derive stable promptCacheKey for OpenAI caching
@@ -1858,7 +1862,8 @@ export class AIService extends EventEmitter {
         filteredMessages,
         (id) => this.streamManager.isResponseIdLost(id),
         effectiveMuxProviderOptions,
-        workspaceId
+        workspaceId,
+        truncationMode
       );
 
       // Debug dump: Log the complete LLM request when MUX_DEBUG_LLM_REQUEST is set

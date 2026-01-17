@@ -3,6 +3,8 @@ name: Compact
 description: History compaction (internal)
 ui:
   hidden: true
+providerOptions:
+  truncationMode: auto
 subagent:
   runnable: false
 ---

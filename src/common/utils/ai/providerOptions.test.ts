@@ -150,6 +150,21 @@ describe("buildProviderOptions - OpenAI", () => {
       expect(openai!.truncation).toBe("disabled");
     });
 
+    test("should allow auto truncation when explicitly enabled", () => {
+      const result = buildProviderOptions(
+        "openai:gpt-5.2",
+        "off",
+        undefined,
+        undefined,
+        undefined,
+        "compaction-workspace",
+        "auto"
+      );
+      const openai = getOpenAIOptions(result);
+
+      expect(openai).toBeDefined();
+      expect(openai!.truncation).toBe("auto");
+    });
     test("should derive promptCacheKey for gateway OpenAI model", () => {
       const result = buildProviderOptions(
         "mux-gateway:openai/gpt-5.2",

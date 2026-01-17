@@ -58,6 +58,9 @@ type ProviderOptions =
  * @param thinkingLevel - Unified thinking level
  * @param messages - Conversation history to extract previousResponseId from
  * @param lostResponseIds - Optional callback to check if a responseId has been invalidated by OpenAI
+ * @param muxProviderOptions - Optional provider overrides from config
+ * @param workspaceId - Optional for non-OpenAI providers
+ * @param openaiTruncationMode - Optional truncation mode for OpenAI responses (auto/disabled)
  * @returns Provider options object for AI SDK
  */
 export function buildProviderOptions(
@@ -66,7 +69,8 @@ export function buildProviderOptions(
   messages?: MuxMessage[],
   lostResponseIds?: (id: string) => boolean,
   muxProviderOptions?: MuxProviderOptions,
-  workspaceId?: string // Optional for non-OpenAI providers
+  workspaceId?: string, // Optional for non-OpenAI providers
+  openaiTruncationMode?: OpenAIResponsesProviderOptions["truncation"]
 ): ProviderOptions {
   // Always clamp to the model's supported thinking policy (e.g., gpt-5-pro = HIGH only)
   const effectiveThinking = enforceThinkingPolicy(modelString, thinkingLevel);
@@ -213,21 +217,23 @@ export function buildProviderOptions(
     // workspaceId is always passed from AIService.streamMessage for real requests
     const promptCacheKey = workspaceId ? `mux-v1-${workspaceId}` : undefined;
 
+    const serviceTier = muxProviderOptions?.openai?.serviceTier ?? "auto";
+    const truncationMode = openaiTruncationMode ?? "disabled";
+
     log.debug("buildProviderOptions: OpenAI config", {
       reasoningEffort,
       thinkingLevel: effectiveThinking,
       previousResponseId,
       promptCacheKey,
+      truncation: truncationMode,
     });
-
-    const serviceTier = muxProviderOptions?.openai?.serviceTier ?? "auto";
 
     const options: ProviderOptions = {
       openai: {
         parallelToolCalls: true, // Always enable concurrent tool execution
         serviceTier,
-        // Never allow server-side truncation (mux handles context via compaction)
-        truncation: "disabled",
+        // Default to disabled; allow auto truncation for compaction to avoid context errors
+        truncation: truncationMode,
         // Stable prompt cache key to improve OpenAI cache hit rates
         // See: https://sdk.vercel.ai/providers/ai-sdk-providers/openai#responses-models
         ...(promptCacheKey && { promptCacheKey }),

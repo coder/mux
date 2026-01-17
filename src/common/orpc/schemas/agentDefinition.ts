@@ -36,6 +36,11 @@ const AgentDefinitionSubagentSchema = z
   })
   .strip();
 
+const AgentDefinitionProviderOptionsSchema = z
+  .object({
+    truncationMode: z.enum(["auto", "disabled"]).optional(),
+  })
+  .strip();
 const AgentDefinitionAiDefaultsSchema = z
   .object({
     // Model identifier: full string (e.g. "anthropic:claude-sonnet-4-5") or abbreviation (e.g. "sonnet")
@@ -77,6 +82,8 @@ export const AgentDefinitionFrontmatterSchema = z
     prompt: AgentDefinitionPromptSchema.optional(),
 
     subagent: AgentDefinitionSubagentSchema.optional(),
+
+    providerOptions: AgentDefinitionProviderOptionsSchema.optional(),
     ai: AgentDefinitionAiDefaultsSchema.optional(),
 
     // Tool configuration: add/remove patterns (regex).
