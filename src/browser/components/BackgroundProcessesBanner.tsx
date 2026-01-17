@@ -1,9 +1,13 @@
 import React, { useState, useCallback, useEffect } from "react";
 import { Terminal, X, ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
-import type { BackgroundProcessInfo } from "@/common/orpc/schemas/api";
 import { cn } from "@/common/lib/utils";
 import { formatDuration } from "./tools/shared/toolUtils";
+import {
+  useBackgroundBashTerminatingIds,
+  useBackgroundProcesses,
+} from "@/browser/stores/BackgroundBashStore";
+import { useBackgroundBashActions } from "@/browser/contexts/BackgroundBashContext";
 
 /**
  * Truncate script to reasonable display length.
@@ -18,9 +22,7 @@ function truncateScript(script: string, maxLength = 60): string {
 }
 
 interface BackgroundProcessesBannerProps {
-  processes: BackgroundProcessInfo[];
-  terminatingIds: Set<string>;
-  onTerminate: (processId: string) => void;
+  workspaceId: string;
 }
 
 /**
@@ -30,9 +32,12 @@ interface BackgroundProcessesBannerProps {
 export const BackgroundProcessesBanner: React.FC<BackgroundProcessesBannerProps> = (props) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [, setTick] = useState(0);
+  const processes = useBackgroundProcesses(props.workspaceId);
+  const terminatingIds = useBackgroundBashTerminatingIds(props.workspaceId);
+  const { terminate } = useBackgroundBashActions();
 
   // Filter to only running processes
-  const runningProcesses = props.processes.filter((p) => p.status === "running");
+  const runningProcesses = processes.filter((p) => p.status === "running");
   const count = runningProcesses.length;
 
   // Update duration display every second when expanded
@@ -42,13 +47,12 @@ export const BackgroundProcessesBanner: React.FC<BackgroundProcessesBannerProps>
     return () => clearInterval(interval);
   }, [isExpanded, count]);
 
-  const { onTerminate } = props;
   const handleTerminate = useCallback(
     (processId: string, event: React.MouseEvent) => {
       event.stopPropagation();
-      onTerminate(processId);
+      terminate(processId);
     },
-    [onTerminate]
+    [terminate]
   );
 
   const handleToggle = useCallback(() => {
@@ -87,7 +91,7 @@ export const BackgroundProcessesBanner: React.FC<BackgroundProcessesBannerProps>
       {isExpanded && (
         <div className="border-border mx-auto max-h-48 max-w-4xl space-y-1.5 overflow-y-auto border-t py-2">
           {runningProcesses.map((proc) => {
-            const isTerminating = props.terminatingIds.has(proc.id);
+            const isTerminating = terminatingIds.has(proc.id);
             return (
               <div
                 key={proc.id}

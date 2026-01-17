@@ -17,10 +17,6 @@ interface ToolMessageProps {
   onReviewNote?: (data: ReviewNoteData) => void;
   /** Whether this is the latest propose_plan in the conversation */
   isLatestProposePlan?: boolean;
-  /** Set of tool call IDs of foreground bashes */
-  foregroundBashToolCallIds?: Set<string>;
-  /** Callback to send a foreground bash to background */
-  onSendBashToBackground?: (toolCallId: string) => void;
   /** Optional bash_output grouping info */
   bashOutputGroup?: BashOutputGroupInfo;
 }
@@ -31,8 +27,6 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
   workspaceId,
   onReviewNote,
   isLatestProposePlan,
-  foregroundBashToolCallIds,
-  onSendBashToBackground,
   bashOutputGroup,
 }) => {
   const { toolName, args, result, status, toolCallId } = message;
@@ -41,7 +35,6 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
   const ToolComponent = getToolComponent(toolName, args);
 
   // Compute tool-specific extras
-  const canSendToBackground = foregroundBashToolCallIds?.has(toolCallId) ?? false;
   const groupPosition =
     bashOutputGroup?.position === "first" || bashOutputGroup?.position === "last"
       ? bashOutputGroup.position
@@ -64,10 +57,6 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
         toolCallId={toolCallId}
         // Bash-specific
         startedAt={message.timestamp}
-        canSendToBackground={canSendToBackground}
-        onSendToBackground={
-          onSendBashToBackground ? () => onSendBashToBackground(toolCallId) : undefined
-        }
         // FileEdit-specific
         onReviewNote={onReviewNote}
         // ProposePlan-specific

@@ -23,6 +23,8 @@ import {
 } from "./shared/toolUtils";
 import { cn } from "@/common/lib/utils";
 import { useBashToolLiveOutput, useLatestStreamingBashId } from "@/browser/stores/WorkspaceStore";
+import { useForegroundBashToolCallIds } from "@/browser/stores/BackgroundBashStore";
+import { useBackgroundBashActions } from "@/browser/contexts/BackgroundBashContext";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 
 interface BashToolCallProps {
@@ -32,10 +34,6 @@ interface BashToolCallProps {
   result?: BashToolResult;
   status?: ToolStatus;
   startedAt?: number;
-  /** Whether there's a foreground bash that can be sent to background */
-  canSendToBackground?: boolean;
-  /** Callback to send the current foreground bash to background */
-  onSendToBackground?: () => void;
 }
 
 /**
@@ -110,10 +108,11 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
   result,
   status = "pending",
   startedAt,
-  canSendToBackground,
-  onSendToBackground,
 }) => {
   const { expanded, setExpanded, toggleExpanded } = useToolExpansion();
+
+  const foregroundBashToolCallIds = useForegroundBashToolCallIds(workspaceId);
+  const { sendToBackground } = useBackgroundBashActions();
 
   const liveOutput = useBashToolLiveOutput(workspaceId, toolCallId);
   const latestStreamingBashId = useLatestStreamingBashId(workspaceId);
@@ -192,6 +191,16 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
   const showLiveOutput =
     !isBackground && (status === "executing" || (Boolean(liveOutput) && !resultHasOutput));
 
+  const canSendToBackground = Boolean(
+    toolCallId && workspaceId && foregroundBashToolCallIds.has(toolCallId)
+  );
+  const handleSendToBackground =
+    toolCallId && workspaceId
+      ? () => {
+          sendToBackground(toolCallId);
+        }
+      : undefined;
+
   const truncatedInfo = result && "truncated" in result ? result.truncated : undefined;
 
   const handleToggle = () => {
@@ -232,14 +241,14 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
         </StatusIndicator>
         {/* Show "Background" button when bash is executing and can be sent to background.
             Use invisible when executing but not yet confirmed as foreground to avoid layout flash. */}
-        {status === "executing" && !isBackground && onSendToBackground && (
+        {status === "executing" && !isBackground && handleSendToBackground && (
           <Tooltip>
             <TooltipTrigger asChild>
               <button
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation(); // Don't toggle expand
-                  onSendToBackground();
+                  handleSendToBackground();
                 }}
                 disabled={!canSendToBackground}
                 className={cn(
