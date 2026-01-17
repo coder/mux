@@ -480,7 +480,15 @@ describeIntegration("Workspace fork", () => {
 
         // Check that history contains our unique word
         const historyContent = forkedHistoryResult.data
-          .map((msg) => ("content" in msg ? msg.content : ""))
+          .map((msg) => {
+            if ("parts" in msg && Array.isArray(msg.parts)) {
+              return msg.parts
+                .filter((p) => p.type === "text")
+                .map((p) => (p as { text: string }).text)
+                .join("");
+            }
+            return "";
+          })
           .join(" ");
         expect(historyContent).toContain(uniqueWord);
 
