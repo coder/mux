@@ -79,6 +79,17 @@ export {
   MCPTestResultSchema,
 } from "./schemas/mcp";
 
+// UI Layouts schemas
+export {
+  KeybindSchema,
+  LayoutPresetSchema,
+  LayoutPresetsConfigSchema,
+  LayoutSlotSchema,
+  RightSidebarLayoutPresetNodeSchema,
+  RightSidebarLayoutPresetStateSchema,
+  RightSidebarPresetTabSchema,
+  RightSidebarWidthPresetSchema,
+} from "./schemas/uiLayouts";
 // Terminal schemas
 export {
   TerminalCreateParamsSchema,
@@ -142,6 +153,7 @@ export {
   CoderWorkspaceSchema,
   CoderWorkspaceStatusSchema,
   config,
+  uiLayouts,
   debug,
   features,
   general,
