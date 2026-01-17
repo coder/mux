@@ -853,6 +853,11 @@ export class AgentSession {
     this.compactionRetryAttempts.add(context.id);
     this.activeCompactionRequest = undefined;
 
+    this.emitChatEvent({
+      type: "stream-abort",
+      workspaceId: this.workspaceId,
+      messageId: data.messageId,
+    });
     log.info("Compaction hit context limit; retrying once with OpenAI truncation", {
       workspaceId: this.workspaceId,
       model: context.modelString,
