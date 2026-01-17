@@ -61,7 +61,16 @@ interface ReasoningDeltaPart {
   };
 }
 
-// Branded types for compile-time safety
+// Tool-call tracking + branded types
+interface ToolCallState {
+  toolCallId: string;
+  toolName: string;
+  input: unknown;
+  output?: unknown;
+}
+
+type ToolCallMap = Map<string, ToolCallState>;
+
 type WorkspaceId = string & { __brand: "WorkspaceId" };
 type StreamToken = string & { __brand: "StreamToken" };
 
@@ -223,6 +232,12 @@ export class StreamManager extends EventEmitter {
     }, remainingTime);
   }
 
+  private async awaitPendingPartialWrite(streamInfo: WorkspaceStreamInfo): Promise<void> {
+    if (streamInfo.partialWritePromise) {
+      await streamInfo.partialWritePromise;
+    }
+  }
+
   /**
    * Flush any pending partial write and write immediately
    * Serializes writes to prevent races - waits for any in-flight write before starting new one
@@ -232,9 +247,7 @@ export class StreamManager extends EventEmitter {
     streamInfo: WorkspaceStreamInfo
   ): Promise<void> {
     // Wait for any in-flight write to complete first (serialization)
-    if (streamInfo.partialWritePromise) {
-      await streamInfo.partialWritePromise;
-    }
+    await this.awaitPendingPartialWrite(streamInfo);
 
     // Clear throttle timer
     if (streamInfo.partialWriteTimer) {
@@ -567,6 +580,19 @@ export class StreamManager extends EventEmitter {
     }
   }
 
+  private async appendPartAndEmit(
+    workspaceId: WorkspaceId,
+    streamInfo: WorkspaceStreamInfo,
+    part: CompletedMessagePart,
+    schedulePartialWrite = false
+  ): Promise<void> {
+    streamInfo.parts.push(part);
+    await this.emitPartAsEvent(workspaceId, streamInfo.messageId, part);
+    if (schedulePartialWrite) {
+      void this.schedulePartialWrite(workspaceId, streamInfo);
+    }
+  }
+
   private async cancelStreamSafely(
     workspaceId: WorkspaceId,
     streamInfo: WorkspaceStreamInfo,
@@ -657,33 +683,51 @@ export class StreamManager extends EventEmitter {
 
     // Record session usage for aborted streams (mirrors stream-end path)
     // This ensures tokens consumed before abort are tracked for cost display
-    if (this.sessionUsageService && usage) {
-      const messageUsage = createDisplayUsage(usage, streamInfo.model, providerMetadata);
-      if (messageUsage) {
-        const normalizedModel = normalizeGatewayModel(streamInfo.model);
-        try {
-          await this.sessionUsageService.recordUsage(
-            workspaceId as string,
-            normalizedModel,
-            messageUsage
-          );
-        } catch (usageError) {
-          log.error("Failed to record session usage on abort", { workspaceId, error: usageError });
-        }
-      }
-    }
+    await this.recordSessionUsage(
+      workspaceId,
+      streamInfo.model,
+      usage,
+      providerMetadata,
+      "Failed to record session usage on abort",
+      "error"
+    );
 
     // Emit abort event with usage if available
-    this.emit("stream-abort", {
-      type: "stream-abort",
-      workspaceId: workspaceId as string,
-      messageId: streamInfo.messageId,
-      metadata: { usage, contextUsage, duration, providerMetadata, contextProviderMetadata },
-      abandonPartial,
-    });
+    this.emitStreamAbort(
+      workspaceId,
+      streamInfo.messageId,
+      { usage, contextUsage, duration, providerMetadata, contextProviderMetadata },
+      abandonPartial
+    );
 
     // Clean up immediately
     this.workspaceStreams.delete(workspaceId);
+  }
+
+  private async recordSessionUsage(
+    workspaceId: WorkspaceId,
+    model: string,
+    usage: LanguageModelV2Usage | undefined,
+    providerMetadata: Record<string, unknown> | undefined,
+    logMessage: string,
+    logLevel: "warn" | "error"
+  ): Promise<void> {
+    if (!this.sessionUsageService || !usage) {
+      return;
+    }
+    const messageUsage = createDisplayUsage(usage, model, providerMetadata);
+    if (!messageUsage) {
+      return;
+    }
+    try {
+      await this.sessionUsageService.recordUsage(
+        workspaceId as string,
+        normalizeGatewayModel(model),
+        messageUsage
+      );
+    } catch (error) {
+      (logLevel === "error" ? log.error : log.warn)(logMessage, { workspaceId, error });
+    }
   }
 
   private buildStreamRequestConfig(
@@ -885,10 +929,7 @@ export class StreamManager extends EventEmitter {
   private async completeToolCall(
     workspaceId: WorkspaceId,
     streamInfo: WorkspaceStreamInfo,
-    toolCalls: Map<
-      string,
-      { toolCallId: string; toolName: string; input: unknown; output?: unknown }
-    >,
+    toolCalls: ToolCallMap,
     toolCallId: string,
     toolName: string,
     output: unknown
@@ -939,6 +980,18 @@ export class StreamManager extends EventEmitter {
       result: output,
       timestamp: Date.now(),
     } as ToolCallEndEvent);
+  }
+
+  private async finishToolCall(
+    workspaceId: WorkspaceId,
+    streamInfo: WorkspaceStreamInfo,
+    toolCalls: ToolCallMap,
+    toolCallId: string,
+    toolName: string,
+    output: unknown
+  ): Promise<void> {
+    await this.completeToolCall(workspaceId, streamInfo, toolCalls, toolCallId, toolName, output);
+    await this.checkSoftCancelStream(workspaceId, streamInfo);
   }
 
   /**
@@ -1052,6 +1105,21 @@ export class StreamManager extends EventEmitter {
     } as StreamStartEvent);
   }
 
+  private emitStreamAbort(
+    workspaceId: WorkspaceId,
+    messageId: string,
+    metadata: Record<string, unknown>,
+    abandonPartial?: boolean
+  ): void {
+    this.emit("stream-abort", {
+      type: "stream-abort",
+      workspaceId: workspaceId as string,
+      messageId,
+      metadata,
+      abandonPartial,
+    });
+  }
+
   /**
    * Processes a stream with guaranteed cleanup, regardless of success or failure
    */
@@ -1074,10 +1142,7 @@ export class StreamManager extends EventEmitter {
 
       while (true) {
         // Use fullStream to capture all events including tool calls
-        const toolCalls = new Map<
-          string,
-          { toolCallId: string; toolName: string; input: unknown; output?: unknown }
-        >();
+        const toolCalls: ToolCallMap = new Map();
 
         try {
           for await (const part of streamInfo.streamResult.fullStream) {
@@ -1102,13 +1167,7 @@ export class StreamManager extends EventEmitter {
                   text: part.text,
                   timestamp: Date.now(),
                 };
-                streamInfo.parts.push(textPart);
-
-                // Emit using shared logic (ensures replay consistency)
-                await this.emitPartAsEvent(workspaceId, streamInfo.messageId, textPart);
-
-                // Schedule partial write (throttled, fire-and-forget to not block stream)
-                void this.schedulePartialWrite(workspaceId, streamInfo);
+                await this.appendPartAndEmit(workspaceId, streamInfo, textPart, true);
                 break;
               }
 
@@ -1156,12 +1215,7 @@ export class StreamManager extends EventEmitter {
                   signature, // May be undefined, will be filled by subsequent signature delta
                   providerOptions: signature ? { anthropic: { signature } } : undefined,
                 };
-                streamInfo.parts.push(newPart);
-
-                // Emit using shared logic (ensures replay consistency)
-                await this.emitPartAsEvent(workspaceId, streamInfo.messageId, newPart);
-
-                void this.schedulePartialWrite(workspaceId, streamInfo);
+                await this.appendPartAndEmit(workspaceId, streamInfo, newPart, true);
                 break;
               }
 
@@ -1198,14 +1252,13 @@ export class StreamManager extends EventEmitter {
                   input: part.input,
                   timestamp: Date.now(),
                 };
-                streamInfo.parts.push(toolPart);
 
                 // Emit using shared logic (ensures replay consistency)
                 const inputText = JSON.stringify(part.input);
                 log.debug(
                   `[StreamManager] tool-call: toolName=${part.toolName}, input length=${inputText.length}`
                 );
-                await this.emitPartAsEvent(workspaceId, streamInfo.messageId, toolPart);
+                await this.appendPartAndEmit(workspaceId, streamInfo, toolPart);
 
                 // CRITICAL: Flush partial immediately for ask_user_question
                 // This tool blocks waiting for user input, and if the app restarts during
@@ -1228,7 +1281,7 @@ export class StreamManager extends EventEmitter {
                   toolCall.output = strippedOutput;
 
                   // Use shared completion logic (await to ensure partial is flushed before event)
-                  await this.completeToolCall(
+                  await this.finishToolCall(
                     workspaceId,
                     streamInfo,
                     toolCalls,
@@ -1237,7 +1290,6 @@ export class StreamManager extends EventEmitter {
                     strippedOutput
                   );
                 }
-                await this.checkSoftCancelStream(workspaceId, streamInfo);
                 break;
               }
 
@@ -1268,7 +1320,7 @@ export class StreamManager extends EventEmitter {
                 };
 
                 // Use shared completion logic (await to ensure partial is flushed before event)
-                await this.completeToolCall(
+                await this.finishToolCall(
                   workspaceId,
                   streamInfo,
                   toolCalls,
@@ -1276,7 +1328,6 @@ export class StreamManager extends EventEmitter {
                   toolErrorPart.toolName,
                   errorOutput
                 );
-                await this.checkSoftCancelStream(workspaceId, streamInfo);
                 break;
               }
 
@@ -1441,29 +1492,14 @@ export class StreamManager extends EventEmitter {
 
               // Update cumulative session usage (if service is available)
               // Wrapped in try-catch: usage recording is non-critical and shouldn't block stream completion
-              if (this.sessionUsageService && totalUsage) {
-                try {
-                  const messageUsage = createDisplayUsage(
-                    totalUsage,
-                    streamInfo.model,
-                    providerMetadata
-                  );
-                  if (messageUsage) {
-                    const normalizedModel = normalizeGatewayModel(streamInfo.model);
-                    await this.sessionUsageService.recordUsage(
-                      workspaceId as string,
-                      normalizedModel,
-                      messageUsage
-                    );
-                  }
-                } catch (usageError) {
-                  // Log but don't fail the stream - usage is tracking data, not critical state
-                  log.warn("Failed to record session usage (stream completion unaffected)", {
-                    workspaceId,
-                    error: usageError,
-                  });
-                }
-              }
+              await this.recordSessionUsage(
+                workspaceId,
+                streamInfo.model,
+                totalUsage,
+                providerMetadata,
+                "Failed to record session usage (stream completion unaffected)",
+                "warn"
+              );
             }
 
             // Mark as completed right before emitting stream-end.
@@ -1520,22 +1556,7 @@ export class StreamManager extends EventEmitter {
       // Don't block stream completion waiting for directory deletion
       // This is especially important for SSH where rm -rf can take 500ms-2s
       if (streamInfo.runtimeTempDir) {
-        // Use parent directory as cwd for safety - if runtimeTempDir is malformed,
-        // we won't accidentally run rm -rf from root
-        const tempDirBasename = PlatformPaths.basename(streamInfo.runtimeTempDir);
-        const tempDirParent = path.dirname(streamInfo.runtimeTempDir);
-        void streamInfo.runtime
-          .exec(`rm -rf "${tempDirBasename}"`, {
-            cwd: tempDirParent,
-            timeout: 10,
-          })
-          .then(async (result) => {
-            await result.exitCode;
-            log.debug(`Cleaned up temp dir: ${streamInfo.runtimeTempDir}`);
-          })
-          .catch((error) => {
-            log.error(`Failed to cleanup temp dir ${streamInfo.runtimeTempDir}:`, error);
-          });
+        this.cleanupStreamTempDir(streamInfo.runtime, streamInfo.runtimeTempDir);
       }
 
       this.workspaceStreams.delete(workspaceId);
@@ -1615,9 +1636,7 @@ export class StreamManager extends EventEmitter {
     // Wait for any in-flight partial write to complete before writing error state.
     // This prevents race conditions where the error write and a throttled flush
     // write at the same time, causing inconsistent partial.json state.
-    if (streamInfo.partialWritePromise) {
-      await streamInfo.partialWritePromise;
-    }
+    await this.awaitPendingPartialWrite(streamInfo);
 
     // Write error state to disk - await to ensure consistent state before any resume.
     await this.partialService.writePartial(workspaceId as string, errorPartialMessage);
@@ -1680,10 +1699,8 @@ export class StreamManager extends EventEmitter {
       streamInfo.partialWriteTimer = undefined;
     }
 
-    if (streamInfo.partialWritePromise) {
-      await streamInfo.partialWritePromise;
-      streamInfo.partialWritePromise = undefined;
-    }
+    await this.awaitPendingPartialWrite(streamInfo);
+    streamInfo.partialWritePromise = undefined;
 
     streamInfo.parts = [];
     streamInfo.lastPartialWriteTime = 0;
@@ -2205,13 +2222,7 @@ export class StreamManager extends EventEmitter {
         // Emit abort event so frontend clears pending stream state.
         // This handles the case where user interrupts before stream-start arrives.
         // Use empty messageId - frontend handles gracefully (just clears pendingStreamStartTime).
-        this.emit("stream-abort", {
-          type: "stream-abort",
-          workspaceId,
-          messageId: "",
-          metadata: {},
-          abandonPartial: options?.abandonPartial ?? false,
-        });
+        this.emitStreamAbort(typedWorkspaceId, "", {}, options?.abandonPartial);
         return Ok(undefined);
       }
 
