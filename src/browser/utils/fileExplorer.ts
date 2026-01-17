@@ -315,6 +315,24 @@ base64 < ${file}`;
 }
 
 /**
+ * Generate bash script to write base64-encoded content to a file.
+ * Uses a temp file to keep existing permissions when overwriting.
+ */
+export function buildWriteFileScript(relativePath: string, base64Content: string): string {
+  const file = shellEscape(relativePath);
+  const payload = shellEscape(base64Content);
+  return `tmp=$(mktemp)
+if printf '%s' ${payload} | base64 --decode > "$tmp" 2>/dev/null; then
+  cat "$tmp" > ${file}
+  rm "$tmp"
+  exit 0
+fi
+printf '%s' ${payload} | base64 -D > "$tmp"
+cat "$tmp" > ${file}
+rm "$tmp"`;
+}
+
+/**
  * Generate bash script to get git diff for a file.
  */
 export function buildFileDiffScript(relativePath: string): string {

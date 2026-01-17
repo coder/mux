@@ -8,14 +8,16 @@ import React from "react";
 import { useAPI } from "@/browser/contexts/API";
 import { workspaceStore } from "@/browser/stores/WorkspaceStore";
 import { RefreshCw, AlertCircle } from "lucide-react";
-import { TextFileViewer } from "./TextFileViewer";
+import { TextFileEditor } from "./TextFileEditor";
 import { ImageFileViewer } from "./ImageFileViewer";
 import {
   validateRelativePath,
   buildReadFileScript,
   buildFileDiffScript,
+  buildWriteFileScript,
   processFileContents,
   EXIT_CODE_TOO_LARGE,
+  MAX_FILE_SIZE,
   type FileContentsResult,
 } from "@/browser/utils/fileExplorer";
 
@@ -30,6 +32,17 @@ interface LoadedData {
 }
 
 const DEBOUNCE_MS = 2000;
+const ENCODE_CHUNK_SIZE = 0x8000;
+
+function encodeTextToBase64(content: string): { base64: string; size: number } {
+  const bytes = new TextEncoder().encode(content);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += ENCODE_CHUNK_SIZE) {
+    const chunk = bytes.subarray(i, i + ENCODE_CHUNK_SIZE);
+    binary += String.fromCharCode(...chunk);
+  }
+  return { base64: btoa(binary), size: bytes.length };
+}
 
 export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
   const { api } = useAPI();
@@ -40,16 +53,34 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
   // Track which path the loaded data is for (to detect file switches)
   // Using ref to avoid effect dep issues - we only read this to decide loading state
   const loadedPathRef = React.useRef<string | null>(null);
+  const [contentVersion, setContentVersion] = React.useState(0);
+  const [pendingExternalChange, setPendingExternalChange] = React.useState(false);
+  const [isSaving, setIsSaving] = React.useState(false);
+  const [saveError, setSaveError] = React.useState<string | null>(null);
+  const dirtyRef = React.useRef(false);
   // Refresh counter to trigger re-fetch
   const [refreshCounter, setRefreshCounter] = React.useState(0);
+
+  // Reset editor state when switching files
+  React.useEffect(() => {
+    dirtyRef.current = false;
+    setPendingExternalChange(false);
+    setIsSaving(false);
+    setSaveError(null);
+  }, [props.relativePath]);
 
   // Subscribe to file-modifying tool events and debounce refresh
   React.useEffect(() => {
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
     const unsubscribe = workspaceStore.subscribeFileModifyingTool(() => {
+      if (dirtyRef.current) {
+        setPendingExternalChange(true);
+        return;
+      }
       if (timeoutId) clearTimeout(timeoutId);
       timeoutId = setTimeout(() => {
+        setPendingExternalChange(false);
         setRefreshCounter((c) => c + 1);
       }, DEBOUNCE_MS);
     }, props.workspaceId);
@@ -119,6 +150,9 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
           });
           loadedPathRef.current = props.relativePath;
           setIsLoading(false);
+          setSaveError(null);
+          setPendingExternalChange(false);
+          dirtyRef.current = false;
           return;
         }
 
@@ -145,6 +179,12 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
         setLoaded({ data, diff });
         loadedPathRef.current = props.relativePath;
         setIsLoading(false);
+        setSaveError(null);
+        setPendingExternalChange(false);
+        dirtyRef.current = false;
+        if (data.type === "text") {
+          setContentVersion((version) => version + 1);
+        }
       } catch (err) {
         if (cancelled) return;
         setError(err instanceof Error ? err.message : "Failed to load file");
@@ -202,17 +242,106 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
     );
   }
 
-  const handleRefresh = () => setRefreshCounter((c) => c + 1);
+  const handleDirtyChange = (dirty: boolean) => {
+    dirtyRef.current = dirty;
+    if (!dirty) {
+      setSaveError(null);
+    }
+  };
+
+  const handleDismissExternal = () => {
+    setPendingExternalChange(false);
+  };
+
+  const handleReloadExternal = () => {
+    setPendingExternalChange(false);
+    dirtyRef.current = false;
+    setSaveError(null);
+    setRefreshCounter((c) => c + 1);
+  };
+  const handleRefresh = () => {
+    if (dirtyRef.current) {
+      setPendingExternalChange(true);
+      return;
+    }
+    setPendingExternalChange(false);
+    setRefreshCounter((c) => c + 1);
+  };
 
   // Route to appropriate viewer
   if (data.type === "text") {
+    const handleSave = async (nextContent: string) => {
+      if (!api) {
+        setSaveError("API not available");
+        return;
+      }
+      if (isSaving) return;
+      setIsSaving(true);
+      setSaveError(null);
+
+      try {
+        const { base64, size } = encodeTextToBase64(nextContent);
+        if (size > MAX_FILE_SIZE) {
+          setSaveError("File is too large to save. Maximum: 10 MB.");
+          return;
+        }
+
+        const writeResult = await api.workspace.executeBash({
+          workspaceId: props.workspaceId,
+          script: buildWriteFileScript(props.relativePath, base64),
+        });
+
+        if (!writeResult.success) {
+          setSaveError(writeResult.error ?? "Failed to save file");
+          return;
+        }
+
+        const bashResult = writeResult.data;
+        if (!bashResult.success) {
+          const errorMsg = bashResult.error ?? "Failed to save file";
+          setSaveError(errorMsg.length > 128 ? errorMsg.slice(0, 128) + "..." : errorMsg);
+          return;
+        }
+
+        let updatedDiff: string | null = null;
+        const diffResult = await api.workspace.executeBash({
+          workspaceId: props.workspaceId,
+          script: buildFileDiffScript(props.relativePath),
+        });
+        if (diffResult.success && diffResult.data.success) {
+          updatedDiff = diffResult.data.output;
+        }
+
+        setLoaded({
+          data: { type: "text", content: nextContent, size },
+          diff: updatedDiff,
+        });
+        loadedPathRef.current = props.relativePath;
+        setContentVersion((version) => version + 1);
+        dirtyRef.current = false;
+        setPendingExternalChange(false);
+      } catch (err) {
+        setSaveError(err instanceof Error ? err.message : "Failed to save file");
+      } finally {
+        setIsSaving(false);
+      }
+    };
+
     return (
-      <TextFileViewer
+      <TextFileEditor
         content={data.content}
+        contentVersion={contentVersion}
         filePath={props.relativePath}
         size={data.size}
         diff={diff}
+        externalChange={pendingExternalChange}
+        isSaving={isSaving}
+        saveError={saveError}
+        onDirtyChange={handleDirtyChange}
         onRefresh={handleRefresh}
+        onSave={handleSave}
+        onReloadExternal={handleReloadExternal}
+        onDismissExternal={handleDismissExternal}
       />
     );
   }
