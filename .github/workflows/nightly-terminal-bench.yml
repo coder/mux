@@ -65,7 +65,8 @@ jobs:
     uses: ./.github/workflows/terminal-bench.yml
     with:
       model_name: ${{ matrix.model }}
-      thinking_level: "high"
+      # gpt-5 class models use xhigh thinking, others use high
+      thinking_level: ${{ contains(matrix.model, 'gpt-5') && 'xhigh' || 'high' }}
       dataset: "terminal-bench@2.0"
       concurrency: "48"
       env: "daytona"
