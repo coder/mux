@@ -38,6 +38,7 @@ const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
   SIDEBAR_TAB_7: "Tab 7",
   SIDEBAR_TAB_8: "Tab 8",
   SIDEBAR_TAB_9: "Tab 9",
+  FOCUS_EXPLORER_SEARCH: "Search in explorer",
   REFRESH_REVIEW: "Refresh diff",
   FOCUS_REVIEW_SEARCH: "Search in review",
   TOGGLE_HUNK_READ: "Toggle hunk read",
@@ -84,6 +85,10 @@ const KEYBIND_GROUPS: Array<{ label: string; keys: Array<keyof typeof KEYBINDS> 
   {
     label: "Navigation",
     keys: ["NEW_WORKSPACE", "NEXT_WORKSPACE", "PREV_WORKSPACE", "JUMP_TO_BOTTOM"],
+  },
+  {
+    label: "Explorer",
+    keys: ["FOCUS_EXPLORER_SEARCH"],
   },
   {
     label: "Sidebar Tabs",

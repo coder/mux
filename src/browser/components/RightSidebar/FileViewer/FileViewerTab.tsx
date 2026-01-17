@@ -24,6 +24,7 @@ import {
 interface FileViewerTabProps {
   workspaceId: string;
   relativePath: string;
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 interface LoadedData {
@@ -247,6 +248,7 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
     if (!dirty) {
       setSaveError(null);
     }
+    props.onDirtyChange?.(dirty);
   };
 
   const handleDismissExternal = () => {

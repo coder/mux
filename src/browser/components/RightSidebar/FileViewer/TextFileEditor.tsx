@@ -5,7 +5,7 @@
 
 import React from "react";
 import { parsePatch } from "diff";
-import { Save, RefreshCw } from "lucide-react";
+import { Check, Copy, Save, RefreshCw } from "lucide-react";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { javascript } from "@codemirror/lang-javascript";
 import { css } from "@codemirror/lang-css";
@@ -45,6 +45,7 @@ import {
   dropCursor,
   rectangularSelection,
 } from "@codemirror/view";
+import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import type { DecorationSet } from "@codemirror/view";
 import { useTheme } from "@/browser/contexts/ThemeContext";
 import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
@@ -376,6 +377,7 @@ function createEditorTheme(isDark: boolean): Extension {
 
 export const TextFileEditor: React.FC<TextFileEditorProps> = (props) => {
   const { theme: themeMode } = useTheme();
+  const { copied, copyToClipboard } = useCopyToClipboard();
   const language = getLanguageFromPath(props.filePath);
   const languageDisplayName = getLanguageDisplayName(language);
   const isDark = themeMode !== "light" && !themeMode.endsWith("-light");
@@ -547,6 +549,20 @@ export const TextFileEditor: React.FC<TextFileEditorProps> = (props) => {
 
   return (
     <div data-testid="text-file-viewer" className="bg-background flex h-full flex-col">
+      <div className="group border-border-light text-muted-foreground flex items-center gap-2 border-b px-2 py-1 text-xs">
+        <span className="min-w-0 flex-1 truncate font-mono" title={props.filePath}>
+          {props.filePath}
+        </span>
+        <button
+          type="button"
+          className="text-muted hover:text-foreground opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100"
+          onClick={() => void copyToClipboard(props.filePath)}
+          aria-label="Copy file path"
+          title={copied ? "Copied" : "Copy file path"}
+        >
+          {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+        </button>
+      </div>
       {props.externalChange && (
         <div className="border-border-light text-muted-foreground flex items-center gap-2 border-b px-2 py-1 text-xs">
           <span>File changed on disk.</span>

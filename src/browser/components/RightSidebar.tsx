@@ -222,6 +222,10 @@ interface RightSidebarTabsetNodeProps {
   onAutoFocusConsumed: () => void;
   /** Handler to open a file in a new tab */
   onOpenFile: (relativePath: string) => void;
+  /** Map of file tabs to dirty (unsaved) state */
+  fileDirtyMap: Map<TabType, boolean>;
+  /** Handler to update file dirty state */
+  onFileDirtyChange: (tab: TabType, dirty: boolean) => void;
   /** Handler to close a file tab */
   onCloseFile: (tab: TabType) => void;
 }
@@ -329,7 +333,13 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
       );
     } else if (isFileTab(tab)) {
       const filePath = getFilePath(tab);
-      label = <FileTabLabel filePath={filePath ?? tab} onClose={() => props.onCloseFile(tab)} />;
+      label = (
+        <FileTabLabel
+          filePath={filePath ?? tab}
+          isDirty={props.fileDirtyMap.get(tab) ?? false}
+          onClose={() => props.onCloseFile(tab)}
+        />
+      );
     } else {
       label = tab;
     }
@@ -514,7 +524,11 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
               hidden={!isActive}
             >
               {isActive && filePath && (
-                <FileViewerTab workspaceId={props.workspaceId} relativePath={filePath} />
+                <FileViewerTab
+                  workspaceId={props.workspaceId}
+                  relativePath={filePath}
+                  onDirtyChange={(dirty) => props.onFileDirtyChange(fileTab, dirty)}
+                />
               )}
             </div>
           );
@@ -747,6 +761,8 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   // Terminal titles from OSC sequences (e.g., shell setting window title)
   // Persisted to localStorage so they survive reload
   const terminalTitlesKey = getTerminalTitlesKey(workspaceId);
+  const [fileDirtyMap, setFileDirtyMap] = React.useState<Map<TabType, boolean>>(() => new Map());
+
   const [terminalTitles, setTerminalTitles] = React.useState<Map<TabType, string>>(() => {
     const stored = readPersistedState<Record<string, string>>(terminalTitlesKey, {});
     return new Map(Object.entries(stored) as Array<[TabType, string]>);
@@ -793,6 +809,12 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       if (isFileTab(activeTab)) {
         e.preventDefault();
         setLayout((prev) => removeTabEverywhere(prev, activeTab));
+        setFileDirtyMap((prev) => {
+          if (!prev.has(activeTab)) return prev;
+          const next = new Map(prev);
+          next.delete(activeTab);
+          return next;
+        });
       }
     };
 
@@ -950,6 +972,21 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     [workspaceId, api, setLayout, terminalTitlesKey]
   );
 
+  const handleFileDirtyChange = React.useCallback((tab: TabType, dirty: boolean) => {
+    setFileDirtyMap((prev) => {
+      const hasEntry = prev.has(tab);
+      if (dirty && hasEntry) return prev;
+      if (!dirty && !hasEntry) return prev;
+      const next = new Map(prev);
+      if (dirty) {
+        next.set(tab, true);
+      } else {
+        next.delete(tab);
+      }
+      return next;
+    });
+  }, []);
+
   // Configure sensors with distance threshold for click vs drag disambiguation
 
   // Handler to open a file in a new tab
@@ -983,6 +1020,12 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   const handleCloseFile = React.useCallback(
     (tab: TabType) => {
       setLayout((prev) => removeTabEverywhere(prev, tab));
+      setFileDirtyMap((prev) => {
+        if (!prev.has(tab)) return prev;
+        const next = new Map(prev);
+        next.delete(tab);
+        return next;
+      });
     },
     [setLayout]
   );
@@ -1138,6 +1181,8 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         onTerminalTitleChange={handleTerminalTitleChange}
         tabPositions={tabPositions}
         autoFocusTerminalSession={autoFocusTerminalSession}
+        fileDirtyMap={fileDirtyMap}
+        onFileDirtyChange={handleFileDirtyChange}
         onAutoFocusConsumed={() => setAutoFocusTerminalSession(null)}
         onOpenFile={handleOpenFile}
         onCloseFile={handleCloseFile}

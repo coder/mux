@@ -311,6 +311,10 @@ export const KEYBINDS = {
   SIDEBAR_TAB_8: { key: "8", ctrl: true, description: "Tab 8" },
   SIDEBAR_TAB_9: { key: "9", ctrl: true, description: "Tab 9" },
 
+  /** Focus search input in Explorer panel */
+  // macOS: Cmd+F, Win/Linux: Ctrl+F
+  FOCUS_EXPLORER_SEARCH: { key: "f", ctrl: true },
+
   /** Refresh diff in Code Review panel */
   // macOS: Cmd+R, Win/Linux: Ctrl+R
   REFRESH_REVIEW: { key: "r", ctrl: true },

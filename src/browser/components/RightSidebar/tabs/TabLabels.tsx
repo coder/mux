@@ -74,12 +74,14 @@ export const ExplorerTabLabel: React.FC = () => (
 interface FileTabLabelProps {
   /** File path (relative to workspace) */
   filePath: string;
+  /** Whether the file has unsaved changes */
+  isDirty?: boolean;
   /** Callback when close button is clicked */
   onClose: () => void;
 }
 
 /** File tab label with file icon, filename, and close button */
-export const FileTabLabel: React.FC<FileTabLabelProps> = ({ filePath, onClose }) => {
+export const FileTabLabel: React.FC<FileTabLabelProps> = ({ filePath, isDirty, onClose }) => {
   // Extract just the filename for display
   const fileName = filePath.split("/").pop() ?? filePath;
 
@@ -89,6 +91,11 @@ export const FileTabLabel: React.FC<FileTabLabelProps> = ({ filePath, onClose })
       <span className="max-w-[120px] truncate" title={filePath}>
         {fileName}
       </span>
+      {isDirty && (
+        <span className="text-warning text-[10px] leading-none" title="Unsaved changes">
+          ●
+        </span>
+      )}
       <Tooltip>
         <TooltipTrigger asChild>
           <button
