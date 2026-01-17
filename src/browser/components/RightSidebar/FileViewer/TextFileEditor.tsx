@@ -6,7 +6,7 @@
 import React from "react";
 import { parsePatch } from "diff";
 import { Save, RefreshCw } from "lucide-react";
-import { basicSetup } from "@codemirror/basic-setup";
+import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { javascript } from "@codemirror/lang-javascript";
 import { css } from "@codemirror/lang-css";
 import { html } from "@codemirror/lang-html";
@@ -20,10 +20,31 @@ import { sql } from "@codemirror/lang-sql";
 import { xml } from "@codemirror/lang-xml";
 import { yaml } from "@codemirror/lang-yaml";
 import { cpp } from "@codemirror/lang-cpp";
+import {
+  bracketMatching,
+  defaultHighlightStyle,
+  foldGutter,
+  foldKeymap,
+  indentOnInput,
+  syntaxHighlighting,
+} from "@codemirror/language";
+import { highlightSelectionMatches } from "@codemirror/search";
 import { php } from "@codemirror/lang-php";
 import type { Extension, Range } from "@codemirror/state";
 import { Compartment, EditorState, Prec, StateField, Text } from "@codemirror/state";
-import { Decoration, EditorView, WidgetType, keymap } from "@codemirror/view";
+import {
+  Decoration,
+  EditorView,
+  WidgetType,
+  keymap,
+  lineNumbers,
+  highlightActiveLine,
+  highlightActiveLineGutter,
+  highlightSpecialChars,
+  drawSelection,
+  dropCursor,
+  rectangularSelection,
+} from "@codemirror/view";
 import type { DecorationSet } from "@codemirror/view";
 import { useTheme } from "@/browser/contexts/ThemeContext";
 import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
@@ -70,6 +91,24 @@ const formatSize = (bytes: number): string => {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
+
+const baseExtensions: Extension = [
+  lineNumbers(),
+  highlightActiveLineGutter(),
+  highlightSpecialChars(),
+  history(),
+  drawSelection(),
+  dropCursor(),
+  EditorState.allowMultipleSelections.of(true),
+  indentOnInput(),
+  syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+  bracketMatching(),
+  foldGutter(),
+  highlightActiveLine(),
+  highlightSelectionMatches(),
+  rectangularSelection(),
+  keymap.of([...defaultKeymap, ...historyKeymap, ...foldKeymap, indentWithTab]),
+];
 
 function getDocLineCount(doc: Text): number {
   if (doc.lines === 0) return 0;
@@ -432,7 +471,7 @@ export const TextFileEditor: React.FC<TextFileEditorProps> = (props) => {
     return EditorState.create({
       doc,
       extensions: [
-        basicSetup,
+        baseExtensions,
         EditorView.lineWrapping,
         saveKeymap,
         updateListener,

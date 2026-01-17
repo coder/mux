@@ -53,7 +53,6 @@
     "@ai-sdk/openai": "^2.0.76",
     "@ai-sdk/xai": "^2.0.39",
     "@aws-sdk/credential-providers": "^3.940.0",
-    "@codemirror/basic-setup": "^0.20.0",
     "@codemirror/commands": "^6.10.1",
     "@codemirror/lang-cpp": "^6.0.3",
     "@codemirror/lang-css": "^6.3.1",
