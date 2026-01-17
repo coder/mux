@@ -124,7 +124,18 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     pendingModel
   );
 
-  const [editingMessage, setEditingMessage] = useState<EditingMessageState>(undefined);
+  const [editingState, setEditingState] = useState(() => ({
+    workspaceId,
+    message: undefined as EditingMessageState,
+  }));
+  const editingMessage =
+    editingState.workspaceId === workspaceId ? editingState.message : undefined;
+  const setEditingMessage = useCallback(
+    (message: EditingMessageState) => {
+      setEditingState({ workspaceId, message });
+    },
+    [workspaceId]
+  );
 
   // Track which bash_output groups are expanded (keyed by first message ID)
   const [expandedBashGroups, setExpandedBashGroups] = useState<Set<string>>(new Set());
@@ -245,7 +256,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     }
     setAutoScroll(true);
     clearBackgroundBashError();
-  }, [workspaceId, setAutoScroll, clearBackgroundBashError]);
+  }, [workspaceId, setAutoScroll, clearBackgroundBashError, setEditingMessage]);
   const handleChatInputReady = useCallback(
     (api: ChatInputAPI) => {
       chatInputAPI.current = api;
@@ -284,7 +295,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     (messageId: string, content: string, imageParts?: ImagePart[]) => {
       setEditingMessage({ id: messageId, content, imageParts });
     },
-    []
+    [setEditingMessage]
   );
 
   const handleEditQueuedMessage = useCallback(async () => {
@@ -352,7 +363,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
       );
       element?.scrollIntoView({ behavior: "smooth", block: "center" });
     });
-  }, [api, workspaceId, chatInputAPI, contentRef, setAutoScroll]);
+  }, [api, workspaceId, chatInputAPI, contentRef, setAutoScroll, setEditingMessage]);
 
   const handleEditLastUserMessageClick = useCallback(() => {
     void handleEditLastUserMessage();
@@ -360,7 +371,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
 
   const handleCancelEdit = useCallback(() => {
     setEditingMessage(undefined);
-  }, []);
+  }, [setEditingMessage]);
 
   const handleMessageSent = useCallback(() => {
     // Auto-background any running foreground bash when user sends a new message
@@ -472,7 +483,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
       // Message was replaced or deleted - clear editing state
       setEditingMessage(undefined);
     }
-  }, [workspaceState, editingMessage]);
+  }, [workspaceState, editingMessage, setEditingMessage]);
 
   // When editing, find the cutoff point
   const editCutoffHistoryId = editingMessage
