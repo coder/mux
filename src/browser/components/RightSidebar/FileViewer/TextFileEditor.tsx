@@ -86,6 +86,9 @@ interface DiffHighlights {
   removedLines: RemovedLineMarker[];
 }
 
+// Normalize line endings for consistent dirty tracking
+const normalizeLineEndings = (content: string): string => content.replace(/\r\n/g, "\n");
+
 // Format file size for display
 const formatSize = (bytes: number): string => {
   if (bytes < 1024) return `${bytes} B`;
@@ -378,14 +381,15 @@ function createEditorTheme(isDark: boolean): Extension {
 export const TextFileEditor: React.FC<TextFileEditorProps> = (props) => {
   const { theme: themeMode } = useTheme();
   const { copied, copyToClipboard } = useCopyToClipboard();
+  const normalizedInitialContent = normalizeLineEndings(props.content);
   const language = getLanguageFromPath(props.filePath);
   const languageDisplayName = getLanguageDisplayName(language);
   const isDark = themeMode !== "light" && !themeMode.endsWith("-light");
 
   const editorRootRef = React.useRef<HTMLDivElement | null>(null);
   const viewRef = React.useRef<EditorView | null>(null);
-  const baseDocRef = React.useRef<Text>(Text.of(props.content.split("\n")));
-  const contentRef = React.useRef(props.content);
+  const baseDocRef = React.useRef<Text>(Text.of(normalizedInitialContent.split("\n")));
+  const contentRef = React.useRef(normalizedInitialContent);
   const dirtyRef = React.useRef(false);
   const lineCountRef = React.useRef(getDocLineCount(baseDocRef.current));
 
@@ -488,7 +492,7 @@ export const TextFileEditor: React.FC<TextFileEditorProps> = (props) => {
     if (!editorRootRef.current) return;
     if (viewRef.current) return;
 
-    const state = createEditorState(props.content);
+    const state = createEditorState(normalizedInitialContent);
     const view = new EditorView({ state, parent: editorRootRef.current });
     viewRef.current = view;
     updateLineCount(state.doc);
@@ -506,10 +510,11 @@ export const TextFileEditor: React.FC<TextFileEditorProps> = (props) => {
     const view = viewRef.current;
     if (!view) return;
 
-    baseDocRef.current = Text.of(props.content.split("\n"));
-    contentRef.current = props.content;
+    const normalizedContent = normalizeLineEndings(props.content);
+    baseDocRef.current = Text.of(normalizedContent.split("\n"));
+    contentRef.current = normalizedContent;
 
-    const nextState = createEditorState(props.content);
+    const nextState = createEditorState(normalizedContent);
     view.setState(nextState);
     updateLineCount(nextState.doc);
     updateDirtyState(false);

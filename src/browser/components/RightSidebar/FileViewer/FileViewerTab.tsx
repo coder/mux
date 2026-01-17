@@ -57,6 +57,7 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
   const [contentVersion, setContentVersion] = React.useState(0);
   const [pendingExternalChange, setPendingExternalChange] = React.useState(false);
   const [isSaving, setIsSaving] = React.useState(false);
+  const lineEndingRef = React.useRef<"lf" | "crlf">("lf");
   const [saveError, setSaveError] = React.useState<string | null>(null);
   const dirtyRef = React.useRef(false);
   // Refresh counter to trigger re-fetch
@@ -168,6 +169,10 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
         // Process file contents - detect image types via magic bytes, text vs binary
         // Even if bashResult.success is false, try to process if we have output
         const data = processFileContents(bashResult.output ?? "", bashResult.exitCode);
+
+        if (data.type === "text") {
+          lineEndingRef.current = data.content.includes("\r\n") ? "crlf" : "lf";
+        }
 
         if (cancelled) return;
 
@@ -282,7 +287,9 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
       setSaveError(null);
 
       try {
-        const { base64, size } = encodeTextToBase64(nextContent);
+        const contentToWrite =
+          lineEndingRef.current === "crlf" ? nextContent.replace(/\n/g, "\r\n") : nextContent;
+        const { base64, size } = encodeTextToBase64(contentToWrite);
         if (size > MAX_FILE_SIZE) {
           setSaveError("File is too large to save. Maximum: 10 MB.");
           return;
@@ -315,7 +322,7 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
         }
 
         setLoaded({
-          data: { type: "text", content: nextContent, size },
+          data: { type: "text", content: contentToWrite, size },
           diff: updatedDiff,
         });
         loadedPathRef.current = props.relativePath;
