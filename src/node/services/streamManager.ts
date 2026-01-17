@@ -1867,6 +1867,9 @@ export class StreamManager extends EventEmitter {
 
   private extractErrorCode(error: unknown): string | undefined {
     const candidates: unknown[] = [];
+    if (error instanceof Error && error.cause) {
+      candidates.push(error.cause);
+    }
     if (APICallError.isInstance(error)) {
       candidates.push(error.data);
     }
@@ -1888,6 +1891,13 @@ export class StreamManager extends EventEmitter {
   }
 
   private extractStatusCode(error: unknown): number | undefined {
+    if (error instanceof Error && error.cause) {
+      const statusCode = this.extractStatusCode(error.cause);
+      if (typeof statusCode === "number") {
+        return statusCode;
+      }
+    }
+
     if (APICallError.isInstance(error) && typeof error.statusCode === "number") {
       return error.statusCode;
     }
