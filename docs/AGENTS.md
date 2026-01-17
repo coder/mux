@@ -44,6 +44,7 @@ EOF
 - If behind: `git fetch origin && git rebase origin/main && git push --force-with-lease`.
 - Never enable auto-merge or merge at all unless the user explicitly says "merge it".
 - Do not enable auto-squash or auto-merge on Pull Requests unless explicit permission is given.
+- PR bodies should also capture the **why** behind a change (motivation, context, or user impact).
 - PR descriptions: include only information a busy reviewer cannot infer; focus on implementation nuances or validation steps.
 - Title prefixes: `perf|refactor|fix|feat|ci|tests|bench`, e.g., `🤖 fix: handle workspace rename edge cases`.
 - Use `tests:` for test-only changes (test helpers, flaky test fixes, storybook). Use `ci:` for CI config changes.
