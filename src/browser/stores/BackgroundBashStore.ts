@@ -92,14 +92,19 @@ export class BackgroundBashStore {
 
     this.markTerminating(workspaceId, processId);
 
-    const result = await this.client.workspace.backgroundBashes.terminate({
-      workspaceId,
-      processId,
-    });
+    try {
+      const result = await this.client.workspace.backgroundBashes.terminate({
+        workspaceId,
+        processId,
+      });
 
-    if (!result.success) {
+      if (!result.success) {
+        this.clearTerminating(workspaceId, processId);
+        throw new Error(result.error);
+      }
+    } catch (error) {
       this.clearTerminating(workspaceId, processId);
-      throw new Error(result.error);
+      throw error;
     }
   }
 
