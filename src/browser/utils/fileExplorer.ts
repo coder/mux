@@ -321,15 +321,19 @@ base64 < ${file}`;
 export function buildWriteFileScript(relativePath: string, base64Content: string): string {
   const file = shellEscape(relativePath);
   const payload = shellEscape(base64Content);
-  return `tmp=$(mktemp)
+  return `tmp=$(mktemp) || exit 1
+cleanup() { rm -f "$tmp"; }
 if printf '%s' ${payload} | base64 --decode > "$tmp" 2>/dev/null; then
-  cat "$tmp" > ${file}
-  rm "$tmp"
+  cat "$tmp" > ${file} || { cleanup; exit 1; }
+  cleanup
   exit 0
 fi
-printf '%s' ${payload} | base64 -D > "$tmp"
-cat "$tmp" > ${file}
-rm "$tmp"`;
+if ! printf '%s' ${payload} | base64 -D > "$tmp"; then
+  cleanup
+  exit 1
+fi
+cat "$tmp" > ${file} || { cleanup; exit 1; }
+cleanup`;
 }
 
 /**
