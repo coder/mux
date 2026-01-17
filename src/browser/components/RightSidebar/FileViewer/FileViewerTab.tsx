@@ -39,7 +39,6 @@ interface LoadedData {
 }
 
 const DRAFT_DEBOUNCE_MS = 300;
-const DEBOUNCE_MS = 2000;
 const ENCODE_CHUNK_SIZE = 0x8000;
 
 const normalizeLineEndings = (content: string): string => content.replace(/\r\n/g, "\n");
@@ -171,29 +170,18 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
     setSaveError(null);
   }, [relativePath]);
 
-  // Subscribe to file-modifying tool events and debounce refresh
+  // Subscribe to file-modifying tool events and surface a reload banner.
   React.useEffect(() => {
-    let timeoutId: ReturnType<typeof setTimeout> | null = null;
-
     const unsubscribe = workspaceStore.subscribeFileModifyingTool(() => {
       if (fileModifyingIgnoreRef.current > 0) {
         fileModifyingIgnoreRef.current = Math.max(0, fileModifyingIgnoreRef.current - 1);
         return;
       }
-      if (dirtyRef.current) {
-        setPendingExternalChange(true);
-        return;
-      }
-      if (timeoutId) clearTimeout(timeoutId);
-      timeoutId = setTimeout(() => {
-        setPendingExternalChange(false);
-        setRefreshCounter((c) => c + 1);
-      }, DEBOUNCE_MS);
+      setPendingExternalChange(true);
     }, workspaceId);
 
     return () => {
       unsubscribe();
-      if (timeoutId) clearTimeout(timeoutId);
     };
   }, [workspaceId]);
 
@@ -300,9 +288,8 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
             draftContent !== null &&
             normalizeLineEndings(draftContent) !== normalizeLineEndings(data.content);
           dirtyRef.current = hasDraft;
-          if (!hasDraft && draftContent !== null) {
-            draftRef.current = null;
-            onDraftChange?.(null);
+          if (!hasDraft && (draftRef.current !== null || draftHistory !== null)) {
+            clearDraft();
           }
           setContentVersion((version) => version + 1);
         } else {
@@ -320,7 +307,7 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
     return () => {
       cancelled = true;
     };
-  }, [api, workspaceId, relativePath, refreshCounter, draftRef, onDraftChange]);
+  }, [api, workspaceId, relativePath, refreshCounter, draftRef, draftHistory, clearDraft]);
 
   const handleDirtyChange = (dirty: boolean) => {
     dirtyRef.current = dirty;
