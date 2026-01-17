@@ -88,13 +88,13 @@ export function UILayoutsProvider(props: { children: ReactNode }) {
   const saveAll = useCallback(
     async (next: LayoutPresetsConfig): Promise<void> => {
       const normalized = normalizeLayoutPresetsConfig(next);
-      setLayoutPresets(normalized);
 
       if (!api) {
         throw new Error("ORPC client not initialized");
       }
 
       await api.uiLayouts.saveAll({ layoutPresets: normalized });
+      setLayoutPresets(normalized);
     },
     [api]
   );
