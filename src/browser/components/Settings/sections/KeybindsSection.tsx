@@ -10,6 +10,8 @@ const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
   SEND_MESSAGE: "Send message",
   NEW_LINE: "Insert newline",
   CANCEL: "Cancel / Close modal",
+  UNDO: "Undo",
+  REDO: "Redo",
   CANCEL_EDIT: "Cancel editing message",
   SAVE_EDIT: "Save edit",
   SAVE_FILE: "Save file",
@@ -80,7 +82,7 @@ const KEYBIND_GROUPS: Array<{ label: string; keys: Array<keyof typeof KEYBINDS> 
   },
   {
     label: "Editing",
-    keys: ["SAVE_EDIT", "SAVE_FILE", "CANCEL_EDIT"],
+    keys: ["UNDO", "REDO", "SAVE_EDIT", "SAVE_FILE", "CANCEL_EDIT"],
   },
   {
     label: "Navigation",

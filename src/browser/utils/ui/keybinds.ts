@@ -233,6 +233,12 @@ export const KEYBINDS = {
   /** Cancel editing message (exit edit mode) */
   CANCEL_EDIT: { key: "Escape" },
 
+  /** Undo edit */
+  UNDO: { key: "z", ctrl: true, macCtrlBehavior: "command" },
+
+  /** Redo edit */
+  REDO: { key: "z", ctrl: true, shift: true, macCtrlBehavior: "command" },
+
   /** Save file */
   SAVE_FILE: { key: "s", ctrl: true, macCtrlBehavior: "command" },
 

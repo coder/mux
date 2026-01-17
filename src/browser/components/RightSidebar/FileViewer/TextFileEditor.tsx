@@ -5,8 +5,17 @@
 
 import React from "react";
 import { parsePatch } from "diff";
-import { Check, Copy, Save, RefreshCw } from "lucide-react";
-import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
+import { Check, Copy, Save, RefreshCw, Undo2, Redo2 } from "lucide-react";
+import {
+  defaultKeymap,
+  history,
+  historyKeymap,
+  indentWithTab,
+  redo,
+  redoDepth,
+  undo,
+  undoDepth,
+} from "@codemirror/commands";
 import { javascript } from "@codemirror/lang-javascript";
 import { css } from "@codemirror/lang-css";
 import { html } from "@codemirror/lang-html";
@@ -434,15 +443,16 @@ function getLanguageExtension(language: string): Extension {
   }
 }
 
-function createEditorTheme(isDark: boolean): Extension {
+function createEditorTheme(isDark: boolean, useNeutralForeground: boolean): Extension {
   const palette = getMinThemePalette(isDark);
+  const baseForeground = useNeutralForeground ? "var(--color-foreground)" : palette.foreground;
 
   return [
     EditorView.theme(
       {
         "&": {
           backgroundColor: "var(--color-code-bg)",
-          color: palette.foreground,
+          color: baseForeground,
           height: "100%",
           fontFamily: "var(--font-monospace)",
           "--mux-editor-gutter-width": "3.5rem",
@@ -454,7 +464,7 @@ function createEditorTheme(isDark: boolean): Extension {
         },
         ".cm-content": {
           padding: "6px 0",
-          caretColor: palette.foreground,
+          caretColor: baseForeground,
         },
         ".cm-line": {
           padding: "0 8px",
@@ -480,7 +490,7 @@ function createEditorTheme(isDark: boolean): Extension {
           backgroundColor: "color-mix(in srgb, var(--color-accent) 45%, transparent)",
         },
         ".cm-cursor": {
-          borderLeftColor: palette.foreground,
+          borderLeftColor: baseForeground,
         },
         ".cm-diff-added-line": {
           backgroundColor: "color-mix(in srgb, var(--color-success) 20%, transparent)",
@@ -528,6 +538,7 @@ export const TextFileEditor: React.FC<TextFileEditorProps> = (props) => {
       : normalizedBaseContent;
   const language = getLanguageFromPath(props.filePath);
   const languageDisplayName = getLanguageDisplayName(language);
+  const isMarkdown = language === "markdown";
   const isDark = themeMode !== "light" && !themeMode.endsWith("-light");
 
   const editorRootRef = React.useRef<HTMLDivElement | null>(null);
@@ -535,6 +546,10 @@ export const TextFileEditor: React.FC<TextFileEditorProps> = (props) => {
   const baseDocRef = React.useRef<Text>(Text.of(normalizedBaseContent.split("\n")));
   const contentRef = React.useRef(normalizedInitialContent);
   const dirtyRef = React.useRef(false);
+  const historyStateRef = React.useRef({ canUndo: false, canRedo: false });
+
+  const [canUndo, setCanUndo] = React.useState(false);
+  const [canRedo, setCanRedo] = React.useState(false);
   const lineCountRef = React.useRef(getDocLineCount(Text.of(normalizedInitialContent.split("\n"))));
 
   const [lineCount, setLineCount] = React.useState(lineCountRef.current);
@@ -544,7 +559,7 @@ export const TextFileEditor: React.FC<TextFileEditorProps> = (props) => {
   const languageCompartmentRef = React.useRef(new Compartment());
   const diffCompartmentRef = React.useRef(new Compartment());
 
-  const themeExtensionRef = React.useRef<Extension>(createEditorTheme(isDark));
+  const themeExtensionRef = React.useRef<Extension>(createEditorTheme(isDark, isMarkdown));
   const languageExtensionRef = React.useRef<Extension>(getLanguageExtension(language));
   const diffExtensionRef = React.useRef<Extension>(createDiffExtension(props.diff));
 
@@ -582,6 +597,35 @@ export const TextFileEditor: React.FC<TextFileEditorProps> = (props) => {
     callbacksRef.current.onDirtyChange?.(nextDirty);
   };
 
+  const updateHistoryState = (state: EditorState) => {
+    const nextCanUndo = undoDepth(state) > 0;
+    const nextCanRedo = redoDepth(state) > 0;
+    if (historyStateRef.current.canUndo !== nextCanUndo) {
+      historyStateRef.current.canUndo = nextCanUndo;
+      setCanUndo(nextCanUndo);
+    }
+    if (historyStateRef.current.canRedo !== nextCanRedo) {
+      historyStateRef.current.canRedo = nextCanRedo;
+      setCanRedo(nextCanRedo);
+    }
+  };
+
+  const handleUndo = () => {
+    const view = viewRef.current;
+    if (!view) return;
+    if (undo(view)) {
+      view.focus();
+    }
+  };
+
+  const handleRedo = () => {
+    const view = viewRef.current;
+    if (!view) return;
+    if (redo(view)) {
+      view.focus();
+    }
+  };
+
   const updateLineCount = (doc: Text) => {
     const nextCount = getDocLineCount(doc);
     if (lineCountRef.current === nextCount) return;
@@ -604,6 +648,7 @@ export const TextFileEditor: React.FC<TextFileEditorProps> = (props) => {
 
   const createEditorState = (doc: string): EditorState => {
     const updateListener = EditorView.updateListener.of((update) => {
+      updateHistoryState(update.state);
       if (!update.docChanged) return;
       const nextDoc = update.state.doc;
       contentRef.current = nextDoc.toString();
@@ -644,6 +689,7 @@ export const TextFileEditor: React.FC<TextFileEditorProps> = (props) => {
     viewRef.current = view;
     updateLineCount(state.doc);
     updateDirtyState(!state.doc.eq(baseDocRef.current));
+    updateHistoryState(state);
     requestAnimationFrame(syncGutterWidth);
 
     return () => {
@@ -671,19 +717,20 @@ export const TextFileEditor: React.FC<TextFileEditorProps> = (props) => {
     view.setState(nextState);
     updateLineCount(nextState.doc);
     updateDirtyState(!nextState.doc.eq(baseDocRef.current));
+    updateHistoryState(nextState);
     requestAnimationFrame(syncGutterWidth);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- rebase only on content changes.
   }, [props.contentVersion, props.content, props.draftContent]);
 
   React.useEffect(() => {
-    themeExtensionRef.current = createEditorTheme(isDark);
+    themeExtensionRef.current = createEditorTheme(isDark, isMarkdown);
     const view = viewRef.current;
     if (!view) return;
     view.dispatch({
       effects: themeCompartmentRef.current.reconfigure(themeExtensionRef.current),
     });
     requestAnimationFrame(syncGutterWidth);
-  }, [isDark]);
+  }, [isDark, isMarkdown]);
 
   React.useEffect(() => {
     languageExtensionRef.current = getLanguageExtension(language);
@@ -703,6 +750,8 @@ export const TextFileEditor: React.FC<TextFileEditorProps> = (props) => {
     });
   }, [props.diff]);
 
+  const undoKeybindLabel = formatKeybind(KEYBINDS.UNDO);
+  const redoKeybindLabel = formatKeybind(KEYBINDS.REDO);
   const saveKeybindLabel = formatKeybind(KEYBINDS.SAVE_FILE);
 
   return (
@@ -763,6 +812,24 @@ export const TextFileEditor: React.FC<TextFileEditorProps> = (props) => {
         )}
         {isDirty && <span className="text-warning">Unsaved</span>}
         <span className="ml-auto">{languageDisplayName}</span>
+        <button
+          type="button"
+          className="text-muted hover:bg-accent/50 hover:text-foreground rounded p-0.5 disabled:opacity-50"
+          onClick={handleUndo}
+          title={`Undo (${undoKeybindLabel})`}
+          disabled={!canUndo}
+        >
+          <Undo2 className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          className="text-muted hover:bg-accent/50 hover:text-foreground rounded p-0.5 disabled:opacity-50"
+          onClick={handleRedo}
+          title={`Redo (${redoKeybindLabel})`}
+          disabled={!canRedo}
+        >
+          <Redo2 className="h-3.5 w-3.5" />
+        </button>
         {props.onSave && (
           <button
             type="button"
