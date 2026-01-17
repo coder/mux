@@ -12,7 +12,6 @@ import { execSync } from "child_process";
 
 // Import production code - script and parser stay in sync
 import { GIT_STATUS_SCRIPT, parseGitStatusScriptOutput } from "@/common/utils/git/gitStatus";
-import { parseGitShowBranchForStatus } from "@/common/utils/git/parseGitStatus";
 import { getMuxSrcDir } from "@/common/constants/paths";
 
 function findWorkspaces(): Array<{ id: string; path: string }> {
@@ -72,7 +71,9 @@ function testGitStatus(workspaceId: string, workspacePath: string) {
     }
 
     const {
-      showBranchOutput,
+      primaryBranch,
+      ahead,
+      behind,
       dirtyCount,
       outgoingAdditions,
       outgoingDeletions,
@@ -81,38 +82,24 @@ function testGitStatus(workspaceId: string, workspacePath: string) {
     } = parsed;
     const dirty = dirtyCount > 0;
 
-    console.log("\n--- SHOW-BRANCH OUTPUT (extracted) ---");
-    console.log(showBranchOutput);
-
-    // Parse with the EXACT SAME function as production
-    const parsedStatus = parseGitShowBranchForStatus(showBranchOutput);
-
     console.log("\n--- PARSED RESULT ---");
-    if (parsedStatus) {
-      console.log(
-        `✅ Success: { ahead: ${parsedStatus.ahead}, behind: ${parsedStatus.behind}, dirty: ${dirty}, outgoing: +${outgoingAdditions}/-${outgoingDeletions}, incoming: +${incomingAdditions}/-${incomingDeletions} }`
-      );
-    } else {
-      console.log("❌ FAILED: parseGitShowBranchForStatus returned null");
-    }
+    console.log(
+      `✅ Success: { base: ${primaryBranch}, ahead: ${ahead}, behind: ${behind}, dirty: ${dirty}, outgoing: +${outgoingAdditions}/-${outgoingDeletions}, incoming: +${incomingAdditions}/-${incomingDeletions} }`
+    );
 
     // Verify with git rev-list
     console.log("\n--- VERIFICATION (git rev-list) ---");
     try {
-      const primaryRegex = /---PRIMARY---\s*([^\n]+)/;
-      const primaryMatch = primaryRegex.exec(output);
-      const primaryBranch = primaryMatch ? primaryMatch[1].trim() : "main";
-
       const revList = execSync(`git rev-list --left-right --count HEAD...origin/${primaryBranch}`, {
         cwd: workspacePath,
         encoding: "utf-8",
       }).trim();
 
-      const [ahead, behind] = revList.split(/\s+/).map((n) => parseInt(n, 10));
-      console.log(`git rev-list: ahead=${ahead}, behind=${behind}`);
+      const [verifyAhead, verifyBehind] = revList.split(/\s+/).map((n) => parseInt(n, 10));
+      console.log(`git rev-list: ahead=${verifyAhead}, behind=${verifyBehind}`);
 
-      if (parsedStatus && (parsedStatus.ahead !== ahead || parsedStatus.behind !== behind)) {
-        console.log("⚠️  WARNING: Mismatch between show-branch parsing and rev-list!");
+      if (verifyAhead !== ahead || verifyBehind !== behind) {
+        console.log("⚠️  WARNING: Mismatch between script output and rev-list!");
       }
     } catch (err: unknown) {
       const error = err as Error;

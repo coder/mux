@@ -1,7 +1,6 @@
 import type { RouterClient } from "@orpc/server";
 import type { AppRouter } from "@/node/orpc/router";
 import type { FrontendWorkspaceMetadata, GitStatus } from "@/common/types/workspace";
-import { parseGitRevList, parseGitShowBranchForStatus } from "@/common/utils/git/parseGitStatus";
 import {
   generateGitStatusScript,
   GIT_FETCH_SCRIPT,
@@ -344,8 +343,8 @@ export class GitStatusStore {
       }
 
       const {
-        showBranchOutput,
-        revListOutput,
+        ahead,
+        behind,
         dirtyCount,
         outgoingAdditions,
         outgoingDeletions,
@@ -354,18 +353,11 @@ export class GitStatusStore {
       } = parsed;
       const dirty = dirtyCount > 0;
 
-      // Prefer rev-list counts (stable), fall back to show-branch parsing.
-      const revListStatus = parseGitRevList(revListOutput);
-      const parsedStatus = revListStatus ?? parseGitShowBranchForStatus(showBranchOutput);
-
-      if (!parsedStatus) {
-        return [metadata.id, null];
-      }
-
       return [
         metadata.id,
         {
-          ...parsedStatus,
+          ahead,
+          behind,
           dirty,
           outgoingAdditions,
           outgoingDeletions,

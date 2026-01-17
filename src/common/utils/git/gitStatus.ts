@@ -5,7 +5,7 @@
 
 /**
  * Generate bash script to get git status for a workspace.
- * Returns structured output with base ref, show-branch, and dirty status.
+ * Returns structured output with base ref, ahead/behind counts, and dirty status.
  *
  * @param baseRef - The ref to compare against (e.g., "origin/main").
  *                  If not provided or not an origin/ ref, auto-detects.
@@ -48,18 +48,10 @@ if [ -z "$PRIMARY_BRANCH" ]; then
   exit 1
 fi
 
-# Get show-branch output for ahead/behind counts
-SHOW_BRANCH=$(git show-branch --sha1-name HEAD "origin/$PRIMARY_BRANCH" 2>/dev/null)
-
-if [ $? -ne 0 ]; then
-  echo "ERROR: git show-branch failed"
-  exit 1
-fi
-
-# Stable ahead/behind counts (avoid show-branch formatting differences)
-REV_LIST=$(git rev-list --left-right --count HEAD..."origin/$PRIMARY_BRANCH" 2>/dev/null || echo "")
-if [ -z "$REV_LIST" ]; then
-  REV_LIST="0 0"
+# Stable ahead/behind counts (rev-list is format-stable across git versions)
+AHEAD_BEHIND=$(git rev-list --left-right --count HEAD..."origin/$PRIMARY_BRANCH" 2>/dev/null || echo "")
+if [ -z "$AHEAD_BEHIND" ]; then
+  AHEAD_BEHIND="0 0"
 fi
 
 # Check for dirty (uncommitted changes)
@@ -91,10 +83,8 @@ fi
 # Output sections
 echo "---PRIMARY---"
 echo "$PRIMARY_BRANCH"
-echo "---SHOW_BRANCH---"
-echo "$SHOW_BRANCH"
-echo "---REV_LIST---"
-echo "$REV_LIST"
+echo "---AHEAD_BEHIND---"
+echo "$AHEAD_BEHIND"
 echo "---DIRTY---"
 echo "$DIRTY_COUNT"
 echo "---LINE_DELTA---"
@@ -113,8 +103,8 @@ export const GIT_STATUS_SCRIPT = generateGitStatusScript();
  */
 export interface ParsedGitStatusOutput {
   primaryBranch: string;
-  showBranchOutput: string;
-  revListOutput: string;
+  ahead: number;
+  behind: number;
   dirtyCount: number;
   outgoingAdditions: number;
   outgoingDeletions: number;
@@ -124,19 +114,24 @@ export interface ParsedGitStatusOutput {
 
 export function parseGitStatusScriptOutput(output: string): ParsedGitStatusOutput | null {
   // Split by section markers using regex to get content between markers
-  const primaryRegex = /---PRIMARY---\s*([\s\S]*?)---SHOW_BRANCH---/;
-  const showBranchRegex = /---SHOW_BRANCH---\s*([\s\S]*?)---REV_LIST---/;
-  const revListRegex = /---REV_LIST---\s*([\s\S]*?)---DIRTY---/;
+  const primaryRegex = /---PRIMARY---\s*([\s\S]*?)---AHEAD_BEHIND---/;
+  const aheadBehindRegex = /---AHEAD_BEHIND---\s*(\d+)\s+(\d+)/;
   const dirtyRegex = /---DIRTY---\s*(\d+)/;
   const lineDeltaRegex = /---LINE_DELTA---\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/;
 
   const primaryMatch = primaryRegex.exec(output);
-  const showBranchMatch = showBranchRegex.exec(output);
-  const revListMatch = revListRegex.exec(output);
+  const aheadBehindMatch = aheadBehindRegex.exec(output);
   const dirtyMatch = dirtyRegex.exec(output);
   const lineDeltaMatch = lineDeltaRegex.exec(output);
 
-  if (!primaryMatch || !showBranchMatch || !revListMatch || !dirtyMatch) {
+  if (!primaryMatch || !aheadBehindMatch || !dirtyMatch) {
+    return null;
+  }
+
+  const ahead = parseInt(aheadBehindMatch[1], 10);
+  const behind = parseInt(aheadBehindMatch[2], 10);
+
+  if (Number.isNaN(ahead) || Number.isNaN(behind)) {
     return null;
   }
 
@@ -147,8 +142,8 @@ export function parseGitStatusScriptOutput(output: string): ParsedGitStatusOutpu
 
   return {
     primaryBranch: primaryMatch[1].trim(),
-    showBranchOutput: showBranchMatch[1].trim(),
-    revListOutput: revListMatch[1].trim(),
+    ahead,
+    behind,
     dirtyCount: parseInt(dirtyMatch[1], 10),
     outgoingAdditions,
     outgoingDeletions,

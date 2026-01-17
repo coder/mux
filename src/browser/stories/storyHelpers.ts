@@ -165,7 +165,7 @@ drwxr-xr-x  2 user group   64 Jan 15 10:00 components
 
 /**
  * Creates an executeBash function that returns git status and diff output for workspaces.
- * Handles: git status, git show-branch, git diff, git diff --numstat, git show (for read-more),
+ * Handles: git status, git diff, git diff --numstat, git show (for read-more),
  * git ls-files --others (for untracked files), ls -la (for file explorer), git check-ignore
  */
 export function createGitStatusExecutor(
@@ -188,7 +188,7 @@ export function createGitStatusExecutor(
       return Promise.resolve({ success: true as const, output, exitCode: 0, wall_duration_ms: 50 });
     }
 
-    if (script.includes("git status") || script.includes("git show-branch")) {
+    if (script.includes("git status")) {
       const status = gitStatus?.get(workspaceId) ?? {};
       // For git status --ignored --porcelain, add !! node_modules to mark it as ignored
       let output = createGitStatusOutput(status);
