@@ -56,6 +56,12 @@ if [ $? -ne 0 ]; then
   exit 1
 fi
 
+# Stable ahead/behind counts (avoid show-branch formatting differences)
+REV_LIST=$(git rev-list --left-right --count HEAD..."origin/$PRIMARY_BRANCH" 2>/dev/null || echo "")
+if [ -z "$REV_LIST" ]; then
+  REV_LIST="0 0"
+fi
+
 # Check for dirty (uncommitted changes)
 DIRTY_COUNT=$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')
 
@@ -87,6 +93,8 @@ echo "---PRIMARY---"
 echo "$PRIMARY_BRANCH"
 echo "---SHOW_BRANCH---"
 echo "$SHOW_BRANCH"
+echo "---REV_LIST---"
+echo "$REV_LIST"
 echo "---DIRTY---"
 echo "$DIRTY_COUNT"
 echo "---LINE_DELTA---"
@@ -106,6 +114,7 @@ export const GIT_STATUS_SCRIPT = generateGitStatusScript();
 export interface ParsedGitStatusOutput {
   primaryBranch: string;
   showBranchOutput: string;
+  revListOutput: string;
   dirtyCount: number;
   outgoingAdditions: number;
   outgoingDeletions: number;
@@ -116,16 +125,18 @@ export interface ParsedGitStatusOutput {
 export function parseGitStatusScriptOutput(output: string): ParsedGitStatusOutput | null {
   // Split by section markers using regex to get content between markers
   const primaryRegex = /---PRIMARY---\s*([\s\S]*?)---SHOW_BRANCH---/;
-  const showBranchRegex = /---SHOW_BRANCH---\s*([\s\S]*?)---DIRTY---/;
+  const showBranchRegex = /---SHOW_BRANCH---\s*([\s\S]*?)---REV_LIST---/;
+  const revListRegex = /---REV_LIST---\s*([\s\S]*?)---DIRTY---/;
   const dirtyRegex = /---DIRTY---\s*(\d+)/;
   const lineDeltaRegex = /---LINE_DELTA---\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/;
 
   const primaryMatch = primaryRegex.exec(output);
   const showBranchMatch = showBranchRegex.exec(output);
+  const revListMatch = revListRegex.exec(output);
   const dirtyMatch = dirtyRegex.exec(output);
   const lineDeltaMatch = lineDeltaRegex.exec(output);
 
-  if (!primaryMatch || !showBranchMatch || !dirtyMatch) {
+  if (!primaryMatch || !showBranchMatch || !revListMatch || !dirtyMatch) {
     return null;
   }
 
@@ -137,6 +148,7 @@ export function parseGitStatusScriptOutput(output: string): ParsedGitStatusOutpu
   return {
     primaryBranch: primaryMatch[1].trim(),
     showBranchOutput: showBranchMatch[1].trim(),
+    revListOutput: revListMatch[1].trim(),
     dirtyCount: parseInt(dirtyMatch[1], 10),
     outgoingAdditions,
     outgoingDeletions,
