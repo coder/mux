@@ -83,23 +83,42 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
         );
       }
 
-      const report = await taskService.waitForAgentReport(created.data.taskId, {
-        abortSignal,
-        requestingWorkspaceId: workspaceId,
-      });
+      try {
+        const report = await taskService.waitForAgentReport(created.data.taskId, {
+          abortSignal,
+          requestingWorkspaceId: workspaceId,
+        });
 
-      return parseToolResult(
-        TaskToolResultSchema,
-        {
-          status: "completed" as const,
-          taskId: created.data.taskId,
-          reportMarkdown: report.reportMarkdown,
-          title: report.title,
-          agentId: requestedAgentId,
-          agentType: requestedAgentId,
-        },
-        "task"
-      );
+        return parseToolResult(
+          TaskToolResultSchema,
+          {
+            status: "completed" as const,
+            taskId: created.data.taskId,
+            reportMarkdown: report.reportMarkdown,
+            title: report.title,
+            agentId: requestedAgentId,
+            agentType: requestedAgentId,
+          },
+          "task"
+        );
+      } catch (waitError) {
+        // If wait timed out, return a valid result indicating task is still running
+        // (consistent with task_await behavior). This prevents timeouts from becoming
+        // tool execution errors that can destabilize the parent stream.
+        const message = waitError instanceof Error ? waitError.message : String(waitError);
+        if (/timed out waiting for agent_report/i.test(message)) {
+          log.debug("Task wait timed out, returning running status", {
+            taskId: created.data.taskId,
+          });
+          return parseToolResult(
+            TaskToolResultSchema,
+            { status: "running" as const, taskId: created.data.taskId },
+            "task"
+          );
+        }
+        // Re-throw other errors (e.g., "Interrupted", "Task terminated")
+        throw waitError;
+      }
     },
   });
 };
