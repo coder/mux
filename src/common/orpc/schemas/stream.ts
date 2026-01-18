@@ -409,7 +409,6 @@ export const SendMessageOptionsSchema = z.object({
   providerOptions: MuxProviderOptionsSchema.optional(),
   mode: AgentModeSchema.optional().catch(undefined),
   muxMetadata: z.any().optional(), // Black box
-  synthetic: z.boolean().optional(),
   experiments: ExperimentsSchema.optional(),
   /**
    * When true, workspace-specific agent definitions are disabled.

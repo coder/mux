@@ -8,7 +8,12 @@ import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 
-import { createMuxMessage, type MuxMessage } from "@/common/types/message";
+import {
+  createMuxMessage,
+  prepareUserMessageForSend,
+  type ContinueMessage,
+  type MuxMessage,
+} from "@/common/types/message";
 import type { TelemetryService } from "@/node/services/telemetryService";
 import { roundToBase2 } from "@/common/telemetry/utils";
 import { log } from "@/node/services/log";
@@ -68,6 +73,9 @@ export class CompactionHandler {
   private readonly telemetryService?: TelemetryService;
   private readonly emitter: EventEmitter;
   private readonly processedCompactionRequestIds: Set<string> = new Set<string>();
+
+  /** Flag indicating a retry message should be resumed after compaction. */
+  private retryAfterCompaction = false;
   private readonly onCompactionComplete?: () => void;
 
   /** Flag indicating post-compaction attachments should be generated on next turn */
@@ -111,6 +119,15 @@ export class CompactionHandler {
   }
 
   /**
+   * Consume retry-after-compaction flag (clears after read).
+   */
+  consumeRetryAfterCompaction(): boolean {
+    const shouldRetry = this.retryAfterCompaction;
+    this.retryAfterCompaction = false;
+    return shouldRetry;
+  }
+
+  /**
    * Handle compaction stream completion
    *
    * Detects when a compaction stream finishes, extracts the summary,
@@ -125,11 +142,14 @@ export class CompactionHandler {
 
     const messages = historyResult.data;
     const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
-    const isCompaction = lastUserMsg?.metadata?.muxMetadata?.type === "compaction-request";
+    const muxMeta = lastUserMsg?.metadata?.muxMetadata;
+    const isCompaction = muxMeta?.type === "compaction-request";
 
     if (!isCompaction || !lastUserMsg) {
       return false;
     }
+
+    this.retryAfterCompaction = false;
 
     // Dedupe: If we've already processed this compaction-request, skip
     if (this.processedCompactionRequestIds.has(lastUserMsg.id)) {
@@ -175,9 +195,12 @@ export class CompactionHandler {
     }
 
     // Check if this was an idle-compaction (auto-triggered due to inactivity)
-    const muxMeta = lastUserMsg.metadata?.muxMetadata;
     const isIdleCompaction =
       muxMeta?.type === "compaction-request" && muxMeta.source === "idle-compaction";
+    const retryContinueMessage =
+      muxMeta?.type === "compaction-request" && muxMeta.parsed.continueMessageIsRetry
+        ? muxMeta.parsed.continueMessage
+        : undefined;
 
     // Mark as processed before performing compaction
     this.processedCompactionRequestIds.add(lastUserMsg.id);
@@ -186,7 +209,8 @@ export class CompactionHandler {
       summary,
       event.metadata,
       messages,
-      isIdleCompaction
+      isIdleCompaction,
+      retryContinueMessage
     );
     if (!result.success) {
       log.error("Compaction failed:", result.error);
@@ -238,7 +262,8 @@ export class CompactionHandler {
       systemMessageTokens?: number;
     },
     messages: MuxMessage[],
-    isIdleCompaction = false
+    isIdleCompaction = false,
+    retryContinueMessage?: ContinueMessage
   ): Promise<Result<void, string>> {
     // CRITICAL: Delete partial.json BEFORE clearing history
     // This prevents a race condition where:
@@ -304,6 +329,38 @@ export class CompactionHandler {
       return Err(`Failed to append summary: ${appendResult.error}`);
     }
 
+    let retryMessage: MuxMessage | null = null;
+    if (retryContinueMessage) {
+      const { finalText, metadata: retryMetadata } =
+        prepareUserMessageForSend(retryContinueMessage);
+      const retryImageParts = retryContinueMessage.imageParts?.map((part) => ({
+        type: "file" as const,
+        url: part.url,
+        mediaType: part.mediaType,
+      }));
+      const retryMessageMetadata = retryMetadata
+        ? { timestamp: Date.now(), muxMetadata: retryMetadata }
+        : { timestamp: Date.now() };
+
+      retryMessage = createMuxMessage(
+        `user-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+        "user",
+        finalText,
+        retryMessageMetadata,
+        retryImageParts
+      );
+
+      const retryAppendResult = await this.historyService.appendToHistory(
+        this.workspaceId,
+        retryMessage
+      );
+      if (!retryAppendResult.success) {
+        return Err(`Failed to append retry message: ${retryAppendResult.error}`);
+      }
+
+      this.retryAfterCompaction = true;
+    }
+
     // Set flag to trigger post-compaction attachment injection on next turn
     this.postCompactionAttachmentsPending = true;
 
@@ -318,6 +375,10 @@ export class CompactionHandler {
 
     // Emit summary message to frontend (add type: "message" for discriminated union)
     this.emitChatEvent({ ...summaryMessage, type: "message" });
+
+    if (retryMessage) {
+      this.emitChatEvent({ ...retryMessage, type: "message" });
+    }
 
     return Ok(undefined);
   }
