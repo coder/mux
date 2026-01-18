@@ -1284,6 +1284,81 @@ export class WorkspaceStore {
     this.checkAndBumpRecencyIfChanged();
   }
 
+  private getOnChatWatchdogExpectation(
+    workspaceId: string
+  ): { timeoutMs: number; transient: WorkspaceChatTransientState } | null {
+    const aggregator = this.aggregators.get(workspaceId);
+    const transient = this.chatTransientState.get(workspaceId);
+    if (!aggregator || !transient) {
+      return null;
+    }
+
+    const hasActiveStream = aggregator.getActiveStreams().length > 0;
+    const hasQueuedMessage = transient.queuedMessage !== null;
+    const pendingStreamStartTime = aggregator.getPendingStreamStartTime();
+    const waitingForStreamStart = pendingStreamStartTime !== null && !hasQueuedMessage;
+    const hasOutbound = transient.lastOutboundAt !== null;
+
+    const shouldExpect =
+      hasActiveStream || hasQueuedMessage || waitingForStreamStart || hasOutbound;
+
+    if (!shouldExpect) {
+      return null;
+    }
+
+    const timeoutMs = hasActiveStream
+      ? ON_CHAT_ACTIVE_STREAM_TIMEOUT_MS
+      : hasQueuedMessage
+        ? ON_CHAT_QUEUED_TIMEOUT_MS
+        : ON_CHAT_PENDING_START_TIMEOUT_MS;
+
+    return { timeoutMs, transient };
+  }
+
+  private startOnChatWatchdog(
+    workspaceId: string,
+    options: {
+      signal: AbortSignal;
+      attemptSignal: AbortSignal;
+      abortAttempt: () => void;
+    }
+  ): { didStall: () => boolean; stop: () => void } {
+    let stalled = false;
+    let wasExpecting = false;
+
+    const watchdog = setInterval(() => {
+      if (options.signal.aborted || options.attemptSignal.aborted) {
+        return;
+      }
+
+      const expectation = this.getOnChatWatchdogExpectation(workspaceId);
+      if (!expectation) {
+        wasExpecting = false;
+        return;
+      }
+
+      const now = Date.now();
+      const { timeoutMs, transient } = expectation;
+
+      if (!wasExpecting) {
+        wasExpecting = true;
+        transient.lastEventAt = now;
+        return;
+      }
+
+      if (now - transient.lastEventAt > timeoutMs) {
+        stalled = true;
+        console.warn(`[WorkspaceStore] onChat stalled for ${workspaceId}; restarting...`);
+        options.abortAttempt();
+      }
+    }, ON_CHAT_STALL_CHECK_MS);
+
+    return {
+      didStall: () => stalled,
+      stop: () => clearInterval(watchdog),
+    };
+  }
+
   /**
    * Subscribe to workspace chat events (history replay + live streaming).
    * Retries on unexpected iterator termination to avoid requiring a full app restart.
@@ -1302,53 +1377,11 @@ export class WorkspaceStore {
       const abortAttempt = () => attemptController.abort();
       signal.addEventListener("abort", abortAttempt, { once: true });
 
-      let stalled = false;
-      let wasExpecting = false;
-
-      const watchdog = setInterval(() => {
-        if (signal.aborted || attemptSignal.aborted) {
-          return;
-        }
-
-        const aggregator = this.aggregators.get(workspaceId);
-        const transient = this.chatTransientState.get(workspaceId);
-        if (!aggregator || !transient) {
-          return;
-        }
-
-        const now = Date.now();
-        const hasActiveStream = aggregator.getActiveStreams().length > 0;
-        const hasQueuedMessage = transient.queuedMessage !== null;
-        const pendingStreamStartTime = aggregator.getPendingStreamStartTime();
-        const waitingForStreamStart = pendingStreamStartTime !== null && !hasQueuedMessage;
-        const hasOutbound = transient.lastOutboundAt !== null;
-
-        const shouldExpect =
-          hasActiveStream || hasQueuedMessage || waitingForStreamStart || hasOutbound;
-
-        if (!shouldExpect) {
-          wasExpecting = false;
-          return;
-        }
-
-        if (!wasExpecting) {
-          wasExpecting = true;
-          transient.lastEventAt = now;
-          return;
-        }
-
-        const timeoutMs = hasActiveStream
-          ? ON_CHAT_ACTIVE_STREAM_TIMEOUT_MS
-          : hasQueuedMessage
-            ? ON_CHAT_QUEUED_TIMEOUT_MS
-            : ON_CHAT_PENDING_START_TIMEOUT_MS;
-
-        if (now - transient.lastEventAt > timeoutMs) {
-          stalled = true;
-          console.warn(`[WorkspaceStore] onChat stalled for ${workspaceId}; restarting...`);
-          attemptController.abort();
-        }
-      }, ON_CHAT_STALL_CHECK_MS);
+      const watchdog = this.startOnChatWatchdog(workspaceId, {
+        signal,
+        attemptSignal,
+        abortAttempt,
+      });
 
       try {
         const iterator = await client.workspace.onChat({ workspaceId }, { signal: attemptSignal });
@@ -1377,7 +1410,7 @@ export class WorkspaceStore {
           return;
         }
 
-        if (!stalled) {
+        if (!watchdog.didStall()) {
           console.warn(
             `[WorkspaceStore] onChat subscription ended unexpectedly for ${workspaceId}; retrying...`
           );
@@ -1392,7 +1425,7 @@ export class WorkspaceStore {
         // 1. Schema validation fails (event doesn't match WorkspaceChatMessageSchema)
         // 2. Workspace was removed on server side (iterator ends with error)
         // 3. Connection dropped (WebSocket/MessagePort error)
-        if (attemptSignal.aborted && stalled) {
+        if (attemptSignal.aborted && watchdog.didStall()) {
           // Watchdog requested restart; skip noisy logging.
         } else if (isIteratorValidationFailed(error)) {
           // Only suppress if workspace no longer exists (was removed during the race)
@@ -1407,7 +1440,7 @@ export class WorkspaceStore {
           console.error(`[WorkspaceStore] Error in onChat subscription for ${workspaceId}:`, error);
         }
       } finally {
-        clearInterval(watchdog);
+        watchdog.stop();
         signal.removeEventListener("abort", abortAttempt);
       }
 
