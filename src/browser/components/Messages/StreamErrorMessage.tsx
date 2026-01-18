@@ -4,6 +4,7 @@ import { Button } from "@/browser/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui/tooltip";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { cn } from "@/common/lib/utils";
+import { useOptionalMessageListContext } from "./MessageListContext";
 import type { DisplayedMessage } from "@/common/types/message";
 
 interface StreamErrorMessageProps {
@@ -11,8 +12,31 @@ interface StreamErrorMessageProps {
   className?: string;
 }
 
-// Note: RetryBarrier handles retry actions. This component only displays the error.
+// RetryBarrier handles auto-retry; this component exposes a compact-and-retry shortcut.
 export const StreamErrorMessage: React.FC<StreamErrorMessageProps> = ({ message, className }) => {
+  const messageListContext = useOptionalMessageListContext();
+  const latestMessageId = messageListContext?.latestMessageId ?? null;
+  const workspaceId = messageListContext?.workspaceId ?? null;
+  const isLatestMessage = latestMessageId === message.id;
+
+  const showCompactRetry =
+    message.errorType === "context_exceeded" && !!workspaceId && isLatestMessage;
+
+  const compactRetryAction = showCompactRetry ? (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={() => {
+        if (!workspaceId) return;
+        window.dispatchEvent(
+          createCustomEvent(CUSTOM_EVENTS.COMPACT_AND_RETRY_REQUESTED, { workspaceId })
+        );
+      }}
+      className="border-warning/40 text-warning hover:bg-warning/10 hover:text-warning h-6 px-2 text-[10px]"
+    >
+      Compact & retry
+    </Button>
+  ) : null;
   const debugAction = (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -68,6 +92,7 @@ export const StreamErrorMessage: React.FC<StreamErrorMessageProps> = ({ message,
           {message.errorType}
         </code>
         <div className="ml-auto flex items-center gap-2">
+          {compactRetryAction}
           {showCount && (
             <span className="text-error rounded-sm bg-red-500/15 px-2 py-0.5 font-mono text-[10px] font-semibold tracking-wide">
               ×{message.errorCount}
