@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useCompactAndRetry } from "@/browser/hooks/useCompactAndRetry";
 import { usePersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import type { RetryState } from "@/browser/hooks/useResumeManager";
 import { useWorkspaceState } from "@/browser/stores/WorkspaceStore";
@@ -13,15 +12,10 @@ import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { getAutoRetryKey, getRetryStateKey, VIM_ENABLED_KEY } from "@/common/constants/storage";
 import { cn } from "@/common/lib/utils";
 import { formatSendMessageError } from "@/common/utils/errors/formatSendError";
-import { formatTokens } from "@/common/utils/tokens/tokenMeterUtils";
 
 interface RetryBarrierProps {
   workspaceId: string;
   className?: string;
-}
-
-function formatContextTokens(tokens: number): string {
-  return formatTokens(tokens).replace(/\.0([kM])$/, "$1");
 }
 
 const defaultRetryState: RetryState = {
@@ -29,20 +23,12 @@ const defaultRetryState: RetryState = {
   retryStartTime: Date.now(),
 };
 
-export const RetryBarrier: React.FC<RetryBarrierProps> = ({ workspaceId, className }) => {
+export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
   // Get workspace state for computing effective autoRetry
-  const workspaceState = useWorkspaceState(workspaceId);
+  const workspaceState = useWorkspaceState(props.workspaceId);
 
-  const {
-    showCompactionUI,
-    compactionSuggestion,
-    hasCompactionRequest,
-    hasTriggerUserMessage,
-    isRetryingWithCompaction,
-    retryWithCompaction,
-  } = useCompactAndRetry({ workspaceId });
   const [autoRetry, setAutoRetry] = usePersistedState<boolean>(
-    getAutoRetryKey(workspaceId),
+    getAutoRetryKey(props.workspaceId),
     true, // Default to true
     { listener: true }
   );
@@ -56,7 +42,7 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = ({ workspaceId, classNa
   // Use persisted state for retry tracking (survives workspace switches)
   // Read retry state (managed by useResumeManager)
   const [retryState] = usePersistedState<RetryState>(
-    getRetryStateKey(workspaceId),
+    getRetryStateKey(props.workspaceId),
     defaultRetryState,
     { listener: true }
   );
@@ -113,13 +99,13 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = ({ workspaceId, classNa
 
     // Create manual retry state: immediate retry BUT preserves attempt counter
     // This prevents infinite retry loops without backoff if the retry fails
-    updatePersistedState(getRetryStateKey(workspaceId), createManualRetryState(attempt));
+    updatePersistedState(getRetryStateKey(props.workspaceId), createManualRetryState(attempt));
 
     // Emit event to useResumeManager - it will handle the actual resume
     // Pass isManual flag to bypass eligibility checks (user explicitly wants to retry)
     window.dispatchEvent(
       createCustomEvent(CUSTOM_EVENTS.RESUME_CHECK_REQUESTED, {
-        workspaceId,
+        workspaceId: props.workspaceId,
         isManual: true,
       })
     );
@@ -141,38 +127,7 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = ({ workspaceId, classNa
       : formatted.message;
   };
 
-  const details = showCompactionUI ? (
-    <div className="font-primary text-foreground/80 pl-8 text-[12px]">
-      <span className="text-warning font-semibold">Context window exceeded.</span>{" "}
-      {compactionSuggestion ? (
-        compactionSuggestion.kind === "preferred" ? (
-          <>
-            We&apos;ll compact with your configured compaction model{" "}
-            <span className="text-foreground font-semibold">
-              {compactionSuggestion.displayName}
-            </span>
-            {compactionSuggestion.maxInputTokens !== null ? (
-              <> ({formatContextTokens(compactionSuggestion.maxInputTokens)} context)</>
-            ) : null}{" "}
-            to unblock you. Your workspace model stays the same.
-          </>
-        ) : (
-          <>
-            We&apos;ll compact with{" "}
-            <span className="text-foreground font-semibold">
-              {compactionSuggestion.displayName}
-            </span>
-            {compactionSuggestion.maxInputTokens !== null ? (
-              <> ({formatContextTokens(compactionSuggestion.maxInputTokens)} context)</>
-            ) : null}{" "}
-            to unblock you with a higher-context model. Your workspace model stays the same.
-          </>
-        )
-      ) : (
-        <>Compact this chat to unblock you. Your workspace model stays the same.</>
-      )}
-    </div>
-  ) : lastError ? (
+  const details = lastError ? (
     <div className="font-primary text-foreground/80 pl-8 text-[12px]">
       <span className="text-warning font-semibold">Error:</span> {getErrorMessage(lastError)}
     </div>
@@ -180,7 +135,7 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = ({ workspaceId, classNa
 
   const barrierClassName = cn(
     "my-5 px-5 py-4 bg-gradient-to-br from-[rgba(255,165,0,0.1)] to-[rgba(255,140,0,0.1)] border-l-4 border-warning rounded flex flex-col gap-3",
-    className
+    props.className
   );
 
   let statusIcon = "⚠️";
@@ -210,32 +165,12 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = ({ workspaceId, classNa
       </button>
     );
   } else {
-    const onClick = showCompactionUI
-      ? () => {
-          retryWithCompaction().catch(() => undefined);
-        }
-      : handleManualRetry;
-
-    let label = "Retry";
-    if (showCompactionUI) {
-      if (isRetryingWithCompaction) {
-        label = "Starting...";
-      } else if (!compactionSuggestion || !hasTriggerUserMessage) {
-        label = "Insert /compact";
-      } else if (hasCompactionRequest) {
-        label = "Retry compaction";
-      } else {
-        label = "Compact & retry";
-      }
-    }
-
     actionButton = (
       <button
         className="bg-warning font-primary text-background cursor-pointer rounded border-none px-4 py-2 text-xs font-semibold whitespace-nowrap transition-all duration-200 hover:-translate-y-px hover:brightness-120 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50"
-        onClick={onClick}
-        disabled={showCompactionUI && isRetryingWithCompaction}
+        onClick={handleManualRetry}
       >
-        {label}
+        Retry
       </button>
     );
   }

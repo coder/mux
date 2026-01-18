@@ -2,41 +2,33 @@ import React from "react";
 import { Bug } from "lucide-react";
 import { Button } from "@/browser/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui/tooltip";
+import { useCompactAndRetry } from "@/browser/hooks/useCompactAndRetry";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { cn } from "@/common/lib/utils";
-import { useOptionalMessageListContext } from "./MessageListContext";
 import type { DisplayedMessage } from "@/common/types/message";
+import { formatTokens } from "@/common/utils/tokens/tokenMeterUtils";
+import { useOptionalMessageListContext } from "./MessageListContext";
 
 interface StreamErrorMessageProps {
   message: DisplayedMessage & { type: "stream-error" };
   className?: string;
 }
 
-// RetryBarrier handles auto-retry; this component exposes a compact-and-retry shortcut.
-export const StreamErrorMessage: React.FC<StreamErrorMessageProps> = ({ message, className }) => {
-  const messageListContext = useOptionalMessageListContext();
-  const latestMessageId = messageListContext?.latestMessageId ?? null;
-  const workspaceId = messageListContext?.workspaceId ?? null;
-  const isLatestMessage = latestMessageId === message.id;
+interface StreamErrorMessageBaseProps extends StreamErrorMessageProps {
+  compactRetryAction?: React.ReactNode;
+  compactionDetails?: React.ReactNode;
+}
 
-  const showCompactRetry =
-    message.errorType === "context_exceeded" && !!workspaceId && isLatestMessage;
+function formatContextTokens(tokens: number): string {
+  return formatTokens(tokens).replace(/\.0([kM])$/, "$1");
+}
 
-  const compactRetryAction = showCompactRetry ? (
-    <Button
-      variant="outline"
-      size="sm"
-      onClick={() => {
-        if (!workspaceId) return;
-        window.dispatchEvent(
-          createCustomEvent(CUSTOM_EVENTS.COMPACT_AND_RETRY_REQUESTED, { workspaceId })
-        );
-      }}
-      className="border-warning/40 text-warning hover:bg-warning/10 hover:text-warning h-6 px-2 text-[10px]"
-    >
-      Compact & retry
-    </Button>
-  ) : null;
+const StreamErrorMessageBase: React.FC<StreamErrorMessageBaseProps> = (props) => {
+  const message = props.message;
+  const className = props.className;
+  const compactRetryAction = props.compactRetryAction;
+  const compactionDetails = props.compactionDetails;
+
   const debugAction = (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -104,6 +96,104 @@ export const StreamErrorMessage: React.FC<StreamErrorMessageProps> = ({ message,
       <div className="text-foreground font-mono text-[13px] leading-relaxed break-words whitespace-pre-wrap">
         {message.error}
       </div>
+      {compactionDetails}
     </div>
+  );
+};
+
+interface StreamErrorMessageWithRetryProps extends StreamErrorMessageProps {
+  workspaceId: string;
+}
+
+const StreamErrorMessageWithRetry: React.FC<StreamErrorMessageWithRetryProps> = (props) => {
+  const compactAndRetry = useCompactAndRetry({ workspaceId: props.workspaceId });
+  const showCompactRetry = compactAndRetry.showCompactionUI;
+
+  let compactRetryLabel = "Compact & retry";
+  if (showCompactRetry) {
+    if (compactAndRetry.isRetryingWithCompaction) {
+      compactRetryLabel = "Starting...";
+    } else if (!compactAndRetry.compactionSuggestion || !compactAndRetry.hasTriggerUserMessage) {
+      compactRetryLabel = "Insert /compact";
+    } else if (compactAndRetry.hasCompactionRequest) {
+      compactRetryLabel = "Retry compaction";
+    }
+  }
+
+  const compactRetryAction = showCompactRetry ? (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={() => {
+        compactAndRetry.retryWithCompaction().catch(() => undefined);
+      }}
+      disabled={compactAndRetry.isRetryingWithCompaction}
+      className="border-warning/40 text-warning hover:bg-warning/10 hover:text-warning h-6 px-2 text-[10px]"
+    >
+      {compactRetryLabel}
+    </Button>
+  ) : null;
+
+  const compactionSuggestion = compactAndRetry.compactionSuggestion;
+  const compactionDetails = showCompactRetry ? (
+    <div className="font-primary text-foreground/80 mt-3 text-[12px]">
+      <span className="text-warning font-semibold">Context window exceeded.</span>{" "}
+      {compactionSuggestion ? (
+        compactionSuggestion.kind === "preferred" ? (
+          <>
+            We&apos;ll compact with your configured compaction model{" "}
+            <span className="text-foreground font-semibold">
+              {compactionSuggestion.displayName}
+            </span>
+            {compactionSuggestion.maxInputTokens !== null ? (
+              <> ({formatContextTokens(compactionSuggestion.maxInputTokens)} context)</>
+            ) : null}{" "}
+            to unblock you. Your workspace model stays the same.
+          </>
+        ) : (
+          <>
+            We&apos;ll compact with{" "}
+            <span className="text-foreground font-semibold">
+              {compactionSuggestion.displayName}
+            </span>
+            {compactionSuggestion.maxInputTokens !== null ? (
+              <> ({formatContextTokens(compactionSuggestion.maxInputTokens)} context)</>
+            ) : null}{" "}
+            to unblock you with a higher-context model. Your workspace model stays the same.
+          </>
+        )
+      ) : (
+        <>Compact this chat to unblock you. Your workspace model stays the same.</>
+      )}
+    </div>
+  ) : null;
+
+  return (
+    <StreamErrorMessageBase
+      message={props.message}
+      className={props.className}
+      compactRetryAction={compactRetryAction}
+      compactionDetails={compactionDetails}
+    />
+  );
+};
+
+// RetryBarrier handles auto-retry; compaction retry UI lives here for stream errors.
+export const StreamErrorMessage: React.FC<StreamErrorMessageProps> = (props) => {
+  const messageListContext = useOptionalMessageListContext();
+  const latestMessageId = messageListContext?.latestMessageId ?? null;
+  const workspaceId = messageListContext?.workspaceId ?? null;
+  const isLatestMessage = latestMessageId === props.message.id;
+
+  if (!workspaceId || !isLatestMessage) {
+    return <StreamErrorMessageBase message={props.message} className={props.className} />;
+  }
+
+  return (
+    <StreamErrorMessageWithRetry
+      message={props.message}
+      className={props.className}
+      workspaceId={workspaceId}
+    />
   );
 };
