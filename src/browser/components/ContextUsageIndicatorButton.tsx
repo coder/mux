@@ -11,6 +11,17 @@ import { Switch } from "./ui/switch";
 import { formatTokens, type TokenMeterData } from "@/common/utils/tokens/tokenMeterUtils";
 import { cn } from "@/common/lib/utils";
 
+/** Output reserve indicator (context limit minus max output tokens) */
+const OutputReserveIndicator: React.FC<{ threshold: number }> = ({ threshold }) => {
+  if (threshold <= 0 || threshold >= 100) return null;
+
+  return (
+    <div
+      className="border-dashed-warning pointer-events-none absolute top-0 z-40 h-full w-0 border-l"
+      style={{ left: `${threshold}%` }}
+    />
+  );
+};
 /** Compact threshold tick mark for the button view */
 const CompactThresholdIndicator: React.FC<{ threshold: number }> = ({ threshold }) => {
   if (threshold >= 100) return null;
@@ -79,6 +90,25 @@ const AutoCompactSettings: React.FC<{
   const showUsageSlider = usageConfig && data.maxTokens;
   const isIdleEnabled = idleConfig?.hours !== null && idleConfig?.hours !== undefined;
 
+  const outputReserveThreshold = React.useMemo(() => {
+    if (!data.maxTokens || !data.maxOutputTokens) return null;
+    if (data.maxOutputTokens <= 0 || data.maxOutputTokens >= data.maxTokens) return null;
+    const raw = ((data.maxTokens - data.maxOutputTokens) / data.maxTokens) * 100;
+    return Math.max(0, Math.min(100, raw));
+  }, [data.maxTokens, data.maxOutputTokens]);
+
+  const outputReserveTokens =
+    data.maxTokens && data.maxOutputTokens ? data.maxTokens - data.maxOutputTokens : null;
+
+  const showOutputReserveIndicator = Boolean(showUsageSlider && outputReserveThreshold !== null);
+  const showOutputReserveWarning = Boolean(
+    showUsageSlider &&
+    usageConfig &&
+    usageConfig.threshold < 100 &&
+    outputReserveThreshold !== null &&
+    usageConfig.threshold > outputReserveThreshold
+  );
+
   const handleIdleToggle = (enabled: boolean) => {
     if (!idleConfig) return;
     const parsed = parseInt(idleInputValue, 10);
@@ -118,9 +148,26 @@ const AutoCompactSettings: React.FC<{
       <div>
         <div className="relative w-full py-1.5">
           <TokenMeter segments={data.segments} orientation="horizontal" />
+          {showOutputReserveIndicator && outputReserveThreshold !== null && (
+            <OutputReserveIndicator threshold={outputReserveThreshold} />
+          )}
           {showUsageSlider && <HorizontalThresholdSlider config={usageConfig} />}
         </div>
         {showUsageSlider && <PercentTickMarks />}
+        {showOutputReserveIndicator &&
+          outputReserveThreshold !== null &&
+          outputReserveTokens !== null && (
+            <div className="text-muted mt-1 text-[10px]">
+              Output reserve starts at {outputReserveThreshold.toFixed(1)}% (
+              {formatTokens(outputReserveTokens)} prompt max)
+            </div>
+          )}
+        {showOutputReserveWarning && outputReserveThreshold !== null && (
+          <div className="text-warning mt-1 text-[10px]">
+            Auto-compact threshold is above the output reserve ({outputReserveThreshold.toFixed(1)}
+            %). Requests may hit context_exceeded before auto-compact runs.
+          </div>
+        )}
       </div>
 
       {/* Idle-based auto-compact */}
