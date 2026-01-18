@@ -211,6 +211,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const [hideReviewsDuringSend, setHideReviewsDuringSend] = useState(false);
   const [showAtMentionSuggestions, setShowAtMentionSuggestions] = useState(false);
   const [atMentionSuggestions, setAtMentionSuggestions] = useState<SlashSuggestion[]>([]);
+  const agentSkillsRequestIdRef = useRef(0);
   const atMentionDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const atMentionRequestIdRef = useRef(0);
   const lastAtMentionScopeIdRef = useRef<string | null>(null);
@@ -988,10 +989,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   // Load agent skills for suggestions
   useEffect(() => {
     let isMounted = true;
+    const requestId = ++agentSkillsRequestIdRef.current;
 
     const loadAgentSkills = async () => {
       if (!api) {
-        if (isMounted) {
+        if (isMounted && agentSkillsRequestIdRef.current === requestId) {
           setAgentSkillDescriptors([]);
         }
         return;
@@ -1008,7 +1010,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             : null;
 
       if (!discoveryInput) {
-        if (isMounted) {
+        if (isMounted && agentSkillsRequestIdRef.current === requestId) {
           setAgentSkillDescriptors([]);
         }
         return;
@@ -1016,14 +1018,18 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
       try {
         const skills = await api.agentSkills.list(discoveryInput);
-        if (isMounted && Array.isArray(skills)) {
+        if (!isMounted || agentSkillsRequestIdRef.current !== requestId) {
+          return;
+        }
+        if (Array.isArray(skills)) {
           setAgentSkillDescriptors(skills);
         }
       } catch (error) {
         console.error("Failed to load agent skills:", error);
-        if (isMounted) {
-          setAgentSkillDescriptors([]);
+        if (!isMounted || agentSkillsRequestIdRef.current !== requestId) {
+          return;
         }
+        setAgentSkillDescriptors([]);
       }
     };
 
