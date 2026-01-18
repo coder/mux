@@ -29,7 +29,7 @@ jobs:
       concurrency: "1"
       task_names: "chess-best-move"
       experiments: ${{ inputs.experiments }}
-    secrets: inherit
+    secrets: inherit # zizmor: ignore[secrets-inherit]
 
   determine-models:
     name: Determine models to test
@@ -68,4 +68,4 @@ jobs:
       concurrency: "48"
       env: "daytona"
       experiments: ${{ inputs.experiments }}
-    secrets: inherit
+    secrets: inherit # zizmor: ignore[secrets-inherit]

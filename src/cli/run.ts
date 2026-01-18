@@ -109,11 +109,12 @@ function parseThinkingLevel(value: string | undefined): ThinkingLevel | undefine
     normalized === "off" ||
     normalized === "low" ||
     normalized === "medium" ||
-    normalized === "high"
+    normalized === "high" ||
+    normalized === "xhigh"
   ) {
     return normalized;
   }
-  throw new Error(`Invalid thinking level "${value}". Expected: off, low, medium, high`);
+  throw new Error(`Invalid thinking level "${value}". Expected: off, low, medium, high, xhigh`);
 }
 
 function parseMode(value: string | undefined): CLIMode {
@@ -240,7 +241,7 @@ program
     "local"
   )
   .option("--mode <mode>", "agent mode: plan or exec", "exec")
-  .option("-t, --thinking <level>", "thinking level: off, low, medium, high", "medium")
+  .option("-t, --thinking <level>", "thinking level: off, low, medium, high, xhigh", "medium")
   .option("-v, --verbose", "show info-level logs (default: errors only)")
   .option("--hide-costs", "hide cost summary at end of run")
   .option("--log-level <level>", "set log level: error, warn, info, debug")
