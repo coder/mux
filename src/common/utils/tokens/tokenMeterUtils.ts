@@ -23,6 +23,7 @@ export interface TokenMeterData {
   segments: TokenSegment[];
   totalTokens: number;
   maxTokens?: number;
+  maxOutputTokens?: number;
   totalPercentage: number;
 }
 
@@ -65,6 +66,7 @@ export function calculateTokenMeterData(
 
   const modelStats = getModelStats(model);
   const maxTokens = use1M && supports1MContext(model) ? 1_000_000 : modelStats?.max_input_tokens;
+  const maxOutputTokens = modelStats?.max_output_tokens;
 
   // Total tokens used in the request.
   // For Anthropic prompt caching, cacheCreate tokens are reported separately but still
@@ -96,6 +98,7 @@ export function calculateTokenMeterData(
     segments,
     totalTokens: totalUsed,
     maxTokens,
+    maxOutputTokens,
     totalPercentage: verticalProportions
       ? maxTokens
         ? (totalUsed / maxTokens) * 100
