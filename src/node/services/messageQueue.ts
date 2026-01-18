@@ -7,6 +7,24 @@ interface CompactionMetadata {
   rawCommand: string;
 }
 
+// Type guard for agent skill metadata (for display + batching constraints)
+interface AgentSkillMetadata {
+  type: "agent-skill";
+  rawCommand: string;
+  skillName: string;
+  scope: "project" | "global" | "built-in";
+}
+
+function isAgentSkillMetadata(meta: unknown): meta is AgentSkillMetadata {
+  if (typeof meta !== "object" || meta === null) return false;
+  const obj = meta as Record<string, unknown>;
+  if (obj.type !== "agent-skill") return false;
+  if (typeof obj.rawCommand !== "string") return false;
+  if (typeof obj.skillName !== "string") return false;
+  if (obj.scope !== "project" && obj.scope !== "global" && obj.scope !== "built-in") return false;
+  return true;
+}
+
 function isCompactionMetadata(meta: unknown): meta is CompactionMetadata {
   if (typeof meta !== "object" || meta === null) return false;
   const obj = meta as Record<string, unknown>;
@@ -33,12 +51,14 @@ function hasReviews(meta: unknown): meta is MetadataWithReviews {
  * - Latest options (model, etc. - updated on each add)
  * - Image parts (accumulated across all messages)
  *
- * IMPORTANT: muxMetadata from the first message is preserved even when
- * subsequent messages are added. This prevents compaction requests from
- * losing their metadata when follow-up messages are queued.
+ * IMPORTANT:
+ * - Compaction requests must preserve their muxMetadata even when follow-up messages are queued.
+ * - Agent-skill invocations cannot be batched with other messages; otherwise the skill metadata would
+ *   “leak” onto later queued sends.
  *
  * Display logic:
  * - Single compaction request → shows rawCommand (/compact)
+ * - Single agent-skill invocation → shows rawCommand (/{skill})
  * - Multiple messages → shows all actual message texts
  */
 export class MessageQueue {
@@ -71,7 +91,18 @@ export class MessageQueue {
     }
 
     const incomingIsCompaction = isCompactionMetadata(options?.muxMetadata);
+    const incomingIsAgentSkill = isAgentSkillMetadata(options?.muxMetadata);
     const queueHasMessages = !this.isEmpty();
+    const queueHasAgentSkill = isAgentSkillMetadata(this.firstMuxMetadata);
+
+    // Avoid leaking agent-skill metadata to later queued messages.
+    // A skill invocation must be sent alone (or the user should restore/edit the queued message).
+    if (queueHasAgentSkill) {
+      throw new Error(
+        "Cannot queue additional messages: an agent skill invocation is already queued. " +
+          "Wait for the current stream to complete before sending another message."
+      );
+    }
 
     // Cannot add compaction to a queue that already has messages
     // (user should wait for those messages to send first)
@@ -79,6 +110,14 @@ export class MessageQueue {
       throw new Error(
         "Cannot queue compaction request: queue already has messages. " +
           "Wait for current stream to complete before compacting."
+      );
+    }
+
+    // Cannot batch agent-skill metadata with other messages (it would apply to the whole batch).
+    if (incomingIsAgentSkill && queueHasMessages) {
+      throw new Error(
+        "Cannot queue agent skill invocation: queue already has messages. " +
+          "Wait for the current stream to complete before running a skill."
       );
     }
 
@@ -112,11 +151,18 @@ export class MessageQueue {
   /**
    * Get display text for queued messages.
    * - Single compaction request shows rawCommand (/compact)
+   * - Single agent-skill invocation shows rawCommand (/{skill})
    * - Multiple messages show all actual message texts
    */
   getDisplayText(): string {
     // Only show rawCommand for single compaction request
     if (this.messages.length === 1 && isCompactionMetadata(this.firstMuxMetadata)) {
+      return this.firstMuxMetadata.rawCommand;
+    }
+
+    // Only show rawCommand for a single agent-skill invocation.
+    // (Batching agent-skill with other messages is disallowed.)
+    if (this.messages.length <= 1 && isAgentSkillMetadata(this.firstMuxMetadata)) {
       return this.firstMuxMetadata.rawCommand;
     }
 
@@ -148,7 +194,7 @@ export class MessageQueue {
     options?: SendMessageOptions & { imageParts?: ImagePart[] };
   } {
     const joinedMessages = this.messages.join("\n");
-    // First metadata takes precedence (preserves compaction requests)
+    // First metadata takes precedence (preserves compaction + agent-skill invocations)
     const muxMetadata =
       this.firstMuxMetadata !== undefined
         ? this.firstMuxMetadata

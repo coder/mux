@@ -198,6 +198,46 @@ describe("MessageQueue", () => {
       }
     });
 
+    it("should throw when adding agent-skill invocation after normal message", () => {
+      queue.add("First message");
+
+      const metadata: MuxFrontendMetadata = {
+        type: "agent-skill",
+        rawCommand: "/init",
+        skillName: "init",
+        scope: "built-in",
+      };
+
+      const options: SendMessageOptions = {
+        model: "claude-3-5-sonnet-20241022",
+        muxMetadata: metadata,
+      };
+
+      expect(() => queue.add('Run the "init" skill.', options)).toThrow(
+        /Cannot queue agent skill invocation/
+      );
+    });
+
+    it("should throw when adding normal message after agent-skill invocation", () => {
+      const metadata: MuxFrontendMetadata = {
+        type: "agent-skill",
+        rawCommand: "/init",
+        skillName: "init",
+        scope: "built-in",
+      };
+
+      queue.add('Run the "init" skill.', {
+        model: "claude-3-5-sonnet-20241022",
+        muxMetadata: metadata,
+      });
+
+      expect(queue.getDisplayText()).toBe("/init");
+
+      expect(() => queue.add("Follow-up message")).toThrow(
+        /agent skill invocation is already queued/
+      );
+    });
+
     it("should produce combined message for API call", () => {
       queue.add("First message", { model: "gpt-4" });
       queue.add("Second message");
