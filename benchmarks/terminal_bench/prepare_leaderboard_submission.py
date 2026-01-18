@@ -95,37 +95,47 @@ MODEL_METADATA = {
 }
 
 
-def run_command(cmd: list[str], check: bool = True) -> subprocess.CompletedProcess:
-    """Run a command and return the result."""
+def run_command(cmd: list[str]) -> str:
+    """Run a command and return stdout."""
     print(f"  Running: {' '.join(cmd)}")
-    return subprocess.run(cmd, capture_output=True, text=True, check=check)
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        stderr = result.stderr.strip()
+        message = f"Command failed: {' '.join(cmd)}"
+        if stderr:
+            message = f"{message}: {stderr}"
+        raise RuntimeError(message)
+    return result.stdout
 
 
-def get_latest_successful_nightly_run() -> dict | None:
+def parse_json(value: str, context: str):
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Failed to parse {context} JSON") from exc
+
+
+def get_latest_successful_nightly_run() -> dict:
     """Get the latest successful nightly Terminal-Bench run."""
     print("Fetching latest successful nightly run...")
-    result = run_command(
-        [
-            "gh",
-            "run",
-            "list",
-            f"--repo={GITHUB_REPO}",
-            "--workflow=nightly-terminal-bench.yml",
-            "--status=success",
-            "--limit=1",
-            "--json=databaseId,createdAt,displayTitle",
-        ],
-        check=False,
+    runs = parse_json(
+        run_command(
+            [
+                "gh",
+                "run",
+                "list",
+                f"--repo={GITHUB_REPO}",
+                "--workflow=nightly-terminal-bench.yml",
+                "--status=success",
+                "--limit=1",
+                "--json=databaseId,createdAt,displayTitle",
+            ]
+        ),
+        "runs",
     )
 
-    if result.returncode != 0:
-        print(f"Error fetching runs: {result.stderr}")
-        return None
-
-    runs = json.loads(result.stdout)
     if not runs:
-        print("No successful nightly runs found")
-        return None
+        raise RuntimeError("No successful nightly runs found")
 
     return runs[0]
 
@@ -141,30 +151,24 @@ def list_artifacts_for_run(run_id: int, include_smoke_test: bool = False) -> lis
     only runs a single task and isn't suitable for leaderboard submission.
     """
     print(f"Listing artifacts for run {run_id}...")
-    result = run_command(
+    output = run_command(
         [
             "gh",
             "api",
             f"repos/{GITHUB_REPO}/actions/runs/{run_id}/artifacts",
             "--jq",
             '.artifacts[] | select(.name | startswith("terminal-bench-results")) | {name, id, size_in_bytes}',
-        ],
-        check=False,
+        ]
     )
 
-    if result.returncode != 0:
-        print(f"Error listing artifacts: {result.stderr}")
-        return []
-
     artifacts = []
-    for line in result.stdout.strip().split("\n"):
+    smoke_test_pattern = SMOKE_TEST_MODEL.replace("/", "-")
+    for line in output.strip().split("\n"):
         if line:
-            artifact = json.loads(line)
+            artifact = parse_json(line, "artifact")
             # Filter out smoke test artifact unless explicitly included
-            if not include_smoke_test:
-                smoke_test_pattern = SMOKE_TEST_MODEL.replace("/", "-")
-                if smoke_test_pattern in artifact["name"]:
-                    continue
+            if not include_smoke_test and smoke_test_pattern in artifact["name"]:
+                continue
             artifacts.append(artifact)
 
     return artifacts
@@ -172,7 +176,7 @@ def list_artifacts_for_run(run_id: int, include_smoke_test: bool = False) -> lis
 
 def download_artifacts(
     run_id: int, artifact_names: list[str], output_dir: Path
-) -> bool:
+) -> None:
     """Download artifacts for a run using gh run download."""
     print(f"Downloading {len(artifact_names)} artifact(s) to {output_dir}...")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -189,13 +193,7 @@ def download_artifacts(
     for name in artifact_names:
         cmd.extend(["--name", name])
 
-    result = run_command(cmd, check=False)
-
-    if result.returncode != 0:
-        print(f"Error downloading artifacts: {result.stderr}")
-        return False
-
-    return True
+    run_command(cmd)
 
 
 def create_metadata_yaml(model: str) -> str:
@@ -242,27 +240,20 @@ def find_job_folders(artifacts_dir: Path) -> list[Path]:
     1. Direct: artifacts_dir/jobs/YYYY-MM-DD__HH-MM-SS/trials/
     2. Per-artifact: artifacts_dir/<artifact-name>/jobs/YYYY-MM-DD__HH-MM-SS/trials/
     """
-    job_folders = []
+    job_roots = [artifacts_dir / "jobs"]
+    job_roots.extend(
+        artifact_dir / "jobs"
+        for artifact_dir in artifacts_dir.iterdir()
+        if artifact_dir.is_dir()
+    )
 
-    # Check for direct jobs/ folder
-    direct_jobs = artifacts_dir / "jobs"
-    if direct_jobs.exists():
-        for item in direct_jobs.iterdir():
-            if item.is_dir():
-                job_folders.append(item)
-        return job_folders
-
-    # Check for per-artifact structure
-    for artifact_dir in artifacts_dir.iterdir():
-        if not artifact_dir.is_dir():
-            continue
-        jobs_dir = artifact_dir / "jobs"
-        if jobs_dir.exists():
-            for item in jobs_dir.iterdir():
-                if item.is_dir():
-                    job_folders.append(item)
-
-    return job_folders
+    return sorted(
+        job_folder
+        for jobs_dir in job_roots
+        if jobs_dir.exists()
+        for job_folder in jobs_dir.iterdir()
+        if job_folder.is_dir()
+    )
 
 
 def prepare_submission(
@@ -301,10 +292,9 @@ def prepare_submission(
     model_trials: dict[
         str, list[tuple[Path, Path]]
     ] = {}  # model -> [(trial_src, job_folder)]
-    model_jobs: dict[str, dict[str, Path]] = {}  # model -> {job_name: job_folder}
 
     for job_folder in job_folders:
-        for trial_folder in job_folder.iterdir():
+        for trial_folder in sorted(job_folder.iterdir()):
             if not trial_folder.is_dir():
                 continue
 
@@ -320,11 +310,7 @@ def prepare_submission(
                 print(f"  Warning: Could not determine model for {trial_folder.name}")
                 continue
 
-            if model not in model_trials:
-                model_trials[model] = []
-                model_jobs[model] = {}
-            model_trials[model].append((trial_folder, job_folder))
-            model_jobs[model][job_folder.name] = job_folder
+            model_trials.setdefault(model, []).append((trial_folder, job_folder))
 
     # Filter models if specified
     if models_filter:
@@ -348,26 +334,21 @@ def prepare_submission(
             metadata_path.write_text(create_metadata_yaml(model))
 
         # Group trials by source job folder (preserve original job structure)
-        trials_by_job: dict[str, list[Path]] = {}
+        trials_by_job: dict[Path, list[Path]] = {}
         for trial_src, job_folder in trials:
-            job_name = job_folder.name
-            if job_name not in trials_by_job:
-                trials_by_job[job_name] = []
-            trials_by_job[job_name].append(trial_src)
+            trials_by_job.setdefault(job_folder, []).append(trial_src)
 
         # Copy trials into job folders
         total_trials = 0
-        for job_name, trial_paths in trials_by_job.items():
-            dest_job_folder = submission_dir / job_name
+        for job_folder, trial_paths in trials_by_job.items():
+            dest_job_folder = submission_dir / job_folder.name
             dest_job_folder.mkdir(parents=True, exist_ok=True)
 
             # Copy job-level config/result if present
-            job_root = model_jobs[model].get(job_name)
-            if job_root:
-                for filename in ("config.json", "result.json"):
-                    source_file = job_root / filename
-                    if source_file.exists():
-                        shutil.copy2(source_file, dest_job_folder / filename)
+            for filename in ("config.json", "result.json"):
+                source_file = job_folder / filename
+                if source_file.exists():
+                    shutil.copy2(source_file, dest_job_folder / filename)
 
             for trial_src in trial_paths:
                 dest_trial_dir = dest_job_folder / trial_src.name
@@ -389,7 +370,7 @@ def prepare_submission(
     return submissions
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="Prepare Terminal-Bench results for leaderboard submission"
     )
@@ -416,75 +397,77 @@ def main():
     )
     args = parser.parse_args()
 
-    # Determine what artifacts to use
-    if args.artifacts_dir:
-        if not args.artifacts_dir.exists():
-            print(f"Error: Artifacts directory {args.artifacts_dir} does not exist")
-            sys.exit(1)
-        artifacts_dir = args.artifacts_dir
-        run_date = datetime.now().strftime("%Y-%m-%d")
-    else:
-        # Download from GitHub Actions
-        if args.run_id:
-            run_id = args.run_id
-            run_info = {"databaseId": run_id, "createdAt": datetime.now().isoformat()}
+    try:
+        # Determine what artifacts to use
+        if args.artifacts_dir:
+            if not args.artifacts_dir.exists():
+                raise RuntimeError(
+                    f"Artifacts directory {args.artifacts_dir} does not exist"
+                )
+            artifacts_dir = args.artifacts_dir
+            run_date = datetime.now().strftime("%Y-%m-%d")
         else:
-            run_info = get_latest_successful_nightly_run()
-            if not run_info:
-                print("Could not find a successful nightly run")
-                sys.exit(1)
+            # Download from GitHub Actions
+            if args.run_id:
+                run_info = {
+                    "databaseId": args.run_id,
+                    "createdAt": datetime.now().isoformat(),
+                }
+            else:
+                run_info = get_latest_successful_nightly_run()
+
             run_id = run_info["databaseId"]
+            run_date = run_info["createdAt"][:10]  # YYYY-MM-DD
+            print(f"Using run {run_id} from {run_date}")
 
-        run_date = run_info["createdAt"][:10]  # YYYY-MM-DD
-        print(f"Using run {run_id} from {run_date}")
+            # List artifacts for this run
+            artifacts = list_artifacts_for_run(run_id)
+            if not artifacts:
+                raise RuntimeError("No terminal-bench artifacts found for this run")
 
-        # List artifacts for this run
-        artifacts = list_artifacts_for_run(run_id)
-        if not artifacts:
-            print("No terminal-bench artifacts found for this run")
-            sys.exit(1)
+            print(f"Found {len(artifacts)} artifact(s)")
 
-        print(f"Found {len(artifacts)} artifact(s)")
+            # Filter by model if specified
+            if args.models:
+                artifacts = [
+                    a
+                    for a in artifacts
+                    if any(m.replace("/", "-") in a["name"] for m in args.models)
+                ]
+                if not artifacts:
+                    raise RuntimeError("No artifacts matched the requested models")
+                print(f"Filtered to {len(artifacts)} artifact(s) for specified models")
 
-        # Filter by model if specified
-        if args.models:
-            artifacts = [
-                a
-                for a in artifacts
-                if any(m.replace("/", "-") in a["name"] for m in args.models)
-            ]
-            print(f"Filtered to {len(artifacts)} artifact(s) for specified models")
+            # Download artifacts
+            artifacts_dir = Path(tempfile.mkdtemp(prefix="tbench-"))
+            artifact_names = [a["name"] for a in artifacts]
+            download_artifacts(run_id, artifact_names, artifacts_dir)
 
-        # Download artifacts
-        artifacts_dir = Path(tempfile.mkdtemp(prefix="tbench-"))
-        artifact_names = [a["name"] for a in artifacts]
-        if not download_artifacts(run_id, artifact_names, artifacts_dir):
-            print("Failed to download artifacts")
-            sys.exit(1)
+        # Prepare submission
+        print(f"\nPreparing submission in {args.output_dir}...")
+        submissions = prepare_submission(artifacts_dir, args.output_dir, args.models)
 
-    # Prepare submission
-    print(f"\nPreparing submission in {args.output_dir}...")
-    submissions = prepare_submission(artifacts_dir, args.output_dir, args.models)
+        if not submissions:
+            raise RuntimeError("No valid submissions created")
 
-    if not submissions:
-        print("No valid submissions created")
+        print(f"\n✅ Created {len(submissions)} submission(s):")
+        for model, path in submissions.items():
+            print(f"  - {model}: {path}")
+
+        # Print next steps
+        print(f"\nNext steps - submit with hf CLI:")
+        print(f"  hf upload {LEADERBOARD_REPO} \\")
+        print(f"    {args.output_dir}/submissions submissions \\")
+        print(f"    --repo-type dataset --create-pr \\")
+        print(f'    --commit-message "Mux submission ({run_date})"')
+
+        # Clean up temp directory if we created one
+        if not args.artifacts_dir and artifacts_dir.exists():
+            print(f"\nNote: Downloaded artifacts are in {artifacts_dir}")
+            print("      Delete with: rm -rf " + str(artifacts_dir))
+    except RuntimeError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
-
-    print(f"\n✅ Created {len(submissions)} submission(s):")
-    for model, path in submissions.items():
-        print(f"  - {model}: {path}")
-
-    # Print next steps
-    print(f"\nNext steps - submit with hf CLI:")
-    print(f"  hf upload {LEADERBOARD_REPO} \\")
-    print(f"    {args.output_dir}/submissions submissions \\")
-    print(f"    --repo-type dataset --create-pr \\")
-    print(f'    --commit-message "Mux submission ({run_date})"')
-
-    # Clean up temp directory if we created one
-    if not args.artifacts_dir and artifacts_dir.exists():
-        print(f"\nNote: Downloaded artifacts are in {artifacts_dir}")
-        print("      Delete with: rm -rf " + str(artifacts_dir))
 
 
 if __name__ == "__main__":

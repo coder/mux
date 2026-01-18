@@ -31,7 +31,7 @@ def find_job_folders() -> list[Path]:
     jobs_dir = Path("jobs")
     if not jobs_dir.exists():
         return []
-    return [d for d in jobs_dir.iterdir() if d.is_dir()]
+    return sorted(d for d in jobs_dir.iterdir() if d.is_dir())
 
 
 def load_json(path: Path) -> dict | None:
@@ -42,10 +42,17 @@ def load_json(path: Path) -> dict | None:
         return None
 
 
+def parse_int(value: str | None) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
 def build_rows(job_folder: Path) -> list[dict]:
     """Build BigQuery rows for all trials in a job folder."""
-    rows = []
-
     # Load job-level files
     job_config = load_json(job_folder / "config.json") or {}
     job_result = load_json(job_folder / "result.json") or {}
@@ -54,24 +61,17 @@ def build_rows(job_folder: Path) -> list[dict]:
 
     # Extract top-level stats from Harbor result.json
     stats = job_result.get("stats", {})
-
-    # Get mean score from evals (Harbor format)
     evals = stats.get("evals", {})
-    mean_scores = []
-    for eval_entry in evals.values():
-        metrics = eval_entry.get("metrics", [])
-        if metrics and "mean" in metrics[0]:
-            mean_scores.append(metrics[0]["mean"])
+    mean_scores = [
+        metrics[0]["mean"]
+        for eval_entry in evals.values()
+        if (metrics := eval_entry.get("metrics")) and "mean" in metrics[0]
+    ]
     accuracy = sum(mean_scores) / len(mean_scores) if mean_scores else None
 
-    # Count resolved/unresolved from trial results
-    n_resolved = 0
-    n_unresolved = 0
-
     # GitHub context from environment
-    github_run_id = os.environ.get("GITHUB_RUN_ID")
     github_context = {
-        "github_run_id": int(github_run_id) if github_run_id else None,
+        "github_run_id": parse_int(os.environ.get("GITHUB_RUN_ID")),
         "github_workflow": os.environ.get("GITHUB_WORKFLOW"),
         "github_sha": os.environ.get("GITHUB_SHA"),
         "github_ref": os.environ.get("GITHUB_REF"),
@@ -80,25 +80,36 @@ def build_rows(job_folder: Path) -> list[dict]:
     }
 
     # Run configuration (job-level fallbacks)
-    job_agents = job_config.get("agents", [{}])
-    job_model_name = job_agents[0].get("model_name") if job_agents else None
-    job_thinking_level = job_agents[0].get("kwargs", {}).get("thinking_level") if job_agents else None
-    job_mode = job_agents[0].get("kwargs", {}).get("mode") if job_agents else None
-    
+    job_agent = (job_config.get("agents") or [{}])[0]
+    job_kwargs = job_agent.get("kwargs") or {}
+    job_model_name = job_agent.get("model_name")
+    job_thinking_level = job_kwargs.get("thinking_level")
+    job_mode = job_kwargs.get("mode")
+
     # Dataset from job config
-    datasets = job_config.get("datasets", [{}])
-    dataset_name = datasets[0].get("name") if datasets else None
-    dataset_version = datasets[0].get("version") if datasets else None
+    dataset_info = (job_config.get("datasets") or [{}])[0]
+    dataset_name = dataset_info.get("name")
+    dataset_version = dataset_info.get("version")
     dataset = f"{dataset_name}@{dataset_version}" if dataset_name and dataset_version else None
-    
+
     experiments = os.environ.get("MUX_EXPERIMENTS")
+    ingested_at = datetime.now(timezone.utc).isoformat()
 
-    # Raw JSON for future-proofing
-    run_result_json = json.dumps(job_result) if job_result else None
-    run_metadata_json = None  # Harbor doesn't have separate run_metadata.json
+    base_row = {
+        "run_id": run_id,
+        **github_context,
+        "dataset": dataset,
+        "experiments": experiments,
+        "run_started_at": None,  # Not available in Harbor format
+        "run_completed_at": None,
+        "accuracy": accuracy,
+        "run_result_json": json.dumps(job_result) if job_result else None,
+        "run_metadata_json": None,  # Harbor doesn't have separate run_metadata.json
+        "ingested_at": ingested_at,
+    }
 
-    # Iterate trial folders
-    for trial_folder in job_folder.iterdir():
+    rows = []
+    for trial_folder in sorted(job_folder.iterdir()):
         if not trial_folder.is_dir():
             continue
 
@@ -106,57 +117,26 @@ def build_rows(job_folder: Path) -> list[dict]:
         if not trial_result:
             continue
 
-        # Load trial-level config for model_name etc.
-        trial_config = load_json(trial_folder / "config.json") or {}
-        trial_agent = trial_config.get("agent", {})
-        
-        # Prefer trial-level config, fall back to job-level
-        model_name = trial_agent.get("model_name") or job_model_name
-        thinking_level = trial_agent.get("kwargs", {}).get("thinking_level") or job_thinking_level
-        mode = trial_agent.get("kwargs", {}).get("mode") or job_mode
+        trial_agent = (load_json(trial_folder / "config.json") or {}).get("agent") or {}
+        trial_kwargs = trial_agent.get("kwargs") or {}
 
-        task_id = trial_folder.name
-
-        # Per-trial fields
-        passed = trial_result.get("passed")
-        score = trial_result.get("score")
-
-        # Track resolved/unresolved
-        if passed is True:
-            n_resolved += 1
-        elif passed is False:
-            n_unresolved += 1
-
-        # Token usage from context (if available in result)
-        n_input_tokens = trial_result.get("n_input_tokens")
-        n_output_tokens = trial_result.get("n_output_tokens")
-
-        row = {
-            "run_id": run_id,
-            "task_id": task_id,
-            **github_context,
-            "model_name": model_name,
-            "thinking_level": thinking_level,
-            "mode": mode,
-            "dataset": dataset,
-            "experiments": experiments,
-            "run_started_at": None,  # Not available in Harbor format
-            "run_completed_at": None,
+        row = base_row | {
+            "task_id": trial_folder.name,
+            "model_name": trial_agent.get("model_name") or job_model_name,
+            "thinking_level": trial_kwargs.get("thinking_level") or job_thinking_level,
+            "mode": trial_kwargs.get("mode") or job_mode,
             "n_resolved": None,  # Will be set after counting all trials
             "n_unresolved": None,
-            "accuracy": accuracy,
-            "passed": passed,
-            "score": score,
-            "n_input_tokens": n_input_tokens,
-            "n_output_tokens": n_output_tokens,
-            "run_result_json": run_result_json,
-            "run_metadata_json": run_metadata_json,
+            "passed": trial_result.get("passed"),
+            "score": trial_result.get("score"),
+            "n_input_tokens": trial_result.get("n_input_tokens"),
+            "n_output_tokens": trial_result.get("n_output_tokens"),
             "task_result_json": json.dumps(trial_result),
-            "ingested_at": datetime.now(timezone.utc).isoformat(),
         }
         rows.append(row)
 
-    # Update n_resolved/n_unresolved on all rows
+    n_resolved = sum(1 for row in rows if row["passed"] is True)
+    n_unresolved = sum(1 for row in rows if row["passed"] is False)
     for row in rows:
         row["n_resolved"] = n_resolved
         row["n_unresolved"] = n_unresolved
