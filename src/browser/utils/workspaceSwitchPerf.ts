@@ -1,9 +1,11 @@
 const MEASURE_NAME = "workspace_switch";
 const PERF_BUFFER_LIMIT = 25;
+const PENDING_SWITCH_LIMIT = 10;
 
 interface PendingWorkspaceSwitch {
   startMark: string;
   fromWorkspaceId: string | null;
+  startTime: number;
 }
 
 export interface WorkspaceSwitchMeasurement {
@@ -81,32 +83,37 @@ function ensureObserver(): void {
   });
 
   try {
-    observer.observe({ entryTypes: ["measure"] });
+    observer.observe({ type: "measure", buffered: true });
   } catch {
-    observerInitialized = false;
+    try {
+      observer.observe({ entryTypes: ["measure"] });
+    } catch {
+      observerInitialized = false;
+    }
   }
 }
 
-function recordMeasurement(
-  entry: PerformanceEntry,
-  workspaceId: string,
-  fromWorkspaceId: string | null,
-  startMark: string,
-  endMark: string
-): void {
+function recordMeasurement(params: {
+  workspaceId: string;
+  fromWorkspaceId: string | null;
+  startTime: number;
+  endTime: number;
+  startMark: string;
+  endMark: string;
+}): void {
   const buffer = getPerfBuffer();
   if (!buffer) {
     return;
   }
 
   buffer.workspaceSwitches.push({
-    workspaceId,
-    fromWorkspaceId,
-    durationMs: entry.duration,
-    startTime: entry.startTime,
-    endTime: entry.startTime + entry.duration,
-    startMark,
-    endMark,
+    workspaceId: params.workspaceId,
+    fromWorkspaceId: params.fromWorkspaceId,
+    durationMs: params.endTime - params.startTime,
+    startTime: params.startTime,
+    endTime: params.endTime,
+    startMark: params.startMark,
+    endMark: params.endMark,
   });
 
   if (buffer.workspaceSwitches.length > PERF_BUFFER_LIMIT) {
@@ -123,15 +130,28 @@ export function markWorkspaceSwitchStart(
   }
 
   ensureObserver();
-  pendingSwitches.clear();
 
   const startMark = getStartMark(workspaceId);
-  pendingSwitches.set(workspaceId, { startMark, fromWorkspaceId });
+  const startTime = performance.now();
+  pendingSwitches.set(workspaceId, { startMark, fromWorkspaceId, startTime });
 
   try {
-    performance.mark(startMark);
+    performance.mark(startMark, {
+      detail: {
+        workspaceId,
+        fromWorkspaceId,
+      },
+    });
   } catch {
-    pendingSwitches.clear();
+    pendingSwitches.delete(workspaceId);
+    return;
+  }
+
+  if (pendingSwitches.size > PENDING_SWITCH_LIMIT) {
+    const oldestKey = pendingSwitches.keys().next().value;
+    if (oldestKey !== undefined) {
+      pendingSwitches.delete(oldestKey);
+    }
   }
 }
 
@@ -146,9 +166,15 @@ export function markWorkspaceSwitchEnd(workspaceId: string): void {
   }
 
   const endMark = getEndMark(workspaceId);
+  const endTime = performance.now();
 
   try {
-    performance.mark(endMark);
+    performance.mark(endMark, {
+      detail: {
+        workspaceId,
+        fromWorkspaceId: pending.fromWorkspaceId,
+      },
+    });
     performance.measure(MEASURE_NAME, {
       start: pending.startMark,
       end: endMark,
@@ -163,16 +189,12 @@ export function markWorkspaceSwitchEnd(workspaceId: string): void {
     pendingSwitches.delete(workspaceId);
   }
 
-  const entries = performance.getEntriesByName(MEASURE_NAME);
-  const entry = entries[entries.length - 1];
-  if (entry) {
-    recordMeasurement(entry, workspaceId, pending.fromWorkspaceId, pending.startMark, endMark);
-  }
-
-  try {
-    performance.clearMarks(pending.startMark);
-    performance.clearMarks(endMark);
-  } catch {
-    // Ignore cleanup failures in older perf implementations.
-  }
+  recordMeasurement({
+    workspaceId,
+    fromWorkspaceId: pending.fromWorkspaceId,
+    startTime: pending.startTime,
+    endTime,
+    startMark: pending.startMark,
+    endMark,
+  });
 }

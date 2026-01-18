@@ -30,6 +30,7 @@ import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { normalizeModeAiDefaults } from "@/common/types/modeAiDefaults";
 import { isWorkspaceArchived } from "@/common/utils/archive";
+import { markWorkspaceSwitchStart } from "@/browser/utils/workspaceSwitchPerf";
 import { useRouter } from "@/browser/contexts/RouterContext";
 
 /**
@@ -269,6 +270,12 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       // Handle functional updates by resolving against the ref (always fresh)
       const current = selectedWorkspaceRef.current;
       const newValue = typeof update === "function" ? update(current) : update;
+      const currentWorkspaceId = current?.workspaceId ?? null;
+      const nextWorkspaceId = newValue?.workspaceId ?? null;
+
+      if (nextWorkspaceId && nextWorkspaceId !== currentWorkspaceId) {
+        markWorkspaceSwitchStart(nextWorkspaceId, currentWorkspaceId);
+      }
 
       // Keep the ref in sync immediately so async handlers (metadata events, etc.) can
       // reliably see the user's latest navigation intent.
