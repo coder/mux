@@ -1693,7 +1693,10 @@ export class WorkspaceStore {
    * Record that the user sent a message so we can detect stalled onChat streams.
    */
   noteOutboundMessage(workspaceId: string): void {
-    const transient = this.assertChatTransientState(workspaceId);
+    const transient = this.chatTransientState.get(workspaceId);
+    if (!transient) {
+      return;
+    }
     const now = Date.now();
     transient.lastOutboundAt = now;
     transient.lastEventAt = now;
