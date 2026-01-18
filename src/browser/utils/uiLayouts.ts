@@ -62,20 +62,11 @@ export function getEffectiveSlotKeybind(
   return override ?? getDefaultSlotKeybind(slot);
 }
 
-export function getPresetById(
-  config: LayoutPresetsConfig,
-  presetId: string
-): LayoutPreset | undefined {
-  return config.presets.find((p) => p.id === presetId);
-}
-
 export function getPresetForSlot(
   config: LayoutPresetsConfig,
   slot: LayoutSlotNumber
 ): LayoutPreset | undefined {
-  const presetId = config.slots.find((s) => s.slot === slot)?.presetId;
-  if (!presetId) return undefined;
-  return getPresetById(config, presetId);
+  return config.slots.find((s) => s.slot === slot)?.preset;
 }
 
 function clampInt(value: number, min: number, max: number): number {
@@ -455,40 +446,23 @@ export async function applyLayoutPresetToWorkspace(
   updatePersistedState<RightSidebarLayoutState>(getRightSidebarLayoutKey(workspaceId), layout);
 }
 
-export function upsertPreset(
-  config: LayoutPresetsConfig,
-  preset: LayoutPreset
-): LayoutPresetsConfig {
-  const normalized = normalizeLayoutPresetsConfig(config);
-
-  const nextPresets = normalized.presets.filter((p) => p.id !== preset.id);
-  nextPresets.push(preset);
-
-  return {
-    ...normalized,
-    presets: nextPresets,
-  };
-}
-
-export function updateSlotAssignment(
+export function updateSlotPreset(
   config: LayoutPresetsConfig,
   slot: LayoutSlotNumber,
-  presetId: string | undefined
+  preset: LayoutPreset | undefined
 ): LayoutPresetsConfig {
   const normalized = normalizeLayoutPresetsConfig(config);
+  const existing = normalized.slots.find((s) => s.slot === slot);
+
   const nextSlots = normalized.slots.filter((s) => s.slot !== slot);
 
-  if (presetId) {
+  const keybindOverride = existing?.keybindOverride;
+  if (preset || keybindOverride) {
     nextSlots.push({
       slot,
-      presetId,
-      keybindOverride: normalized.slots.find((s) => s.slot === slot)?.keybindOverride,
+      ...(preset ? { preset } : {}),
+      ...(keybindOverride ? { keybindOverride } : {}),
     });
-  } else {
-    const existingOverride = normalized.slots.find((s) => s.slot === slot)?.keybindOverride;
-    if (existingOverride) {
-      nextSlots.push({ slot, keybindOverride: existingOverride });
-    }
   }
 
   return {
@@ -504,15 +478,15 @@ export function updateSlotKeybindOverride(
 ): LayoutPresetsConfig {
   const normalized = normalizeLayoutPresetsConfig(config);
   const existing = normalized.slots.find((s) => s.slot === slot);
-  const presetId = existing?.presetId;
+  const preset = existing?.preset;
 
   const nextSlots = normalized.slots.filter((s) => s.slot !== slot);
 
-  if (presetId || keybindOverride) {
+  if (preset || keybindOverride) {
     nextSlots.push({
       slot,
-      presetId,
-      keybindOverride,
+      ...(preset ? { preset } : {}),
+      ...(keybindOverride ? { keybindOverride } : {}),
     });
   }
 

@@ -6,7 +6,9 @@ export type LayoutSlotNumber = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
 
 export interface LayoutSlot {
   slot: LayoutSlotNumber;
-  presetId?: string;
+  /** The layout stored in this slot, if any. */
+  preset?: LayoutPreset;
+  /** Optional keybind override for applying this slot. */
   keybindOverride?: Keybind;
 }
 
@@ -57,14 +59,12 @@ export interface LayoutPreset {
 }
 
 export interface LayoutPresetsConfig {
-  version: 1;
-  presets: LayoutPreset[];
+  version: 2;
   slots: LayoutSlot[];
 }
 
 export const DEFAULT_LAYOUT_PRESETS_CONFIG: LayoutPresetsConfig = {
-  version: 1,
-  presets: [],
+  version: 2,
   slots: [],
 };
 
@@ -178,6 +178,39 @@ function normalizeLayoutSlot(raw: unknown): LayoutSlot | undefined {
     return undefined;
   }
 
+  const preset = normalizeLayoutPreset(record.preset);
+
+  const keybindOverrideRaw = normalizeKeybind(record.keybindOverride);
+  const keybindOverride = keybindOverrideRaw
+    ? hasModifierKeybind(keybindOverrideRaw)
+      ? keybindOverrideRaw
+      : undefined
+    : undefined;
+
+  if (!preset && !keybindOverride) {
+    return undefined;
+  }
+
+  return {
+    slot: record.slot,
+    preset: preset ?? undefined,
+    keybindOverride,
+  };
+}
+
+function normalizeLayoutSlotV1(
+  raw: unknown
+): { slot: LayoutSlotNumber; presetId?: string; keybindOverride?: Keybind } | undefined {
+  if (!raw || typeof raw !== "object") {
+    return undefined;
+  }
+
+  const record = raw as Record<string, unknown>;
+
+  if (!isLayoutSlotNumber(record.slot)) {
+    return undefined;
+  }
+
   const presetId = normalizeOptionalNonEmptyString(record.presetId);
   const keybindOverrideRaw = normalizeKeybind(record.keybindOverride);
   const keybindOverride = keybindOverrideRaw
@@ -247,12 +280,45 @@ export function normalizeLayoutPresetsConfig(raw: unknown): LayoutPresetsConfig 
   }
 
   const record = raw as Record<string, unknown>;
-  if (record.version !== 1) {
-    return DEFAULT_LAYOUT_PRESETS_CONFIG;
+
+  if (record.version === 2) {
+    return normalizeLayoutPresetsConfigV2(record);
   }
 
+  if (record.version === 1) {
+    return migrateLayoutPresetsConfigV1(record);
+  }
+
+  return DEFAULT_LAYOUT_PRESETS_CONFIG;
+}
+
+function normalizeLayoutPresetsConfigV2(record: Record<string, unknown>): LayoutPresetsConfig {
+  const slotsArray = Array.isArray(record.slots) ? record.slots : [];
+  const slotsByNumber = new Map<LayoutSlotNumber, LayoutSlot>();
+
+  for (const entry of slotsArray) {
+    const slot = normalizeLayoutSlot(entry);
+    if (!slot) continue;
+    slotsByNumber.set(slot.slot, slot);
+  }
+
+  const slots = Array.from(slotsByNumber.values()).sort((a, b) => a.slot - b.slot);
+
+  const result: LayoutPresetsConfig = {
+    version: 2,
+    slots,
+  };
+
+  assert(result.version === 2, "normalizeLayoutPresetsConfig: version must be 2");
+  assert(Array.isArray(result.slots), "normalizeLayoutPresetsConfig: slots must be an array");
+
+  return result;
+}
+
+function migrateLayoutPresetsConfigV1(record: Record<string, unknown>): LayoutPresetsConfig {
   const presetsArray = Array.isArray(record.presets) ? record.presets : [];
   const presetsById = new Map<string, LayoutPreset>();
+
   for (const entry of presetsArray) {
     const preset = normalizeLayoutPreset(entry);
     if (!preset) continue;
@@ -261,47 +327,41 @@ export function normalizeLayoutPresetsConfig(raw: unknown): LayoutPresetsConfig 
 
   const slotsArray = Array.isArray(record.slots) ? record.slots : [];
   const slotsByNumber = new Map<LayoutSlotNumber, LayoutSlot>();
+
   for (const entry of slotsArray) {
-    const slot = normalizeLayoutSlot(entry);
+    const slot = normalizeLayoutSlotV1(entry);
     if (!slot) continue;
 
-    // Drop presetId references to missing presets (self-healing)
-    if (slot.presetId && !presetsById.has(slot.presetId)) {
-      if (!slot.keybindOverride) {
-        continue;
-      }
-      slotsByNumber.set(slot.slot, { slot: slot.slot, keybindOverride: slot.keybindOverride });
+    const preset = slot.presetId ? presetsById.get(slot.presetId) : undefined;
+    if (!preset && !slot.keybindOverride) {
       continue;
     }
 
-    slotsByNumber.set(slot.slot, slot);
+    slotsByNumber.set(slot.slot, {
+      slot: slot.slot,
+      preset,
+      keybindOverride: slot.keybindOverride,
+    });
   }
 
-  const presets = Array.from(presetsById.values());
   const slots = Array.from(slotsByNumber.values()).sort((a, b) => a.slot - b.slot);
 
   const result: LayoutPresetsConfig = {
-    version: 1,
-    presets,
+    version: 2,
     slots,
   };
 
-  assert(result.version === 1, "normalizeLayoutPresetsConfig: version must be 1");
-  assert(Array.isArray(result.presets), "normalizeLayoutPresetsConfig: presets must be an array");
-  assert(Array.isArray(result.slots), "normalizeLayoutPresetsConfig: slots must be an array");
+  assert(result.version === 2, "migrateLayoutPresetsConfigV1: version must be 2");
+  assert(Array.isArray(result.slots), "migrateLayoutPresetsConfigV1: slots must be an array");
 
   return result;
 }
 
 export function isLayoutPresetsConfigEmpty(value: LayoutPresetsConfig): boolean {
-  assert(value.version === 1, "isLayoutPresetsConfigEmpty: version must be 1");
-
-  if (value.presets.length > 0) {
-    return false;
-  }
+  assert(value.version === 2, "isLayoutPresetsConfigEmpty: version must be 2");
 
   for (const slot of value.slots) {
-    if (slot.presetId || slot.keybindOverride) {
+    if (slot.preset || slot.keybindOverride) {
       return false;
     }
   }

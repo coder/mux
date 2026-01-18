@@ -73,14 +73,13 @@ export interface BuildSourcesParams {
   onSetTheme: (theme: ThemeMode) => void;
   onOpenSettings?: (section?: string) => void;
 
-  // Layout presets
+  // Layout slots
   layoutPresets?: LayoutPresetsConfig | null;
   onApplyLayoutSlot?: (workspaceId: string, slot: LayoutSlotNumber) => void;
-  onApplyLayoutPreset?: (workspaceId: string, presetId: string) => void;
-  onSaveLayoutPreset?: (
+  onCaptureLayoutSlot?: (
     workspaceId: string,
-    name: string,
-    slot?: LayoutSlotNumber | null
+    slot: LayoutSlotNumber,
+    name: string
   ) => Promise<void>;
   onClearTimingStats?: (workspaceId: string) => void;
 }
@@ -497,7 +496,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
     return list;
   });
 
-  // Layout presets
+  // Layout slots
   actions.push(() => {
     const list: CommandAction[] = [];
     const selected = p.selectedWorkspace;
@@ -523,62 +522,30 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
           void p.onApplyLayoutSlot?.(selected.workspaceId, slot);
         },
       });
-    }
 
-    if (p.onSaveLayoutPreset) {
-      list.push({
-        id: CommandIds.layoutSavePreset(),
-        title: "Layout: Save current as preset…",
-        section: section.layouts,
-        run: () => undefined,
-        prompt: {
-          title: "Save Layout Preset",
-          fields: [
-            {
-              type: "text",
-              name: "name",
-              label: "Name",
-              placeholder: "Enter preset name",
-              validate: (v) => (!v.trim() ? "Name is required" : null),
-            },
-            {
-              type: "select",
-              name: "slot",
-              label: "Assign to slot (optional)",
-              placeholder: "Don't assign",
-              getOptions: () => [
-                { id: "none", label: "Don't assign" },
-                ...([1, 2, 3, 4, 5, 6, 7, 8, 9] as const).map((slot) => {
-                  const assigned = getPresetForSlot(config, slot);
-                  return {
-                    id: String(slot),
-                    label: `Slot ${slot}${assigned ? ` • ${assigned.name}` : ""}`,
-                    keywords: assigned ? [assigned.name] : [],
-                  };
-                }),
-              ],
-            },
-          ],
-          onSubmit: async (vals) => {
-            const name = vals.name.trim();
-            const slotRaw = vals.slot;
-            const slot =
-              slotRaw && slotRaw !== "none" ? (Number(slotRaw) as LayoutSlotNumber) : null;
-            await p.onSaveLayoutPreset?.(selected.workspaceId, name, slot);
-          },
-        },
-      });
-    }
-
-    if (p.onApplyLayoutPreset && config.presets.length > 0) {
-      for (const preset of config.presets) {
+      if (p.onCaptureLayoutSlot) {
         list.push({
-          id: CommandIds.layoutApplyPreset(preset.id),
-          title: `Layout: Apply Preset ${preset.name}`,
+          id: CommandIds.layoutCaptureSlot(slot),
+          title: `Layout: Capture current to Slot ${slot}…`,
+          subtitle: preset ? preset.name : "Empty",
           section: section.layouts,
-          keywords: [preset.name],
-          run: () => {
-            void p.onApplyLayoutPreset?.(selected.workspaceId, preset.id);
+          run: () => undefined,
+          prompt: {
+            title: `Capture Layout Slot ${slot}`,
+            fields: [
+              {
+                type: "text",
+                name: "name",
+                label: "Name",
+                placeholder: `Slot ${slot}`,
+                initialValue: preset ? preset.name : `Slot ${slot}`,
+                getInitialValue: () => getPresetForSlot(config, slot)?.name ?? `Slot ${slot}`,
+                validate: (v) => (!v.trim() ? "Name is required" : null),
+              },
+            ],
+            onSubmit: async (vals) => {
+              await p.onCaptureLayoutSlot?.(selected.workspaceId, slot, vals.name.trim());
+            },
           },
         });
       }

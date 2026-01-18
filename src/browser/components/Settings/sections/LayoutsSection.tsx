@@ -1,12 +1,15 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Button } from "@/browser/components/ui/button";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/browser/components/ui/select";
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/browser/components/ui/dialog";
+import { Input } from "@/browser/components/ui/input";
+import { Label } from "@/browser/components/ui/label";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { useUILayouts } from "@/browser/contexts/UILayoutsContext";
 import { getEffectiveSlotKeybind, getPresetForSlot } from "@/browser/utils/uiLayouts";
@@ -106,18 +109,22 @@ export function LayoutsSection() {
     loadFailed,
     refresh,
     applySlotToWorkspace,
-    applyPresetToWorkspace,
-    saveCurrentWorkspaceAsPreset,
-    setSlotPreset,
+    saveCurrentWorkspaceToSlot,
+    renameSlot,
+    clearSlot,
     setSlotKeybindOverride,
-    deletePreset,
-    renamePreset,
-    updatePresetFromCurrentWorkspace,
   } = useUILayouts();
   const { selectedWorkspace } = useWorkspaceContext();
 
   const [actionError, setActionError] = useState<string | null>(null);
   const [capturingSlot, setCapturingSlot] = useState<LayoutSlotNumber | null>(null);
+
+  const [nameDialog, setNameDialog] = useState<{
+    mode: "capture" | "rename";
+    slot: LayoutSlotNumber;
+  } | null>(null);
+  const [nameValue, setNameValue] = useState("");
+  const [nameError, setNameError] = useState<string | null>(null);
   const [captureError, setCaptureError] = useState<string | null>(null);
 
   const effectiveSlotKeybinds = useMemo(() => {
@@ -172,25 +179,50 @@ export function LayoutsSection() {
   }, [capturingSlot, effectiveSlotKeybinds, setSlotKeybindOverride]);
 
   const workspaceId = selectedWorkspace?.workspaceId ?? null;
+  const selectedWorkspaceLabel = selectedWorkspace
+    ? `${selectedWorkspace.projectName}/${selectedWorkspace.namedWorkspacePath.split("/").pop() ?? selectedWorkspace.namedWorkspacePath}`
+    : null;
 
-  const handleSavePreset = async (): Promise<void> => {
+  const openNameDialog = (mode: "capture" | "rename", slot: LayoutSlotNumber) => {
+    setActionError(null);
+    setNameError(null);
+
+    const existingPreset = getPresetForSlot(layoutPresets, slot);
+    const initialName = existingPreset?.name ?? `Slot ${slot}`;
+
+    setNameDialog({ mode, slot });
+    setNameValue(initialName);
+  };
+
+  const handleNameSubmit = async (): Promise<void> => {
+    if (!nameDialog) {
+      return;
+    }
+
+    const trimmed = nameValue.trim();
+    if (!trimmed) {
+      setNameError("Name is required.");
+      return;
+    }
+
+    setNameError(null);
     setActionError(null);
 
-    if (!workspaceId) {
-      setActionError("Select a workspace to save its layout.");
-      return;
-    }
-
-    const name = window.prompt("Preset name:", "");
-    const trimmed = name?.trim();
-    if (!trimmed) {
-      return;
-    }
-
     try {
-      await saveCurrentWorkspaceAsPreset(workspaceId, trimmed);
+      if (nameDialog.mode === "capture") {
+        if (!workspaceId) {
+          setActionError("Select a workspace to capture its layout.");
+          return;
+        }
+
+        await saveCurrentWorkspaceToSlot(workspaceId, nameDialog.slot, trimmed);
+      } else {
+        await renameSlot(nameDialog.slot, trimmed);
+      }
+
+      setNameDialog(null);
     } catch {
-      setActionError("Failed to save preset.");
+      setNameError("Failed to save.");
     }
   };
 
@@ -198,17 +230,23 @@ export function LayoutsSection() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-foreground text-sm font-medium">Layout Presets</h3>
+          <h3 className="text-foreground text-sm font-medium">Layout Slots</h3>
           <div className="text-muted mt-1 text-xs">
-            Save and re-apply sidebar layouts per workspace.
+            Each slot stores a layout snapshot. Apply with Ctrl/Cmd+Alt+1..9 (customizable).
           </div>
+          {selectedWorkspaceLabel ? (
+            <div className="text-muted mt-1 text-xs">
+              Selected workspace: {selectedWorkspaceLabel}
+            </div>
+          ) : (
+            <div className="text-muted mt-1 text-xs">
+              Select a workspace to capture/apply layouts.
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <Button variant="secondary" size="sm" onClick={() => void refresh()}>
             Refresh
-          </Button>
-          <Button variant="default" size="sm" onClick={() => void handleSavePreset()}>
-            Save Current…
           </Button>
         </div>
       </div>
@@ -216,7 +254,7 @@ export function LayoutsSection() {
       {!loaded ? <div className="text-muted text-sm">Loading…</div> : null}
       {loadFailed ? (
         <div className="text-muted text-sm">
-          Failed to load presets from config. Using defaults.
+          Failed to load layouts from config. Using defaults.
         </div>
       ) : null}
       {actionError ? <div className="text-sm text-red-500">{actionError}</div> : null}
@@ -263,28 +301,40 @@ export function LayoutsSection() {
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
-                  <Select
-                    value={slotConfig?.presetId ?? "none"}
-                    onValueChange={(value) => {
-                      const presetId = value === "none" ? undefined : value;
-                      void setSlotPreset(slot, presetId).catch(() => {
-                        setActionError("Failed to update slot.");
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={!workspaceId}
+                    onClick={() => openNameDialog("capture", slot)}
+                  >
+                    Capture current…
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={!assignedPreset}
+                    onClick={() => openNameDialog("rename", slot)}
+                  >
+                    Rename
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    disabled={!assignedPreset}
+                    onClick={() => {
+                      if (!assignedPreset) return;
+                      const ok = confirm(`Clear Slot ${slot} ("${assignedPreset.name}")?`);
+                      if (!ok) return;
+                      void clearSlot(slot).catch(() => {
+                        setActionError("Failed to clear slot.");
                       });
                     }}
                   >
-                    <SelectTrigger className="w-[280px]">
-                      <SelectValue placeholder="Select preset" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">Empty</SelectItem>
-                      {layoutPresets.presets.map((preset) => (
-                        <SelectItem key={preset.id} value={preset.id}>
-                          {preset.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    Clear
+                  </Button>
+                </div>
 
+                <div className="flex flex-wrap items-center gap-2">
                   {capturingSlot === slot ? (
                     <div className="text-muted text-xs">
                       Press a key combo (Esc to cancel)
@@ -314,7 +364,7 @@ export function LayoutsSection() {
                             });
                           }}
                         >
-                          Clear Hotkey
+                          Reset Hotkey
                         </Button>
                       ) : null}
                     </>
@@ -326,84 +376,72 @@ export function LayoutsSection() {
         </div>
       </div>
 
-      <div>
-        <h4 className="text-foreground mb-3 text-sm font-medium">Presets</h4>
-        <div className="space-y-2">
-          {layoutPresets.presets.length === 0 ? (
-            <div className="text-muted text-sm">No presets yet.</div>
-          ) : null}
+      <Dialog
+        open={nameDialog !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setNameDialog(null);
+            setNameError(null);
+          }
+        }}
+      >
+        <DialogContent maxWidth="520px">
+          <DialogHeader>
+            <DialogTitle>
+              {nameDialog?.mode === "capture" ? "Capture Layout" : "Rename Layout"}
+            </DialogTitle>
+            <DialogDescription>
+              {nameDialog?.mode === "capture" ? (
+                <>Capture the current layout into Slot {nameDialog?.slot}.</>
+              ) : (
+                <>Rename Slot {nameDialog?.slot}.</>
+              )}
+            </DialogDescription>
+          </DialogHeader>
 
-          {layoutPresets.presets.map((preset) => (
-            <div
-              key={preset.id}
-              className="border-border-medium bg-background-secondary flex flex-col gap-2 rounded border p-3"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="text-foreground text-sm font-medium">{preset.name}</div>
-                  <div className="text-muted text-xs">ID: {preset.id}</div>
-                </div>
-
-                <div className="flex flex-wrap items-center justify-end gap-2">
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    disabled={!workspaceId}
-                    onClick={() => {
-                      if (!workspaceId) return;
-                      void applyPresetToWorkspace(workspaceId, preset.id).catch(() => {
-                        setActionError("Failed to apply preset.");
-                      });
-                    }}
-                  >
-                    Apply
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    disabled={!workspaceId}
-                    onClick={() => {
-                      if (!workspaceId) return;
-                      void updatePresetFromCurrentWorkspace(workspaceId, preset.id).catch(() => {
-                        setActionError("Failed to update preset.");
-                      });
-                    }}
-                  >
-                    Update
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      const next = window.prompt("Rename preset:", preset.name);
-                      const trimmed = next?.trim();
-                      if (!trimmed) return;
-                      void renamePreset(preset.id, trimmed).catch(() => {
-                        setActionError("Failed to rename preset.");
-                      });
-                    }}
-                  >
-                    Rename
-                  </Button>
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    onClick={() => {
-                      const ok = confirm(`Delete preset "${preset.name}"?`);
-                      if (!ok) return;
-                      void deletePreset(preset.id).catch(() => {
-                        setActionError("Failed to delete preset.");
-                      });
-                    }}
-                  >
-                    Delete
-                  </Button>
-                </div>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void handleNameSubmit();
+            }}
+            className="space-y-4"
+          >
+            {nameDialog?.mode === "capture" ? (
+              <div className="text-muted text-xs">
+                Source workspace: {selectedWorkspaceLabel ?? "(none selected)"}
               </div>
+            ) : null}
+
+            <div className="space-y-2">
+              <Label htmlFor="layout-slot-name">Name</Label>
+              <Input
+                id="layout-slot-name"
+                value={nameValue}
+                onChange={(e) => setNameValue(e.target.value)}
+                placeholder="Enter layout name"
+                autoFocus
+              />
+              {nameError ? <div className="text-sm text-red-500">{nameError}</div> : null}
             </div>
-          ))}
-        </div>
-      </div>
+
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => {
+                  setNameDialog(null);
+                  setNameError(null);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" variant="default">
+                Save
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
