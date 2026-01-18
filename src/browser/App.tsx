@@ -14,7 +14,12 @@ import {
   readPersistedState,
 } from "./hooks/usePersistedState";
 import { getEffectiveSlotKeybind, getPresetForSlot } from "@/browser/utils/uiLayouts";
-import { matchesKeybind, KEYBINDS } from "./utils/ui/keybinds";
+import {
+  matchesKeybind,
+  KEYBINDS,
+  isEditableElement,
+  isTerminalFocused,
+} from "./utils/ui/keybinds";
 import { buildSortedWorkspacesByProject } from "./utils/ui/workspaceFiltering";
 import { useResumeManager } from "./hooks/useResumeManager";
 import { useUnreadTracking } from "./hooks/useUnreadTracking";
@@ -90,7 +95,6 @@ function AppInner() {
     applySlotToWorkspace,
     applyPresetToWorkspace,
     saveCurrentWorkspaceAsPreset,
-    setSlotPreset,
   } = useUILayouts();
   const { api, status, error, authenticate } = useAPI();
 
@@ -481,10 +485,7 @@ function AppInner() {
     },
     onSaveLayoutPreset: async (workspaceId, name, slot) => {
       try {
-        const preset = await saveCurrentWorkspaceAsPreset(workspaceId, name);
-        if (slot) {
-          await setSlotPreset(slot, preset.id);
-        }
+        await saveCurrentWorkspaceAsPreset(workspaceId, name, slot);
       } catch {
         // Best-effort only.
       }
@@ -569,6 +570,16 @@ function AppInner() {
       }
 
       if (!selectedWorkspace) {
+        return;
+      }
+
+      // Don't let global slot hotkeys fire while the user is typing.
+      if (isEditableElement(e.target) || isTerminalFocused(e.target)) {
+        return;
+      }
+
+      // AltGr is commonly implemented as Ctrl+Alt; avoid treating it as our shortcut.
+      if (typeof e.getModifierState === "function" && e.getModifierState("AltGraph")) {
         return;
       }
 
