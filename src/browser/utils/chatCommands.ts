@@ -613,6 +613,8 @@ export interface CompactionOptions {
   workspaceId: string;
   maxOutputTokens?: number;
   continueMessage?: ContinueMessage;
+  /** True when the continue message retries an already-sent user message. */
+  continueMessageIsRetry?: boolean;
   model?: string;
   sendMessageOptions: SendMessageOptions;
   editMessageId?: string;
@@ -662,6 +664,7 @@ export function prepareCompactionMessage(options: CompactionOptions): {
     model: effectiveModel,
     maxOutputTokens: options.maxOutputTokens,
     continueMessage: cm,
+    continueMessageIsRetry: options.continueMessageIsRetry,
   };
 
   const metadata: MuxFrontendMetadata = {

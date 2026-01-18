@@ -70,6 +70,7 @@ interface CompactionRequestMetadata {
   type: "compaction-request";
   parsed: {
     continueMessage?: ContinueMessage;
+    continueMessageIsRetry?: boolean;
   };
 }
 
@@ -541,6 +542,7 @@ export class AgentSession {
         timestamp: Date.now(),
         toolPolicy: typedToolPolicy,
         muxMetadata: typedMuxMetadata, // Pass through frontend metadata as black-box
+        synthetic: options?.synthetic ? true : undefined,
       },
       additionalParts
     );
@@ -620,6 +622,7 @@ export class AgentSession {
         "exec";
       // Build options for the queued message (strip compaction-specific fields)
       // agentId determines tool policy via resolveToolPolicyForAgent in aiService
+
       const sanitizedOptions: Omit<
         SendMessageOptions,
         "muxMetadata" | "mode" | "editMessageId" | "imageParts" | "maxOutputTokens"
@@ -631,6 +634,10 @@ export class AgentSession {
         providerOptions: options.providerOptions,
         experiments: options.experiments,
       };
+
+      if (typedMuxMetadata.parsed.continueMessageIsRetry) {
+        sanitizedOptions.synthetic = true;
+      }
 
       // Add image parts if present
       const continueImageParts = continueMessage.imageParts;
