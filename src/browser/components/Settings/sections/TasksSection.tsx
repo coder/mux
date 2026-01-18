@@ -28,11 +28,11 @@ import {
   normalizeTaskSettings,
   type TaskSettings,
 } from "@/common/types/tasks";
-import type { ThinkingLevel } from "@/common/types/thinking";
+import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
 import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
 
 const INHERIT = "__inherit__";
-const ALL_THINKING_LEVELS = ["off", "low", "medium", "high", "xhigh"] as const;
+const ALL_THINKING_LEVELS = THINKING_LEVELS;
 
 const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
   {

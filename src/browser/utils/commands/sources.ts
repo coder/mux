@@ -2,7 +2,7 @@ import { THEME_OPTIONS, type ThemeMode } from "@/browser/contexts/ThemeContext";
 import type { CommandAction } from "@/browser/contexts/CommandRegistryContext";
 import type { APIClient } from "@/browser/contexts/API";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
-import type { ThinkingLevel } from "@/common/types/thinking";
+import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import {
   getAutoRetryKey,
@@ -68,8 +68,6 @@ export interface BuildSourcesParams {
   onOpenSettings?: (section?: string) => void;
   onClearTimingStats?: (workspaceId: string) => void;
 }
-
-const THINKING_LEVELS: ThinkingLevel[] = ["off", "low", "medium", "high", "xhigh"];
 
 /**
  * Command palette section names

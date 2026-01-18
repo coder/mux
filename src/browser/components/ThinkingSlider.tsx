@@ -1,5 +1,5 @@
 import React, { useEffect, useId } from "react";
-import type { ThinkingLevel } from "@/common/types/thinking";
+import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
@@ -7,6 +7,8 @@ import { getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
 
 // Uses CSS variable --color-thinking-mode for theme compatibility
 // Glow is applied via CSS using color-mix with the theme color
+const BASE_THINKING_LEVELS: ThinkingLevel[] = THINKING_LEVELS.filter((level) => level !== "xhigh");
+
 const GLOW_INTENSITIES: Record<number, { track: string; thumb: string }> = {
   0: { track: "none", thumb: "none" },
   1: {
@@ -92,7 +94,7 @@ export const ThinkingSliderComponent: React.FC<ThinkingControlProps> = ({ modelS
     // or if no options are available (shouldn't happen given policy types)
     const fixedLevel = allowed[0] || "off";
     // Calculate style based on "standard" levels for consistency
-    const standardIndex = ["off", "low", "medium", "high"].indexOf(fixedLevel);
+    const standardIndex = BASE_THINKING_LEVELS.indexOf(fixedLevel);
     const value = standardIndex === -1 ? 0 : standardIndex;
 
     const formattedLevel = fixedLevel === "off" ? "Off" : fixedLevel;
@@ -125,7 +127,7 @@ export const ThinkingSliderComponent: React.FC<ThinkingControlProps> = ({ modelS
 
   // Map levels to visual intensity indices (0-3) so colors/glow stay consistent
   // Levels outside the base 4 (e.g., xhigh) map to the strongest intensity
-  const baseVisualOrder: ThinkingLevel[] = ["off", "low", "medium", "high"];
+  const baseVisualOrder = BASE_THINKING_LEVELS;
   const visualValue = (() => {
     const idx = baseVisualOrder.indexOf(thinkingLevel);
     if (idx >= 0) return idx;

@@ -27,7 +27,7 @@ import { useTheme, type ThemeMode } from "./contexts/ThemeContext";
 import { CommandPalette } from "./components/CommandPalette";
 import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sources";
 
-import type { ThinkingLevel } from "@/common/types/thinking";
+import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
 import type { UIMode } from "@/common/types/mode";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { isWorkspaceForkSwitchEvent } from "./utils/workspaceEvents";
@@ -62,8 +62,6 @@ import { ExperimentsProvider } from "./contexts/ExperimentsContext";
 import { getWorkspaceSidebarKey } from "./utils/workspace";
 import { WindowsToolchainBanner } from "./components/WindowsToolchainBanner";
 import { RosettaBanner } from "./components/RosettaBanner";
-
-const THINKING_LEVELS: ThinkingLevel[] = ["off", "low", "medium", "high", "xhigh"];
 
 function AppInner() {
   // Get workspace state from context
