@@ -37,7 +37,11 @@ interface UILayoutsContextValue {
 
   applySlotToWorkspace: (workspaceId: string, slot: LayoutSlotNumber) => Promise<void>;
   applyPresetToWorkspace: (workspaceId: string, presetId: string) => Promise<void>;
-  saveCurrentWorkspaceAsPreset: (workspaceId: string, name: string) => Promise<LayoutPreset>;
+  saveCurrentWorkspaceAsPreset: (
+    workspaceId: string,
+    name: string,
+    slot?: LayoutSlotNumber | null
+  ) => Promise<LayoutPreset>;
 
   setSlotPreset: (slot: LayoutSlotNumber, presetId: string | undefined) => Promise<void>;
   setSlotKeybindOverride: (slot: LayoutSlotNumber, keybind: Keybind | undefined) => Promise<void>;
@@ -128,13 +132,22 @@ export function UILayoutsProvider(props: { children: ReactNode }) {
   );
 
   const saveCurrentWorkspaceAsPreset = useCallback(
-    async (workspaceId: string, name: string): Promise<LayoutPreset> => {
+    async (
+      workspaceId: string,
+      name: string,
+      slot?: LayoutSlotNumber | null
+    ): Promise<LayoutPreset> => {
       assert(
         typeof workspaceId === "string" && workspaceId.length > 0,
         "workspaceId must be non-empty"
       );
+
       const preset = createPresetFromCurrentWorkspace(workspaceId, name);
-      await saveAll(upsertPreset(layoutPresets, preset));
+      let next = upsertPreset(layoutPresets, preset);
+      if (slot != null) {
+        next = updateSlotAssignment(next, slot, preset.id);
+      }
+      await saveAll(next);
       return preset;
     },
     [layoutPresets, saveAll]
