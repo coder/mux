@@ -6,6 +6,23 @@ import { MapStore } from "./MapStore";
 const EMPTY_SET = new Set<string>();
 const EMPTY_PROCESSES: BackgroundProcessInfo[] = [];
 
+function areProcessesEqual(a: BackgroundProcessInfo[], b: BackgroundProcessInfo[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  return a.every((proc, index) => {
+    const other = b[index];
+    return (
+      proc.id === other.id &&
+      proc.pid === other.pid &&
+      proc.script === other.script &&
+      proc.displayName === other.displayName &&
+      proc.startTime === other.startTime &&
+      proc.status === other.status &&
+      proc.exitCode === other.exitCode
+    );
+  });
+}
+
 function areSetsEqual(a: Set<string>, b: Set<string>): boolean {
   if (a === b) return true;
   if (a.size !== b.size) return false;
@@ -190,8 +207,11 @@ export class BackgroundBashStore {
         for await (const state of iterator) {
           if (signal.aborted) break;
 
-          this.processesCache.set(workspaceId, state.processes);
-          this.processesStore.bump(workspaceId);
+          const previousProcesses = this.processesCache.get(workspaceId) ?? EMPTY_PROCESSES;
+          if (!areProcessesEqual(previousProcesses, state.processes)) {
+            this.processesCache.set(workspaceId, state.processes);
+            this.processesStore.bump(workspaceId);
+          }
 
           const nextForeground = new Set(state.foregroundToolCallIds);
           const previousForeground = this.foregroundIdsCache.get(workspaceId) ?? EMPTY_SET;
