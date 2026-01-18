@@ -4,8 +4,16 @@
 
 import type { FileTreeNode } from "@/common/utils/git/numstatParser";
 
-/** Maximum file size for viewing (10MB) */
-export const MAX_FILE_SIZE = 10 * 1024 * 1024;
+/** Maximum file size for viewing/editing (kept small to avoid bash arg limits) */
+export const MAX_FILE_SIZE = 128 * 1024;
+
+const formatFileSizeLabel = (bytes: number): string => {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+export const MAX_FILE_SIZE_LABEL = formatFileSizeLabel(MAX_FILE_SIZE);
 
 /** Exit code for "file too large" */
 export const EXIT_CODE_TOO_LARGE = 42;
@@ -315,6 +323,28 @@ base64 < ${file}`;
 }
 
 /**
+ * Generate bash script to write base64-encoded content to a file.
+ * Uses a temp file to keep existing permissions when overwriting.
+ */
+export function buildWriteFileScript(relativePath: string, base64Content: string): string {
+  const file = shellEscape(relativePath);
+  const payload = shellEscape(base64Content);
+  return `tmp=$(mktemp) || exit 1
+cleanup() { rm -f "$tmp"; }
+if printf '%s' ${payload} | base64 --decode > "$tmp" 2>/dev/null; then
+  cat "$tmp" > ${file} || { cleanup; exit 1; }
+  cleanup
+  exit 0
+fi
+if ! printf '%s' ${payload} | base64 -D > "$tmp"; then
+  cleanup
+  exit 1
+fi
+cat "$tmp" > ${file} || { cleanup; exit 1; }
+cleanup`;
+}
+
+/**
  * Generate bash script to get git diff for a file.
  */
 export function buildFileDiffScript(relativePath: string): string {
@@ -359,7 +389,10 @@ export type FileContentsResult =
 export function processFileContents(output: string, exitCode: number): FileContentsResult {
   // Check for "too large" exit code
   if (exitCode === EXIT_CODE_TOO_LARGE) {
-    return { type: "error", message: "File is too large to display. Maximum: 10 MB." };
+    return {
+      type: "error",
+      message: `File is too large to display. Maximum: ${MAX_FILE_SIZE_LABEL}.`,
+    };
   }
 
   // Parse output

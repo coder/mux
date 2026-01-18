@@ -3,5 +3,5 @@
  */
 
 export { FileViewerTab } from "./FileViewerTab";
-export { TextFileViewer } from "./TextFileViewer";
+export { TextFileEditor } from "./TextFileEditor";
 export { ImageFileViewer } from "./ImageFileViewer";

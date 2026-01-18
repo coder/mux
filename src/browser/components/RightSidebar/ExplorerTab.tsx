@@ -17,10 +17,12 @@ import {
   FolderClosed,
   FolderOpen,
   RefreshCw,
+  Search,
 } from "lucide-react";
 import { FileIcon } from "../FileIcon";
 import { cn } from "@/common/lib/utils";
 import type { FileTreeNode } from "@/common/utils/git/numstatParser";
+import { KEYBINDS, formatKeybind, matchesKeybind } from "@/browser/utils/ui/keybinds";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import {
   validateRelativePath,
@@ -55,6 +57,9 @@ const INDENT_PX = 12;
 
 export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
   const { api } = useAPI();
+
+  const [searchQuery, setSearchQuery] = React.useState("");
+  const searchInputRef = React.useRef<HTMLInputElement | null>(null);
 
   const [state, setState] = React.useState<ExplorerState>({
     entries: new Map(),
@@ -267,6 +272,19 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
     }
   }, [api, fetchDirectory]);
 
+  // Global search shortcut (Ctrl+F / Cmd+F)
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!matchesKeybind(e, KEYBINDS.FOCUS_EXPLORER_SEARCH)) return;
+      e.preventDefault();
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
   // Subscribe to file-modifying tool events and debounce refresh
   React.useEffect(() => {
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -318,6 +336,17 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
     void Promise.all(pathsToRefresh.map((p) => fetchDirectory(p)));
   };
 
+  // Search filtering
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  const isSearchActive = normalizedQuery.length > 0;
+
+  const matchesQuery = (node: FileTreeNode): boolean => {
+    if (!isSearchActive) return true;
+    const nameMatch = node.name.toLowerCase().includes(normalizedQuery);
+    const pathMatch = node.path.toLowerCase().includes(normalizedQuery);
+    return nameMatch || pathMatch;
+  };
+
   // Collapse all
   const handleCollapseAll = () => {
     setState((prev) => ({
@@ -329,11 +358,22 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
   const hasExpandedDirs = state.expanded.size > 0;
 
   // Render a tree node recursively
-  const renderNode = (node: FileTreeNode, depth: number): React.ReactNode => {
+  const renderNode = (node: FileTreeNode, depth: number): React.ReactNode | null => {
     const key = node.path;
     const isExpanded = state.expanded.has(key);
     const isLoading = state.loading.has(key);
     const children = state.entries.get(key) ?? [];
+    const renderedChildren = node.isDirectory
+      ? children
+          .map((child) => renderNode(child, depth + 1))
+          .filter((child): child is React.ReactNode => child !== null)
+      : [];
+    const matches = matchesQuery(node);
+    if (isSearchActive && !matches && renderedChildren.length === 0) {
+      return null;
+    }
+    const isExpandedForRender =
+      node.isDirectory && (isSearchActive ? renderedChildren.length > 0 : isExpanded);
     // Check both node.ignored flag and ignoredDirs cache
     const isIgnored = node.ignored === true || state.ignoredDirs.has(node.path);
     const isModified = state.gitStatus.modified.has(node.path);
@@ -368,12 +408,12 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
             <>
               {isLoading ? (
                 <RefreshCw className="text-muted h-3 w-3 shrink-0 animate-spin" />
-              ) : isExpanded ? (
+              ) : isExpandedForRender ? (
                 <ChevronDown className="text-muted h-3 w-3 shrink-0" />
               ) : (
                 <ChevronRight className="text-muted h-3 w-3 shrink-0" />
               )}
-              {isExpanded ? (
+              {isExpandedForRender ? (
                 <FolderOpen className="h-4 w-4 shrink-0 text-[var(--color-folder-icon)]" />
               ) : (
                 <FolderClosed className="h-4 w-4 shrink-0 text-[var(--color-folder-icon)]" />
@@ -390,15 +430,17 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
           </span>
         </button>
 
-        {node.isDirectory && isExpanded && (
-          <div>{children.map((child) => renderNode(child, depth + 1))}</div>
-        )}
+        {node.isDirectory && isExpandedForRender && <div>{renderedChildren}</div>}
       </div>
     );
   };
 
   const rootEntries = state.entries.get("") ?? [];
   const isRootLoading = state.loading.has("");
+  const renderedRootNodes = rootEntries
+    .map((node) => renderNode(node, 0))
+    .filter((node): node is React.ReactNode => node !== null);
+  const emptyMessage = isSearchActive ? "No matching files" : "No files found";
 
   // Shorten workspace path for display (replace home dir with ~)
   const shortenPath = (fullPath: string): string => {
@@ -465,6 +507,18 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
           )}
         </div>
       </div>
+      <div className="border-border-light flex items-center gap-1.5 border-b px-2 py-1">
+        <Search className="text-muted h-3.5 w-3.5 shrink-0" />
+        <input
+          ref={searchInputRef}
+          type="text"
+          value={searchQuery}
+          onChange={(event) => setSearchQuery(event.target.value)}
+          placeholder={`Search files... (${formatKeybind(KEYBINDS.FOCUS_EXPLORER_SEARCH)})`}
+          className="bg-background text-foreground border-border-medium placeholder:text-dim hover:border-accent focus:border-accent min-w-0 flex-1 rounded border px-1.5 py-0.5 font-mono text-[11px] transition-[border-color] duration-150 focus:outline-none"
+          aria-label="Search files"
+        />
+      </div>
 
       {/* Tree */}
       <div className="flex-1 overflow-y-auto py-1">
@@ -474,10 +528,10 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
             <RefreshCw className="text-muted h-5 w-5 animate-spin" />
           </div>
         ) : (
-          rootEntries.map((node) => renderNode(node, 0))
+          renderedRootNodes
         )}
-        {!isRootLoading && rootEntries.length === 0 && !state.error && (
-          <div className="text-muted px-3 py-2 text-sm">No files found</div>
+        {!isRootLoading && renderedRootNodes.length === 0 && !state.error && (
+          <div className="text-muted px-3 py-2 text-sm">{emptyMessage}</div>
         )}
       </div>
     </div>

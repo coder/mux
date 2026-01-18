@@ -1,5 +1,14 @@
 import { isTabType, type TabType } from "@/browser/types/rightSidebar";
 
+export type FileDraftHistory = Record<string, unknown>;
+
+export interface RightSidebarTabState {
+  fileDraft?: string;
+  fileHistory?: FileDraftHistory;
+}
+
+export type RightSidebarTabStates = Partial<Record<TabType, RightSidebarTabState>>;
+
 export type RightSidebarLayoutNode =
   | {
       type: "split";
@@ -54,6 +63,7 @@ export interface RightSidebarLayoutState {
   nextId: number;
   focusedTabsetId: string;
   root: RightSidebarLayoutNode;
+  tabStates?: RightSidebarTabStates;
 }
 
 export function getDefaultRightSidebarLayoutState(activeTab: TabType): RightSidebarLayoutState {
@@ -71,6 +81,7 @@ export function getDefaultRightSidebarLayoutState(activeTab: TabType): RightSide
       tabs,
       activeTab,
     },
+    tabStates: {},
   };
 }
 
@@ -88,6 +99,60 @@ function injectTabIntoLayout(node: RightSidebarLayoutNode, tab: TabType): boolea
   }
   // Split node - try first child, then second
   return injectTabIntoLayout(node.children[0], tab) || injectTabIntoLayout(node.children[1], tab);
+}
+
+/**
+ * Normalize persisted tab state and migrate legacy file drafts.
+ */
+function normalizeTabStates(raw: unknown): RightSidebarTabStates {
+  if (!raw || typeof raw !== "object") return {};
+  return raw as RightSidebarTabStates;
+}
+
+function coerceLegacyFileDrafts(raw: unknown): Record<string, string> {
+  if (!raw || typeof raw !== "object") return {};
+  const entries = Object.entries(raw as Record<string, unknown>);
+  if (entries.length === 0) return {};
+  const next: Record<string, string> = {};
+  for (const [tab, content] of entries) {
+    if (typeof content === "string") {
+      next[tab] = content;
+    }
+  }
+  return next;
+}
+
+function coerceLegacyFileDraftHistories(raw: unknown): Record<string, FileDraftHistory> {
+  if (!raw || typeof raw !== "object") return {};
+  const entries = Object.entries(raw as Record<string, unknown>);
+  if (entries.length === 0) return {};
+  const next: Record<string, FileDraftHistory> = {};
+  for (const [tab, history] of entries) {
+    if (history && typeof history === "object") {
+      next[tab] = history as FileDraftHistory;
+    }
+  }
+  return next;
+}
+
+function mergeLegacyFileDrafts(
+  tabStates: RightSidebarTabStates,
+  drafts: Record<string, string>,
+  histories: Record<string, FileDraftHistory>
+): RightSidebarTabStates {
+  if (Object.keys(drafts).length === 0 && Object.keys(histories).length === 0) {
+    return tabStates;
+  }
+  const next: RightSidebarTabStates = { ...tabStates };
+  for (const [tab, draft] of Object.entries(drafts)) {
+    const typedTab = tab as TabType;
+    next[typedTab] = { ...next[typedTab], fileDraft: draft };
+  }
+  for (const [tab, history] of Object.entries(histories)) {
+    const typedTab = tab as TabType;
+    next[typedTab] = { ...next[typedTab], fileHistory: history };
+  }
+  return next;
 }
 
 /**
@@ -109,7 +174,21 @@ export function parseRightSidebarLayoutState(
     if (!layoutContainsTab(raw.root, "explorer")) {
       injectTabIntoLayout(raw.root, "explorer");
     }
-    return raw;
+    const rawState = raw as RightSidebarLayoutState & {
+      fileDrafts?: unknown;
+      fileDraftHistories?: unknown;
+      tabStates?: unknown;
+    };
+    const tabStates = mergeLegacyFileDrafts(
+      normalizeTabStates(rawState.tabStates),
+      coerceLegacyFileDrafts(rawState.fileDrafts),
+      coerceLegacyFileDraftHistories(rawState.fileDraftHistories)
+    );
+    const { fileDrafts: _legacyDrafts, fileDraftHistories: _legacyHistories, ...rest } = rawState;
+    return {
+      ...rest,
+      tabStates,
+    };
   }
 
   return getDefaultRightSidebarLayoutState(activeTabFallback);
@@ -188,10 +267,17 @@ export function removeTabEverywhere(
     ? state.focusedTabsetId
     : (findFirstTabsetId(nextRoot) ?? "tabset-1");
 
+  let tabStates = state.tabStates;
+  if (tabStates && tab in tabStates) {
+    const { [tab]: _removed, ...rest } = tabStates;
+    tabStates = rest;
+  }
+
   return {
     ...state,
     root: nextRoot,
     focusedTabsetId,
+    tabStates,
   };
 }
 function updateNode(

@@ -10,8 +10,11 @@ const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
   SEND_MESSAGE: "Send message",
   NEW_LINE: "Insert newline",
   CANCEL: "Cancel / Close modal",
+  UNDO: "Undo",
+  REDO: "Redo",
   CANCEL_EDIT: "Cancel editing message",
   SAVE_EDIT: "Save edit",
+  SAVE_FILE: "Save file",
   INTERRUPT_STREAM_VIM: "Interrupt stream (Vim mode)",
   INTERRUPT_STREAM_NORMAL: "Interrupt stream",
   FOCUS_INPUT_I: "Focus input (i)",
@@ -37,6 +40,7 @@ const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
   SIDEBAR_TAB_7: "Tab 7",
   SIDEBAR_TAB_8: "Tab 8",
   SIDEBAR_TAB_9: "Tab 9",
+  FOCUS_EXPLORER_SEARCH: "Search in explorer",
   REFRESH_REVIEW: "Refresh diff",
   FOCUS_REVIEW_SEARCH: "Search in review",
   TOGGLE_HUNK_READ: "Toggle hunk read",
@@ -78,11 +82,15 @@ const KEYBIND_GROUPS: Array<{ label: string; keys: Array<keyof typeof KEYBINDS> 
   },
   {
     label: "Editing",
-    keys: ["SAVE_EDIT", "CANCEL_EDIT"],
+    keys: ["UNDO", "REDO", "SAVE_EDIT", "SAVE_FILE", "CANCEL_EDIT"],
   },
   {
     label: "Navigation",
     keys: ["NEW_WORKSPACE", "NEXT_WORKSPACE", "PREV_WORKSPACE", "JUMP_TO_BOTTOM"],
+  },
+  {
+    label: "Explorer",
+    keys: ["FOCUS_EXPLORER_SEARCH"],
   },
   {
     label: "Sidebar Tabs",

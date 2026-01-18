@@ -233,6 +233,15 @@ export const KEYBINDS = {
   /** Cancel editing message (exit edit mode) */
   CANCEL_EDIT: { key: "Escape" },
 
+  /** Undo edit */
+  UNDO: { key: "z", ctrl: true, macCtrlBehavior: "command" },
+
+  /** Redo edit */
+  REDO: { key: "z", ctrl: true, shift: true, macCtrlBehavior: "command" },
+
+  /** Save file */
+  SAVE_FILE: { key: "s", ctrl: true, macCtrlBehavior: "command" },
+
   /** Save edit (Cmd/Ctrl+Enter) */
   SAVE_EDIT: { key: "Enter", ctrl: true },
 
@@ -307,6 +316,10 @@ export const KEYBINDS = {
   SIDEBAR_TAB_7: { key: "7", ctrl: true, description: "Tab 7" },
   SIDEBAR_TAB_8: { key: "8", ctrl: true, description: "Tab 8" },
   SIDEBAR_TAB_9: { key: "9", ctrl: true, description: "Tab 9" },
+
+  /** Focus search input in Explorer panel */
+  // macOS: Cmd+F, Win/Linux: Ctrl+F
+  FOCUS_EXPLORER_SEARCH: { key: "f", ctrl: true },
 
   /** Refresh diff in Code Review panel */
   // macOS: Cmd+R, Win/Linux: Ctrl+R

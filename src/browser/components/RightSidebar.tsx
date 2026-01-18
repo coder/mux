@@ -56,6 +56,9 @@ import {
   updateSplitSizes,
   type RightSidebarLayoutNode,
   type RightSidebarLayoutState,
+  type RightSidebarTabState,
+  type RightSidebarTabStates,
+  type FileDraftHistory,
 } from "@/browser/utils/rightSidebarLayout";
 import {
   RightSidebarTabStrip,
@@ -222,6 +225,16 @@ interface RightSidebarTabsetNodeProps {
   onAutoFocusConsumed: () => void;
   /** Handler to open a file in a new tab */
   onOpenFile: (relativePath: string) => void;
+  /** Map of file tabs to dirty (unsaved) state */
+  fileDirtyMap: Map<TabType, boolean>;
+  /** Handler to update file dirty state */
+  onFileDirtyChange: (tab: TabType, dirty: boolean) => void;
+  /** Persisted tab state for right sidebar tabs */
+  tabStates: RightSidebarTabStates;
+  /** Handler to update file draft content */
+  onFileDraftChange: (tab: TabType, content: string | null) => void;
+  /** Handler to update file draft history */
+  onFileDraftHistoryChange: (tab: TabType, history: FileDraftHistory | null) => void;
   /** Handler to close a file tab */
   onCloseFile: (tab: TabType) => void;
 }
@@ -329,7 +342,13 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
       );
     } else if (isFileTab(tab)) {
       const filePath = getFilePath(tab);
-      label = <FileTabLabel filePath={filePath ?? tab} onClose={() => props.onCloseFile(tab)} />;
+      label = (
+        <FileTabLabel
+          filePath={filePath ?? tab}
+          isDirty={props.fileDirtyMap.get(tab) ?? false}
+          onClose={() => props.onCloseFile(tab)}
+        />
+      );
     } else {
       label = tab;
     }
@@ -503,6 +522,9 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
           const fileTabId = `${tabsetBaseId}-tab-${fileTab}`;
           const filePanelId = `${tabsetBaseId}-panel-${fileTab}`;
           const isActive = props.node.activeTab === fileTab;
+          const fileTabState = props.tabStates[fileTab];
+          const draftContent = fileTabState?.fileDraft ?? null;
+          const draftHistory = fileTabState?.fileHistory ?? null;
 
           return (
             <div
@@ -514,7 +536,17 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
               hidden={!isActive}
             >
               {isActive && filePath && (
-                <FileViewerTab workspaceId={props.workspaceId} relativePath={filePath} />
+                <FileViewerTab
+                  workspaceId={props.workspaceId}
+                  relativePath={filePath}
+                  draftHistory={draftHistory}
+                  onDraftHistoryChange={(history) =>
+                    props.onFileDraftHistoryChange(fileTab, history)
+                  }
+                  draftContent={draftContent}
+                  onDraftChange={(content) => props.onFileDraftChange(fileTab, content)}
+                  onDirtyChange={(dirty) => props.onFileDirtyChange(fileTab, dirty)}
+                />
               )}
             </div>
           );
@@ -622,6 +654,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     () => parseRightSidebarLayoutState(layoutDraft ?? layoutRaw, initialActiveTab),
     [layoutDraft, layoutRaw, initialActiveTab]
   );
+  const tabStates = React.useMemo(() => layout.tabStates ?? {}, [layout.tabStates]);
 
   // If the Stats tab feature is enabled, ensure it exists in the layout.
   // If disabled, ensure it doesn't linger in persisted layouts.
@@ -747,6 +780,28 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   // Terminal titles from OSC sequences (e.g., shell setting window title)
   // Persisted to localStorage so they survive reload
   const terminalTitlesKey = getTerminalTitlesKey(workspaceId);
+
+  const [fileDirtyMap, setFileDirtyMap] = React.useState<Map<TabType, boolean>>(() => new Map());
+
+  React.useEffect(() => {
+    const draftTabs = (Object.entries(tabStates) as Array<[TabType, RightSidebarTabState]>)
+      .filter(([, state]) => state?.fileDraft !== undefined)
+      .map(([tab]) => tab);
+    if (draftTabs.length === 0) return;
+    setFileDirtyMap((prev) => {
+      let next = prev;
+      for (const tab of draftTabs) {
+        if (!next.has(tab)) {
+          if (next === prev) {
+            next = new Map(prev);
+          }
+          next.set(tab, true);
+        }
+      }
+      return next;
+    });
+  }, [tabStates]);
+
   const [terminalTitles, setTerminalTitles] = React.useState<Map<TabType, string>>(() => {
     const stored = readPersistedState<Record<string, string>>(terminalTitlesKey, {});
     return new Map(Object.entries(stored) as Array<[TabType, string]>);
@@ -793,6 +848,12 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       if (isFileTab(activeTab)) {
         e.preventDefault();
         setLayout((prev) => removeTabEverywhere(prev, activeTab));
+        setFileDirtyMap((prev) => {
+          if (!prev.has(activeTab)) return prev;
+          const next = new Map(prev);
+          next.delete(activeTab);
+          return next;
+        });
       }
     };
 
@@ -950,6 +1011,85 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     [workspaceId, api, setLayout, terminalTitlesKey]
   );
 
+  const handleFileDraftChange = React.useCallback(
+    (tab: TabType, content: string | null) => {
+      setLayout((prev) => {
+        const openTabs = collectAllTabs(prev.root);
+        if (!openTabs.includes(tab)) {
+          return prev;
+        }
+        const tabStates: RightSidebarTabStates = prev.tabStates ?? {};
+        const currentState = tabStates[tab] ?? {};
+        if (content === null) {
+          if (currentState.fileDraft === undefined) {
+            return prev;
+          }
+          const { fileDraft: _removedDraft, ...restState } = currentState;
+          if (Object.keys(restState).length === 0) {
+            const { [tab]: _removedState, ...rest } = tabStates;
+            return { ...prev, tabStates: rest };
+          }
+          return { ...prev, tabStates: { ...tabStates, [tab]: restState } };
+        }
+        if (currentState.fileDraft === content) return prev;
+        return {
+          ...prev,
+          tabStates: {
+            ...tabStates,
+            [tab]: { ...currentState, fileDraft: content },
+          },
+        };
+      });
+    },
+    [setLayout]
+  );
+
+  const handleFileDraftHistoryChange = React.useCallback(
+    (tab: TabType, history: FileDraftHistory | null) => {
+      setLayout((prev) => {
+        const openTabs = collectAllTabs(prev.root);
+        if (!openTabs.includes(tab)) {
+          return prev;
+        }
+        const tabStates: RightSidebarTabStates = prev.tabStates ?? {};
+        const currentState = tabStates[tab] ?? {};
+        if (history === null) {
+          if (currentState.fileHistory === undefined) return prev;
+          const { fileHistory: _removedHistory, ...restState } = currentState;
+          if (Object.keys(restState).length === 0) {
+            const { [tab]: _removedState, ...rest } = tabStates;
+            return { ...prev, tabStates: rest };
+          }
+          return { ...prev, tabStates: { ...tabStates, [tab]: restState } };
+        }
+        if (currentState.fileHistory === history) return prev;
+        return {
+          ...prev,
+          tabStates: {
+            ...tabStates,
+            [tab]: { ...currentState, fileHistory: history },
+          },
+        };
+      });
+    },
+    [setLayout]
+  );
+
+  const handleFileDirtyChange = React.useCallback((tab: TabType, dirty: boolean) => {
+    setFileDirtyMap((prev) => {
+      const hasEntry = prev.has(tab);
+      if (dirty && hasEntry) return prev;
+      if (!dirty && !hasEntry) return prev;
+      const next = new Map(prev);
+      if (dirty) {
+        next.set(tab, true);
+      } else {
+        next.delete(tab);
+      }
+      return next;
+    });
+  }, []);
+
   // Configure sensors with distance threshold for click vs drag disambiguation
 
   // Handler to open a file in a new tab
@@ -983,6 +1123,12 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   const handleCloseFile = React.useCallback(
     (tab: TabType) => {
       setLayout((prev) => removeTabEverywhere(prev, tab));
+      setFileDirtyMap((prev) => {
+        if (!prev.has(tab)) return prev;
+        const next = new Map(prev);
+        next.delete(tab);
+        return next;
+      });
     },
     [setLayout]
   );
@@ -1138,6 +1284,11 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         onTerminalTitleChange={handleTerminalTitleChange}
         tabPositions={tabPositions}
         autoFocusTerminalSession={autoFocusTerminalSession}
+        tabStates={tabStates}
+        onFileDraftHistoryChange={handleFileDraftHistoryChange}
+        onFileDraftChange={handleFileDraftChange}
+        fileDirtyMap={fileDirtyMap}
+        onFileDirtyChange={handleFileDirtyChange}
         onAutoFocusConsumed={() => setAutoFocusTerminalSession(null)}
         onOpenFile={handleOpenFile}
         onCloseFile={handleCloseFile}
