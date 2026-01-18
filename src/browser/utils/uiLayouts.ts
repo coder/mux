@@ -22,6 +22,8 @@ import {
   updatePersistedState,
 } from "@/browser/hooks/usePersistedState";
 import {
+  addTabToFocusedTabset,
+  collectAllTabs,
   findFirstTabsetId,
   findTabset,
   getDefaultRightSidebarLayoutState,
@@ -29,7 +31,7 @@ import {
   type RightSidebarLayoutNode,
   type RightSidebarLayoutState,
 } from "@/browser/utils/rightSidebarLayout";
-import { isTabType, type TabType } from "@/browser/types/rightSidebar";
+import { isTabType, makeTerminalTabType, type TabType } from "@/browser/types/rightSidebar";
 import { createTerminalSession } from "@/browser/utils/terminal";
 import type { APIClient } from "@/browser/contexts/API";
 
@@ -428,7 +430,27 @@ export async function applyLayoutPresetToWorkspace(
 
   const terminalMapping = await resolveTerminalSessions(api, workspaceId, terminalTabs);
 
-  const layout = resolvePresetLayoutToLayoutState(preset.rightSidebar.layout, terminalMapping);
+  let layout = resolvePresetLayoutToLayoutState(preset.rightSidebar.layout, terminalMapping);
+
+  // Preserve any extra backend terminal sessions that aren't referenced by the preset.
+  // Otherwise those sessions remain running but have no tabs until the workspace is re-mounted.
+  const backendSessionIds = await api.terminal.listSessions({ workspaceId }).catch(() => []);
+
+  if (backendSessionIds.length > 0) {
+    const currentTabs = collectAllTabs(layout.root);
+    const currentTerminalSessionIds = new Set(
+      currentTabs.filter((t) => t.startsWith("terminal:")).map((t) => t.slice("terminal:".length))
+    );
+
+    for (const sessionId of backendSessionIds) {
+      if (currentTerminalSessionIds.has(sessionId)) {
+        continue;
+      }
+
+      layout = addTabToFocusedTabset(layout, makeTerminalTabType(sessionId), false);
+      currentTerminalSessionIds.add(sessionId);
+    }
+  }
 
   updatePersistedState<RightSidebarLayoutState>(getRightSidebarLayoutKey(workspaceId), layout);
 }
