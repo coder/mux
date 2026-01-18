@@ -20,11 +20,9 @@ import {
   applyLayoutPresetToWorkspace,
   createPresetFromCurrentWorkspace,
   getLayoutsConfigOrDefault,
-  getPresetById,
   getPresetForSlot,
-  updateSlotAssignment,
   updateSlotKeybindOverride,
-  upsertPreset,
+  updateSlotPreset,
 } from "@/browser/utils/uiLayouts";
 import type { Keybind } from "@/common/types/keybind";
 
@@ -36,18 +34,17 @@ interface UILayoutsContextValue {
   saveAll: (next: LayoutPresetsConfig) => Promise<void>;
 
   applySlotToWorkspace: (workspaceId: string, slot: LayoutSlotNumber) => Promise<void>;
-  applyPresetToWorkspace: (workspaceId: string, presetId: string) => Promise<void>;
-  saveCurrentWorkspaceAsPreset: (
+
+  /** Capture the currently-selected workspace's layout into the given slot. */
+  saveCurrentWorkspaceToSlot: (
     workspaceId: string,
-    name: string,
-    slot?: LayoutSlotNumber | null
+    slot: LayoutSlotNumber,
+    name?: string | null
   ) => Promise<LayoutPreset>;
 
-  setSlotPreset: (slot: LayoutSlotNumber, presetId: string | undefined) => Promise<void>;
+  renameSlot: (slot: LayoutSlotNumber, newName: string) => Promise<void>;
+  clearSlot: (slot: LayoutSlotNumber) => Promise<void>;
   setSlotKeybindOverride: (slot: LayoutSlotNumber, keybind: Keybind | undefined) => Promise<void>;
-  deletePreset: (presetId: string) => Promise<void>;
-  renamePreset: (presetId: string, newName: string) => Promise<void>;
-  updatePresetFromCurrentWorkspace: (workspaceId: string, presetId: string) => Promise<void>;
 }
 
 const UILayoutsContext = createContext<UILayoutsContextValue | null>(null);
@@ -127,18 +124,6 @@ export function UILayoutsProvider(props: { children: ReactNode }) {
     void refresh();
   }, [refresh]);
 
-  const applyPresetToWorkspace = useCallback(
-    async (workspaceId: string, presetId: string): Promise<void> => {
-      const preset = getPresetById(layoutPresets, presetId);
-      if (!preset) {
-        return;
-      }
-
-      await applyLayoutPresetToWorkspace(api ?? null, workspaceId, preset);
-    },
-    [api, layoutPresets]
-  );
-
   const applySlotToWorkspace = useCallback(
     async (workspaceId: string, slot: LayoutSlotNumber): Promise<void> => {
       const preset = getPresetForSlot(layoutPresets, slot);
@@ -151,11 +136,11 @@ export function UILayoutsProvider(props: { children: ReactNode }) {
     [api, layoutPresets]
   );
 
-  const saveCurrentWorkspaceAsPreset = useCallback(
+  const saveCurrentWorkspaceToSlot = useCallback(
     async (
       workspaceId: string,
-      name: string,
-      slot?: LayoutSlotNumber | null
+      slot: LayoutSlotNumber,
+      name?: string | null
     ): Promise<LayoutPreset> => {
       assert(
         typeof workspaceId === "string" && workspaceId.length > 0,
@@ -163,80 +148,47 @@ export function UILayoutsProvider(props: { children: ReactNode }) {
       );
 
       const base = await getConfigForWrite();
+      const existingPreset = getPresetForSlot(base, slot);
 
-      const preset = createPresetFromCurrentWorkspace(workspaceId, name);
-      let next = upsertPreset(base, preset);
-      if (slot != null) {
-        next = updateSlotAssignment(next, slot, preset.id);
-      }
-      await saveAll(next);
+      const trimmedName = name?.trim();
+      const resolvedName =
+        trimmedName && trimmedName.length > 0
+          ? trimmedName
+          : (existingPreset?.name ?? `Slot ${slot}`);
+
+      const preset = createPresetFromCurrentWorkspace(
+        workspaceId,
+        resolvedName,
+        existingPreset?.id
+      );
+      await saveAll(updateSlotPreset(base, slot, preset));
       return preset;
     },
     [getConfigForWrite, saveAll]
   );
 
-  const updatePresetFromCurrentWorkspace = useCallback(
-    async (workspaceId: string, presetId: string): Promise<void> => {
-      const base = await getConfigForWrite();
-
-      const existing = getPresetById(base, presetId);
-      if (!existing) {
-        return;
-      }
-
-      const next = createPresetFromCurrentWorkspace(workspaceId, existing.name, presetId);
-      await saveAll(upsertPreset(base, next));
-    },
-    [getConfigForWrite, saveAll]
-  );
-
-  const renamePreset = useCallback(
-    async (presetId: string, newName: string): Promise<void> => {
+  const renameSlot = useCallback(
+    async (slot: LayoutSlotNumber, newName: string): Promise<void> => {
       const trimmed = newName.trim();
       if (!trimmed) {
         return;
       }
 
       const base = await getConfigForWrite();
-      const existing = getPresetById(base, presetId);
-      if (!existing) {
+      const existingPreset = getPresetForSlot(base, slot);
+      if (!existingPreset) {
         return;
       }
 
-      await saveAll(
-        upsertPreset(base, {
-          ...existing,
-          name: trimmed,
-        })
-      );
+      await saveAll(updateSlotPreset(base, slot, { ...existingPreset, name: trimmed }));
     },
     [getConfigForWrite, saveAll]
   );
 
-  const deletePreset = useCallback(
-    async (presetId: string): Promise<void> => {
+  const clearSlot = useCallback(
+    async (slot: LayoutSlotNumber): Promise<void> => {
       const base = await getConfigForWrite();
-
-      const nextPresets = base.presets.filter((p) => p.id !== presetId);
-      const nextSlots = base.slots.map((s) =>
-        s.presetId === presetId ? { ...s, presetId: undefined } : s
-      );
-
-      await saveAll(
-        normalizeLayoutPresetsConfig({
-          version: 1,
-          presets: nextPresets,
-          slots: nextSlots,
-        })
-      );
-    },
-    [getConfigForWrite, saveAll]
-  );
-
-  const setSlotPreset = useCallback(
-    async (slot: LayoutSlotNumber, presetId: string | undefined): Promise<void> => {
-      const base = await getConfigForWrite();
-      await saveAll(updateSlotAssignment(base, slot, presetId));
+      await saveAll(updateSlotPreset(base, slot, undefined));
     },
     [getConfigForWrite, saveAll]
   );
@@ -257,13 +209,10 @@ export function UILayoutsProvider(props: { children: ReactNode }) {
       refresh,
       saveAll,
       applySlotToWorkspace,
-      applyPresetToWorkspace,
-      saveCurrentWorkspaceAsPreset,
-      setSlotPreset,
+      saveCurrentWorkspaceToSlot,
+      renameSlot,
+      clearSlot,
       setSlotKeybindOverride,
-      deletePreset,
-      renamePreset,
-      updatePresetFromCurrentWorkspace,
     }),
     [
       layoutPresets,
@@ -272,13 +221,10 @@ export function UILayoutsProvider(props: { children: ReactNode }) {
       refresh,
       saveAll,
       applySlotToWorkspace,
-      applyPresetToWorkspace,
-      saveCurrentWorkspaceAsPreset,
-      setSlotPreset,
+      saveCurrentWorkspaceToSlot,
+      renameSlot,
+      clearSlot,
       setSlotKeybindOverride,
-      deletePreset,
-      renamePreset,
-      updatePresetFromCurrentWorkspace,
     ]
   );
 

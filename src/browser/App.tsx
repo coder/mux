@@ -93,12 +93,7 @@ function AppInner() {
     },
     [setTheme]
   );
-  const {
-    layoutPresets,
-    applySlotToWorkspace,
-    applyPresetToWorkspace,
-    saveCurrentWorkspaceAsPreset,
-  } = useUILayouts();
+  const { layoutPresets, applySlotToWorkspace, saveCurrentWorkspaceToSlot } = useUILayouts();
   const { api, status, error, authenticate } = useAPI();
 
   const {
@@ -482,14 +477,9 @@ function AppInner() {
         // Best-effort only.
       });
     },
-    onApplyLayoutPreset: (workspaceId, presetId) => {
-      void applyPresetToWorkspace(workspaceId, presetId).catch(() => {
-        // Best-effort only.
-      });
-    },
-    onSaveLayoutPreset: async (workspaceId, name, slot) => {
+    onCaptureLayoutSlot: async (workspaceId, slot, name) => {
       try {
-        await saveCurrentWorkspaceAsPreset(workspaceId, name, slot);
+        await saveCurrentWorkspaceToSlot(workspaceId, slot, name);
       } catch {
         // Best-effort only.
       }
