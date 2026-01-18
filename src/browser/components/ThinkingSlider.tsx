@@ -1,5 +1,6 @@
 import React, { useEffect, useId } from "react";
 import type { ThinkingLevel } from "@/common/types/thinking";
+import { useThinkingModel } from "@/browser/contexts/ThinkingContext";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
@@ -59,12 +60,9 @@ const getSliderStyles = (value: number, isHover = false) => {
   };
 };
 
-interface ThinkingControlProps {
-  modelString: string;
-}
-
-export const ThinkingSliderComponent: React.FC<ThinkingControlProps> = ({ modelString }) => {
+export const ThinkingSliderComponent: React.FC = () => {
   const [thinkingLevel, setThinkingLevel] = useThinkingLevel();
+  const modelString = useThinkingModel();
   const [isHovering, setIsHovering] = React.useState(false);
   const sliderId = useId();
   const allowed = getThinkingPolicyForModel(modelString);

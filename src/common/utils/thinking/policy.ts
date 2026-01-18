@@ -53,17 +53,20 @@ export function getThinkingPolicyForModel(modelString: string): ThinkingPolicy {
   }
 
   // GPT-5.2-Codex supports 5 reasoning levels including xhigh (Extra High)
-  if (/^gpt-5\.2-codex(?!-[a-z])/.test(withoutProviderNamespace)) {
+  // Allow version suffixes like -2025-12-11-preview, but exclude mini variants.
+  if (/^gpt-5\.2-codex(?!-mini\b)/.test(withoutProviderNamespace)) {
     return ["off", "low", "medium", "high", "xhigh"];
   }
 
   // gpt-5.2-pro supports medium, high, xhigh reasoning levels
-  if (/^gpt-5\.2-pro(?!-[a-z])/.test(withoutProviderNamespace)) {
+  // Allow version suffixes like -2025-12-11-preview, but exclude mini variants.
+  if (/^gpt-5\.2-pro(?!-mini\b)/.test(withoutProviderNamespace)) {
     return ["medium", "high", "xhigh"];
   }
 
   // gpt-5.2 supports 5 reasoning levels including xhigh (Extra High)
-  if (/^gpt-5\.2(?!-[a-z])/.test(withoutProviderNamespace)) {
+  // Allow version suffixes like -2025-12-11-preview, but exclude any mini variants.
+  if (/^gpt-5\.2(?!.*-mini\b)/.test(withoutProviderNamespace)) {
     return ["off", "low", "medium", "high", "xhigh"];
   }
 

@@ -2274,7 +2274,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                 className="flex items-center [&_.thinking-slider]:[@container(max-width:550px)]:hidden"
                 data-component="ThinkingSliderGroup"
               >
-                <ThinkingSliderComponent modelString={baseModel} />
+                <ThinkingSliderComponent />
               </div>
 
               <div className="ml-4 flex items-center" data-component="ModelSettingsGroup">
