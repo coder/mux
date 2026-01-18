@@ -115,7 +115,10 @@ function readCurrentRightSidebarWidthPx(): number {
 }
 
 function readCurrentLeftSidebarCollapsed(): boolean {
-  return readPersistedState<boolean>(LEFT_SIDEBAR_COLLAPSED_KEY, false);
+  // Match App.tsx's default: auto-collapse on mobile-ish widths unless the user has an explicit
+  // persisted preference yet.
+  const defaultCollapsed = typeof window !== "undefined" && window.innerWidth <= 768;
+  return readPersistedState<boolean>(LEFT_SIDEBAR_COLLAPSED_KEY, defaultCollapsed);
 }
 
 function createTerminalPlaceholder(counter: number): RightSidebarPresetTabType {

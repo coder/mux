@@ -27,7 +27,8 @@ export function normalizeKeybind(raw: unknown): Keybind | undefined {
 
   const record = raw as Record<string, unknown>;
 
-  const key = typeof record.key === "string" ? record.key.trim() : "";
+  const rawKey = typeof record.key === "string" ? record.key : "";
+  const key = rawKey === " " ? rawKey : rawKey.trim();
   if (!key) {
     return undefined;
   }
