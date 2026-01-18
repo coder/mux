@@ -47,6 +47,7 @@ import {
   prepareCompactionMessage,
   executeCompaction,
   buildContinueMessage,
+  processSlashCommand,
   type CommandHandlerContext,
 } from "@/browser/utils/chatCommands";
 import { shouldTriggerAutoCompaction } from "@/browser/utils/compaction/shouldTriggerAutoCompaction";
@@ -283,6 +284,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   // Attached reviews come from parent via props (persisted in pendingReviews state)
   const attachedReviews = variant === "workspace" ? (props.attachedReviews ?? []) : [];
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const resetInputHeight = useCallback(() => {
+    if (inputRef.current) {
+      inputRef.current.style.height = "";
+    }
+  }, []);
   const modelSelectorRef = useRef<ModelSelectorRef>(null);
   const [atMentionCursorNonce, setAtMentionCursorNonce] = useState(0);
   const lastAtMentionCursorRef = useRef<number | null>(null);
@@ -1209,9 +1215,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     // Save the original input in case we need to restore on error
     const originalInput = input;
     setInput("");
-    if (inputRef.current) {
-      inputRef.current.style.height = "";
-    }
+    resetInputHeight();
 
     try {
       if (type === "clear") {
@@ -1233,7 +1237,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       // Restore the input so user can retry
       setInput(originalInput);
     }
-  }, [pendingDestructiveCommand, variant, props, pushToast, setInput, input]);
+  }, [pendingDestructiveCommand, variant, props, pushToast, resetInputHeight, setInput, input]);
 
   const handleDestructiveCommandCancel = useCallback(() => {
     setPendingDestructiveCommand(null);
@@ -1326,18 +1330,44 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       return;
     }
 
+    const originalInput = input;
     const messageText = input.trim();
 
     // Route to creation handler for creation variant
     if (variant === "creation") {
+      const parsed = messageText.startsWith("/") ? parseCommand(messageText) : null;
+
       // Handle /init command in creation variant - populate input with init message
-      if (messageText.startsWith("/")) {
-        const parsed = parseCommand(messageText);
-        if (parsed?.type === "init") {
-          setInput(initMessage);
-          focusMessageInput();
+      if (parsed?.type === "init") {
+        setInput(initMessage);
+        focusMessageInput();
+        return;
+      }
+
+      if (parsed) {
+        if (!api) {
+          pushToast({ type: "error", message: "Not connected to server" });
           return;
         }
+
+        const result = await processSlashCommand(parsed, {
+          api,
+          variant,
+          sendMessageOptions,
+          setInput,
+          setImageAttachments,
+          setIsSending,
+          setToast,
+          resetInputHeight,
+          onProviderConfig: props.onProviderConfig,
+          onModelChange: props.onModelChange,
+          setPreferredModel,
+          setVimEnabled,
+        });
+        if (!result.clearInput) {
+          setInput(originalInput);
+        }
+        return;
       }
 
       setHasAttemptedCreateSend(true);
@@ -1361,9 +1391,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         setImageAttachments([]);
         // Height is managed by VimTextArea's useLayoutEffect - clear inline style
         // to let CSS min-height take over
-        if (inputRef.current) {
-          inputRef.current.style.height = "";
-        }
+        resetInputHeight();
       }
       return;
     }

@@ -20,7 +20,8 @@ import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { RUNTIME_MODE, parseRuntimeModeAndHost } from "@/common/types/runtime";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
-import { WORKSPACE_ONLY_COMMANDS } from "@/constants/slashCommands";
+import { isCommandAvailableInVariant } from "@/constants/slashCommands";
+import { getCommandKeyFromParsed } from "@/browser/utils/slashCommands/commandKey";
 import type { Toast } from "@/browser/components/ChatInputToast";
 import type { ParsedCommand } from "@/browser/utils/slashCommands/types";
 import { formatCompactionCommandLine } from "@/browser/utils/compaction/format";
@@ -248,20 +249,18 @@ export async function processSlashCommand(
     return { clearInput: true, toastShown: false };
   }
 
+  const commandKey = getCommandKeyFromParsed(parsed);
+  if (commandKey && !isCommandAvailableInVariant(commandKey, variant)) {
+    setToast({
+      id: Date.now().toString(),
+      type: "error",
+      message: "Command not available during workspace creation",
+    });
+    return { clearInput: false, toastShown: true };
+  }
+
   // 2. Workspace Commands
-  const isWorkspaceCommand = WORKSPACE_ONLY_COMMANDS.has(parsed.type);
-
-  if (isWorkspaceCommand) {
-    if (variant !== "workspace") {
-      setToast({
-        id: Date.now().toString(),
-        type: "error",
-        message: "Command not available during workspace creation",
-      });
-      return { clearInput: false, toastShown: true };
-    }
-
-    // Dispatch workspace commands
+  if (variant === "workspace") {
     switch (parsed.type) {
       case "clear":
         return handleClearCommand(parsed, context);

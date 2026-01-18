@@ -7,6 +7,18 @@ describe("getSlashCommandSuggestions", () => {
     expect(getSlashCommandSuggestions("")).toEqual([]);
   });
 
+  it("filters commands for creation variant", () => {
+    const suggestions = getSlashCommandSuggestions("/", { variant: "creation" });
+    const labels = suggestions.map((s) => s.display);
+
+    expect(labels).toContain("/init");
+    expect(labels).toContain("/model");
+    expect(labels).toContain("/providers");
+    expect(labels).toContain("/vim");
+    expect(labels).not.toContain("/clear");
+    expect(labels).not.toContain("/mcp");
+  });
+
   it("suggests top level commands when starting with slash", () => {
     const suggestions = getSlashCommandSuggestions("/");
     const labels = suggestions.map((s) => s.display);

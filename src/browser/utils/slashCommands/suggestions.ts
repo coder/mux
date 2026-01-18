@@ -13,7 +13,7 @@ import type {
 
 export type { SlashSuggestion } from "./types";
 
-import { WORKSPACE_ONLY_COMMANDS } from "@/constants/slashCommands";
+import { isCommandAvailableInVariant } from "@/constants/slashCommands";
 
 const COMMAND_DEFINITIONS = getSlashCommandDefinitions();
 
@@ -52,8 +52,8 @@ function buildTopLevelSuggestions(
         replacement,
       };
     },
-    // In creation mode, filter out workspace-only commands
-    isCreation ? (definition) => !WORKSPACE_ONLY_COMMANDS.has(definition.key) : undefined
+    // In creation mode, only show commands that are available before a workspace exists
+    isCreation ? (definition) => isCommandAvailableInVariant(definition.key, "creation") : undefined
   );
 }
 
@@ -111,8 +111,8 @@ export function getSlashCommandSuggestions(
     return [];
   }
 
-  // In creation mode, don't show subcommand suggestions for workspace-only commands
-  if (context.variant === "creation" && WORKSPACE_ONLY_COMMANDS.has(rootKey)) {
+  // In creation mode, don't show subcommand suggestions for unavailable commands
+  if (context.variant === "creation" && !isCommandAvailableInVariant(rootKey, "creation")) {
     return [];
   }
 
