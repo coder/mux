@@ -7,6 +7,12 @@ import { Button } from "@/browser/components/ui/button";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { copyToClipboard } from "@/browser/utils/clipboard";
 
+const JsonOutput: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <div className="bg-code-bg text-text mt-3 max-h-[40vh] w-full max-w-full min-w-0 overflow-auto rounded-sm">
+    <pre className="min-w-max p-3 font-mono text-xs leading-relaxed whitespace-pre">{children}</pre>
+  </div>
+);
+
 interface DebugLlmRequestModalProps {
   workspaceId: string;
   open: boolean;
@@ -73,8 +79,8 @@ export const DebugLlmRequestModal: React.FC<DebugLlmRequestModalProps> = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent maxWidth="900px" maxHeight="85vh" className="gap-5">
-        <DialogHeader className="space-y-3">
+      <DialogContent maxWidth="900px" maxHeight="85vh" className="min-w-0 gap-5 overflow-x-hidden">
+        <DialogHeader className="min-w-0 space-y-3">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="space-y-1">
               <DialogTitle>Last LLM request</DialogTitle>
@@ -112,7 +118,7 @@ export const DebugLlmRequestModal: React.FC<DebugLlmRequestModalProps> = ({
           </div>
         </DialogHeader>
 
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           {error && <div className="text-danger-soft text-sm">{error}</div>}
 
           {loading && !snapshot && (
@@ -126,7 +132,7 @@ export const DebugLlmRequestModal: React.FC<DebugLlmRequestModalProps> = ({
           )}
 
           {snapshot && (
-            <div className="space-y-4">
+            <div className="min-w-0 space-y-4">
               <div className="border-border-light bg-foreground/5 rounded-md border p-3 text-xs">
                 <div className="text-muted flex flex-wrap items-center gap-x-2 gap-y-1">
                   <span className="text-foreground font-mono">{snapshot.providerName}</span>
@@ -162,8 +168,11 @@ export const DebugLlmRequestModal: React.FC<DebugLlmRequestModalProps> = ({
                 )}
               </div>
 
-              <div className="space-y-3">
-                <details open className="border-border-light bg-modal-bg rounded-md border p-3">
+              <div className="min-w-0 space-y-3">
+                <details
+                  open
+                  className="border-border-light bg-modal-bg min-w-0 rounded-md border p-3"
+                >
                   <summary className="text-foreground cursor-pointer text-sm font-medium">
                     System message
                   </summary>
@@ -172,22 +181,18 @@ export const DebugLlmRequestModal: React.FC<DebugLlmRequestModalProps> = ({
                   </pre>
                 </details>
 
-                <details className="border-border-light bg-modal-bg rounded-md border p-3">
+                <details className="border-border-light bg-modal-bg min-w-0 rounded-md border p-3">
                   <summary className="text-foreground cursor-pointer text-sm font-medium">
                     Messages
                   </summary>
-                  <pre className="bg-code-bg text-text mt-3 max-h-[40vh] overflow-auto rounded-sm p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap">
-                    {JSON.stringify(snapshot.messages, null, 2)}
-                  </pre>
+                  <JsonOutput>{JSON.stringify(snapshot.messages, null, 2)}</JsonOutput>
                 </details>
 
-                <details className="border-border-light bg-modal-bg rounded-md border p-3">
+                <details className="border-border-light bg-modal-bg min-w-0 rounded-md border p-3">
                   <summary className="text-foreground cursor-pointer text-sm font-medium">
                     Full JSON
                   </summary>
-                  <pre className="bg-code-bg text-text mt-3 max-h-[40vh] overflow-auto rounded-sm p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap">
-                    {json}
-                  </pre>
+                  <JsonOutput>{json}</JsonOutput>
                 </details>
               </div>
             </div>
