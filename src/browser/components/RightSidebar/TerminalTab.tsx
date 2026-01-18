@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React from "react";
 import { TerminalView } from "@/browser/components/TerminalView";
 import type { TabType } from "@/browser/types/rightSidebar";
 import { getTerminalSessionId } from "@/browser/types/rightSidebar";
@@ -27,18 +27,6 @@ export const TerminalTab: React.FC<TerminalTabProps> = (props) => {
   // Extract session ID from tab type - must exist (sessions created before tab added)
   const sessionId = getTerminalSessionId(props.tabType);
 
-  // Destructure for use in effect (per eslint react-hooks/exhaustive-deps)
-  const { autoFocus, onAutoFocusConsumed } = props;
-
-  // Consume the autoFocus state after it's been passed to TerminalView.
-  // By the time this effect runs, React has committed the render and TerminalView
-  // has already received the autoFocus prop. Safe to clear immediately.
-  useEffect(() => {
-    if (autoFocus) {
-      onAutoFocusConsumed?.();
-    }
-  }, [autoFocus, onAutoFocusConsumed]);
-
   if (!sessionId) {
     // This should never happen - RightSidebar creates session before adding tab
     return (
@@ -55,6 +43,7 @@ export const TerminalTab: React.FC<TerminalTabProps> = (props) => {
       visible={props.visible}
       setDocumentTitle={false}
       onTitleChange={props.onTitleChange}
+      onAutoFocusConsumed={props.onAutoFocusConsumed}
       autoFocus={props.autoFocus ?? false}
     />
   );

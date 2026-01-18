@@ -18,6 +18,8 @@ interface TerminalViewProps {
   setDocumentTitle?: boolean;
   /** Called when the terminal title changes (via OSC escape sequences from running processes) */
   onTitleChange?: (title: string) => void;
+  /** Called once after auto-focus successfully lands (used to clear parent state). */
+  onAutoFocusConsumed?: () => void;
   /**
    * Whether to auto-focus the terminal on mount/visibility change.
    *
@@ -33,13 +35,14 @@ export function TerminalView({
   visible,
   setDocumentTitle = true,
   onTitleChange,
+  onAutoFocusConsumed,
   autoFocus = true,
 }: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
+  const autoFocusRef = useRef(autoFocus);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const [terminalError, setTerminalError] = useState<string | null>(null);
-  const pendingAutoFocusRef = useRef(false);
   const [terminalReady, setTerminalReady] = useState(false);
   // Track whether we've received the initial screen state from backend
   const [isLoading, setIsLoading] = useState(true);
@@ -66,34 +69,69 @@ export function TerminalView({
     void setWindowDetails();
   }, [api, workspaceId, setDocumentTitle]);
 
-  // RightSidebar clears autoFocus immediately, but ghostty init is async.
-  // Stash the intent so we can focus once the terminal is ready.
-  useEffect(() => {
-    if (autoFocus) {
-      pendingAutoFocusRef.current = true;
+  const autoFocusConsumedRef = useRef(false);
+
+  const consumeAutoFocus = useCallback(() => {
+    if (autoFocusConsumedRef.current) {
+      return;
     }
+    autoFocusConsumedRef.current = true;
+    onAutoFocusConsumed?.();
+  }, [onAutoFocusConsumed]);
+
+  useEffect(() => {
+    autoFocusRef.current = autoFocus;
+    autoFocusConsumedRef.current = false;
   }, [autoFocus]);
 
   useEffect(() => {
-    if (!pendingAutoFocusRef.current || !visible || !terminalReady) {
+    if (!autoFocus || !visible || !terminalReady || autoFocusConsumedRef.current) {
       return;
     }
 
-    const term = termRef.current;
-    if (!term) {
-      return;
-    }
+    let cancelled = false;
+    let attempts = 0;
+    const maxAttempts = 60;
 
-    const rafId = requestAnimationFrame(() => {
+    const tryFocus = () => {
+      if (cancelled) {
+        return;
+      }
+
+      const term = termRef.current;
+      const container = containerRef.current;
+      if (!term || !container) {
+        return;
+      }
+
       term.focus();
-      // Clear after we attempt focus so rapid autoFocus resets don't drop the request.
-      pendingAutoFocusRef.current = false;
-      // Surface focus state for e2e (Playwright can be flaky querying ghostty focus).
-      containerRef.current?.setAttribute("data-terminal-autofocus", "true");
-    });
+      const textarea = container.querySelector("textarea");
+      if (textarea instanceof HTMLTextAreaElement) {
+        textarea.focus();
+      }
 
-    return () => cancelAnimationFrame(rafId);
-  }, [terminalReady, visible, autoFocus]);
+      const active = document.activeElement;
+      const isFocused = active instanceof HTMLElement && container.contains(active);
+      if (isFocused) {
+        consumeAutoFocus();
+        return;
+      }
+
+      attempts += 1;
+      if (attempts < maxAttempts) {
+        requestAnimationFrame(tryFocus);
+      } else {
+        consumeAutoFocus();
+      }
+    };
+
+    const rafId = requestAnimationFrame(tryFocus);
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(rafId);
+    };
+  }, [autoFocus, visible, terminalReady, consumeAutoFocus]);
 
   // Reset loading state when session changes
   useEffect(() => {
@@ -198,8 +236,7 @@ export function TerminalView({
       return;
     }
 
-    // Snapshot the pending focus request so one-shot autoFocus updates don't restart init.
-    const shouldAutoFocusOnInit = pendingAutoFocusRef.current;
+    const shouldAutoFocusOnInit = autoFocusRef.current;
 
     // StrictMode will run this effect twice in dev (setup → cleanup → setup).
     // If the first async init completes after cleanup, we can end up with two ghostty-web
@@ -384,14 +421,19 @@ export function TerminalView({
     const container = containerRef.current;
 
     const handleFocusIn = () => {
+      container.setAttribute("data-terminal-autofocus", "true");
       if (termRef.current) {
         termRef.current.options.cursorBlink = true;
+      }
+      if (autoFocus) {
+        consumeAutoFocus();
       }
     };
 
     const handleFocusOut = (e: FocusEvent) => {
       // Only blur if focus is leaving the container entirely
       if (!container.contains(e.relatedTarget as Node)) {
+        container.removeAttribute("data-terminal-autofocus");
         if (termRef.current) {
           termRef.current.options.cursorBlink = false;
         }
@@ -404,8 +446,9 @@ export function TerminalView({
     return () => {
       container.removeEventListener("focusin", handleFocusIn);
       container.removeEventListener("focusout", handleFocusOut);
+      container.removeAttribute("data-terminal-autofocus");
     };
-  }, [terminalReady]);
+  }, [autoFocus, consumeAutoFocus, terminalReady]);
 
   // Resize on container size change
   useEffect(() => {

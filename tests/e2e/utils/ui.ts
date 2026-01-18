@@ -481,6 +481,7 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
 
     /**
      * Wait for the terminal to own focus (ghostty's hidden textarea).
+     * Uses the focus marker from TerminalView + activeElement checks.
      */
     async expectTerminalFocused(): Promise<void> {
       await expect(page.locator("[data-terminal-container]")).toBeVisible();

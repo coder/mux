@@ -217,7 +217,7 @@ interface RightSidebarTabsetNodeProps {
   onTerminalTitleChange: (tab: TabType, title: string) => void;
   /** Map of tab → global position index (0-based) for keybind tooltips */
   tabPositions: Map<TabType, number>;
-  /** Terminal session ID that should be auto-focused (consumed and cleared on mount) */
+  /** Terminal session ID that should be auto-focused (cleared once focus lands) */
   autoFocusTerminalSession: string | null;
   /** Callback to request terminal focus when a tab is selected */
   onRequestTerminalFocus: (sessionId: string) => void;
