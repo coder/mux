@@ -204,6 +204,8 @@ interface WorkspaceChatTransientState {
   replayingHistory: boolean;
   queuedMessage: QueuedMessage | null;
   liveBashOutput: Map<string, LiveBashOutputInternal>;
+  lastEventAt: number;
+  lastOutboundAt: number | null;
 }
 
 function createInitialChatTransientState(): WorkspaceChatTransientState {
@@ -214,8 +216,15 @@ function createInitialChatTransientState(): WorkspaceChatTransientState {
     replayingHistory: false,
     queuedMessage: null,
     liveBashOutput: new Map(),
+    lastEventAt: Date.now(),
+    lastOutboundAt: null,
   };
 }
+
+const ON_CHAT_PENDING_START_TIMEOUT_MS = 15000;
+const ON_CHAT_QUEUED_TIMEOUT_MS = 300000;
+const ON_CHAT_ACTIVE_STREAM_TIMEOUT_MS = 60000;
+const ON_CHAT_STALL_CHECK_MS = 5000;
 
 const ON_CHAT_RETRY_BASE_MS = 250;
 const ON_CHAT_RETRY_MAX_MS = 5000;
@@ -1265,7 +1274,11 @@ export class WorkspaceStore {
     aggregator.clear();
 
     // Reset per-workspace transient state so the next replay rebuilds from the backend source of truth.
-    this.chatTransientState.set(workspaceId, createInitialChatTransientState());
+    // Preserve outbound send expectations so stalled subscriptions keep retrying until events arrive.
+    const previousOutboundAt = this.chatTransientState.get(workspaceId)?.lastOutboundAt ?? null;
+    const nextTransient = createInitialChatTransientState();
+    nextTransient.lastOutboundAt = previousOutboundAt;
+    this.chatTransientState.set(workspaceId, nextTransient);
 
     this.states.bump(workspaceId);
     this.checkAndBumpRecencyIfChanged();
@@ -1284,8 +1297,61 @@ export class WorkspaceStore {
         return;
       }
 
+      const attemptController = new AbortController();
+      const { signal: attemptSignal } = attemptController;
+      const abortAttempt = () => attemptController.abort();
+      signal.addEventListener("abort", abortAttempt, { once: true });
+
+      let stalled = false;
+      let wasExpecting = false;
+
+      const watchdog = setInterval(() => {
+        if (signal.aborted || attemptSignal.aborted) {
+          return;
+        }
+
+        const aggregator = this.aggregators.get(workspaceId);
+        const transient = this.chatTransientState.get(workspaceId);
+        if (!aggregator || !transient) {
+          return;
+        }
+
+        const now = Date.now();
+        const hasActiveStream = aggregator.getActiveStreams().length > 0;
+        const hasQueuedMessage = transient.queuedMessage !== null;
+        const pendingStreamStartTime = aggregator.getPendingStreamStartTime();
+        const waitingForStreamStart = pendingStreamStartTime !== null && !hasQueuedMessage;
+        const hasOutbound = transient.lastOutboundAt !== null;
+
+        const shouldExpect =
+          hasActiveStream || hasQueuedMessage || waitingForStreamStart || hasOutbound;
+
+        if (!shouldExpect) {
+          wasExpecting = false;
+          return;
+        }
+
+        if (!wasExpecting) {
+          wasExpecting = true;
+          transient.lastEventAt = now;
+          return;
+        }
+
+        const timeoutMs = hasActiveStream
+          ? ON_CHAT_ACTIVE_STREAM_TIMEOUT_MS
+          : hasQueuedMessage
+            ? ON_CHAT_QUEUED_TIMEOUT_MS
+            : ON_CHAT_PENDING_START_TIMEOUT_MS;
+
+        if (now - transient.lastEventAt > timeoutMs) {
+          stalled = true;
+          console.warn(`[WorkspaceStore] onChat stalled for ${workspaceId}; restarting...`);
+          attemptController.abort();
+        }
+      }, ON_CHAT_STALL_CHECK_MS);
+
       try {
-        const iterator = await client.workspace.onChat({ workspaceId }, { signal });
+        const iterator = await client.workspace.onChat({ workspaceId }, { signal: attemptSignal });
 
         for await (const data of iterator) {
           if (signal.aborted) {
@@ -1294,6 +1360,12 @@ export class WorkspaceStore {
 
           // Connection is alive again - don't carry old backoff into the next failure.
           attempt = 0;
+
+          const transient = this.chatTransientState.get(workspaceId);
+          if (transient) {
+            transient.lastEventAt = Date.now();
+            transient.lastOutboundAt = null;
+          }
 
           queueMicrotask(() => {
             this.handleChatMessage(workspaceId, data);
@@ -1305,9 +1377,11 @@ export class WorkspaceStore {
           return;
         }
 
-        console.warn(
-          `[WorkspaceStore] onChat subscription ended unexpectedly for ${workspaceId}; retrying...`
-        );
+        if (!stalled) {
+          console.warn(
+            `[WorkspaceStore] onChat subscription ended unexpectedly for ${workspaceId}; retrying...`
+          );
+        }
       } catch (error) {
         // Suppress errors when subscription was intentionally cleaned up
         if (signal.aborted) {
@@ -1318,7 +1392,9 @@ export class WorkspaceStore {
         // 1. Schema validation fails (event doesn't match WorkspaceChatMessageSchema)
         // 2. Workspace was removed on server side (iterator ends with error)
         // 3. Connection dropped (WebSocket/MessagePort error)
-        if (isIteratorValidationFailed(error)) {
+        if (attemptSignal.aborted && stalled) {
+          // Watchdog requested restart; skip noisy logging.
+        } else if (isIteratorValidationFailed(error)) {
           // Only suppress if workspace no longer exists (was removed during the race)
           if (!this.isWorkspaceSubscribed(workspaceId)) {
             return;
@@ -1330,6 +1406,9 @@ export class WorkspaceStore {
         } else {
           console.error(`[WorkspaceStore] Error in onChat subscription for ${workspaceId}:`, error);
         }
+      } finally {
+        clearInterval(watchdog);
+        signal.removeEventListener("abort", abortAttempt);
       }
 
       const delayMs = calculateOnChatBackoffMs(attempt);
@@ -1577,6 +1656,16 @@ export class WorkspaceStore {
     this.fileModifyingToolSubs.bump(workspaceId);
   }
 
+  /**
+   * Record that the user sent a message so we can detect stalled onChat streams.
+   */
+  noteOutboundMessage(workspaceId: string): void {
+    const transient = this.assertChatTransientState(workspaceId);
+    const now = Date.now();
+    transient.lastOutboundAt = now;
+    transient.lastEventAt = now;
+  }
+
   // Private methods
 
   /**
@@ -1624,6 +1713,8 @@ export class WorkspaceStore {
     const aggregator = this.assertGet(workspaceId);
 
     const transient = this.assertChatTransientState(workspaceId);
+    transient.lastEventAt = Date.now();
+    transient.lastOutboundAt = null;
 
     if (isCaughtUpMessage(data)) {
       // Check if there's an active stream in buffered events (reconnection scenario)

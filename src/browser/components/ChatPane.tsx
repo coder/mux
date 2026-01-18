@@ -374,6 +374,8 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   }, [setEditingMessage]);
 
   const handleMessageSent = useCallback(() => {
+    storeRaw.noteOutboundMessage(workspaceId);
+
     // Auto-background any running foreground bash when user sends a new message
     // This prevents the user from waiting for the bash to complete before their message is processed
     autoBackgroundOnSend();
@@ -384,7 +386,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     // Reset autoRetry when user sends a message
     // User action = clear intent: "I'm actively using this workspace"
     setAutoRetry(true);
-  }, [setAutoScroll, setAutoRetry, autoBackgroundOnSend]);
+  }, [storeRaw, workspaceId, setAutoScroll, setAutoRetry, autoBackgroundOnSend]);
 
   const handleClearHistory = useCallback(
     async (percentage = 1.0) => {
