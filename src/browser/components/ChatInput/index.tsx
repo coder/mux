@@ -1350,21 +1350,31 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           return;
         }
 
-        const result = await processSlashCommand(parsed, {
-          api,
-          variant,
-          sendMessageOptions,
-          setInput,
-          setImageAttachments,
-          setIsSending,
-          setToast,
-          resetInputHeight,
-          onProviderConfig: props.onProviderConfig,
-          onModelChange: props.onModelChange,
-          setPreferredModel,
-          setVimEnabled,
-        });
-        if (!result.clearInput) {
+        try {
+          const result = await processSlashCommand(parsed, {
+            api,
+            variant,
+            sendMessageOptions,
+            setInput,
+            setImageAttachments,
+            setIsSending,
+            setToast,
+            resetInputHeight,
+            onProviderConfig: props.onProviderConfig,
+            onModelChange: props.onModelChange,
+            setPreferredModel,
+            setVimEnabled,
+          });
+          if (!result.clearInput) {
+            setInput(originalInput);
+          }
+        } catch (error) {
+          console.error("Failed to run slash command:", error);
+          setIsSending(false);
+          pushToast({
+            type: "error",
+            message: error instanceof Error ? error.message : "Failed to run command",
+          });
           setInput(originalInput);
         }
         return;
