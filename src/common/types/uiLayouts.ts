@@ -1,6 +1,6 @@
 import assert from "@/common/utils/assert";
 import type { Keybind } from "@/common/types/keybind";
-import { normalizeKeybind } from "@/common/types/keybind";
+import { hasModifierKeybind, normalizeKeybind } from "@/common/types/keybind";
 
 export type LayoutSlotNumber = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
 
@@ -179,7 +179,12 @@ function normalizeLayoutSlot(raw: unknown): LayoutSlot | undefined {
   }
 
   const presetId = normalizeOptionalNonEmptyString(record.presetId);
-  const keybindOverride = normalizeKeybind(record.keybindOverride);
+  const keybindOverrideRaw = normalizeKeybind(record.keybindOverride);
+  const keybindOverride = keybindOverrideRaw
+    ? hasModifierKeybind(keybindOverrideRaw)
+      ? keybindOverrideRaw
+      : undefined
+    : undefined;
 
   if (!presetId && !keybindOverride) {
     return undefined;
