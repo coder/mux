@@ -1376,6 +1376,11 @@ export class WorkspaceStore {
       const { signal: attemptSignal } = attemptController;
       const abortAttempt = () => attemptController.abort();
       signal.addEventListener("abort", abortAttempt, { once: true });
+      if (signal.aborted) {
+        abortAttempt();
+        signal.removeEventListener("abort", abortAttempt);
+        return;
+      }
 
       const watchdog = this.startOnChatWatchdog(workspaceId, {
         signal,
