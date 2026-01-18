@@ -30,7 +30,6 @@ import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sour
 import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
 import type { UIMode } from "@/common/types/mode";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
-import { markWorkspaceSwitchStart } from "./utils/workspaceSwitchPerf";
 import { isWorkspaceForkSwitchEvent } from "./utils/workspaceEvents";
 import {
   getAgentIdKey,
@@ -134,13 +133,6 @@ function AppInner() {
   const prevWorkspaceRef = useRef<WorkspaceSelection | null>(null);
   useEffect(() => {
     const prev = prevWorkspaceRef.current;
-    const prevWorkspaceId = prev?.workspaceId ?? null;
-    const nextWorkspaceId = selectedWorkspace?.workspaceId ?? null;
-
-    if (nextWorkspaceId && nextWorkspaceId !== prevWorkspaceId) {
-      markWorkspaceSwitchStart(nextWorkspaceId, prevWorkspaceId);
-    }
-
     if (prev && selectedWorkspace && prev.workspaceId !== selectedWorkspace.workspaceId) {
       telemetry.workspaceSwitched(prev.workspaceId, selectedWorkspace.workspaceId);
     }
