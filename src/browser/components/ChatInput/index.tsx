@@ -1436,6 +1436,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   skillName: skill.name,
                   scope: skill.scope,
                 },
+                // In the creation flow, skills are discovered from the project path. If the skill is
+                // project-scoped (often untracked in git), it may not exist in the new worktree.
+                // Force project-path discovery for this send so resolution matches suggestions.
+                ...(skill.scope === "project" ? { disableWorkspaceAgents: true } : {}),
               };
             }
           }
