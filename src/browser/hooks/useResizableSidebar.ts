@@ -23,6 +23,8 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { getStorageChangeEvent } from "@/common/constants/events";
+import { readPersistedString, updatePersistedState } from "@/browser/hooks/usePersistedState";
 
 interface UseResizableSidebarOptions {
   /** Enable/disable resize functionality (typically tied to tab state) */
@@ -81,12 +83,47 @@ export function useResizableSidebar({
   // Persist width changes to localStorage
   useEffect(() => {
     if (!enabled) return;
-    try {
-      localStorage.setItem(storageKey, width.toString());
-    } catch {
-      // Ignore storage errors (private browsing, quota exceeded, etc.)
-    }
+    updatePersistedState<number>(storageKey, width);
   }, [width, storageKey, enabled]);
+
+  // Keep width in sync when updated externally (e.g., layout presets)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const handleExternalUpdate = () => {
+      if (isResizing) {
+        return;
+      }
+
+      const stored = readPersistedString(storageKey);
+      if (!stored) {
+        return;
+      }
+
+      const parsed = parseInt(stored, 10);
+      if (!Number.isFinite(parsed)) {
+        return;
+      }
+
+      const clamped = Math.max(minWidth, Math.min(maxWidth, parsed));
+      setWidth((prev) => (prev === clamped ? prev : clamped));
+    };
+
+    const eventName = getStorageChangeEvent(storageKey);
+    window.addEventListener(eventName, handleExternalUpdate as EventListener);
+
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === storageKey) {
+        handleExternalUpdate();
+      }
+    };
+    window.addEventListener("storage", handleStorage);
+
+    return () => {
+      window.removeEventListener(eventName, handleExternalUpdate as EventListener);
+      window.removeEventListener("storage", handleStorage);
+    };
+  }, [storageKey, minWidth, maxWidth, isResizing]);
 
   /**
    * Handle mouse movement during drag

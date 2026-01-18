@@ -13,7 +13,13 @@ import {
   updatePersistedState,
   readPersistedState,
 } from "./hooks/usePersistedState";
-import { matchesKeybind, KEYBINDS } from "./utils/ui/keybinds";
+import { getEffectiveSlotKeybind, getPresetForSlot } from "@/browser/utils/uiLayouts";
+import {
+  matchesKeybind,
+  KEYBINDS,
+  isEditableElement,
+  isTerminalFocused,
+} from "./utils/ui/keybinds";
 import { buildSortedWorkspacesByProject } from "./utils/ui/workspaceFiltering";
 import { useResumeManager } from "./hooks/useResumeManager";
 import { useUnreadTracking } from "./hooks/useUnreadTracking";
@@ -57,6 +63,7 @@ import { SplashScreenProvider } from "./components/splashScreens/SplashScreenPro
 import { TutorialProvider } from "./contexts/TutorialContext";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { useFeatureFlags } from "./contexts/FeatureFlagsContext";
+import { UILayoutsProvider, useUILayouts } from "@/browser/contexts/UILayoutsContext";
 import { FeatureFlagsProvider } from "./contexts/FeatureFlagsContext";
 import { ExperimentsProvider } from "./contexts/ExperimentsContext";
 import { getWorkspaceSidebarKey } from "./utils/workspace";
@@ -79,13 +86,14 @@ function AppInner() {
     beginWorkspaceCreation,
   } = useWorkspaceContext();
   const { theme, setTheme, toggleTheme } = useTheme();
-  const { open: openSettings } = useSettings();
+  const { open: openSettings, isOpen: isSettingsOpen } = useSettings();
   const setThemePreference = useCallback(
     (nextTheme: ThemeMode) => {
       setTheme(nextTheme);
     },
     [setTheme]
   );
+  const { layoutPresets, applySlotToWorkspace, saveCurrentWorkspaceToSlot } = useUILayouts();
   const { api, status, error, authenticate } = useAPI();
 
   const {
@@ -99,7 +107,9 @@ function AppInner() {
 
   // Auto-collapse sidebar on mobile by default
   const isMobile = typeof window !== "undefined" && window.innerWidth <= 768;
-  const [sidebarCollapsed, setSidebarCollapsed] = usePersistedState("sidebarCollapsed", isMobile);
+  const [sidebarCollapsed, setSidebarCollapsed] = usePersistedState("sidebarCollapsed", isMobile, {
+    listener: true,
+  });
 
   // Sync sidebar collapse state to root element for CSS-based titlebar insets
   useEffect(() => {
@@ -461,6 +471,19 @@ function AppInner() {
     onToggleTheme: toggleTheme,
     onSetTheme: setThemePreference,
     onOpenSettings: openSettings,
+    layoutPresets,
+    onApplyLayoutSlot: (workspaceId, slot) => {
+      void applySlotToWorkspace(workspaceId, slot).catch(() => {
+        // Best-effort only.
+      });
+    },
+    onCaptureLayoutSlot: async (workspaceId, slot, name) => {
+      try {
+        await saveCurrentWorkspaceToSlot(workspaceId, slot, name);
+      } catch {
+        // Best-effort only.
+      }
+    },
     onClearTimingStats: (workspaceId: string) => workspaceStore.clearTimingStats(workspaceId),
     api,
   };
@@ -531,6 +554,56 @@ function AppInner() {
     openCommandPalette,
     creationProjectPath,
     openSettings,
+  ]);
+
+  // Layout slot hotkeys (Ctrl/Cmd+Alt+1..9 by default)
+  useEffect(() => {
+    const handleKeyDownCapture = (e: KeyboardEvent) => {
+      if (isCommandPaletteOpen || isSettingsOpen) {
+        return;
+      }
+
+      if (!selectedWorkspace) {
+        return;
+      }
+
+      // Don't let global slot hotkeys fire while the user is typing.
+      if (isEditableElement(e.target) || isTerminalFocused(e.target)) {
+        return;
+      }
+
+      // AltGr is commonly implemented as Ctrl+Alt; avoid treating it as our shortcut.
+      if (typeof e.getModifierState === "function" && e.getModifierState("AltGraph")) {
+        return;
+      }
+
+      for (const slot of [1, 2, 3, 4, 5, 6, 7, 8, 9] as const) {
+        const preset = getPresetForSlot(layoutPresets, slot);
+        if (!preset) {
+          continue;
+        }
+
+        const keybind = getEffectiveSlotKeybind(layoutPresets, slot);
+        if (!matchesKeybind(e, keybind)) {
+          continue;
+        }
+
+        e.preventDefault();
+        void applySlotToWorkspace(selectedWorkspace.workspaceId, slot).catch(() => {
+          // Best-effort only.
+        });
+        return;
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDownCapture, { capture: true });
+    return () => window.removeEventListener("keydown", handleKeyDownCapture, { capture: true });
+  }, [
+    isCommandPaletteOpen,
+    isSettingsOpen,
+    selectedWorkspace,
+    layoutPresets,
+    applySlotToWorkspace,
   ]);
 
   // Subscribe to menu bar "Open Settings" (macOS Cmd+, from app menu)
@@ -794,17 +867,19 @@ function App() {
   return (
     <ExperimentsProvider>
       <FeatureFlagsProvider>
-        <TooltipProvider delayDuration={200}>
-          <SettingsProvider>
-            <SplashScreenProvider>
-              <TutorialProvider>
-                <CommandRegistryProvider>
-                  <AppInner />
-                </CommandRegistryProvider>
-              </TutorialProvider>
-            </SplashScreenProvider>
-          </SettingsProvider>
-        </TooltipProvider>
+        <UILayoutsProvider>
+          <TooltipProvider delayDuration={200}>
+            <SettingsProvider>
+              <SplashScreenProvider>
+                <TutorialProvider>
+                  <CommandRegistryProvider>
+                    <AppInner />
+                  </CommandRegistryProvider>
+                </TutorialProvider>
+              </SplashScreenProvider>
+            </SettingsProvider>
+          </TooltipProvider>
+        </UILayoutsProvider>
       </FeatureFlagsProvider>
     </ExperimentsProvider>
   );
