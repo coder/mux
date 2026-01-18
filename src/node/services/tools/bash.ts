@@ -792,6 +792,9 @@ File will be automatically cleaned up when stream ends.`;
             error: output,
             exitCode: -1,
             wall_duration_ms,
+            ui_only: {
+              severity: "soft",
+            },
           };
         } catch (err) {
           // If temp file creation fails, fall back to original error

@@ -1,6 +1,10 @@
 import { tool } from "ai";
 import type { FileEditInsertToolArgs, FileEditInsertToolResult } from "@/common/types/tools";
-import { EDIT_FAILED_NOTE_PREFIX, NOTE_READ_FILE_RETRY } from "@/common/types/tools";
+import {
+  EDIT_FAILED_NOTE_PREFIX,
+  FILE_EDIT_DIFF_OMITTED_MESSAGE,
+  NOTE_READ_FILE_RETRY,
+} from "@/common/types/tools";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import { generateDiff, validateAndCorrectPath, validatePlanModeAccess } from "./fileCommon";
@@ -98,7 +102,12 @@ export const createFileEditInsertTool: ToolFactory = (config: ToolConfiguration)
           const diff = generateDiff(resolvedPath, "", content);
           return {
             success: true,
-            diff,
+            diff: FILE_EDIT_DIFF_OMITTED_MESSAGE,
+            ui_only: {
+              file_edit: {
+                diff,
+              },
+            },
             ...(pathWarning && { warning: pathWarning }),
           };
         }

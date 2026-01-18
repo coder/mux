@@ -9,6 +9,7 @@ import type {
   FileEditReplaceLinesToolArgs,
   FileEditReplaceLinesToolResult,
 } from "@/common/types/tools";
+import { getToolOutputUiOnly } from "@/common/utils/tools/toolOutputUiOnly";
 import {
   ToolContainer,
   ToolHeader,
@@ -104,6 +105,8 @@ export const FileEditToolCall: React.FC<FileEditToolCallProps> = ({
   const { expanded, toggleExpanded } = useToolExpansion(initialExpanded);
   const [showRaw, setShowRaw] = React.useState(false);
 
+  const uiOnlyDiff = getToolOutputUiOnly(result)?.file_edit?.diff;
+  const diff = result && result.success ? (uiOnlyDiff ?? result.diff) : undefined;
   const filePath = "file_path" in args ? args.file_path : undefined;
 
   // Copy to clipboard with feedback
@@ -111,11 +114,11 @@ export const FileEditToolCall: React.FC<FileEditToolCallProps> = ({
 
   // Build kebab menu items for successful edits with diffs
   const kebabMenuItems: KebabMenuItem[] =
-    result && result.success && result.diff
+    result && result.success && diff
       ? [
           {
             label: copied ? "Copied" : "Copy Patch",
-            onClick: () => void copyToClipboard(result.diff),
+            onClick: () => void copyToClipboard(diff),
           },
           {
             label: showRaw ? "Show Parsed" : "Show Patch",
@@ -139,7 +142,7 @@ export const FileEditToolCall: React.FC<FileEditToolCallProps> = ({
             <span className="font-monospace truncate">{filePath}</span>
           </div>
         </div>
-        {!(result && result.success && result.diff) && (
+        {!(result && result.success && diff) && (
           <StatusIndicator status={status}>{getStatusDisplay(status)}</StatusIndicator>
         )}
         {kebabMenuItems.length > 0 && (
@@ -161,15 +164,15 @@ export const FileEditToolCall: React.FC<FileEditToolCallProps> = ({
               )}
 
               {result.success &&
-                result.diff &&
+                diff &&
                 (showRaw ? (
                   <DiffContainer>
                     <pre className="font-monospace m-0 text-[11px] leading-[1.4] break-words whitespace-pre-wrap">
-                      {result.diff}
+                      {diff}
                     </pre>
                   </DiffContainer>
                 ) : (
-                  renderDiff(result.diff, filePath, onReviewNote)
+                  renderDiff(diff, filePath, onReviewNote)
                 ))}
             </>
           )}

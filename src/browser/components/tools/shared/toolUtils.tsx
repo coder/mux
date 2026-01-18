@@ -1,7 +1,8 @@
 import React, { useState } from "react";
 import { AlertTriangle, Check, CircleDot, X } from "lucide-react";
+import type { ToolErrorResult, ToolOutputSeverity } from "@/common/types/tools";
+import { getToolOutputUiOnly } from "@/common/utils/tools/toolOutputUiOnly";
 import { LoadingDots } from "./ToolPrimitives";
-import type { ToolErrorResult } from "@/common/types/tools";
 
 /**
  * Shared utilities and hooks for tool components
@@ -27,7 +28,10 @@ export function useToolExpansion(initialExpanded = false) {
 /**
  * Get display element for tool status
  */
-export function getStatusDisplay(status: ToolStatus): React.ReactNode {
+export function getStatusDisplay(
+  status: ToolStatus,
+  severity?: ToolOutputSeverity
+): React.ReactNode {
   switch (status) {
     case "executing":
       return (
@@ -43,6 +47,13 @@ export function getStatusDisplay(status: ToolStatus): React.ReactNode {
         </>
       );
     case "failed":
+      if (severity === "soft") {
+        return (
+          <>
+            ⚠<span className="status-text"> warning</span>
+          </>
+        );
+      }
       return (
         <>
           <X aria-hidden="true" className="mr-1 inline-block h-3 w-3 align-[-2px]" />
@@ -91,6 +102,10 @@ export function formatDuration(ms: number): string {
   if (ms < 60000) return `${Math.round(ms / 1000)}s`;
   if (ms < 3600000) return `${Math.round(ms / 60000)}m`;
   return `${Math.round(ms / 3600000)}h`;
+}
+
+export function getToolOutputSeverity(output: unknown): ToolOutputSeverity | undefined {
+  return getToolOutputUiOnly(output)?.severity;
 }
 
 /**

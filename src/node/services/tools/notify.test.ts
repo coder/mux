@@ -80,7 +80,7 @@ describe("notify tool", () => {
 
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.notifiedVia).toBe("browser");
+      expect(result.ui_only?.notify?.notifiedVia).toBe("browser");
       expect(result.title).toBe("Test Notification");
       expect(result.message).toBe("This is a test");
     }
@@ -100,7 +100,7 @@ describe("notify tool", () => {
     // In non-Electron, returns success with browser fallback
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.notifiedVia).toBe("browser");
+      expect(result.ui_only?.notify?.notifiedVia).toBe("browser");
       expect(result.title).toBe("Test Notification");
       expect(result.message).toBeUndefined();
     }
@@ -123,7 +123,7 @@ describe("notify tool", () => {
 
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.workspaceId).toBe("test-workspace-123");
+      expect(result.ui_only?.notify?.workspaceId).toBe("test-workspace-123");
     }
   });
 });

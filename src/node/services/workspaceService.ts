@@ -45,6 +45,7 @@ import type {
   WorkspaceActivitySnapshot,
 } from "@/common/types/workspace";
 import { isDynamicToolPart } from "@/common/types/toolParts";
+import { buildAskUserQuestionSummary } from "@/common/utils/tools/askUserQuestionSummary";
 import {
   AskUserQuestionToolArgsSchema,
   AskUserQuestionToolResultSchema,
@@ -1910,8 +1911,13 @@ export class WorkspaceService extends EventEmitter {
             }
 
             const nextOutput: AskUserQuestionToolSuccessResult = {
-              questions: parsedArgs.data.questions,
-              answers,
+              summary: buildAskUserQuestionSummary(answers),
+              ui_only: {
+                ask_user_question: {
+                  questions: parsedArgs.data.questions,
+                  answers,
+                },
+              },
             };
             output = nextOutput;
 

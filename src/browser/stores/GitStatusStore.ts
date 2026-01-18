@@ -11,6 +11,7 @@ import { STORAGE_KEYS, WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults"
 import { useSyncExternalStore } from "react";
 import { MapStore } from "./MapStore";
 import { isSSHRuntime } from "@/common/types/runtime";
+import { getToolOutputUiOnly } from "@/common/utils/tools/toolOutputUiOnly";
 import { RefreshController } from "@/browser/utils/RefreshController";
 
 /**
@@ -332,8 +333,10 @@ export class GitStatusStore {
       }
 
       if (!result.data.success) {
+        const uiOnlySeverity = getToolOutputUiOnly(result.data)?.severity;
         // Don't log output overflow errors at all (common in large repos, handled gracefully)
         if (
+          uiOnlySeverity !== "soft" &&
           !result.data.error?.includes("OUTPUT TRUNCATED") &&
           !result.data.error?.includes("OUTPUT OVERFLOW")
         ) {

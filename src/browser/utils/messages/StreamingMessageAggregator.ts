@@ -23,6 +23,7 @@ import type {
 } from "@/common/types/stream";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { TodoItem, StatusSetToolResult, NotifyToolResult } from "@/common/types/tools";
+import { getToolOutputUiOnly } from "@/common/utils/tools/toolOutputUiOnly";
 
 import type { WorkspaceChatMessage, StreamErrorMessage, DeleteMessage } from "@/common/orpc/types";
 import { isInitStart, isInitOutput, isInitEnd, isMuxMessage } from "@/common/orpc/types";
@@ -1417,8 +1418,13 @@ export class StreamingMessageAggregator {
     // Handle browser notifications when Electron wasn't available
     if (toolName === "notify" && hasSuccessResult(output)) {
       const result = output as Extract<NotifyToolResult, { success: true }>;
-      if (result.notifiedVia === "browser") {
-        this.sendBrowserNotification(result.title, result.message, result.workspaceId);
+      const uiOnlyNotify = getToolOutputUiOnly(output)?.notify;
+      const legacyNotify = output as { notifiedVia?: string; workspaceId?: string };
+      const notifiedVia = uiOnlyNotify?.notifiedVia ?? legacyNotify.notifiedVia;
+      const workspaceId = uiOnlyNotify?.workspaceId ?? legacyNotify.workspaceId;
+
+      if (notifiedVia === "browser") {
+        this.sendBrowserNotification(result.title, result.message, workspaceId);
       }
     }
 

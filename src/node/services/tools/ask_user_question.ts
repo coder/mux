@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { tool } from "ai";
 
 import type { AskUserQuestionToolResult } from "@/common/types/tools";
+import { buildAskUserQuestionSummary } from "@/common/utils/tools/askUserQuestionSummary";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import { askUserQuestionManager } from "@/node/services/askUserQuestionManager";
@@ -15,7 +16,15 @@ export const createAskUserQuestionTool: ToolFactory = (config: ToolConfiguration
       // Claude Code allows passing pre-filled answers directly. If provided, we can short-circuit
       // and return immediately without prompting.
       if (args.answers && Object.keys(args.answers).length > 0) {
-        return { questions: args.questions, answers: args.answers };
+        return {
+          summary: buildAskUserQuestionSummary(args.answers),
+          ui_only: {
+            ask_user_question: {
+              questions: args.questions,
+              answers: args.answers,
+            },
+          },
+        };
       }
 
       assert(config.workspaceId, "ask_user_question requires a workspaceId");
@@ -29,7 +38,15 @@ export const createAskUserQuestionTool: ToolFactory = (config: ToolConfiguration
 
       if (!abortSignal) {
         const answers = await pendingPromise;
-        return { questions: args.questions, answers };
+        return {
+          summary: buildAskUserQuestionSummary(answers),
+          ui_only: {
+            ask_user_question: {
+              questions: args.questions,
+              answers,
+            },
+          },
+        };
       }
 
       if (abortSignal.aborted) {
@@ -60,7 +77,15 @@ export const createAskUserQuestionTool: ToolFactory = (config: ToolConfiguration
       const answers = await Promise.race([pendingPromise, abortPromise]);
       assert(answers && typeof answers === "object", "Expected answers to be an object");
 
-      return { questions: args.questions, answers };
+      return {
+        summary: buildAskUserQuestionSummary(answers),
+        ui_only: {
+          ask_user_question: {
+            questions: args.questions,
+            answers,
+          },
+        },
+      };
     },
   });
 };

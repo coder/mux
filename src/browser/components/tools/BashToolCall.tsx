@@ -19,6 +19,7 @@ import {
   useToolExpansion,
   getStatusDisplay,
   formatDuration,
+  getToolOutputSeverity,
   type ToolStatus,
 } from "./shared/toolUtils";
 import { cn } from "@/common/lib/utils";
@@ -195,6 +196,7 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
   const showLiveOutput =
     !isBackground && (status === "executing" || (Boolean(liveOutput) && !resultHasOutput));
 
+  const severity = getToolOutputSeverity(result);
   const canSendToBackground = Boolean(
     toolCallId && workspaceId && foregroundBashToolCallIds.has(toolCallId)
   );
@@ -204,7 +206,6 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
           sendToBackground(toolCallId);
         }
       : undefined;
-
   const truncatedInfo = result && "truncated" in result ? result.truncated : undefined;
 
   const handleToggle = () => {
@@ -254,11 +255,13 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
               {result && ` • took ${formatDuration(result.wall_duration_ms)}`}
               {!result && <ElapsedTimeDisplay startedAt={startedAt} isActive={isPending} />}
             </span>
-            {result && <ExitCodeBadge exitCode={result.exitCode} className="ml-2" />}
+            {result && (
+              <ExitCodeBadge exitCode={result.exitCode} className="ml-2" severity={severity} />
+            )}
           </>
         )}
-        <StatusIndicator status={effectiveStatus}>
-          {getStatusDisplay(effectiveStatus)}
+        <StatusIndicator status={effectiveStatus} severity={severity}>
+          {getStatusDisplay(effectiveStatus, severity)}
         </StatusIndicator>
         {/* Show "Background" button when bash is executing and can be sent to background.
             Use invisible when executing but not yet confirmed as foreground to avoid layout flash. */}
@@ -334,7 +337,7 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
               {result.success === false && result.error && (
                 <DetailSection>
                   <DetailLabel>Error</DetailLabel>
-                  <ErrorBox>{result.error}</ErrorBox>
+                  <ErrorBox severity={severity}>{result.error}</ErrorBox>
                 </DetailSection>
               )}
 
