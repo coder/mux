@@ -1,4 +1,4 @@
-import React, { useCallback, useRef } from "react";
+import React, { useCallback, useEffect, useRef } from "react";
 import { cn } from "@/common/lib/utils";
 import { RIGHT_SIDEBAR_WIDTH_KEY } from "@/common/constants/storage";
 import { useResizableSidebar } from "@/browser/hooks/useResizableSidebar";
@@ -6,6 +6,7 @@ import { RightSidebar } from "./RightSidebar";
 import { PopoverError } from "./PopoverError";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { useBackgroundBashError } from "@/browser/contexts/BackgroundBashContext";
+import { markWorkspaceSwitchEnd } from "@/browser/utils/workspaceSwitchPerf";
 import { useWorkspaceState } from "@/browser/stores/WorkspaceStore";
 import { useReviews } from "@/browser/hooks/useReviews";
 import type { ReviewNoteData } from "@/common/types/review";
@@ -70,8 +71,17 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
 
   const workspaceState = useWorkspaceState(props.workspaceId);
   const backgroundBashError = useBackgroundBashError();
+  const isWorkspaceLoaded = Boolean(workspaceState && !workspaceState.loading);
 
-  if (!workspaceState || workspaceState.loading) {
+  useEffect(() => {
+    if (!isWorkspaceLoaded) {
+      return;
+    }
+
+    markWorkspaceSwitchEnd(props.workspaceId);
+  }, [isWorkspaceLoaded, props.workspaceId]);
+
+  if (!isWorkspaceLoaded) {
     return <WorkspacePlaceholder title="Loading workspace..." className={props.className} />;
   }
 
