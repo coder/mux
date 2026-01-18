@@ -1,18 +1,20 @@
 import { tool } from "ai";
+import type { ToolOutputUiOnlyFields } from "@/common/types/tools";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import { executeFileEditOperation } from "./file_edit_operation";
 import { handleLineReplace, type LineReplaceArgs } from "./file_edit_replace_shared";
 
-export interface FileEditReplaceLinesResult {
+export interface FileEditReplaceLinesResult extends ToolOutputUiOnlyFields {
   success: true;
   diff: string;
   edits_applied: number;
   lines_replaced: number;
   line_delta: number;
+  warning?: string;
 }
 
-export interface FileEditReplaceLinesError {
+export interface FileEditReplaceLinesError extends ToolOutputUiOnlyFields {
   success: false;
   error: string;
 }
@@ -43,6 +45,8 @@ export const createFileEditReplaceLinesTool: ToolFactory = (config: ToolConfigur
         return {
           success: true,
           diff: result.diff,
+          ui_only: result.ui_only,
+          warning: result.warning,
           edits_applied: result.edits_applied,
           lines_replaced: result.lines_replaced!,
           line_delta: result.line_delta!,

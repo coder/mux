@@ -58,6 +58,31 @@ export const AskUserQuestionQuestionSchema = z
     }
   });
 
+const AskUserQuestionUiOnlySchema = z.object({
+  questions: z.array(AskUserQuestionQuestionSchema),
+  answers: z.record(z.string(), z.string()),
+});
+
+const ToolOutputUiOnlySchema = z.object({
+  severity: z.enum(["soft", "hard"]).optional(),
+  ask_user_question: AskUserQuestionUiOnlySchema.optional(),
+  file_edit: z
+    .object({
+      diff: z.string(),
+    })
+    .optional(),
+  notify: z
+    .object({
+      notifiedVia: z.enum(["electron", "browser"]),
+      workspaceId: z.string().optional(),
+    })
+    .optional(),
+});
+
+const ToolOutputUiOnlyFieldSchema = {
+  ui_only: ToolOutputUiOnlySchema.optional(),
+};
+
 export const AskUserQuestionToolArgsSchema = z
   .object({
     questions: z.array(AskUserQuestionQuestionSchema).min(1).max(4),
@@ -77,12 +102,23 @@ export const AskUserQuestionToolArgsSchema = z
     }
   });
 
-export const AskUserQuestionToolResultSchema = z
+const AskUserQuestionToolSummarySchema = z
+  .object({
+    summary: z.string(),
+  })
+  .extend(ToolOutputUiOnlyFieldSchema);
+
+const AskUserQuestionToolLegacySchema = z
   .object({
     questions: z.array(AskUserQuestionQuestionSchema),
     answers: z.record(z.string(), z.string()),
   })
   .strict();
+
+export const AskUserQuestionToolResultSchema = z.union([
+  AskUserQuestionToolSummarySchema,
+  AskUserQuestionToolLegacySchema,
+]);
 
 // -----------------------------------------------------------------------------
 // task (sub-workspaces as subagents)
@@ -816,27 +852,30 @@ const TruncatedInfoSchema = z.object({
 /**
  * Bash tool result - success, background spawn, or failure.
  */
-export const BashToolResultSchema = z.union([
-  // Foreground success
-  z.object({
+const BashToolSuccessSchema = z
+  .object({
     success: z.literal(true),
     output: z.string(),
     exitCode: z.literal(0),
     wall_duration_ms: z.number(),
     note: z.string().optional(),
     truncated: TruncatedInfoSchema.optional(),
-  }),
-  // Background spawn success
-  z.object({
+  })
+  .extend(ToolOutputUiOnlyFieldSchema);
+
+const BashToolBackgroundSchema = z
+  .object({
     success: z.literal(true),
     output: z.string(),
     exitCode: z.literal(0),
     wall_duration_ms: z.number(),
     taskId: z.string(),
     backgroundProcessId: z.string(),
-  }),
-  // Failure
-  z.object({
+  })
+  .extend(ToolOutputUiOnlyFieldSchema);
+
+const BashToolFailureSchema = z
+  .object({
     success: z.literal(false),
     output: z.string().optional(),
     exitCode: z.number(),
@@ -844,7 +883,16 @@ export const BashToolResultSchema = z.union([
     wall_duration_ms: z.number(),
     note: z.string().optional(),
     truncated: TruncatedInfoSchema.optional(),
-  }),
+  })
+  .extend(ToolOutputUiOnlyFieldSchema);
+
+export const BashToolResultSchema = z.union([
+  // Foreground success
+  BashToolSuccessSchema,
+  // Background spawn success
+  BashToolBackgroundSchema,
+  // Failure
+  BashToolFailureSchema,
 ]);
 
 /**
@@ -945,33 +993,41 @@ export const AgentSkillReadFileToolResultSchema = FileReadToolResultSchema;
  * File edit insert tool result - diff or error.
  */
 export const FileEditInsertToolResultSchema = z.union([
-  z.object({
-    success: z.literal(true),
-    diff: z.string(),
-    warning: z.string().optional(),
-  }),
-  z.object({
-    success: z.literal(false),
-    error: z.string(),
-    note: z.string().optional(),
-  }),
+  z
+    .object({
+      success: z.literal(true),
+      diff: z.string(),
+      warning: z.string().optional(),
+    })
+    .extend(ToolOutputUiOnlyFieldSchema),
+  z
+    .object({
+      success: z.literal(false),
+      error: z.string(),
+      note: z.string().optional(),
+    })
+    .extend(ToolOutputUiOnlyFieldSchema),
 ]);
 
 /**
  * File edit replace string tool result - diff with edit count or error.
  */
 export const FileEditReplaceStringToolResultSchema = z.union([
-  z.object({
-    success: z.literal(true),
-    diff: z.string(),
-    edits_applied: z.number(),
-    warning: z.string().optional(),
-  }),
-  z.object({
-    success: z.literal(false),
-    error: z.string(),
-    note: z.string().optional(),
-  }),
+  z
+    .object({
+      success: z.literal(true),
+      diff: z.string(),
+      edits_applied: z.number(),
+      warning: z.string().optional(),
+    })
+    .extend(ToolOutputUiOnlyFieldSchema),
+  z
+    .object({
+      success: z.literal(false),
+      error: z.string(),
+      note: z.string().optional(),
+    })
+    .extend(ToolOutputUiOnlyFieldSchema),
 ]);
 
 /**

@@ -1,4 +1,8 @@
-import type { FileEditDiffSuccessBase, FileEditErrorResult } from "@/common/types/tools";
+import {
+  FILE_EDIT_DIFF_OMITTED_MESSAGE,
+  type FileEditDiffSuccessBase,
+  type FileEditErrorResult,
+} from "@/common/types/tools";
 import type { ToolConfiguration } from "@/common/utils/tools/tools";
 import {
   generateDiff,
@@ -143,7 +147,12 @@ export async function executeFileEditOperation<TMetadata>({
 
     return {
       success: true,
-      diff,
+      diff: FILE_EDIT_DIFF_OMITTED_MESSAGE,
+      ui_only: {
+        file_edit: {
+          diff,
+        },
+      },
       ...operationResult.metadata,
       ...(pathWarning && { warning: pathWarning }),
     };

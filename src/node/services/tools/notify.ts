@@ -137,10 +137,14 @@ export const createNotifyTool: ToolFactory = (config) => {
       if (result.success) {
         return {
           success: true,
-          notifiedVia: "electron",
           title: truncatedTitle,
           message: truncatedMessage,
-          workspaceId: config.workspaceId,
+          ui_only: {
+            notify: {
+              notifiedVia: "electron",
+              workspaceId: config.workspaceId,
+            },
+          },
         };
       }
 
@@ -148,10 +152,14 @@ export const createNotifyTool: ToolFactory = (config) => {
       // This is not an error; the notification will be delivered via Web Notifications API
       return {
         success: true,
-        notifiedVia: "browser",
         title: truncatedTitle,
         message: truncatedMessage,
-        workspaceId: config.workspaceId,
+        ui_only: {
+          notify: {
+            notifiedVia: "browser",
+            workspaceId: config.workspaceId,
+          },
+        },
       };
     },
   });
