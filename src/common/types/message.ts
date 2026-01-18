@@ -136,6 +136,8 @@ export interface CompactionRequestData {
   model?: string; // Custom model override for compaction
   maxOutputTokens?: number;
   continueMessage?: ContinueMessage;
+  /** True when the continue message retries an already-sent user message. */
+  continueMessageIsRetry?: boolean;
 }
 
 /**

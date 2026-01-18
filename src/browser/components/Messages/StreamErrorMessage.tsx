@@ -84,7 +84,6 @@ const StreamErrorMessageBase: React.FC<StreamErrorMessageBaseProps> = (props) =>
           {message.errorType}
         </code>
         <div className="ml-auto flex items-center gap-2">
-          {compactRetryAction}
           {showCount && (
             <span className="text-error rounded-sm bg-red-500/15 px-2 py-0.5 font-mono text-[10px] font-semibold tracking-wide">
               ×{message.errorCount}
@@ -97,6 +96,9 @@ const StreamErrorMessageBase: React.FC<StreamErrorMessageBaseProps> = (props) =>
         {message.error}
       </div>
       {compactionDetails}
+      {compactRetryAction ? (
+        <div className="mt-3 flex items-center justify-start">{compactRetryAction}</div>
+      ) : null}
     </div>
   );
 };
