@@ -42,16 +42,6 @@ def load_json(path: Path) -> dict | None:
         return None
 
 
-def extract_model_from_config(config: dict) -> str | None:
-    """Extract model_name from config.json."""
-    return config.get("agent", {}).get("model_name")
-
-
-def extract_thinking_from_config(config: dict) -> str | None:
-    """Extract thinking_level from config.json."""
-    return config.get("agent", {}).get("thinking_level")
-
-
 def build_rows(job_folder: Path) -> list[dict]:
     """Build BigQuery rows for all trials in a job folder."""
     rows = []
@@ -64,7 +54,6 @@ def build_rows(job_folder: Path) -> list[dict]:
 
     # Extract top-level stats from Harbor result.json
     stats = job_result.get("stats", {})
-    n_total_trials = job_result.get("n_total_trials") or stats.get("n_trials", 0)
 
     # Get mean score from evals (Harbor format)
     evals = stats.get("evals", {})

@@ -99,7 +99,6 @@ class MuxAgent(BaseInstalledAgent):
         self._thinking_level = thinking_level.lower() if thinking_level else None
         self._model_name = (model_name or "").strip()
         self._experiments = (experiments or "").strip() if experiments else None
-        self._last_environment: BaseEnvironment | None = None
 
     @staticmethod
     def name() -> str:
@@ -208,9 +207,6 @@ class MuxAgent(BaseInstalledAgent):
         # Now run parent setup which executes mux_setup.sh.j2 template
         # (extracts archive, installs bun/deps, chmod +x runner)
         await super().setup(environment)
-
-        # Store environment reference for token extraction later
-        self._last_environment = environment
 
     def create_run_agent_commands(self, instruction: str) -> list[ExecInput]:
         escaped = shlex.quote(instruction)
