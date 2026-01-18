@@ -16,6 +16,10 @@ export interface Keybind {
   macCtrlBehavior?: "either" | "command" | "control";
 }
 
+export function hasModifierKeybind(keybind: Keybind): boolean {
+  return [keybind.ctrl, keybind.shift, keybind.alt, keybind.meta].some((v) => v === true);
+}
+
 export function normalizeKeybind(raw: unknown): Keybind | undefined {
   if (!raw || typeof raw !== "object") {
     return undefined;
