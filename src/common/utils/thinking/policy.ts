@@ -93,7 +93,7 @@ export function getThinkingPolicyForModel(modelString: string): ThinkingPolicy {
  * 1. If requested level is allowed, use it.
  * 2. If the request is above the model's maximum, clamp to the highest allowed level.
  * 3. If the request is below the model's minimum, clamp to the lowest allowed level.
- * 4. Otherwise: prefer "medium" if available, else use the lowest allowed level.
+ * 4. Otherwise, pick the closest allowed level by order.
  */
 export function enforceThinkingPolicy(
   modelString: string,
@@ -120,5 +120,13 @@ export function enforceThinkingPolicy(
     return maxAllowed;
   }
 
-  return allowed.includes("medium") ? "medium" : minAllowed;
+  const closest = orderedAllowed.reduce((nearest, level) => {
+    const nearestIndex = THINKING_LEVELS.indexOf(nearest);
+    const levelIndex = THINKING_LEVELS.indexOf(level);
+    return Math.abs(levelIndex - requestedIndex) < Math.abs(nearestIndex - requestedIndex)
+      ? level
+      : nearest;
+  }, minAllowed);
+
+  return closest;
 }
