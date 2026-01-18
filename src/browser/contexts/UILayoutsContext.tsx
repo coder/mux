@@ -89,6 +89,26 @@ export function UILayoutsProvider(props: { children: ReactNode }) {
     }
   }, [api]);
 
+  const getConfigForWrite = useCallback(async (): Promise<LayoutPresetsConfig> => {
+    if (!api) {
+      return layoutPresets;
+    }
+
+    if (loaded && !loadFailed) {
+      return layoutPresets;
+    }
+
+    // Avoid overwriting an existing config with defaults before the initial load completes.
+    const remote = await api.uiLayouts.getAll();
+    const normalized = getLayoutsConfigOrDefault(remote);
+
+    setLayoutPresets(normalized);
+    setLoaded(true);
+    setLoadFailed(false);
+
+    return normalized;
+  }, [api, layoutPresets, loaded, loadFailed]);
+
   const saveAll = useCallback(
     async (next: LayoutPresetsConfig): Promise<void> => {
       const normalized = normalizeLayoutPresetsConfig(next);
@@ -142,28 +162,32 @@ export function UILayoutsProvider(props: { children: ReactNode }) {
         "workspaceId must be non-empty"
       );
 
+      const base = await getConfigForWrite();
+
       const preset = createPresetFromCurrentWorkspace(workspaceId, name);
-      let next = upsertPreset(layoutPresets, preset);
+      let next = upsertPreset(base, preset);
       if (slot != null) {
         next = updateSlotAssignment(next, slot, preset.id);
       }
       await saveAll(next);
       return preset;
     },
-    [layoutPresets, saveAll]
+    [getConfigForWrite, saveAll]
   );
 
   const updatePresetFromCurrentWorkspace = useCallback(
     async (workspaceId: string, presetId: string): Promise<void> => {
-      const existing = getPresetById(layoutPresets, presetId);
+      const base = await getConfigForWrite();
+
+      const existing = getPresetById(base, presetId);
       if (!existing) {
         return;
       }
 
       const next = createPresetFromCurrentWorkspace(workspaceId, existing.name, presetId);
-      await saveAll(upsertPreset(layoutPresets, next));
+      await saveAll(upsertPreset(base, next));
     },
-    [layoutPresets, saveAll]
+    [getConfigForWrite, saveAll]
   );
 
   const renamePreset = useCallback(
@@ -173,25 +197,28 @@ export function UILayoutsProvider(props: { children: ReactNode }) {
         return;
       }
 
-      const existing = getPresetById(layoutPresets, presetId);
+      const base = await getConfigForWrite();
+      const existing = getPresetById(base, presetId);
       if (!existing) {
         return;
       }
 
       await saveAll(
-        upsertPreset(layoutPresets, {
+        upsertPreset(base, {
           ...existing,
           name: trimmed,
         })
       );
     },
-    [layoutPresets, saveAll]
+    [getConfigForWrite, saveAll]
   );
 
   const deletePreset = useCallback(
     async (presetId: string): Promise<void> => {
-      const nextPresets = layoutPresets.presets.filter((p) => p.id !== presetId);
-      const nextSlots = layoutPresets.slots.map((s) =>
+      const base = await getConfigForWrite();
+
+      const nextPresets = base.presets.filter((p) => p.id !== presetId);
+      const nextSlots = base.slots.map((s) =>
         s.presetId === presetId ? { ...s, presetId: undefined } : s
       );
 
@@ -203,21 +230,23 @@ export function UILayoutsProvider(props: { children: ReactNode }) {
         })
       );
     },
-    [layoutPresets, saveAll]
+    [getConfigForWrite, saveAll]
   );
 
   const setSlotPreset = useCallback(
     async (slot: LayoutSlotNumber, presetId: string | undefined): Promise<void> => {
-      await saveAll(updateSlotAssignment(layoutPresets, slot, presetId));
+      const base = await getConfigForWrite();
+      await saveAll(updateSlotAssignment(base, slot, presetId));
     },
-    [layoutPresets, saveAll]
+    [getConfigForWrite, saveAll]
   );
 
   const setSlotKeybindOverride = useCallback(
     async (slot: LayoutSlotNumber, keybind: Keybind | undefined): Promise<void> => {
-      await saveAll(updateSlotKeybindOverride(layoutPresets, slot, keybind));
+      const base = await getConfigForWrite();
+      await saveAll(updateSlotKeybindOverride(base, slot, keybind));
     },
-    [layoutPresets, saveAll]
+    [getConfigForWrite, saveAll]
   );
 
   const value: UILayoutsContextValue = useMemo(
