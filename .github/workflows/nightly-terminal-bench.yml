@@ -29,10 +29,7 @@ jobs:
       concurrency: "1"
       task_names: "chess-best-move"
       experiments: ${{ inputs.experiments }}
-    secrets:
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+    secrets: inherit
 
   determine-models:
     name: Determine models to test
@@ -71,7 +68,4 @@ jobs:
       concurrency: "48"
       env: "daytona"
       experiments: ${{ inputs.experiments }}
-    secrets:
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+    secrets: inherit
