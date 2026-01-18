@@ -13,7 +13,7 @@ import {
   type CompactionSuggestion,
 } from "@/browser/utils/compaction/suggestion";
 import { executeCompaction } from "@/browser/utils/chatCommands";
-import { CUSTOM_EVENTS, createCustomEvent, type CustomEventType } from "@/common/constants/events";
+import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { PREFERRED_COMPACTION_MODEL_KEY } from "@/common/constants/storage";
 import type { ImagePart, ProvidersConfigMap } from "@/common/orpc/types";
 import { buildContinueMessage, type DisplayedMessage } from "@/common/types/message";
@@ -257,28 +257,6 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
       }
     }
   }, [api, compactionSuggestion, props.workspaceId, triggerUserMessage]);
-
-  useEffect(() => {
-    if (!showCompactionUI) return;
-
-    const handleCompactRetryRequested = (event: Event) => {
-      const customEvent = event as CustomEventType<
-        typeof CUSTOM_EVENTS.COMPACT_AND_RETRY_REQUESTED
-      >;
-      if (customEvent.detail.workspaceId !== props.workspaceId) return;
-      if (isRetryingWithCompaction) return;
-      retryWithCompaction().catch(() => undefined);
-    };
-
-    window.addEventListener(CUSTOM_EVENTS.COMPACT_AND_RETRY_REQUESTED, handleCompactRetryRequested);
-
-    return () => {
-      window.removeEventListener(
-        CUSTOM_EVENTS.COMPACT_AND_RETRY_REQUESTED,
-        handleCompactRetryRequested
-      );
-    };
-  }, [isRetryingWithCompaction, props.workspaceId, retryWithCompaction, showCompactionUI]);
 
   return {
     showCompactionUI,
