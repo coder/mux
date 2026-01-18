@@ -62,7 +62,6 @@ import { defaultModel, isValidModelFormat, normalizeGatewayModel } from "@/commo
 import type { StreamEndEvent, StreamAbortEvent } from "@/common/types/stream";
 import type { TerminalService } from "@/node/services/terminalService";
 import type { WorkspaceAISettingsSchema } from "@/common/orpc/schemas";
-import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import type { SessionUsageService } from "@/node/services/sessionUsageService";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 
@@ -1144,11 +1143,9 @@ export class WorkspaceService extends EventEmitter {
       return Err(`Invalid model format: ${rawModel}`);
     }
 
-    const effectiveThinkingLevel = enforceThinkingPolicy(model, aiSettings.thinkingLevel);
-
     return Ok({
       model,
-      thinkingLevel: effectiveThinkingLevel,
+      thinkingLevel: aiSettings.thinkingLevel,
     });
   }
 
@@ -1172,7 +1169,7 @@ export class WorkspaceService extends EventEmitter {
       return null;
     }
 
-    const thinkingLevel = enforceThinkingPolicy(model, requestedThinking);
+    const thinkingLevel = requestedThinking;
 
     return { model, thinkingLevel };
   }

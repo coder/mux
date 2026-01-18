@@ -40,7 +40,6 @@ import {
   getWorkspaceAISettingsByModeKey,
 } from "@/common/constants/storage";
 import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
-import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import type { BranchListResult } from "@/common/orpc/types";
 import { useTelemetry } from "./hooks/useTelemetry";
@@ -308,12 +307,11 @@ function AppInner() {
 
       const normalized = THINKING_LEVELS.includes(level) ? level : "off";
       const model = getModelForWorkspace(workspaceId);
-      const effective = enforceThinkingPolicy(model, normalized);
       const key = getThinkingLevelKey(workspaceId);
 
       // Use the utility function which handles localStorage and event dispatch
       // ThinkingProvider will pick this up via its listener
-      updatePersistedState(key, effective);
+      updatePersistedState(key, normalized);
 
       type WorkspaceAISettingsByModeCache = Partial<
         Record<string, { model: string; thinkingLevel: ThinkingLevel }>
@@ -330,7 +328,7 @@ function AppInner() {
             prev && typeof prev === "object" ? prev : {};
           return {
             ...record,
-            [agentId]: { model, thinkingLevel: effective },
+            [agentId]: { model, thinkingLevel: normalized },
           };
         },
         {}
@@ -344,7 +342,7 @@ function AppInner() {
           .updateModeAISettings({
             workspaceId,
             mode,
-            aiSettings: { model, thinkingLevel: effective },
+            aiSettings: { model, thinkingLevel: normalized },
           })
           .catch(() => {
             // Best-effort only.
@@ -355,7 +353,7 @@ function AppInner() {
       if (typeof window !== "undefined") {
         window.dispatchEvent(
           new CustomEvent(CUSTOM_EVENTS.THINKING_LEVEL_TOAST, {
-            detail: { workspaceId, level: effective },
+            detail: { workspaceId, level: normalized },
           })
         );
       }

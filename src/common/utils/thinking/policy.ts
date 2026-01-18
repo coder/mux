@@ -12,7 +12,7 @@
  * - Multiple elements = User can select from options
  */
 
-import type { ThinkingLevel } from "@/common/types/thinking";
+import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
 
 /**
  * Thinking policy is simply the set of allowed thinking levels for a model.
@@ -90,8 +90,10 @@ export function getThinkingPolicyForModel(modelString: string): ThinkingPolicy {
  * Enforce thinking policy by clamping requested level to allowed set.
  *
  * Fallback strategy:
- * 1. If requested level is allowed, use it
- * 2. Otherwise: prefer "medium" if allowed, else use first allowed level
+ * 1. If requested level is allowed, use it.
+ * 2. If the request is above the model's maximum, clamp to the highest allowed level.
+ * 3. If the request is below the model's minimum, clamp to the lowest allowed level.
+ * 4. Otherwise: prefer "medium" if available, else use the lowest allowed level.
  */
 export function enforceThinkingPolicy(
   modelString: string,
@@ -103,6 +105,20 @@ export function enforceThinkingPolicy(
     return requested;
   }
 
-  // Fallback: prefer "medium" if allowed, else use first allowed level
-  return allowed.includes("medium") ? "medium" : allowed[0];
+  const orderedAllowed = [...allowed].sort(
+    (left, right) => THINKING_LEVELS.indexOf(left) - THINKING_LEVELS.indexOf(right)
+  );
+  const minAllowed = orderedAllowed[0] ?? "off";
+  const maxAllowed = orderedAllowed[orderedAllowed.length - 1] ?? minAllowed;
+  const requestedIndex = THINKING_LEVELS.indexOf(requested);
+
+  if (requestedIndex <= THINKING_LEVELS.indexOf(minAllowed)) {
+    return minAllowed;
+  }
+
+  if (requestedIndex >= THINKING_LEVELS.indexOf(maxAllowed)) {
+    return maxAllowed;
+  }
+
+  return allowed.includes("medium") ? "medium" : minAllowed;
 }

@@ -10,7 +10,6 @@ import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import { toGatewayModel, migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
 import type { SendMessageOptions } from "@/common/orpc/types";
 import type { ThinkingLevel } from "@/common/types/thinking";
-import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { isExperimentEnabled } from "@/browser/hooks/useExperiments";
@@ -75,9 +74,6 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
 
   // Plan mode instructions are now handled by the backend (has access to plan file path)
 
-  // Enforce thinking policy (gpt-5-pro → high only)
-  const effectiveThinkingLevel = enforceThinkingPolicy(baseModel, thinkingLevel);
-
   // Read disableWorkspaceAgents toggle (workspace-scoped)
   const disableWorkspaceAgents = readPersistedState<boolean>(
     getDisableWorkspaceAgentsKey(workspaceId),
@@ -88,7 +84,7 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
     model,
     agentId,
     mode,
-    thinkingLevel: effectiveThinkingLevel,
+    thinkingLevel,
     // toolPolicy is computed by backend from agent definitions (resolveToolPolicyForAgent)
     providerOptions,
     disableWorkspaceAgents: disableWorkspaceAgents || undefined, // Only include if true

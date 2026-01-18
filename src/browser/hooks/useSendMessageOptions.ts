@@ -10,7 +10,6 @@ import type { UIMode } from "@/common/types/mode";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
-import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { useProviderOptions } from "./useProviderOptions";
 import type { GatewayState } from "./useGatewayModels";
 import { useExperimentOverrideValue } from "./useExperiments";
@@ -63,8 +62,8 @@ function constructSendMessageOptions(
   // Migrate any legacy mux-gateway:provider/model format to canonical form
   const baseModel = migrateGatewayModel(rawModel);
 
-  // Enforce thinking policy BEFORE gateway transform (policy checks canonical model name)
-  const uiThinking = enforceThinkingPolicy(baseModel, thinkingLevel);
+  // Preserve the user's preferred thinking level; backend enforces per-model policy.
+  const uiThinking = thinkingLevel;
 
   // Transform to gateway format if gateway is enabled for this model (reactive)
   const model = applyGatewayTransform(baseModel, gateway);

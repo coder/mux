@@ -70,16 +70,14 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
       return;
     }
 
-    const effective = enforceThinkingPolicy(model, legacy);
-    updatePersistedState(thinkingKey, effective);
+    updatePersistedState(thinkingKey, legacy);
   }, [defaultModel, scopeId, thinkingKey]);
 
   const setThinkingLevel = useCallback(
     (level: ThinkingLevel) => {
       const model = getCanonicalModelForScope(scopeId, defaultModel);
-      const effective = enforceThinkingPolicy(model, level);
 
-      setThinkingLevelInternal(effective);
+      setThinkingLevelInternal(level);
 
       // Workspace variant: persist to backend so settings follow the workspace across devices.
       if (!props.workspaceId) {
@@ -99,7 +97,7 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
             prev && typeof prev === "object" ? prev : {};
           return {
             ...record,
-            [agentId]: { model, thinkingLevel: effective },
+            [agentId]: { model, thinkingLevel: level },
           };
         },
         {}
@@ -115,7 +113,7 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
         .updateModeAISettings({
           workspaceId: props.workspaceId,
           mode: agentId,
-          aiSettings: { model, thinkingLevel: effective },
+          aiSettings: { model, thinkingLevel: level },
         })
         .catch(() => {
           // Best-effort only. If offline or backend is old, the next sendMessage will persist.
@@ -141,7 +139,8 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
         return;
       }
 
-      const currentIndex = allowed.indexOf(thinkingLevel);
+      const effectiveThinkingLevel = enforceThinkingPolicy(model, thinkingLevel);
+      const currentIndex = allowed.indexOf(effectiveThinkingLevel);
       const nextIndex = (currentIndex + 1) % allowed.length;
       setThinkingLevel(allowed[nextIndex]);
     };

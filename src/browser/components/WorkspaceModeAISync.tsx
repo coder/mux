@@ -14,7 +14,6 @@ import {
   MODE_AI_DEFAULTS_KEY,
 } from "@/common/constants/storage";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
-import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
 import type { ModeAiDefaults } from "@/common/types/modeAiDefaults";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
@@ -86,14 +85,12 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
       "off";
     const resolvedThinking = coerceThinkingLevel(candidateThinking) ?? "off";
 
-    const effectiveThinking = enforceThinkingPolicy(resolvedModel, resolvedThinking);
-
     if (existingModel !== resolvedModel) {
       updatePersistedState(modelKey, resolvedModel);
     }
 
-    if (existingThinking !== effectiveThinking) {
-      updatePersistedState(thinkingKey, effectiveThinking);
+    if (existingThinking !== resolvedThinking) {
+      updatePersistedState(thinkingKey, resolvedThinking);
     }
   }, [agentAiDefaults, agentId, agents, mode, modeAiDefaults, workspaceByMode, workspaceId]);
 

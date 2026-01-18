@@ -25,7 +25,6 @@ import { ModelSettings } from "../ModelSettings";
 import { useAPI } from "@/browser/contexts/API";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
 import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
-import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import {
   getModelKey,
@@ -438,8 +437,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         return;
       }
 
-      const effectiveThinkingLevel = enforceThinkingPolicy(canonicalModel, thinkingLevel);
-
       const normalizedAgentId =
         typeof agentId === "string" && agentId.trim().length > 0
           ? agentId.trim().toLowerCase()
@@ -452,7 +449,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             prev && typeof prev === "object" ? prev : {};
           return {
             ...record,
-            [normalizedAgentId]: { model: canonicalModel, thinkingLevel: effectiveThinkingLevel },
+            [normalizedAgentId]: { model: canonicalModel, thinkingLevel },
           };
         },
         {}
@@ -469,7 +466,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         .updateModeAISettings({
           workspaceId,
           mode,
-          aiSettings: { model: canonicalModel, thinkingLevel: effectiveThinkingLevel },
+          aiSettings: { model: canonicalModel, thinkingLevel },
         })
         .catch(() => {
           // Best-effort only. If offline or backend is old, sendMessage will persist.
@@ -669,14 +666,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     const existingThinking = readPersistedState<ThinkingLevel>(thinkingKey, "off");
     const candidateThinking = modeAiDefaults[mode]?.thinkingLevel ?? existingThinking ?? "off";
     const resolvedThinking = coerceThinkingLevel(candidateThinking) ?? "off";
-    const effectiveThinking = enforceThinkingPolicy(resolvedModel, resolvedThinking);
 
     if (existingModel !== resolvedModel) {
       updatePersistedState(modelKey, resolvedModel);
     }
 
-    if (existingThinking !== effectiveThinking) {
-      updatePersistedState(thinkingKey, effectiveThinking);
+    if (existingThinking !== resolvedThinking) {
+      updatePersistedState(thinkingKey, resolvedThinking);
     }
   }, [creationProjectPath, defaultModel, mode, modeAiDefaults, variant]);
 
