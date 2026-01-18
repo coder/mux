@@ -48,6 +48,17 @@ if [ -z "$PRIMARY_BRANCH" ]; then
   exit 1
 fi
 
+# Avoid sampling while git is holding the index lock (e.g., mid-commit)
+GIT_DIR=$(git rev-parse --git-dir 2>/dev/null || echo "")
+if [ -n "$GIT_DIR" ]; then
+  LOCK_PATH="$GIT_DIR/index.lock"
+  retries=0
+  while [ -f "$LOCK_PATH" ] && [ $retries -lt 20 ]; do
+    sleep 0.05
+    retries=$((retries + 1))
+  done
+fi
+
 # Stable ahead/behind counts (rev-list is format-stable across git versions)
 AHEAD_BEHIND=$(git rev-list --left-right --count HEAD..."origin/$PRIMARY_BRANCH" 2>/dev/null || echo "")
 if [ -z "$AHEAD_BEHIND" ]; then
