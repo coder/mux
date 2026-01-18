@@ -100,6 +100,7 @@ Avoid mock-heavy tests that verify implementation details rather than behavior. 
 
 ### Storybook
 
+- **Settings UI coverage:** if you add a new Settings modal section (or materially change an existing one), add/update an `App.settings.*.stories.tsx` story that navigates to that section so Chromatic catches regressions.
 - **Only** add full-app stories (`App.*.stories.tsx`). Do not add isolated component stories, even for small UI changes (they are not used/accepted in this repo).
 - Use play functions with `@storybook/test` utilities (`within`, `userEvent`, `waitFor`) to interact with the UI and set up the desired visual state. Do not add props to production components solely for storybook convenience.
 - Keep story data deterministic: avoid `Math.random()`, `Date.now()`, or other non-deterministic values in story setup. Pass explicit values when ordering or timing matters for visual stability.

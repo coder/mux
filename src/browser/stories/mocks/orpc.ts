@@ -10,6 +10,11 @@ import type {
 } from "@/common/types/agentDefinition";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { ProjectConfig } from "@/node/config";
+import {
+  DEFAULT_LAYOUT_PRESETS_CONFIG,
+  normalizeLayoutPresetsConfig,
+  type LayoutPresetsConfig,
+} from "@/common/types/uiLayouts";
 import type {
   WorkspaceChatMessage,
   ProvidersConfigMap,
@@ -66,6 +71,8 @@ export interface MockSessionUsage {
 }
 
 export interface MockORPCClientOptions {
+  /** Layout presets config for Settings → Layouts stories */
+  layoutPresets?: LayoutPresetsConfig;
   projects?: Map<string, ProjectConfig>;
   workspaces?: FrontendWorkspaceMetadata[];
   /** Initial task settings for config.getConfig (e.g., Settings → Tasks section) */
@@ -235,6 +242,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     coderTemplates = [],
     coderPresets = new Map<string, CoderPreset[]>(),
     coderWorkspaces = [],
+    layoutPresets: initialLayoutPresets,
   } = options;
 
   // Feature flags
@@ -322,6 +330,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     return normalizeSubagentAiDefaults(raw);
   };
 
+  let layoutPresets = initialLayoutPresets ?? DEFAULT_LAYOUT_PRESETS_CONFIG;
   let modeAiDefaults = deriveModeAiDefaults();
   let subagentAiDefaults = deriveSubagentAiDefaults();
 
@@ -377,6 +386,17 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       getLaunchProject: () => Promise.resolve(null),
       getSshHost: () => Promise.resolve(null),
       setSshHost: () => Promise.resolve(undefined),
+    },
+    // Settings → Layouts (layout presets)
+    // Stored in-memory for Storybook only.
+    // Frontend code normalizes the response defensively, but we normalize here too so
+    // stories remain stable even if they mutate the config.
+    uiLayouts: {
+      getAll: () => Promise.resolve(layoutPresets),
+      saveAll: (input: { layoutPresets: unknown }) => {
+        layoutPresets = normalizeLayoutPresetsConfig(input.layoutPresets);
+        return Promise.resolve(undefined);
+      },
     },
     config: {
       getConfig: () =>
