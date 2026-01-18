@@ -241,7 +241,7 @@ export const LayoutsConfigured: AppStory = {
     await dialogCanvas.findByText(/Slots \(1–9\)/i);
 
     // Wait for the async config load from the UILayoutsProvider.
-    await dialogCanvas.findByText(/My Layout/i);
+    await dialogCanvas.findByText(/ID: preset-1/i);
   },
 };
 /** Providers section - expanded to show quick links (docs + get API key) */
