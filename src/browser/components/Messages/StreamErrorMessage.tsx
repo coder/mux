@@ -128,7 +128,7 @@ const StreamErrorMessageWithRetry: React.FC<StreamErrorMessageWithRetryProps> = 
         compactAndRetry.retryWithCompaction().catch(() => undefined);
       }}
       disabled={compactAndRetry.isRetryingWithCompaction}
-      className="border-warning/40 text-warning hover:bg-warning/10 hover:text-warning h-6 px-2 text-[10px]"
+      className="border-warning/50 text-foreground bg-warning/10 hover:bg-warning/15 hover:text-foreground h-6 px-2 text-[10px]"
     >
       {compactRetryLabel}
     </Button>
@@ -137,7 +137,7 @@ const StreamErrorMessageWithRetry: React.FC<StreamErrorMessageWithRetryProps> = 
   const compactionSuggestion = compactAndRetry.compactionSuggestion;
   const compactionDetails = showCompactRetry ? (
     <div className="font-primary text-foreground/80 mt-3 text-[12px]">
-      <span className="text-warning font-semibold">Context window exceeded.</span>{" "}
+      <span className="text-foreground font-semibold">Context window exceeded.</span>{" "}
       {compactionSuggestion ? (
         compactionSuggestion.kind === "preferred" ? (
           <>
