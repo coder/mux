@@ -1,9 +1,9 @@
 /**
- * Apply centralized tool-output redaction to a list of MuxMessages.
+ * Strip UI-only tool output before sending to providers.
  * Produces a cloned array safe for sending to providers without touching persisted history/UI.
  */
 import type { MuxMessage } from "@/common/types/message";
-import { redactToolOutput } from "./toolOutputRedaction";
+import { stripToolOutputUiOnly } from "@/common/utils/tools/toolOutputUiOnly";
 
 export function applyToolOutputRedaction(messages: MuxMessage[]): MuxMessage[] {
   return messages.map((msg) => {
@@ -15,7 +15,7 @@ export function applyToolOutputRedaction(messages: MuxMessage[]): MuxMessage[] {
 
       return {
         ...part,
-        output: redactToolOutput(part.toolName, part.output),
+        output: stripToolOutputUiOnly(part.output),
       };
     });
 

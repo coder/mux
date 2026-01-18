@@ -54,16 +54,45 @@ export type AgentSkillReadFileToolArgs = z.infer<
 >;
 export type AgentSkillReadFileToolResult = z.infer<typeof AgentSkillReadFileToolResultSchema>;
 
+export type ToolOutputSeverity = "soft" | "hard";
+
+export interface AskUserQuestionUiOnlyPayload {
+  questions: AskUserQuestionQuestion[];
+  answers: Record<string, string>;
+}
+
+export interface FileEditUiOnlyPayload {
+  diff: string;
+}
+
+export interface NotifyUiOnlyPayload {
+  notifiedVia: "electron" | "browser";
+  workspaceId?: string;
+}
+
+export interface ToolOutputUiOnly {
+  severity?: ToolOutputSeverity;
+  ask_user_question?: AskUserQuestionUiOnlyPayload;
+  file_edit?: FileEditUiOnlyPayload;
+  notify?: NotifyUiOnlyPayload;
+}
+
+export interface ToolOutputUiOnlyFields {
+  ui_only?: ToolOutputUiOnly;
+}
 // FileReadToolResult derived from Zod schema (single source of truth)
 export type FileReadToolResult = z.infer<typeof FileReadToolResultSchema>;
 
-export interface FileEditDiffSuccessBase {
+export interface FileEditDiffSuccessBase extends ToolOutputUiOnlyFields {
   success: true;
   diff: string;
   warning?: string;
 }
 
-export interface FileEditErrorResult {
+export const FILE_EDIT_DIFF_OMITTED_MESSAGE =
+  "[diff omitted in context - call file_read on the target file if needed]";
+
+export interface FileEditErrorResult extends ToolOutputUiOnlyFields {
   success: false;
   error: string;
   note?: string; // Agent-only message (not displayed in UI)
@@ -147,7 +176,7 @@ export const TOOL_EDIT_WARNING =
   "Always check the tool result before proceeding with other operations.";
 
 // Generic tool error shape emitted via streamManager on tool-error parts.
-export interface ToolErrorResult {
+export interface ToolErrorResult extends ToolOutputUiOnlyFields {
   success: false;
   error: string;
 }
@@ -313,14 +342,11 @@ export type WebFetchToolResult = z.infer<typeof WebFetchToolResultSchema>;
 
 // Notify Tool Types
 export type NotifyToolResult =
-  | {
+  | (ToolOutputUiOnlyFields & {
       success: true;
-      notifiedVia: "electron" | "browser";
       title: string;
       message?: string;
-      /** Workspace ID for navigation on notification click */
-      workspaceId?: string;
-    }
+    })
   | {
       success: false;
       error: string;

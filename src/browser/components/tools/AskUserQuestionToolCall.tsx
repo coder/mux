@@ -26,9 +26,10 @@ import type {
   AskUserQuestionQuestion,
   AskUserQuestionToolArgs,
   AskUserQuestionToolResult,
-  AskUserQuestionToolSuccessResult,
+  AskUserQuestionUiOnlyPayload,
   ToolErrorResult,
 } from "@/common/types/tools";
+import { getToolOutputUiOnly } from "@/common/utils/tools/toolOutputUiOnly";
 
 const OTHER_VALUE = "__other__";
 
@@ -58,7 +59,7 @@ function unwrapJsonContainer(value: unknown): unknown {
   return value;
 }
 
-function isAskUserQuestionToolSuccessResult(val: unknown): val is AskUserQuestionToolSuccessResult {
+function isAskUserQuestionPayload(val: unknown): val is AskUserQuestionUiOnlyPayload {
   if (!val || typeof val !== "object") {
     return false;
   }
@@ -261,8 +262,11 @@ export function AskUserQuestionToolCall(props: {
     return unwrapJsonContainer(props.result);
   }, [props.result]);
 
+  const uiOnlyPayload = getToolOutputUiOnly(resultUnwrapped)?.ask_user_question;
+
   const successResult =
-    resultUnwrapped && isAskUserQuestionToolSuccessResult(resultUnwrapped) ? resultUnwrapped : null;
+    uiOnlyPayload ??
+    (resultUnwrapped && isAskUserQuestionPayload(resultUnwrapped) ? resultUnwrapped : null);
 
   const errorResult =
     resultUnwrapped && isToolErrorResult(resultUnwrapped) ? resultUnwrapped : null;

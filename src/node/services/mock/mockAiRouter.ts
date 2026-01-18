@@ -261,9 +261,13 @@ function buildToolNotifyReply(): MockAiRouterReply {
         },
         result: {
           success: true,
-          notifiedVia: "electron",
           title: "Task Complete",
           message: "Your requested task has been completed successfully.",
+          ui_only: {
+            notify: {
+              notifiedVia: "electron",
+            },
+          },
         },
       },
     ],
