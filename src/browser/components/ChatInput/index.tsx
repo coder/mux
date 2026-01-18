@@ -181,6 +181,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     variant === "workspace" ? (props.hasQueuedCompaction ?? false) : false;
   // runtimeType for telemetry - defaults to "worktree" if not provided
   const runtimeType = variant === "workspace" ? (props.runtimeType ?? "worktree") : "worktree";
+  // Callback for model changes (both variants support this)
+  const onModelChange = props.onModelChange;
 
   // Storage keys differ by variant
   const storageKeys = (() => {
@@ -434,6 +436,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       ensureModelInSettings(canonicalModel); // Ensure model exists in Settings
       updatePersistedState(storageKeys.modelKey, canonicalModel); // Update workspace or project-specific
 
+      // Notify parent of model change (for context switch warning)
+      // Called before early returns so warning works even offline or with custom agents
+      onModelChange?.(canonicalModel);
+
       if (variant !== "workspace" || !workspaceId) {
         return;
       }
@@ -484,6 +490,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       thinkingLevel,
       variant,
       workspaceId,
+      onModelChange,
     ]
   );
 
@@ -1417,7 +1424,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         if (parsed.type === "model-set") {
           setInput(""); // Clear input immediately
           setPreferredModel(parsed.modelString);
-          props.onModelChange?.(parsed.modelString);
+          // Note: onModelChange is called within setPreferredModel
           pushToast({ type: "success", message: `Model changed to ${parsed.modelString}` });
           return;
         }

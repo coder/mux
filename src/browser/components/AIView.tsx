@@ -61,6 +61,8 @@ import { ConcurrentLocalWarning } from "./ConcurrentLocalWarning";
 import { BackgroundProcessesBanner } from "./BackgroundProcessesBanner";
 import { useBackgroundBashHandlers } from "@/browser/hooks/useBackgroundBashHandlers";
 import { checkAutoCompaction } from "@/browser/utils/compaction/autoCompactionCheck";
+import { useContextSwitchWarning } from "@/browser/hooks/useContextSwitchWarning";
+import { ContextSwitchWarning as ContextSwitchWarningBanner } from "./ContextSwitchWarning";
 import { executeCompaction, buildContinueMessage } from "@/browser/utils/chatCommands";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { useAutoCompactionSettings } from "../hooks/useAutoCompactionSettings";
@@ -169,6 +171,22 @@ const AIViewInner: React.FC<AIViewProps> = ({
     workspaceStateRef.current = workspaceState;
   }, [workspaceState]);
   const { messages, canInterrupt, isCompacting, loading } = workspaceState;
+
+  // Context switch warning - shown when user switches to a model that can't fit current context
+  const {
+    warning: contextSwitchWarning,
+    handleModelChange,
+    handleCompact: handleContextSwitchCompact,
+    handleDismiss: handleContextSwitchDismiss,
+  } = useContextSwitchWarning({
+    workspaceId,
+    messages,
+    pendingModel,
+    use1M,
+    workspaceUsage,
+    api: api ?? undefined,
+    pendingSendOptions,
+  });
 
   // Apply message transformations:
   // 1. Merge consecutive identical stream errors
@@ -736,13 +754,22 @@ const AIViewInner: React.FC<AIViewProps> = ({
             </button>
           )}
         </div>
-        {shouldShowCompactionWarning && (
-          <CompactionWarning
-            usagePercentage={autoCompactionResult.usagePercentage}
-            thresholdPercentage={autoCompactionResult.thresholdPercentage}
-            isStreaming={canInterrupt}
-            onCompactClick={handleCompactClick}
+        {/* Show only one compaction warning at a time - context switch takes priority */}
+        {contextSwitchWarning ? (
+          <ContextSwitchWarningBanner
+            warning={contextSwitchWarning}
+            onCompact={handleContextSwitchCompact}
+            onDismiss={handleContextSwitchDismiss}
           />
+        ) : (
+          shouldShowCompactionWarning && (
+            <CompactionWarning
+              usagePercentage={autoCompactionResult.usagePercentage}
+              thresholdPercentage={autoCompactionResult.thresholdPercentage}
+              isStreaming={canInterrupt}
+              onCompactClick={handleCompactClick}
+            />
+          )
         )}
         <BackgroundProcessesBanner
           processes={backgroundBashes}
@@ -784,6 +811,7 @@ const AIViewInner: React.FC<AIViewProps> = ({
           onCheckReviews={handleCheckReviews}
           onDeleteReview={reviews.removeReview}
           onUpdateReviewNote={reviews.updateReviewNote}
+          onModelChange={handleModelChange}
         />
       </div>
 
