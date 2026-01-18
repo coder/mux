@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { createPatch } from "diff";
+import { FILE_EDIT_DIFF_OMITTED_MESSAGE } from "@/common/types/tools";
 import type { MuxMessage } from "@/common/types/message";
 import { extractEditedFileDiffs, extractEditedFilePaths } from "./extractEditedFiles";
 
@@ -11,6 +12,7 @@ function createAssistantMessage(
     toolName: string;
     filePath: string;
     diff: string;
+    uiOnlyDiff?: string;
     success?: boolean;
   }>
 ): MuxMessage {
@@ -23,7 +25,19 @@ function createAssistantMessage(
       toolName: tc.toolName,
       state: "output-available" as const,
       input: { file_path: tc.filePath },
-      output: { success: tc.success ?? true, diff: tc.diff },
+      output: {
+        success: tc.success ?? true,
+        diff: tc.diff,
+        ...(tc.uiOnlyDiff
+          ? {
+              ui_only: {
+                file_edit: {
+                  diff: tc.uiOnlyDiff,
+                },
+              },
+            }
+          : {}),
+      },
     })),
   };
 }
@@ -126,6 +140,27 @@ describe("extractEditedFileDiffs", () => {
     expect(result[0].path).toBe("/path/to/file.ts");
     expect(result[0].truncated).toBe(false);
     // Single diff should be returned as-is
+    expect(result[0].diff).toBe(diff);
+  });
+
+  it("should prefer ui_only diffs when present", () => {
+    const originalContent = "line1\nline2\nline3";
+    const newContent = "line1\nmodified\nline3";
+    const diff = makeDiff("/path/to/file.ts", originalContent, newContent);
+
+    const messages: MuxMessage[] = [
+      createAssistantMessage([
+        {
+          toolName: "file_edit_replace_string",
+          filePath: "/path/to/file.ts",
+          diff: FILE_EDIT_DIFF_OMITTED_MESSAGE,
+          uiOnlyDiff: diff,
+        },
+      ]),
+    ];
+
+    const result = extractEditedFileDiffs(messages);
+    expect(result).toHaveLength(1);
     expect(result[0].diff).toBe(diff);
   });
 

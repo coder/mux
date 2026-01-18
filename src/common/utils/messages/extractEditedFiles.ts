@@ -1,4 +1,5 @@
 import type { MuxMessage } from "@/common/types/message";
+import { getToolOutputUiOnly } from "@/common/utils/tools/toolOutputUiOnly";
 import { FILE_EDIT_TOOL_NAMES } from "@/common/types/tools";
 import { MAX_EDITED_FILES, MAX_FILE_CONTENT_SIZE } from "@/common/constants/attachments";
 import { applyPatch, createPatch, parsePatch } from "diff";
@@ -198,7 +199,11 @@ export function extractEditedFileDiffs(messages: MuxMessage[]): FileEditDiff[] {
       if (part.state !== "output-available") continue;
 
       const output = part.output as FileEditToolOutput | undefined;
-      if (!output?.success || !output.diff) continue;
+      if (!output?.success) continue;
+
+      const uiOnly = getToolOutputUiOnly(output);
+      const diff = uiOnly?.file_edit?.diff ?? output.diff;
+      if (!diff) continue;
 
       const input = part.input as FileEditToolInput | undefined;
       const filePath = input?.file_path;
@@ -208,7 +213,7 @@ export function extractEditedFileDiffs(messages: MuxMessage[]): FileEditDiff[] {
       if (!diffsByPath.has(filePath)) {
         diffsByPath.set(filePath, []);
       }
-      diffsByPath.get(filePath)!.push(output.diff);
+      diffsByPath.get(filePath)!.push(diff);
 
       // Update edit order (move to end if already exists)
       const idx = editOrder.indexOf(filePath);
