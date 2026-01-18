@@ -23,6 +23,7 @@ import { within, userEvent, waitFor } from "@storybook/test";
 import { getExperimentKey, EXPERIMENT_IDS } from "@/common/constants/experiments";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import type { TaskSettings } from "@/common/types/tasks";
+import type { LayoutPresetsConfig } from "@/common/types/uiLayouts";
 
 export default {
   ...appMeta,
@@ -35,6 +36,7 @@ export default {
 
 /** Setup basic workspace for settings stories */
 function setupSettingsStory(options: {
+  layoutPresets?: LayoutPresetsConfig;
   providersConfig?: Record<
     string,
     { apiKeySet: boolean; isConfigured: boolean; baseUrl?: string; models?: string[] }
@@ -64,6 +66,7 @@ function setupSettingsStory(options: {
     agentAiDefaults: options.agentAiDefaults,
     providersList: options.providersList ?? ["anthropic", "openai", "xai"],
     taskSettings: options.taskSettings,
+    layoutPresets: options.layoutPresets,
   });
 }
 
@@ -187,6 +190,60 @@ export const ProvidersConfigured: AppStory = {
   },
 };
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Layouts
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** Layouts section - with a preset assigned to a slot */
+export const LayoutsConfigured: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSettingsStory({
+          layoutPresets: {
+            version: 1,
+            presets: [
+              {
+                id: "preset-1",
+                name: "My Layout",
+                leftSidebarCollapsed: false,
+                rightSidebar: {
+                  collapsed: false,
+                  width: { mode: "px", value: 420 },
+                  layout: {
+                    version: 1,
+                    nextId: 2,
+                    focusedTabsetId: "tabset-1",
+                    root: {
+                      type: "tabset",
+                      id: "tabset-1",
+                      tabs: ["costs", "review", "terminal_new:t1"],
+                      activeTab: "review",
+                    },
+                  },
+                },
+              },
+            ],
+            slots: [{ slot: 1, presetId: "preset-1" }],
+          },
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await openSettingsToSection(canvasElement, "layouts");
+
+    const body = within(canvasElement.ownerDocument.body);
+    const dialog = await body.findByRole("dialog");
+    const dialogCanvas = within(dialog);
+
+    await dialogCanvas.findByRole("heading", { name: /layout presets/i });
+    await dialogCanvas.findByText(/Slots \(1–9\)/i);
+
+    // Wait for the async config load from the UILayoutsProvider.
+    await dialogCanvas.findByText(/My Layout/i);
+  },
+};
 /** Providers section - expanded to show quick links (docs + get API key) */
 export const ProvidersExpanded: AppStory = {
   render: () => (
