@@ -391,6 +391,9 @@ export class StreamingMessageAggregator {
     if (didDelete) {
       this.displayedMessageCache.delete(messageId);
       this.messageVersions.delete(messageId);
+      // Clean up token tracking state to prevent memory leaks
+      this.deltaHistory.delete(messageId);
+      this.activeStreamUsage.delete(messageId);
     }
     return didDelete;
   }
@@ -495,6 +498,12 @@ export class StreamingMessageAggregator {
    * - lastCompletedStreamStats - timing stats from this stream for display after completion
    */
   private cleanupStreamState(messageId: string): void {
+    // Clear optimistic interrupt flag if this stream was being interrupted.
+    // This handles cases where streams end normally or with errors (not just abort).
+    if (this.interruptingMessageId === messageId) {
+      this.interruptingMessageId = null;
+    }
+
     // Capture timing stats before removing the stream context
     const context = this.activeStreams.get(messageId);
     if (context) {
@@ -516,10 +525,14 @@ export class StreamingMessageAggregator {
           ? Math.max(0, context.serverFirstTokenTime - context.serverStartTime)
           : null;
 
-      // Get output tokens from cumulative usage (if available)
+      // Get output tokens from cumulative usage (if available).
+      // Fall back to message metadata for abort/error cases where clearTokenState was
+      // called before cleanupStreamState (e.g., stream abort event handler ordering).
       const cumulativeUsage = this.activeStreamUsage.get(messageId)?.cumulative.usage;
-      const outputTokens = cumulativeUsage?.outputTokens ?? 0;
-      const reasoningTokens = cumulativeUsage?.reasoningTokens ?? 0;
+      const metadataUsage = message?.metadata?.usage;
+      const outputTokens = cumulativeUsage?.outputTokens ?? metadataUsage?.outputTokens ?? 0;
+      const reasoningTokens =
+        cumulativeUsage?.reasoningTokens ?? metadataUsage?.reasoningTokens ?? 0;
 
       // Account for in-progress tool calls (can happen on abort/error)
       let totalToolExecutionMs = context.toolExecutionMs;
@@ -634,9 +647,15 @@ export class StreamingMessageAggregator {
    * @param hasActiveStream - Whether there's an active stream in buffered events (for reconnection scenario)
    */
   loadHistoricalMessages(messages: MuxMessage[], hasActiveStream = false): void {
+    // Clear existing state to prevent stale messages from persisting.
+    // This method replaces all messages, not merges them.
+    this.messages.clear();
     this.displayedMessageCache.clear();
     this.messageVersions.clear();
-    // First, add all messages to the map
+    this.deltaHistory.clear();
+    this.activeStreamUsage.clear();
+
+    // Add all messages to the map
     for (const message of messages) {
       this.messages.set(message.id, message);
     }
@@ -984,6 +1003,9 @@ export class StreamingMessageAggregator {
     const activeMessageIds = Array.from(this.activeStreams.keys());
     this.activeStreams.clear();
 
+    // Clear optimistic interrupt flag since all streams are cleared
+    this.interruptingMessageId = null;
+
     if (activeMessageIds.length > 0) {
       for (const messageId of activeMessageIds) {
         this.bumpMessageVersion(messageId);
@@ -997,6 +1019,7 @@ export class StreamingMessageAggregator {
     this.activeStreams.clear();
     this.displayedMessageCache.clear();
     this.messageVersions.clear();
+    this.interruptingMessageId = null;
     this.invalidateCache();
   }
 
@@ -1440,7 +1463,8 @@ export class StreamingMessageAggregator {
 
       const startTime = context.pendingToolStarts.get(data.toolCallId);
       if (startTime !== undefined) {
-        context.toolExecutionMs += data.timestamp - startTime;
+        // Clamp to non-negative to handle out-of-order timestamps during replay
+        context.toolExecutionMs += Math.max(0, data.timestamp - startTime);
         context.pendingToolStarts.delete(data.toolCallId);
       }
     }
@@ -1964,7 +1988,10 @@ export class StreamingMessageAggregator {
           historySequence: -1, // Place it before all messages
         };
 
-        return [historyHiddenMessage, ...slicedMessages];
+        // Cache the sliced result to maintain stable references and avoid recomputation
+        const result = [historyHiddenMessage, ...slicedMessages];
+        this.cache.displayedMessages = result;
+        return result;
       }
 
       // Return the full array
