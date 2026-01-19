@@ -7,25 +7,25 @@ description: Share reusable workflows and references with skills
 
 Agent Skills are reusable, file-based “playbooks” that you can share across projects or keep project-local.
 
-mux follows the Agent Skills specification and exposes skills to models in two steps:
+Mux follows the Agent Skills specification and exposes skills to models in two steps:
 
-1. **Index in the system prompt**: mux lists available skills (name + description).
+1. **Index in the system prompt**: Mux lists available skills (name + description).
 2. **Tool-based loading**: the agent calls tools to load a full skill when needed.
 
 This keeps the system prompt small while still making skills discoverable.
 
 ## Where skills live
 
-mux discovers skills from three roots:
+Mux discovers skills from three roots:
 
 - **Project-local**: `<projectRoot>/.mux/skills/<skill-name>/SKILL.md`
 - **Global**: `~/.mux/skills/<skill-name>/SKILL.md`
-- **Built-in**: shipped with mux
+- **Built-in**: shipped with Mux
 
 If a skill exists in multiple locations, the precedence order is: **project-local > global > built-in**.
 
 <Info>
-  mux reads skills using the active workspace runtime. For SSH workspaces, skills are read from the
+  Mux reads skills using the active workspace runtime. For SSH workspaces, skills are read from the
   remote host.
 </Info>
 
@@ -46,12 +46,12 @@ Skill directory names must match `^[a-z0-9]+(?:-[a-z0-9]+)*$` (1–64 chars).
 ## `SKILL.md` format
 
 `SKILL.md` must start with YAML frontmatter delimited by `---` on its own line.
-mux enforces a 1MB maximum file size for `SKILL.md`.
+Mux enforces a 1MB maximum file size for `SKILL.md`.
 
 Required fields:
 
 - `name`: must match the directory name
-- `description`: short summary shown in mux’s skills index
+- `description`: short summary shown in Mux’s skills index
 
 Optional fields:
 
@@ -59,7 +59,7 @@ Optional fields:
 - `compatibility`
 - `metadata` (string key/value map)
 
-mux ignores unknown frontmatter keys (for example `allowed-tools`).
+Mux ignores unknown frontmatter keys (for example `allowed-tools`).
 
 Example:
 
@@ -77,13 +77,13 @@ metadata:
 1. Do the thing...
 ```
 
-## Using skills in mux
+## Using skills in Mux
 
-mux injects an `<agent-skills>` block into the system prompt listing the available skills.
+Mux injects an `<agent-skills>` block into the system prompt listing the available skills.
 
 You can apply a skill in two ways:
 
-- **Explicit (slash command)**: type `/{skill-name}` (optionally followed by a message: `/{skill-name} ...`) in the chat input. mux will send your message normally (or a small default message if you omit one), and persist a synthetic snapshot of the skill body in history immediately before that message.
+- **Explicit (slash command)**: type `/{skill-name}` (optionally followed by a message: `/{skill-name} ...`) in the chat input. Mux will send your message normally (or a small default message if you omit one), and persist a synthetic snapshot of the skill body in history immediately before that message.
   - Example: `/init` runs the built-in `init` skill to bootstrap `AGENTS.md`. You can override it with `~/.mux/skills/init/SKILL.md` (or `.mux/skills/init/SKILL.md` for a single project).
   - Type `/` to see skills in the suggestions list.
 - **Agent-initiated (tool call)**: the agent can load skills on-demand.
@@ -111,7 +111,7 @@ agent_skill_read_file({ name: "my-skill", filePath: "references/template.md" });
 
 - Slash command invocation supports only a single skill as the first token (for example `/{skill-name}` or `/{skill-name} ...`).
 - Skill bodies may be truncated when injected to avoid accidental mega-prompts.
-- `allowed-tools` is not enforced by mux (it is tolerated in frontmatter, but ignored).
+- `allowed-tools` is not enforced by Mux (it is tolerated in frontmatter, but ignored).
 
 ## Further reading
 

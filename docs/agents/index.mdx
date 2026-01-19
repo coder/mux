@@ -5,7 +5,7 @@ description: Define custom agents (modes + subagents) with Markdown files
 
 ## Overview
 
-mux uses **agents** to control the model's:
+Mux uses **agents** to control the model's:
 
 - **System prompt** (what the assistant "is")
 - **Tool access policy** (which tools it can call)
@@ -18,7 +18,7 @@ This unifies two older concepts:
 An **Agent Definition** is a Markdown file:
 
 - The **YAML frontmatter** defines metadata + policy.
-- The **Markdown body** becomes the agent's system prompt (layered with mux's base prelude).
+- The **Markdown body** becomes the agent's system prompt (layered with Mux's base prelude).
 
 ## Quick Start
 
@@ -47,7 +47,7 @@ You are a code reviewer.
 
 ## Discovery + Precedence
 
-mux discovers agent definitions from (non-recursive):
+Mux discovers agent definitions from (non-recursive):
 
 | Location             | Scope   | Priority |
 | -------------------- | ------- | -------- |
@@ -110,7 +110,7 @@ tools:
 
 ### Markdown Body (Instructions)
 
-The markdown body after the frontmatter becomes the agent's system prompt, layered with mux's base prelude.
+The markdown body after the frontmatter becomes the agent's system prompt, layered with Mux's base prelude.
 
 **Inheritance behavior:** By default, when an agent has a `base`, the child's body is **appended** to the base agent's body. Set `prompt.append: false` to **replace** the base body entirely—useful when you want to completely override the base agent's instructions while keeping its tool policies or AI defaults.
 
@@ -141,7 +141,7 @@ base: exec
 Additional project-specific instructions that append to built-in exec.
 ```
 
-This works because when resolving `base: exec`, mux skips the current scope (project) and looks for `exec` in lower-priority scopes (global, then built-in). Your project-local `exec.md` extends the built-in exec, not itself.
+This works because when resolving `base: exec`, Mux skips the current scope (project) and looks for `exec` in lower-priority scopes (global, then built-in). Your project-local `exec.md` extends the built-in exec, not itself.
 
 **Common pattern:** Add repo-specific guidance (CI commands, test patterns) without duplicating the built-in instructions.
 
@@ -157,7 +157,7 @@ Tools are controlled via an explicit **whitelist**. The `tools` array lists patt
 
 Inheritance is multi-level: if `my-agent` has `base: plan`, agents inheriting from `my-agent` also get plan-like behavior.
 
-**Hard denies in subagents:** Even if an agent definition allows them, mux blocks these tools in child workspaces:
+**Hard denies in subagents:** Even if an agent definition allows them, Mux blocks these tools in child workspaces:
 
 - `task`, `task_await`, `task_list`, `task_terminate` (no recursive spawning)
 - `propose_plan`, `ask_user_question` (UI-only tools)

@@ -59,7 +59,7 @@ mux supports per-workspace MCP overrides (enable/disable servers and restrict to
 These overrides are stored in a workspace-local file: `.mux/mcp.local.jsonc`.
 
 - This file is intended to be **gitignored** (it contains local-only workspace preferences)
-- When mux writes this file, it also adds it to the workspace's local git excludes (`.git/info/exclude`) so it doesn't get accidentally committed
+- When Mux writes this file, it also adds it to the workspace's local git excludes (`.git/info/exclude`) so it doesn't get accidentally committed
 - Older mux versions stored these overrides in `~/.mux/config.json`; mux will migrate them into `.mux/mcp.local.jsonc` on first use
 
 This means you configure servers once per project, but each workspace (branch) gets isolated server instances with independent state.

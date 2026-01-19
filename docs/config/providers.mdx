@@ -3,7 +3,7 @@ title: Providers
 description: Configure API keys and settings for AI providers
 ---
 
-mux supports multiple AI providers. The easiest way to configure them is through **Settings → Providers** (`Cmd+,` / `Ctrl+,`).
+Mux supports multiple AI providers. The easiest way to configure them is through **Settings → Providers** (`Cmd+,` / `Ctrl+,`).
 
 ## Quick Setup
 
@@ -103,7 +103,7 @@ Bedrock supports multiple authentication methods (tried in order):
 2. **Explicit Credentials** — `accessKeyId` + `secretAccessKey` in config
 3. **AWS Credential Chain** — Automatic resolution from environment, `~/.aws/credentials`, SSO, EC2/ECS roles
 
-If you're already authenticated with AWS CLI (`aws sso login`), mux uses those credentials automatically.
+If you're already authenticated with AWS CLI (`aws sso login`), Mux uses those credentials automatically.
 
 ### OpenRouter Provider Routing
 
@@ -118,4 +118,4 @@ See [OpenRouter Provider Routing docs](https://openrouter.ai/docs/features/provi
 
 ### xAI Search Orchestration
 
-Grok models support live web search. mux enables this by default with `mode: "auto"`. Customize via [`searchParameters`](https://docs.x.ai/docs/resources/search) for regional focus, time filters, or to disable search.
+Grok models support live web search. Mux enables this by default with `mode: "auto"`. Customize via [`searchParameters`](https://docs.x.ai/docs/resources/search) for regional focus, time filters, or to disable search.

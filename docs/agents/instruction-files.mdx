@@ -5,27 +5,27 @@ description: Configure agent behavior with AGENTS.md files
 
 ## Overview
 
-mux layers instructions from two locations:
+Mux layers instructions from two locations:
 
 1. `~/.mux/AGENTS.md` (+ optional `AGENTS.local.md`) — global defaults
 2. `<workspace>/AGENTS.md` (+ optional `AGENTS.local.md`) — workspace-specific context
 
-Within each location, mux picks the first matching base file:
+Within each location, Mux picks the first matching base file:
 
 1. `AGENTS.md`
 2. `AGENT.md`
 3. `CLAUDE.md`
 
-If a base file is found, mux also appends `AGENTS.local.md` from the same directory (when present).
+If a base file is found, Mux also appends `AGENTS.local.md` from the same directory (when present).
 
 <Info>
-  mux strips HTML-style markdown comments (`<!-- ... -->`) from instruction files before sending them
+  Mux strips HTML-style markdown comments (`<!-- ... -->`) from instruction files before sending them
   to the model. Use these comments for editor-only metadata—they will not reach the agent.
 </Info>
 
 ## Scoped instructions
 
-mux supports **scoped instructions** that activate only in specific contexts. You define them using special headings:
+Mux supports **scoped instructions** that activate only in specific contexts. You define them using special headings:
 
 - `Model: <regex>` — Active only for specific models (e.g., GPT-4, Claude).
 - `Tool: <tool_name>` — Appended to the description of specific tools.
@@ -35,7 +35,7 @@ These scoped headings work identically in both:
 1. **AGENTS.md files** (global `~/.mux/AGENTS.md` or workspace `<workspace>/AGENTS.md`)
 2. **Custom agent definitions** (the Markdown body of `.mux/agents/<name>.md` files)
 
-When searching for a matching section, mux checks sources in this order: agent definition → workspace AGENTS.md → global AGENTS.md. The first match wins.
+When searching for a matching section, Mux checks sources in this order: agent definition → workspace AGENTS.md → global AGENTS.md. The first match wins.
 
 <Note>
   Agent-specific and mode-specific scoped instructions (`Agent:` and `Mode:`) have been removed. Use
