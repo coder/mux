@@ -135,23 +135,13 @@ function parseOptionalPort(value: string | undefined): number | null {
   return parsed;
 }
 
-async function main(): Promise<void> {
+async function main(): Promise<number> {
   const keepSandbox = process.env.KEEP_SANDBOX === "1";
   const makeCmd = process.env.MAKE ?? "make";
 
-  const muxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mux-dev-server-"));
-
+  // Do any validation that might throw *before* creating the temp root so we
+  // don't leave behind stale `mux-dev-server-*` directories for simple mistakes.
   const seedMuxRoot = chooseSeedMuxRoot();
-
-  const seedProvidersPath = seedMuxRoot ? path.join(seedMuxRoot, "providers.jsonc") : null;
-  const seedConfigPath = seedMuxRoot ? path.join(seedMuxRoot, "config.json") : null;
-
-  const copiedProviders = seedProvidersPath
-    ? copyFileIfExists(seedProvidersPath, path.join(muxRoot, "providers.jsonc"), { mode: 0o600 })
-    : false;
-  const copiedConfig = seedConfigPath
-    ? copyFileIfExists(seedConfigPath, path.join(muxRoot, "config.json"))
-    : false;
 
   const backendPortOverride = parseOptionalPort(process.env.BACKEND_PORT);
   const vitePortOverride = parseOptionalPort(process.env.VITE_PORT);
@@ -171,99 +161,108 @@ async function main(): Promise<void> {
     vitePort = await getFreePort();
   }
 
-  console.log("\nStarting mux dev-server sandbox...");
-  console.log(`  MUX_ROOT:        ${muxRoot}`);
-  if (seedMuxRoot) {
-    console.log(`  Seeded from:     ${seedMuxRoot}`);
-    console.log(`  Copied config:   ${copiedConfig ? "yes" : "no"}`);
-    console.log(`  Copied providers: ${copiedProviders ? "yes" : "no"}`);
-  } else {
-    console.log("  Seeded from:     (none)");
-  }
-  console.log(`  Backend:         http://127.0.0.1:${backendPort}`);
-  console.log(`  Frontend:        http://localhost:${vitePort}`);
-  if (keepSandbox) {
-    console.log("  KEEP_SANDBOX=1 (temp root will not be deleted)");
-  }
+  const muxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mux-dev-server-"));
 
-  let child: ReturnType<typeof spawn>;
   try {
-    child = spawn(makeCmd, ["dev-server"], {
-      stdio: "inherit",
-      env: {
-        ...process.env,
+    const seedProvidersPath = seedMuxRoot ? path.join(seedMuxRoot, "providers.jsonc") : null;
+    const seedConfigPath = seedMuxRoot ? path.join(seedMuxRoot, "config.json") : null;
 
-        // Allow access via reverse proxies / port-forwarding domains.
-        // This sets the Makefile's `VITE_ALLOWED_HOSTS`, which is forwarded to
-        // `MUX_VITE_ALLOWED_HOSTS` and then consumed by `vite.config.ts`.
-        VITE_ALLOWED_HOSTS: process.env.VITE_ALLOWED_HOSTS ?? "all",
+    const copiedProviders = seedProvidersPath
+      ? copyFileIfExists(seedProvidersPath, path.join(muxRoot, "providers.jsonc"), { mode: 0o600 })
+      : false;
+    const copiedConfig = seedConfigPath
+      ? copyFileIfExists(seedConfigPath, path.join(muxRoot, "config.json"))
+      : false;
 
-        MUX_ROOT: muxRoot,
-        BACKEND_PORT: String(backendPort),
-        VITE_PORT: String(vitePort),
-      },
+    console.log("\nStarting mux dev-server sandbox...");
+    console.log(`  MUX_ROOT:        ${muxRoot}`);
+    if (seedMuxRoot) {
+      console.log(`  Seeded from:     ${seedMuxRoot}`);
+      console.log(`  Copied config:   ${copiedConfig ? "yes" : "no"}`);
+      console.log(`  Copied providers: ${copiedProviders ? "yes" : "no"}`);
+    } else {
+      console.log("  Seeded from:     (none)");
+    }
+    console.log(`  Backend:         http://127.0.0.1:${backendPort}`);
+    console.log(`  Frontend:        http://localhost:${vitePort}`);
+    if (keepSandbox) {
+      console.log("  KEEP_SANDBOX=1 (temp root will not be deleted)");
+    }
+
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(makeCmd, ["dev-server"], {
+        stdio: "inherit",
+        env: {
+          ...process.env,
+
+          // Allow access via reverse proxies / port-forwarding domains.
+          // This sets the Makefile's `VITE_ALLOWED_HOSTS`, which is forwarded to
+          // `MUX_VITE_ALLOWED_HOSTS` and then consumed by `vite.config.ts`.
+          VITE_ALLOWED_HOSTS: process.env.VITE_ALLOWED_HOSTS ?? "all",
+
+          MUX_ROOT: muxRoot,
+          BACKEND_PORT: String(backendPort),
+          VITE_PORT: String(vitePort),
+        },
+      });
+    } catch (err) {
+      console.error(`Failed to start ${makeCmd} dev-server:`, err);
+      throw err;
+    }
+
+    const forwardSignal = (signal: NodeJS.Signals): void => {
+      if (!child.killed) {
+        child.kill(signal);
+      }
+    };
+
+    // Forward signals so Ctrl+C stops all subprocesses.
+    process.on("SIGINT", () => forwardSignal("SIGINT"));
+    process.on("SIGTERM", () => forwardSignal("SIGTERM"));
+
+    const exitCode = await new Promise<number>((resolve) => {
+      let resolved = false;
+      const finish = (code: number): void => {
+        if (resolved) return;
+        resolved = true;
+        resolve(code);
+      };
+
+      // If spawning fails (e.g. ENOENT for `make`), Node emits `error` but does
+      // not emit `exit`. Without this, we'd hang.
+      child.on("error", (err) => {
+        console.error(`Failed to start ${makeCmd} dev-server:`, err);
+        finish(1);
+      });
+
+      child.on("exit", (code, signal) => {
+        if (typeof code === "number") {
+          finish(code);
+        } else {
+          // When killed by signal, prefer a non-zero exit code.
+          finish(signal ? 1 : 0);
+        }
+      });
     });
-  } catch (err) {
-    // `spawn` can throw synchronously (e.g., invalid cwd). If that happens we
-    // still want to clean up the temp root.
+
+    return exitCode;
+  } finally {
     if (!keepSandbox) {
       try {
         fs.rmSync(muxRoot, { recursive: true, force: true });
-      } catch {
-        // ignore
+      } catch (err) {
+        console.error(`Failed to remove sandbox MUX_ROOT at ${muxRoot}:`, err);
       }
     }
-
-    throw err;
   }
-
-  const forwardSignal = (signal: NodeJS.Signals): void => {
-    if (!child.killed) {
-      child.kill(signal);
-    }
-  };
-
-  // Forward signals so Ctrl+C stops all subprocesses.
-  process.on("SIGINT", () => forwardSignal("SIGINT"));
-  process.on("SIGTERM", () => forwardSignal("SIGTERM"));
-
-  const exitCode = await new Promise<number>((resolve) => {
-    let resolved = false;
-    const finish = (code: number): void => {
-      if (resolved) return;
-      resolved = true;
-      resolve(code);
-    };
-
-    // If spawning fails (e.g. ENOENT for `make`), Node emits `error` but does
-    // not emit `exit`. Without this, we'd hang and leak the temp root.
-    child.on("error", (err) => {
-      console.error(`Failed to start ${makeCmd} dev-server:`, err);
-      finish(1);
-    });
-
-    child.on("exit", (code, signal) => {
-      if (typeof code === "number") {
-        finish(code);
-      } else {
-        // When killed by signal, prefer a non-zero exit code.
-        finish(signal ? 1 : 0);
-      }
-    });
-  });
-
-  if (!keepSandbox) {
-    try {
-      fs.rmSync(muxRoot, { recursive: true, force: true });
-    } catch (err) {
-      console.error(`Failed to remove sandbox MUX_ROOT at ${muxRoot}:`, err);
-    }
-  }
-
-  process.exit(exitCode);
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+main()
+  .then((exitCode) => {
+    process.exit(exitCode);
+  })
+  .catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
