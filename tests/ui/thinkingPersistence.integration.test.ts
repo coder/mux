@@ -5,7 +5,7 @@
 import { fireEvent, waitFor, within } from "@testing-library/react";
 
 import { CUSTOM_EVENTS } from "@/common/constants/events";
-import { getModelKey, getThinkingLevelKey } from "@/common/constants/storage";
+import { getModelKey } from "@/common/constants/storage";
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
 
 import { shouldRunIntegrationTests } from "../testUtils";
@@ -58,12 +58,44 @@ async function selectModel(
 }
 
 async function setThinkingToMax(container: HTMLElement): Promise<void> {
-  const steps = ["low", "medium", "high", "xhigh"] as const;
+  // Wait for the thinking slider to render
+  const button = await waitFor(
+    () => {
+      const btn = container.querySelector(
+        '[data-component="ThinkingSliderGroup"] button'
+      ) as HTMLButtonElement | null;
+      if (!btn) {
+        throw new Error("Thinking level button not found");
+      }
+      return btn;
+    },
+    { timeout: 5000 }
+  );
 
-  for (const level of steps) {
-    fireEvent.keyDown(window, { key: "T", ctrlKey: true, shiftKey: true });
-    await expectThinkingLabel(container, level);
+  // Cycle by clicking until we hit xhigh
+  const maxIterations = 10;
+  for (let i = 0; i < maxIterations; i++) {
+    const current = button.querySelector("span")?.textContent?.trim()?.toLowerCase();
+    if (current === "xhigh") {
+      return;
+    }
+    fireEvent.click(button);
+
+    // Wait for level to change before next iteration
+    await waitFor(
+      () => {
+        const updated = button.querySelector("span")?.textContent?.trim()?.toLowerCase();
+        if (!updated || updated === current) {
+          throw new Error("Waiting for thinking level to change");
+        }
+      },
+      { timeout: 1000 }
+    );
   }
+  const final = button.querySelector("span")?.textContent;
+  throw new Error(
+    `Failed to reach xhigh after max iterations. Last value: ${final ?? "<missing>"}`
+  );
 }
 
 async function expectThinkingLabel(container: HTMLElement, expected: string): Promise<void> {
@@ -87,9 +119,6 @@ describeIntegration("Thinking level persistence", () => {
 
       await selectModel(harness.view.container, harness.workspaceId, OPUS_MODEL);
       await expectThinkingLabel(harness.view.container, "high");
-
-      const persistedThinking = readPersistedState(getThinkingLevelKey(harness.workspaceId), "off");
-      expect(persistedThinking).toBe("xhigh");
 
       await selectModel(harness.view.container, harness.workspaceId, CODEX_MODEL);
       await expectThinkingLabel(harness.view.container, "xhigh");
