@@ -1,6 +1,19 @@
-import React, { useState, useCallback, useEffect, type ReactNode } from "react";
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useCallback,
+  useEffect,
+  type ReactNode,
+} from "react";
 import { SPLASH_REGISTRY, DISABLE_SPLASH_SCREENS, type SplashConfig } from "./index";
 import { useAPI } from "@/browser/contexts/API";
+
+const SplashScreenActiveContext = createContext(false);
+
+export function useIsSplashScreenActive(): boolean {
+  return useContext(SplashScreenActiveContext);
+}
 
 export function SplashScreenProvider({ children }: { children: ReactNode }) {
   const { api } = useAPI();
@@ -55,15 +68,12 @@ export function SplashScreenProvider({ children }: { children: ReactNode }) {
     setQueue((q) => q.slice(1));
   }, [currentSplash, api]);
 
-  // Don't render splash until we've loaded the viewed state
-  if (!loaded) {
-    return <>{children}</>;
-  }
+  const isSplashScreenActive = loaded && currentSplash !== null;
 
   return (
-    <>
+    <SplashScreenActiveContext.Provider value={isSplashScreenActive}>
       {children}
-      {currentSplash && <currentSplash.component onDismiss={() => void dismiss()} />}
-    </>
+      {loaded && currentSplash && <currentSplash.component onDismiss={() => void dismiss()} />}
+    </SplashScreenActiveContext.Provider>
   );
 }
