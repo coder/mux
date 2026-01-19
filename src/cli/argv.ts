@@ -54,6 +54,58 @@ export function getSubcommand(
 }
 
 /**
+ * Extract and consume a global --mux-root/--root flag.
+ *
+ * This must run before subcommand routing so that commands like:
+ *   mux --mux-root /tmp/mux-test server
+ * correctly route to "server" (instead of treating --mux-root as a subcommand).
+ *
+ * Mutates argv in-place by splicing out the flag and its value.
+ */
+export function consumeMuxRootFromArgv(
+  argv: string[] = process.argv,
+  env: CliEnvironment = detectCliEnvironment()
+): { muxRoot?: string; error?: string } {
+  let muxRoot: string | undefined;
+
+  // Matches:
+  // - --mux-root <path>
+  // - --root <path>
+  // - --mux-root=<path>
+  // - --root=<path>
+  const rootFlagRe = /^--(mux-root|root)(?:=(.*))?$/;
+
+  for (let i = env.firstArgIndex; i < argv.length; i++) {
+    const arg = argv[i];
+    const match = rootFlagRe.exec(arg);
+    if (!match) continue;
+
+    const equalsValue = match[2];
+    if (equalsValue !== undefined) {
+      if (!equalsValue) {
+        return { error: `Missing value for ${arg}` };
+      }
+
+      muxRoot = equalsValue;
+      argv.splice(i, 1);
+      i -= 1;
+      continue;
+    }
+
+    const value = argv[i + 1];
+    if (value === undefined || value.startsWith("-")) {
+      return { error: `Missing value for ${arg}` };
+    }
+
+    muxRoot = value;
+    argv.splice(i, 2);
+    i -= 1;
+  }
+
+  return { muxRoot };
+}
+
+/**
  * Get args for a subcommand after the subcommand name has been spliced out.
  * This is what subcommand handlers (server.ts, api.ts, run.ts) use after
  * index.ts removes the subcommand name from process.argv.

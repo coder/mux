@@ -44,6 +44,7 @@ import { TaskService } from "@/node/services/taskService";
 import { getSigningService, type SigningService } from "@/node/services/signingService";
 import { coderService, type CoderService } from "@/node/services/coderService";
 import { setGlobalCoderService } from "@/node/runtime/runtimeFactory";
+import { TestInstanceService } from "@/node/services/testInstanceService";
 
 /**
  * ServiceContainer - Central dependency container for all backend services.
@@ -77,6 +78,7 @@ export class ServiceContainer {
   public readonly sessionTimingService: SessionTimingService;
   public readonly experimentsService: ExperimentsService;
   public readonly sessionUsageService: SessionUsageService;
+  public readonly testInstanceService: TestInstanceService;
   public readonly signingService: SigningService;
   public readonly coderService: CoderService;
   private readonly initStateManager: InitStateManager;
@@ -87,6 +89,7 @@ export class ServiceContainer {
 
   constructor(config: Config) {
     this.config = config;
+    this.testInstanceService = new TestInstanceService(config);
     this.historyService = new HistoryService(config);
     this.partialService = new PartialService(config, this.historyService);
     this.projectService = new ProjectService(config);

@@ -115,6 +115,7 @@ const mockWindow: BrowserWindow = {
     voiceService: serviceContainer.voiceService,
     telemetryService: serviceContainer.telemetryService,
     experimentsService: serviceContainer.experimentsService,
+    testInstanceService: serviceContainer.testInstanceService,
     sessionUsageService: serviceContainer.sessionUsageService,
     signingService: serviceContainer.signingService,
     coderService: serviceContainer.coderService,
