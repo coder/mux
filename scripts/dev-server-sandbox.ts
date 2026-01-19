@@ -186,21 +186,36 @@ async function main(): Promise<void> {
     console.log("  KEEP_SANDBOX=1 (temp root will not be deleted)");
   }
 
-  const child = spawn(makeCmd, ["dev-server"], {
-    stdio: "inherit",
-    env: {
-      ...process.env,
+  let child: ReturnType<typeof spawn>;
+  try {
+    child = spawn(makeCmd, ["dev-server"], {
+      stdio: "inherit",
+      env: {
+        ...process.env,
 
-      // Allow access via reverse proxies / port-forwarding domains.
-      // This sets the Makefile's `VITE_ALLOWED_HOSTS`, which is forwarded to
-      // `MUX_VITE_ALLOWED_HOSTS` and then consumed by `vite.config.ts`.
-      VITE_ALLOWED_HOSTS: process.env.VITE_ALLOWED_HOSTS ?? "all",
+        // Allow access via reverse proxies / port-forwarding domains.
+        // This sets the Makefile's `VITE_ALLOWED_HOSTS`, which is forwarded to
+        // `MUX_VITE_ALLOWED_HOSTS` and then consumed by `vite.config.ts`.
+        VITE_ALLOWED_HOSTS: process.env.VITE_ALLOWED_HOSTS ?? "all",
 
-      MUX_ROOT: muxRoot,
-      BACKEND_PORT: String(backendPort),
-      VITE_PORT: String(vitePort),
-    },
-  });
+        MUX_ROOT: muxRoot,
+        BACKEND_PORT: String(backendPort),
+        VITE_PORT: String(vitePort),
+      },
+    });
+  } catch (err) {
+    // `spawn` can throw synchronously (e.g., invalid cwd). If that happens we
+    // still want to clean up the temp root.
+    if (!keepSandbox) {
+      try {
+        fs.rmSync(muxRoot, { recursive: true, force: true });
+      } catch {
+        // ignore
+      }
+    }
+
+    throw err;
+  }
 
   const forwardSignal = (signal: NodeJS.Signals): void => {
     if (!child.killed) {
@@ -213,12 +228,26 @@ async function main(): Promise<void> {
   process.on("SIGTERM", () => forwardSignal("SIGTERM"));
 
   const exitCode = await new Promise<number>((resolve) => {
+    let resolved = false;
+    const finish = (code: number): void => {
+      if (resolved) return;
+      resolved = true;
+      resolve(code);
+    };
+
+    // If spawning fails (e.g. ENOENT for `make`), Node emits `error` but does
+    // not emit `exit`. Without this, we'd hang and leak the temp root.
+    child.on("error", (err) => {
+      console.error(`Failed to start ${makeCmd} dev-server:`, err);
+      finish(1);
+    });
+
     child.on("exit", (code, signal) => {
       if (typeof code === "number") {
-        resolve(code);
+        finish(code);
       } else {
         // When killed by signal, prefer a non-zero exit code.
-        resolve(signal ? 1 : 0);
+        finish(signal ? 1 : 0);
       }
     });
   });
