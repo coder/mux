@@ -154,11 +154,27 @@ async function main(): Promise<number> {
     throw new Error("BACKEND_PORT and VITE_PORT must be different");
   }
 
-  const backendPort = backendPortOverride ?? (await getFreePort());
+  let backendPort: number;
+  if (backendPortOverride !== null) {
+    backendPort = backendPortOverride;
+  } else {
+    backendPort = await getFreePort();
 
-  let vitePort = vitePortOverride ?? (await getFreePort());
-  while (vitePort === backendPort) {
+    // If the user explicitly chose a Vite port, keep it stable and move the
+    // backend port instead.
+    while (vitePortOverride !== null && backendPort === vitePortOverride) {
+      backendPort = await getFreePort();
+    }
+  }
+
+  let vitePort: number;
+  if (vitePortOverride !== null) {
+    vitePort = vitePortOverride;
+  } else {
     vitePort = await getFreePort();
+    while (vitePort === backendPort) {
+      vitePort = await getFreePort();
+    }
   }
 
   const muxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mux-dev-server-"));
