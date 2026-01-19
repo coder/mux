@@ -350,6 +350,14 @@ const reallyLongVariableName = someFunction(argumentOne, argumentTwo, argumentTh
 
 This is a very long paragraph without any breaks that should demonstrate text wrapping behavior in the chat message container. The text should wrap at the container boundary and not cause horizontal overflow that creates a scrollbar on the entire chat area. If you see a horizontal scrollbar, the CSS is broken.`;
 
+const USER_LONG_CODE_BLOCK = `Here's the error output:
+
+\`\`\`
+Expected ahead ≥ 2, got: {"ahead":1,"behind":0,"dirty":true,"outgoingAdditions":2,"outgoingDeletions":0,"incomingAdditions":0,"incomingDeletions":0}
+\`\`\`
+
+Any ideas?`;
+
 /** Long lines in code blocks and lists - regression test for horizontal overflow */
 export const LongLinesOverflow: AppStory = {
   render: () => (
@@ -358,7 +366,7 @@ export const LongLinesOverflow: AppStory = {
         setupSimpleChatStory({
           workspaceId: "ws-long-lines",
           messages: [
-            createUserMessage("msg-1", "Show me content with long lines", {
+            createUserMessage("msg-1", USER_LONG_CODE_BLOCK, {
               historySequence: 1,
               timestamp: STABLE_TIMESTAMP - 100000,
             }),
@@ -374,15 +382,16 @@ export const LongLinesOverflow: AppStory = {
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     await waitForChatMessagesLoaded(canvasElement);
 
-    // Wait for plain code block to render (no language = uses pre > code, not .code-block-wrapper)
+    // Wait for assistant's plain code block to render (no language = uses pre > code, not .code-block-wrapper)
     await waitFor(
       () => {
-        const codeBlock = canvasElement.querySelector(".markdown-content pre > code");
-        if (!codeBlock) throw new Error("Code block not found");
-        if (!codeBlock.textContent?.includes("reallyLongVariableName")) {
-          throw new Error("Code block content not rendered yet");
-        }
-        return codeBlock;
+        // Find all code blocks and look for the one with the expected content
+        const codeBlocks = canvasElement.querySelectorAll(".markdown-content pre > code");
+        const assistantCodeBlock = Array.from(codeBlocks).find((el) =>
+          el.textContent?.includes("reallyLongVariableName")
+        );
+        if (!assistantCodeBlock) throw new Error("Assistant code block not found");
+        return assistantCodeBlock;
       },
       { timeout: 15000 }
     );
