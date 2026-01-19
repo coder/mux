@@ -298,8 +298,8 @@ export const LayoutsConfigured: AppStory = {
     // Wait for the async config load from the UILayoutsProvider.
     await dialogCanvas.findByText(/My Layout/i);
     await dialogCanvas.findByText(/Extra Layout/i);
-    await dialogCanvas.findByText(/Slot 1/i);
-    await dialogCanvas.findByText(/Slot 10/i);
+    await dialogCanvas.findByText(/^Slot 1$/i);
+    await dialogCanvas.findByText(/^Slot 10$/i);
     await dialogCanvas.findByText(/^Add layout$/i);
 
     if (dialogCanvas.queryByText(/Slot 2/i)) {
