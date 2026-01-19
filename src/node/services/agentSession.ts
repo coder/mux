@@ -46,7 +46,7 @@ import type { TodoItem } from "@/common/types/tools";
 import type { PostCompactionAttachment, PostCompactionExclusions } from "@/common/types/attachment";
 import { TURNS_BETWEEN_ATTACHMENTS } from "@/common/constants/attachments";
 import { extractEditedFileDiffs } from "@/common/utils/messages/extractEditedFiles";
-import { getModelName, getModelProvider, isValidModelFormat } from "@/common/utils/ai/models";
+import { normalizeGatewayModel, isValidModelFormat } from "@/common/utils/ai/models";
 import { readAgentSkill } from "@/node/services/agentSkills/agentSkillsService";
 import { materializeFileAtMentions } from "@/node/services/fileAtMentions";
 
@@ -870,10 +870,9 @@ export class AgentSession {
   }
 
   private isSonnet45Model(modelString: string): boolean {
-    return (
-      getModelProvider(modelString) === "anthropic" &&
-      getModelName(modelString).toLowerCase().startsWith("claude-sonnet-4-5")
-    );
+    const normalized = normalizeGatewayModel(modelString);
+    const [provider, modelName] = normalized.split(":", 2);
+    return provider === "anthropic" && modelName?.toLowerCase().startsWith("claude-sonnet-4-5");
   }
 
   private withAnthropic1MContext(
@@ -904,10 +903,9 @@ export class AgentSession {
   }
 
   private isGptClassModel(modelString: string): boolean {
-    return (
-      getModelProvider(modelString) === "openai" &&
-      getModelName(modelString).toLowerCase().startsWith("gpt-")
-    );
+    const normalized = normalizeGatewayModel(modelString);
+    const [provider, modelName] = normalized.split(":", 2);
+    return provider === "openai" && modelName?.toLowerCase().startsWith("gpt-");
   }
 
   private async maybeRetryCompactionOnContextExceeded(data: {
