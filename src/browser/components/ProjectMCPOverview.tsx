@@ -9,7 +9,8 @@ interface ProjectMCPOverviewProps {
   projectPath: string;
 }
 
-export const ProjectMCPOverview: React.FC<ProjectMCPOverviewProps> = ({ projectPath }) => {
+export const ProjectMCPOverview: React.FC<ProjectMCPOverviewProps> = (props) => {
+  const projectPath = props.projectPath;
   const { api } = useAPI();
   const settings = useSettings();
 
@@ -45,13 +46,10 @@ export const ProjectMCPOverview: React.FC<ProjectMCPOverviewProps> = ({ projectP
     };
   }, [api, projectPath, settings.isOpen]);
 
-  const enabledServerNames = React.useMemo(() => {
-    const names = Object.entries(servers)
-      .filter(([, info]) => !info.disabled)
-      .map(([name]) => name);
-    names.sort((a, b) => a.localeCompare(b));
-    return names;
-  }, [servers]);
+  const enabledServerNames = Object.entries(servers)
+    .filter(([, info]) => !info.disabled)
+    .map(([name]) => name)
+    .sort((a, b) => a.localeCompare(b));
 
   const shownServerNames = enabledServerNames.slice(0, 3);
   const remainingCount = enabledServerNames.length - shownServerNames.length;
