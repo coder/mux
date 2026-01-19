@@ -267,6 +267,41 @@ describeIntegration("Workspace Archive List Reactivity (UI)", () => {
         { timeout: 5_000 }
       );
 
+      // ArchivedWorkspaces is collapsed by default; expand so archived rows are visible.
+      const expandArchivedButton = await waitFor(
+        () => {
+          const expand = view.container.querySelector(
+            '[aria-label="Expand archived workspaces"]'
+          ) as HTMLElement | null;
+          const collapse = view.container.querySelector(
+            '[aria-label="Collapse archived workspaces"]'
+          ) as HTMLElement | null;
+
+          if (!expand && !collapse) {
+            throw new Error("Archived workspaces toggle not found");
+          }
+
+          return expand;
+        },
+        { timeout: 5_000 }
+      );
+
+      if (expandArchivedButton) {
+        fireEvent.click(expandArchivedButton);
+      }
+
+      await waitFor(
+        () => {
+          const collapse = view.container.querySelector(
+            '[aria-label="Collapse archived workspaces"]'
+          );
+          if (!collapse) {
+            throw new Error("Archived workspaces not expanded");
+          }
+        },
+        { timeout: 5_000 }
+      );
+
       // KEY ASSERTION: The newly archived workspace should appear in the archive list
       // immediately WITHOUT requiring a manual refresh
       await waitFor(
@@ -344,6 +379,41 @@ describeIntegration("Workspace Delete from Archive (UI)", () => {
         () => {
           const textarea = view.container.querySelector("textarea");
           if (!textarea) throw new Error("Project page not rendered (no textarea)");
+        },
+        { timeout: 5_000 }
+      );
+
+      // ArchivedWorkspaces is collapsed by default; expand so archived rows are visible.
+      const expandArchivedButton = await waitFor(
+        () => {
+          const expand = view.container.querySelector(
+            '[aria-label="Expand archived workspaces"]'
+          ) as HTMLElement | null;
+          const collapse = view.container.querySelector(
+            '[aria-label="Collapse archived workspaces"]'
+          ) as HTMLElement | null;
+
+          if (!expand && !collapse) {
+            throw new Error("Archived workspaces toggle not found");
+          }
+
+          return expand;
+        },
+        { timeout: 5_000 }
+      );
+
+      if (expandArchivedButton) {
+        fireEvent.click(expandArchivedButton);
+      }
+
+      await waitFor(
+        () => {
+          const collapse = view.container.querySelector(
+            '[aria-label="Collapse archived workspaces"]'
+          );
+          if (!collapse) {
+            throw new Error("Archived workspaces not expanded");
+          }
         },
         { timeout: 5_000 }
       );
@@ -435,6 +505,41 @@ describeIntegration("Workspace Delete from Archive (UI)", () => {
           const textarea = view.container.querySelector("textarea");
           if (!archivedSection && !textarea) {
             throw new Error("Project page not rendered");
+          }
+        },
+        { timeout: 5_000 }
+      );
+
+      // ArchivedWorkspaces is collapsed by default; expand so archived rows are visible.
+      const expandArchivedButton = await waitFor(
+        () => {
+          const expand = view.container.querySelector(
+            '[aria-label="Expand archived workspaces"]'
+          ) as HTMLElement | null;
+          const collapse = view.container.querySelector(
+            '[aria-label="Collapse archived workspaces"]'
+          ) as HTMLElement | null;
+
+          if (!expand && !collapse) {
+            throw new Error("Archived workspaces toggle not found");
+          }
+
+          return expand;
+        },
+        { timeout: 5_000 }
+      );
+
+      if (expandArchivedButton) {
+        fireEvent.click(expandArchivedButton);
+      }
+
+      await waitFor(
+        () => {
+          const collapse = view.container.querySelector(
+            '[aria-label="Collapse archived workspaces"]'
+          );
+          if (!collapse) {
+            throw new Error("Archived workspaces not expanded");
           }
         },
         { timeout: 5_000 }

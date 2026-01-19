@@ -90,8 +90,15 @@ export const WorkspaceNameInRuntimeTooltip: AppStory = {
     const canvas = within(storyRoot);
 
     // Wait for the archived list to load and scroll it into view (it's below the creation prompt).
+
     const archivedHeader = await canvas.findByText(/Archived Workspaces/i, {}, { timeout: 10000 });
     archivedHeader.scrollIntoView({ block: "start" });
+
+    // ArchivedWorkspaces is collapsed by default; expand to make rows interactable.
+    const expandButton = canvas.queryByLabelText("Expand archived workspaces");
+    if (expandButton) {
+      await userEvent.click(expandButton);
+    }
 
     // Find the workspace row by its visible title.
     const checkbox = await canvas.findByLabelText(
