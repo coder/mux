@@ -195,6 +195,7 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
           maxOutputTokens,
           continueMessage,
           continueMessageIsRetry,
+          editMessageId: source.id,
         });
 
         if (!result.success) {
@@ -246,6 +247,7 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
         model: compactionSuggestion.modelId,
         continueMessage,
         continueMessageIsRetry: true,
+        editMessageId: source.id,
       });
 
       if (!result.success) {
