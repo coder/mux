@@ -3,7 +3,8 @@ import { TokenMeter } from "./TokenMeter";
 import { HorizontalThresholdSlider, type AutoCompactionConfig } from "./ThresholdSlider";
 import { formatTokens, type TokenMeterData } from "@/common/utils/tokens/tokenMeterUtils";
 
-const OutputReserveIndicator: React.FC<{ threshold: number }> = ({ threshold }) => {
+const OutputReserveIndicator: React.FC<{ threshold: number }> = (props) => {
+  const threshold = props.threshold;
   if (threshold <= 0 || threshold >= 100) return null;
 
   return (
@@ -35,12 +36,12 @@ const ContextUsageBarComponent: React.FC<ContextUsageBarProps> = ({
   const showWarning = !data.maxTokens;
   const showThresholdSlider = autoCompaction && data.maxTokens;
 
-  const outputReserveThreshold = React.useMemo(() => {
+  const outputReserveThreshold = (() => {
     if (!data.maxTokens || !data.maxOutputTokens) return null;
     if (data.maxOutputTokens <= 0 || data.maxOutputTokens >= data.maxTokens) return null;
     const raw = ((data.maxTokens - data.maxOutputTokens) / data.maxTokens) * 100;
     return Math.max(0, Math.min(100, raw));
-  }, [data.maxTokens, data.maxOutputTokens]);
+  })();
 
   const outputReserveTokens =
     data.maxTokens && data.maxOutputTokens ? data.maxTokens - data.maxOutputTokens : null;
