@@ -26,6 +26,22 @@ export {
 } from "./schemas/workspace";
 
 // Workspace stats schemas
+// Harness schemas
+export {
+  HarnessChecklistItemSchema,
+  HarnessChecklistStatusSchema,
+  HarnessContextResetStrategySchema,
+  HarnessGateCommandResultSchema,
+  HarnessGateRunResultSchema,
+  HarnessGateSchema,
+  HarnessLoopSettingsSchema,
+  HarnessLoopStateSchema,
+  HarnessLoopStatusSchema,
+  GitCheckpointResultSchema,
+  WorkspaceHarnessConfigSchema,
+  WorkspaceHarnessFilePathsSchema,
+} from "./schemas/harness";
+
 export {
   ActiveStreamStatsSchema,
   CompletedStreamStatsSchema,

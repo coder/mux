@@ -267,6 +267,16 @@ export type MuxFrontendMetadata = MuxFrontendMetadataBase &
         path: string;
       }
     | {
+        type: "harness-bearings";
+      }
+    | {
+        type: "harness-loop";
+        iteration?: number;
+      }
+    | {
+        type: "harness-loop-bearings";
+      }
+    | {
         type: "normal"; // Regular messages
       }
   );

@@ -71,6 +71,7 @@ import {
 import {
   CostsTabLabel,
   ExplorerTabLabel,
+  HarnessTabLabel,
   FileTabLabel,
   ReviewTabLabel,
   StatsTabLabel,
@@ -79,6 +80,7 @@ import {
   type ReviewStats,
 } from "./RightSidebar/tabs";
 import { FileViewerTab } from "./RightSidebar/FileViewer";
+import { HarnessTab } from "./RightSidebar/HarnessTab";
 import { ExplorerTab } from "./RightSidebar/ExplorerTab";
 import {
   DndContext,
@@ -345,6 +347,8 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
       label = <ReviewTabLabel reviewStats={props.reviewStats} />;
     } else if (tab === "explorer") {
       label = <ExplorerTabLabel />;
+    } else if (tab === "harness") {
+      label = <HarnessTabLabel />;
     } else if (tab === "stats") {
       label = <StatsTabLabel sessionDuration={props.sessionDuration} />;
     } else if (isTerminal) {
@@ -385,11 +389,13 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
 
   const costsPanelId = `${tabsetBaseId}-panel-costs`;
   const reviewPanelId = `${tabsetBaseId}-panel-review`;
+  const harnessPanelId = `${tabsetBaseId}-panel-harness`;
   const explorerPanelId = `${tabsetBaseId}-panel-explorer`;
   const statsPanelId = `${tabsetBaseId}-panel-stats`;
 
   const costsTabId = `${tabsetBaseId}-tab-costs`;
   const reviewTabId = `${tabsetBaseId}-tab-review`;
+  const harnessTabId = `${tabsetBaseId}-tab-harness`;
   const explorerTabId = `${tabsetBaseId}-tab-explorer`;
   const statsTabId = `${tabsetBaseId}-tab-stats`;
 
@@ -509,6 +515,12 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
             <ErrorBoundary workspaceInfo="Stats tab">
               <StatsTab workspaceId={props.workspaceId} />
             </ErrorBoundary>
+          </div>
+        )}
+
+        {props.node.activeTab === "harness" && (
+          <div role="tabpanel" id={harnessPanelId} aria-labelledby={harnessTabId}>
+            <HarnessTab workspaceId={props.workspaceId} />
           </div>
         )}
 
