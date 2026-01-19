@@ -390,13 +390,16 @@ async function loadServices(): Promise<void> {
     if (process.platform !== "win32") return false;
 
     const normalize = (p: string) => p.replace(/\//g, "\\").toLowerCase();
-    const isWslLauncher = (p: string) =>
-      p === "wsl" ||
-      p === "wsl.exe" ||
-      p === "bash" ||
-      p === "bash.exe" ||
-      p.endsWith("\\windows\\system32\\bash.exe") ||
-      p.endsWith("\\windows\\system32\\wsl.exe");
+    const isWslLauncher = (p: string) => {
+      const base = path.win32.basename(p);
+      return (
+        p === "wsl" ||
+        base === "wsl.exe" ||
+        p === "bash" ||
+        p === "bash.exe" ||
+        p.endsWith("\\windows\\system32\\bash.exe")
+      );
+    };
 
     const envShell = process.env.SHELL?.trim();
     if (envShell && isWslLauncher(normalize(envShell))) {
@@ -410,6 +413,7 @@ async function loadServices(): Promise<void> {
       const result = execSync("where bash", {
         encoding: "utf8",
         stdio: ["pipe", "pipe", "ignore"],
+        windowsHide: true,
       });
       const firstPath = result
         .split(/\r?\n/)
