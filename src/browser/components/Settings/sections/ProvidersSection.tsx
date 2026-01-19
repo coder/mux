@@ -94,6 +94,44 @@ function getProviderFields(provider: ProviderName): FieldConfig[] {
     return [];
   }
 
+  if (provider === "azure-foundry") {
+    return [
+      { key: "apiKey", label: "API Key", placeholder: "Enter API key", type: "secret" },
+      {
+        key: "resource",
+        label: "Resource",
+        placeholder: "your-resource-name",
+        type: "text",
+      },
+    ];
+  }
+
+  if (provider === "azure-openai") {
+    return [
+      { key: "apiKey", label: "API Key", placeholder: "Enter API key", type: "secret" },
+      {
+        key: "baseUrl",
+        label: "Endpoint",
+        placeholder: "https://your-resource.cognitiveservices.azure.com",
+        type: "text",
+      },
+      {
+        key: "deployment",
+        label: "Deployment",
+        placeholder: "your-deployment-name",
+        type: "text",
+        optional: true,
+      },
+      {
+        key: "apiVersion",
+        label: "API Version",
+        placeholder: "2024-12-01-preview",
+        type: "text",
+        optional: true,
+      },
+    ];
+  }
+
   // Default for most providers
   return [
     { key: "apiKey", label: "API Key", placeholder: "Enter API key", type: "secret" },
@@ -112,6 +150,8 @@ function getProviderFields(provider: ProviderName): FieldConfig[] {
  */
 const PROVIDER_KEY_URLS: Partial<Record<ProviderName, string>> = {
   anthropic: "https://console.anthropic.com/settings/keys",
+  "azure-foundry": "https://ai.azure.com/",
+  "azure-openai": "https://portal.azure.com/",
   openai: "https://platform.openai.com/api-keys",
   google: "https://aistudio.google.com/app/apikey",
   xai: "https://console.x.ai/team/default/api-keys",
@@ -468,6 +508,8 @@ export function ProvidersSection() {
       updateOptimistically(provider, { apiKeySet: editValue !== "" });
     } else if (field === "baseUrl") {
       updateOptimistically(provider, { baseUrl: editValue || undefined });
+    } else if (field === "resource") {
+      updateOptimistically(provider, { resource: editValue || undefined });
     }
 
     setEditingField(null);
@@ -487,6 +529,8 @@ export function ProvidersSection() {
         updateOptimistically(provider, { apiKeySet: false });
       } else if (field === "baseUrl") {
         updateOptimistically(provider, { baseUrl: undefined });
+      } else if (field === "resource") {
+        updateOptimistically(provider, { resource: undefined });
       }
 
       // Save in background
