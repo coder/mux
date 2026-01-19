@@ -3,8 +3,8 @@ import * as os from "os";
 import * as path from "path";
 import * as fsPromises from "fs/promises";
 import { execSync } from "node:child_process";
-import { WorktreeRuntime } from "./WorktreeRuntime";
-import type { InitLogger } from "./Runtime";
+import type { InitLogger } from "@/node/runtime/Runtime";
+import { WorktreeManager } from "./WorktreeManager";
 
 function initGitRepo(projectPath: string): void {
   execSync("git init -b main", { cwd: projectPath, stdio: "ignore" });
@@ -26,10 +26,10 @@ function createNullInitLogger(): InitLogger {
   };
 }
 
-describe("WorktreeRuntime constructor", () => {
+describe("WorktreeManager constructor", () => {
   it("should expand tilde in srcBaseDir", () => {
-    const runtime = new WorktreeRuntime("~/workspace");
-    const workspacePath = runtime.getWorkspacePath("/home/user/project", "branch");
+    const manager = new WorktreeManager("~/workspace");
+    const workspacePath = manager.getWorkspacePath("/home/user/project", "branch");
 
     // The workspace path should use the expanded home directory
     const expected = path.join(os.homedir(), "workspace", "project", "branch");
@@ -37,62 +37,26 @@ describe("WorktreeRuntime constructor", () => {
   });
 
   it("should handle absolute paths without expansion", () => {
-    const runtime = new WorktreeRuntime("/absolute/path");
-    const workspacePath = runtime.getWorkspacePath("/home/user/project", "branch");
+    const manager = new WorktreeManager("/absolute/path");
+    const workspacePath = manager.getWorkspacePath("/home/user/project", "branch");
 
     const expected = path.join("/absolute/path", "project", "branch");
     expect(workspacePath).toBe(expected);
   });
 
   it("should handle bare tilde", () => {
-    const runtime = new WorktreeRuntime("~");
-    const workspacePath = runtime.getWorkspacePath("/home/user/project", "branch");
+    const manager = new WorktreeManager("~");
+    const workspacePath = manager.getWorkspacePath("/home/user/project", "branch");
 
     const expected = path.join(os.homedir(), "project", "branch");
     expect(workspacePath).toBe(expected);
   });
 });
 
-describe("WorktreeRuntime.resolvePath", () => {
-  it("should expand tilde to home directory", async () => {
-    const runtime = new WorktreeRuntime("/tmp");
-    const resolved = await runtime.resolvePath("~");
-    expect(resolved).toBe(os.homedir());
-  });
-
-  it("should expand tilde with path", async () => {
-    const runtime = new WorktreeRuntime("/tmp");
-    // Use a path that likely exists (or use /tmp if ~ doesn't have subdirs)
-    const resolved = await runtime.resolvePath("~/..");
-    const expected = path.dirname(os.homedir());
-    expect(resolved).toBe(expected);
-  });
-
-  it("should resolve absolute paths", async () => {
-    const runtime = new WorktreeRuntime("/tmp");
-    const resolved = await runtime.resolvePath("/tmp");
-    expect(resolved).toBe("/tmp");
-  });
-
-  it("should resolve non-existent paths without checking existence", async () => {
-    const runtime = new WorktreeRuntime("/tmp");
-    const resolved = await runtime.resolvePath("/this/path/does/not/exist/12345");
-    // Should resolve to absolute path without checking if it exists
-    expect(resolved).toBe("/this/path/does/not/exist/12345");
-  });
-
-  it("should resolve relative paths from cwd", async () => {
-    const runtime = new WorktreeRuntime("/tmp");
-    const resolved = await runtime.resolvePath(".");
-    // Should resolve to absolute path
-    expect(path.isAbsolute(resolved)).toBe(true);
-  });
-});
-
-describe("WorktreeRuntime.deleteWorkspace", () => {
+describe("WorktreeManager.deleteWorkspace", () => {
   it("deletes non-agent branches when removing worktrees (force)", async () => {
     const rootDir = await fsPromises.realpath(
-      await fsPromises.mkdtemp(path.join(os.tmpdir(), "worktree-runtime-delete-"))
+      await fsPromises.mkdtemp(path.join(os.tmpdir(), "worktree-manager-delete-"))
     );
 
     try {
@@ -103,15 +67,14 @@ describe("WorktreeRuntime.deleteWorkspace", () => {
       const srcBaseDir = path.join(rootDir, "src");
       await fsPromises.mkdir(srcBaseDir, { recursive: true });
 
-      const runtime = new WorktreeRuntime(srcBaseDir);
+      const manager = new WorktreeManager(srcBaseDir);
       const initLogger = createNullInitLogger();
 
       const branchName = "feature_aaaaaaaaaa";
-      const createResult = await runtime.createWorkspace({
+      const createResult = await manager.createWorkspace({
         projectPath,
         branchName,
         trunkBranch: "main",
-        directoryName: branchName,
         initLogger,
       });
       expect(createResult.success).toBe(true);
@@ -129,7 +92,7 @@ describe("WorktreeRuntime.deleteWorkspace", () => {
       execSync("git add README.md", { cwd: workspacePath, stdio: "ignore" });
       execSync('git commit -m "change"', { cwd: workspacePath, stdio: "ignore" });
 
-      const deleteResult = await runtime.deleteWorkspace(projectPath, branchName, true);
+      const deleteResult = await manager.deleteWorkspace(projectPath, branchName, true);
       expect(deleteResult.success).toBe(true);
 
       const after = execSync(`git branch --list "${branchName}"`, {
@@ -146,7 +109,7 @@ describe("WorktreeRuntime.deleteWorkspace", () => {
 
   it("deletes merged branches when removing worktrees (safe delete)", async () => {
     const rootDir = await fsPromises.realpath(
-      await fsPromises.mkdtemp(path.join(os.tmpdir(), "worktree-runtime-delete-"))
+      await fsPromises.mkdtemp(path.join(os.tmpdir(), "worktree-manager-delete-"))
     );
 
     try {
@@ -157,15 +120,14 @@ describe("WorktreeRuntime.deleteWorkspace", () => {
       const srcBaseDir = path.join(rootDir, "src");
       await fsPromises.mkdir(srcBaseDir, { recursive: true });
 
-      const runtime = new WorktreeRuntime(srcBaseDir);
+      const manager = new WorktreeManager(srcBaseDir);
       const initLogger = createNullInitLogger();
 
       const branchName = "feature_merge_aaaaaaaaaa";
-      const createResult = await runtime.createWorkspace({
+      const createResult = await manager.createWorkspace({
         projectPath,
         branchName,
         trunkBranch: "main",
-        directoryName: branchName,
         initLogger,
       });
       expect(createResult.success).toBe(true);
@@ -189,7 +151,7 @@ describe("WorktreeRuntime.deleteWorkspace", () => {
       // Merge into main so `git branch -d` succeeds.
       execSync(`git merge "${branchName}"`, { cwd: projectPath, stdio: "ignore" });
 
-      const deleteResult = await runtime.deleteWorkspace(projectPath, branchName, false);
+      const deleteResult = await manager.deleteWorkspace(projectPath, branchName, false);
       expect(deleteResult.success).toBe(true);
 
       const after = execSync(`git branch --list "${branchName}"`, {
@@ -206,7 +168,7 @@ describe("WorktreeRuntime.deleteWorkspace", () => {
 
   it("does not delete protected branches", async () => {
     const rootDir = await fsPromises.realpath(
-      await fsPromises.mkdtemp(path.join(os.tmpdir(), "worktree-runtime-delete-"))
+      await fsPromises.mkdtemp(path.join(os.tmpdir(), "worktree-manager-delete-"))
     );
 
     try {
@@ -220,15 +182,14 @@ describe("WorktreeRuntime.deleteWorkspace", () => {
       const srcBaseDir = path.join(rootDir, "src");
       await fsPromises.mkdir(srcBaseDir, { recursive: true });
 
-      const runtime = new WorktreeRuntime(srcBaseDir);
+      const manager = new WorktreeManager(srcBaseDir);
       const initLogger = createNullInitLogger();
 
       const branchName = "main";
-      const createResult = await runtime.createWorkspace({
+      const createResult = await manager.createWorkspace({
         projectPath,
         branchName,
         trunkBranch: "main",
-        directoryName: branchName,
         initLogger,
       });
       expect(createResult.success).toBe(true);
@@ -238,7 +199,7 @@ describe("WorktreeRuntime.deleteWorkspace", () => {
       }
       const workspacePath = createResult.workspacePath;
 
-      const deleteResult = await runtime.deleteWorkspace(projectPath, branchName, true);
+      const deleteResult = await manager.deleteWorkspace(projectPath, branchName, true);
       expect(deleteResult.success).toBe(true);
 
       // The worktree directory should be removed.

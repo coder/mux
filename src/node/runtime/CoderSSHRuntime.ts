@@ -83,11 +83,11 @@ export class CoderSSHRuntime extends SSHRuntime {
 
   /**
    * Flags for WorkspaceService to customize create flow:
-   * - deferredHost: skip srcBaseDir resolution (Coder host doesn't exist yet)
+   * - deferredRuntimeAccess: skip srcBaseDir resolution (Coder host doesn't exist yet)
    * - configLevelCollisionDetection: use config-based collision check (can't reach host)
    */
   readonly createFlags: RuntimeCreateFlags = {
-    deferredHost: true,
+    deferredRuntimeAccess: true,
     configLevelCollisionDetection: true,
   };
 

@@ -261,9 +261,9 @@ export interface WorkspaceForkResult {
 export interface RuntimeCreateFlags {
   /**
    * Skip srcBaseDir resolution before createWorkspace.
-   * Use when host doesn't exist until postCreateSetup (e.g., Coder).
+   * Use when runtime access doesn't exist until postCreateSetup (e.g., Coder).
    */
-  deferredHost?: boolean;
+  deferredRuntimeAccess?: boolean;
 
   /**
    * Use config-level collision detection instead of runtime.createWorkspace.

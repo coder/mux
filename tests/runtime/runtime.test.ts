@@ -8,7 +8,7 @@
  *
  * Note: Workspace management tests (renameWorkspace, deleteWorkspace) are colocated
  * with their runtime implementations:
- * - WorktreeRuntime: src/node/runtime/WorktreeRuntime.test.ts
+ * - WorktreeManager: src/node/worktree/WorktreeManager.test.ts
  * - SSHRuntime: src/node/runtime/SSHRuntime.test.ts
  */
 

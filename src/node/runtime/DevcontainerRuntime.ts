@@ -1,30 +1,32 @@
 import type {
+  RuntimeCreateFlags,
   WorkspaceCreationParams,
   WorkspaceCreationResult,
-  WorkspaceInitParams,
-  WorkspaceInitResult,
   WorkspaceForkParams,
   WorkspaceForkResult,
+  WorkspaceInitParams,
+  WorkspaceInitResult,
 } from "./Runtime";
-import { checkInitHookExists, getMuxEnv } from "./initHook";
 import { LocalBaseRuntime } from "./LocalBaseRuntime";
-import { getErrorMessage } from "@/common/utils/errors";
 import { WorktreeManager } from "@/node/worktree/WorktreeManager";
 
-/**
- * Worktree runtime implementation that executes commands and file operations
- * directly on the host machine using Node.js APIs.
- *
- * This runtime uses git worktrees for workspace isolation:
- * - Workspaces are created in {srcBaseDir}/{projectName}/{workspaceName}
- * - Each workspace is a git worktree with its own branch
- */
-export class WorktreeRuntime extends LocalBaseRuntime {
-  private readonly worktreeManager: WorktreeManager;
+export interface DevcontainerRuntimeOptions {
+  srcBaseDir: string;
+  configPath: string;
+}
 
-  constructor(srcBaseDir: string) {
+export class DevcontainerRuntime extends LocalBaseRuntime {
+  private readonly worktreeManager: WorktreeManager;
+  private readonly configPath: string;
+
+  readonly createFlags: RuntimeCreateFlags = {
+    deferredRuntimeAccess: true,
+  };
+
+  constructor(options: DevcontainerRuntimeOptions) {
     super();
-    this.worktreeManager = new WorktreeManager(srcBaseDir);
+    this.worktreeManager = new WorktreeManager(options.srcBaseDir);
+    this.configPath = options.configPath;
   }
 
   getWorkspacePath(projectPath: string, workspaceName: string): string {
@@ -40,30 +42,9 @@ export class WorktreeRuntime extends LocalBaseRuntime {
     });
   }
 
-  async initWorkspace(params: WorkspaceInitParams): Promise<WorkspaceInitResult> {
-    const { projectPath, branchName, workspacePath, initLogger, env } = params;
-
-    try {
-      // Run .mux/init hook if it exists
-      // Note: runInitHook calls logComplete() internally if hook exists
-      const hookExists = await checkInitHookExists(projectPath);
-      if (hookExists) {
-        const muxEnv = { ...env, ...getMuxEnv(projectPath, "worktree", branchName) };
-        await this.runInitHook(workspacePath, muxEnv, initLogger);
-      } else {
-        // No hook - signal completion immediately
-        initLogger.logComplete(0);
-      }
-      return { success: true };
-    } catch (error) {
-      const errorMsg = getErrorMessage(error);
-      initLogger.logStderr(`Initialization failed: ${errorMsg}`);
-      initLogger.logComplete(-1);
-      return {
-        success: false,
-        error: errorMsg,
-      };
-    }
+  // eslint-disable-next-line @typescript-eslint/require-await -- stub for Phase 1; will have real async logic
+  async initWorkspace(_params: WorkspaceInitParams): Promise<WorkspaceInitResult> {
+    return { success: true };
   }
 
   async renameWorkspace(

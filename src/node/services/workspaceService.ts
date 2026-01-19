@@ -580,9 +580,9 @@ export class WorkspaceService extends EventEmitter {
       runtime = createRuntime(finalRuntimeConfig, { projectPath });
 
       // Resolve srcBaseDir path if the config has one.
-      // Skip if runtime has deferredHost flag (host doesn't exist yet, e.g., Coder).
+      // Skip if runtime has deferredRuntimeAccess flag (runtime doesn't exist yet, e.g., Coder).
       const srcBaseDir = getSrcBaseDir(finalRuntimeConfig);
-      if (srcBaseDir && !runtime.createFlags?.deferredHost) {
+      if (srcBaseDir && !runtime.createFlags?.deferredRuntimeAccess) {
         const resolvedSrcBaseDir = await runtime.resolvePath(srcBaseDir);
         if (resolvedSrcBaseDir !== srcBaseDir && hasSrcBaseDir(finalRuntimeConfig)) {
           finalRuntimeConfig = {
