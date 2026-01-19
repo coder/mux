@@ -194,6 +194,37 @@ export const ProvidersConfigured: AppStory = {
 // Layouts
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/** Layouts section - empty state (no layouts configured) */
+export const LayoutsEmpty: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSettingsStory({
+          layoutPresets: {
+            version: 2,
+            slots: [],
+          },
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await openSettingsToSection(canvasElement, "layouts");
+
+    const body = within(canvasElement.ownerDocument.body);
+    const dialog = await body.findByRole("dialog");
+    const dialogCanvas = within(dialog);
+
+    await dialogCanvas.findByRole("heading", { name: /layout slots/i });
+
+    // Empty state should render no slot rows.
+    await dialogCanvas.findByText(/^Add layout$/i);
+    if (dialogCanvas.queryByText(/Slot 1/i)) {
+      throw new Error("Expected no slot rows to be rendered in the empty state");
+    }
+  },
+};
+
 /** Layouts section - with a preset assigned to a slot */
 export const LayoutsConfigured: AppStory = {
   render: () => (
@@ -240,10 +271,15 @@ export const LayoutsConfigured: AppStory = {
     const dialogCanvas = within(dialog);
 
     await dialogCanvas.findByRole("heading", { name: /layout slots/i });
-    await dialogCanvas.findByText(/Slots \(1–9\)/i);
 
     // Wait for the async config load from the UILayoutsProvider.
     await dialogCanvas.findByText(/My Layout/i);
+    await dialogCanvas.findByText(/Slot 1/i);
+    await dialogCanvas.findByText(/^Add layout$/i);
+
+    if (dialogCanvas.queryByText(/Slot 2/i)) {
+      throw new Error("Expected only configured layouts to render");
+    }
   },
 };
 /** Providers section - expanded to show quick links (docs + get API key) */
