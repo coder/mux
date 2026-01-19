@@ -504,3 +504,36 @@ export function updateSlotKeybindOverride(
 export function getLayoutsConfigOrDefault(value: unknown): LayoutPresetsConfig {
   return normalizeLayoutPresetsConfig(value);
 }
+
+export function deleteSlotAndShiftFollowingSlots(
+  config: LayoutPresetsConfig,
+  slot: LayoutSlotNumber
+): LayoutPresetsConfig {
+  assert(
+    Number.isInteger(slot) && slot >= 1,
+    "deleteSlotAndShiftFollowingSlots: slot must be a positive integer"
+  );
+
+  const normalized = normalizeLayoutPresetsConfig(config);
+  const hasSlot = normalized.slots.some((s) => s.slot === slot);
+  if (!hasSlot) {
+    return normalized;
+  }
+
+  const nextSlots = normalized.slots
+    .filter((s) => s.slot !== slot)
+    .map((s) => {
+      if (s.slot > slot) {
+        return {
+          ...s,
+          slot: s.slot - 1,
+        };
+      }
+      return s;
+    });
+
+  return normalizeLayoutPresetsConfig({
+    ...normalized,
+    slots: nextSlots,
+  });
+}

@@ -19,6 +19,7 @@ import {
 import {
   applyLayoutPresetToWorkspace,
   createPresetFromCurrentWorkspace,
+  deleteSlotAndShiftFollowingSlots,
   getLayoutsConfigOrDefault,
   getPresetForSlot,
   updateSlotKeybindOverride,
@@ -43,7 +44,7 @@ interface UILayoutsContextValue {
   ) => Promise<LayoutPreset>;
 
   renameSlot: (slot: LayoutSlotNumber, newName: string) => Promise<void>;
-  clearSlot: (slot: LayoutSlotNumber) => Promise<void>;
+  deleteSlot: (slot: LayoutSlotNumber) => Promise<void>;
   setSlotKeybindOverride: (slot: LayoutSlotNumber, keybind: Keybind | undefined) => Promise<void>;
 }
 
@@ -189,10 +190,10 @@ export function UILayoutsProvider(props: { children: ReactNode }) {
     [getConfigForWrite, saveAll]
   );
 
-  const clearSlot = useCallback(
+  const deleteSlot = useCallback(
     async (slot: LayoutSlotNumber): Promise<void> => {
       const base = await getConfigForWrite();
-      await saveAll(updateSlotPreset(base, slot, undefined));
+      await saveAll(deleteSlotAndShiftFollowingSlots(base, slot));
     },
     [getConfigForWrite, saveAll]
   );
@@ -215,7 +216,7 @@ export function UILayoutsProvider(props: { children: ReactNode }) {
       applySlotToWorkspace,
       saveCurrentWorkspaceToSlot,
       renameSlot,
-      clearSlot,
+      deleteSlot,
       setSlotKeybindOverride,
     }),
     [
@@ -227,7 +228,7 @@ export function UILayoutsProvider(props: { children: ReactNode }) {
       applySlotToWorkspace,
       saveCurrentWorkspaceToSlot,
       renameSlot,
-      clearSlot,
+      deleteSlot,
       setSlotKeybindOverride,
     ]
   );

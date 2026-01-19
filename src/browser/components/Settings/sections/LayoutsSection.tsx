@@ -101,11 +101,10 @@ export function LayoutsSection() {
     layoutPresets,
     loaded,
     loadFailed,
-    refresh,
     applySlotToWorkspace,
     saveCurrentWorkspaceToSlot,
     renameSlot,
-    clearSlot,
+    deleteSlot,
     setSlotKeybindOverride,
   } = useUILayouts();
   const { selectedWorkspace } = useWorkspaceContext();
@@ -254,29 +253,22 @@ export function LayoutsSection() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-foreground text-sm font-medium">Layout Slots</h3>
+      <div>
+        <h3 className="text-foreground text-sm font-medium">Layout Slots</h3>
+        <div className="text-muted mt-1 text-xs">
+          Layouts are saved globally and can be applied to any workspace.
+        </div>
+        <div className="text-muted mt-1 text-xs">
+          Slots 1–9 have default Ctrl/Cmd+Alt+1..9 hotkeys. Additional layouts can be added and
+          assigned custom hotkeys.
+        </div>
+        {selectedWorkspaceLabel ? (
+          <div className="text-muted mt-1 text-xs">Target workspace: {selectedWorkspaceLabel}</div>
+        ) : (
           <div className="text-muted mt-1 text-xs">
-            Slots 1–9 have default Ctrl/Cmd+Alt+1..9 hotkeys. Additional layouts can be added and
-            assigned custom hotkeys.
+            Select a workspace to capture or apply layouts.
           </div>
-          {selectedWorkspaceLabel ? (
-            <div className="text-muted mt-1 text-xs">
-              Selected workspace: {selectedWorkspaceLabel}
-            </div>
-          ) : (
-            <div className="text-muted mt-1 text-xs">
-              Select a workspace to capture/apply layouts.
-            </div>
-          )}
-        </div>
-
-        <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" onClick={() => void refresh()}>
-            Refresh
-          </Button>
-        </div>
+        )}
       </div>
 
       {!loaded ? <div className="text-muted text-sm">Loading…</div> : null}
@@ -334,25 +326,13 @@ export function LayoutsSection() {
 
                   setActionError(null);
 
-                  void (async () => {
-                    let failed = false;
+                  setEditingName(null);
+                  setCapturingSlot(null);
+                  setCaptureError(null);
 
-                    try {
-                      await clearSlot(slot);
-                    } catch {
-                      failed = true;
-                    }
-
-                    try {
-                      await setSlotKeybindOverride(slot, undefined);
-                    } catch {
-                      failed = true;
-                    }
-
-                    if (failed) {
-                      setActionError("Failed to delete layout.");
-                    }
-                  })();
+                  void deleteSlot(slot).catch(() => {
+                    setActionError("Failed to delete layout.");
+                  });
                 },
               },
             ];
