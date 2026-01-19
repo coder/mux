@@ -26,6 +26,17 @@ import {
 } from "@/common/constants/storage";
 import { SUPPORTED_PROVIDERS } from "@/common/constants/providers";
 import { Button } from "@/browser/components/ui/button";
+import { useProjectContext } from "@/browser/contexts/ProjectContext";
+import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
+import { PlatformPaths } from "@/common/utils/paths";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui/tooltip";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/browser/components/ui/select";
 import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 
 interface ProjectPageProps {
@@ -68,6 +79,8 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
   onProviderConfig,
   onWorkspaceCreated,
 }) => {
+  const { projects } = useProjectContext();
+  const { beginWorkspaceCreation } = useWorkspaceContext();
   const { api } = useAPI();
   const chatInputRef = useRef<ChatInputAPI | null>(null);
   const pendingAgentsInitSendRef = useRef(false);
@@ -247,25 +260,64 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
             {/* Draggable header bar - matches WorkspaceHeader for consistency */}
             <div
               className={cn(
-                "bg-sidebar border-border-light flex shrink-0 items-center border-b px-[15px] [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:py-2",
+                "bg-sidebar border-border-light flex shrink-0 items-center justify-between border-b px-[15px] [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:py-2",
                 isDesktopMode() ? "h-10 titlebar-drag" : "h-8"
               )}
             >
-              {leftSidebarCollapsed && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={onToggleLeftSidebarCollapsed}
-                  title="Open sidebar"
-                  aria-label="Open sidebar menu"
-                  className={cn(
-                    "hidden mobile-menu-btn h-6 w-6 shrink-0 text-muted hover:text-foreground",
-                    isDesktopMode() && "titlebar-no-drag"
-                  )}
-                >
-                  <Menu className="h-4 w-4" />
-                </Button>
-              )}
+              <div
+                className={cn(
+                  "flex min-w-0 items-center gap-2.5 overflow-hidden",
+                  isDesktopMode() && "titlebar-no-drag"
+                )}
+              >
+                {leftSidebarCollapsed && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={onToggleLeftSidebarCollapsed}
+                    title="Open sidebar"
+                    aria-label="Open sidebar menu"
+                    className="mobile-menu-btn text-muted hover:text-foreground hidden h-6 w-6 shrink-0"
+                  >
+                    <Menu className="h-4 w-4" />
+                  </Button>
+                )}
+                {projects.size > 1 ? (
+                  <Select
+                    value={projectPath}
+                    onValueChange={(path) => beginWorkspaceCreation(path)}
+                  >
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <SelectTrigger
+                          aria-label="Select project"
+                          data-testid="project-selector"
+                          className="border-border-light text-muted-foreground hover:border-border-medium/80 hover:bg-toggle-bg/70 h-6 w-auto max-w-[280px] cursor-pointer border bg-transparent px-2 text-xs transition-colors duration-150"
+                        >
+                          <SelectValue placeholder="Select project" />
+                        </SelectTrigger>
+                      </TooltipTrigger>
+                      <TooltipContent align="start">{projectPath}</TooltipContent>
+                    </Tooltip>
+                    <SelectContent>
+                      {Array.from(projects.keys()).map((path) => (
+                        <SelectItem key={path} value={path}>
+                          {PlatformPaths.basename(path)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="text-foreground line-clamp-1 max-w-[280px] font-mono text-xs">
+                        {projectName}
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent align="start">{projectPath}</TooltipContent>
+                  </Tooltip>
+                )}
+              </div>
             </div>
             {/* Scrollable content area */}
             <div className="min-h-0 flex-1 overflow-y-auto">
