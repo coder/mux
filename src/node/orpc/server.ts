@@ -10,7 +10,7 @@ import express, { type Express } from "express";
 import * as fs from "fs/promises";
 import * as http from "http";
 import * as path from "path";
-import { WebSocketServer } from "ws";
+import { WebSocketServer, type WebSocket } from "ws";
 import { RPCHandler } from "@orpc/server/node";
 import { RPCHandler as ORPCWebSocketServerHandler } from "@orpc/server/ws";
 import { ORPCError, onError } from "@orpc/server";
@@ -22,6 +22,10 @@ import type { ORPCContext } from "@/node/orpc/context";
 import { extractWsHeaders, safeEq } from "@/node/orpc/authMiddleware";
 import { VERSION } from "@/version";
 import { log } from "@/node/services/log";
+
+type AliveWebSocket = WebSocket & { isAlive?: boolean };
+
+const WS_HEARTBEAT_INTERVAL_MS = 30_000;
 
 // --- Types ---
 
@@ -433,10 +437,36 @@ export async function createOrpcServer({
 
   // oRPC WebSocket handler
   const wsServer = new WebSocketServer({ server: httpServer, path: "/orpc/ws" });
+
+  // WebSocket heartbeat: proactively terminate half-open connections (common with NAT/proxy setups).
+  // When a client is unresponsive, closing the socket forces the browser to reconnect.
+  const heartbeatInterval = setInterval(() => {
+    for (const ws of wsServer.clients) {
+      const socket = ws as AliveWebSocket;
+      if (socket.isAlive === false) {
+        ws.terminate();
+        continue;
+      }
+
+      socket.isAlive = false;
+      try {
+        ws.ping();
+      } catch {
+        // Best-effort - ws may already be closing.
+      }
+    }
+  }, WS_HEARTBEAT_INTERVAL_MS);
+
   const orpcWsHandler = new ORPCWebSocketServerHandler(orpcRouter, {
     interceptors: [onError(onOrpcError)],
   });
   wsServer.on("connection", (ws, req) => {
+    const socket = ws as AliveWebSocket;
+    socket.isAlive = true;
+    ws.on("pong", () => {
+      socket.isAlive = true;
+    });
+
     const headers = extractWsHeaders(req);
     void orpcWsHandler.upgrade(ws, { context: { ...context, headers } });
   });
@@ -467,6 +497,11 @@ export async function createOrpcServer({
     specUrl: `http://${connectableHostForUrl}:${actualPort}/api/spec.json`,
     docsUrl: `http://${connectableHostForUrl}:${actualPort}/api/docs`,
     close: async () => {
+      clearInterval(heartbeatInterval);
+      for (const ws of wsServer.clients) {
+        ws.terminate();
+      }
+
       // Close WebSocket server first
       wsServer.close();
       // Then close HTTP server

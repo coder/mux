@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo } from "react";
+import { useAPI } from "@/browser/contexts/API";
 import { usePersistedState, readPersistedState, updatePersistedState } from "./usePersistedState";
 import { useProvidersConfig } from "./useProvidersConfig";
-
-// localStorage keys
-const GATEWAY_MODELS_KEY = "gateway-models"; // Models user has enabled for gateway routing
-const GATEWAY_CONFIGURED_KEY = "gateway-available"; // Synced from provider config (coupon set)
-const GATEWAY_ENABLED_KEY = "gateway-enabled"; // Global on/off toggle
+import {
+  GATEWAY_CONFIGURED_KEY,
+  GATEWAY_ENABLED_KEY,
+  GATEWAY_MODELS_KEY,
+} from "@/common/constants/storage";
 
 /**
  * Providers that Mux Gateway supports routing to.
@@ -156,6 +157,7 @@ export interface GatewayState {
  * so that toGatewayModel() can check it synchronously during message sending.
  */
 export function useGateway(): GatewayState {
+  const { api } = useAPI();
   const { config } = useProvidersConfig();
 
   const [enabledModels, setEnabledModels] = usePersistedState<string[]>(GATEWAY_MODELS_KEY, [], {
@@ -179,11 +181,32 @@ export function useGateway(): GatewayState {
 
   const isActive = isConfigured && isEnabled;
 
+  const persistGatewayPrefs = useCallback(
+    (nextEnabled: boolean, nextModels: string[]) => {
+      if (!api?.config?.updateMuxGatewayPrefs) {
+        return;
+      }
+
+      void api.config
+        .updateMuxGatewayPrefs({
+          muxGatewayEnabled: nextEnabled,
+          muxGatewayModels: nextModels,
+        })
+        .catch(() => {
+          // Best-effort only.
+        });
+    },
+    [api]
+  );
+
   const toggleEnabled = useCallback(() => {
+    const nextEnabled = !isEnabled;
+
     // usePersistedState writes to localStorage synchronously.
     // Avoid double-writes here (which would toggle twice and become a no-op).
-    setIsEnabled((prev) => !prev);
-  }, [setIsEnabled]);
+    setIsEnabled(nextEnabled);
+    persistGatewayPrefs(nextEnabled, enabledModels);
+  }, [enabledModels, isEnabled, persistGatewayPrefs, setIsEnabled]);
 
   const modelUsesGateway = useCallback(
     (modelId: string) => enabledModels.includes(modelId),
@@ -192,13 +215,16 @@ export function useGateway(): GatewayState {
 
   const toggleModelGateway = useCallback(
     (modelId: string) => {
+      const nextModels = enabledModels.includes(modelId)
+        ? enabledModels.filter((m) => m !== modelId)
+        : [...enabledModels, modelId];
+
       // usePersistedState writes to localStorage synchronously.
       // Avoid double-writes here (which would toggle twice and become a no-op).
-      setEnabledModels((prev) =>
-        prev.includes(modelId) ? prev.filter((m) => m !== modelId) : [...prev, modelId]
-      );
+      setEnabledModels(nextModels);
+      persistGatewayPrefs(isEnabled, nextModels);
     },
-    [setEnabledModels]
+    [enabledModels, isEnabled, persistGatewayPrefs, setEnabledModels]
   );
 
   const canToggleModel = useCallback(

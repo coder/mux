@@ -71,6 +71,13 @@ function parseOptionalBoolean(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
 }
 
+function parseOptionalStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  return value.filter((item): item is string => typeof item === "string");
+}
 function parseOptionalPort(value: unknown): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value)) {
     return undefined;
@@ -123,6 +130,8 @@ export class Config {
           featureFlagOverrides?: Record<string, "default" | "on" | "off">;
           layoutPresets?: unknown;
           taskSettings?: unknown;
+          muxGatewayEnabled?: unknown;
+          muxGatewayModels?: unknown;
           agentAiDefaults?: unknown;
           subagentAiDefaults?: unknown;
           modeAiDefaults?: unknown;
@@ -149,6 +158,9 @@ export class Config {
           const projectsMap = new Map<string, ProjectConfig>(normalizedPairs);
 
           const taskSettings = normalizeTaskSettings(parsed.taskSettings);
+
+          const muxGatewayEnabled = parseOptionalBoolean(parsed.muxGatewayEnabled);
+          const muxGatewayModels = parseOptionalStringArray(parsed.muxGatewayModels);
           const legacySubagentAiDefaults = normalizeSubagentAiDefaults(parsed.subagentAiDefaults);
           const legacyModeAiDefaults = normalizeModeAiDefaults(parsed.modeAiDefaults);
 
@@ -178,6 +190,8 @@ export class Config {
             viewedSplashScreens: parsed.viewedSplashScreens,
             layoutPresets,
             taskSettings,
+            muxGatewayEnabled,
+            muxGatewayModels,
             agentAiDefaults,
             // Legacy fields are still parsed and returned for downgrade compatibility.
             subagentAiDefaults: legacySubagentAiDefaults,
@@ -219,6 +233,8 @@ export class Config {
         layoutPresets?: ProjectsConfig["layoutPresets"];
         featureFlagOverrides?: ProjectsConfig["featureFlagOverrides"];
         taskSettings?: ProjectsConfig["taskSettings"];
+        muxGatewayEnabled?: ProjectsConfig["muxGatewayEnabled"];
+        muxGatewayModels?: ProjectsConfig["muxGatewayModels"];
         agentAiDefaults?: ProjectsConfig["agentAiDefaults"];
         subagentAiDefaults?: ProjectsConfig["subagentAiDefaults"];
         modeAiDefaults?: ProjectsConfig["modeAiDefaults"];
@@ -227,6 +243,16 @@ export class Config {
         projects: Array.from(config.projects.entries()),
         taskSettings: config.taskSettings ?? DEFAULT_TASK_SETTINGS,
       };
+
+      const muxGatewayEnabled = parseOptionalBoolean(config.muxGatewayEnabled);
+      if (muxGatewayEnabled !== undefined) {
+        data.muxGatewayEnabled = muxGatewayEnabled;
+      }
+
+      const muxGatewayModels = parseOptionalStringArray(config.muxGatewayModels);
+      if (muxGatewayModels !== undefined) {
+        data.muxGatewayModels = muxGatewayModels;
+      }
       const apiServerBindHost = parseOptionalNonEmptyString(config.apiServerBindHost);
       if (apiServerBindHost) {
         data.apiServerBindHost = apiServerBindHost;

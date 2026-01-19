@@ -227,6 +227,11 @@ function createInitialChatTransientState(): WorkspaceChatTransientState {
 const ON_CHAT_RETRY_BASE_MS = 250;
 const ON_CHAT_RETRY_MAX_MS = 5000;
 
+// If a stream is active but we stop receiving onChat events, the UI can get stuck.
+// This can happen with half-open WebSocket paths (e.g., some WSL localhost forwarding setups).
+const ON_CHAT_STALL_TIMEOUT_MS = 60_000;
+const ON_CHAT_STALL_CHECK_INTERVAL_MS = 5_000;
+
 interface ValidationIssue {
   path?: Array<string | number>;
   message?: string;
@@ -1307,13 +1312,44 @@ export class WorkspaceStore {
         return;
       }
 
+      // Allow us to abort only this subscription attempt (without unsubscribing the workspace).
+      const attemptController = new AbortController();
+      const onAbort = () => attemptController.abort();
+      signal.addEventListener("abort", onAbort);
+
+      let stallInterval: ReturnType<typeof setInterval> | null = null;
+      let lastChatEventAt = Date.now();
+
       try {
-        const iterator = await client.workspace.onChat({ workspaceId }, { signal });
+        const iterator = await client.workspace.onChat(
+          { workspaceId },
+          { signal: attemptController.signal }
+        );
+
+        // Stall watchdog: if a stream is active but we stop receiving events, abort this
+        // subscription attempt so the outer loop can resubscribe.
+        stallInterval = setInterval(() => {
+          if (attemptController.signal.aborted) return;
+
+          const aggregator = this.aggregators.get(workspaceId);
+          const hasActiveStream = aggregator?.getActiveStreamMessageId() !== undefined;
+          if (!hasActiveStream) return;
+
+          const elapsedMs = Date.now() - lastChatEventAt;
+          if (elapsedMs < ON_CHAT_STALL_TIMEOUT_MS) return;
+
+          console.warn(
+            `[WorkspaceStore] onChat appears stalled for ${workspaceId} (no events for ${elapsedMs}ms while a stream is active); retrying...`
+          );
+          attemptController.abort();
+        }, ON_CHAT_STALL_CHECK_INTERVAL_MS);
 
         for await (const data of iterator) {
           if (signal.aborted) {
             return;
           }
+
+          lastChatEventAt = Date.now();
 
           // Connection is alive again - don't carry old backoff into the next failure.
           attempt = 0;
@@ -1328,20 +1364,32 @@ export class WorkspaceStore {
           return;
         }
 
-        console.warn(
-          `[WorkspaceStore] onChat subscription ended unexpectedly for ${workspaceId}; retrying...`
-        );
+        if (attemptController.signal.aborted) {
+          // e.g., stall watchdog fired
+          console.warn(
+            `[WorkspaceStore] onChat subscription aborted for ${workspaceId}; retrying...`
+          );
+        } else {
+          console.warn(
+            `[WorkspaceStore] onChat subscription ended unexpectedly for ${workspaceId}; retrying...`
+          );
+        }
       } catch (error) {
         // Suppress errors when subscription was intentionally cleaned up
         if (signal.aborted) {
           return;
         }
 
-        // EVENT_ITERATOR_VALIDATION_FAILED can happen when:
-        // 1. Schema validation fails (event doesn't match WorkspaceChatMessageSchema)
-        // 2. Workspace was removed on server side (iterator ends with error)
-        // 3. Connection dropped (WebSocket/MessagePort error)
-        if (isIteratorValidationFailed(error)) {
+        if (attemptController.signal.aborted) {
+          console.warn(
+            `[WorkspaceStore] onChat subscription aborted for ${workspaceId}; retrying...`
+          );
+        } else if (isIteratorValidationFailed(error)) {
+          // EVENT_ITERATOR_VALIDATION_FAILED can happen when:
+          // 1. Schema validation fails (event doesn't match WorkspaceChatMessageSchema)
+          // 2. Workspace was removed on server side (iterator ends with error)
+          // 3. Connection dropped (WebSocket/MessagePort error)
+
           // Only suppress if workspace no longer exists (was removed during the race)
           if (!this.isWorkspaceSubscribed(workspaceId)) {
             return;
@@ -1352,6 +1400,11 @@ export class WorkspaceStore {
           );
         } else {
           console.error(`[WorkspaceStore] Error in onChat subscription for ${workspaceId}:`, error);
+        }
+      } finally {
+        signal.removeEventListener("abort", onAbort);
+        if (stallInterval) {
+          clearInterval(stallInterval);
         }
       }
 

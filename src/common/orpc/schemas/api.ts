@@ -945,6 +945,8 @@ export const config = {
         maxParallelAgentTasks: z.number().int(),
         maxTaskNestingDepth: z.number().int(),
       }),
+      muxGatewayEnabled: z.boolean().optional(),
+      muxGatewayModels: z.array(z.string()).optional(),
       agentAiDefaults: AgentAiDefaultsSchema,
       // Legacy fields (downgrade compatibility)
       subagentAiDefaults: SubagentAiDefaultsSchema,
@@ -972,6 +974,13 @@ export const config = {
   updateModeAiDefaults: {
     input: z.object({
       modeAiDefaults: ModeAiDefaultsSchema,
+    }),
+    output: z.void(),
+  },
+  updateMuxGatewayPrefs: {
+    input: z.object({
+      muxGatewayEnabled: z.boolean(),
+      muxGatewayModels: z.array(z.string()),
     }),
     output: z.void(),
   },

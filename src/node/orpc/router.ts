@@ -303,6 +303,8 @@ export const router = (authToken?: string) => {
           const config = context.config.loadConfigOrDefault();
           return {
             taskSettings: config.taskSettings ?? DEFAULT_TASK_SETTINGS,
+            muxGatewayEnabled: config.muxGatewayEnabled,
+            muxGatewayModels: config.muxGatewayModels,
             agentAiDefaults: config.agentAiDefaults ?? {},
             // Legacy fields (downgrade compatibility)
             subagentAiDefaults: config.subagentAiDefaults ?? {},
@@ -367,6 +369,21 @@ export const router = (authToken?: string) => {
                 Object.keys(legacyModeDefaults).length > 0 ? legacyModeDefaults : undefined,
               subagentAiDefaults:
                 Object.keys(legacySubagentDefaults).length > 0 ? legacySubagentDefaults : undefined,
+            };
+          });
+        }),
+      updateMuxGatewayPrefs: t
+        .input(schemas.config.updateMuxGatewayPrefs.input)
+        .output(schemas.config.updateMuxGatewayPrefs.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => {
+            const nextModels = Array.from(new Set(input.muxGatewayModels));
+            nextModels.sort();
+
+            return {
+              ...config,
+              muxGatewayEnabled: input.muxGatewayEnabled ? undefined : false,
+              muxGatewayModels: nextModels.length > 0 ? nextModels : undefined,
             };
           });
         }),

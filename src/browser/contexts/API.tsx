@@ -55,6 +55,7 @@ const MAX_DELAY_MS = 10000;
 const LIVENESS_INTERVAL_MS = 5000; // Check every 5 seconds
 const LIVENESS_TIMEOUT_MS = 3000; // Ping must respond within 3 seconds
 const CONSECUTIVE_FAILURES_FOR_DEGRADED = 2; // Mark degraded after N failures
+const CONSECUTIVE_FAILURES_FOR_RECONNECT = 3; // Force reconnect after N failures (WS may be half-open)
 
 const APIContext = createContext<UseAPIResult | null>(null);
 
@@ -136,6 +137,8 @@ export const APIProvider = (props: APIProviderProps) => {
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scheduleReconnectRef = useRef<(() => void) | null>(null);
   const consecutivePingFailuresRef = useRef(0);
+  const connectionIdRef = useRef(0);
+  const forceReconnectInProgressRef = useRef(false);
 
   const wsFactory = useMemo(
     () => props.createWebSocket ?? ((url: string) => new WebSocket(url)),
@@ -144,6 +147,8 @@ export const APIProvider = (props: APIProviderProps) => {
 
   const connect = useCallback(
     (token: string | null) => {
+      const connectionId = ++connectionIdRef.current;
+
       if (props.client) {
         window.__ORPC_CLIENT__ = props.client;
         cleanupRef.current = null;
@@ -164,17 +169,37 @@ export const APIProvider = (props: APIProviderProps) => {
       const { client, cleanup, ws } = createBrowserClient(token, wsFactory);
 
       ws.addEventListener("open", () => {
+        // Ignore stale connections (can happen if we force reconnect while the old socket is mid-flight).
+        if (connectionId !== connectionIdRef.current) {
+          cleanup();
+          return;
+        }
+
         client.general
           .ping("auth-check")
           .then(() => {
+            // Ignore stale connections (e.g., auth-check returned after a new connect()).
+            if (connectionId !== connectionIdRef.current) {
+              cleanup();
+              return;
+            }
+
             hasConnectedRef.current = true;
             reconnectAttemptRef.current = 0;
+            consecutivePingFailuresRef.current = 0;
+            forceReconnectInProgressRef.current = false;
             window.__ORPC_CLIENT__ = client;
             cleanupRef.current = cleanup;
             setState({ status: "connected", client, cleanup });
           })
           .catch((err: unknown) => {
+            if (connectionId !== connectionIdRef.current) {
+              cleanup();
+              return;
+            }
+
             cleanup();
+            forceReconnectInProgressRef.current = false;
             const errMsg = err instanceof Error ? err.message : String(err);
             const errMsgLower = errMsg.toLowerCase();
             const isAuthError =
@@ -201,6 +226,13 @@ export const APIProvider = (props: APIProviderProps) => {
 
       ws.addEventListener("close", (event) => {
         cleanup();
+
+        // Ignore stale connections (can happen if we force reconnect while the old socket is mid-flight).
+        if (connectionId !== connectionIdRef.current) {
+          return;
+        }
+
+        forceReconnectInProgressRef.current = false;
 
         // Auth-specific close codes
         if (event.code === 1008 || event.code === 4401) {
@@ -230,6 +262,10 @@ export const APIProvider = (props: APIProviderProps) => {
 
   // Schedule reconnection with exponential backoff
   const scheduleReconnect = useCallback(() => {
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+    }
+
     const attempt = reconnectAttemptRef.current;
     if (attempt >= MAX_RECONNECT_ATTEMPTS) {
       setState({ status: "error", error: "Connection lost. Please refresh the page." });
@@ -282,12 +318,27 @@ export const APIProvider = (props: APIProviderProps) => {
 
         // Ping succeeded - reset failure count and restore connected state if degraded
         consecutivePingFailuresRef.current = 0;
+        forceReconnectInProgressRef.current = false;
         if (state.status === "degraded") {
           setState({ status: "connected", client, cleanup });
         }
       } catch {
         // Ping failed
         consecutivePingFailuresRef.current++;
+
+        if (
+          consecutivePingFailuresRef.current >= CONSECUTIVE_FAILURES_FOR_RECONNECT &&
+          !forceReconnectInProgressRef.current
+        ) {
+          forceReconnectInProgressRef.current = true;
+          console.warn(
+            `[APIProvider] Liveness ping failed ${consecutivePingFailuresRef.current} times; reconnecting...`
+          );
+          cleanup();
+          connect(authToken);
+          return;
+        }
+
         if (
           consecutivePingFailuresRef.current >= CONSECUTIVE_FAILURES_FOR_DEGRADED &&
           state.status === "connected"
@@ -301,7 +352,7 @@ export const APIProvider = (props: APIProviderProps) => {
       void checkLiveness();
     }, LIVENESS_INTERVAL_MS);
     return () => clearInterval(intervalId);
-  }, [state, props.client, props.createWebSocket]);
+  }, [state, props.client, props.createWebSocket, connect, authToken]);
 
   const authenticate = useCallback(
     (token: string) => {

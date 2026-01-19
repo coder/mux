@@ -21,6 +21,8 @@ import {
   getWorkspaceAISettingsByModeKey,
   AGENT_AI_DEFAULTS_KEY,
   MODE_AI_DEFAULTS_KEY,
+  GATEWAY_ENABLED_KEY,
+  GATEWAY_MODELS_KEY,
   SELECTED_WORKSPACE_KEY,
 } from "@/common/constants/storage";
 import { useAPI } from "@/browser/contexts/API";
@@ -205,6 +207,36 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           MODE_AI_DEFAULTS_KEY,
           normalizeModeAiDefaults(cfg.modeAiDefaults ?? {})
         );
+
+        // Seed Mux Gateway prefs from backend so switching ports doesn't reset the UI.
+        if (cfg.muxGatewayEnabled !== undefined) {
+          updatePersistedState(GATEWAY_ENABLED_KEY, cfg.muxGatewayEnabled);
+        }
+        if (cfg.muxGatewayModels !== undefined) {
+          updatePersistedState(GATEWAY_MODELS_KEY, cfg.muxGatewayModels);
+        }
+
+        // One-time best-effort migration: if the backend doesn't have gateway prefs yet,
+        // persist non-default localStorage values so future port changes keep them.
+        if (api.config.updateMuxGatewayPrefs) {
+          const localEnabled = readPersistedState<boolean>(GATEWAY_ENABLED_KEY, true);
+          const localModels = readPersistedState<string[]>(GATEWAY_MODELS_KEY, []);
+
+          const shouldMigrateEnabled =
+            cfg.muxGatewayEnabled === undefined && localEnabled === false;
+          const shouldMigrateModels = cfg.muxGatewayModels === undefined && localModels.length > 0;
+
+          if (shouldMigrateEnabled || shouldMigrateModels) {
+            void api.config
+              .updateMuxGatewayPrefs({
+                muxGatewayEnabled: cfg.muxGatewayEnabled ?? localEnabled,
+                muxGatewayModels: cfg.muxGatewayModels ?? localModels,
+              })
+              .catch(() => {
+                // Best-effort only.
+              });
+          }
+        }
       })
       .catch(() => {
         // Best-effort only.

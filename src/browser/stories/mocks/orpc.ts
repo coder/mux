@@ -312,6 +312,9 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       } as const)
   );
 
+  let muxGatewayEnabled: boolean | undefined = undefined;
+  let muxGatewayModels: string[] | undefined = undefined;
+
   const deriveModeAiDefaults = () =>
     normalizeModeAiDefaults({
       plan: agentAiDefaults.plan,
@@ -400,7 +403,14 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     },
     config: {
       getConfig: () =>
-        Promise.resolve({ taskSettings, agentAiDefaults, subagentAiDefaults, modeAiDefaults }),
+        Promise.resolve({
+          taskSettings,
+          muxGatewayEnabled,
+          muxGatewayModels,
+          agentAiDefaults,
+          subagentAiDefaults,
+          modeAiDefaults,
+        }),
       saveConfig: (input: {
         taskSettings: unknown;
         agentAiDefaults?: unknown;
@@ -439,6 +449,14 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         agentAiDefaults = normalizeAgentAiDefaults({ ...agentAiDefaults, ...modeAiDefaults });
         modeAiDefaults = deriveModeAiDefaults();
         subagentAiDefaults = deriveSubagentAiDefaults();
+        return Promise.resolve(undefined);
+      },
+      updateMuxGatewayPrefs: (input: {
+        muxGatewayEnabled: boolean;
+        muxGatewayModels: string[];
+      }) => {
+        muxGatewayEnabled = input.muxGatewayEnabled ? undefined : false;
+        muxGatewayModels = input.muxGatewayModels.length > 0 ? input.muxGatewayModels : undefined;
         return Promise.resolve(undefined);
       },
     },
