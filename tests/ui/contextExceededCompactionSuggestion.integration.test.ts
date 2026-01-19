@@ -81,8 +81,8 @@ describeIntegration("Context exceeded compaction suggestion (UI)", () => {
         // And we should render an action button for one-click compaction + retry.
         await waitFor(
           () => {
-            const button = view.queryByRole("button", { name: "Compact & retry" });
-            if (!button) {
+            const buttons = view.queryAllByRole("button", { name: "Compact & retry" });
+            if (buttons.length === 0) {
               throw new Error("Expected Compact & retry button");
             }
           },
@@ -105,7 +105,7 @@ describeIntegration("Context exceeded compaction suggestion (UI)", () => {
 
         // Clicking the CTA should actually send a compaction request message.
         // We assert on the rendered /compact command (from muxMetadata.rawCommand).
-        const button = view.getByRole("button", { name: "Compact & retry" });
+        const [button] = view.getAllByRole("button", { name: "Compact & retry" });
         if (view.container.textContent?.includes(expectedCompactionCommand)) {
           throw new Error("Compaction command should not be present before clicking");
         }
@@ -176,8 +176,8 @@ describeIntegration("Context exceeded compaction suggestion (UI)", () => {
         // And we should render an action button for one-click compaction + retry.
         await waitFor(
           () => {
-            const button = view.queryByRole("button", { name: "Compact & retry" });
-            if (!button) {
+            const buttons = view.queryAllByRole("button", { name: "Compact & retry" });
+            if (buttons.length === 0) {
               throw new Error("Expected Compact & retry button");
             }
           },
@@ -201,7 +201,7 @@ describeIntegration("Context exceeded compaction suggestion (UI)", () => {
 
         // Clicking the CTA should actually send a compaction request message.
         // We assert on the rendered /compact command (from muxMetadata.rawCommand).
-        const button = view.getByRole("button", { name: "Compact & retry" });
+        const [button] = view.getAllByRole("button", { name: "Compact & retry" });
         if (view.container.textContent?.includes(expectedCompactionCommand)) {
           throw new Error("Compaction command should not be present before clicking");
         }

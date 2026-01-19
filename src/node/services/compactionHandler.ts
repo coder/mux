@@ -68,6 +68,7 @@ export class CompactionHandler {
   private readonly telemetryService?: TelemetryService;
   private readonly emitter: EventEmitter;
   private readonly processedCompactionRequestIds: Set<string> = new Set<string>();
+
   private readonly onCompactionComplete?: () => void;
 
   /** Flag indicating post-compaction attachments should be generated on next turn */
@@ -125,7 +126,8 @@ export class CompactionHandler {
 
     const messages = historyResult.data;
     const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
-    const isCompaction = lastUserMsg?.metadata?.muxMetadata?.type === "compaction-request";
+    const muxMeta = lastUserMsg?.metadata?.muxMetadata;
+    const isCompaction = muxMeta?.type === "compaction-request";
 
     if (!isCompaction || !lastUserMsg) {
       return false;
@@ -175,10 +177,8 @@ export class CompactionHandler {
     }
 
     // Check if this was an idle-compaction (auto-triggered due to inactivity)
-    const muxMeta = lastUserMsg.metadata?.muxMetadata;
     const isIdleCompaction =
       muxMeta?.type === "compaction-request" && muxMeta.source === "idle-compaction";
-
     // Mark as processed before performing compaction
     this.processedCompactionRequestIds.add(lastUserMsg.id);
 

@@ -7,6 +7,7 @@ import type {
   MuxFrontendMetadata,
 } from "@/common/types/message";
 import { createMuxMessage } from "@/common/types/message";
+import { buildCompactionEditText } from "@/browser/utils/compaction/format";
 import type {
   StreamStartEvent,
   StreamDeltaEvent,
@@ -1746,7 +1747,7 @@ export class StreamingMessageAggregator {
         type: "user",
         id: message.id,
         historyId: message.id,
-        content: compactionRequest ? compactionRequest.rawCommand : content,
+        content: compactionRequest ? buildCompactionEditText(compactionRequest) : content,
         imageParts: imageParts.length > 0 ? imageParts : undefined,
         historySequence,
         isSynthetic: message.metadata?.synthetic === true ? true : undefined,

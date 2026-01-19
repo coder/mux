@@ -620,6 +620,7 @@ export class AgentSession {
         "exec";
       // Build options for the queued message (strip compaction-specific fields)
       // agentId determines tool policy via resolveToolPolicyForAgent in aiService
+
       const sanitizedOptions: Omit<
         SendMessageOptions,
         "muxMetadata" | "mode" | "editMessageId" | "imageParts" | "maxOutputTokens"
@@ -955,6 +956,7 @@ export class AgentSession {
     forward("stream-end", async (payload) => {
       this.activeCompactionRequest = undefined;
       const handled = await this.compactionHandler.handleCompletion(payload as StreamEndEvent);
+
       if (!handled) {
         this.emitChatEvent(payload);
       } else {
@@ -962,6 +964,7 @@ export class AgentSession {
         // This allows the frontend to get updated postCompaction state
         this.onCompactionComplete?.();
       }
+
       // Stream end: auto-send queued messages
       this.sendQueuedMessages();
     });

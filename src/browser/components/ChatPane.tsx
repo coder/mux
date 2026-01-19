@@ -7,6 +7,7 @@ import React, {
   useDeferredValue,
   useMemo,
 } from "react";
+import { MessageListProvider } from "./Messages/MessageListContext";
 import { cn } from "@/common/lib/utils";
 import { MessageRenderer } from "./Messages/MessageRenderer";
 import { InterruptedBarrier } from "./Messages/ChatBarrier/InterruptedBarrier";
@@ -169,6 +170,15 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     hasActiveStream || transformedMessages.length !== deferredTransformedMessages.length
       ? transformedMessages
       : deferredTransformedMessages;
+
+  const latestMessageId =
+    deferredMessages.length > 0
+      ? (deferredMessages[deferredMessages.length - 1]?.id ?? null)
+      : null;
+  const messageListContextValue = useMemo(
+    () => ({ workspaceId, latestMessageId }),
+    [workspaceId, latestMessageId]
+  );
 
   const autoCompactionResult = useMemo(
     () => checkAutoCompaction(workspaceUsage, pendingModel, use1M, autoCompactionThreshold / 100),
@@ -448,6 +458,11 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
       )
     : false;
 
+  const lastMessage = workspaceState.messages[workspaceState.messages.length - 1];
+  const suppressRetryBarrier =
+    lastMessage?.type === "stream-error" && lastMessage.errorType === "context_exceeded";
+  const showRetryBarrierUI = showRetryBarrier && !suppressRetryBarrier;
+
   // Handle keyboard shortcuts (using optional refs that are safe even if not initialized)
   useAIViewKeybinds({
     workspaceId,
@@ -557,79 +572,81 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                 </p>
               </div>
             ) : (
-              <>
-                {deferredMessages.map((msg, index) => {
-                  // Compute bash_output grouping at render-time
-                  const bashOutputGroup = computeBashOutputGroupInfo(deferredMessages, index);
+              <MessageListProvider value={messageListContextValue}>
+                <>
+                  {deferredMessages.map((msg, index) => {
+                    // Compute bash_output grouping at render-time
+                    const bashOutputGroup = computeBashOutputGroupInfo(deferredMessages, index);
 
-                  // For bash_output groups, use first message ID as expansion key
-                  const groupKey = bashOutputGroup
-                    ? deferredMessages[bashOutputGroup.firstIndex]?.id
-                    : undefined;
-                  const isGroupExpanded = groupKey ? expandedBashGroups.has(groupKey) : false;
+                    // For bash_output groups, use first message ID as expansion key
+                    const groupKey = bashOutputGroup
+                      ? deferredMessages[bashOutputGroup.firstIndex]?.id
+                      : undefined;
+                    const isGroupExpanded = groupKey ? expandedBashGroups.has(groupKey) : false;
 
-                  // Skip rendering middle items in a bash_output group (unless expanded)
-                  if (bashOutputGroup?.position === "middle" && !isGroupExpanded) {
-                    return null;
-                  }
+                    // Skip rendering middle items in a bash_output group (unless expanded)
+                    if (bashOutputGroup?.position === "middle" && !isGroupExpanded) {
+                      return null;
+                    }
 
-                  const isAtCutoff =
-                    editCutoffHistoryId !== undefined &&
-                    msg.type !== "history-hidden" &&
-                    msg.type !== "workspace-init" &&
-                    msg.historyId === editCutoffHistoryId;
+                    const isAtCutoff =
+                      editCutoffHistoryId !== undefined &&
+                      msg.type !== "history-hidden" &&
+                      msg.type !== "workspace-init" &&
+                      msg.historyId === editCutoffHistoryId;
 
-                  return (
-                    <React.Fragment key={msg.id}>
-                      <div
-                        data-testid="chat-message"
-                        data-message-id={
-                          msg.type !== "history-hidden" && msg.type !== "workspace-init"
-                            ? msg.historyId
-                            : undefined
-                        }
-                      >
-                        <MessageRenderer
-                          message={msg}
-                          onEditUserMessage={handleEditUserMessage}
-                          workspaceId={workspaceId}
-                          isCompacting={isCompacting}
-                          onReviewNote={handleReviewNote}
-                          isLatestProposePlan={
-                            msg.type === "tool" &&
-                            msg.toolName === "propose_plan" &&
-                            msg.id === latestProposePlanId
+                    return (
+                      <React.Fragment key={msg.id}>
+                        <div
+                          data-testid="chat-message"
+                          data-message-id={
+                            msg.type !== "history-hidden" && msg.type !== "workspace-init"
+                              ? msg.historyId
+                              : undefined
                           }
-                          bashOutputGroup={bashOutputGroup}
-                        />
-                      </div>
-                      {/* Show collapsed indicator after the first item in a bash_output group */}
-                      {bashOutputGroup?.position === "first" && groupKey && (
-                        <BashOutputCollapsedIndicator
-                          processId={bashOutputGroup.processId}
-                          collapsedCount={bashOutputGroup.collapsedCount}
-                          isExpanded={isGroupExpanded}
-                          onToggle={() => {
-                            setExpandedBashGroups((prev) => {
-                              const next = new Set(prev);
-                              if (next.has(groupKey)) {
-                                next.delete(groupKey);
-                              } else {
-                                next.add(groupKey);
-                              }
-                              return next;
-                            });
-                          }}
-                        />
-                      )}
-                      {isAtCutoff && <EditCutoffBarrier />}
-                      {shouldShowInterruptedBarrier(msg) && <InterruptedBarrier />}
-                    </React.Fragment>
-                  );
-                })}
-                {/* Show RetryBarrier after the last message if needed */}
-                {showRetryBarrier && <RetryBarrier workspaceId={workspaceId} />}
-              </>
+                        >
+                          <MessageRenderer
+                            message={msg}
+                            onEditUserMessage={handleEditUserMessage}
+                            workspaceId={workspaceId}
+                            isCompacting={isCompacting}
+                            onReviewNote={handleReviewNote}
+                            isLatestProposePlan={
+                              msg.type === "tool" &&
+                              msg.toolName === "propose_plan" &&
+                              msg.id === latestProposePlanId
+                            }
+                            bashOutputGroup={bashOutputGroup}
+                          />
+                        </div>
+                        {/* Show collapsed indicator after the first item in a bash_output group */}
+                        {bashOutputGroup?.position === "first" && groupKey && (
+                          <BashOutputCollapsedIndicator
+                            processId={bashOutputGroup.processId}
+                            collapsedCount={bashOutputGroup.collapsedCount}
+                            isExpanded={isGroupExpanded}
+                            onToggle={() => {
+                              setExpandedBashGroups((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(groupKey)) {
+                                  next.delete(groupKey);
+                                } else {
+                                  next.add(groupKey);
+                                }
+                                return next;
+                              });
+                            }}
+                          />
+                        )}
+                        {isAtCutoff && <EditCutoffBarrier />}
+                        {shouldShowInterruptedBarrier(msg) && <InterruptedBarrier />}
+                      </React.Fragment>
+                    );
+                  })}
+                  {/* Show RetryBarrier after the last message if needed */}
+                  {showRetryBarrierUI && <RetryBarrier workspaceId={workspaceId} />}
+                </>
+              </MessageListProvider>
             )}
             <PinnedTodoList workspaceId={workspaceId} />
             <StreamingBarrier workspaceId={workspaceId} />

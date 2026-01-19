@@ -30,8 +30,17 @@ export function buildCompactionEditText(request: {
   rawCommand: string;
   parsed: CompactionRequestData;
 }): string {
-  const continueText = request.parsed.continueMessage?.text;
-  if (typeof continueText === "string" && continueText.trim().length > 0) {
+  const continueMessage = request.parsed.continueMessage;
+  const continueText = continueMessage?.text;
+  const hasImages = (continueMessage?.imageParts?.length ?? 0) > 0;
+  const hasReviews = (continueMessage?.reviews?.length ?? 0) > 0;
+  const isDefaultResume =
+    typeof continueText === "string" &&
+    continueText.trim() === "Continue" &&
+    !hasImages &&
+    !hasReviews;
+
+  if (typeof continueText === "string" && continueText.trim().length > 0 && !isDefaultResume) {
     return `${request.rawCommand}\n${continueText}`;
   }
   return request.rawCommand;

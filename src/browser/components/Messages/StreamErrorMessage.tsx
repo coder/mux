@@ -2,17 +2,33 @@ import React from "react";
 import { Bug } from "lucide-react";
 import { Button } from "@/browser/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui/tooltip";
+import { useCompactAndRetry } from "@/browser/hooks/useCompactAndRetry";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { cn } from "@/common/lib/utils";
 import type { DisplayedMessage } from "@/common/types/message";
+import { formatTokens } from "@/common/utils/tokens/tokenMeterUtils";
+import { useOptionalMessageListContext } from "./MessageListContext";
 
 interface StreamErrorMessageProps {
   message: DisplayedMessage & { type: "stream-error" };
   className?: string;
 }
 
-// Note: RetryBarrier handles retry actions. This component only displays the error.
-export const StreamErrorMessage: React.FC<StreamErrorMessageProps> = ({ message, className }) => {
+interface StreamErrorMessageBaseProps extends StreamErrorMessageProps {
+  compactRetryAction?: React.ReactNode;
+  compactionDetails?: React.ReactNode;
+}
+
+function formatContextTokens(tokens: number): string {
+  return formatTokens(tokens).replace(/\.0([kM])$/, "$1");
+}
+
+const StreamErrorMessageBase: React.FC<StreamErrorMessageBaseProps> = (props) => {
+  const message = props.message;
+  const className = props.className;
+  const compactRetryAction = props.compactRetryAction;
+  const compactionDetails = props.compactionDetails;
+
   const debugAction = (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -79,6 +95,107 @@ export const StreamErrorMessage: React.FC<StreamErrorMessageProps> = ({ message,
       <div className="text-foreground font-mono text-[13px] leading-relaxed break-words whitespace-pre-wrap">
         {message.error}
       </div>
+      {compactionDetails}
+      {compactRetryAction ? (
+        <div className="mt-3 flex items-center justify-start">{compactRetryAction}</div>
+      ) : null}
     </div>
+  );
+};
+
+interface StreamErrorMessageWithRetryProps extends StreamErrorMessageProps {
+  workspaceId: string;
+}
+
+const StreamErrorMessageWithRetry: React.FC<StreamErrorMessageWithRetryProps> = (props) => {
+  const compactAndRetry = useCompactAndRetry({ workspaceId: props.workspaceId });
+  const showCompactRetry = compactAndRetry.showCompactionUI;
+
+  let compactRetryLabel = "Compact & retry";
+  if (showCompactRetry) {
+    if (compactAndRetry.isRetryingWithCompaction) {
+      compactRetryLabel = "Starting...";
+    } else if (!compactAndRetry.compactionSuggestion || !compactAndRetry.hasTriggerUserMessage) {
+      compactRetryLabel = "Insert /compact";
+    } else if (compactAndRetry.hasCompactionRequest) {
+      compactRetryLabel = "Retry compaction";
+    }
+  }
+
+  const compactRetryAction = showCompactRetry ? (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={() => {
+        compactAndRetry.retryWithCompaction().catch(() => undefined);
+      }}
+      disabled={compactAndRetry.isRetryingWithCompaction}
+      className="border-warning/50 text-foreground bg-warning/10 hover:bg-warning/15 hover:text-foreground h-6 px-2 text-[10px]"
+    >
+      {compactRetryLabel}
+    </Button>
+  ) : null;
+
+  const compactionSuggestion = compactAndRetry.compactionSuggestion;
+  const compactionDetails = showCompactRetry ? (
+    <div className="font-primary text-foreground/80 mt-3 text-[12px]">
+      <span className="text-foreground font-semibold">Context window exceeded.</span>{" "}
+      {compactionSuggestion ? (
+        compactionSuggestion.kind === "preferred" ? (
+          <>
+            We&apos;ll compact with your configured compaction model{" "}
+            <span className="text-foreground font-semibold">
+              {compactionSuggestion.displayName}
+            </span>
+            {compactionSuggestion.maxInputTokens !== null ? (
+              <> ({formatContextTokens(compactionSuggestion.maxInputTokens)} context)</>
+            ) : null}{" "}
+            to unblock you. Your workspace model stays the same.
+          </>
+        ) : (
+          <>
+            We&apos;ll compact with{" "}
+            <span className="text-foreground font-semibold">
+              {compactionSuggestion.displayName}
+            </span>
+            {compactionSuggestion.maxInputTokens !== null ? (
+              <> ({formatContextTokens(compactionSuggestion.maxInputTokens)} context)</>
+            ) : null}{" "}
+            to unblock you with a higher-context model. Your workspace model stays the same.
+          </>
+        )
+      ) : (
+        <>Compact this chat to unblock you. Your workspace model stays the same.</>
+      )}
+    </div>
+  ) : null;
+
+  return (
+    <StreamErrorMessageBase
+      message={props.message}
+      className={props.className}
+      compactRetryAction={compactRetryAction}
+      compactionDetails={compactionDetails}
+    />
+  );
+};
+
+// RetryBarrier handles auto-retry; compaction retry UI lives here for stream errors.
+export const StreamErrorMessage: React.FC<StreamErrorMessageProps> = (props) => {
+  const messageListContext = useOptionalMessageListContext();
+  const latestMessageId = messageListContext?.latestMessageId ?? null;
+  const workspaceId = messageListContext?.workspaceId ?? null;
+  const isLatestMessage = latestMessageId === props.message.id;
+
+  if (!workspaceId || !isLatestMessage) {
+    return <StreamErrorMessageBase message={props.message} className={props.className} />;
+  }
+
+  return (
+    <StreamErrorMessageWithRetry
+      message={props.message}
+      className={props.className}
+      workspaceId={workspaceId}
+    />
   );
 };
