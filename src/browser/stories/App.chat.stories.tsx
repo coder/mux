@@ -1389,6 +1389,61 @@ graph TD
   },
 };
 
+/**
+ * Story showing a propose_plan with a code block containing long horizontal content.
+ * Tests that code blocks wrap correctly instead of overflowing the container.
+ */
+export const ProposePlanWithLongCodeBlock: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-plan-overflow",
+          messages: [
+            createUserMessage("msg-1", "The CI is failing with this error, can you help?", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP,
+            }),
+            createAssistantMessage("msg-2", "I see the issue. Here's my plan to fix it:", {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP,
+              toolCalls: [
+                createProposePlanTool(
+                  "call-plan-1",
+                  `# Fix CI Pipeline Failure
+
+## Problem
+
+The deployment step is failing due to a configuration mismatch:
+
+\`\`\`json
+{"error":"ConfigurationError","message":"Environment variable AWS_REGION is required but not set","stack":"at validateConfig (deploy.js:42)","context":{"requiredVars":["AWS_REGION","AWS_ACCESS_KEY_ID","AWS_SECRET_ACCESS_KEY"],"missingVars":["AWS_REGION"]}}
+\`\`\`
+
+## Solution
+
+1. Add the missing \`AWS_REGION\` environment variable to the CI configuration
+2. Update the deployment script to provide better error messages
+3. Add a pre-flight check to catch missing variables earlier`
+                ),
+              ],
+            }),
+          ],
+        })
+      }
+    />
+  ),
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Tests that code blocks within plans wrap correctly instead of overflowing. " +
+          "The long JSON error line should wrap within the plan card.",
+      },
+    },
+  },
+};
+
 // Message content used in SigningBadgePassphraseWarning story
 const SIGNING_WARNING_MESSAGE_CONTENT = "Hello! How can I help you today?";
 

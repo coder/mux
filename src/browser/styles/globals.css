@@ -1602,7 +1602,7 @@ span.search-highlight {
 /* Code block with line numbers - each line is a grid row */
 .code-block-container {
   display: grid;
-  grid-template-columns: auto 1fr;
+  grid-template-columns: auto minmax(0, 1fr);
   background: var(--color-code-bg);
   border-radius: 4px;
   padding: 6px 40px 6px 0; /* Right padding for copy button */
