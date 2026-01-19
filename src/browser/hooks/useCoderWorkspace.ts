@@ -15,6 +15,29 @@ import type {
 } from "@/common/orpc/schemas/coder";
 import type { CoderWorkspaceConfig } from "@/common/types/runtime";
 
+/**
+ * Returns an auto-selected template config if no template is set, otherwise null.
+ * Preserves existing config fields (like preset) when auto-selecting.
+ */
+export function buildAutoSelectedTemplateConfig(
+  currentConfig: CoderWorkspaceConfig | null,
+  templates: CoderTemplate[]
+): CoderWorkspaceConfig | null {
+  if (templates.length === 0 || currentConfig?.template || currentConfig?.existingWorkspace) {
+    return null;
+  }
+  const firstTemplate = templates[0];
+  const firstIsDuplicate = templates.some(
+    (t) => t.name === firstTemplate.name && t.organizationName !== firstTemplate.organizationName
+  );
+  return {
+    ...(currentConfig ?? {}),
+    existingWorkspace: false,
+    template: firstTemplate.name,
+    templateOrg: firstIsDuplicate ? firstTemplate.organizationName : undefined,
+  };
+}
+
 interface UseCoderWorkspaceOptions {
   /** Current Coder config (null = disabled, owned by parent via selectedRuntime.coder) */
   coderConfig: CoderWorkspaceConfig | null;
@@ -77,10 +100,8 @@ export function useCoderWorkspace({
   // Refs to access current values in async callbacks (avoids stale closures)
   const coderConfigRef = useRef(coderConfig);
   const onCoderConfigChangeRef = useRef(onCoderConfigChange);
-  useEffect(() => {
-    coderConfigRef.current = coderConfig;
-    onCoderConfigChangeRef.current = onCoderConfigChange;
-  }, [coderConfig, onCoderConfigChange]);
+  coderConfigRef.current = coderConfig;
+  onCoderConfigChangeRef.current = onCoderConfigChange;
   const [templates, setTemplates] = useState<CoderTemplate[]>([]);
   const [presets, setPresets] = useState<CoderPreset[]>([]);
   const [existingWorkspaces, setExistingWorkspaces] = useState<CoderWorkspace[]>([]);
@@ -142,20 +163,9 @@ export function useCoderWorkspace({
         if (mounted) {
           setTemplates(result);
           // Auto-select first template if none selected
-          // Use ref to get current config (avoids stale closure if user toggled modes during fetch)
-          const currentConfig = coderConfigRef.current;
-          if (result.length > 0 && !currentConfig?.template && !currentConfig?.existingWorkspace) {
-            const firstTemplate = result[0];
-            const firstIsDuplicate = result.some(
-              (t) =>
-                t.name === firstTemplate.name &&
-                t.organizationName !== firstTemplate.organizationName
-            );
-            onCoderConfigChange({
-              existingWorkspace: false,
-              template: firstTemplate.name,
-              templateOrg: firstIsDuplicate ? firstTemplate.organizationName : undefined,
-            });
+          const autoConfig = buildAutoSelectedTemplateConfig(coderConfigRef.current, result);
+          if (autoConfig) {
+            onCoderConfigChange(autoConfig);
           }
         }
       })
