@@ -16,6 +16,11 @@ interface SettingsContextValue {
   isOpen: boolean;
   activeSection: string;
   open: (section?: string, options?: OpenSettingsOptions) => void;
+  /** Open Settings → Projects with a project preselected in the dropdown */
+  openProjectSettings: (projectPath: string) => void;
+  /** One-shot target used to preselect the project dropdown in Project settings */
+  projectsTargetProjectPath: string | null;
+  clearProjectsTargetProjectPath: () => void;
   close: () => void;
   setActiveSection: (section: string) => void;
 
@@ -36,14 +41,23 @@ const DEFAULT_SECTION = "general";
 
 export function SettingsProvider(props: { children: ReactNode }) {
   const [isOpen, setIsOpen] = useState(false);
+  const [projectsTargetProjectPath, setProjectsTargetProjectPath] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState(DEFAULT_SECTION);
   const [providersExpandedProvider, setProvidersExpandedProvider] = useState<string | null>(null);
+
+  const clearProjectsTargetProjectPath = useCallback(() => {
+    setProjectsTargetProjectPath(null);
+  }, []);
 
   const setSection = useCallback((section: string) => {
     setActiveSection(section);
 
     if (section !== "providers") {
       setProvidersExpandedProvider(null);
+    }
+
+    if (section !== "projects") {
+      setProjectsTargetProjectPath(null);
     }
   }, []);
 
@@ -62,9 +76,18 @@ export function SettingsProvider(props: { children: ReactNode }) {
     [setSection]
   );
 
+  const openProjectSettings = useCallback(
+    (projectPath: string) => {
+      setProjectsTargetProjectPath(projectPath);
+      open("projects");
+    },
+    [open]
+  );
+
   const close = useCallback(() => {
     setIsOpen(false);
     setProvidersExpandedProvider(null);
+    setProjectsTargetProjectPath(null);
   }, []);
 
   const value = useMemo<SettingsContextValue>(
@@ -72,12 +95,25 @@ export function SettingsProvider(props: { children: ReactNode }) {
       isOpen,
       activeSection,
       open,
+      openProjectSettings,
+      projectsTargetProjectPath,
+      clearProjectsTargetProjectPath,
       close,
       setActiveSection: setSection,
       providersExpandedProvider,
       setProvidersExpandedProvider,
     }),
-    [isOpen, activeSection, open, close, providersExpandedProvider, setSection]
+    [
+      isOpen,
+      activeSection,
+      open,
+      openProjectSettings,
+      projectsTargetProjectPath,
+      clearProjectsTargetProjectPath,
+      close,
+      setSection,
+      providersExpandedProvider,
+    ]
   );
 
   return <SettingsContext.Provider value={value}>{props.children}</SettingsContext.Provider>;

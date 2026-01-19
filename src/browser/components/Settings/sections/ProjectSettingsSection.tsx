@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useAPI } from "@/browser/contexts/API";
+import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import {
   Trash2,
@@ -174,6 +175,7 @@ const ToolAllowlistSection: React.FC<{
 
 export const ProjectSettingsSection: React.FC = () => {
   const { api } = useAPI();
+  const { projectsTargetProjectPath, clearProjectsTargetProjectPath } = useSettings();
   const { projects, getSecrets } = useProjectContext();
   const projectList = Array.from(projects.keys());
 
@@ -217,12 +219,27 @@ export const ProjectSettingsSection: React.FC = () => {
   const [editing, setEditing] = useState<EditableServer | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
 
-  // Set default project when projects load
+  // Set default project when projects load (or when deep-linking into a specific project)
   useEffect(() => {
-    if (projectList.length > 0 && !selectedProject) {
+    if (projectList.length === 0) return;
+
+    if (projectsTargetProjectPath) {
+      const target = projectsTargetProjectPath;
+      clearProjectsTargetProjectPath();
+
+      if (projectList.includes(target)) {
+        setSelectedProject(target);
+      } else if (!selectedProject || !projectList.includes(selectedProject)) {
+        setSelectedProject(projectList[0]);
+      }
+
+      return;
+    }
+
+    if (!selectedProject || !projectList.includes(selectedProject)) {
       setSelectedProject(projectList[0]);
     }
-  }, [projectList, selectedProject]);
+  }, [projectList, selectedProject, projectsTargetProjectPath, clearProjectsTargetProjectPath]);
 
   const refresh = useCallback(async () => {
     if (!api || !selectedProject) return;

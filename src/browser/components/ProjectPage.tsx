@@ -7,6 +7,7 @@ import { ProviderOptionsProvider } from "@/browser/contexts/ProviderOptionsConte
 import { ThinkingProvider } from "@/browser/contexts/ThinkingContext";
 import { ChatInput } from "./ChatInput/index";
 import type { ChatInputAPI } from "./ChatInput/types";
+import { ProjectMCPOverview } from "./ProjectMCPOverview";
 import { ArchivedWorkspaces } from "./ArchivedWorkspaces";
 import { useAPI } from "@/browser/contexts/API";
 import { isWorkspaceArchived } from "@/common/utils/archive";
@@ -306,6 +307,14 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
                   )}
                 </div>
               </div>
+
+              {/* MCP servers: overview between creation and archived workspaces */}
+              <div className="flex justify-center px-4 pb-4">
+                <div className="w-full max-w-3xl">
+                  <ProjectMCPOverview projectPath={projectPath} />
+                </div>
+              </div>
+
               {/* Archived workspaces: separate section below centered area */}
               {archivedWorkspaces.length > 0 && (
                 <div className="flex justify-center px-4 pb-4">
