@@ -104,9 +104,7 @@ function AppInner() {
   }, [sidebarCollapsed]);
   const defaultProjectPath = getFirstProjectPath(projects);
   const creationProjectPath = !selectedWorkspace
-    ? pendingNewWorkspaceProject && projects.has(pendingNewWorkspaceProject)
-      ? pendingNewWorkspaceProject
-      : defaultProjectPath
+    ? (pendingNewWorkspaceProject ?? defaultProjectPath)
     : null;
 
   const startWorkspaceCreation = useStartWorkspaceCreation({
