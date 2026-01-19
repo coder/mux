@@ -35,6 +35,7 @@ import type { TelemetryService } from "./telemetryService";
 import { roundToBase2 } from "@/common/telemetry/utils";
 
 const SESSION_TIMING_FILE = "session-timing.json";
+const SESSION_TIMING_VERSION = 2 as const;
 
 export type StatsTabVariant = "control" | "stats";
 export type StatsTabOverride = "default" | "on" | "off";
@@ -54,7 +55,14 @@ interface ActiveStreamState {
   startTimeMs: number;
   firstTokenTimeMs: number | null;
 
-  completedToolExecutionMs: number;
+  /**
+   * Tool execution wall-clock time (union of overlapping tool calls) accumulated so far.
+   *
+   * Note: We intentionally do NOT sum per-tool durations, because tools can run concurrently.
+   */
+  toolWallMs: number;
+  /** Start time of the current "≥1 tool running" segment, if any. */
+  toolWallStartMs: number | null;
   pendingToolStarts: Map<string, number>;
 
   outputTokensByDelta: number;
@@ -71,7 +79,7 @@ function getModelKey(model: string, mode: AgentMode | undefined): string {
 
 function createEmptyTimingFile(): SessionTimingFile {
   return {
-    version: 1,
+    version: SESSION_TIMING_VERSION,
     session: {
       totalDurationMs: 0,
       totalToolExecutionMs: 0,
@@ -249,8 +257,17 @@ export class SessionTimingService {
     try {
       const data = await fs.readFile(this.getFilePath(workspaceId), "utf-8");
       const parsed = JSON.parse(data) as unknown;
-      const validated = SessionTimingFileSchema.parse(parsed);
-      return validated;
+
+      // Stats semantics may change over time. If we can't safely interpret old versions,
+      // reset without treating it as file corruption.
+      if (parsed && typeof parsed === "object" && "version" in parsed) {
+        const version = (parsed as { version?: unknown }).version;
+        if (version !== SESSION_TIMING_VERSION) {
+          return createEmptyTimingFile();
+        }
+      }
+
+      return SessionTimingFileSchema.parse(parsed);
     } catch (error) {
       if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
         return createEmptyTimingFile();
@@ -419,9 +436,14 @@ export class SessionTimingService {
     const now = Date.now();
     const elapsedMs = Math.max(0, now - state.startTimeMs);
 
-    let toolExecutionMs = state.completedToolExecutionMs;
-    for (const toolStart of state.pendingToolStarts.values()) {
-      toolExecutionMs += Math.max(0, now - toolStart);
+    let toolExecutionMs = state.toolWallMs;
+
+    if (state.toolWallStartMs !== null) {
+      toolExecutionMs += Math.max(0, now - state.toolWallStartMs);
+    } else if (state.pendingToolStarts.size > 0) {
+      // Defensive recovery: tools are running but we lost the current wall segment start.
+      const minStart = Math.min(...Array.from(state.pendingToolStarts.values()));
+      toolExecutionMs += Math.max(0, now - minStart);
     }
 
     const ttftMs =
@@ -494,7 +516,8 @@ export class SessionTimingService {
       mode,
       startTimeMs: data.startTime,
       firstTokenTimeMs: null,
-      completedToolExecutionMs: 0,
+      toolWallMs: 0,
+      toolWallStartMs: null,
       pendingToolStarts: new Map(),
       outputTokensByDelta: 0,
       reasoningTokensByDelta: 0,
@@ -549,6 +572,25 @@ export class SessionTimingService {
     if (!state) return;
 
     state.lastEventTimestampMs = Math.max(state.lastEventTimestampMs, data.timestamp);
+
+    // Defensive: ignore duplicate tool-call-start events.
+    if (state.pendingToolStarts.has(data.toolCallId)) {
+      return;
+    }
+
+    if (state.pendingToolStarts.size === 0) {
+      state.toolWallStartMs = data.timestamp;
+    } else if (state.toolWallStartMs !== null) {
+      state.toolWallStartMs = Math.min(state.toolWallStartMs, data.timestamp);
+    } else {
+      // Should not happen: tools are running but we lost the current wall segment start.
+      // Recover using the earliest start we still know about.
+      state.toolWallStartMs = Math.min(
+        data.timestamp,
+        ...Array.from(state.pendingToolStarts.values())
+      );
+    }
+
     state.pendingToolStarts.set(data.toolCallId, data.timestamp);
 
     // Tool args contribute to the visible token count + TPS.
@@ -582,9 +624,18 @@ export class SessionTimingService {
     state.lastEventTimestampMs = Math.max(state.lastEventTimestampMs, data.timestamp);
 
     const start = state.pendingToolStarts.get(data.toolCallId);
-    if (start !== undefined) {
-      state.completedToolExecutionMs += Math.max(0, data.timestamp - start);
-      state.pendingToolStarts.delete(data.toolCallId);
+    if (start === undefined) {
+      this.emitChange(data.workspaceId);
+      return;
+    }
+
+    state.pendingToolStarts.delete(data.toolCallId);
+
+    // If this was the last in-flight tool, close the current "tool wall time" segment.
+    if (state.pendingToolStarts.size === 0) {
+      const segmentStart = state.toolWallStartMs ?? start;
+      state.toolWallMs += Math.max(0, data.timestamp - segmentStart);
+      state.toolWallStartMs = null;
     }
 
     this.emitChange(data.workspaceId);
@@ -610,11 +661,17 @@ export class SessionTimingService {
         ? data.metadata.duration
         : Math.max(0, Date.now() - state.startTimeMs);
 
-    // Include time for any in-flight tools (should not happen, but keep defensive).
-    let toolExecutionMs = state.completedToolExecutionMs;
     const endTimestamp = Math.max(state.lastEventTimestampMs, state.startTimeMs + durationMs);
-    for (const toolStart of state.pendingToolStarts.values()) {
-      toolExecutionMs += Math.max(0, endTimestamp - toolStart);
+
+    let toolExecutionMs = state.toolWallMs;
+
+    // Close any open tool segment at stream end (can happen on abort/error).
+    if (state.toolWallStartMs !== null) {
+      toolExecutionMs += Math.max(0, endTimestamp - state.toolWallStartMs);
+    } else if (state.pendingToolStarts.size > 0) {
+      // Defensive recovery: tools are running but we lost the current wall segment start.
+      const minStart = Math.min(...Array.from(state.pendingToolStarts.values()));
+      toolExecutionMs += Math.max(0, endTimestamp - minStart);
     }
 
     const ttftMs =
