@@ -26,6 +26,7 @@ make dev-server-sandbox
   - `providers.jsonc` (provider config)
   - `config.json` (project list)
 - Picks free ports (`BACKEND_PORT`, `VITE_PORT`)
+- Allows all hosts (`VITE_ALLOWED_HOSTS=all`) so it works behind port-forwarding domains
 - Runs `make dev-server` with those env overrides
 
 ## Options

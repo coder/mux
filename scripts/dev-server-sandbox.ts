@@ -190,6 +190,12 @@ async function main(): Promise<void> {
     stdio: "inherit",
     env: {
       ...process.env,
+
+      // Allow access via reverse proxies / port-forwarding domains.
+      // This sets the Makefile's `VITE_ALLOWED_HOSTS`, which is forwarded to
+      // `MUX_VITE_ALLOWED_HOSTS` and then consumed by `vite.config.ts`.
+      VITE_ALLOWED_HOSTS: process.env.VITE_ALLOWED_HOSTS ?? "all",
+
       MUX_ROOT: muxRoot,
       BACKEND_PORT: String(backendPort),
       VITE_PORT: String(vitePort),
