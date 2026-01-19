@@ -50,14 +50,19 @@ export function createLayoutPresetId(): string {
   return id;
 }
 
-export function getDefaultSlotKeybind(slot: LayoutSlotNumber): Keybind {
-  return { key: String(slot), ctrl: true, alt: true };
+export function getDefaultSlotKeybind(slot: LayoutSlotNumber): Keybind | undefined {
+  // Reserve 1–9 for the built-in Ctrl/Cmd+Alt+[1-9] slot hotkeys.
+  if (slot >= 1 && slot <= 9) {
+    return { key: String(slot), ctrl: true, alt: true };
+  }
+
+  return undefined;
 }
 
 export function getEffectiveSlotKeybind(
   config: LayoutPresetsConfig,
   slot: LayoutSlotNumber
-): Keybind {
+): Keybind | undefined {
   const override = config.slots.find((s) => s.slot === slot)?.keybindOverride;
   return override ?? getDefaultSlotKeybind(slot);
 }

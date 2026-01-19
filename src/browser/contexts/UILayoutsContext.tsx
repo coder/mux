@@ -91,20 +91,24 @@ export function UILayoutsProvider(props: { children: ReactNode }) {
       return layoutPresets;
     }
 
-    if (loaded && !loadFailed) {
+    // Always fetch the latest config right before a write.
+    //
+    // This prevents stale in-memory state (captured by closures) from accidentally overwriting a
+    // newer config when multiple writes happen in sequence (e.g., delete layout → clear hotkey).
+    try {
+      const remote = await api.uiLayouts.getAll();
+      const normalized = getLayoutsConfigOrDefault(remote);
+
+      setLayoutPresets(normalized);
+      setLoaded(true);
+      setLoadFailed(false);
+
+      return normalized;
+    } catch {
+      // Best-effort fallback: don't block writes if the config fetch fails.
       return layoutPresets;
     }
-
-    // Avoid overwriting an existing config with defaults before the initial load completes.
-    const remote = await api.uiLayouts.getAll();
-    const normalized = getLayoutsConfigOrDefault(remote);
-
-    setLayoutPresets(normalized);
-    setLoaded(true);
-    setLoadFailed(false);
-
-    return normalized;
-  }, [api, layoutPresets, loaded, loadFailed]);
+  }, [api, layoutPresets]);
 
   const saveAll = useCallback(
     async (next: LayoutPresetsConfig): Promise<void> => {

@@ -580,12 +580,31 @@ function AppInner() {
         }
 
         const keybind = getEffectiveSlotKeybind(layoutPresets, slot);
-        if (!matchesKeybind(e, keybind)) {
+        if (!keybind || !matchesKeybind(e, keybind)) {
           continue;
         }
 
         e.preventDefault();
         void applySlotToWorkspace(selectedWorkspace.workspaceId, slot).catch(() => {
+          // Best-effort only.
+        });
+        return;
+      }
+
+      // Custom overrides for additional slots (10+).
+      for (const slotConfig of layoutPresets.slots) {
+        if (slotConfig.slot <= 9) {
+          continue;
+        }
+        if (!slotConfig.preset || !slotConfig.keybindOverride) {
+          continue;
+        }
+        if (!matchesKeybind(e, slotConfig.keybindOverride)) {
+          continue;
+        }
+
+        e.preventDefault();
+        void applySlotToWorkspace(selectedWorkspace.workspaceId, slotConfig.slot).catch(() => {
           // Best-effort only.
         });
         return;

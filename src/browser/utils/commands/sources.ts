@@ -3,6 +3,7 @@ import type { CommandAction } from "@/browser/contexts/CommandRegistryContext";
 import type { APIClient } from "@/browser/contexts/API";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
+import assert from "@/common/utils/assert";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import {
   getAutoRetryKey,
@@ -508,7 +509,9 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
 
     for (const slot of [1, 2, 3, 4, 5, 6, 7, 8, 9] as const) {
       const preset = getPresetForSlot(config, slot);
-      const shortcutHint = formatKeybind(getEffectiveSlotKeybind(config, slot));
+      const keybind = getEffectiveSlotKeybind(config, slot);
+      assert(keybind, `Slot ${slot} must have a default keybind`);
+      const shortcutHint = formatKeybind(keybind);
 
       list.push({
         id: CommandIds.layoutApplySlot(slot),

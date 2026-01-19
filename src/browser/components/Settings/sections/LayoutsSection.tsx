@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from "react";
-import { Plus } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import { Button } from "@/browser/components/ui/button";
+import assert from "@/common/utils/assert";
 import { KebabMenu, type KebabMenuItem } from "@/browser/components/KebabMenu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui/tooltip";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
@@ -125,11 +126,29 @@ export function LayoutsSection() {
     ? `${selectedWorkspace.projectName}/${selectedWorkspace.namedWorkspacePath.split("/").pop() ?? selectedWorkspace.namedWorkspacePath}`
     : null;
 
-  const effectiveSlotKeybinds = useMemo(() => {
-    return ([1, 2, 3, 4, 5, 6, 7, 8, 9] as const).map((slot) => ({
-      slot,
-      keybind: getEffectiveSlotKeybind(layoutPresets, slot),
-    }));
+  const existingKeybinds = useMemo(() => {
+    const existing: Array<{ slot: LayoutSlotNumber; keybind: Keybind }> = [];
+
+    // Built-in defaults for Slots 1–9 are treated as "reserved" regardless of whether a preset
+    // is assigned (so users don't accidentally create conflicts for later).
+    for (const slot of [1, 2, 3, 4, 5, 6, 7, 8, 9] as const) {
+      const keybind = getEffectiveSlotKeybind(layoutPresets, slot);
+      assert(keybind, `Slot ${slot} must have a default keybind`);
+      existing.push({ slot, keybind });
+    }
+
+    // Additional slots only participate in conflict detection if they have a custom override.
+    for (const slotConfig of layoutPresets.slots) {
+      if (slotConfig.slot <= 9) {
+        continue;
+      }
+      if (!slotConfig.keybindOverride) {
+        continue;
+      }
+      existing.push({ slot: slotConfig.slot, keybind: slotConfig.keybindOverride });
+    }
+
+    return existing;
   }, [layoutPresets]);
 
   const visibleSlots = useMemo(() => {
@@ -141,21 +160,20 @@ export function LayoutsSection() {
       .sort((a, b) => a.slot - b.slot);
   }, [layoutPresets]);
 
-  const nextFreeSlot = useMemo((): LayoutSlotNumber | null => {
-    const used = new Set<LayoutSlotNumber>();
+  const nextSlotNumber = useMemo((): LayoutSlotNumber => {
+    const used = new Set<number>();
     for (const slot of layoutPresets.slots) {
       if (slot.preset) {
         used.add(slot.slot);
       }
     }
 
-    for (const slot of [1, 2, 3, 4, 5, 6, 7, 8, 9] as const) {
-      if (!used.has(slot)) {
-        return slot;
-      }
+    let candidate = 1;
+    while (used.has(candidate)) {
+      candidate += 1;
     }
 
-    return null;
+    return candidate;
   }, [layoutPresets]);
 
   const submitRename = async (slot: LayoutSlotNumber, nextName: string): Promise<void> => {
@@ -182,18 +200,13 @@ export function LayoutsSection() {
       return;
     }
 
-    if (!nextFreeSlot) {
-      setActionError("All 9 layout slots are used.");
-      return;
-    }
-
     try {
       const preset = await saveCurrentWorkspaceToSlot(
         workspaceId,
-        nextFreeSlot,
-        `Layout ${nextFreeSlot}`
+        nextSlotNumber,
+        `Layout ${nextSlotNumber}`
       );
-      setEditingName({ slot: nextFreeSlot, value: preset.name, original: preset.name });
+      setEditingName({ slot: nextSlotNumber, value: preset.name, original: preset.name });
       setNameError(null);
     } catch {
       setActionError("Failed to add layout.");
@@ -223,7 +236,7 @@ export function LayoutsSection() {
     const error = validateSlotKeybindOverride({
       slot,
       keybind: captured,
-      existing: effectiveSlotKeybinds,
+      existing: existingKeybinds,
     });
 
     if (error) {
@@ -245,7 +258,8 @@ export function LayoutsSection() {
         <div>
           <h3 className="text-foreground text-sm font-medium">Layout Slots</h3>
           <div className="text-muted mt-1 text-xs">
-            Each slot stores a layout snapshot. Apply with Ctrl/Cmd+Alt+1..9 (customizable).
+            Slots 1–9 have default Ctrl/Cmd+Alt+1..9 hotkeys. Additional layouts can be added and
+            assigned custom hotkeys.
           </div>
           {selectedWorkspaceLabel ? (
             <div className="text-muted mt-1 text-xs">
@@ -285,6 +299,18 @@ export function LayoutsSection() {
 
             const menuItems: KebabMenuItem[] = [
               {
+                label: "Apply",
+                disabled: !workspaceId,
+                tooltip: workspaceId ? undefined : "Select a workspace to apply layouts.",
+                onClick: () => {
+                  setActionError(null);
+                  if (!workspaceId) return;
+                  void applySlotToWorkspace(workspaceId, slot).catch(() => {
+                    setActionError("Failed to apply layout.");
+                  });
+                },
+              },
+              {
                 label: "Update from current workspace",
                 disabled: !workspaceId,
                 tooltip: workspaceId ? undefined : "Select a workspace to capture its layout.",
@@ -300,18 +326,6 @@ export function LayoutsSection() {
                   });
                 },
               },
-              ...(slotConfig.keybindOverride
-                ? ([
-                    {
-                      label: "Reset hotkey to default",
-                      onClick: () => {
-                        void setSlotKeybindOverride(slot, undefined).catch(() => {
-                          setActionError("Failed to reset hotkey.");
-                        });
-                      },
-                    },
-                  ] as const)
-                : []),
               {
                 label: "Delete layout",
                 onClick: () => {
@@ -406,16 +420,54 @@ export function LayoutsSection() {
 
                   <div className="flex shrink-0 items-center gap-2">
                     {isCapturing ? (
-                      <div className="relative">
-                        <kbd className="bg-background-secondary text-foreground border-border-medium rounded border px-2 py-0.5 font-mono text-xs">
-                          Press keys…
-                        </kbd>
-                        <input
-                          className="absolute inset-0 h-full w-full opacity-0"
-                          autoFocus
-                          onKeyDown={(e) => handleCaptureKeyDown(slot, e)}
-                          aria-label={`Set hotkey for Slot ${slot}`}
-                        />
+                      <div className="flex items-center gap-1">
+                        <div className="relative">
+                          <kbd className="bg-background-secondary text-foreground border-border-medium rounded border px-2 py-0.5 font-mono text-xs">
+                            Press keys…
+                          </kbd>
+                          <input
+                            className="absolute inset-0 h-full w-full opacity-0"
+                            autoFocus
+                            onKeyDown={(e) => handleCaptureKeyDown(slot, e)}
+                            aria-label={`Set hotkey for Slot ${slot}`}
+                          />
+                        </div>
+
+                        {slotConfig.keybindOverride ? (
+                          <Tooltip disableHoverableContent>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="secondary"
+                                size="icon"
+                                className="h-6 w-6 [&_svg]:size-3"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+
+                                  setActionError(null);
+                                  void setSlotKeybindOverride(slot, undefined)
+                                    .then(() => {
+                                      setCapturingSlot(null);
+                                      setCaptureError(null);
+                                    })
+                                    .catch(() => {
+                                      setCaptureError("Failed to reset hotkey.");
+                                    });
+                                }}
+                                aria-label={
+                                  slot <= 9
+                                    ? `Reset hotkey for Slot ${slot}`
+                                    : `Clear hotkey for Slot ${slot}`
+                                }
+                              >
+                                <X />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent align="end">
+                              {slot <= 9 ? "Reset to default" : "Clear hotkey"}
+                            </TooltipContent>
+                          </Tooltip>
+                        ) : null}
                       </div>
                     ) : (
                       <Tooltip disableHoverableContent>
@@ -433,27 +485,12 @@ export function LayoutsSection() {
                               setCaptureError(null);
                             }}
                           >
-                            {formatKeybind(effectiveKeybind)}
+                            {effectiveKeybind ? formatKeybind(effectiveKeybind) : "No hotkey"}
                           </kbd>
                         </TooltipTrigger>
                         <TooltipContent align="end">Double-click to change hotkey</TooltipContent>
                       </Tooltip>
                     )}
-
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      disabled={!workspaceId}
-                      onClick={() => {
-                        setActionError(null);
-                        if (!workspaceId) return;
-                        void applySlotToWorkspace(workspaceId, slot).catch(() => {
-                          setActionError("Failed to apply layout.");
-                        });
-                      }}
-                    >
-                      Apply
-                    </Button>
 
                     <KebabMenu items={menuItems} />
                   </div>
@@ -479,7 +516,7 @@ export function LayoutsSection() {
         variant="secondary"
         size="lg"
         className="w-full"
-        disabled={!workspaceId || !nextFreeSlot}
+        disabled={!workspaceId}
         onClick={() => void handleAddLayout()}
       >
         <Plus />

@@ -91,7 +91,7 @@ export const LayoutPresetSchema = z
 
 export const LayoutSlotSchema = z
   .object({
-    slot: z.number().int().min(1).max(9),
+    slot: z.number().int().min(1),
     preset: LayoutPresetSchema.optional(),
     keybindOverride: KeybindSchema.optional(),
   })

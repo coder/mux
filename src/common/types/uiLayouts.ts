@@ -2,7 +2,12 @@ import assert from "@/common/utils/assert";
 import type { Keybind } from "@/common/types/keybind";
 import { hasModifierKeybind, normalizeKeybind } from "@/common/types/keybind";
 
-export type LayoutSlotNumber = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+/**
+ * Layout slots are 1-indexed and unbounded.
+ *
+ * Slots 1–9 are reserved for the default Ctrl/Cmd+Alt+1..9 hotkeys.
+ */
+export type LayoutSlotNumber = number;
 
 export interface LayoutSlot {
   slot: LayoutSlotNumber;
@@ -69,17 +74,7 @@ export const DEFAULT_LAYOUT_PRESETS_CONFIG: LayoutPresetsConfig = {
 };
 
 function isLayoutSlotNumber(value: unknown): value is LayoutSlotNumber {
-  return (
-    value === 1 ||
-    value === 2 ||
-    value === 3 ||
-    value === 4 ||
-    value === 5 ||
-    value === 6 ||
-    value === 7 ||
-    value === 8 ||
-    value === 9
-  );
+  return typeof value === "number" && Number.isInteger(value) && value >= 1;
 }
 
 function normalizeOptionalNonEmptyString(value: unknown): string | undefined {

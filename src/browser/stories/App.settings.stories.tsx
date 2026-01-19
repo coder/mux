@@ -257,6 +257,29 @@ export const LayoutsConfigured: AppStory = {
                   },
                 },
               },
+              {
+                slot: 10,
+                preset: {
+                  id: "preset-10",
+                  name: "Extra Layout",
+                  leftSidebarCollapsed: false,
+                  rightSidebar: {
+                    collapsed: true,
+                    width: { mode: "px", value: 400 },
+                    layout: {
+                      version: 1,
+                      nextId: 2,
+                      focusedTabsetId: "tabset-1",
+                      root: {
+                        type: "tabset",
+                        id: "tabset-1",
+                        tabs: ["costs"],
+                        activeTab: "costs",
+                      },
+                    },
+                  },
+                },
+              },
             ],
           },
         })
@@ -274,7 +297,9 @@ export const LayoutsConfigured: AppStory = {
 
     // Wait for the async config load from the UILayoutsProvider.
     await dialogCanvas.findByText(/My Layout/i);
+    await dialogCanvas.findByText(/Extra Layout/i);
     await dialogCanvas.findByText(/Slot 1/i);
+    await dialogCanvas.findByText(/Slot 10/i);
     await dialogCanvas.findByText(/^Add layout$/i);
 
     if (dialogCanvas.queryByText(/Slot 2/i)) {
