@@ -262,9 +262,7 @@ export function LayoutsSection() {
           Slots 1–9 have default Ctrl/Cmd+Alt+1..9 hotkeys. Additional layouts can be added and
           assigned custom hotkeys.
         </div>
-        {selectedWorkspaceLabel ? (
-          <div className="text-muted mt-1 text-xs">Target workspace: {selectedWorkspaceLabel}</div>
-        ) : (
+        {selectedWorkspaceLabel ? null : (
           <div className="text-muted mt-1 text-xs">
             Select a workspace to capture or apply layouts.
           </div>
