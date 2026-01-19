@@ -6,6 +6,7 @@ import { useWorkspaceState } from "@/browser/stores/WorkspaceStore";
 import {
   buildCompactionEditText,
   formatCompactionCommandLine,
+  getCompactionContinueText,
 } from "@/browser/utils/compaction/format";
 import {
   getExplicitCompactionSuggestion,
@@ -211,8 +212,7 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
             },
           });
 
-          const shouldAppendNewline =
-            !continueMessage?.text || continueMessage.text.trim().length === 0;
+          const shouldAppendNewline = !getCompactionContinueText(continueMessage);
 
           insertIntoChatInput(
             fallbackText + (shouldAppendNewline ? "\n" : ""),

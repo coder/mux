@@ -926,11 +926,16 @@ export class AgentSession {
     error: string;
     errorType?: string;
   }): Promise<void> {
+    const hadCompactionRequest = this.activeCompactionRequest !== undefined;
     if (await this.maybeRetryCompactionOnContextExceeded(data)) {
       return;
     }
 
     this.activeCompactionRequest = undefined;
+
+    if (hadCompactionRequest && !this.disposed) {
+      this.clearQueue();
+    }
 
     const streamError: StreamErrorMessage = {
       type: "stream-error",
@@ -985,7 +990,11 @@ export class AgentSession {
     forward("reasoning-end", (payload) => this.emitChatEvent(payload));
     forward("usage-delta", (payload) => this.emitChatEvent(payload));
     forward("stream-abort", (payload) => {
+      const hadCompactionRequest = this.activeCompactionRequest !== undefined;
       this.activeCompactionRequest = undefined;
+      if (hadCompactionRequest && !this.disposed) {
+        this.clearQueue();
+      }
       this.emitChatEvent(payload);
     });
     forward("runtime-status", (payload) => this.emitChatEvent(payload));

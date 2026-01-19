@@ -99,6 +99,18 @@ export type PersistedContinueMessage =
   };
 
 /**
+ * True when the continue message is the default resume sentinel ("Continue")
+ * with no attachments.
+ */
+export function isDefaultContinueMessage(message?: Partial<UserMessageContent>): boolean {
+  if (!message) return false;
+  const text = typeof message.text === "string" ? message.text.trim() : "";
+  const hasImages = (message.imageParts?.length ?? 0) > 0;
+  const hasReviews = (message.reviews?.length ?? 0) > 0;
+  return text === "Continue" && !hasImages && !hasReviews;
+}
+
+/**
  * Rebuild a ContinueMessage from persisted data.
  * Use this when reading from storage/history where the data may have been
  * saved by older code that didn't include all fields.
