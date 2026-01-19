@@ -15,7 +15,6 @@ interface UserMessageContentProps {
 const markdownStyles: Record<UserMessageContentProps["variant"], React.CSSProperties> = {
   sent: {
     color: "var(--color-user-text)",
-    whiteSpace: "pre-wrap",
     overflowWrap: "break-word",
     wordBreak: "break-word",
   },
@@ -24,7 +23,6 @@ const markdownStyles: Record<UserMessageContentProps["variant"], React.CSSProper
     fontFamily: "var(--font-monospace)",
     fontSize: "12px",
     lineHeight: "16px",
-    whiteSpace: "pre-wrap",
     overflowWrap: "break-word",
     wordBreak: "break-word",
     opacity: 0.9,

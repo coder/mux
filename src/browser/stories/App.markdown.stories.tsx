@@ -350,6 +350,55 @@ const reallyLongVariableName = someFunction(argumentOne, argumentTwo, argumentTh
 
 This is a very long paragraph without any breaks that should demonstrate text wrapping behavior in the chat message container. The text should wrap at the container boundary and not cause horizontal overflow that creates a scrollbar on the entire chat area. If you see a horizontal scrollbar, the CSS is broken.`;
 
+const USER_CODE_BLOCKS = `Here's the error:
+
+\`\`\`
+npm install
+\`\`\`
+
+And the full output:
+
+\`\`\`
+Expected ahead ≥ 2, got: {"ahead":1,"behind":0,"dirty":true,"outgoingAdditions":2,"outgoingDeletions":0,"incomingAdditions":0,"incomingDeletions":0}
+\`\`\`
+
+Short JS:
+
+\`\`\`js
+const x = 42;
+\`\`\`
+
+Long JS:
+
+\`\`\`js
+const reallyLongVariableName = someFunction(argumentOne, argumentTwo, argumentThree, argumentFour, argumentFive, argumentSix);
+\`\`\`
+
+Any ideas?`;
+
+/** User message with code blocks - tests scrolling for long lines */
+export const UserMessageCodeBlock: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-user-code",
+          messages: [
+            createUserMessage("msg-1", USER_CODE_BLOCKS, {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 10000,
+            }),
+            createAssistantMessage("msg-2", "I can help with that error.", {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP,
+            }),
+          ],
+        })
+      }
+    />
+  ),
+};
+
 /** Long lines in code blocks and lists - regression test for horizontal overflow */
 export const LongLinesOverflow: AppStory = {
   render: () => (
