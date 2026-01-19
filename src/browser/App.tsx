@@ -635,7 +635,7 @@ function AppInner() {
 
   return (
     <>
-      <div className="bg-bg-dark mobile-layout flex h-screen overflow-hidden">
+      <div className="bg-bg-dark mobile-layout flex h-full overflow-hidden">
         <LeftSidebar
           lastReadTimestamps={lastReadTimestamps}
           onToggleUnread={onToggleUnread}
