@@ -46,10 +46,10 @@ Use this index to find a page's:
 <!-- BEGIN DOCS_TREE -->
 - **Documentation**
   - **Getting Started**
-    - Introduction (`/`) → `references/docs/index.mdx` — Mux - Coding Agent Multiplexer for AI-assisted development
-    - Install (`/install`) → `references/docs/install.mdx` — Download and install mux for macOS, Linux, and Windows
+    - Introduction (`/`) → `references/docs/index.mdx`
+    - Install (`/install`) → `references/docs/install.mdx` — Download and install Mux for macOS, Linux, and Windows
     - **Models**
-      - Models (`/config/models`) → `references/docs/config/models.mdx` — Select and configure AI models in mux
+      - Models (`/config/models`) → `references/docs/config/models.mdx` — Select and configure AI models in Mux
       - Providers (`/config/providers`) → `references/docs/config/providers.mdx` — Configure API keys and settings for AI providers
     - Why Parallelize? (`/getting-started/why-parallelize`) → `references/docs/getting-started/why-parallelize.mdx` — Use cases for running multiple AI agents in parallel
     - Mux Codes (`/getting-started/mux-codes`) → `references/docs/getting-started/mux-codes.mdx` — Redeem free LLM token credits for evaluating Mux
@@ -57,7 +57,7 @@ Use this index to find a page's:
   - **Workspaces**
     - Workspaces (`/workspaces`) → `references/docs/workspaces/index.mdx` — Isolated development environments for parallel agent work
     - Forking Workspaces (`/workspaces/fork`) → `references/docs/workspaces/fork.mdx` — Clone workspaces with conversation history to explore alternatives
-    - Message Sharing (`/workspaces/sharing`) → `references/docs/workspaces/sharing.mdx` — Share encrypted messages with cryptographic signatures via mux.md
+    - Message Sharing (`/workspaces/sharing`) → `references/docs/workspaces/sharing.mdx` — Share encrypted messages with cryptographic signatures via Mux
     - **Compaction**
       - Compaction (`/workspaces/compaction`) → `references/docs/workspaces/compaction/index.mdx` — Managing conversation context size with compaction
       - Manual Compaction (`/workspaces/compaction/manual`) → `references/docs/workspaces/compaction/manual.mdx` — Commands for manually managing conversation context
@@ -79,13 +79,13 @@ Use this index to find a page's:
     - Instruction Files (`/agents/instruction-files`) → `references/docs/agents/instruction-files.mdx` — Configure agent behavior with AGENTS.md files
     - Agent Skills (`/agents/agent-skills`) → `references/docs/agents/agent-skills.mdx` — Share reusable workflows and references with skills
     - Plan Mode (`/agents/plan-mode`) → `references/docs/agents/plan-mode.mdx` — Review and collaborate on plans before execution
-    - System Prompt (`/agents/system-prompt`) → `references/docs/agents/system-prompt.mdx` — How mux constructs the system prompt for AI models
+    - System Prompt (`/agents/system-prompt`) → `references/docs/agents/system-prompt.mdx` — How Mux constructs the system prompt for AI models
     - Prompting Tips (`/agents/prompting-tips`) → `references/docs/agents/prompting-tips.mdx` — Tips and tricks for getting the most out of your AI agents
   - **Configuration**
     - MCP Servers (`/config/mcp-servers`) → `references/docs/config/mcp-servers.mdx` — Extend agent capabilities with Model Context Protocol servers
     - Project Secrets (`/config/project-secrets`) → `references/docs/config/project-secrets.mdx` — Manage environment variables and API keys for your projects
     - Agentic Git Identity (`/config/agentic-git-identity`) → `references/docs/config/agentic-git-identity.mdx` — Configure a separate Git identity for AI-generated commits
-    - Keyboard Shortcuts (`/config/keybinds`) → `references/docs/config/keybinds.mdx` — Complete keyboard shortcut reference for mux
+    - Keyboard Shortcuts (`/config/keybinds`) → `references/docs/config/keybinds.mdx` — Complete keyboard shortcut reference for Mux
     - Notifications (`/config/notifications`) → `references/docs/config/notifications.mdx` — Configure how agents notify you about important events
     - Vim Mode (`/config/vim-mode`) → `references/docs/config/vim-mode.mdx` — Vim-style editing in the Mux chat input
   - **Guides**
