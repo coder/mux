@@ -32,6 +32,13 @@ import {
   AgentIdSchema,
 } from "./agentDefinition";
 import {
+  HarnessGateRunResultSchema,
+  HarnessLoopStateSchema,
+  GitCheckpointResultSchema,
+  WorkspaceHarnessConfigSchema,
+  WorkspaceHarnessFilePathsSchema,
+} from "./harness";
+import {
   MCPAddParamsSchema,
   MCPRemoveParamsSchema,
   MCPServerMapSchema,
@@ -691,6 +698,91 @@ export const workspace = {
         overrides: WorkspaceMCPOverridesSchema,
       }),
       output: ResultSchema(z.void(), z.string()),
+    },
+  },
+
+  /** Workspace-local harness config + gates */
+  harness: {
+    get: {
+      input: z.object({ workspaceId: z.string() }),
+      output: ResultSchema(
+        z
+          .object({
+            config: WorkspaceHarnessConfigSchema,
+            paths: WorkspaceHarnessFilePathsSchema,
+            exists: z.boolean(),
+            lastGateRun: HarnessGateRunResultSchema.nullable(),
+            lastCheckpoint: GitCheckpointResultSchema.nullable(),
+            loopState: HarnessLoopStateSchema,
+          })
+          .strict(),
+        z.string()
+      ),
+    },
+    set: {
+      input: z
+        .object({
+          workspaceId: z.string(),
+          config: WorkspaceHarnessConfigSchema,
+        })
+        .strict(),
+      output: ResultSchema(WorkspaceHarnessConfigSchema, z.string()),
+    },
+    runGates: {
+      input: z.object({ workspaceId: z.string() }),
+      output: ResultSchema(HarnessGateRunResultSchema, z.string()),
+    },
+    checkpoint: {
+      input: z
+        .object({
+          workspaceId: z.string(),
+          messageTemplate: z.string().optional(),
+        })
+        .strict(),
+      output: ResultSchema(GitCheckpointResultSchema, z.string()),
+    },
+    /** Replace chat history with a short loop-style bearings message. */
+    resetContext: {
+      input: z
+        .object({
+          workspaceId: z.string(),
+          note: z.string().optional(),
+        })
+        .strict(),
+      output: ResultSchema(z.void(), z.string()),
+    },
+  },
+  /** Ralph loop runner */
+  loop: {
+    getState: {
+      input: z.object({ workspaceId: z.string() }),
+      output: HarnessLoopStateSchema,
+    },
+    start: {
+      input: z.object({ workspaceId: z.string() }),
+      output: ResultSchema(z.void(), z.string()),
+    },
+    pause: {
+      input: z
+        .object({
+          workspaceId: z.string(),
+          reason: z.string().optional(),
+        })
+        .strict(),
+      output: ResultSchema(z.void(), z.string()),
+    },
+    stop: {
+      input: z
+        .object({
+          workspaceId: z.string(),
+          reason: z.string().optional(),
+        })
+        .strict(),
+      output: ResultSchema(z.void(), z.string()),
+    },
+    subscribe: {
+      input: z.object({ workspaceId: z.string() }),
+      output: eventIterator(HarnessLoopStateSchema),
     },
   },
 };
