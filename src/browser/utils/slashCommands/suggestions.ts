@@ -39,7 +39,7 @@ function buildTopLevelSuggestions(
 ): SlashSuggestion[] {
   const isCreation = context.variant === "creation";
 
-  return filterAndMapSuggestions(
+  const commandSuggestions = filterAndMapSuggestions(
     COMMAND_DEFINITIONS,
     partial,
     (definition) => {
@@ -55,6 +55,33 @@ function buildTopLevelSuggestions(
     // In creation mode, filter out workspace-only commands
     isCreation ? (definition) => !WORKSPACE_ONLY_COMMANDS.has(definition.key) : undefined
   );
+
+  const formatScopeLabel = (scope: string): string => {
+    if (scope === "global") {
+      return "user";
+    }
+    return scope;
+  };
+
+  const skillDefinitions: SuggestionDefinition[] = (context.agentSkills ?? [])
+    .filter((skill) => !SLASH_COMMAND_DEFINITION_MAP.has(skill.name))
+    .map((skill) => ({
+      key: skill.name,
+      description: `${skill.description} (${formatScopeLabel(skill.scope)})`,
+      appendSpace: true,
+    }));
+
+  const skillSuggestions = filterAndMapSuggestions(skillDefinitions, partial, (definition) => {
+    const replacement = `/${definition.key} `;
+    return {
+      id: `skill:${definition.key}`,
+      display: `/${definition.key}`,
+      description: definition.description,
+      replacement,
+    };
+  });
+
+  return [...commandSuggestions, ...skillSuggestions];
 }
 
 function buildSubcommandSuggestions(

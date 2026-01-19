@@ -283,7 +283,10 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
           <div className="font-monospace text-foreground min-w-0 flex-1 truncate text-xs">
             <HighlightedText text={suggestion.display} query={highlightQuery} />
           </div>
-          <div className="text-secondary shrink-0 text-right text-[11px]">
+          <div
+            className="text-secondary max-w-[70%] min-w-0 truncate text-[11px]"
+            title={suggestion.description}
+          >
             {suggestion.description}
           </div>
         </div>

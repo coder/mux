@@ -28,6 +28,10 @@ import {
   normalizeTaskSettings,
 } from "@/common/types/tasks";
 import {
+  discoverAgentSkills,
+  readAgentSkill,
+} from "@/node/services/agentSkills/agentSkillsService";
+import {
   discoverAgentDefinitions,
   readAgentDefinition,
 } from "@/node/services/agentDefinitions/agentDefinitionsService";
@@ -449,7 +453,7 @@ export const router = (authToken?: string) => {
         .input(schemas.agents.list.input)
         .output(schemas.agents.list.output)
         .handler(async ({ context, input }) => {
-          // Wait for workspace init before agent discovery (SSH may not be ready yet)
+          // Wait for workspace init before discovery (SSH may not be ready yet)
           if (input.workspaceId) {
             await context.aiService.waitForInit(input.workspaceId);
           }
@@ -487,12 +491,37 @@ export const router = (authToken?: string) => {
         .input(schemas.agents.get.input)
         .output(schemas.agents.get.output)
         .handler(async ({ context, input }) => {
-          // Wait for workspace init before agent discovery (SSH may not be ready yet)
+          // Wait for workspace init before discovery (SSH may not be ready yet)
           if (input.workspaceId) {
             await context.aiService.waitForInit(input.workspaceId);
           }
           const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
           return readAgentDefinition(runtime, discoveryPath, input.agentId);
+        }),
+    },
+    agentSkills: {
+      list: t
+        .input(schemas.agentSkills.list.input)
+        .output(schemas.agentSkills.list.output)
+        .handler(async ({ context, input }) => {
+          // Wait for workspace init before agent discovery (SSH may not be ready yet)
+          if (input.workspaceId) {
+            await context.aiService.waitForInit(input.workspaceId);
+          }
+          const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
+          return discoverAgentSkills(runtime, discoveryPath);
+        }),
+      get: t
+        .input(schemas.agentSkills.get.input)
+        .output(schemas.agentSkills.get.output)
+        .handler(async ({ context, input }) => {
+          // Wait for workspace init before agent discovery (SSH may not be ready yet)
+          if (input.workspaceId) {
+            await context.aiService.waitForInit(input.workspaceId);
+          }
+          const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
+          const result = await readAgentSkill(runtime, discoveryPath, input.skillName);
+          return result.package;
         }),
     },
     providers: {

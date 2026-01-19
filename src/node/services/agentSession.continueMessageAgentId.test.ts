@@ -93,6 +93,7 @@ describe("AgentSession continue-message agentId fallback", () => {
       model: "openai:gpt-4o",
       agentId: "compact",
       mode: "compact",
+      disableWorkspaceAgents: true,
       toolPolicy: [{ regex_match: ".*", action: "disable" }],
       muxMetadata: {
         type: "compaction-request",
@@ -108,6 +109,7 @@ describe("AgentSession continue-message agentId fallback", () => {
     const queued = internals.messageQueue.produceMessage();
     expect(queued.message).toBe("follow up");
     expect(queued.options?.agentId).toBe("plan");
+    expect(queued.options?.disableWorkspaceAgents).toBe(true);
 
     session.dispose();
   });

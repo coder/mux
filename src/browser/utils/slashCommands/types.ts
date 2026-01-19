@@ -9,6 +9,8 @@
  * for new commands.
  */
 
+import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
+
 export type ParsedCommand =
   | { type: "providers-set"; provider: string; keyPath: string[]; value: string }
   | { type: "providers-help" }
@@ -36,7 +38,6 @@ export type ParsedCommand =
   | { type: "plan-show" }
   | { type: "plan-open" }
   | { type: "debug-llm-request" }
-  | { type: "init" }
   | { type: "unknown-command"; command: string; subcommand?: string }
   | { type: "idle-compaction"; hours: number | null }
   | null;
@@ -78,6 +79,7 @@ export interface SlashSuggestion {
 }
 
 export interface SlashSuggestionContext {
+  agentSkills?: AgentSkillDescriptor[];
   providerNames?: string[];
   /** Variant determines which commands are available */
   variant?: "workspace" | "creation";

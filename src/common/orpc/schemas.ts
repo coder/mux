@@ -146,6 +146,7 @@ export {
   features,
   general,
   menu,
+  agentSkills,
   agents,
   nameGeneration,
   projects,
