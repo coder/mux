@@ -83,7 +83,7 @@ mux injects an `<agent-skills>` block into the system prompt listing the availab
 
 You can apply a skill in two ways:
 
-- **Explicit (slash command)**: type `/{skill-name}` (optionally followed by a message: `/{skill-name} ...`) in the chat input. mux will send your message normally (or a small default message if you omit one), and inject the skill content into the system context for that send.
+- **Explicit (slash command)**: type `/{skill-name}` (optionally followed by a message: `/{skill-name} ...`) in the chat input. mux will send your message normally (or a small default message if you omit one), and persist a synthetic snapshot of the skill body in history immediately before that message.
   - Example: `/init` runs the built-in `init` skill to bootstrap `AGENTS.md`. You can override it with `~/.mux/skills/init/SKILL.md` (or `.mux/skills/init/SKILL.md` for a single project).
   - Type `/` to see skills in the suggestions list.
 - **Agent-initiated (tool call)**: the agent can load skills on-demand.
