@@ -12,7 +12,8 @@ import { formatTokens, type TokenMeterData } from "@/common/utils/tokens/tokenMe
 import { cn } from "@/common/lib/utils";
 
 /** Output reserve indicator (context limit minus max output tokens) */
-const OutputReserveIndicator: React.FC<{ threshold: number }> = ({ threshold }) => {
+const OutputReserveIndicator: React.FC<{ threshold: number }> = (props) => {
+  const threshold = props.threshold;
   if (threshold <= 0 || threshold >= 100) return null;
 
   return (
@@ -90,12 +91,12 @@ const AutoCompactSettings: React.FC<{
   const showUsageSlider = usageConfig && data.maxTokens;
   const isIdleEnabled = idleConfig?.hours !== null && idleConfig?.hours !== undefined;
 
-  const outputReserveThreshold = React.useMemo(() => {
+  const outputReserveThreshold = (() => {
     if (!data.maxTokens || !data.maxOutputTokens) return null;
     if (data.maxOutputTokens <= 0 || data.maxOutputTokens >= data.maxTokens) return null;
     const raw = ((data.maxTokens - data.maxOutputTokens) / data.maxTokens) * 100;
     return Math.max(0, Math.min(100, raw));
-  }, [data.maxTokens, data.maxOutputTokens]);
+  })();
 
   const outputReserveTokens =
     data.maxTokens && data.maxOutputTokens ? data.maxTokens - data.maxOutputTokens : null;
