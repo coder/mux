@@ -1,9 +1,16 @@
 import { describe, it, expect } from "bun:test";
-import type { FileStat } from "@/node/runtime/Runtime";
+import * as fsPromises from "fs/promises";
+import * as os from "os";
+import * as path from "path";
+import type { FileStat, Runtime } from "@/node/runtime/Runtime";
+import type { ToolConfiguration } from "@/common/utils/tools/tools";
+import { LocalRuntime } from "@/node/runtime/LocalRuntime";
+import { DockerRuntime } from "@/node/runtime/DockerRuntime";
 import {
   validatePathInCwd,
   validateFileSize,
   validateNoRedundantPrefix,
+  isPlanFilePath,
   MAX_FILE_SIZE,
 } from "./fileCommon";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
@@ -233,5 +240,102 @@ describe("fileCommon", () => {
       // Should allow relative paths on SSH
       expect(validateNoRedundantPrefix("src/file.ts", sshCwd, sshRuntime)).toBeNull();
     });
+  });
+});
+
+describe("isPlanFilePath", () => {
+  it("should match canonical absolute plan path against ~/.mux alias in local runtimes", async () => {
+    const previousMuxRoot = process.env.MUX_ROOT;
+
+    const muxHome = await fsPromises.mkdtemp(path.join(os.tmpdir(), "mux-home-"));
+    process.env.MUX_ROOT = muxHome;
+
+    try {
+      const runtime = new LocalRuntime("/workspace/project");
+
+      // Canonical (already-resolved) path under mux home.
+      const canonicalPlanPath = path.join(muxHome, "plans", "proj", "branch.md");
+
+      const config: ToolConfiguration = {
+        cwd: "/workspace/project",
+        runtime,
+        runtimeTempDir: "/tmp",
+        planFilePath: canonicalPlanPath,
+      };
+
+      // Absolute path should match exactly.
+      expect(await isPlanFilePath(canonicalPlanPath, config)).toBe(true);
+
+      // Tilde + ~/.mux prefix should resolve to mux home (which may be MUX_ROOT or ~/.mux-dev).
+      expect(await isPlanFilePath("~/.mux/plans/proj/branch.md", config)).toBe(true);
+
+      // If the caller uses the OS-home absolute path for ~/.mux, that may not match mux home
+      // when mux is configured to use a different root (e.g. MUX_ROOT or NODE_ENV=development).
+      const osHomeMuxPath = path.join(os.homedir(), ".mux", "plans", "proj", "branch.md");
+      expect(await isPlanFilePath(osHomeMuxPath, config)).toBe(false);
+    } finally {
+      if (previousMuxRoot === undefined) {
+        delete process.env.MUX_ROOT;
+      } else {
+        process.env.MUX_ROOT = previousMuxRoot;
+      }
+      await fsPromises.rm(muxHome, { recursive: true, force: true });
+    }
+  });
+
+  it("should use DockerRuntime.resolvePath semantics when matching plan file", async () => {
+    const runtime = new DockerRuntime({ image: "ubuntu:22.04" });
+
+    const config: ToolConfiguration = {
+      cwd: "/src",
+      runtime,
+      runtimeTempDir: "/tmp",
+      planFilePath: "/var/mux/plans/proj/branch.md",
+    };
+
+    // Docker uses /var/mux for mux home (not ~/.mux), so only that absolute path matches.
+    expect(await isPlanFilePath("/var/mux/plans/proj/branch.md", config)).toBe(true);
+
+    // In Docker, ~ expands to the container user's home (e.g. /root), so this should not match.
+    expect(await isPlanFilePath("~/.mux/plans/proj/branch.md", config)).toBe(false);
+
+    // Non-absolute paths are resolved relative to /src (workspace), so this should not match either.
+    expect(await isPlanFilePath("var/mux/plans/proj/branch.md", config)).toBe(false);
+  });
+
+  it("should handle SSH-like resolution (~/, absolute, and relative) consistently", async () => {
+    const fakeSshRuntime: Runtime = {
+      // Minimal subset needed for isPlanFilePath()
+      resolvePath: (filePath: string) => {
+        const home = "/home/test";
+        const pwd = "/home/test/work";
+
+        let resolved: string;
+        if (filePath === "~") {
+          resolved = home;
+        } else if (filePath.startsWith("~/")) {
+          resolved = path.posix.join(home, filePath.slice(2));
+        } else if (filePath.startsWith("/")) {
+          resolved = filePath;
+        } else {
+          resolved = path.posix.join(pwd, filePath);
+        }
+
+        return Promise.resolve(resolved);
+      },
+    } as unknown as Runtime;
+
+    const config: ToolConfiguration = {
+      cwd: "/home/test/work",
+      runtime: fakeSshRuntime,
+      runtimeTempDir: "/tmp",
+      planFilePath: "/home/test/.mux/plans/proj/branch.md",
+    };
+
+    expect(await isPlanFilePath("/home/test/.mux/plans/proj/branch.md", config)).toBe(true);
+    expect(await isPlanFilePath("~/.mux/plans/proj/branch.md", config)).toBe(true);
+
+    // Relative path is resolved from PWD (not mux home), so it should not match.
+    expect(await isPlanFilePath(".mux/plans/proj/branch.md", config)).toBe(false);
   });
 });
