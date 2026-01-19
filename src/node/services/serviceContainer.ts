@@ -43,7 +43,6 @@ import { IdleCompactionService } from "@/node/services/idleCompactionService";
 import { TaskService } from "@/node/services/taskService";
 import { getSigningService, type SigningService } from "@/node/services/signingService";
 import { coderService, type CoderService } from "@/node/services/coderService";
-import { log } from "@/node/services/log";
 import { setGlobalCoderService } from "@/node/runtime/runtimeFactory";
 
 /**
@@ -217,12 +216,9 @@ export class ServiceContainer {
     this.idleCompactionService.start();
 
     // Refresh Coder SSH config in background (handles binary path changes on restart)
-    void this.coderService.getCoderInfo().then((info) => {
-      if (info.state === "available") {
-        this.coderService.ensureSSHConfig().catch((err) => {
-          log.warn("Failed to refresh Coder SSH config", { err });
-        });
-      }
+    // Skip getCoderInfo() to avoid caching "unavailable" if coder isn't installed yet
+    void this.coderService.ensureSSHConfig().catch(() => {
+      // Ignore errors - coder may not be installed
     });
   }
 
