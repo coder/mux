@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Menu, PanelRight, Pencil, Server } from "lucide-react";
+import { Menu, Pencil, Server } from "lucide-react";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { cn } from "@/common/lib/utils";
 import { RIGHT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
@@ -58,14 +58,10 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   const [debugLlmRequestOpen, setDebugLlmRequestOpen] = useState(false);
   const [mcpModalOpen, setMcpModalOpen] = useState(false);
 
-  const [rightSidebarCollapsed, setRightSidebarCollapsed] = usePersistedState<boolean>(
-    RIGHT_SIDEBAR_COLLAPSED_KEY,
-    false,
-    {
-      // This state is toggled from RightSidebar, so we need cross-component updates.
-      listener: true,
-    }
-  );
+  const [rightSidebarCollapsed] = usePersistedState<boolean>(RIGHT_SIDEBAR_COLLAPSED_KEY, false, {
+    // This state is toggled from RightSidebar, so we need cross-component updates.
+    listener: true,
+  });
 
   const handleOpenTerminal = useCallback(() => {
     if (onOpenTerminal) {
@@ -160,18 +156,6 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
       </div>
       <div className={cn("flex items-center gap-2", isDesktop && "titlebar-no-drag")}>
         <WorkspaceLinks workspaceId={workspaceId} />
-        {rightSidebarCollapsed && (
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setRightSidebarCollapsed(false)}
-            title="Open sidebar"
-            aria-label="Open sidebar"
-            className="mobile-menu-btn text-muted hover:text-foreground hidden h-6 w-6 shrink-0"
-          >
-            <PanelRight className="h-4 w-4" />
-          </Button>
-        )}
         {editorError && <span className="text-danger-soft text-xs">{editorError}</span>}
         <Tooltip>
           <TooltipTrigger asChild>

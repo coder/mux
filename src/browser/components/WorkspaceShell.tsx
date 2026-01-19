@@ -107,18 +107,20 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
         onOpenTerminal={handleOpenTerminal}
       />
 
-      <RightSidebar
-        key={props.workspaceId}
-        workspaceId={props.workspaceId}
-        workspacePath={props.namedWorkspacePath}
-        projectPath={props.projectPath}
-        width={sidebarWidth}
-        onStartResize={startResize}
-        isResizing={isResizing}
-        onReviewNote={handleReviewNote}
-        isCreating={props.status === "creating"}
-        addTerminalRef={addTerminalRef}
-      />
+      <div className="shrink-0 [@media(max-width:768px)]:hidden">
+        <RightSidebar
+          key={props.workspaceId}
+          workspaceId={props.workspaceId}
+          workspacePath={props.namedWorkspacePath}
+          projectPath={props.projectPath}
+          width={sidebarWidth}
+          onStartResize={startResize}
+          isResizing={isResizing}
+          onReviewNote={handleReviewNote}
+          isCreating={props.status === "creating"}
+          addTerminalRef={addTerminalRef}
+        />
+      </div>
 
       <PopoverError
         error={backgroundBashError.error}
