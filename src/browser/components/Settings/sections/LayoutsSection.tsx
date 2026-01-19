@@ -259,21 +259,6 @@ export function LayoutsSection() {
         </div>
 
         <div className="flex items-center gap-2">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="secondary"
-                size="icon"
-                onClick={() => void handleAddLayout()}
-                disabled={!workspaceId || !nextFreeSlot}
-                aria-label="Add layout"
-              >
-                <Plus />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent align="end">Add layout</TooltipContent>
-          </Tooltip>
-
           <Button variant="secondary" size="sm" onClick={() => void refresh()}>
             Refresh
           </Button>
