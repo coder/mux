@@ -97,7 +97,7 @@ export const KebabMenu: React.FC<KebabMenuProps> = ({ items, className }) => {
         createPortal(
           <div
             ref={menuRef}
-            className="bg-dark border-border-light fixed z-[10000] min-w-40 overflow-hidden rounded-[3px] border shadow-[0_4px_16px_rgba(0,0,0,0.8)]"
+            className="bg-dark border-border-light pointer-events-auto fixed z-[10000] min-w-40 overflow-hidden rounded-[3px] border shadow-[0_4px_16px_rgba(0,0,0,0.8)]"
             style={{
               top: `${dropdownPosition.top}px`,
               left: `${dropdownPosition.left}px`,

@@ -286,7 +286,6 @@ export function LayoutsSection() {
             const menuItems: KebabMenuItem[] = [
               {
                 label: "Update from current workspace",
-                emoji: "📸",
                 disabled: !workspaceId,
                 tooltip: workspaceId ? undefined : "Select a workspace to capture its layout.",
                 onClick: () => {
@@ -305,7 +304,6 @@ export function LayoutsSection() {
                 ? ([
                     {
                       label: "Reset hotkey to default",
-                      emoji: "↩️",
                       onClick: () => {
                         void setSlotKeybindOverride(slot, undefined).catch(() => {
                           setActionError("Failed to reset hotkey.");
@@ -316,7 +314,6 @@ export function LayoutsSection() {
                 : []),
               {
                 label: "Delete layout",
-                emoji: "🗑️",
                 onClick: () => {
                   const ok = confirm(`Delete layout "${preset.name}"?`);
                   if (!ok) return;
