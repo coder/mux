@@ -869,6 +869,40 @@ export class AgentSession {
     }
   }
 
+  private isSonnet45Model(modelString: string): boolean {
+    return (
+      getModelProvider(modelString) === "anthropic" &&
+      getModelName(modelString).toLowerCase().startsWith("claude-sonnet-4-5")
+    );
+  }
+
+  private withAnthropic1MContext(
+    modelString: string,
+    options: SendMessageOptions | undefined
+  ): SendMessageOptions {
+    if (options) {
+      return {
+        ...options,
+        providerOptions: {
+          ...options.providerOptions,
+          anthropic: {
+            ...options.providerOptions?.anthropic,
+            use1MContext: true,
+          },
+        },
+      };
+    }
+
+    return {
+      model: modelString,
+      providerOptions: {
+        anthropic: {
+          use1MContext: true,
+        },
+      },
+    };
+  }
+
   private isGptClassModel(modelString: string): boolean {
     return (
       getModelProvider(modelString) === "openai" &&
@@ -889,8 +923,18 @@ export class AgentSession {
       return false;
     }
 
-    if (!this.isGptClassModel(context.modelString)) {
+    const isGptClass = this.isGptClassModel(context.modelString);
+    const isSonnet45 = this.isSonnet45Model(context.modelString);
+
+    if (!isGptClass && !isSonnet45) {
       return false;
+    }
+
+    if (isSonnet45) {
+      const use1MContext = context.options?.providerOptions?.anthropic?.use1MContext ?? false;
+      if (use1MContext) {
+        return false;
+      }
     }
 
     if (this.compactionRetryAttempts.has(context.id)) {
@@ -899,7 +943,8 @@ export class AgentSession {
 
     this.compactionRetryAttempts.add(context.id);
 
-    log.info("Compaction hit context limit; retrying once with OpenAI truncation", {
+    const retryLabel = isSonnet45 ? "Anthropic 1M context" : "OpenAI truncation";
+    log.info(`Compaction hit context limit; retrying once with ${retryLabel}`, {
       workspaceId: this.workspaceId,
       model: context.modelString,
       compactionRequestId: context.id,
@@ -907,7 +952,14 @@ export class AgentSession {
 
     await this.finalizeCompactionRetry(data.messageId);
 
-    const retryResult = await this.streamWithHistory(context.modelString, context.options, "auto");
+    const retryOptions = isSonnet45
+      ? this.withAnthropic1MContext(context.modelString, context.options)
+      : context.options;
+    const retryResult = await this.streamWithHistory(
+      context.modelString,
+      retryOptions,
+      isGptClass ? "auto" : undefined
+    );
     if (!retryResult.success) {
       log.error("Compaction retry failed to start", {
         workspaceId: this.workspaceId,
