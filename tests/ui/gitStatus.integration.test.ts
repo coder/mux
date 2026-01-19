@@ -16,10 +16,12 @@ import {
   getGitStatusFromElement,
   setupWorkspaceView,
   waitForAheadStatus,
+  waitForIdleGitStatus,
   waitForGitStatusElement,
   waitForDirtyStatus,
   waitForCleanStatus,
 } from "./helpers";
+import { invalidateGitStatus } from "@/browser/stores/GitStatusStore";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
@@ -139,10 +141,14 @@ describeIntegration("GitStatus (UI + ORPC)", () => {
       try {
         await setupWorkspaceView(view, metadata, workspaceId);
 
-        // Wait for any initial git status fetch to complete before making commits.
-        // The RefreshController has debounce/min-interval guards that can delay
-        // subsequent refreshes if we start too quickly.
-        await waitForGitStatusElement(view.container, workspaceId, 10_000);
+        // Wait for stable baseline (ahead === 0, clean) AND idle store (no in-flight fetch).
+        // This ensures we don't race with a background fetch completing mid-commit.
+        await waitForIdleGitStatus(
+          workspaceId,
+          (s) => s.ahead === 0 && !s.dirty,
+          "ahead === 0, clean, idle",
+          10_000
+        );
 
         // Make 2 commits to get ahead of remote
         for (let i = 0; i < 2; i++) {
@@ -154,7 +160,9 @@ describeIntegration("GitStatus (UI + ORPC)", () => {
           if (!bashRes.success) return;
         }
 
-        simulateWindowFocus();
+        // Directly invalidate git status instead of simulating window focus.
+        // This bypasses RefreshController rate-limiting and jsdom event quirks.
+        invalidateGitStatus(workspaceId);
         await waitForAheadStatus(view.container, workspaceId, 2, 20_000);
       } finally {
         await cleanupView(view, cleanupDom);

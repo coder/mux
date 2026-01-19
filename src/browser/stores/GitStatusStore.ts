@@ -153,6 +153,14 @@ export class GitStatusStore {
   }
 
   /**
+   * Check if any git status fetch is currently in-flight.
+   * Use this to ensure no background fetch can race with operations that change git state.
+   */
+  isAnyRefreshInFlight(): boolean {
+    return this.refreshController.isRefreshing;
+  }
+
+  /**
    * Subscribe to refreshing state changes for a specific workspace.
    */
   subscribeRefreshingKey = (workspaceId: string, listener: () => void) => {

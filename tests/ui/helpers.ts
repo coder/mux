@@ -6,6 +6,7 @@ import { cleanup, fireEvent, waitFor } from "@testing-library/react";
 import type { FrontendWorkspaceMetadata, GitStatus } from "@/common/types/workspace";
 import type { RenderedApp } from "./renderReviewPanel";
 import { workspaceStore } from "@/browser/stores/WorkspaceStore";
+import { useGitStatusStoreRaw } from "@/browser/stores/GitStatusStore";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -262,5 +263,34 @@ export function waitForAheadStatus(
     (s) => (s.ahead ?? 0) >= minAhead,
     `ahead >= ${minAhead}`,
     timeoutMs
+  );
+}
+
+/**
+ * Wait for git status to be idle (no fetch in-flight) AND match a predicate.
+ * Use this to ensure no background fetch can race with subsequent operations.
+ */
+export function waitForIdleGitStatus(
+  workspaceId: string,
+  predicate: (status: GitStatus) => boolean,
+  description: string,
+  timeoutMs: number = 60_000
+): Promise<GitStatus> {
+  const store = useGitStatusStoreRaw();
+
+  return waitFor(
+    () => {
+      // Check global in-flight state, not per-workspace (initial fetch doesn't set per-workspace flag)
+      if (store.isAnyRefreshInFlight()) {
+        throw new Error("Git status fetch in-flight");
+      }
+      const status = store.getStatus(workspaceId);
+      if (!status) throw new Error("Git status not yet available");
+      if (!predicate(status)) {
+        throw new Error(`Expected ${description}, got: ${JSON.stringify(status)}`);
+      }
+      return status;
+    },
+    { timeout: timeoutMs }
   );
 }
