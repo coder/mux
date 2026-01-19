@@ -66,6 +66,7 @@ export class MessageQueue {
   private firstMuxMetadata?: unknown;
   private latestOptions?: SendMessageOptions;
   private accumulatedImages: ImagePart[] = [];
+  private dedupeKeys: Set<string> = new Set<string>();
 
   /**
    * Check if the queue currently contains a compaction request.
@@ -82,12 +83,39 @@ export class MessageQueue {
    * @throws Error if trying to add a compaction request when queue already has messages
    */
   add(message: string, options?: SendMessageOptions & { imageParts?: ImagePart[] }): void {
+    this.addInternal(message, options);
+  }
+
+  /**
+   * Add a message to the queue once, keyed by dedupeKey.
+   * Returns true if the message was queued.
+   */
+  addOnce(
+    message: string,
+    options?: SendMessageOptions & { imageParts?: ImagePart[] },
+    dedupeKey?: string
+  ): boolean {
+    if (dedupeKey !== undefined && this.dedupeKeys.has(dedupeKey)) {
+      return false;
+    }
+
+    const didAdd = this.addInternal(message, options);
+    if (didAdd && dedupeKey !== undefined) {
+      this.dedupeKeys.add(dedupeKey);
+    }
+    return didAdd;
+  }
+
+  private addInternal(
+    message: string,
+    options?: SendMessageOptions & { imageParts?: ImagePart[] }
+  ): boolean {
     const trimmedMessage = message.trim();
     const hasImages = options?.imageParts && options.imageParts.length > 0;
 
     // Reject if both text and images are empty
     if (trimmedMessage.length === 0 && !hasImages) {
-      return;
+      return false;
     }
 
     const incomingIsCompaction = isCompactionMetadata(options?.muxMetadata);
@@ -139,6 +167,8 @@ export class MessageQueue {
         this.accumulatedImages.push(...imageParts);
       }
     }
+
+    return true;
   }
 
   /**
@@ -218,6 +248,7 @@ export class MessageQueue {
     this.firstMuxMetadata = undefined;
     this.latestOptions = undefined;
     this.accumulatedImages = [];
+    this.dedupeKeys.clear();
   }
 
   /**

@@ -159,6 +159,27 @@ describe("MessageQueue", () => {
     });
   });
 
+  describe("addOnce", () => {
+    it("should dedupe repeated entries by key", () => {
+      const image = { url: "data:image/png;base64,abc", mediaType: "image/png" };
+      const addedFirst = queue.addOnce(
+        "Follow up",
+        { model: "gpt-4", imageParts: [image] },
+        "follow-up"
+      );
+      const addedSecond = queue.addOnce(
+        "Follow up",
+        { model: "gpt-4", imageParts: [image] },
+        "follow-up"
+      );
+
+      expect(addedFirst).toBe(true);
+      expect(addedSecond).toBe(false);
+      expect(queue.getMessages()).toEqual(["Follow up"]);
+      expect(queue.getImageParts()).toEqual([image]);
+    });
+  });
+
   describe("multi-message batching", () => {
     it("should batch multiple follow-up messages", () => {
       queue.add("First message");

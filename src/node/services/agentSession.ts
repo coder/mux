@@ -681,8 +681,14 @@ export class AgentSession {
         sanitizedOptions.muxMetadata = metadata;
       }
 
-      this.messageQueue.add(finalText, sanitizedOptions);
-      this.emitQueuedMessageChanged();
+      const dedupeKey = JSON.stringify({
+        text: finalText.trim(),
+        images: (continueImageParts ?? []).map((image) => `${image.mediaType}:${image.url}`),
+      });
+
+      if (this.messageQueue.addOnce(finalText, sanitizedOptions, dedupeKey)) {
+        this.emitQueuedMessageChanged();
+      }
     }
 
     if (this.disposed) {
