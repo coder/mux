@@ -139,9 +139,14 @@ export class WorktreeRuntime extends LocalBaseRuntime {
       return true;
     } catch (error) {
       const errorMsg = getErrorMessage(error);
-      initLogger.logStderr(
-        `Note: Could not fetch from origin (${errorMsg}), using local branch state`
-      );
+      // Branch doesn't exist on origin (common for subagent local-only branches)
+      if (errorMsg.includes("couldn't find remote ref")) {
+        initLogger.logStep(`Branch "${trunkBranch}" not found on origin; using local state.`);
+      } else {
+        initLogger.logStderr(
+          `Note: Could not fetch from origin (${errorMsg}), using local branch state`
+        );
+      }
       return false;
     }
   }

@@ -685,9 +685,14 @@ export class SSHRuntime extends RemoteRuntime {
       const fetchExitCode = await fetchStream.exitCode;
       if (fetchExitCode !== 0) {
         const fetchStderr = await streamToString(fetchStream.stderr);
-        initLogger.logStderr(
-          `Note: Could not fetch from origin (${fetchStderr}), using local branch state`
-        );
+        // Branch doesn't exist on origin (common for subagent local-only branches)
+        if (fetchStderr.includes("couldn't find remote ref")) {
+          initLogger.logStep(`Branch "${trunkBranch}" not found on origin; using local state.`);
+        } else {
+          initLogger.logStderr(
+            `Note: Could not fetch from origin (${fetchStderr}), using local branch state`
+          );
+        }
         return false;
       }
 
