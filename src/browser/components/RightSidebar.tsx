@@ -126,12 +126,10 @@ const SidebarContainer: React.FC<SidebarContainerProps> = ({
   return (
     <div
       className={cn(
-        "bg-sidebar border-l border-border-light flex flex-col overflow-hidden flex-shrink-0",
+        "bg-sidebar border-l border-border-light flex flex-col overflow-hidden flex-shrink-0 mobile-right-sidebar",
         !isResizing && "transition-[width] duration-200",
-        collapsed && "sticky right-0 z-10 shadow-[-2px_0_4px_rgba(0,0,0,0.2)]",
-        // Mobile: Show vertical meter when collapsed (20px), full width when expanded
-        "max-md:border-l-0 max-md:border-t max-md:border-border-light",
-        !collapsed && "max-md:w-full max-md:relative max-md:max-h-[50vh]",
+        collapsed &&
+          "sticky right-0 z-10 shadow-[-2px_0_4px_rgba(0,0,0,0.2)] mobile-right-sidebar-collapsed",
         // In desktop mode, hide the left border when collapsed to avoid
         // visual separation in the titlebar area (overlay buttons zone)
         isDesktop && collapsed && "border-l-0"
@@ -1197,50 +1195,61 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   };
 
   return (
-    <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
-      <SidebarContainer
-        collapsed={collapsed}
-        isResizing={isResizing}
-        isDesktop={isDesktopMode()}
-        customWidth={width} // Unified width from AIView (applies to all tabs)
-        role="complementary"
-        aria-label="Workspace insights"
-      >
-        {!collapsed && (
-          <div className="flex min-h-0 min-w-0 flex-1 flex-row">
-            {/* Resize handle (left edge) */}
-            {onStartResize && (
-              <div
-                className={cn(
-                  "w-0.5 flex-shrink-0 z-10 transition-[background] duration-150 cursor-col-resize",
-                  isResizing ? "bg-accent" : "bg-border-light hover:bg-accent"
-                )}
-                onMouseDown={(e) => onStartResize(e as unknown as React.MouseEvent)}
-              />
-            )}
-
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-              {renderLayoutNode(layout.root)}
-            </div>
-          </div>
+    <>
+      {/* Overlay backdrop - only visible on mobile when sidebar is open */}
+      <div
+        className={cn(
+          "hidden mobile-overlay fixed inset-0 bg-black/50 z-40 backdrop-blur-sm",
+          collapsed && "!hidden"
         )}
+        onClick={() => setCollapsed(true)}
+      />
 
-        <SidebarCollapseButton
+      <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+        <SidebarContainer
           collapsed={collapsed}
-          onToggle={() => setCollapsed(!collapsed)}
-          side="right"
-        />
-      </SidebarContainer>
+          isResizing={isResizing}
+          isDesktop={isDesktopMode()}
+          customWidth={width} // Unified width from AIView (applies to all tabs)
+          role="complementary"
+          aria-label="Workspace insights"
+        >
+          {!collapsed && (
+            <div className="flex min-h-0 min-w-0 flex-1 flex-row">
+              {/* Resize handle (left edge) */}
+              {onStartResize && (
+                <div
+                  className={cn(
+                    "w-0.5 flex-shrink-0 z-10 transition-[background] duration-150 cursor-col-resize",
+                    isResizing ? "bg-accent" : "bg-border-light hover:bg-accent"
+                  )}
+                  onMouseDown={(e) => onStartResize(e as unknown as React.MouseEvent)}
+                />
+              )}
 
-      {/* Drag overlay - shows tab being dragged at cursor position */}
-      <DragOverlay>
-        {activeDragData ? (
-          <div className="border-border bg-background/95 cursor-grabbing rounded-md border px-3 py-1 text-xs font-medium shadow">
-            {getTabName(activeDragData.tab)}
-          </div>
-        ) : null}
-      </DragOverlay>
-    </DndContext>
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                {renderLayoutNode(layout.root)}
+              </div>
+            </div>
+          )}
+
+          <SidebarCollapseButton
+            collapsed={collapsed}
+            onToggle={() => setCollapsed(!collapsed)}
+            side="right"
+          />
+        </SidebarContainer>
+
+        {/* Drag overlay - shows tab being dragged at cursor position */}
+        <DragOverlay>
+          {activeDragData ? (
+            <div className="border-border bg-background/95 cursor-grabbing rounded-md border px-3 py-1 text-xs font-medium shadow">
+              {getTabName(activeDragData.tab)}
+            </div>
+          ) : null}
+        </DragOverlay>
+      </DndContext>
+    </>
   );
 };
 
