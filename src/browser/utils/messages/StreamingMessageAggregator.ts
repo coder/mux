@@ -1736,7 +1736,6 @@ export class StreamingMessageAggregator {
                 model: muxMeta.parsed.model,
                 maxOutputTokens: muxMeta.parsed.maxOutputTokens,
                 continueMessage: muxMeta.parsed.continueMessage,
-                continueMessageIsRetry: muxMeta.parsed.continueMessageIsRetry,
               } satisfies CompactionRequestData,
             }
           : undefined;

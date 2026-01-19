@@ -184,9 +184,6 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
       if (source.compactionRequest) {
         const maxOutputTokens = source.compactionRequest.parsed.maxOutputTokens;
         const continueMessage = source.compactionRequest.parsed.continueMessage;
-        const continueMessageIsRetry =
-          source.compactionRequest.parsed.continueMessageIsRetry === true;
-
         const result = await executeCompaction({
           api,
           workspaceId: props.workspaceId,
@@ -194,7 +191,6 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
           model: compactionSuggestion.modelId,
           maxOutputTokens,
           continueMessage,
-          continueMessageIsRetry,
           editMessageId: source.id,
         });
 
@@ -246,7 +242,6 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
         sendMessageOptions,
         model: compactionSuggestion.modelId,
         continueMessage,
-        continueMessageIsRetry: true,
         editMessageId: source.id,
       });
 
