@@ -70,7 +70,6 @@ interface CompactionRequestMetadata {
   type: "compaction-request";
   parsed: {
     continueMessage?: ContinueMessage;
-    continueMessageIsRetry?: boolean;
   };
 }
 
@@ -123,7 +122,6 @@ export class AgentSession {
   private readonly initListeners: Array<{ event: string; handler: (...args: unknown[]) => void }> =
     [];
   private disposed = false;
-  private pendingCompactionRetryOptions?: SendMessageOptions;
   private readonly messageQueue = new MessageQueue();
   private readonly compactionHandler: CompactionHandler;
 
@@ -646,12 +644,8 @@ export class AgentSession {
         sanitizedOptions.muxMetadata = metadata;
       }
 
-      if (typedMuxMetadata.parsed.continueMessageIsRetry) {
-        this.pendingCompactionRetryOptions = sanitizedOptions;
-      } else {
-        this.messageQueue.add(finalText, sanitizedOptions);
-        this.emitQueuedMessageChanged();
-      }
+      this.messageQueue.add(finalText, sanitizedOptions);
+      this.emitQueuedMessageChanged();
     }
 
     if (this.disposed) {
@@ -900,7 +894,6 @@ export class AgentSession {
     }
 
     this.activeCompactionRequest = undefined;
-    this.pendingCompactionRetryOptions = undefined;
 
     const streamError: StreamErrorMessage = {
       type: "stream-error",
@@ -956,7 +949,6 @@ export class AgentSession {
     forward("usage-delta", (payload) => this.emitChatEvent(payload));
     forward("stream-abort", (payload) => {
       this.activeCompactionRequest = undefined;
-      this.pendingCompactionRetryOptions = undefined;
       this.emitChatEvent(payload);
     });
     forward("runtime-status", (payload) => this.emitChatEvent(payload));
@@ -964,10 +956,6 @@ export class AgentSession {
     forward("stream-end", async (payload) => {
       this.activeCompactionRequest = undefined;
       const handled = await this.compactionHandler.handleCompletion(payload as StreamEndEvent);
-      const retryOptions = this.pendingCompactionRetryOptions;
-      const shouldRetryAfterCompaction =
-        handled && this.compactionHandler.consumeRetryAfterCompaction();
-      this.pendingCompactionRetryOptions = undefined;
 
       if (!handled) {
         this.emitChatEvent(payload);
@@ -975,18 +963,6 @@ export class AgentSession {
         // Compaction completed - notify to trigger metadata refresh
         // This allows the frontend to get updated postCompaction state
         this.onCompactionComplete?.();
-      }
-
-      if (shouldRetryAfterCompaction && retryOptions) {
-        const retryResult = await this.resumeStream(retryOptions);
-        if (!retryResult.success) {
-          log.warn("Failed to resume after compaction retry", {
-            workspaceId: this.workspaceId,
-            error: retryResult.error,
-          });
-        } else {
-          return;
-        }
       }
 
       // Stream end: auto-send queued messages
