@@ -10,6 +10,9 @@ import {
   SelectValue,
 } from "../ui/select";
 import { Loader2, Wand2 } from "lucide-react";
+import { PlatformPaths } from "@/common/utils/paths";
+import { useProjectContext } from "@/browser/contexts/ProjectContext";
+import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { cn } from "@/common/lib/utils";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { SSHIcon, WorktreeIcon, LocalIcon, DockerIcon } from "../icons/RuntimeIcons";
@@ -32,6 +35,8 @@ interface CreationControlsProps {
   onSelectedRuntimeChange: (runtime: ParsedRuntime) => void;
   onSetDefaultRuntime: (mode: RuntimeMode) => void;
   disabled: boolean;
+  /** Project path to display (and used for project selector) */
+  projectPath: string;
   /** Project name to display as header */
   projectName: string;
   /** Workspace name/title generation state and actions */
@@ -243,6 +248,8 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
  * Displays project name as header, workspace name with magic wand, and runtime/branch selectors.
  */
 export function CreationControls(props: CreationControlsProps) {
+  const { projects } = useProjectContext();
+  const { beginWorkspaceCreation } = useWorkspaceContext();
   const { nameState, runtimeAvailability } = props;
 
   // Extract mode from discriminated union for convenience
@@ -289,7 +296,41 @@ export function CreationControls(props: CreationControlsProps) {
     <div className="mb-3 flex flex-col gap-4">
       {/* Project name / workspace name header row - wraps on narrow viewports */}
       <div className="flex flex-wrap items-center gap-y-2" data-component="WorkspaceNameGroup">
-        <h2 className="text-foreground shrink-0 text-lg font-semibold">{props.projectName}</h2>
+        {projects.size > 1 ? (
+          <RadixSelect
+            value={props.projectPath}
+            onValueChange={(path) => beginWorkspaceCreation(path)}
+          >
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <SelectTrigger
+                  aria-label="Select project"
+                  data-testid="project-selector"
+                  className="text-foreground hover:bg-toggle-bg/70 h-7 w-auto max-w-[280px] shrink-0 border-transparent bg-transparent px-0 text-lg font-semibold shadow-none"
+                >
+                  <SelectValue placeholder={props.projectName} />
+                </SelectTrigger>
+              </TooltipTrigger>
+              <TooltipContent align="start">{props.projectPath}</TooltipContent>
+            </Tooltip>
+            <SelectContent>
+              {Array.from(projects.keys()).map((path) => (
+                <SelectItem key={path} value={path}>
+                  {PlatformPaths.basename(path)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </RadixSelect>
+        ) : (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <h2 className="text-foreground shrink-0 text-lg font-semibold">
+                {props.projectName}
+              </h2>
+            </TooltipTrigger>
+            <TooltipContent align="start">{props.projectPath}</TooltipContent>
+          </Tooltip>
+        )}
         <span className="text-muted-foreground mx-2 text-lg">/</span>
 
         {/* Name input with magic wand - uses grid overlay technique for auto-sizing */}
