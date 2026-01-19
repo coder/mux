@@ -38,6 +38,8 @@ export type ParsedCommand =
   | { type: "debug-llm-request" }
   | { type: "init" }
   | { type: "unknown-command"; command: string; subcommand?: string }
+  | { type: "command-missing-args"; command: string; usage: string }
+  | { type: "command-invalid-args"; command: string; input: string; usage: string }
   | { type: "idle-compaction"; hours: number | null }
   | null;
 
