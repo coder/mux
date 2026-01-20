@@ -1,6 +1,6 @@
 import React from "react";
 import type { Preview } from "@storybook/react-vite";
-import { ThemeProvider, type ThemeMode } from "../src/browser/contexts/ThemeContext";
+import { ThemeProvider, type ResolvedThemeMode } from "../src/browser/contexts/ThemeContext";
 import "../src/browser/styles/globals.css";
 import {
   TUTORIAL_STATE_KEY,
@@ -91,7 +91,7 @@ const preview: Preview = {
     // Theme provider
     (Story, context) => {
       // Default to dark if mode not set (e.g., Chromatic headless browser defaults to light)
-      const mode = (context.globals.theme as ThemeMode | undefined) ?? "dark";
+      const mode = (context.globals.theme as ResolvedThemeMode | undefined) ?? "dark";
 
       // Apply theme synchronously before React renders - critical for Chromatic snapshots
       if (typeof document !== "undefined") {

@@ -10,6 +10,7 @@ import ReactDOM from "react-dom/client";
 import { TerminalView } from "@/browser/components/TerminalView";
 import { APIProvider } from "@/browser/contexts/API";
 import { TerminalRouterProvider } from "@/browser/terminal/TerminalRouterContext";
+import { ThemeProvider } from "@/browser/contexts/ThemeContext";
 import "./styles/globals.css";
 
 // Get workspace ID from query parameter
@@ -30,10 +31,12 @@ if (!workspaceId || !sessionId) {
   // StrictMode intentionally double-mounts components in dev, which causes
   // race conditions with WebSocket connections and terminal lifecycle
   ReactDOM.createRoot(document.getElementById("root")!).render(
-    <APIProvider>
-      <TerminalRouterProvider>
-        <TerminalView workspaceId={workspaceId} sessionId={sessionId} visible={true} />
-      </TerminalRouterProvider>
-    </APIProvider>
+    <ThemeProvider>
+      <APIProvider>
+        <TerminalRouterProvider>
+          <TerminalView workspaceId={workspaceId} sessionId={sessionId} visible={true} />
+        </TerminalRouterProvider>
+      </APIProvider>
+    </ThemeProvider>
   );
 }

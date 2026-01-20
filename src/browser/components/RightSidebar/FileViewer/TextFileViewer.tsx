@@ -137,7 +137,7 @@ function buildUnifiedView(content: string, diffText: string): UnifiedLine[] | nu
 }
 
 export const TextFileViewer: React.FC<TextFileViewerProps> = (props) => {
-  const { theme: themeMode } = useTheme();
+  const { resolvedTheme } = useTheme();
   const language = getLanguageFromPath(props.filePath);
   const languageDisplayName = getLanguageDisplayName(language);
 
@@ -160,7 +160,7 @@ export const TextFileViewer: React.FC<TextFileViewerProps> = (props) => {
       ? unifiedLines.map((l) => l.content)
       : fileLines.filter((l, i, arr) => i < arr.length - 1 || l !== "");
 
-    const theme = themeMode === "light" || themeMode.endsWith("-light") ? "light" : "dark";
+    const theme = resolvedTheme === "light" || resolvedTheme.endsWith("-light") ? "light" : "dark";
 
     let cancelled = false;
 
@@ -181,7 +181,7 @@ export const TextFileViewer: React.FC<TextFileViewerProps> = (props) => {
     return () => {
       cancelled = true;
     };
-  }, [unifiedLines, fileLines, language, themeMode]);
+  }, [unifiedLines, fileLines, language, resolvedTheme]);
 
   const addedCount = unifiedLines?.filter((l) => l.type === "added").length ?? 0;
   const removedCount = unifiedLines?.filter((l) => l.type === "removed").length ?? 0;
