@@ -46,6 +46,100 @@ function normalizeEditorConfig(value: unknown): EditorConfig {
   return { editor, customCommand };
 }
 
+const GENERIC_FONT_FAMILIES: ReadonlySet<string> = new Set([
+  "serif",
+  "sans-serif",
+  "monospace",
+  "cursive",
+  "fantasy",
+  "system-ui",
+  "ui-serif",
+  "ui-sans-serif",
+  "ui-monospace",
+  "ui-rounded",
+  "emoji",
+  "math",
+  "fangsong",
+]);
+
+function stripOuterQuotes(value: string): string {
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+
+  return trimmed;
+}
+
+function quoteCssFontFamily(value: string): string {
+  const trimmed = stripOuterQuotes(value);
+  if (!trimmed) {
+    return trimmed;
+  }
+
+  if (GENERIC_FONT_FAMILIES.has(trimmed.toLowerCase())) {
+    return trimmed;
+  }
+
+  if (/[^a-zA-Z0-9_-]/.test(trimmed)) {
+    const sanitized = trimmed.replace(/"/g, "");
+    return `"${sanitized}"`;
+  }
+
+  return trimmed;
+}
+
+function getPrimaryFontFamily(value: string): string | undefined {
+  const first = value.split(",").at(0);
+  if (!first) {
+    return undefined;
+  }
+
+  const stripped = stripOuterQuotes(first);
+  return stripped || undefined;
+}
+
+function getTerminalFontAvailabilityWarning(config: TerminalFontConfig): string | undefined {
+  if (typeof document === "undefined") {
+    return undefined;
+  }
+
+  if (!document.fonts?.check) {
+    return undefined;
+  }
+
+  const primary = getPrimaryFontFamily(config.fontFamily);
+  if (!primary) {
+    return undefined;
+  }
+
+  const normalizedPrimary = primary.trim();
+  if (!normalizedPrimary) {
+    return undefined;
+  }
+
+  if (GENERIC_FONT_FAMILIES.has(normalizedPrimary.toLowerCase())) {
+    return undefined;
+  }
+
+  const spec = `${config.fontSize}px ${quoteCssFontFamily(normalizedPrimary)}`;
+  if (document.fonts.check(spec)) {
+    return undefined;
+  }
+
+  if (normalizedPrimary.endsWith("Nerd Font") && !normalizedPrimary.endsWith("Nerd Font Mono")) {
+    const monoCandidate = `${normalizedPrimary} Mono`;
+    const monoSpec = `${config.fontSize}px ${quoteCssFontFamily(monoCandidate)}`;
+    if (document.fonts.check(monoSpec)) {
+      return `Font "${normalizedPrimary}" not found. Try "${monoCandidate}".`;
+    }
+  }
+
+  return `Font "${normalizedPrimary}" not found in this browser.`;
+}
 function normalizeTerminalFontConfig(value: unknown): TerminalFontConfig {
   if (!value || typeof value !== "object") {
     return DEFAULT_TERMINAL_FONT_CONFIG;
@@ -85,6 +179,7 @@ export function GeneralSection() {
     DEFAULT_TERMINAL_FONT_CONFIG
   );
   const terminalFontConfig = normalizeTerminalFontConfig(rawTerminalFontConfig);
+  const terminalFontWarning = getTerminalFontAvailabilityWarning(terminalFontConfig);
 
   const [rawEditorConfig, setEditorConfig] = usePersistedState<EditorConfig>(
     EDITOR_CONFIG_KEY,
@@ -160,6 +255,9 @@ export function GeneralSection() {
           <div className="flex items-center justify-between gap-4">
             <div className="flex-1">
               <div className="text-foreground text-sm">Terminal Font</div>
+              {terminalFontWarning ? (
+                <div className="text-warning text-xs">{terminalFontWarning}</div>
+              ) : null}
               <div className="text-muted text-xs">
                 To render Nerd Font icons in TUIs, set this to a Nerd Font (e.g. JetBrainsMono Nerd
                 Font)
