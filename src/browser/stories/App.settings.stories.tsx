@@ -98,11 +98,19 @@ async function openSettingsToSection(canvasElement: HTMLElement, section?: strin
 // STORIES
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/** General settings section with theme toggle */
+/** General settings section */
 export const General: AppStory = {
   render: () => <AppWithMocks setup={() => setupSettingsStory({})} />,
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     await openSettingsToSection(canvasElement, "general");
+
+    const body = within(canvasElement.ownerDocument.body);
+    const dialog = await body.findByRole("dialog");
+    const dialogCanvas = within(dialog);
+
+    await dialogCanvas.findByText(/^Theme$/i);
+    await dialogCanvas.findByText(/^Terminal Font$/i);
+    await dialogCanvas.findByText(/^Terminal Font Size$/i);
   },
 };
 

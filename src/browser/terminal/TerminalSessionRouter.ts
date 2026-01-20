@@ -141,6 +141,44 @@ export class TerminalSessionRouter {
   }
 
   /**
+   * Intercept terminal color queries that ghostty-web might not respond to yet.
+   *
+   * OSC 10/11 queries (foreground/background) are used by some TUIs to theme themselves.
+   */
+  private handleTerminalQueries(sessionId: string, data: string) {
+    if (data.includes("\x1b]11;?") || data.includes("\x1b]10;?")) {
+      const styles = getComputedStyle(document.documentElement);
+      if (data.includes("\x1b]11;?")) {
+        const bg = styles.getPropertyValue("--color-terminal-bg").trim() || "#1e1e1e";
+        this.sendInput(sessionId, `\x1b]11;${this.formatXtermColor(bg)}\x07`);
+      }
+      if (data.includes("\x1b]10;?")) {
+        const fg = styles.getPropertyValue("--color-terminal-fg").trim() || "#d4d4d4";
+        this.sendInput(sessionId, `\x1b]10;${this.formatXtermColor(fg)}\x07`);
+      }
+    }
+  }
+
+  private formatXtermColor(color: string): string {
+    if (color.startsWith("#")) {
+      const hex = color.slice(1);
+      if (hex.length === 3) {
+        const r = hex[0] + hex[0];
+        const g = hex[1] + hex[1];
+        const b = hex[2] + hex[2];
+        return `rgb:${r}${r}/${g}${g}/${b}${b}`;
+      }
+      if (hex.length === 6) {
+        const r = hex.slice(0, 2);
+        const g = hex.slice(2, 4);
+        const b = hex.slice(4, 6);
+        return `rgb:${r}${r}/${g}${g}/${b}${b}`;
+      }
+    }
+    return color;
+  }
+
+  /**
    * Send input to a terminal session.
    */
   sendInput(sessionId: string, data: string): void {
@@ -206,6 +244,9 @@ export class TerminalSessionRouter {
               callbacks.onScreenState(msg.data);
             }
           } else if (msg.type === "output") {
+            // Centralized shim for OSC 10/11 color queries that some TUIs rely on.
+            this.handleTerminalQueries(sessionId, msg.data);
+
             // Broadcast to all subscribers
             for (const callbacks of currentSession.subscribers.values()) {
               callbacks.onOutput(msg.data);
