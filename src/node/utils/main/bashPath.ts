@@ -11,7 +11,10 @@ import path from "path";
 
 const WIN_PATH = path.win32;
 
+const BASH_PATH_ERROR_COOLDOWN_MS = 30_000;
+
 let cachedBashPath: string | null = null;
+let cachedBashPathError: { message: string; lastCheckedMs: number } | null = null;
 
 type ExecSyncFn = (command: string, options: ExecSyncOptionsWithStringEncoding) => string;
 type ExistsSyncFn = (path: string) => boolean;
@@ -137,7 +140,11 @@ function findWindowsBash(params: FindWindowsBashParams): string | null {
 
   // Also check if Git is in PATH and derive bash path from it.
   try {
-    const result = execSyncFn("where git", { encoding: "utf8", stdio: ["pipe", "pipe", "ignore"] });
+    const result = execSyncFn("where git", {
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "ignore"],
+      windowsHide: true,
+    });
     for (const gitExePath of parseWhereOutput(result)) {
       if (!existsSyncFn(gitExePath)) {
         continue;
@@ -168,6 +175,7 @@ function findWindowsBash(params: FindWindowsBashParams): string | null {
     const result = execSyncFn("where bash", {
       encoding: "utf8",
       stdio: ["pipe", "pipe", "ignore"],
+      windowsHide: true,
     });
     for (const bashPath of parseWhereOutput(result)) {
       if (!existsSyncFn(bashPath)) {
@@ -219,9 +227,19 @@ export function getBashPathForPlatform(params: GetBashPathForPlatformParams): st
  *          on Windows returns full path to Git Bash if found.
  * @throws Error if Git Bash cannot be found on Windows
  */
-export function getBashPath(): string {
+export function getBashPath(
+  params: {
+    platform?: NodeJS.Platform;
+    env?: NodeJS.ProcessEnv;
+    execSyncFn?: (command: string, options: ExecSyncOptionsWithStringEncoding) => string;
+    existsSyncFn?: (path: string) => boolean;
+    nowFn?: () => number;
+  } = {}
+): string {
+  const platform = params.platform ?? process.platform;
+
   // On Unix/Linux/macOS, bash is in PATH
-  if (process.platform !== "win32") {
+  if (platform !== "win32") {
     return "bash";
   }
 
@@ -230,8 +248,35 @@ export function getBashPath(): string {
     return cachedBashPath;
   }
 
-  cachedBashPath = getBashPathForPlatform({ platform: process.platform });
-  return cachedBashPath;
+  const nowFn = params.nowFn ?? Date.now;
+  const now = nowFn();
+  if (
+    cachedBashPathError &&
+    now - cachedBashPathError.lastCheckedMs < BASH_PATH_ERROR_COOLDOWN_MS
+  ) {
+    throw new Error(cachedBashPathError.message);
+  }
+
+  try {
+    cachedBashPath = getBashPathForPlatform({
+      platform,
+      env: params.env,
+      execSyncFn: params.execSyncFn,
+      existsSyncFn: params.existsSyncFn,
+    });
+    cachedBashPathError = null;
+    return cachedBashPath;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    cachedBashPathError = { message, lastCheckedMs: now };
+    throw error;
+  }
+}
+
+/** Reset cached bash path (used by tests). */
+export function resetBashPathCache(): void {
+  cachedBashPath = null;
+  cachedBashPathError = null;
 }
 
 /**

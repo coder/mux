@@ -57,6 +57,20 @@ describe("resolveLocalPtyShell", () => {
     });
   });
 
+  it("on Windows, ignores WSL wsl.exe in SHELL and prefers Git Bash", () => {
+    const result = resolveLocalPtyShell({
+      platform: "win32",
+      env: { SHELL: "C:\\Program Files\\WSL\\wsl.exe" },
+      isCommandAvailable: () => false,
+      getBashPath: () => "C:\\Program Files\\Git\\bin\\bash.exe",
+    });
+
+    expect(result).toEqual({
+      command: "C:\\Program Files\\Git\\bin\\bash.exe",
+      args: ["--login", "-i"],
+    });
+  });
+
   it("on Windows, falls back to pwsh when Git Bash is unavailable", () => {
     const result = resolveLocalPtyShell({
       platform: "win32",

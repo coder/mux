@@ -1,4 +1,5 @@
 import { spawnSync } from "child_process";
+import path from "path";
 
 import { getBashPath } from "@/node/utils/main/bashPath";
 
@@ -37,13 +38,13 @@ function looksLikeWslShell(envShell: string): boolean {
   }
 
   const normalized = envShell.replace(/\//g, "\\").toLowerCase();
+  const base = path.win32.basename(normalized);
   return (
     normalized === "wsl" ||
-    normalized === "wsl.exe" ||
+    base === "wsl.exe" ||
     normalized === "bash" ||
     normalized === "bash.exe" ||
-    normalized.endsWith("\\windows\\system32\\bash.exe") ||
-    normalized.endsWith("\\windows\\system32\\wsl.exe")
+    normalized.endsWith("\\windows\\system32\\bash.exe")
   );
 }
 
