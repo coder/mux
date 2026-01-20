@@ -61,6 +61,7 @@ describe("resolveToolPolicyForAgent", () => {
       { regex_match: "task", action: "disable" },
       { regex_match: "task_.*", action: "disable" },
       { regex_match: "propose_plan", action: "disable" },
+      { regex_match: "propose_harness", action: "disable" },
       { regex_match: "ask_user_question", action: "disable" },
       { regex_match: "agent_report", action: "enable" },
     ]);

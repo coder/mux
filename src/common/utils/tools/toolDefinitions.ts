@@ -659,6 +659,14 @@ export const TOOL_DEFINITIONS = {
       "After calling this tool, do not paste the plan contents or mention the plan file path; the UI already shows the full plan.",
     schema: z.object({}),
   },
+  propose_harness: {
+    description:
+      "Signal that your harness is complete and ready for user approval. " +
+      "This tool validates the harness config file you wrote under .mux/harness. " +
+      "You must write your harness file before calling this tool. " +
+      "After calling this tool, do not paste the full harness contents; the UI already shows it.",
+    schema: z.object({}),
+  },
   task: {
     description:
       "Spawn a sub-agent task (child workspace). " +
@@ -1255,6 +1263,7 @@ export function getAvailableTools(
     "file_edit_insert",
     "ask_user_question",
     "propose_plan",
+    "propose_harness",
     "bash",
     "task",
     "task_await",

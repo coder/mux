@@ -68,9 +68,18 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
         throw new Error("Sub-agent workspaces may not spawn additional sub-agent tasks.");
       }
 
-      // Plan agent is explicitly non-executing. Allow only read-only exploration tasks.
-      if (config.planFileOnly && requestedAgentId !== "explore") {
-        throw new Error('In the plan agent you may only spawn agentId: "explore" tasks.');
+      // Defense-in-depth: some agents are never valid as sub-agents.
+      if (requestedAgentId === "harness-init") {
+        throw new Error('agentId "harness-init" may not be spawned as a sub-agent task.');
+      }
+
+      // Harness init is explicitly non-executing. Allow only read-only exploration tasks.
+      if (config.agentId === "harness-init" && requestedAgentId !== "explore") {
+        throw new Error('In Harness Init you may only spawn agentId: "explore" tasks.');
+      }
+      // Plan mode is explicitly non-executing. Allow only read-only exploration tasks.
+      if (config.mode === "plan" && requestedAgentId !== "explore") {
+        throw new Error('In Plan Mode you may only spawn agentId: "explore" tasks.');
       }
 
       const modelString =

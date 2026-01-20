@@ -30,6 +30,7 @@ import { usePopoverError } from "@/browser/hooks/usePopoverError";
 import { PopoverError } from "../PopoverError";
 import { getAgentIdKey, getPlanContentKey } from "@/common/constants/storage";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { formatSendMessageError } from "@/common/utils/errors/formatSendError";
 import { buildSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import {
   Clipboard,
@@ -417,14 +418,19 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     isStartingLoopRef.current = true;
     setIsStartingLoop(true);
 
-    // Switch to exec so the UI matches the loop runner.
-    updatePersistedState(getAgentIdKey(workspaceId), "exec");
+    // Switch to harness-init before sending so send options (agentId/mode) match.
+    updatePersistedState(getAgentIdKey(workspaceId), "harness-init");
 
-    api.workspace.loop
-      .startFromPlan({ workspaceId })
+    api.workspace
+      .sendMessage({
+        workspaceId,
+        message: "Generate a Ralph harness from the current plan and propose it",
+        options: buildSendMessageOptions(workspaceId),
+      })
       .then((result) => {
         if (!result.success) {
-          loopError.showError("start-ralph-loop", result.error, anchorPosition);
+          const formatted = formatSendMessageError(result.error);
+          loopError.showError("start-ralph-loop", formatted.message, anchorPosition);
         }
       })
       .catch((error: unknown) => {
@@ -539,7 +545,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
                 onClick: handleStartRalphLoop,
                 disabled: !api || isStartingLoop,
                 icon: <RefreshCw className={cn(isStartingLoop && "animate-spin")} />,
-                tooltip: "Generate a harness from the plan (if needed) and start the loop",
+                tooltip: "Switch to Harness Init and propose a harness for approval",
               }}
             />
           </div>

@@ -149,6 +149,69 @@ describe("fileCommon", () => {
     });
   });
 
+  describe("validatePlanModeAccess", () => {
+    const cwd = "/workspace/project";
+    const runtime = createRuntime({ type: "local", srcBaseDir: cwd });
+
+    function buildConfig(overrides: Partial<ToolConfiguration>): ToolConfiguration {
+      return {
+        cwd,
+        runtime,
+        runtimeTempDir: "/tmp",
+        ...overrides,
+      };
+    }
+
+    it("allows edits to allowlisted files", async () => {
+      const config = buildConfig({
+        mode: "exec",
+        allowedEditPaths: [".mux/harness/*.jsonc"],
+      });
+
+      expect(await validatePlanModeAccess(".mux/harness/main.jsonc", config)).toBeNull();
+      expect(
+        await validatePlanModeAccess("/workspace/project/.mux/harness/main.jsonc", config)
+      ).toBeNull();
+    });
+
+    it("rejects edits to non-allowlisted files", async () => {
+      const config = buildConfig({
+        mode: "exec",
+        allowedEditPaths: [".mux/harness/*.jsonc"],
+      });
+
+      const result = await validatePlanModeAccess("src/main.ts", config);
+      expect(result).not.toBeNull();
+      expect(result?.success).toBe(false);
+      expect(result?.error).toContain("File edits are restricted to");
+      expect(result?.error).toContain(".mux/harness/*.jsonc");
+    });
+
+    it("rejects edits to allowlisted directory with wrong extension", async () => {
+      const config = buildConfig({
+        mode: "exec",
+        allowedEditPaths: [".mux/harness/*.jsonc"],
+      });
+
+      const result = await validatePlanModeAccess(".mux/harness/main.progress.md", config);
+      expect(result).not.toBeNull();
+      expect(result?.error).toContain("File edits are restricted to");
+    });
+
+    it("keeps plan file read-only outside plan mode even if allowlisted", async () => {
+      const planFilePath = "/workspace/project/plan.md";
+      const config = buildConfig({
+        mode: "exec",
+        planFilePath,
+        allowedEditPaths: ["/workspace/project/plan.md"],
+      });
+
+      const result = await validatePlanModeAccess(planFilePath, config);
+      expect(result).not.toBeNull();
+      expect(result?.error).toContain("Plan file is read-only outside plan mode");
+    });
+  });
+
   describe("validateNoRedundantPrefix", () => {
     const cwd = "/workspace/project";
     const runtime = createRuntime({ type: "local", srcBaseDir: cwd });

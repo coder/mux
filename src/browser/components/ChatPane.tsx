@@ -549,6 +549,17 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     }
   }
 
+  // Find the ID of the latest propose_harness tool call for external edit detection
+  // Only the latest harness should fetch fresh content from disk
+  let latestProposeHarnessId: string | null = null;
+  for (let i = transformedMessages.length - 1; i >= 0; i--) {
+    const msg = transformedMessages[i];
+    if (msg.type === "tool" && msg.toolName === "propose_harness") {
+      latestProposeHarnessId = msg.id;
+      break;
+    }
+  }
+
   return (
     <div
       ref={chatAreaRef}
@@ -647,6 +658,11 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                               msg.type === "tool" &&
                               msg.toolName === "propose_plan" &&
                               msg.id === latestProposePlanId
+                            }
+                            isLatestProposeHarness={
+                              msg.type === "tool" &&
+                              msg.toolName === "propose_harness" &&
+                              msg.id === latestProposeHarnessId
                             }
                             bashOutputGroup={bashOutputGroup}
                             userMessageNavigation={
