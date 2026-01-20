@@ -88,12 +88,22 @@ export function getIconForEmoji(emoji: string): LucideIcon | undefined {
   return EMOJI_TO_ICON[normalized];
 }
 
-export function EmojiIcon(props: { emoji: string | null | undefined; className?: string }) {
+export function EmojiIcon(props: {
+  emoji: string | null | undefined;
+  className?: string;
+  /**
+   * When provided, forces whether the icon should spin.
+   *
+   * When omitted, we spin only for emojis that semantically represent
+   * "working"/"refreshing".
+   */
+  spin?: boolean;
+}) {
   if (!props.emoji) return null;
 
   const normalizedEmoji = normalizeEmoji(props.emoji);
   const Icon = EMOJI_TO_ICON[normalizedEmoji] ?? Sparkles;
-  const shouldSpin = SPINNING_EMOJI.has(normalizedEmoji);
+  const shouldSpin = props.spin ?? SPINNING_EMOJI.has(normalizedEmoji);
 
   return <Icon aria-hidden="true" className={cn(props.className, shouldSpin && "animate-spin")} />;
 }

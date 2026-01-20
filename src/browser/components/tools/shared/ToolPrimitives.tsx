@@ -188,6 +188,13 @@ interface ToolIconProps {
    * corresponding icon via EmojiIcon.
    */
   emoji?: string;
+  /**
+   * Optional control for whether the emoji icon should spin.
+   *
+   * This is useful when the emoji represents "working" (⏳/🔄), but the tool call itself
+   * is already completed.
+   */
+  emojiSpin?: boolean;
   className?: string;
 }
 
@@ -207,7 +214,7 @@ const TOOL_NAME_TO_ICON: Partial<Record<string, LucideIcon>> = {
   notify: Bell,
 };
 
-export const ToolIcon: React.FC<ToolIconProps> = ({ toolName, emoji, className }) => {
+export const ToolIcon: React.FC<ToolIconProps> = ({ toolName, emoji, emojiSpin, className }) => {
   const Icon = TOOL_NAME_TO_ICON[toolName] ?? Sparkles;
 
   return (
@@ -219,7 +226,7 @@ export const ToolIcon: React.FC<ToolIconProps> = ({ toolName, emoji, className }
             className
           )}
         >
-          {emoji ? <EmojiIcon emoji={emoji} /> : <Icon aria-hidden="true" />}
+          {emoji ? <EmojiIcon emoji={emoji} spin={emojiSpin} /> : <Icon aria-hidden="true" />}
         </span>
       </TooltipTrigger>
       <TooltipContent>{toolName}</TooltipContent>
