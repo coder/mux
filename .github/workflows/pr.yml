@@ -365,7 +365,7 @@ jobs:
   build-macos:
     name: Build / macOS
     needs: [changes]
-    if: ${{ needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true' }}
+    if: ${{ (needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true') && (github.event_name != 'push' || github.actor != 'github-merge-queue[bot]') }}
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-macos-15' || 'macos-latest' }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -399,8 +399,8 @@ jobs:
   build-windows:
     name: Build / Windows
     needs: [changes]
-    # Windows builds are slow - only run in merge queue and main pushes, not on every PR push
-    if: ${{ (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true') }}
+    # Windows builds are slow - only run in merge queue and main pushes (excluding merge-queue-bot to avoid duplicate runs)
+    if: ${{ (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor != 'github-merge-queue[bot]')) && (needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true') }}
     runs-on: windows-latest
     permissions:
       contents: read
