@@ -354,9 +354,9 @@
 
   /* Runtime icon colors (matches Tailwind blue-500/purple-500) */
   --color-runtime-ssh: #3b82f6;
-  --color-runtime-ssh-text: #60a5fa;
+  --color-runtime-ssh-text: color-mix(in srgb, var(--color-runtime-ssh), black 20%);
   --color-runtime-worktree: #a855f7;
-  --color-runtime-worktree-text: #c084fc;
+  --color-runtime-worktree-text: color-mix(in srgb, var(--color-runtime-worktree), black 20%);
   --color-runtime-local: hsl(210 14% 48%); /* matches --color-muted-foreground */
   --color-runtime-docker: #2496ed; /* Docker blue */
   --color-runtime-docker-text: #0d7cc4;
@@ -592,6 +592,11 @@
 
   /* File explorer */
   --color-folder-icon: #ad8301; /* Flexoki yellow-600 */
+
+  /* Runtime badges (ensure readable on light background) */
+  --color-runtime-ssh-text: color-mix(in srgb, var(--color-runtime-ssh), black 20%);
+  --color-runtime-worktree-text: color-mix(in srgb, var(--color-runtime-worktree), black 20%);
+  --color-runtime-docker-text: color-mix(in srgb, var(--color-runtime-docker), black 20%);
 
   /* Flexoki neutrals */
   --color-background: #fffcf0;
@@ -1329,7 +1334,7 @@ code {
   border-radius: 3px;
   font-family: var(--font-monospace);
   font-size: 11px;
-  color: #4fc3f7;
+  color: color-mix(in srgb, var(--color-plan-mode) 65%, var(--color-foreground) 35%);
   border: 1px solid color-mix(in srgb, var(--color-plan-mode), transparent 80%);
 }
 

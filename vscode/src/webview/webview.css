@@ -530,7 +530,7 @@ body {
   border-radius: 3px;
   font-family: var(--font-monospace);
   font-size: 11px;
-  color: #4fc3f7;
+  color: color-mix(in srgb, var(--color-plan-mode) 65%, var(--color-foreground) 35%);
   border: 1px solid color-mix(in srgb, var(--color-plan-mode), transparent 80%);
 }
 
