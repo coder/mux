@@ -38,6 +38,7 @@ import {
   ListStart,
   Pencil,
   Play,
+  RefreshCw,
   X,
 } from "lucide-react";
 import { ShareMessagePopover } from "../ShareMessagePopover";
@@ -131,13 +132,17 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   } = props;
   const { expanded, toggleExpanded } = useToolExpansion(true); // Expand by default
   const [showRaw, setShowRaw] = useState(false);
+  const [isStartingLoop, setIsStartingLoop] = useState(false);
+  const isStartingLoopRef = useRef(false);
   const [isImplementing, setIsImplementing] = useState(false);
   const [implementReplacesChatHistory, setImplementReplacesChatHistory] = useState(false);
   const isImplementingRef = useRef(false);
   const isMountedRef = useRef(true);
   const { api } = useAPI();
   const openInEditor = useOpenInEditor();
+  const loopError = usePopoverError();
   const workspaceContext = useOptionalWorkspaceContext();
+  const startLoopButtonRef = useRef<HTMLDivElement>(null);
   const editorError = usePopoverError();
   const editButtonRef = useRef<HTMLDivElement>(null);
 
@@ -369,6 +374,42 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
       }
     }
   };
+
+  const handleStartRalphLoop = () => {
+    if (!workspaceId || !api) return;
+    if (isStartingLoopRef.current) return;
+
+    // Capture positioning from the ref for error popover placement
+    const anchorPosition = startLoopButtonRef.current
+      ? (() => {
+          const { bottom, left } = startLoopButtonRef.current.getBoundingClientRect();
+          return { top: bottom + 8, left };
+        })()
+      : { top: 100, left: 100 };
+
+    isStartingLoopRef.current = true;
+    setIsStartingLoop(true);
+
+    // Switch to exec so the UI matches the loop runner.
+    updatePersistedState(getAgentIdKey(workspaceId), "exec");
+
+    api.workspace.loop
+      .startFromPlan({ workspaceId })
+      .then((result) => {
+        if (!result.success) {
+          loopError.showError("start-ralph-loop", result.error, anchorPosition);
+        }
+      })
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        loopError.showError("start-ralph-loop", message, anchorPosition);
+      })
+      .finally(() => {
+        isStartingLoopRef.current = false;
+        setIsStartingLoop(false);
+      });
+  };
+
   // Copy to clipboard with feedback
   const { copied, copyToClipboard } = useCopyToClipboard();
 
@@ -447,6 +488,23 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
         tooltip: implementReplacesChatHistory
           ? "Replace chat history with this plan, switch to Exec, and start implementing"
           : "Switch to Exec and start implementing",
+      });
+
+      actionButtons.push({
+        label: "Start Ralph loop",
+        component: (
+          <div ref={startLoopButtonRef}>
+            <IconActionButton
+              button={{
+                label: "Start Ralph loop",
+                onClick: handleStartRalphLoop,
+                disabled: !api || isStartingLoop,
+                icon: <RefreshCw />,
+                tooltip: "Generate a harness from the plan (if needed) and start the loop",
+              }}
+            />
+          </div>
+        ),
       });
     }
   }
@@ -538,6 +596,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
       <>
         <div className={cn("px-4 py-2", className)}>{planUI}</div>
         <PopoverError error={editorError.error} prefix="Failed to open editor" />
+        <PopoverError error={loopError.error} prefix="Failed to start Ralph loop" />
       </>
     );
   }
@@ -557,6 +616,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
         {modal}
       </ToolContainer>
       <PopoverError error={editorError.error} prefix="Failed to open editor" />
+      <PopoverError error={loopError.error} prefix="Failed to start Ralph loop" />
     </>
   );
 };

@@ -758,6 +758,10 @@ export const workspace = {
       input: z.object({ workspaceId: z.string() }),
       output: HarnessLoopStateSchema,
     },
+    startFromPlan: {
+      input: z.object({ workspaceId: z.string() }),
+      output: ResultSchema(z.void(), z.string()),
+    },
     start: {
       input: z.object({ workspaceId: z.string() }),
       output: ResultSchema(z.void(), z.string()),

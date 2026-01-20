@@ -1,3 +1,4 @@
+import { generateObject } from "ai";
 import { os } from "@orpc/server";
 import * as schemas from "@/common/orpc/schemas";
 import type { ORPCContext } from "./context";
@@ -5,6 +6,11 @@ import {
   selectModelForNameGeneration,
   generateWorkspaceIdentity,
 } from "@/node/services/workspaceTitleGenerator";
+import { formatSendMessageError } from "@/node/services/utils/sendMessageError";
+import {
+  HarnessFromPlanDraftSchema,
+  createWorkspaceHarnessConfigFromPlanDraft,
+} from "@/node/services/workspaceHarnessFromPlan";
 import type {
   UpdateStatus,
   WorkspaceActivitySnapshot,
@@ -1870,6 +1876,105 @@ export const router = (authToken?: string) => {
           }),
       },
       loop: {
+        startFromPlan: t
+          .input(schemas.workspace.loop.startFromPlan.input)
+          .output(schemas.workspace.loop.startFromPlan.output)
+          .handler(async ({ context, input }) => {
+            try {
+              const harness = await context.workspaceHarnessService.getHarnessForWorkspace(
+                input.workspaceId
+              );
+
+              // Don't stomp on user-edited harnesses.
+              if (harness.exists) {
+                const result = await context.loopRunnerService.start(input.workspaceId);
+                if (!result.success) {
+                  return { success: false, error: result.error };
+                }
+                return { success: true, data: undefined };
+              }
+
+              const metadata = await context.workspaceService.getInfo(input.workspaceId);
+              if (!metadata) {
+                return { success: false, error: `Workspace not found: ${input.workspaceId}` };
+              }
+
+              const runtime = createRuntime(metadata.runtimeConfig, {
+                projectPath: metadata.projectPath,
+              });
+
+              const planResult = await readPlanFile(
+                runtime,
+                metadata.name,
+                metadata.projectName,
+                input.workspaceId
+              );
+
+              if (!planResult.exists) {
+                return {
+                  success: false,
+                  error: `Plan file not found at ${planResult.path}`,
+                };
+              }
+
+              const userModel =
+                metadata.aiSettingsByMode?.exec?.model ?? metadata.aiSettings?.model;
+              const modelString = await selectModelForNameGeneration(
+                context.aiService,
+                undefined,
+                userModel
+              );
+              if (!modelString) {
+                return {
+                  success: false,
+                  error: "No AI model available to generate a harness from this plan",
+                };
+              }
+
+              const modelResult = await context.aiService.createModel(modelString);
+              if (!modelResult.success) {
+                return {
+                  success: false,
+                  error: formatSendMessageError(modelResult.error).message,
+                };
+              }
+
+              const generation = await generateObject({
+                model: modelResult.data,
+                schema: HarnessFromPlanDraftSchema,
+                mode: "json",
+                prompt: `Generate a Ralph harness (checklist + optional gates) from this plan.
+
+Rules:
+- Checklist items should be small, mergeable steps (max 20).
+- Gates should be safe, single commands that run checks (prefer make targets like "make static-check").
+- Do not use shell chaining, pipes, redirects, quotes, or destructive commands.
+
+Plan:
+
+${planResult.content}`,
+              });
+
+              const derived = createWorkspaceHarnessConfigFromPlanDraft(generation.object);
+
+              const loopState = await context.loopRunnerService.getState(input.workspaceId);
+              await context.workspaceHarnessService.setHarnessForWorkspace(
+                input.workspaceId,
+                derived.config,
+                { loopState }
+              );
+
+              const startResult = await context.loopRunnerService.start(input.workspaceId);
+              if (!startResult.success) {
+                return { success: false, error: startResult.error };
+              }
+
+              return { success: true, data: undefined };
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              return { success: false, error: message };
+            }
+          }),
         getState: t
           .input(schemas.workspace.loop.getState.input)
           .output(schemas.workspace.loop.getState.output)
