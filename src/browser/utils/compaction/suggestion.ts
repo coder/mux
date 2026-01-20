@@ -68,7 +68,9 @@ export function getExplicitCompactionSuggestion(options: {
 }
 
 /**
- * Find a configured known model with a strictly larger context window than `currentModel`.
+ * Find a configured known model with a strictly larger input window than `currentModel`.
+ *
+ * Uses max_input_tokens (not total context) since that's the actual limit for request payloads.
  */
 export function getHigherContextCompactionSuggestion(options: {
   currentModel: string;

@@ -44,6 +44,7 @@ import type { SessionUsageService } from "./sessionUsageService";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { extractToolMediaAsUserMessagesFromModelMessages } from "@/node/utils/messages/extractToolMediaAsUserMessagesFromModelMessages";
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
+import { getModelStats } from "@/common/utils/tokens/modelStats";
 
 // Disable AI SDK warning logging (e.g., "setting `toolChoice` to `none` is not supported")
 globalThis.AI_SDK_LOG_WARNINGS = false;
@@ -799,6 +800,12 @@ export class StreamManager extends EventEmitter {
       finalTools = applyCacheControlToTools(tools, modelString);
     }
 
+    // Use model's max_output_tokens if available and caller didn't specify.
+    // If no metadata exists for the model, omit the parameter entirely to let
+    // the provider use its default (Anthropic requires this but has low defaults).
+    const modelStats = getModelStats(modelString);
+    const effectiveMaxOutputTokens = maxOutputTokens ?? modelStats?.max_output_tokens;
+
     return {
       model,
       messages: finalMessages,
@@ -806,7 +813,7 @@ export class StreamManager extends EventEmitter {
       tools: finalTools,
       toolChoice,
       providerOptions: finalProviderOptions,
-      maxOutputTokens,
+      maxOutputTokens: effectiveMaxOutputTokens,
       hasQueuedMessage,
     };
   }
@@ -840,8 +847,7 @@ export class StreamManager extends EventEmitter {
         : { stopWhen: [stepCountIs(100000), () => request.hasQueuedMessage?.() ?? false] }),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment
       providerOptions: request.providerOptions as any, // Pass provider-specific options (thinking/reasoning config)
-      // Default to 32000 tokens if not specified (Anthropic defaults to 4096)
-      maxOutputTokens: request.maxOutputTokens ?? 32000,
+      maxOutputTokens: request.maxOutputTokens,
     });
   }
 
