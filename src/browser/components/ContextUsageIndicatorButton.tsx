@@ -8,6 +8,7 @@ import {
   type AutoCompactionConfig,
 } from "./RightSidebar/ThresholdSlider";
 import { OutputReserveIndicator } from "./RightSidebar/OutputReserveIndicator";
+import { OutputReserveDetails } from "./RightSidebar/OutputReserveDetails";
 import { getOutputReserveInfo } from "./RightSidebar/contextUsageUtils";
 import { Switch } from "./ui/switch";
 import { formatTokens, type TokenMeterData } from "@/common/utils/tokens/tokenMeterUtils";
@@ -139,21 +140,13 @@ const AutoCompactSettings: React.FC<{
           {showUsageSlider && <HorizontalThresholdSlider config={usageConfig} />}
         </div>
         {showUsageSlider && <PercentTickMarks />}
-        {showOutputReserveIndicator &&
-          outputReserveInfo.threshold !== null &&
-          outputReserveInfo.tokens !== null && (
-            <div className="text-muted mt-1 text-[10px]">
-              Output reserve starts at {outputReserveInfo.threshold.toFixed(1)}% (
-              {formatTokens(outputReserveInfo.tokens)} prompt max)
-            </div>
-          )}
-        {showOutputReserveWarning && outputReserveInfo.threshold !== null && (
-          <div className="warning-text mt-1 text-[10px]">
-            Auto-compact threshold is above the output reserve (
-            {outputReserveInfo.threshold.toFixed(1)}%). Requests may hit context_exceeded before
-            auto-compact runs.
-          </div>
-        )}
+        <OutputReserveDetails
+          info={outputReserveInfo}
+          showDetails={showOutputReserveIndicator}
+          showWarning={showOutputReserveWarning}
+          detailClassName="text-muted mt-1 text-[10px]"
+          warningClassName="warning-text mt-1 text-[10px]"
+        />
       </div>
 
       {/* Idle-based auto-compact */}

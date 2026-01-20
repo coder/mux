@@ -3,6 +3,7 @@ import { TokenMeter } from "./TokenMeter";
 import { HorizontalThresholdSlider, type AutoCompactionConfig } from "./ThresholdSlider";
 import { formatTokens, type TokenMeterData } from "@/common/utils/tokens/tokenMeterUtils";
 import { OutputReserveIndicator } from "./OutputReserveIndicator";
+import { OutputReserveDetails } from "./OutputReserveDetails";
 import { getOutputReserveInfo } from "./contextUsageUtils";
 
 interface ContextUsageBarProps {
@@ -64,22 +65,13 @@ const ContextUsageBarComponent: React.FC<ContextUsageBarProps> = ({
         {showThresholdSlider && <HorizontalThresholdSlider config={autoCompaction} />}
       </div>
 
-      {showOutputReserveIndicator &&
-        outputReserveInfo.threshold !== null &&
-        outputReserveInfo.tokens !== null && (
-          <div className="text-muted mt-1 text-[11px]">
-            Output reserve starts at {outputReserveInfo.threshold.toFixed(1)}% (
-            {formatTokens(outputReserveInfo.tokens)} prompt max)
-          </div>
-        )}
-
-      {showOutputReserveWarning && outputReserveInfo.threshold !== null && (
-        <div className="warning-text mt-1 text-[11px]">
-          Auto-compact threshold is above the output reserve (
-          {outputReserveInfo.threshold.toFixed(1)}%). Requests may hit context_exceeded before
-          auto-compact runs.
-        </div>
-      )}
+      <OutputReserveDetails
+        info={outputReserveInfo}
+        showDetails={showOutputReserveIndicator}
+        showWarning={showOutputReserveWarning}
+        detailClassName="text-muted mt-1 text-[11px]"
+        warningClassName="warning-text mt-1 text-[11px]"
+      />
 
       {showWarning && (
         <div className="text-subtle mt-2 text-[11px] italic">
