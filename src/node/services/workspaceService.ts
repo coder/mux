@@ -2397,6 +2397,26 @@ export class WorkspaceService extends EventEmitter {
 
       const workspacePath = workspace.workspacePath;
 
+      // Workspace creation can be async and some runtimes/tests call executeBash immediately after
+      // workspace.create returns. On Windows (and slower filesystems), this can race with directory
+      // creation and cause LocalBaseRuntime.exec() to throw "Working directory does not exist".
+      //
+      // Wait briefly for the workspace path to exist for local/worktree runtimes.
+      if (runtimeConfig.type !== "ssh" && runtimeConfig.type !== "docker") {
+        const maxAttempts = 20;
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+          try {
+            await fsPromises.access(workspacePath);
+            break;
+          } catch {
+            if (attempt === maxAttempts - 1) {
+              return Err(`Workspace directory does not exist: ${workspacePath}`);
+            }
+            await new Promise<void>((resolve) => setTimeout(resolve, 100));
+          }
+        }
+      }
+
       // Create bash tool
       const bashTool = createBashTool({
         cwd: workspacePath,
