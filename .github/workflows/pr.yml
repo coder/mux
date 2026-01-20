@@ -364,9 +364,7 @@ jobs:
     name: Build / Windows
     needs: [changes]
     # Windows builds are slow - only run in merge queue and main pushes, not on every PR push
-    # TODO(ethan): Revert this - temporarily enabled for SSH2 runtime testing
-    # if: ${{ (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true') }}
-    if: ${{ needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true' }}
+    if: ${{ (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true') }}
     runs-on: windows-latest
     permissions:
       contents: read
@@ -393,8 +391,7 @@ jobs:
       - run: bun run build
       - name: Setup code signing
         id: signing
-        # TODO(ethan): Revert this - temporarily enabled for SSH2 runtime testing
-        # if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: ./.github/actions/setup-windows-signing
         with:
           ev_signing_cert: ${{ secrets.EV_SIGNING_CERT }}

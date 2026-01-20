@@ -63,8 +63,8 @@ RUN NODE_ENV=production bun run node_modules/@typescript/native-preview/bin/tsgo
 RUN bun x vite build
 
 # Bundle server with esbuild (reduces ~2GB node_modules to ~10MB bundle)
-# External: native modules that can't be bundled
-# Alias: use ESM version of jsonc-parser to avoid UMD bundling issues
+# External: native modules that can't be bundled, plus jsonc-parser (UMD/ESM interop issues)
+# Keep --external:jsonc-parser aligned with Makefile ESBUILD_CLI_FLAGS
 RUN bun x esbuild dist/cli/server.js \
     --bundle \
     --platform=node \
@@ -74,7 +74,7 @@ RUN bun x esbuild dist/cli/server.js \
     --external:@lydell/node-pty \
     --external:node-pty \
     --external:electron \
-    --alias:jsonc-parser=jsonc-parser/lib/esm/main.js \
+    --external:jsonc-parser \
     --minify
 
 # Copy static assets
@@ -102,8 +102,11 @@ COPY --from=builder /app/dist/*.js ./dist/
 COPY --from=builder /app/dist/*.css ./dist/
 COPY --from=builder /app/dist/static ./dist/static
 
-# Copy only native modules needed at runtime (node-pty for terminal support)
+# Copy runtime dependencies:
+# - @lydell/node-pty: native module for terminal support
+# - jsonc-parser: externalized to avoid UMD/ESM bundling issues (see esbuild step)
 COPY --from=builder /app/node_modules/@lydell ./node_modules/@lydell
+COPY --from=builder /app/node_modules/jsonc-parser ./node_modules/jsonc-parser
 
 # Create mux data directory
 RUN mkdir -p /root/.mux
