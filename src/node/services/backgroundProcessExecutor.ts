@@ -38,8 +38,12 @@ function quotePathForShell(p: string): string {
   return shellQuote(posixPath);
 }
 
-/** Safe fallback cwd for exec calls - /tmp exists on all POSIX systems (including WSL/Git Bash) */
-const FALLBACK_CWD = "/tmp";
+/**
+ * Safe fallback cwd for runtime.exec() calls that don't need a specific workspace cwd.
+ *
+ * NOTE: Local runtimes validate that cwd exists before spawning, so this must be a real directory.
+ */
+const FALLBACK_CWD = process.platform === "win32" ? (process.env.TEMP ?? "C:\\") : "/tmp";
 
 /** Helper to extract error message for logging */
 function errorMsg(error: unknown): string {
