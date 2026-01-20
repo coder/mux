@@ -528,7 +528,7 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
       try {
         const credsPromise =
           newSigningEnabled && signingCapabilities?.publicKey && api
-            ? api.signing.getSignCredentials({})
+            ? api.signing.getSignCredentials({}).catch(() => null)
             : null;
 
         // Delete the old share
@@ -538,18 +538,20 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
         // Get sign credentials if signing is now enabled
         let sign: SignOptions | undefined;
         if (credsPromise) {
-          try {
-            const creds = await credsPromise;
-            const privateKeyBytes = Uint8Array.from(atob(creds.privateKeyBase64), (c) =>
-              c.charCodeAt(0)
-            );
-            sign = {
-              privateKey: privateKeyBytes,
-              publicKey: creds.publicKey,
-              githubUser: creds.githubUser ?? undefined,
-            };
-          } catch {
-            // Continue without signature
+          const creds = await credsPromise;
+          if (creds) {
+            try {
+              const privateKeyBytes = Uint8Array.from(atob(creds.privateKeyBase64), (c) =>
+                c.charCodeAt(0)
+              );
+              sign = {
+                privateKey: privateKeyBytes,
+                publicKey: creds.publicKey,
+                githubUser: creds.githubUser ?? undefined,
+              };
+            } catch {
+              // Continue without signature
+            }
           }
         }
 
