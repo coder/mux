@@ -57,6 +57,7 @@ describe("ToolBridge", () => {
         code_execution: createMockTool("code_execution", z.object({}), () => ({})),
         ask_user_question: createMockTool("ask_user_question", z.object({}), () => ({})),
         propose_plan: createMockTool("propose_plan", z.object({}), () => ({})),
+        propose_harness: createMockTool("propose_harness", z.object({}), () => ({})),
         todo_write: createMockTool("todo_write", z.object({}), () => ({})),
         todo_read: createMockTool("todo_read", z.object({}), () => ({})),
         status_set: createMockTool("status_set", z.object({}), () => ({})),
@@ -68,6 +69,7 @@ describe("ToolBridge", () => {
       expect(names).toEqual(["file_read"]);
       expect(names).not.toContain("code_execution");
       expect(names).not.toContain("ask_user_question");
+      expect(names).not.toContain("propose_harness");
       expect(names).not.toContain("propose_plan");
       expect(names).not.toContain("todo_write");
       expect(names).not.toContain("todo_read");

@@ -24,6 +24,8 @@ interface MessageRendererProps {
   onReviewNote?: (data: ReviewNoteData) => void;
   /** Whether this message is the latest propose_plan tool call (for external edit detection) */
   isLatestProposePlan?: boolean;
+  /** Whether this message is the latest propose_harness tool call (for external edit detection) */
+  isLatestProposeHarness?: boolean;
   /** Optional bash_output grouping info (computed at render-time) */
   bashOutputGroup?: BashOutputGroupInfo;
 }
@@ -38,6 +40,7 @@ export const MessageRenderer = React.memo<MessageRendererProps>(
     isCompacting,
     onReviewNote,
     isLatestProposePlan,
+    isLatestProposeHarness,
     bashOutputGroup,
   }) => {
     // Route based on message type
@@ -68,6 +71,7 @@ export const MessageRenderer = React.memo<MessageRendererProps>(
             workspaceId={workspaceId}
             onReviewNote={onReviewNote}
             isLatestProposePlan={isLatestProposePlan}
+            isLatestProposeHarness={isLatestProposeHarness}
             bashOutputGroup={bashOutputGroup}
           />
         );

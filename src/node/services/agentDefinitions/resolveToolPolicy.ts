@@ -24,6 +24,7 @@ const SUBAGENT_HARD_DENY: ToolPolicy = [
   { regex_match: "task", action: "disable" },
   { regex_match: "task_.*", action: "disable" },
   { regex_match: "propose_plan", action: "disable" },
+  { regex_match: "propose_harness", action: "disable" },
   { regex_match: "ask_user_question", action: "disable" },
 ];
 

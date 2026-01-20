@@ -17,6 +17,8 @@ interface ToolMessageProps {
   onReviewNote?: (data: ReviewNoteData) => void;
   /** Whether this is the latest propose_plan in the conversation */
   isLatestProposePlan?: boolean;
+  /** Whether this is the latest propose_harness in the conversation */
+  isLatestProposeHarness?: boolean;
   /** Optional bash_output grouping info */
   bashOutputGroup?: BashOutputGroupInfo;
 }
@@ -27,6 +29,7 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
   workspaceId,
   onReviewNote,
   isLatestProposePlan,
+  isLatestProposeHarness,
   bashOutputGroup,
 }) => {
   const { toolName, args, result, status, toolCallId } = message;
@@ -40,6 +43,12 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
       ? bashOutputGroup.position
       : undefined;
 
+  const isLatest =
+    toolName === "propose_plan"
+      ? isLatestProposePlan
+      : toolName === "propose_harness"
+        ? isLatestProposeHarness
+        : undefined;
   // Extract hook output if present (only shown when hook produced output)
   const hookOutput = extractHookOutput(result);
   const hookDuration = extractHookDuration(result);
@@ -59,8 +68,8 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
         startedAt={message.timestamp}
         // FileEdit-specific
         onReviewNote={onReviewNote}
-        // ProposePlan-specific
-        isLatest={isLatestProposePlan}
+        // ProposePlan/ProposeHarness-specific
+        isLatest={isLatest}
         // BashOutput-specific
         groupPosition={groupPosition}
         // CodeExecution-specific
