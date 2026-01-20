@@ -11,6 +11,7 @@ import { DirectoryPickerModal } from "./DirectoryPickerModal";
 import { Button } from "@/browser/components/ui/button";
 import type { ProjectConfig } from "@/node/config";
 import { useAPI } from "@/browser/contexts/API";
+import { useProjectContext } from "@/browser/contexts/ProjectContext";
 
 interface ProjectCreateModalProps {
   isOpen: boolean;
@@ -46,6 +47,7 @@ export const ProjectCreateForm: React.FC<ProjectCreateFormProps> = ({
   submitLabel = "Add Project",
   placeholder = "/home/user/projects/my-project",
 }) => {
+  const { projects } = useProjectContext();
   const { api } = useAPI();
   const [path, setPath] = useState("");
   const [error, setError] = useState("");
@@ -113,8 +115,7 @@ export const ProjectCreateForm: React.FC<ProjectCreateFormProps> = ({
 
     try {
       // First check if project already exists
-      const existingProjects = await api.projects.list();
-      const existingPaths = new Map(existingProjects);
+      const existingPaths = projects;
 
       // Try to create the project
       const result = await api.projects.create({ projectPath: trimmedPath });
@@ -149,7 +150,7 @@ export const ProjectCreateForm: React.FC<ProjectCreateFormProps> = ({
     } finally {
       setCreating(false);
     }
-  }, [api, onClose, onSuccess, path, reset, setCreating]);
+  }, [api, onClose, onSuccess, path, projects, reset, setCreating]);
 
   const handleCreateFolder = useCallback(async () => {
     const trimmedPath = path.trim();
