@@ -143,6 +143,7 @@ export const TextFileViewer: React.FC<TextFileViewerProps> = (props) => {
   const diffRendererProps = {
     content: diffContent,
     showLineNumbers: true,
+    lineNumberMode: "new" as const,
     oldStart: 1,
     newStart: 1,
     filePath: props.filePath,
