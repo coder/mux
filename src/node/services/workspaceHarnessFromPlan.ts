@@ -49,6 +49,27 @@ function fallbackHarnessConfig(): WorkspaceHarnessConfig {
   };
 }
 
+const MAX_CHECKLIST_TITLE_LENGTH = 200;
+
+function isTriviallyBadChecklistTitle(title: string): boolean {
+  assert(typeof title === "string", "title must be a string");
+
+  const trimmed = title.trim();
+  if (trimmed.length === 0) return true;
+
+  const normalized = trimmed.toLowerCase();
+  if (
+    normalized === "todo" ||
+    normalized === "tbd" ||
+    normalized === "todo." ||
+    normalized === "tbd."
+  ) {
+    return true;
+  }
+
+  return trimmed.length > MAX_CHECKLIST_TITLE_LENGTH;
+}
+
 export function isSafeHarnessGateCommand(command: string): boolean {
   assert(typeof command === "string", "command must be a string");
 
@@ -92,19 +113,29 @@ export function createWorkspaceHarnessConfigFromPlanDraft(draft: unknown): {
 
   const rawChecklist = parsed.data.checklist ?? [];
 
-  const checklist: HarnessChecklistItem[] = rawChecklist
-    .map((item) => ({
-      title: item.title.trim(),
-      notes: typeof item.notes === "string" ? item.notes.trim() : undefined,
-    }))
-    .filter((item) => item.title.length > 0)
-    .slice(0, 20)
-    .map((item, index) => ({
-      id: `item-${index + 1}`,
-      title: item.title,
+  const checklist: HarnessChecklistItem[] = [];
+  const seenTitles = new Set<string>();
+
+  for (const item of rawChecklist) {
+    const title = item.title.trim();
+    if (title.length === 0) continue;
+    if (isTriviallyBadChecklistTitle(title)) continue;
+
+    const normalizedTitle = title.toLowerCase();
+    if (seenTitles.has(normalizedTitle)) continue;
+    seenTitles.add(normalizedTitle);
+
+    const notes = typeof item.notes === "string" ? item.notes.trim() : undefined;
+
+    checklist.push({
+      id: `item-${checklist.length + 1}`,
+      title,
       status: "todo" as const,
-      notes: item.notes && item.notes.length > 0 ? item.notes : undefined,
-    }));
+      notes: notes && notes.length > 0 ? notes : undefined,
+    });
+
+    if (checklist.length >= 20) break;
+  }
 
   if (checklist.length === 0) {
     return { config: fallbackHarnessConfig(), usedFallback: true, droppedUnsafeGates: false };
@@ -153,4 +184,45 @@ export function createWorkspaceHarnessConfigFromPlanDraft(draft: unknown): {
   };
 
   return { config, usedFallback: false, droppedUnsafeGates };
+}
+
+export function extractJsonObjectFromMarkdown(
+  markdown: string
+): { success: true; data: unknown } | { success: false; error: string } {
+  assert(typeof markdown === "string", "markdown must be a string");
+
+  const trimmed = markdown.trim();
+  if (trimmed.length === 0) {
+    return { success: false, error: "Empty agent_report" };
+  }
+
+  const fencedMatch = /```json\s*([\s\S]*?)```/i.exec(trimmed);
+  const candidate = (fencedMatch ? fencedMatch[1] : trimmed).trim();
+
+  const tryParse = (text: string): { ok: true; value: unknown } | { ok: false; error: string } => {
+    try {
+      return { ok: true, value: JSON.parse(text) };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  };
+
+  let parsed = tryParse(candidate);
+  if (!parsed.ok && !fencedMatch) {
+    const start = trimmed.indexOf("{");
+    const end = trimmed.lastIndexOf("}");
+    if (start !== -1 && end !== -1 && end > start) {
+      parsed = tryParse(trimmed.slice(start, end + 1));
+    }
+  }
+
+  if (!parsed.ok) {
+    return { success: false, error: `Failed to parse JSON: ${parsed.error}` };
+  }
+
+  if (typeof parsed.value !== "object" || parsed.value === null || Array.isArray(parsed.value)) {
+    return { success: false, error: "Expected a JSON object" };
+  }
+
+  return { success: true, data: parsed.value };
 }
