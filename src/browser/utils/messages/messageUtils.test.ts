@@ -1,7 +1,11 @@
 import { describe, it, expect } from "@jest/globals";
 
-import { shouldShowInterruptedBarrier } from "./messageUtils";
-import { mergeConsecutiveStreamErrors, computeBashOutputGroupInfo } from "./messageUtils";
+import {
+  shouldShowInterruptedBarrier,
+  mergeConsecutiveStreamErrors,
+  computeBashOutputGroupInfo,
+  computeBashOutputGroupInfos,
+} from "./messageUtils";
 import type { DisplayedMessage } from "@/common/types/message";
 
 describe("shouldShowInterruptedBarrier", () => {
@@ -519,5 +523,57 @@ describe("computeBashOutputGroupInfo", () => {
     expect(computeBashOutputGroupInfo(messages, 1)?.firstIndex).toBe(0); // middle
     expect(computeBashOutputGroupInfo(messages, 2)?.firstIndex).toBe(0); // middle
     expect(computeBashOutputGroupInfo(messages, 3)?.firstIndex).toBe(0); // last
+  });
+});
+
+describe("computeBashOutputGroupInfos", () => {
+  // Helper to create a bash_output tool message
+  function createBashOutputMessage(
+    id: string,
+    processId: string,
+    historySequence: number
+  ): DisplayedMessage {
+    return {
+      type: "tool",
+      id,
+      historyId: `h-${id}`,
+      toolCallId: `tc-${id}`,
+      toolName: "bash_output",
+      args: { process_id: processId, timeout_secs: 0 },
+      result: { success: true, status: "running", output: `output-${id}` },
+      status: "completed",
+      isPartial: false,
+      historySequence,
+    };
+  }
+
+  it("computes group positions for 3+ consecutive bash_output calls", () => {
+    const messages: DisplayedMessage[] = [
+      createBashOutputMessage("1", "bash_1", 1),
+      createBashOutputMessage("2", "bash_1", 2),
+      createBashOutputMessage("3", "bash_1", 3),
+      createBashOutputMessage("4", "bash_1", 4),
+    ];
+
+    const groups = computeBashOutputGroupInfos(messages);
+    expect(groups.map((g) => g?.position)).toEqual(["first", "middle", "middle", "last"]);
+  });
+
+  it("leaves non-grouped messages undefined", () => {
+    const messages: DisplayedMessage[] = [
+      createBashOutputMessage("1", "bash_1", 1),
+      createBashOutputMessage("2", "bash_1", 2),
+      {
+        type: "user",
+        id: "u1",
+        historyId: "hu1",
+        content: "hello",
+        historySequence: 3,
+      },
+    ];
+
+    const groups = computeBashOutputGroupInfos(messages);
+    expect(groups).toHaveLength(messages.length);
+    expect(groups.every((g) => g === undefined)).toBe(true);
   });
 });

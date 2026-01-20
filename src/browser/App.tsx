@@ -21,10 +21,12 @@ import { useWorkspaceStoreRaw, useWorkspaceRecency } from "./stores/WorkspaceSto
 
 import { useStableReference, compareMaps } from "./hooks/useStableReference";
 import { CommandRegistryProvider, useCommandRegistry } from "./contexts/CommandRegistryContext";
+import { useIsSmallScreen } from "./hooks/useIsSmallScreen";
 import { useOpenTerminal } from "./hooks/useOpenTerminal";
 import type { CommandAction } from "./contexts/CommandRegistryContext";
 import { useTheme, type ThemeMode } from "./contexts/ThemeContext";
 import { CommandPalette } from "./components/CommandPalette";
+import { SMALL_SCREEN_MAX_WIDTH_PX } from "@/constants/layout";
 import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sources";
 
 import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
@@ -95,7 +97,8 @@ function AppInner() {
   } = useProjectContext();
 
   // Auto-collapse sidebar on mobile by default
-  const isMobile = typeof window !== "undefined" && window.innerWidth <= 768;
+  const isMobile = typeof window !== "undefined" && window.innerWidth <= SMALL_SCREEN_MAX_WIDTH_PX;
+  const isSmallScreen = useIsSmallScreen();
   const [sidebarCollapsed, setSidebarCollapsed] = usePersistedState("sidebarCollapsed", isMobile);
 
   // Sync sidebar collapse state to root element for CSS-based titlebar insets
@@ -436,6 +439,7 @@ function AppInner() {
     projects,
     workspaceMetadata,
     selectedWorkspace,
+    isSmallScreen,
     theme,
     getThinkingLevel: getThinkingLevelForWorkspace,
     onSetThinkingLevel: setThinkingLevelFromPalette,
@@ -734,7 +738,7 @@ function AppInner() {
               })()
             ) : (
               <div className="bg-dark flex flex-1 flex-col overflow-hidden">
-                <div className="bg-sidebar border-border-light flex h-8 shrink-0 items-center border-b px-[15px] [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:py-2">
+                <div className="safe-area-top-bleed bg-sidebar border-border-light flex h-8 shrink-0 items-center border-b px-[15px] [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:py-2">
                   {sidebarCollapsed && (
                     <Button
                       variant="ghost"

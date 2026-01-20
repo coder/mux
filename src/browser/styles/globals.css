@@ -1111,6 +1111,14 @@ body,
    meta tag to include 'interactive-widget=resizes-content' which is handled
    in index.html */
 
+/* Utility: let top bars bleed their background into the iOS safe-area without
+   double-padding content (since #root already has safe-area padding). */
+.safe-area-top-bleed {
+  margin-top: calc(-1 * env(safe-area-inset-top, 0px));
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+
 
 @utility plan-surface {
   background: var(--surface-plan-gradient);

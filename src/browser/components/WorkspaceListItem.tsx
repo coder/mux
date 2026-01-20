@@ -27,6 +27,7 @@ export interface WorkspaceListItemProps {
   projectPath: string;
   projectName: string;
   isSelected: boolean;
+  showGitStatus?: boolean;
   isArchiving?: boolean;
   depth?: number;
   /** Section ID this workspace belongs to (for drag-drop targeting) */
@@ -45,6 +46,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
   projectPath,
   projectName,
   isSelected,
+  showGitStatus = true,
   isArchiving,
   depth,
   sectionId,
@@ -57,7 +59,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
   const { id: workspaceId, namedWorkspacePath, status } = metadata;
   const isCreating = status === "creating";
   const isDisabled = isCreating || isArchiving;
-  const gitStatus = useGitStatus(workspaceId);
+  const gitStatus = useGitStatus(workspaceId, { enabled: showGitStatus });
 
   // Get title edit context (renamed from rename context since we now edit titles, not names)
   const { editingWorkspaceId, requestRename, confirmRename, cancelRename } = useRename();
@@ -258,7 +260,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
               </Tooltip>
             )}
 
-            {!isCreating && !isEditing && (
+            {showGitStatus && !isCreating && !isEditing && (
               <GitStatusIndicator
                 gitStatus={gitStatus}
                 workspaceId={workspaceId}

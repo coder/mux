@@ -154,6 +154,56 @@ export function mergeConsecutiveStreamErrors(messages: DisplayedMessage[]): Disp
 }
 
 /**
+ * Computes bash_output group info for every message in a single pass.
+ *
+ * ChatPane uses this to avoid O(n²) scanning when rendering long transcripts.
+ */
+export function computeBashOutputGroupInfos(
+  messages: DisplayedMessage[]
+): Array<BashOutputGroupInfo | undefined> {
+  const groups = new Array<BashOutputGroupInfo | undefined>(messages.length);
+
+  let i = 0;
+  while (i < messages.length) {
+    const msg = messages[i];
+    if (!isBashOutputTool(msg)) {
+      i++;
+      continue;
+    }
+
+    const processId = msg.args.process_id;
+    let end = i + 1;
+    while (end < messages.length) {
+      const nextMsg = messages[end];
+      if (isBashOutputTool(nextMsg) && nextMsg.args.process_id === processId) {
+        end++;
+      } else {
+        break;
+      }
+    }
+
+    const groupSize = end - i;
+    if (groupSize >= 3) {
+      const collapsedCount = groupSize - 2;
+      const lastIndex = end - 1;
+      for (let j = i; j < end; j++) {
+        groups[j] = {
+          position: j === i ? "first" : j === lastIndex ? "last" : "middle",
+          totalCount: groupSize,
+          collapsedCount,
+          processId,
+          firstIndex: i,
+        };
+      }
+    }
+
+    i = end;
+  }
+
+  return groups;
+}
+
+/**
  * Computes the bash_output group info for a message at a given index.
  * Used at render-time to determine how to display bash_output messages.
  *

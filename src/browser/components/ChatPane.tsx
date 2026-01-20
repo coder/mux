@@ -21,7 +21,7 @@ import { ChatInput, type ChatInputAPI } from "./ChatInput/index";
 import {
   shouldShowInterruptedBarrier,
   mergeConsecutiveStreamErrors,
-  computeBashOutputGroupInfo,
+  computeBashOutputGroupInfos,
   getEditableUserMessageText,
 } from "@/browser/utils/messages/messageUtils";
 import { BashOutputCollapsedIndicator } from "./tools/BashOutputCollapsedIndicator";
@@ -521,6 +521,8 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     }
   }
 
+  const bashOutputGroups = computeBashOutputGroupInfos(deferredMessages);
+
   return (
     <div
       ref={chatAreaRef}
@@ -575,8 +577,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
               <MessageListProvider value={messageListContextValue}>
                 <>
                   {deferredMessages.map((msg, index) => {
-                    // Compute bash_output grouping at render-time
-                    const bashOutputGroup = computeBashOutputGroupInfo(deferredMessages, index);
+                    const bashOutputGroup = bashOutputGroups[index];
 
                     // For bash_output groups, use first message ID as expansion key
                     const groupKey = bashOutputGroup

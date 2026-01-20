@@ -12,6 +12,7 @@ import { useTheme } from "@/browser/contexts/ThemeContext";
 import { getLanguageFromPath, getLanguageDisplayName } from "@/common/utils/git/languageDetector";
 
 interface TextFileViewerProps {
+  workspaceId: string;
   content: string;
   filePath: string;
   size: number;
@@ -28,6 +29,28 @@ const formatSize = (bytes: number): string => {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+// Heuristics to avoid pathological render work for very large files.
+const LARGE_FILE_MAX_LINES = 5_000;
+const LARGE_FILE_MAX_BYTES = 500_000;
+
+const countLines = (content: string): number => {
+  if (content.length === 0) return 0;
+
+  let lines = 1;
+  for (const char of content) {
+    if (char === "\n") {
+      lines++;
+    }
+  }
+
+  // Match split("\n") behavior: ignore trailing empty line.
+  if (content.endsWith("\n")) {
+    lines--;
+  }
+
+  return lines;
 };
 
 // Line type for unified view
@@ -144,21 +167,35 @@ export const TextFileViewer: React.FC<TextFileViewerProps> = (props) => {
   const language = getLanguageFromPath(props.filePath);
   const languageDisplayName = getLanguageDisplayName(language);
 
-  // Count lines
-  const fileLines = props.content.split("\n");
-  const lineCount = fileLines.length - (fileLines[fileLines.length - 1] === "" ? 1 : 0);
+  const fileKey = `${props.workspaceId}:${props.filePath}`;
+  const [fullRenderFileKey, setFullRenderFileKey] = React.useState<string | null>(null);
+  const renderFullFile = fullRenderFileKey === fileKey;
+
+  const lineCount = React.useMemo(() => countLines(props.content), [props.content]);
+  const isLargeFile = props.size > LARGE_FILE_MAX_BYTES || lineCount > LARGE_FILE_MAX_LINES;
+  const shouldUseFastPath = isLargeFile && !renderFullFile;
+
+  const fileLines = React.useMemo(() => {
+    if (shouldUseFastPath) return null;
+    return props.content.split("\n");
+  }, [props.content, shouldUseFastPath]);
 
   // Build unified view if we have a diff
   const unifiedLines = React.useMemo(() => {
-    if (!props.diff) return null;
+    if (shouldUseFastPath || !props.diff) return null;
     return buildUnifiedView(props.content, props.diff);
-  }, [props.content, props.diff]);
+  }, [props.content, props.diff, shouldUseFastPath]);
 
   // Syntax highlight all unique line contents
   // Store highlighted lines by index to preserve context for repeated lines
   const [highlightedLines, setHighlightedLines] = React.useState<string[] | null>(null);
 
   React.useEffect(() => {
+    if (shouldUseFastPath || !fileLines) {
+      setHighlightedLines(null);
+      return;
+    }
+
     const linesToHighlight = unifiedLines
       ? unifiedLines.map((l) => l.content)
       : fileLines.filter((l, i, arr) => i < arr.length - 1 || l !== "");
@@ -184,7 +221,7 @@ export const TextFileViewer: React.FC<TextFileViewerProps> = (props) => {
     return () => {
       cancelled = true;
     };
-  }, [unifiedLines, fileLines, language, isLightTheme]);
+  }, [shouldUseFastPath, unifiedLines, fileLines, language, isLightTheme]);
 
   const addedCount = unifiedLines?.filter((l) => l.type === "added").length ?? 0;
   const removedCount = unifiedLines?.filter((l) => l.type === "removed").length ?? 0;
@@ -235,25 +272,33 @@ export const TextFileViewer: React.FC<TextFileViewerProps> = (props) => {
   return (
     <div data-testid="text-file-viewer" className="flex h-full flex-col">
       <div className="min-h-0 flex-1 overflow-auto bg-[var(--color-code-bg)]">
-        {/* Content wrapper - min-h-full so gutter extends when content is short */}
-        <div
-          className="relative min-h-full text-[11px]"
-          style={{ fontFamily: "var(--font-monospace)" }}
-        >
-          {/* Gutter background + border that extends full height of content */}
+        {shouldUseFastPath ? (
+          <pre
+            className="m-0 p-2 text-[11px] whitespace-pre"
+            style={{ fontFamily: "var(--font-monospace)" }}
+          >
+            {props.content}
+          </pre>
+        ) : (
           <div
-            className={`pointer-events-none absolute inset-y-0 left-0 border-r border-[var(--color-border-light)] ${isLightTheme ? "bg-black/5" : "bg-black/20"}`}
-            style={{ width: gutterWidth }}
-          />
-          {/* Lines */}
-          {unifiedLines
-            ? unifiedLines.map((line, idx) =>
-                renderLine(line.content, line.oldLineNumber, line.newLineNumber, line.type, idx)
-              )
-            : fileLines
-                .filter((_, i, arr) => i < arr.length - 1 || fileLines[i] !== "")
-                .map((content, idx) => renderLine(content, idx + 1, idx + 1, "normal", idx))}
-        </div>
+            className="relative min-h-full text-[11px]"
+            style={{ fontFamily: "var(--font-monospace)" }}
+          >
+            {/* Gutter background + border that extends full height of content */}
+            <div
+              className={`pointer-events-none absolute inset-y-0 left-0 border-r border-[var(--color-border-light)] ${isLightTheme ? "bg-black/5" : "bg-black/20"}`}
+              style={{ width: gutterWidth }}
+            />
+            {/* Lines */}
+            {unifiedLines
+              ? unifiedLines.map((line, idx) =>
+                  renderLine(line.content, line.oldLineNumber, line.newLineNumber, line.type, idx)
+                )
+              : fileLines!
+                  .filter((line, i, arr) => i < arr.length - 1 || line !== "")
+                  .map((content, idx) => renderLine(content, idx + 1, idx + 1, "normal", idx))}
+          </div>
+        )}
       </div>
 
       {/* Status line */}
@@ -268,18 +313,30 @@ export const TextFileViewer: React.FC<TextFileViewerProps> = (props) => {
             <span className="text-red-600 dark:text-red-500">-{removedCount}</span>
           </span>
         )}
-        <span className="ml-auto shrink-0">{languageDisplayName}</span>
-        {props.onRefresh && (
-          <button
-            type="button"
-            className="text-muted hover:bg-accent/50 hover:text-foreground rounded p-0.5"
-            onClick={props.onRefresh}
-            title="Refresh file"
-            disabled={props.isRefreshing}
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${props.isRefreshing ? "animate-spin" : ""}`} />
-          </button>
-        )}
+        <div className="ml-auto flex items-center gap-2">
+          {shouldUseFastPath && (
+            <button
+              type="button"
+              className="text-muted hover:bg-accent/50 hover:text-foreground rounded px-1 py-0.5"
+              onClick={() => setFullRenderFileKey(fileKey)}
+              title="Render with highlighting (may be slow)"
+            >
+              Render highlighted
+            </button>
+          )}
+          <span className="shrink-0">{languageDisplayName}</span>
+          {props.onRefresh && (
+            <button
+              type="button"
+              className="text-muted hover:bg-accent/50 hover:text-foreground rounded p-0.5"
+              onClick={props.onRefresh}
+              title="Refresh file"
+              disabled={props.isRefreshing}
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${props.isRefreshing ? "animate-spin" : ""}`} />
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

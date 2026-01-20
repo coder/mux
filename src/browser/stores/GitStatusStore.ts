@@ -566,12 +566,16 @@ function getGitStoreInstance(): GitStatusStore {
  * Uses per-key subscription for surgical updates - only notified when
  * this specific workspace's git status changes.
  */
-export function useGitStatus(workspaceId: string): GitStatus | null {
+export function useGitStatus(
+  workspaceId: string,
+  options?: { enabled?: boolean }
+): GitStatus | null {
   const store = getGitStoreInstance();
+  const enabled = options?.enabled ?? true;
 
   return useSyncExternalStore(
-    (listener) => store.subscribeKey(workspaceId, listener),
-    () => store.getStatus(workspaceId)
+    (listener) => (enabled ? store.subscribeKey(workspaceId, listener) : () => undefined),
+    () => (enabled ? store.getStatus(workspaceId) : null)
   );
 }
 

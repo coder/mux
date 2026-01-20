@@ -81,6 +81,21 @@ test("buildCoreSources includes create/switch workspace actions", () => {
   expect(titles.includes("Open Terminal Window for Workspace…")).toBe(true);
 });
 
+test("buildCoreSources hides right sidebar commands on small screens", () => {
+  const sources = mk({ isSmallScreen: true });
+  const actions = sources.flatMap((s) => s());
+  const titles = actions.map((a) => a.title);
+
+  expect(titles.includes("Right Sidebar: Split Horizontally")).toBe(false);
+  expect(titles.includes("Right Sidebar: Split Vertically")).toBe(false);
+  expect(titles.includes("Right Sidebar: Add Tool…")).toBe(false);
+  expect(titles.includes("Right Sidebar: Focus Terminal")).toBe(false);
+
+  // Non-right-sidebar actions should remain.
+  expect(titles.includes("New Terminal Window")).toBe(true);
+  expect(titles.includes("Open Terminal Window for Workspace…")).toBe(true);
+});
+
 test("buildCoreSources adds thinking effort command", () => {
   const sources = mk({ getThinkingLevel: () => "medium" });
   const actions = sources.flatMap((s) => s());

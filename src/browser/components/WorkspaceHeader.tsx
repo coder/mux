@@ -111,7 +111,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
       style={headerRightPadding > 0 ? { paddingRight: headerRightPadding } : undefined}
       data-testid="workspace-header"
       className={cn(
-        "bg-sidebar border-border-light flex items-center justify-between border-b px-[15px] [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:flex-wrap [@media(max-width:768px)]:gap-2 [@media(max-width:768px)]:py-2",
+        "safe-area-top-bleed bg-sidebar border-border-light flex items-center justify-between border-b px-[15px] [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:flex-wrap [@media(max-width:768px)]:gap-2 [@media(max-width:768px)]:py-2",
         isDesktop ? DESKTOP_TITLEBAR_HEIGHT_CLASS : "h-8",
         // In desktop mode, make header draggable for window movement
         isDesktop && "titlebar-drag"

@@ -33,6 +33,7 @@ export interface BuildSourcesParams {
   /** Map of workspace ID to workspace metadata (keyed by metadata.id, not path) */
   workspaceMetadata: Map<string, FrontendWorkspaceMetadata>;
   theme: ThemeMode;
+  isSmallScreen?: boolean;
   selectedWorkspaceState?: WorkspaceState | null;
   selectedWorkspace: {
     projectPath: string;
@@ -400,7 +401,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
 
     // Right sidebar layout commands require a selected workspace (layout is per-workspace)
     const wsId = p.selectedWorkspace?.workspaceId;
-    if (wsId) {
+    if (wsId && !p.isSmallScreen) {
       list.push(
         {
           id: CommandIds.navRightSidebarFocusTerminal(),

@@ -3,6 +3,7 @@ import { cn } from "@/common/lib/utils";
 import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 import MuxLogoDark from "@/browser/assets/logos/mux-logo-dark.svg?react";
 import MuxLogoLight from "@/browser/assets/logos/mux-logo-light.svg?react";
+import { useIsSmallScreen } from "@/browser/hooks/useIsSmallScreen";
 import { useTheme } from "@/browser/contexts/ThemeContext";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
@@ -245,32 +246,32 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   } = useProjectContext();
 
   // Theme for logo variant
+  const isSmallScreen = useIsSmallScreen();
   const { theme } = useTheme();
   const MuxLogo = theme === "dark" || theme.endsWith("-dark") ? MuxLogoDark : MuxLogoLight;
 
-  // Mobile breakpoint for auto-closing sidebar
-  const MOBILE_BREAKPOINT = 768;
+  // Auto-close sidebar on small screens after actions
 
   // Wrapper to close sidebar on mobile after workspace selection
   const handleSelectWorkspace = useCallback(
     (selection: WorkspaceSelection) => {
       onSelectWorkspace(selection);
-      if (window.innerWidth <= MOBILE_BREAKPOINT && !collapsed) {
+      if (isSmallScreen && !collapsed) {
         onToggleCollapsed();
       }
     },
-    [onSelectWorkspace, collapsed, onToggleCollapsed]
+    [onSelectWorkspace, collapsed, onToggleCollapsed, isSmallScreen]
   );
 
   // Wrapper to close sidebar on mobile after adding workspace
   const handleAddWorkspace = useCallback(
     (projectPath: string, sectionId?: string) => {
       onAddWorkspace(projectPath, sectionId);
-      if (window.innerWidth <= MOBILE_BREAKPOINT && !collapsed) {
+      if (isSmallScreen && !collapsed) {
         onToggleCollapsed();
       }
     },
-    [onAddWorkspace, collapsed, onToggleCollapsed]
+    [onAddWorkspace, collapsed, onToggleCollapsed, isSmallScreen]
   );
 
   // Workspace-specific subscriptions moved to WorkspaceListItem component
@@ -659,6 +660,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   metadata={metadata}
                                   projectPath={projectPath}
                                   projectName={projectName}
+                                  showGitStatus={!isSmallScreen}
                                   isSelected={selectedWorkspace?.workspaceId === metadata.id}
                                   isArchiving={archivingWorkspaceIds.has(metadata.id)}
                                   lastReadTimestamp={lastReadTimestamps[metadata.id] ?? 0}

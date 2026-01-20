@@ -1,6 +1,8 @@
 import React, { useCallback, useRef } from "react";
 import { cn } from "@/common/lib/utils";
 import { RIGHT_SIDEBAR_WIDTH_KEY } from "@/common/constants/storage";
+import { useIsSmallScreen } from "@/browser/hooks/useIsSmallScreen";
+import { useOpenTerminal } from "@/browser/hooks/useOpenTerminal";
 import { useResizableSidebar } from "@/browser/hooks/useResizableSidebar";
 import { RightSidebar } from "./RightSidebar";
 import { PopoverError } from "./PopoverError";
@@ -53,11 +55,19 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
     storageKey: RIGHT_SIDEBAR_WIDTH_KEY,
   });
 
+  const isSmallScreen = useIsSmallScreen();
+  const openTerminalPopout = useOpenTerminal();
+
   const { width: sidebarWidth, isResizing, startResize } = sidebar;
   const addTerminalRef = useRef<(() => void) | null>(null);
   const handleOpenTerminal = useCallback(() => {
+    if (isSmallScreen) {
+      void openTerminalPopout(props.workspaceId, props.runtimeConfig);
+      return;
+    }
+
     addTerminalRef.current?.();
-  }, []);
+  }, [isSmallScreen, openTerminalPopout, props.workspaceId, props.runtimeConfig]);
 
   const reviews = useReviews(props.workspaceId);
   const { addReview } = reviews;
@@ -107,18 +117,20 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
         onOpenTerminal={handleOpenTerminal}
       />
 
-      <RightSidebar
-        key={props.workspaceId}
-        workspaceId={props.workspaceId}
-        workspacePath={props.namedWorkspacePath}
-        projectPath={props.projectPath}
-        width={sidebarWidth}
-        onStartResize={startResize}
-        isResizing={isResizing}
-        onReviewNote={handleReviewNote}
-        isCreating={props.status === "creating"}
-        addTerminalRef={addTerminalRef}
-      />
+      {!isSmallScreen && (
+        <RightSidebar
+          key={props.workspaceId}
+          workspaceId={props.workspaceId}
+          workspacePath={props.namedWorkspacePath}
+          projectPath={props.projectPath}
+          width={sidebarWidth}
+          onStartResize={startResize}
+          isResizing={isResizing}
+          onReviewNote={handleReviewNote}
+          isCreating={props.status === "creating"}
+          addTerminalRef={addTerminalRef}
+        />
+      )}
 
       <PopoverError
         error={backgroundBashError.error}
