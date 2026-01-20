@@ -1,3 +1,4 @@
+import type { TerminalSessionCreateOptions } from "@/browser/utils/terminal";
 import React, { useCallback, useRef } from "react";
 import { cn } from "@/common/lib/utils";
 import { RIGHT_SIDEBAR_WIDTH_KEY } from "@/common/constants/storage";
@@ -54,9 +55,9 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
   });
 
   const { width: sidebarWidth, isResizing, startResize } = sidebar;
-  const addTerminalRef = useRef<(() => void) | null>(null);
-  const handleOpenTerminal = useCallback(() => {
-    addTerminalRef.current?.();
+  const addTerminalRef = useRef<((options?: TerminalSessionCreateOptions) => void) | null>(null);
+  const handleOpenTerminal = useCallback((options?: TerminalSessionCreateOptions) => {
+    addTerminalRef.current?.(options);
   }, []);
 
   const reviews = useReviews(props.workspaceId);

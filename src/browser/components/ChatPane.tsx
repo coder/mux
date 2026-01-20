@@ -54,6 +54,7 @@ import { useAutoCompactionSettings } from "../hooks/useAutoCompactionSettings";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import { useForceCompaction } from "@/browser/hooks/useForceCompaction";
 import { useIdleCompactionHandler } from "@/browser/hooks/useIdleCompactionHandler";
+import type { TerminalSessionCreateOptions } from "@/browser/utils/terminal";
 import { useAPI } from "@/browser/contexts/API";
 import { useReviews } from "@/browser/hooks/useReviews";
 import { ReviewsBanner } from "./ReviewsBanner";
@@ -75,7 +76,7 @@ interface ChatPaneProps {
   onToggleLeftSidebarCollapsed: () => void;
   runtimeConfig?: RuntimeConfig;
   status?: "creating";
-  onOpenTerminal: () => void;
+  onOpenTerminal: (options?: TerminalSessionCreateOptions) => void;
 }
 
 type ReviewsState = ReturnType<typeof useReviews>;
@@ -177,8 +178,12 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
       ? (deferredMessages[deferredMessages.length - 1]?.id ?? null)
       : null;
   const messageListContextValue = useMemo(
-    () => ({ workspaceId, latestMessageId }),
-    [workspaceId, latestMessageId]
+    () => ({
+      workspaceId,
+      latestMessageId,
+      openTerminal: onOpenTerminal,
+    }),
+    [workspaceId, latestMessageId, onOpenTerminal]
   );
 
   const autoCompactionResult = useMemo(

@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import React, { useState, useEffect } from "react";
+import { Play } from "lucide-react";
 import { Mermaid } from "./Mermaid";
+import { useOptionalMessageListContext } from "./MessageListContext";
 import { highlightCode } from "@/browser/utils/highlighting/highlightWorkerClient";
 import { extractShikiLines } from "@/browser/utils/highlighting/shiki-shared";
 import { useTheme } from "@/browser/contexts/ThemeContext";
@@ -31,17 +33,107 @@ interface AnchorProps {
   children?: ReactNode;
 }
 
+const RUNNABLE_SHELL_LANGUAGES = new Set([
+  "bash",
+  "sh",
+  "shell",
+  "zsh",
+  "fish",
+  "powershell",
+  "pwsh",
+  "cmd",
+  "batch",
+]);
+
+function normalizeSuggestedShellCommand(code: string): string {
+  const lines = code.split("\n");
+
+  // Trim leading/trailing blank lines (but preserve blank lines in the middle).
+  while (lines.length > 0 && lines[0].trim() === "") {
+    lines.shift();
+  }
+  while (lines.length > 0 && lines[lines.length - 1].trim() === "") {
+    lines.pop();
+  }
+
+  let promptKind: "unix" | "powershell" | "cmd" | null = null;
+
+  return lines
+    .map((line, idx) => {
+      // Remove leading prompt characters (copy/paste friendly).
+      // Examples:
+      //   $ npm install
+      //   $ cat <<EOF
+      //   > line 1
+      //   > EOF
+      //   PS C:\Users\mike> npm install
+      //   C:\Users\mike> npm install
+
+      // Common Unix shell prompt marker.
+      if (/^\s*\$\s+/.test(line)) {
+        promptKind = "unix";
+        return line.replace(/^\s*\$\s+/, "");
+      }
+
+      // PowerShell prompt marker.
+      if (/^\s*PS(?:\s+[^>]+)?>\s*/.test(line)) {
+        promptKind = "powershell";
+        return line.replace(/^\s*PS(?:\s+[^>]+)?>\s*/, "");
+      }
+
+      // cmd.exe prompt marker.
+      if (/^\s*[A-Za-z]:\\[^>]*>\s*/.test(line)) {
+        promptKind = "cmd";
+        return line.replace(/^\s*[A-Za-z]:\\[^>]*>\s*/, "");
+      }
+
+      // Avoid stripping leading `>` on the *first* line since it can be a valid
+      // redirection operator (e.g. `> output.txt` truncates/creates a file).
+      //
+      // But if the snippet starts with a `$ ` prompt marker, then `> ` on subsequent
+      // lines is usually a continuation prompt (PS2) and should be stripped.
+      if (promptKind === "unix" && idx > 0) {
+        return line.replace(/^\s*>\s+/, "");
+      }
+
+      // cmd.exe continuation prompt is just `>` (space after is optional).
+      if (promptKind === "cmd" && idx > 0) {
+        return line.replace(/^\s*>\s*/, "");
+      }
+
+      // PowerShell uses `>>` for continuation lines.
+      if (promptKind === "powershell" && idx > 0) {
+        return line.replace(/^\s*>>\s+/, "");
+      }
+
+      return line;
+    })
+    .join("\n")
+    .trim();
+}
+
+function isRunnableShellLanguage(language: string): boolean {
+  return RUNNABLE_SHELL_LANGUAGES.has(language.toLowerCase());
+}
+
 interface CodeBlockProps {
   code: string;
   language: string;
+  /**
+   * Language id passed to Shiki. Allows us to keep a non-runnable “meta” language
+   * (e.g. shell-session) while still getting reasonable highlighting.
+   */
+  highlightLanguage?: string;
 }
 
 /**
  * CodeBlock component with async Shiki highlighting
  * Displays code with line numbers in a CSS grid
  */
-const CodeBlock: React.FC<CodeBlockProps> = ({ code, language }) => {
+const CodeBlock: React.FC<CodeBlockProps> = ({ code, language, highlightLanguage }) => {
   const [highlightedLines, setHighlightedLines] = useState<string[] | null>(null);
+
+  const shikiLanguage = highlightLanguage ?? language;
   const { theme: themeMode } = useTheme();
 
   // Split code into lines, removing trailing empty line
@@ -58,7 +150,7 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, language }) => {
 
     async function highlight() {
       try {
-        const html = await highlightCode(code, language, theme);
+        const html = await highlightCode(code, shikiLanguage, theme);
 
         if (!cancelled) {
           const lines = extractShikiLines(html);
@@ -69,7 +161,7 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, language }) => {
           setHighlightedLines(filteredLines.length > 0 ? filteredLines : null);
         }
       } catch (error) {
-        console.warn(`Failed to highlight code block (${language}):`, error);
+        console.warn(`Failed to highlight code block (${shikiLanguage}):`, error);
         if (!cancelled) setHighlightedLines(null);
       }
     }
@@ -78,13 +170,21 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, language }) => {
     return () => {
       cancelled = true;
     };
-  }, [code, language, themeMode]);
+  }, [code, shikiLanguage, themeMode]);
 
+  const messageListContext = useOptionalMessageListContext();
+  const openTerminal = messageListContext?.openTerminal;
+  const runnableCommand = isRunnableShellLanguage(language)
+    ? normalizeSuggestedShellCommand(code)
+    : "";
+  const showRunButton = Boolean(openTerminal) && runnableCommand.length > 0;
   const lines = highlightedLines ?? plainLines;
   const isSingleLine = lines.length === 1;
 
   return (
-    <div className={`code-block-wrapper${isSingleLine ? " code-block-single-line" : ""}`}>
+    <div
+      className={`code-block-wrapper${isSingleLine ? " code-block-single-line" : ""}${showRunButton ? " code-block-runnable" : ""}`}
+    >
       <div className="code-block-container">
         {lines.map((content, idx) => (
           <React.Fragment key={idx}>
@@ -107,6 +207,16 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, language }) => {
           </React.Fragment>
         ))}
       </div>
+      {showRunButton ? (
+        <button
+          type="button"
+          className="copy-button code-run-button"
+          aria-label="Run command"
+          onClick={() => openTerminal?.({ initialCommand: runnableCommand })}
+        >
+          <Play className="copy-icon" />
+        </button>
+      ) : null}
       <CopyButton text={code} className="code-copy-button" />
     </div>
   );
@@ -140,7 +250,7 @@ export const markdownComponents = {
 
   // Custom code block renderer with async Shiki highlighting
   code: ({ inline, className, children, node, ...props }: CodeProps) => {
-    const match = /language-(\w+)/.exec(className ?? "");
+    const match = /language-([^\s]+)/.exec(className ?? "");
     const language = match ? match[1] : "";
 
     // Extract text content
@@ -156,7 +266,10 @@ export const markdownComponents = {
 
     // Code blocks with language - use async Shiki highlighting
     if (!isInline && language) {
-      return <CodeBlock code={childString} language={language} />;
+      const highlightLanguage = language === "shell-session" ? "shell" : language;
+      return (
+        <CodeBlock code={childString} language={language} highlightLanguage={highlightLanguage} />
+      );
     }
 
     // Code blocks without language (global CSS provides styling)

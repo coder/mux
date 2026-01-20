@@ -63,7 +63,11 @@ import {
   getTabName,
   type TabDragData,
 } from "./RightSidebar/RightSidebarTabStrip";
-import { createTerminalSession, openTerminalPopout } from "@/browser/utils/terminal";
+import {
+  createTerminalSession,
+  openTerminalPopout,
+  type TerminalSessionCreateOptions,
+} from "@/browser/utils/terminal";
 import {
   CostsTabLabel,
   ExplorerTabLabel,
@@ -163,7 +167,9 @@ interface RightSidebarProps {
   /** Workspace is still being created (git operations in progress) */
   isCreating?: boolean;
   /** Ref callback to expose addTerminal function to parent */
-  addTerminalRef?: React.MutableRefObject<(() => void) | null>;
+  addTerminalRef?: React.MutableRefObject<
+    ((options?: TerminalSessionCreateOptions) => void) | null
+  >;
 }
 
 /**
@@ -938,19 +944,22 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   // Handler to add a new terminal tab.
   // Creates the backend session first, then adds the tab with the real sessionId.
   // This ensures the tabType (and React key) never changes, preventing remounts.
-  const handleAddTerminal = React.useCallback(() => {
-    if (!api) return;
+  const handleAddTerminal = React.useCallback(
+    (options?: TerminalSessionCreateOptions) => {
+      if (!api) return;
 
-    // Also expand sidebar if collapsed
-    setCollapsed(false);
+      // Also expand sidebar if collapsed
+      setCollapsed(false);
 
-    void createTerminalSession(api, workspaceId).then((session) => {
-      const newTab = makeTerminalTabType(session.sessionId);
-      setLayout((prev) => addTabToFocusedTabset(prev, newTab));
-      // Schedule focus for this terminal (will be consumed when the tab mounts)
-      setAutoFocusTerminalSession(session.sessionId);
-    });
-  }, [api, workspaceId, setLayout, setCollapsed]);
+      void createTerminalSession(api, workspaceId, options).then((session) => {
+        const newTab = makeTerminalTabType(session.sessionId);
+        setLayout((prev) => addTabToFocusedTabset(prev, newTab));
+        // Schedule focus for this terminal (will be consumed when the tab mounts)
+        setAutoFocusTerminalSession(session.sessionId);
+      });
+    },
+    [api, workspaceId, setLayout, setCollapsed]
+  );
 
   // Expose handleAddTerminal to parent via ref (for Cmd/Ctrl+T keybind)
   React.useEffect(() => {
