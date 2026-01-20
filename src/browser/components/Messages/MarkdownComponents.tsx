@@ -92,8 +92,13 @@ function normalizeSuggestedShellCommand(code: string): string {
       //
       // But if the snippet starts with a `$ ` prompt marker, then `> ` on subsequent
       // lines is usually a continuation prompt (PS2) and should be stripped.
-      if ((promptKind === "unix" || promptKind === "cmd") && idx > 0) {
+      if (promptKind === "unix" && idx > 0) {
         return line.replace(/^\s*>\s+/, "");
+      }
+
+      // cmd.exe continuation prompt is just `>` (space after is optional).
+      if (promptKind === "cmd" && idx > 0) {
+        return line.replace(/^\s*>\s*/, "");
       }
 
       // PowerShell uses `>>` for continuation lines.

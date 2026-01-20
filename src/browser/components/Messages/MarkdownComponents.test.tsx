@@ -115,7 +115,7 @@ describe("MarkdownComponents command code blocks", () => {
     const element = markdownComponents.code({
       inline: false,
       className: "language-cmd",
-      children: "C:\\> echo foo ^\n> bar\n",
+      children: "C:\\> echo foo ^\n>bar\n",
     });
 
     const { getByRole } = render(
