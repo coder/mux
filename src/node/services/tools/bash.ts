@@ -1,6 +1,7 @@
 import { tool } from "ai";
 // NOTE: We avoid readline; consume Web Streams directly to prevent race conditions
 import * as path from "path";
+import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
 import {
   BASH_DEFAULT_TIMEOUT_SECS,
   BASH_HARD_MAX_LINES,
@@ -214,6 +215,14 @@ function shellEscape(str: string): string {
  * Build script prelude that sources .mux/tool_env if present.
  * Returns empty string if no tool_env path is provided.
  */
+
+function buildNonInteractiveEnvPrelude(): string {
+  return (
+    Object.entries(NON_INTERACTIVE_ENV_VARS)
+      .map(([key, value]) => `export ${key}=${shellEscape(value)}`)
+      .join("\n") + "\n"
+  );
+}
 function buildToolEnvPrelude(toolEnvPath: string | null): string {
   if (!toolEnvPath) return "";
   // Source the tool_env file; fail with clear error if sourcing fails
@@ -258,7 +267,8 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
       // Look up .mux/tool_env to source before script (for direnv, nvm, venv, etc.)
       const toolEnvPath = config.runtime ? await getToolEnvPath(config.runtime, config.cwd) : null;
       const toolEnvPrelude = buildToolEnvPrelude(toolEnvPath);
-      const scriptWithEnv = toolEnvPrelude + script;
+      const nonInteractivePrelude = buildNonInteractiveEnvPrelude();
+      const scriptWithEnv = toolEnvPrelude + nonInteractivePrelude + script;
 
       // Handle explicit background execution (run_in_background=true)
       if (run_in_background) {
