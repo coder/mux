@@ -101,16 +101,6 @@ function formatCssFontFamilyList(value: string): string {
   return parts.map(quoteCssFontFamily).join(", ");
 }
 
-function getPrimaryFontFamily(value: string): string | undefined {
-  const primary = splitFontFamilyList(value).at(0);
-  if (!primary) {
-    return undefined;
-  }
-
-  const stripped = stripOuterQuotes(primary);
-  return stripped || undefined;
-}
-
 async function canLoadFontFamily(primary: string, fontSize: number): Promise<boolean> {
   if (typeof document === "undefined") {
     return true;
@@ -131,14 +121,14 @@ async function canLoadFontFamily(primary: string, fontSize: number): Promise<boo
   }
 
   const spec = `${fontSize}px ${quoteCssFontFamily(family)}`;
-  if (document.fonts.check(spec)) {
-    return true;
-  }
 
   try {
-    await document.fonts.load(spec);
+    const faces = await document.fonts.load(spec);
+    if (faces.length === 0) {
+      return false;
+    }
   } catch {
-    // Ignore font load errors; we'll fall back to browser font matching.
+    // Ignore font load errors; fall back to check().
   }
 
   return document.fonts.check(spec);
@@ -146,7 +136,8 @@ async function canLoadFontFamily(primary: string, fontSize: number): Promise<boo
 
 async function resolveTerminalFontFamily(fontFamily: string, fontSize: number): Promise<string> {
   const formatted = formatCssFontFamilyList(fontFamily);
-  const primary = getPrimaryFontFamily(fontFamily);
+  const parts = splitFontFamilyList(fontFamily).map(stripOuterQuotes).filter(Boolean);
+  const primary = parts.at(0);
   if (!primary) {
     return formatted;
   }
@@ -156,13 +147,29 @@ async function resolveTerminalFontFamily(fontFamily: string, fontSize: number): 
     return formatted;
   }
 
+  // Common mismatch: "Nerd Font" vs "Nerd Font Mono". Try the Mono variant even if the user
+  // didn't list it explicitly.
   if (primary.endsWith("Nerd Font") && !primary.endsWith("Nerd Font Mono")) {
     const monoCandidate = `${primary} Mono`;
     const monoOk = await canLoadFontFamily(monoCandidate, fontSize);
     if (monoOk) {
-      const remaining = splitFontFamilyList(fontFamily).slice(1).join(", ");
+      const remaining = parts.slice(1).join(", ");
       const withMono = remaining ? `${monoCandidate}, ${remaining}` : monoCandidate;
       return formatCssFontFamilyList(withMono);
+    }
+  }
+
+  // If the primary isn't available, try to promote the first available fallback font.
+  for (const candidate of parts.slice(1)) {
+    if (isGenericFontFamily(candidate)) {
+      continue;
+    }
+
+    const candidateOk = await canLoadFontFamily(candidate, fontSize);
+    if (candidateOk) {
+      const remaining = parts.filter((part) => part !== candidate).join(", ");
+      const reordered = remaining ? `${candidate}, ${remaining}` : candidate;
+      return formatCssFontFamilyList(reordered);
     }
   }
 
