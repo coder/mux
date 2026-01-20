@@ -62,7 +62,7 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
   const addTerminalRef = useRef<(() => void) | null>(null);
   const handleOpenTerminal = useCallback(() => {
     if (isSmallScreen) {
-      void openTerminalPopout(props.workspaceId, props.runtimeConfig);
+      void openTerminalPopout(props.workspaceId, props.runtimeConfig).catch(() => undefined);
       return;
     }
 
