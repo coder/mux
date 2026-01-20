@@ -1005,7 +1005,10 @@ html,
 body,
 #root,
 #storybook-root {
-  height: 100dvh;
+  /* Fallback for older browsers */
+  height: 100vh;
+  /* Prefer the visual viewport height (see App.tsx) to avoid iOS keyboard scroll jumps */
+  height: var(--mux-visual-viewport-height, 100dvh);
   overflow: hidden;
 }
 
@@ -1082,17 +1085,7 @@ body,
  * variables to handle safe areas and ensure content stays visible.
  */
 
-/* Ensure the app uses the full viewport height accounting for browser chrome */
-html,
-body,
-#root,
-#storybook-root {
-  /* Use dvh (dynamic viewport height) on supported browsers - this accounts for
-     mobile browser chrome and keyboard accessory bars */
-  min-height: 100dvh;
-  /* Fallback for older browsers */
-  min-height: 100vh;
-}
+/* Root height is managed via --mux-visual-viewport-height (set in App.tsx). */
 
 /* Handle safe areas for notched devices and keyboard accessory bars */
 @supports (padding: env(safe-area-inset-top)) {

@@ -98,6 +98,47 @@ function AppInner() {
   const isMobile = typeof window !== "undefined" && window.innerWidth <= 768;
   const [sidebarCollapsed, setSidebarCollapsed] = usePersistedState("sidebarCollapsed", isMobile);
 
+  // Sync global layout state to the DOM for CSS/layout calculations.
+
+  // Keep the app sized to the *visual* viewport on iOS Safari.
+  // Without this, focusing the chat input can cause Safari to scroll the page
+  // (hiding the WorkspaceHeader) instead of shrinking the app layout.
+  useEffect(() => {
+    try {
+      const root = document.documentElement;
+      let raf: number | null = null;
+
+      const update = () => {
+        if (raf !== null) {
+          cancelAnimationFrame(raf);
+        }
+        raf = requestAnimationFrame(() => {
+          const height = window.visualViewport?.height ?? window.innerHeight;
+          root.style.setProperty("--mux-visual-viewport-height", `${Math.round(height)}px`);
+        });
+      };
+
+      update();
+
+      const vv = window.visualViewport;
+      window.addEventListener("resize", update);
+      vv?.addEventListener("resize", update);
+      vv?.addEventListener("scroll", update);
+
+      return () => {
+        if (raf !== null) {
+          cancelAnimationFrame(raf);
+        }
+        window.removeEventListener("resize", update);
+        vv?.removeEventListener("resize", update);
+        vv?.removeEventListener("scroll", update);
+      };
+    } catch {
+      // Never crash the app on startup due to viewport sizing.
+      return;
+    }
+  }, []);
+
   // Sync sidebar collapse state to root element for CSS-based titlebar insets
   useEffect(() => {
     document.documentElement.dataset.leftSidebarCollapsed = String(sidebarCollapsed);
