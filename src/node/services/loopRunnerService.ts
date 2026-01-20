@@ -59,8 +59,9 @@ function hasUnfinishedChecklistItems(config: { checklist: HarnessChecklistItem[]
   return config.checklist.some((item) => item.status !== "done");
 }
 
-function buildIterationPrompt(params: {
+export function buildIterationPrompt(params: {
   iteration: number;
+  itemId: string;
   itemTitle: string;
   configPathHint: string;
   progressPathHint: string;
@@ -68,16 +69,20 @@ function buildIterationPrompt(params: {
   const lines: string[] = [];
   lines.push(`Ralph loop iteration ${params.iteration}`);
   lines.push("");
-  lines.push(`Work on: ${params.itemTitle}`);
+  lines.push(`Checklist item: ${params.itemId} — ${params.itemTitle}`);
   lines.push("");
   lines.push("Rules:");
   lines.push("- Make a small, mergeable change.");
   lines.push("- Run the configured gates (see harness config) before stopping.");
   lines.push("- Do NOT start the next checklist item.");
+  lines.push(`- Before coding: skim the journal for prior attempts on item ${params.itemId}.`);
+  lines.push(
+    "- After you finish (and gates), append a short entry to the journal (do not edit old entries)."
+  );
   lines.push("");
   lines.push("Harness files:");
-  lines.push(`- ${params.progressPathHint}`);
-  lines.push(`- ${params.configPathHint}`);
+  lines.push(`- Journal: ${params.progressPathHint}`);
+  lines.push(`- Config: ${params.configPathHint}`);
   return lines.join("\n");
 }
 
@@ -187,11 +192,11 @@ export class LoopRunnerService extends EventEmitter {
       log.debug("[HARNESS] Failed to persist loop state", { workspaceId, error });
     }
 
-    // Best-effort: keep progress file in sync, but never block loop control on remote IO.
+    // Best-effort: ensure harness journal exists, but never block loop control on remote IO.
     void this.workspaceHarnessService
       .updateProgressFile(workspaceId, state)
       .catch((error: unknown) => {
-        log.debug("[HARNESS] Failed to update progress file", { workspaceId, error });
+        log.debug("[HARNESS] Failed to ensure harness journal exists", { workspaceId, error });
       });
 
     this.emit("change", workspaceId);
@@ -395,8 +400,8 @@ export class LoopRunnerService extends EventEmitter {
         return;
       }
 
-      const configPathHint = `.mux/harness/${info.name}.harness.jsonc`;
-      const progressPathHint = `.mux/harness/${info.name}.harness.progress.md`;
+      const configPathHint = `.mux/harness/${info.name}.jsonc`;
+      const progressPathHint = `.mux/harness/${info.name}.progress.md`;
 
       const modelString =
         info.aiSettingsByMode?.exec?.model ?? info.aiSettings?.model ?? defaultModel;
@@ -413,8 +418,10 @@ export class LoopRunnerService extends EventEmitter {
       }
 
       const itemTitle = nextItem?.title ?? "Final cleanup (gates + git clean)";
+      const itemId = nextItem?.id ?? "final-cleanup";
       const prompt = buildIterationPrompt({
         iteration: state.iteration,
+        itemId,
         itemTitle,
         configPathHint,
         progressPathHint,
@@ -431,16 +438,12 @@ export class LoopRunnerService extends EventEmitter {
 
       // If this is a checklist item, mark it doing before we start.
       if (nextItem?.status === "todo") {
-        await this.workspaceHarnessService.setHarnessForWorkspace(
-          workspaceId,
-          {
-            ...config,
-            checklist: config.checklist.map((item) =>
-              item.id === nextItem.id ? { ...item, status: "doing" as const } : item
-            ),
-          },
-          { loopState: updatedStateBeforeSend }
-        );
+        await this.workspaceHarnessService.setHarnessForWorkspace(workspaceId, {
+          ...config,
+          checklist: config.checklist.map((item) =>
+            item.id === nextItem.id ? { ...item, status: "doing" as const } : item
+          ),
+        });
       }
 
       const sendResult = await this.workspaceService.sendMessage(workspaceId, prompt, {
@@ -493,16 +496,12 @@ export class LoopRunnerService extends EventEmitter {
 
         // If this was a checklist item, mark it done.
         if (nextItem) {
-          await this.workspaceHarnessService.setHarnessForWorkspace(
-            workspaceId,
-            {
-              ...config,
-              checklist: config.checklist.map((item) =>
-                item.id === nextItem.id ? { ...item, status: "done" as const } : item
-              ),
-            },
-            { loopState: nextState }
-          );
+          await this.workspaceHarnessService.setHarnessForWorkspace(workspaceId, {
+            ...config,
+            checklist: config.checklist.map((item) =>
+              item.id === nextItem.id ? { ...item, status: "done" as const } : item
+            ),
+          });
         }
       } else {
         const failures = nextState.consecutiveFailures + 1;

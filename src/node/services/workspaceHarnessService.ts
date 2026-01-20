@@ -20,10 +20,7 @@ import { log } from "@/node/services/log";
 
 const HARNESS_DIR = ".mux/harness";
 
-const HARNESS_GITIGNORE_PATTERNS = [
-  `${HARNESS_DIR}/*.harness.jsonc`,
-  `${HARNESS_DIR}/*.harness.progress.md`,
-];
+const HARNESS_GITIGNORE_PATTERNS = [`${HARNESS_DIR}/*.jsonc`, `${HARNESS_DIR}/*.progress.md`];
 
 const DEFAULT_LOOP_SETTINGS: Required<
   Pick<
@@ -208,78 +205,34 @@ async function statIsFile(
   }
 }
 
-function formatChecklistItemForProgress(item: HarnessChecklistItem): string {
-  const checkbox =
-    item.status === "done"
-      ? "[x]"
-      : item.status === "doing"
-        ? "[~]"
-        : item.status === "blocked"
-          ? "[!]"
-          : "[ ]";
-  return `- ${checkbox} ${item.title}`;
-}
-
-function renderProgressMarkdown(params: {
+function renderHarnessJournalBootstrapMarkdown(params: {
   metadata: FrontendWorkspaceMetadata;
-  config: WorkspaceHarnessConfig;
   paths: WorkspaceHarnessFilePaths;
-  loopState?: HarnessLoopState;
 }): string {
   const nowIso = new Date().toISOString();
 
+  const configBasename = path.basename(params.paths.configPath);
+
   const lines: string[] = [];
-  lines.push(`# Harness Progress`);
+  lines.push("# Harness journal (append-only)");
+  lines.push("");
+  lines.push("This file is an append-only journal for Ralph loop work in this workspace.");
+  lines.push("Append new entries at the bottom. Do not edit or rewrite older entries.");
   lines.push("");
   lines.push(`- Workspace: ${params.metadata.name} (${params.metadata.id})`);
-  lines.push(`- Updated: ${nowIso}`);
-  lines.push(`- Harness file: ${params.paths.configPath}`);
+  lines.push(`- Created: ${nowIso}`);
+  lines.push(`- Harness config: ${path.posix.join(HARNESS_DIR, configBasename)}`);
   lines.push("");
-
-  lines.push("## Checklist");
-  if (params.config.checklist.length === 0) {
-    lines.push("(no checklist items)");
-  } else {
-    for (const item of params.config.checklist) {
-      lines.push(formatChecklistItemForProgress(item));
-    }
-  }
+  lines.push("## Entry template");
   lines.push("");
-
-  lines.push("## Gates");
-  if (params.config.gates.length === 0) {
-    lines.push("(no gates configured)");
-  } else {
-    for (const gate of params.config.gates) {
-      lines.push(`- ${gate.command}`);
-    }
-  }
+  lines.push("### <ISO timestamp> — Iteration N — Item: <id> — <title>");
+  lines.push("- Did:");
+  lines.push("- Tried:");
+  lines.push("- Learned:");
+  lines.push("- Dead ends:");
+  lines.push("- Next:");
   lines.push("");
-
-  if (params.loopState) {
-    lines.push("## Loop");
-    lines.push(`- Status: ${params.loopState.status}`);
-    lines.push(`- Iteration: ${params.loopState.iteration}`);
-    if (params.loopState.currentItemTitle) {
-      lines.push(`- Current item: ${params.loopState.currentItemTitle}`);
-    }
-    if (params.loopState.lastGateRun) {
-      lines.push(
-        `- Last gates: ${params.loopState.lastGateRun.ok ? "PASS" : "FAIL"} (${Math.round(
-          params.loopState.lastGateRun.totalDurationMs / 1000
-        )}s)`
-      );
-    }
-    if (params.loopState.lastCheckpoint?.commitSha) {
-      lines.push(`- Last commit: ${params.loopState.lastCheckpoint.commitSha}`);
-    }
-    if (params.loopState.lastError) {
-      lines.push(`- Last error: ${params.loopState.lastError}`);
-    }
-    lines.push("");
-  }
-
-  return lines.join("\n") + "\n";
+  return lines.join("\n");
 }
 
 export class WorkspaceHarnessService {
@@ -328,7 +281,7 @@ export class WorkspaceHarnessService {
     return { metadata, runtime, workspacePath };
   }
 
-  private getHarnessFilePaths(
+  private getLegacyHarnessFilePaths(
     workspacePath: string,
     runtimeConfig: RuntimeConfig | undefined,
     workspaceName: string
@@ -350,6 +303,26 @@ export class WorkspaceHarnessService {
         workspacePath,
         HARNESS_DIR,
         `${prefix}.harness.progress.md`
+      ),
+    };
+  }
+  private getHarnessFilePaths(
+    workspacePath: string,
+    runtimeConfig: RuntimeConfig | undefined,
+    workspaceName: string
+  ): WorkspaceHarnessFilePaths {
+    assert(typeof workspacePath === "string", "workspacePath must be a string");
+    assert(typeof workspaceName === "string", "workspaceName must be a string");
+
+    const prefix = workspaceName.trim().length > 0 ? workspaceName.trim() : "workspace";
+
+    return {
+      configPath: joinForRuntime(runtimeConfig, workspacePath, HARNESS_DIR, `${prefix}.jsonc`),
+      progressPath: joinForRuntime(
+        runtimeConfig,
+        workspacePath,
+        HARNESS_DIR,
+        `${prefix}.progress.md`
       ),
     };
   }
@@ -459,6 +432,68 @@ export class WorkspaceHarnessService {
     }
   }
 
+  private async ensureHarnessJournalExists(params: {
+    metadata: FrontendWorkspaceMetadata;
+    runtime: ReturnType<typeof createRuntime>;
+    workspacePath: string;
+    runtimeConfig: RuntimeConfig | undefined;
+    paths: WorkspaceHarnessFilePaths;
+    legacyPaths: WorkspaceHarnessFilePaths;
+  }): Promise<void> {
+    try {
+      await this.ensureHarnessDir(params.runtime, params.workspacePath, params.runtimeConfig);
+
+      const exists = await statIsFile(params.runtime, params.paths.progressPath);
+      if (exists) {
+        return;
+      }
+
+      let legacyProgressContents = "";
+      const legacyExists = await statIsFile(params.runtime, params.legacyPaths.progressPath);
+      if (legacyExists) {
+        try {
+          legacyProgressContents = await readFileString(
+            params.runtime,
+            params.legacyPaths.progressPath
+          );
+        } catch (error) {
+          log.debug("[HARNESS] Failed to read legacy harness progress file", {
+            filePath: params.legacyPaths.progressPath,
+            error,
+          });
+        }
+      }
+
+      let markdown = renderHarnessJournalBootstrapMarkdown({
+        metadata: params.metadata,
+        paths: params.paths,
+      });
+
+      if (legacyProgressContents.trim().length > 0) {
+        markdown +=
+          "\n## Migrated content (legacy progress file)\n\n" +
+          legacyProgressContents.trimEnd() +
+          "\n";
+      }
+
+      await writeFileString(
+        params.runtime,
+        params.paths.progressPath,
+        markdown.endsWith("\n") ? markdown : `${markdown}\n`
+      );
+      await this.ensureHarnessGitignored(
+        params.runtime,
+        params.workspacePath,
+        params.runtimeConfig
+      );
+    } catch (error) {
+      log.debug("[HARNESS] Failed to ensure harness journal file exists", {
+        workspacePath: params.workspacePath,
+        error,
+      });
+    }
+  }
+
   async getHarnessForWorkspace(workspaceId: string): Promise<{
     config: WorkspaceHarnessConfig;
     paths: WorkspaceHarnessFilePaths;
@@ -466,8 +501,41 @@ export class WorkspaceHarnessService {
   }> {
     const { metadata, runtime, workspacePath } = await this.getRuntimeAndWorkspacePath(workspaceId);
     const paths = this.getHarnessFilePaths(workspacePath, metadata.runtimeConfig, metadata.name);
+    const legacyPaths = this.getLegacyHarnessFilePaths(
+      workspacePath,
+      metadata.runtimeConfig,
+      metadata.name
+    );
 
-    const exists = await statIsFile(runtime, paths.configPath);
+    let exists = await statIsFile(runtime, paths.configPath);
+    if (!exists) {
+      const legacyExists = await statIsFile(runtime, legacyPaths.configPath);
+      if (legacyExists) {
+        try {
+          const rawLegacy = await readFileString(runtime, legacyPaths.configPath);
+          await this.ensureHarnessDir(runtime, workspacePath, metadata.runtimeConfig);
+          await writeFileString(
+            runtime,
+            paths.configPath,
+            rawLegacy.endsWith("\n") ? rawLegacy : `${rawLegacy}\n`
+          );
+          await this.ensureHarnessGitignored(runtime, workspacePath, metadata.runtimeConfig);
+          exists = true;
+        } catch (error) {
+          log.debug("[HARNESS] Failed to migrate legacy harness config file", {
+            workspaceId,
+            error,
+          });
+          const parsedLegacy = await this.readHarnessFile(runtime, legacyPaths.configPath);
+          return {
+            config: normalizeWorkspaceHarnessConfig(parsedLegacy),
+            paths: legacyPaths,
+            exists: true,
+          };
+        }
+      }
+    }
+
     if (!exists) {
       return { config: { ...DEFAULT_HARNESS_CONFIG }, paths, exists: false };
     }
@@ -482,48 +550,70 @@ export class WorkspaceHarnessService {
 
   async setHarnessForWorkspace(
     workspaceId: string,
-    config: WorkspaceHarnessConfig,
-    options?: { loopState?: HarnessLoopState }
+    config: WorkspaceHarnessConfig
   ): Promise<WorkspaceHarnessConfig> {
     assert(config && typeof config === "object", "config must be an object");
 
     const { metadata, runtime, workspacePath } = await this.getRuntimeAndWorkspacePath(workspaceId);
     const paths = this.getHarnessFilePaths(workspacePath, metadata.runtimeConfig, metadata.name);
+    const legacyPaths = this.getLegacyHarnessFilePaths(
+      workspacePath,
+      metadata.runtimeConfig,
+      metadata.name
+    );
 
     const normalized = normalizeWorkspaceHarnessConfig(config);
+    const serialized = JSON.stringify(normalized, null, 2) + "\n";
 
     await this.ensureHarnessDir(runtime, workspacePath, metadata.runtimeConfig);
 
-    await writeFileString(runtime, paths.configPath, JSON.stringify(normalized, null, 2) + "\n");
+    await writeFileString(runtime, paths.configPath, serialized);
     await this.ensureHarnessGitignored(runtime, workspacePath, metadata.runtimeConfig);
 
-    // Best-effort: keep the progress file up-to-date for both users and agent context.
+    // Best-effort: keep the legacy file updated for downgrade compatibility.
     try {
-      const progressMarkdown = renderProgressMarkdown({
-        metadata,
-        config: normalized,
-        paths,
-        loopState: options?.loopState,
-      });
-      await writeFileString(runtime, paths.progressPath, progressMarkdown);
+      const legacyExists = await statIsFile(runtime, legacyPaths.configPath);
+      if (legacyExists) {
+        await writeFileString(runtime, legacyPaths.configPath, serialized);
+      }
     } catch (error) {
-      log.debug("[HARNESS] Failed to update harness progress file", { workspaceId, error });
+      log.debug("[HARNESS] Failed to update legacy harness config file", { workspaceId, error });
     }
+
+    await this.ensureHarnessJournalExists({
+      metadata,
+      runtime,
+      workspacePath,
+      runtimeConfig: metadata.runtimeConfig,
+      paths,
+      legacyPaths,
+    });
 
     return normalized;
   }
 
-  async updateProgressFile(workspaceId: string, loopState?: HarnessLoopState): Promise<void> {
+  async updateProgressFile(workspaceId: string, _loopState?: HarnessLoopState): Promise<void> {
     try {
       const { metadata, runtime, workspacePath } =
         await this.getRuntimeAndWorkspacePath(workspaceId);
-      const { config, paths } = await this.getHarnessForWorkspace(workspaceId);
 
-      await this.ensureHarnessDir(runtime, workspacePath, metadata.runtimeConfig);
-      const progressMarkdown = renderProgressMarkdown({ metadata, config, paths, loopState });
-      await writeFileString(runtime, paths.progressPath, progressMarkdown);
+      const paths = this.getHarnessFilePaths(workspacePath, metadata.runtimeConfig, metadata.name);
+      const legacyPaths = this.getLegacyHarnessFilePaths(
+        workspacePath,
+        metadata.runtimeConfig,
+        metadata.name
+      );
+
+      await this.ensureHarnessJournalExists({
+        metadata,
+        runtime,
+        workspacePath,
+        runtimeConfig: metadata.runtimeConfig,
+        paths,
+        legacyPaths,
+      });
     } catch (error) {
-      log.debug("[HARNESS] Failed to update progress file", { workspaceId, error });
+      log.debug("[HARNESS] Failed to ensure harness journal exists", { workspaceId, error });
     }
   }
 }
