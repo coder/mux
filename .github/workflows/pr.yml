@@ -261,32 +261,21 @@ jobs:
         shell: bash
         run: ./scripts/generate-builtin-skills.sh
       - name: Run unit tests (Windows smoke)
-        shell: bash
+        shell: pwsh
         run: |
-          set -euo pipefail
-
-          bun test \
-            src/node/utils/paths.test.ts \
-            src/node/utils/main/bashPath.test.ts \
-            src/node/utils/main/resolveLocalPtyShell.test.ts
+          bun test src/node/utils/paths.test.ts src/node/utils/main/bashPath.test.ts src/node/utils/main/resolveLocalPtyShell.test.ts
       - name: Run Windows integration smoke tests
-        shell: bash
+        shell: pwsh
         run: |
-          set -euo pipefail
-
-          if [[ "$BACKEND" != "true" ]]; then
-            echo "No backend changes - skipping Windows integration smoke tests"
+          if ($env:BACKEND -ne "true") {
+            Write-Host "No backend changes - skipping Windows integration smoke tests"
             exit 0
-          fi
+          }
 
-          TEST_INTEGRATION=1 bun x jest --silent \
-            tests/ipc/backgroundBashDirect.test.ts \
-            tests/ipc/executeBash.test.ts \
-            tests/ipc/terminal.test.ts \
-            tests/ipc/projectCreate.test.ts \
-            tests/ipc/planCommands.test.ts
+          bun x jest --silent tests/ipc/backgroundBashDirect.test.ts tests/ipc/executeBash.test.ts tests/ipc/terminal.test.ts tests/ipc/projectCreate.test.ts tests/ipc/planCommands.test.ts
         env:
           BACKEND: ${{ needs.changes.outputs.backend }}
+          TEST_INTEGRATION: "1"
 
   smoke-server:
     name: Smoke / Server
