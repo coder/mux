@@ -101,6 +101,57 @@ describe("TerminalService", () => {
     });
   });
 
+  it("should respond to DA1 terminal queries on the backend", async () => {
+    let capturedOnData: ((data: string) => void) | undefined;
+
+    // Override mock temporarily for this test
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (mockPTYService.createSession as any) = mock(
+      (
+        params: TerminalCreateParams,
+        _runtime: unknown,
+        _path: string,
+        onData: (d: string) => void,
+        _onExit: (code: number) => void
+      ) => {
+        capturedOnData = onData;
+        return Promise.resolve({
+          sessionId: "session-da1",
+          workspaceId: params.workspaceId,
+          cols: params.cols,
+          rows: params.rows,
+        });
+      }
+    );
+
+    await service.create({ workspaceId: "ws-1", cols: 80, rows: 24 });
+
+    if (!capturedOnData) {
+      throw new Error("Expected createSession to capture onData callback");
+    }
+
+    // DA1 (Primary Device Attributes) query sent by many TUIs during startup.
+    capturedOnData("\x1b[0c");
+
+    // xterm/headless processes writes asynchronously.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(sendInputMock).toHaveBeenCalled();
+
+    const calls = sendInputMock.mock.calls;
+    if (calls.length === 0) {
+      throw new Error("Expected sendInput to be called with DA1 response");
+    }
+
+    const [calledSessionId, response] = calls[calls.length - 1] as unknown as [string, string];
+    expect(calledSessionId).toBe("session-da1");
+    expect(response.startsWith("\x1b[?")).toBe(true);
+    expect(response.endsWith("c")).toBe(true);
+
+    // Restore mock (since we replaced the reference on the object)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (mockPTYService.createSession as any) = createSessionMock;
+  });
   it("should handle input", () => {
     service.sendInput("session-1", "ls\n");
     expect(sendInputMock).toHaveBeenCalledWith("session-1", "ls\n");

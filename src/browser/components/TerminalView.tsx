@@ -1,8 +1,35 @@
 import { useRef, useEffect, useState, useCallback } from "react";
 import { init, Terminal, FitAddon } from "ghostty-web";
 import { useAPI } from "@/browser/contexts/API";
+import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import {
+  DEFAULT_TERMINAL_FONT_CONFIG,
+  TERMINAL_FONT_CONFIG_KEY,
+  type TerminalFontConfig,
+} from "@/common/constants/storage";
 import { useTerminalRouter } from "@/browser/terminal/TerminalRouterContext";
 import { TERMINAL_CONTAINER_ATTR } from "@/browser/utils/ui/keybinds";
+
+function normalizeTerminalFontConfig(value: unknown): TerminalFontConfig {
+  if (!value || typeof value !== "object") {
+    return DEFAULT_TERMINAL_FONT_CONFIG;
+  }
+
+  const record = value as { fontFamily?: unknown; fontSize?: unknown };
+
+  const fontFamily =
+    typeof record.fontFamily === "string" && record.fontFamily.trim()
+      ? record.fontFamily
+      : DEFAULT_TERMINAL_FONT_CONFIG.fontFamily;
+
+  const fontSizeNumber = Number(record.fontSize);
+  const fontSize =
+    Number.isFinite(fontSizeNumber) && fontSizeNumber > 0
+      ? fontSizeNumber
+      : DEFAULT_TERMINAL_FONT_CONFIG.fontSize;
+
+  return { fontFamily, fontSize };
+}
 
 interface TerminalViewProps {
   workspaceId: string;
@@ -47,6 +74,12 @@ export function TerminalView({
   // Track whether we've received the initial screen state from backend
   const [isLoading, setIsLoading] = useState(true);
 
+  const [rawTerminalFontConfig] = usePersistedState<TerminalFontConfig>(
+    TERMINAL_FONT_CONFIG_KEY,
+    DEFAULT_TERMINAL_FONT_CONFIG,
+    { listener: true }
+  );
+  const terminalFontConfig = normalizeTerminalFontConfig(rawTerminalFontConfig);
   const { api } = useAPI();
   const router = useTerminalRouter();
 
@@ -270,8 +303,8 @@ export function TerminalView({
         const terminalFg = styles.getPropertyValue("--color-terminal-fg").trim() || "#d4d4d4";
 
         terminal = new Terminal({
-          fontSize: 13,
-          fontFamily: "JetBrains Mono, Menlo, Monaco, monospace",
+          fontSize: terminalFontConfig.fontSize,
+          fontFamily: terminalFontConfig.fontFamily,
           // Start with no blinking - we enable it on focus
           cursorBlink: false,
           theme: {
@@ -410,7 +443,79 @@ export function TerminalView({
       containerEl.replaceChildren();
       initInProgressRef.current = false;
     };
-  }, [visible, workspaceId, router, sessionId]);
+  }, [
+    visible,
+    workspaceId,
+    router,
+    sessionId,
+    terminalFontConfig.fontFamily,
+    terminalFontConfig.fontSize,
+  ]);
+
+  // Apply persisted terminal font options and keep PTY size in sync.
+
+  useEffect(() => {
+    if (!terminalReady) {
+      return;
+    }
+
+    const term = termRef.current;
+    const fitAddon = fitAddonRef.current;
+    if (!term || !fitAddon) {
+      return;
+    }
+
+    term.options.fontFamily = terminalFontConfig.fontFamily;
+    term.options.fontSize = terminalFontConfig.fontSize;
+
+    // Avoid resizing the PTY when hidden (container may be 0x0).
+    if (!visible) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const updateSize = async () => {
+      // xterm measures character sizes asynchronously after font changes.
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+      );
+
+      if (cancelled) {
+        return;
+      }
+
+      const proposed = fitAddon.proposeDimensions();
+      if (!proposed) {
+        return;
+      }
+
+      try {
+        await router.resize(sessionId, proposed.cols, proposed.rows);
+
+        if (cancelled) {
+          return;
+        }
+
+        termRef.current?.resize(proposed.cols, proposed.rows);
+      } catch (err) {
+        console.error("[TerminalView] Error resizing after terminal font change:", err);
+      }
+    };
+
+    void updateSize();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    router,
+    sessionId,
+    terminalReady,
+    terminalFontConfig.fontFamily,
+    terminalFontConfig.fontSize,
+    visible,
+  ]);
 
   // Track focus/blur on the terminal container to control cursor blinking
   useEffect(() => {

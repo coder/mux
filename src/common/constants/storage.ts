@@ -269,6 +269,22 @@ export const DEFAULT_EDITOR_CONFIG: EditorConfig = {
 };
 
 /**
+ * Integrated terminal font configuration (global)
+ * Stores: { fontFamily: string; fontSize: number }
+ */
+export const TERMINAL_FONT_CONFIG_KEY = "terminalFontConfig";
+
+export interface TerminalFontConfig {
+  fontFamily: string;
+  fontSize: number;
+}
+
+export const DEFAULT_TERMINAL_FONT_CONFIG: TerminalFontConfig = {
+  fontFamily: "JetBrains Mono, Menlo, Monaco, monospace",
+  fontSize: 13,
+};
+
+/**
  * Tutorial state storage key (global)
  * Stores: { disabled: boolean, completed: { creation?: true, workspace?: true } }
  */

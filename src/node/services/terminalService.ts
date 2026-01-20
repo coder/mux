@@ -41,6 +41,7 @@ export class TerminalService {
   // On reconnect, we serialize the screen state (~4KB) instead of replaying raw output (~512KB).
   private readonly headlessTerminals = new Map<string, Terminal>();
   private readonly serializeAddons = new Map<string, SerializeAddon>();
+  private readonly headlessOnDataDisposables = new Map<string, { dispose: () => void }>();
 
   constructor(config: Config, ptyService: PTYService) {
     this.config = config;
@@ -149,8 +150,29 @@ export class TerminalService {
         rows: params.rows,
         allowProposedApi: true,
       });
+
+      // Respond to terminal device queries (DA1/DSR) on the backend.
+      //
+      // Some TUIs (e.g. Yazi) issue terminal probes like `\x1b[0c` during startup and expect
+      // the terminal emulator to reply quickly. When the renderer isn't mounted yet (or IPC
+      // is slow), relying on the frontend alone can lead to timeouts.
+      const disposeHeadlessOnData = headless.onData((data: string) => {
+        if (!data) {
+          return;
+        }
+
+        try {
+          this.ptyService.sendInput(session.sessionId, data);
+        } catch (error) {
+          log.debug("[TerminalService] Failed to forward terminal response", {
+            sessionId: session.sessionId,
+            error,
+          });
+        }
+      });
       const serializeAddon = new SerializeAddon();
       headless.loadAddon(serializeAddon);
+      this.headlessOnDataDisposables.set(session.sessionId, disposeHeadlessOnData);
       this.headlessTerminals.set(session.sessionId, headless);
       this.serializeAddons.set(session.sessionId, serializeAddon);
 
@@ -592,14 +614,14 @@ export class TerminalService {
   }
 
   private emitOutput(sessionId: string, data: string) {
+    // Write to headless terminal to maintain parsed state (and generate device-query responses)
+    const headless = this.headlessTerminals.get(sessionId);
+    headless?.write(data);
+
     const emitter = this.outputEmitters.get(sessionId);
     if (emitter) {
       emitter.emit("data", data);
     }
-
-    // Write to headless terminal to maintain parsed state
-    const headless = this.headlessTerminals.get(sessionId);
-    headless?.write(data);
   }
 
   /**
@@ -627,6 +649,9 @@ export class TerminalService {
   }
 
   private cleanup(sessionId: string) {
+    const disposeHeadlessOnData = this.headlessOnDataDisposables.get(sessionId);
+    disposeHeadlessOnData?.dispose();
+    this.headlessOnDataDisposables.delete(sessionId);
     this.outputEmitters.delete(sessionId);
     this.exitEmitters.delete(sessionId);
 
