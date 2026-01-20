@@ -45,8 +45,22 @@ describe("fileContentCache", () => {
       const cached = getCachedFileContent("ws1", "file.txt");
       expect(cached).not.toBeNull();
       expect(cached!.type).toBe("text");
-      expect(cached!.textContent).toBe("hello world");
+      const result = cacheToResult(cached!);
+      expect(result.type).toBe("text");
+      if (result.type === "text") expect(result.content).toBe("hello world");
       expect(cached!.size).toBe(11);
+    });
+
+    test("handles Unicode text content", () => {
+      const content = "Hello 世界! 🚀 émojis and ñ";
+      const data: FileContentsResult = { type: "text", content, size: content.length };
+      setCachedFileContent("ws1", "unicode.txt", data, null);
+
+      const cached = getCachedFileContent("ws1", "unicode.txt");
+      expect(cached).not.toBeNull();
+      const result = cacheToResult(cached!);
+      expect(result.type).toBe("text");
+      if (result.type === "text") expect(result.content).toBe(content);
     });
 
     test("stores and retrieves image file content", () => {
@@ -87,8 +101,10 @@ describe("fileContentCache", () => {
       setCachedFileContent("ws1", "file.txt", data1, null);
       setCachedFileContent("ws2", "file.txt", data2, null);
 
-      expect(getCachedFileContent("ws1", "file.txt")!.textContent).toBe("ws1 content");
-      expect(getCachedFileContent("ws2", "file.txt")!.textContent).toBe("ws2 content");
+      const r1 = cacheToResult(getCachedFileContent("ws1", "file.txt")!);
+      const r2 = cacheToResult(getCachedFileContent("ws2", "file.txt")!);
+      expect(r1.type === "text" && r1.content).toBe("ws1 content");
+      expect(r2.type === "text" && r2.content).toBe("ws2 content");
     });
   });
 
