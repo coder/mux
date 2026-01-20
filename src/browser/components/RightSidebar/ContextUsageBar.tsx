@@ -4,7 +4,7 @@ import { HorizontalThresholdSlider, type AutoCompactionConfig } from "./Threshol
 import { formatTokens, type TokenMeterData } from "@/common/utils/tokens/tokenMeterUtils";
 import { OutputReserveIndicator } from "./OutputReserveIndicator";
 import { OutputReserveDetails } from "./OutputReserveDetails";
-import { getOutputReserveInfo } from "./contextUsageUtils";
+import { getOutputReserveDisplayState } from "./contextUsageUtils";
 
 interface ContextUsageBarProps {
   data: TokenMeterData;
@@ -25,20 +25,17 @@ const ContextUsageBarComponent: React.FC<ContextUsageBarProps> = ({
   const percentageDisplay = data.maxTokens ? ` (${data.totalPercentage.toFixed(1)}%)` : "";
 
   const showWarning = !data.maxTokens;
-  const showThresholdSlider = autoCompaction && data.maxTokens;
+  const showThresholdSlider = Boolean(autoCompaction && data.maxTokens);
 
-  const outputReserveInfo = getOutputReserveInfo(data);
+  const outputReserveDisplay = getOutputReserveDisplayState({
+    data,
+    showThresholdSlider,
+    threshold: autoCompaction?.threshold,
+  });
 
-  const showOutputReserveIndicator = Boolean(
-    showThresholdSlider && outputReserveInfo.threshold !== null
-  );
-  const showOutputReserveWarning = Boolean(
-    showThresholdSlider &&
-    autoCompaction &&
-    autoCompaction.threshold < 100 &&
-    outputReserveInfo.threshold !== null &&
-    autoCompaction.threshold > outputReserveInfo.threshold
-  );
+  const outputReserveInfo = outputReserveDisplay.info;
+  const showOutputReserveIndicator = outputReserveDisplay.showIndicator;
+  const showOutputReserveWarning = outputReserveDisplay.showWarning;
 
   if (data.totalTokens === 0) return null;
 
@@ -62,7 +59,9 @@ const ContextUsageBarComponent: React.FC<ContextUsageBarProps> = ({
         {showOutputReserveIndicator && outputReserveInfo.threshold !== null && (
           <OutputReserveIndicator threshold={outputReserveInfo.threshold} />
         )}
-        {showThresholdSlider && <HorizontalThresholdSlider config={autoCompaction} />}
+        {showThresholdSlider && autoCompaction && (
+          <HorizontalThresholdSlider config={autoCompaction} />
+        )}
       </div>
 
       <OutputReserveDetails

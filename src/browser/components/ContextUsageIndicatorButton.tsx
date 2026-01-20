@@ -9,7 +9,7 @@ import {
 } from "./RightSidebar/ThresholdSlider";
 import { OutputReserveIndicator } from "./RightSidebar/OutputReserveIndicator";
 import { OutputReserveDetails } from "./RightSidebar/OutputReserveDetails";
-import { getOutputReserveInfo } from "./RightSidebar/contextUsageUtils";
+import { getOutputReserveDisplayState } from "./RightSidebar/contextUsageUtils";
 import { Switch } from "./ui/switch";
 import { formatTokens, type TokenMeterData } from "@/common/utils/tokens/tokenMeterUtils";
 import { cn } from "@/common/lib/utils";
@@ -79,21 +79,18 @@ const AutoCompactSettings: React.FC<{
   const maxDisplay = data.maxTokens ? ` / ${formatTokens(data.maxTokens)}` : "";
   const percentageDisplay = data.maxTokens ? ` (${data.totalPercentage.toFixed(1)}%)` : "";
 
-  const showUsageSlider = usageConfig && data.maxTokens;
+  const showUsageSlider = Boolean(usageConfig && data.maxTokens);
   const isIdleEnabled = idleConfig?.hours !== null && idleConfig?.hours !== undefined;
 
-  const outputReserveInfo = getOutputReserveInfo(data);
+  const outputReserveDisplay = getOutputReserveDisplayState({
+    data,
+    showThresholdSlider: showUsageSlider,
+    threshold: usageConfig?.threshold,
+  });
 
-  const showOutputReserveIndicator = Boolean(
-    showUsageSlider && outputReserveInfo.threshold !== null
-  );
-  const showOutputReserveWarning = Boolean(
-    showUsageSlider &&
-    usageConfig &&
-    usageConfig.threshold < 100 &&
-    outputReserveInfo.threshold !== null &&
-    usageConfig.threshold > outputReserveInfo.threshold
-  );
+  const outputReserveInfo = outputReserveDisplay.info;
+  const showOutputReserveIndicator = outputReserveDisplay.showIndicator;
+  const showOutputReserveWarning = outputReserveDisplay.showWarning;
 
   const handleIdleToggle = (enabled: boolean) => {
     if (!idleConfig) return;
@@ -137,7 +134,7 @@ const AutoCompactSettings: React.FC<{
           {showOutputReserveIndicator && outputReserveInfo.threshold !== null && (
             <OutputReserveIndicator threshold={outputReserveInfo.threshold} />
           )}
-          {showUsageSlider && <HorizontalThresholdSlider config={usageConfig} />}
+          {showUsageSlider && usageConfig && <HorizontalThresholdSlider config={usageConfig} />}
         </div>
         {showUsageSlider && <PercentTickMarks />}
         <OutputReserveDetails

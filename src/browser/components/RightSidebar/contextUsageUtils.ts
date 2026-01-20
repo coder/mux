@@ -21,3 +21,28 @@ export function getOutputReserveInfo(data: TokenMeterData): OutputReserveInfo {
     tokens: data.maxTokens - data.maxOutputTokens,
   };
 }
+
+export interface OutputReserveDisplayState {
+  info: OutputReserveInfo;
+  showIndicator: boolean;
+  showWarning: boolean;
+}
+
+export function getOutputReserveDisplayState(options: {
+  data: TokenMeterData;
+  showThresholdSlider: boolean;
+  threshold?: number | null;
+}): OutputReserveDisplayState {
+  const info = getOutputReserveInfo(options.data);
+  const threshold = options.threshold ?? null;
+  const showIndicator = Boolean(options.showThresholdSlider && info.threshold !== null);
+  const showWarning = Boolean(
+    options.showThresholdSlider &&
+    threshold !== null &&
+    threshold < 100 &&
+    info.threshold !== null &&
+    threshold > info.threshold
+  );
+
+  return { info, showIndicator, showWarning };
+}
