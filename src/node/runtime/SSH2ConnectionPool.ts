@@ -228,9 +228,34 @@ function spawnProxyCommand(
   return { sock, process: proc };
 }
 
+/**
+ * Detect if error is due to encrypted key without passphrase.
+ * ssh2 throws parse errors like "Cannot parse privateKey: Encrypted private OpenSSH key detected,
+ * but no passphrase given" when encountering encrypted keys without a passphrase.
+ * We treat these as auth failures so the retry loop can skip the key and try agent-only.
+ */
+function isEncryptedKeyError(error: unknown): boolean {
+  if (!error) {
+    return false;
+  }
+  const message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  return (
+    message.includes("Encrypted private key detected") ||
+    message.includes("Encrypted private OpenSSH key detected") ||
+    message.includes("Encrypted PPK private key detected") ||
+    (message.includes("Cannot parse privateKey") && message.includes("ncrypted"))
+  );
+}
+
 function isAuthFailure(error: unknown): boolean {
   if (!error) {
     return false;
+  }
+
+  // Encrypted key without passphrase should be treated as auth failure
+  // so we can fall back to agent-only authentication.
+  if (isEncryptedKeyError(error)) {
+    return true;
   }
 
   if (typeof error === "object" && error !== null && "level" in error) {
