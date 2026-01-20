@@ -48,6 +48,7 @@ import type { PostCompactionAttachment } from "@/common/types/attachment";
 import { applyCacheControl } from "@/common/utils/ai/cacheStrategy";
 import type { HistoryService } from "./historyService";
 import type { PartialService } from "./partialService";
+import { createErrorEvent } from "./utils/sendMessageError";
 import { createAssistantMessageId } from "./utils/messageIds";
 import type { SessionUsageService } from "./sessionUsageService";
 import { sumUsageHistory, getTotalCost } from "@/common/utils/tokens/usageAggregator";
@@ -1205,13 +1206,14 @@ export class AIService extends EventEmitter {
         // This mirrors the context_exceeded pattern - the fire-and-forget sendMessage
         // call in useCreationWorkspace.ts won't see the returned Err, but will receive
         // this event through the workspace chat subscription.
-        this.emit("error", {
-          type: "error",
-          workspaceId,
-          messageId: errorMessageId,
-          error: errorMessage,
-          errorType,
-        });
+        this.emit(
+          "error",
+          createErrorEvent(workspaceId, {
+            messageId: errorMessageId,
+            error: errorMessage,
+            errorType,
+          })
+        );
 
         return Err({
           type: errorType,
@@ -1770,13 +1772,14 @@ export class AIService extends EventEmitter {
         };
         this.emit("stream-start", streamStartEvent);
 
-        this.emit("error", {
-          type: "error",
-          workspaceId,
-          messageId: assistantMessageId,
-          error: errorMessage,
-          errorType: "context_exceeded",
-        });
+        this.emit(
+          "error",
+          createErrorEvent(workspaceId, {
+            messageId: assistantMessageId,
+            error: errorMessage,
+            errorType: "context_exceeded",
+          })
+        );
 
         return Ok(undefined);
       }

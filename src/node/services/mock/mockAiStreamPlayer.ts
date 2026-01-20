@@ -6,6 +6,7 @@ import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { SendMessageError } from "@/common/types/errors";
 import type { AIService } from "@/node/services/aiService";
+import { createErrorEvent } from "@/node/services/utils/sendMessageError";
 import { log } from "@/node/services/log";
 import type {
   MockAssistantEvent,
@@ -389,13 +390,14 @@ export class MockAiStreamPlayer {
       }
       case "stream-error": {
         const payload: MockStreamErrorEvent = event;
-        this.deps.aiService.emit("error", {
-          type: "error",
-          workspaceId,
-          messageId,
-          error: payload.error,
-          errorType: payload.errorType,
-        });
+        this.deps.aiService.emit(
+          "error",
+          createErrorEvent(workspaceId, {
+            messageId,
+            error: payload.error,
+            errorType: payload.errorType,
+          })
+        );
         this.cleanup(workspaceId);
         break;
       }

@@ -19,7 +19,6 @@ import type {
   StreamStartEvent,
   StreamEndEvent,
   UsageDeltaEvent,
-  ErrorEvent,
   ToolCallEndEvent,
   CompletedMessagePart,
 } from "@/common/types/stream";
@@ -27,6 +26,11 @@ import type {
 import type { SendMessageError, StreamErrorType } from "@/common/types/errors";
 import type { MuxMetadata, MuxMessage } from "@/common/types/message";
 import type { NestedToolCall } from "@/common/orpc/schemas/message";
+import {
+  coerceStreamErrorTypeForMessage,
+  createErrorEvent,
+  type StreamErrorPayload,
+} from "@/node/services/utils/sendMessageError";
 import type { PartialService } from "./partialService";
 import type { HistoryService } from "./historyService";
 import { addUsage, accumulateProviderMetadata } from "@/common/utils/tokens/usageHelpers";
@@ -1585,6 +1589,14 @@ export class StreamManager extends EventEmitter {
     // Record lost previousResponseId so future requests can filter it out
     this.recordLostResponseIdIfApplicable(error, streamInfo);
 
+    const errorPayload = this.buildStreamErrorPayload(streamInfo, error);
+    await this.persistStreamError(workspaceId, streamInfo, errorPayload);
+  }
+
+  private buildStreamErrorPayload(
+    streamInfo: WorkspaceStreamInfo,
+    error: unknown
+  ): StreamErrorPayload & { errorType: StreamErrorType } {
     // Extract error message (errors thrown from 'error' parts already have the correct message)
     let errorMessage: string = error instanceof Error ? error.message : String(error);
     let actualError: unknown = error;
@@ -1603,37 +1615,33 @@ export class StreamManager extends EventEmitter {
       errorMessage = `Model '${modelName || streamInfo.model}' does not exist or is not available. Please check your model selection.`;
     }
 
-    // If we detect API key issues in the error message, override the type
-    if (
-      errorMessage.toLowerCase().includes("api key") ||
-      errorMessage.toLowerCase().includes("api_key") ||
-      errorMessage.toLowerCase().includes("anthropic_api_key")
-    ) {
-      errorType = "authentication";
-    }
+    errorType = coerceStreamErrorTypeForMessage(errorType, errorMessage);
 
-    await this.persistErrorState(workspaceId, streamInfo, errorMessage, errorType);
+    return {
+      messageId: streamInfo.messageId,
+      error: errorMessage,
+      errorType,
+    };
   }
 
   /**
    * Write error metadata to partial.json and emit the corresponding error event.
    */
-  private async persistErrorState(
+  private async persistStreamError(
     workspaceId: WorkspaceId,
     streamInfo: WorkspaceStreamInfo,
-    errorMessage: string,
-    errorType: StreamErrorType
+    payload: StreamErrorPayload & { errorType: StreamErrorType }
   ): Promise<void> {
     const errorPartialMessage: MuxMessage = {
-      id: streamInfo.messageId,
+      id: payload.messageId,
       role: "assistant",
       metadata: {
         historySequence: streamInfo.historySequence,
         timestamp: streamInfo.startTime,
         model: streamInfo.model,
         partial: true,
-        error: errorMessage,
-        errorType,
+        error: payload.error,
+        errorType: payload.errorType,
         ...streamInfo.initialMetadata,
       },
       parts: streamInfo.parts,
@@ -1648,13 +1656,7 @@ export class StreamManager extends EventEmitter {
     await this.partialService.writePartial(workspaceId as string, errorPartialMessage);
 
     // Emit error event.
-    this.emit("error", {
-      type: "error",
-      workspaceId: workspaceId as string,
-      messageId: streamInfo.messageId,
-      error: errorMessage,
-      errorType,
-    } as ErrorEvent);
+    this.emit("error", createErrorEvent(workspaceId as string, payload));
   }
 
   private getOpenAIPreviousResponseId(
@@ -2377,7 +2379,11 @@ export class StreamManager extends EventEmitter {
     };
 
     // Write error state to partial.json (same as real error handling)
-    await this.persistErrorState(typedWorkspaceId, streamInfo, errorMessage, "network");
+    await this.persistStreamError(typedWorkspaceId, streamInfo, {
+      messageId: streamInfo.messageId,
+      error: errorMessage,
+      errorType: "network",
+    });
 
     // Wait for the stream processing to complete (cleanup)
     await streamInfo.processingPromise;
