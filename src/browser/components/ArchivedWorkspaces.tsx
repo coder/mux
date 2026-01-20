@@ -410,7 +410,8 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
       }
     };
 
-    await Promise.all(Array.from({ length: Math.min(3, idsToRestore.length) }, () => worker()));
+    // Serialize restores: backend config updates are not concurrency-safe.
+    await worker();
 
     setSelectedIds(new Set());
     onWorkspacesChanged?.();
@@ -462,7 +463,8 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
       }
     };
 
-    await Promise.all(Array.from({ length: Math.min(3, idsToDelete.length) }, () => worker()));
+    // Serialize deletes: backend config updates are not concurrency-safe.
+    await worker();
 
     setSelectedIds(new Set());
     onWorkspacesChanged?.();

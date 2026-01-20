@@ -171,11 +171,8 @@ export const PostCompactionSection: React.FC<PostCompactionSectionProps> = (prop
                             }
                           };
 
-                          await Promise.all(
-                            Array.from({ length: Math.min(3, itemIdsToToggle.length) }, () =>
-                              worker()
-                            )
-                          );
+                          // Serialize toggles: backend config updates are not concurrency-safe.
+                          await worker();
                         })();
                       }}
                       className="text-subtle hover:text-foreground p-0.5 transition-colors"
