@@ -21,6 +21,7 @@ import type {
 import { RuntimeError as RuntimeErrorClass } from "./Runtime";
 import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
 import { getBashPath } from "@/node/utils/main/bashPath";
+import { shellQuote } from "@/common/utils/shell";
 import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
 import { DisposableProcess, killProcessTree } from "@/node/utils/disposableExec";
 import { expandTilde } from "./tildeExpansion";
@@ -66,7 +67,17 @@ export abstract class LocalBaseRuntime implements Runtime {
 
     const bashPath = getBashPath();
     const spawnCommand = bashPath;
-    const spawnArgs = ["-c", command];
+
+    // Match RemoteRuntime behavior: ensure non-interactive env vars are set inside the shell.
+    //
+    // Why not rely solely on `env`?
+    // - On Windows, env var casing and shell startup state can be surprising.
+    // - These are non-sensitive vars that we want to guarantee for git/editor safety.
+    const nonInteractivePrelude = Object.entries(NON_INTERACTIVE_ENV_VARS)
+      .map(([key, value]) => `export ${key}=${shellQuote(value)}`)
+      .join("\n");
+
+    const spawnArgs = ["-c", `${nonInteractivePrelude}\n${command}`];
 
     const defaultPath = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
     const effectivePath =
