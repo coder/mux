@@ -1,4 +1,5 @@
 import React from "react";
+import { AlertTriangle } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { ThinkingProvider } from "@/browser/contexts/ThinkingContext";
@@ -34,7 +35,9 @@ const IncompatibleWorkspaceView: React.FC<{ message: string; className?: string 
 }) => (
   <div className={cn("flex h-full w-full flex-col items-center justify-center p-8", className)}>
     <div className="max-w-md text-center">
-      <div className="mb-4 text-4xl">⚠️</div>
+      <div className="mb-4 flex justify-center">
+        <AlertTriangle aria-hidden="true" className="text-warning h-10 w-10" />
+      </div>
       <h2 className="mb-2 text-xl font-semibold text-[var(--color-text-primary)]">
         Incompatible Workspace
       </h2>

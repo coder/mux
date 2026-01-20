@@ -1,9 +1,8 @@
-import { COMPACTED_EMOJI, IDLE_COMPACTED_EMOJI } from "@/common/constants/ui";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { useStartHere } from "@/browser/hooks/useStartHere";
 import type { DisplayedMessage } from "@/common/types/message";
 import { copyToClipboard } from "@/browser/utils/clipboard";
-import { Clipboard, ClipboardCheck, FileText, ListStart } from "lucide-react";
+import { Clipboard, ClipboardCheck, FileText, ListStart, Moon, Package } from "lucide-react";
 import { ShareMessagePopover } from "@/browser/components/ShareMessagePopover";
 import { useOptionalWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { Button } from "../ui/button";
@@ -152,10 +151,13 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
       <div className="flex items-center gap-2">
         {modelName && <ModelDisplay modelString={modelName} />}
         {isCompacted && (
-          <span className="text-plan-mode bg-plan-mode/10 rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
-            {isIdleCompacted
-              ? `${IDLE_COMPACTED_EMOJI} idle-compacted`
-              : `${COMPACTED_EMOJI} compacted`}
+          <span className="text-plan-mode bg-plan-mode/10 inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
+            {isIdleCompacted ? (
+              <Moon aria-hidden="true" className="h-3 w-3" />
+            ) : (
+              <Package aria-hidden="true" className="h-3 w-3" />
+            )}
+            <span>{isIdleCompacted ? "idle-compacted" : "compacted"}</span>
           </span>
         )}
       </div>

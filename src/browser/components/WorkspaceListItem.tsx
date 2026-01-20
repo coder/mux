@@ -272,7 +272,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
             <div className="min-w-0">
               {isArchiving ? (
                 <div className="text-muted flex min-w-0 items-center gap-1.5 text-xs">
-                  <span className="-mt-0.5 shrink-0 text-[10px]">📦</span>
+                  <ArchiveIcon className="h-3 w-3 shrink-0" />
                   <span className="min-w-0 truncate">Archiving...</span>
                 </div>
               ) : (

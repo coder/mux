@@ -55,7 +55,7 @@ export const BashBackgroundListToolCall: React.FC<BashBackgroundListToolCallProp
     <ToolContainer expanded={expanded}>
       <ToolHeader onClick={toggleExpanded}>
         <ExpandIcon expanded={expanded}>▶</ExpandIcon>
-        <ToolIcon emoji="📋" toolName="bash_background_list" />
+        <ToolIcon toolName="bash_background_list" />
         <span className="text-text-secondary">
           {result?.success
             ? runningCount === 0

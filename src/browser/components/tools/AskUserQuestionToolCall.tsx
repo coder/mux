@@ -1,5 +1,6 @@
 import assert from "@/common/utils/assert";
 
+import { AlertTriangle, Check } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
@@ -396,7 +397,9 @@ export function AskUserQuestionToolCall(props: {
                         onClick={() => setActiveIndex(idx)}
                       >
                         {q.header}
-                        {answered ? " ✓" : ""}
+                        {answered && (
+                          <Check aria-hidden="true" className="ml-1 inline-block h-3 w-3" />
+                        )}
                       </button>
                     );
                   })}
@@ -412,7 +415,10 @@ export function AskUserQuestionToolCall(props: {
                     }
                     onClick={() => setActiveIndex(summaryIndex)}
                   >
-                    Summary{isComplete ? " ✓" : ""}
+                    Summary
+                    {isComplete && (
+                      <Check aria-hidden="true" className="ml-1 inline-block h-3 w-3" />
+                    )}
                   </button>
                 </div>
 
@@ -544,8 +550,11 @@ export function AskUserQuestionToolCall(props: {
                   <div className="flex flex-col gap-2">
                     <div className="text-sm font-medium">Review your answers</div>
                     {unansweredCount > 0 && (
-                      <div className="text-xs text-yellow-500">
-                        ⚠️ {unansweredCount} question{unansweredCount > 1 ? "s" : ""} not answered
+                      <div className="flex items-center gap-1 text-xs text-yellow-500">
+                        <AlertTriangle aria-hidden="true" className="h-3 w-3" />
+                        <span>
+                          {unansweredCount} question{unansweredCount > 1 ? "s" : ""} not answered
+                        </span>
                       </div>
                     )}
                     <div className="flex flex-col gap-2">
@@ -572,9 +581,12 @@ export function AskUserQuestionToolCall(props: {
                           >
                             <div className="flex items-start gap-1">
                               {answered ? (
-                                <span className="text-green-400">✓</span>
+                                <Check aria-hidden="true" className="h-3 w-3 text-green-400" />
                               ) : (
-                                <span className="text-yellow-500">⚠️</span>
+                                <AlertTriangle
+                                  aria-hidden="true"
+                                  className="h-3 w-3 text-yellow-500"
+                                />
                               )}{" "}
                               <div className="flex flex-col">
                                 <div>

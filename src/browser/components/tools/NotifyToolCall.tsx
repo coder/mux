@@ -25,7 +25,7 @@ export const NotifyToolCall: React.FC<NotifyToolCallProps> = ({
   return (
     <ToolContainer expanded={false}>
       <ToolHeader>
-        <ToolIcon emoji="🔔" toolName="notify" />
+        <ToolIcon toolName="notify" />
         <span className="text-muted-foreground truncate italic">{args.title}</span>
         {args.message && (
           <span className="text-muted-foreground/60 hidden truncate @[300px]:inline">

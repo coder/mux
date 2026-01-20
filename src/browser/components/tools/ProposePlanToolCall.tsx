@@ -29,7 +29,16 @@ import { PopoverError } from "../PopoverError";
 import { getAgentIdKey, getPlanContentKey } from "@/common/constants/storage";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { buildSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
-import { Clipboard, ClipboardCheck, FileText, ListStart, Pencil, Play, X } from "lucide-react";
+import {
+  Clipboard,
+  ClipboardCheck,
+  ClipboardList,
+  FileText,
+  ListStart,
+  Pencil,
+  Play,
+  X,
+} from "lucide-react";
 import { ShareMessagePopover } from "../ShareMessagePopover";
 
 /**
@@ -374,7 +383,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     <div className="plan-surface rounded-md p-3 shadow-md">
       {/* Header: title only */}
       <div className="plan-divider mb-3 flex items-center gap-2 border-b pb-2">
-        <div className="text-base">📋</div>
+        <ClipboardList aria-hidden="true" className="h-4 w-4" />
         <div className="text-plan-mode font-mono text-[13px] font-semibold">{planTitle}</div>
         {isEphemeralPreview && (
           <div className="text-muted font-mono text-[10px] italic">preview only</div>

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { AlertTriangle, RefreshCw } from "lucide-react";
 import { usePersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import type { RetryState } from "@/browser/hooks/useResumeManager";
 import { useWorkspaceState } from "@/browser/stores/WorkspaceStore";
@@ -138,14 +139,18 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
     props.className
   );
 
-  let statusIcon = "⚠️";
+  let statusIcon: React.ReactNode = (
+    <AlertTriangle aria-hidden="true" className="text-warning h-4 w-4 shrink-0" />
+  );
   let statusText: React.ReactNode = <>Stream interrupted</>;
   let actionButton: React.ReactNode;
 
   if (effectiveAutoRetry) {
     // Auto-retry mode: show countdown and stop button.
     // useResumeManager handles the actual retry logic.
-    statusIcon = "🔄";
+    statusIcon = (
+      <RefreshCw aria-hidden="true" className="text-warning h-4 w-4 shrink-0 animate-spin" />
+    );
     statusText =
       countdown === 0 ? (
         <>Retrying... (attempt {attempt + 1})</>
@@ -179,7 +184,7 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
     <div className={barrierClassName}>
       <div className="flex items-center justify-between gap-4">
         <div className="flex flex-1 items-center gap-3">
-          <span className="text-lg leading-none">{statusIcon}</span>
+          <span className="shrink-0">{statusIcon}</span>
           <div className="font-primary text-foreground text-[13px] font-medium">{statusText}</div>
         </div>
         {actionButton}

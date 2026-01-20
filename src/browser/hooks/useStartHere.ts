@@ -1,6 +1,5 @@
 import { useState } from "react";
 import React from "react";
-import { COMPACTED_EMOJI } from "@/common/constants/ui";
 import { StartHereModal } from "@/browser/components/StartHereModal";
 import { createMuxMessage } from "@/common/types/message";
 import type { AgentMode } from "@/common/types/mode";
@@ -80,7 +79,6 @@ export function useStartHere(
     openModal,
     isStartingHere,
     buttonLabel: `Start Here`,
-    buttonEmoji: COMPACTED_EMOJI,
     disabled: !workspaceId || isStartingHere || isCompacted,
     modal, // Pre-configured modal to render
   };

@@ -22,7 +22,7 @@ export const BashBackgroundTerminateToolCall: React.FC<BashBackgroundTerminateTo
   return (
     <ToolContainer expanded={false}>
       <ToolHeader>
-        <ToolIcon emoji="⏹️" toolName="bash_background_terminate" />
+        <ToolIcon toolName="bash_background_terminate" />
         <span className="text-text font-mono">
           {result?.success === true ? (result.display_name ?? args.process_id) : args.process_id}
         </span>

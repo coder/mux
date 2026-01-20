@@ -1,4 +1,5 @@
 import React, { useMemo } from "react";
+import { AlertTriangle } from "lucide-react";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { isLocalProjectRuntime } from "@/common/types/runtime";
@@ -65,7 +66,8 @@ export const ConcurrentLocalWarning: React.FC<{
 
   return (
     <div className="text-center text-xs text-yellow-600/80">
-      ⚠ <span className="text-yellow-500">{streamingWorkspaceName}</span> is also running in this
+      <AlertTriangle aria-hidden="true" className="mr-1 inline-block h-3 w-3 align-[-2px]" />
+      <span className="text-yellow-500">{streamingWorkspaceName}</span> is also running in this
       project directory — agents may interfere
     </div>
   );

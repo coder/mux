@@ -1,5 +1,8 @@
 import React from "react";
 import { cn } from "@/common/lib/utils";
+import type { LucideIcon } from "lucide-react";
+import { Bell, BookOpen, Globe, List, Pencil, Sparkles, Square, Wrench } from "lucide-react";
+import { EmojiIcon } from "../../icons/EmojiIcon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../../ui/tooltip";
 
 /**
@@ -163,21 +166,55 @@ export const HeaderButton: React.FC<HeaderButtonProps> = ({ active, className, .
 );
 
 /**
- * Tool icon with tooltip showing tool name
+ * Tool icon with tooltip showing tool name.
+ *
+ * We deliberately render SVG icons instead of emoji glyphs, since emoji rendering varies
+ * widely across platforms and fonts.
  */
 interface ToolIconProps {
-  emoji: string;
   toolName: string;
+  /**
+   * Optional emoji provided by the tool call (e.g. status_set). When present, we render a
+   * corresponding icon via EmojiIcon.
+   */
+  emoji?: string;
+  className?: string;
 }
 
-export const ToolIcon: React.FC<ToolIconProps> = ({ emoji, toolName }) => (
-  <Tooltip>
-    <TooltipTrigger asChild>
-      <span>{emoji}</span>
-    </TooltipTrigger>
-    <TooltipContent>{toolName}</TooltipContent>
-  </Tooltip>
-);
+const TOOL_NAME_TO_ICON: Partial<Record<string, LucideIcon>> = {
+  bash: Wrench,
+  bash_output: Wrench,
+  bash_background_terminate: Square,
+  bash_background_list: List,
+  file_read: BookOpen,
+  file_edit_insert: Pencil,
+  file_edit_replace_string: Pencil,
+  file_edit_replace_lines: Pencil,
+  todo_write: List,
+  web_fetch: Globe,
+  web_search: Globe,
+  notify: Bell,
+};
+
+export const ToolIcon: React.FC<ToolIconProps> = ({ toolName, emoji, className }) => {
+  const Icon = TOOL_NAME_TO_ICON[toolName] ?? Sparkles;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className={cn(
+            "inline-flex shrink-0 items-center justify-center text-secondary [&_svg]:size-3.5",
+            className
+          )}
+        >
+          {emoji ? <EmojiIcon emoji={emoji} /> : <Icon aria-hidden="true" />}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{toolName}</TooltipContent>
+    </Tooltip>
+  );
+};
 
 /**
  * Error display box with danger styling

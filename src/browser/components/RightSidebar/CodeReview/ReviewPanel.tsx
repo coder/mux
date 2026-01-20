@@ -23,6 +23,7 @@
  */
 
 import { LRUCache } from "lru-cache";
+import { AlertTriangle, Lightbulb, Loader2 } from "lucide-react";
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { HunkViewer } from "./HunkViewer";
 import type { ReviewActionCallbacks } from "../../shared/InlineReviewNote";
@@ -1126,7 +1127,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   if (isCreating) {
     return (
       <div className="flex h-full flex-col items-center justify-center p-8 text-center">
-        <div className="mb-4 text-2xl">⏳</div>
+        <Loader2 aria-hidden="true" className="text-secondary mb-4 h-6 w-6 animate-spin" />
         <p className="text-secondary text-sm">Setting up workspace...</p>
         <p className="text-secondary mt-1 text-xs">Review will be available once ready</p>
       </div>
@@ -1161,10 +1162,13 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
           {diffState.message}
           {/* Show helpful hint when ref doesn't exist */}
           {diffState.message.includes("unknown revision") && (
-            <div className="text-muted mt-3 border-t border-current/20 pt-3 font-sans text-[11px]">
-              💡 The ref <code className="text-foreground">{filters.diffBase}</code> does not exist
-              in this repository. Use the dropdown above to select a different base (e.g., HEAD,
-              origin/master).
+            <div className="text-muted mt-3 flex items-start gap-2 border-t border-current/20 pt-3 font-sans text-[11px]">
+              <Lightbulb aria-hidden="true" className="mt-0.5 h-3 w-3 shrink-0" />
+              <span>
+                The ref <code className="text-foreground">{filters.diffBase}</code> does not exist
+                in this repository. Use the dropdown above to select a different base (e.g., HEAD,
+                origin/master).
+              </span>
             </div>
           )}
         </div>
@@ -1175,8 +1179,9 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
       ) : (
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           {diffState.truncationWarning && (
-            <div className="bg-warning/10 border-warning/30 text-warning mx-3 my-3 flex items-center gap-1.5 rounded border px-3 py-1.5 text-[10px] leading-[1.3] before:text-xs before:content-['⚠️']">
-              {diffState.truncationWarning}
+            <div className="bg-warning/10 border-warning/30 text-warning mx-3 my-3 flex items-center gap-1.5 rounded border px-3 py-1.5 text-[10px] leading-[1.3]">
+              <AlertTriangle aria-hidden="true" className="h-3 w-3 shrink-0" />
+              <span>{diffState.truncationWarning}</span>
             </div>
           )}
 

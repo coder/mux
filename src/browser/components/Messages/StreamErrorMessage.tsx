@@ -1,5 +1,5 @@
 import React from "react";
-import { Bug } from "lucide-react";
+import { AlertTriangle, Bug } from "lucide-react";
 import { Button } from "@/browser/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui/tooltip";
 import { useCompactAndRetry } from "@/browser/hooks/useCompactAndRetry";
@@ -64,7 +64,7 @@ const StreamErrorMessageBase: React.FC<StreamErrorMessageBaseProps> = (props) =>
     return (
       <div className={cn("bg-error-bg border border-error rounded px-5 py-4 my-3", className)}>
         <div className="font-primary text-error mb-2 flex items-center gap-2 text-[13px] font-semibold">
-          <span className="text-base leading-none">⚠️</span>
+          <AlertTriangle aria-hidden="true" className="h-4 w-4" />
           <span>{title}</span>
           <div className="ml-auto flex items-center">{debugAction}</div>
         </div>

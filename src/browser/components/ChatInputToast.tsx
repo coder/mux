@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { AlertTriangle, Check } from "lucide-react";
 import React, { useEffect, useCallback } from "react";
 import { cn } from "@/common/lib/utils";
 
@@ -91,7 +92,7 @@ export const ChatInputToast: React.FC<ChatInputToastProps> = ({
       className="bg-toast-fatal-bg border-toast-fatal-border text-danger-soft animate-[toastSlideIn_0.2s_ease-out] rounded border px-3 py-2.5 text-xs shadow-[0_4px_12px_rgba(0,0,0,0.3)]"
     >
       <div className="flex items-start gap-1.5">
-        <span className="text-sm leading-none">⚠</span>
+        <AlertTriangle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
         <div className="flex-1">
           {toast.title && <div className="mb-1.5 font-semibold">{toast.title}</div>}
           <div className="text-light mt-1.5 leading-[1.4]">{toast.message}</div>
@@ -122,7 +123,11 @@ export const ChatInputToast: React.FC<ChatInputToastProps> = ({
         toastTypeStyles[toast.type]
       )}
     >
-      <span className="text-sm leading-none">{toast.type === "success" ? "✓" : "⚠"}</span>
+      {toast.type === "success" ? (
+        <Check aria-hidden="true" className="h-4 w-4 shrink-0" />
+      ) : (
+        <AlertTriangle aria-hidden="true" className="h-4 w-4 shrink-0" />
+      )}
       <div className="flex-1">
         {toast.title && <div className="mb-px text-[11px] font-semibold">{toast.title}</div>}
         <div className="opacity-90">{toast.message}</div>

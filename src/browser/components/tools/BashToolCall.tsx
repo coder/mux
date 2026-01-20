@@ -215,7 +215,7 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
     <ToolContainer expanded={expanded}>
       <ToolHeader onClick={handleToggle}>
         <ExpandIcon expanded={expanded}>▶</ExpandIcon>
-        <ToolIcon emoji="🔧" toolName="bash" />
+        <ToolIcon toolName="bash" />
         <span className="text-text font-monospace max-w-96 truncate">{args.script}</span>
         {isBackground && backgroundProcessId && workspaceId && (
           <Tooltip>

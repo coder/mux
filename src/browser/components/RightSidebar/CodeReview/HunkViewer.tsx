@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useMemo } from "react";
+import { Check, Circle } from "lucide-react";
 import type { DiffHunk, Review, ReviewNoteData } from "@/common/types/review";
 import { SelectableDiffRenderer } from "../../shared/DiffRenderer";
 import type { ReviewActionCallbacks } from "../../shared/InlineReviewNote";
@@ -252,7 +253,11 @@ export const HunkViewer = React.memo<HunkViewerProps>(
                   onClick={handleToggleRead}
                   aria-label={`Mark as read (${formatKeybind(KEYBINDS.TOGGLE_HUNK_READ)})`}
                 >
-                  {isRead ? "✓" : "○"}
+                  {isRead ? (
+                    <Check aria-hidden="true" className="h-3 w-3" />
+                  ) : (
+                    <Circle aria-hidden="true" className="h-3 w-3" />
+                  )}
                 </button>
               </TooltipTrigger>
               <TooltipContent align="start" side="top">

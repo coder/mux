@@ -46,7 +46,7 @@ export const BashOutputToolCall: React.FC<BashOutputToolCallProps> = ({
     <ToolContainer expanded={expanded}>
       <ToolHeader onClick={toggleExpanded}>
         <ExpandIcon expanded={expanded}>▶</ExpandIcon>
-        <ToolIcon emoji="🔧" toolName="bash_output" />
+        <ToolIcon toolName="bash_output" />
         <span className="text-text font-monospace max-w-96 truncate">{args.process_id}</span>
         <span className="text-muted ml-2 flex items-center gap-1 text-[10px] whitespace-nowrap">
           <Layers size={10} />
