@@ -488,6 +488,32 @@ describe("StreamingMessageAggregator", () => {
     });
   });
 
+  describe("agent skill display", () => {
+    test("shows muxMetadata.rawCommand in the user transcript", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      const msg = createMuxMessage("u1", "user", 'Run the "mux-docs" skill.', {
+        timestamp: 1,
+        historySequence: 1,
+        muxMetadata: {
+          type: "agent-skill",
+          rawCommand: "/mux-docs",
+          skillName: "mux-docs",
+          scope: "built-in",
+        },
+      });
+
+      aggregator.loadHistoricalMessages([msg], false);
+
+      const displayed = aggregator.getDisplayedMessages();
+      const userMsg = displayed.find((m) => m.type === "user");
+      expect(userMsg).toBeDefined();
+      if (userMsg?.type === "user") {
+        expect(userMsg.content).toBe("/mux-docs");
+      }
+    });
+  });
+
   describe("compaction detection", () => {
     test("treats active stream as compacting on reconnect when stream-start has no mode", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);

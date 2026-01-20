@@ -63,12 +63,25 @@ async function resolveAgentDiscoveryContext(
       throw new Error(metadataResult.error);
     }
     const metadata = metadataResult.data;
-    const runtime = createRuntime(metadata.runtimeConfig, { projectPath: metadata.projectPath });
-    // When workspace agents disabled, discover from project path instead of worktree
-    // (but still use the workspace's runtime for SSH compatibility)
-    const discoveryPath = input.disableWorkspaceAgents
+
+    // Align with aiService.sendMessage: pass workspaceName so Docker can derive containerName
+    // when runtimeConfig.containerName is missing.
+    const runtime = createRuntime(
+      metadata.runtimeConfig ?? { type: "local", srcBaseDir: context.config.srcDir },
+      { projectPath: metadata.projectPath, workspaceName: metadata.name }
+    );
+
+    // In-place workspaces (CLI/benchmarks) have projectPath === name.
+    // Use path directly instead of reconstructing via getWorkspacePath.
+    const isInPlace = metadata.projectPath === metadata.name;
+    const workspacePath = isInPlace
       ? metadata.projectPath
       : runtime.getWorkspacePath(metadata.projectPath, metadata.name);
+
+    // When workspace agents disabled, discover from project path instead of worktree
+    // (but still use the workspace's runtime for SSH compatibility)
+    const discoveryPath = input.disableWorkspaceAgents ? metadata.projectPath : workspacePath;
+
     return { runtime, discoveryPath };
   }
 

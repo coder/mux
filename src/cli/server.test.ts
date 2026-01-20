@@ -208,6 +208,38 @@ describe("oRPC Server Endpoints", () => {
         await fs.rm(projectPath, { recursive: true, force: true });
       }
     });
+    test("agentSkills.list and agentSkills.get work with workspaceId", async () => {
+      const client = createHttpClient(serverHandle.server.baseUrl);
+
+      const projectPath = await fs.mkdtemp(path.join(os.tmpdir(), "mux-agent-skills-workspace-"));
+      const branchName = `agent-skills-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+      try {
+        const createResult = await client.workspace.create({
+          projectPath,
+          branchName,
+          runtimeConfig: { type: "local" },
+        });
+
+        expect(createResult.success).toBe(true);
+        if (!createResult.success) {
+          return;
+        }
+
+        const workspaceId = createResult.metadata.id;
+
+        const descriptors = await client.agentSkills.list({ workspaceId });
+        expect(descriptors.length).toBeGreaterThan(0);
+        expect(descriptors.some((d) => d.name === "mux-docs" && d.scope === "built-in")).toBe(true);
+
+        const pkg = await client.agentSkills.get({ workspaceId, skillName: "mux-docs" });
+        expect(pkg.frontmatter.name).toBe("mux-docs");
+        expect(pkg.scope).toBe("built-in");
+      } finally {
+        await fs.rm(projectPath, { recursive: true, force: true });
+      }
+    });
+
     test("ping with empty string", async () => {
       const client = createHttpClient(serverHandle.server.baseUrl);
       const result = await client.general.ping("");

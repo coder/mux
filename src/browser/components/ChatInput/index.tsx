@@ -1030,6 +1030,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         if (!isMounted || agentSkillsRequestIdRef.current !== requestId) {
           return;
         }
+
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        pushToast({
+          type: "error",
+          title: "Agent skills unavailable",
+          message: `Failed to load agent skills: ${errorMessage}`,
+        });
         setAgentSkillDescriptors([]);
       }
     };
@@ -1039,7 +1046,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     return () => {
       isMounted = false;
     };
-  }, [api, variant, workspaceId, atMentionProjectPath, sendMessageOptions.disableWorkspaceAgents]);
+  }, [
+    api,
+    variant,
+    workspaceId,
+    atMentionProjectPath,
+    sendMessageOptions.disableWorkspaceAgents,
+    pushToast,
+  ]);
 
   // Voice input: track whether OpenAI API key is configured (subscribe to provider config changes)
   useEffect(() => {
@@ -1422,7 +1436,16 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   description: pkg.frontmatter.description,
                   scope: pkg.scope,
                 };
-              } catch {
+              } catch (error) {
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                if (!/Agent skill not found/i.test(errorMessage)) {
+                  pushToast({
+                    type: "error",
+                    message: `Failed to resolve skill '${command}': ${errorMessage}`,
+                  });
+                  return;
+                }
+
                 // Not a skill (or not available yet) - fall through.
               }
             }
@@ -1514,7 +1537,16 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                 description: pkg.frontmatter.description,
                 scope: pkg.scope,
               };
-            } catch {
+            } catch (error) {
+              const errorMessage = error instanceof Error ? error.message : String(error);
+              if (!/Agent skill not found/i.test(errorMessage)) {
+                pushToast({
+                  type: "error",
+                  message: `Failed to resolve skill '${command}': ${errorMessage}`,
+                });
+                return;
+              }
+
               // Not a skill (or not available yet) - fall through.
             }
           }

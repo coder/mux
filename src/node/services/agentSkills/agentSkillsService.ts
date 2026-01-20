@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
 import type { Runtime } from "@/node/runtime/Runtime";
-import { SSHRuntime } from "@/node/runtime/SSHRuntime";
+import { RemoteRuntime } from "@/node/runtime/RemoteRuntime";
 import { shellQuote } from "@/node/runtime/backgroundCommands";
 import { execBuffered, readFileString } from "@/node/utils/runtime/helpers";
 
@@ -57,30 +57,32 @@ async function listSkillDirectoriesFromLocalFs(root: string): Promise<string[]> 
 }
 
 async function listSkillDirectoriesFromRuntime(
-  runtime: Runtime,
-  root: string,
-  options: { cwd: string }
+  runtime: RemoteRuntime,
+  root: string
 ): Promise<string[]> {
-  if (!options.cwd) {
-    throw new Error("listSkillDirectoriesFromRuntime: options.cwd is required");
-  }
-
   const quotedRoot = shellQuote(root);
   const command =
     `if [ -d ${quotedRoot} ]; then ` +
     `find ${quotedRoot} -mindepth 1 -maxdepth 1 -type d -exec basename {} \\; ; ` +
     `fi`;
 
-  const result = await execBuffered(runtime, command, { cwd: options.cwd, timeout: 10 });
-  if (result.exitCode !== 0) {
-    log.warn(`Failed to read skills directory ${root}: ${result.stderr || result.stdout}`);
+  try {
+    // Use a stable cwd so discovery works even when workspacePath is invalid (e.g., remote runtimes
+    // where projectPath is a local absolute path).
+    const result = await execBuffered(runtime, command, { cwd: "/tmp", timeout: 10 });
+    if (result.exitCode !== 0) {
+      log.warn(`Failed to read skills directory ${root}: ${result.stderr || result.stdout}`);
+      return [];
+    }
+
+    return result.stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+  } catch (err) {
+    log.warn(`Failed to read skills directory ${root}: ${formatError(err)}`);
     return [];
   }
-
-  return result.stdout
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
 }
 
 async function readSkillDescriptorFromDir(
@@ -173,8 +175,8 @@ export async function discoverAgentSkills(
     }
 
     const directoryNames =
-      runtime instanceof SSHRuntime
-        ? await listSkillDirectoriesFromRuntime(runtime, resolvedRoot, { cwd: workspacePath })
+      runtime instanceof RemoteRuntime
+        ? await listSkillDirectoriesFromRuntime(runtime, resolvedRoot)
         : await listSkillDirectoriesFromLocalFs(resolvedRoot);
 
     for (const directoryNameRaw of directoryNames) {
@@ -336,7 +338,7 @@ export function resolveAgentSkillFilePath(
     throw new Error(`Invalid filePath (must be relative to the skill directory): ${filePath}`);
   }
 
-  const pathModule = runtime instanceof SSHRuntime ? path.posix : path;
+  const pathModule = runtime instanceof RemoteRuntime ? path.posix : path;
 
   // Resolve relative to skillDir and ensure it stays within skillDir.
   const resolved = pathModule.resolve(skillDir, filePath);
