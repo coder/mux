@@ -66,10 +66,10 @@ async function resolveAgentDiscoveryContext(
 
     // Align with aiService.sendMessage: pass workspaceName so Docker can derive containerName
     // when runtimeConfig.containerName is missing.
-    const runtime = createRuntime(
-      metadata.runtimeConfig ?? { type: "local", srcBaseDir: context.config.srcDir },
-      { projectPath: metadata.projectPath, workspaceName: metadata.name }
-    );
+    const runtime = createRuntime(metadata.runtimeConfig ?? { type: "local" }, {
+      projectPath: metadata.projectPath,
+      workspaceName: metadata.name,
+    });
 
     // In-place workspaces (CLI/benchmarks) have projectPath === name.
     // Use path directly instead of reconstructing via getWorkspacePath.
@@ -86,10 +86,7 @@ async function resolveAgentDiscoveryContext(
   }
 
   // No workspace - use local runtime with project path
-  const runtime = createRuntime(
-    { type: "local", srcBaseDir: context.config.srcDir },
-    { projectPath: input.projectPath! }
-  );
+  const runtime = createRuntime({ type: "local" }, { projectPath: input.projectPath! });
   return { runtime, discoveryPath: input.projectPath! };
 }
 
