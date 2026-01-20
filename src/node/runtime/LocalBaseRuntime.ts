@@ -22,7 +22,7 @@ import { RuntimeError as RuntimeErrorClass } from "./Runtime";
 import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
 import { getBashPath } from "@/node/utils/main/bashPath";
 import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
-import { DisposableProcess } from "@/node/utils/disposableExec";
+import { DisposableProcess, killProcessTree } from "@/node/utils/disposableExec";
 import { expandTilde } from "./tildeExpansion";
 import { getInitHookPath, createLineBufferedLoggers } from "./initHook";
 
@@ -118,13 +118,11 @@ export abstract class LocalBaseRuntime implements Runtime {
         // Clean up any background processes (process group cleanup)
         // This prevents zombie processes when scripts spawn background tasks
         if (childProcess.pid !== undefined) {
-          try {
-            // Kill entire process group with SIGKILL - cannot be caught/ignored
-            // Use negative PID to signal the entire process group
-            process.kill(-childProcess.pid, "SIGKILL");
-          } catch {
-            // Process group already dead or doesn't exist - ignore
-          }
+          // Kill the full process tree to prevent hangs when scripts spawn background jobs.
+          //
+          // On Unix we can kill the whole group via process.kill(-pid).
+          // On Windows we must use taskkill to avoid leaking child processes.
+          killProcessTree(childProcess.pid);
         }
 
         // Check abort first (highest priority)
@@ -158,12 +156,8 @@ export abstract class LocalBaseRuntime implements Runtime {
     disposable.addCleanup(() => {
       if (childProcess.pid === undefined) return;
 
-      try {
-        // Kill entire process group with SIGKILL - cannot be caught/ignored
-        process.kill(-childProcess.pid, "SIGKILL");
-      } catch {
-        // Process group already dead or doesn't exist - ignore
-      }
+      // Kill the full process tree (see comment in exit handler).
+      killProcessTree(childProcess.pid);
     });
 
     // Handle abort signal

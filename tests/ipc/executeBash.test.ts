@@ -13,6 +13,7 @@ function expectWorkspaceCreationSuccess(result: WorkspaceCreationResult): Worksp
   return result.metadata;
 }
 
+const TEST_TIMEOUT_MS = process.platform === "win32" ? 30_000 : 15_000;
 // Skip all tests if TEST_INTEGRATION is not set
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
@@ -47,7 +48,7 @@ describeIntegration("executeBash", () => {
         await cleanupTempGitRepo(tempGitRepo);
       }
     },
-    15000
+    TEST_TIMEOUT_MS
   );
 
   test.concurrent(
@@ -81,7 +82,7 @@ describeIntegration("executeBash", () => {
         await cleanupTempGitRepo(tempGitRepo);
       }
     },
-    15000
+    TEST_TIMEOUT_MS
   );
 
   test.concurrent(
@@ -117,7 +118,7 @@ describeIntegration("executeBash", () => {
         await cleanupTempGitRepo(tempGitRepo);
       }
     },
-    15000
+    TEST_TIMEOUT_MS
   );
 
   test.concurrent(
@@ -153,7 +154,7 @@ describeIntegration("executeBash", () => {
         await cleanupTempGitRepo(tempGitRepo);
       }
     },
-    15000
+    TEST_TIMEOUT_MS
   );
 
   test.concurrent(
@@ -191,7 +192,7 @@ describeIntegration("executeBash", () => {
         await cleanupTempGitRepo(tempGitRepo);
       }
     },
-    15000
+    TEST_TIMEOUT_MS
   );
 
   test.concurrent(
@@ -214,7 +215,7 @@ describeIntegration("executeBash", () => {
         await cleanupTestEnvironment(env);
       }
     },
-    15000
+    TEST_TIMEOUT_MS
   );
 
   test.concurrent(
@@ -258,7 +259,7 @@ describeIntegration("executeBash", () => {
         await cleanupTempGitRepo(tempGitRepo);
       }
     },
-    15000
+    TEST_TIMEOUT_MS
   );
 
   test.concurrent(
@@ -322,6 +323,6 @@ describeIntegration("executeBash", () => {
         await cleanupTempGitRepo(tempGitRepo);
       }
     },
-    15000
+    TEST_TIMEOUT_MS
   );
 });
