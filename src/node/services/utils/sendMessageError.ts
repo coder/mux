@@ -1,5 +1,6 @@
 import assert from "@/common/utils/assert";
 import type { SendMessageError, StreamErrorType } from "@/common/types/errors";
+import { createAssistantMessageId } from "./messageIds";
 
 /**
  * Helper to wrap arbitrary errors into SendMessageError structures.
@@ -71,6 +72,6 @@ export const buildStreamErrorEventData = (
   error: SendMessageError
 ): { messageId: string; error: string; errorType: StreamErrorType } => {
   const { message, errorType } = formatSendMessageError(error);
-  const messageId = `assistant-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+  const messageId = createAssistantMessageId();
   return { messageId, error: message, errorType };
 };
