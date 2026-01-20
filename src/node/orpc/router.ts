@@ -1804,8 +1804,8 @@ export const router = (authToken?: string) => {
                 ]);
 
               const workspaceName = workspaceInfo?.name ?? input.workspaceId;
-              const configPathHint = `.mux/${workspaceName}.harness.jsonc`;
-              const progressPathHint = `.mux/${workspaceName}.harness.progress.md`;
+              const configPathHint = `.mux/harness/${workspaceName}.harness.jsonc`;
+              const progressPathHint = `.mux/harness/${workspaceName}.harness.progress.md`;
 
               const lines: string[] = [];
               lines.push("# Harness bearings");

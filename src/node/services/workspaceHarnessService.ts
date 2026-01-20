@@ -18,7 +18,7 @@ import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { execBuffered, readFileString, writeFileString } from "@/node/utils/runtime/helpers";
 import { log } from "@/node/services/log";
 
-const HARNESS_DIR = ".mux";
+const HARNESS_DIR = ".mux/harness";
 
 const HARNESS_GITIGNORE_PATTERNS = [
   `${HARNESS_DIR}/*.harness.jsonc`,
