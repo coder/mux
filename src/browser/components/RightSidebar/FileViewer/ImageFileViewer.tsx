@@ -11,6 +11,7 @@ interface ImageFileViewerProps {
   base64: string;
   mimeType: string;
   size: number;
+  filePath: string;
 }
 
 const MIN_ZOOM = 0.1;
@@ -107,13 +108,14 @@ export const ImageFileViewer: React.FC<ImageFileViewerProps> = (props) => {
       {/* Toolbar */}
       <div className="border-border-light flex items-center justify-between border-b px-2 py-1">
         <div className="text-muted-foreground flex min-w-0 flex-1 items-center gap-2 text-xs">
+          <span className="min-w-0 truncate">{props.filePath}</span>
           {imageDimensions && (
             <span className="shrink-0">
               {imageDimensions.width} × {imageDimensions.height}
             </span>
           )}
           <span className="shrink-0">{formatSize(props.size)}</span>
-          <span className="truncate opacity-60">{props.mimeType}</span>
+          <span className="shrink-0 truncate opacity-60">{props.mimeType}</span>
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <button

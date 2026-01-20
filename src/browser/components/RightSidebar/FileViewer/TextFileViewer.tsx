@@ -19,6 +19,8 @@ interface TextFileViewerProps {
   diff: string | null;
   /** Callback to refresh the file contents */
   onRefresh?: () => void;
+  /** Whether a background refresh is in progress */
+  isRefreshing?: boolean;
 }
 
 // Format file size for display
@@ -212,7 +214,7 @@ export const TextFileViewer: React.FC<TextFileViewerProps> = (props) => {
             </div>
           </>
         ) : (
-          <div className="line-number w-10 shrink-0 pr-2 text-right text-[var(--color-muted)] select-none">
+          <div className="w-10 shrink-0 pr-2 text-right text-[var(--color-muted)] select-none">
             {newLineNum ?? ""}
           </div>
         )}
@@ -226,10 +228,23 @@ export const TextFileViewer: React.FC<TextFileViewerProps> = (props) => {
     );
   };
 
+  // Width of line number gutter(s)
+  const gutterWidth = hasDiff ? "5rem" : "2.5rem"; // w-10 = 2.5rem, two columns for diff
+
   return (
-    <div data-testid="text-file-viewer" className="bg-background flex h-full flex-col">
-      <div className="min-h-0 flex-1 overflow-auto">
-        <div className="code-block-container text-[11px]" style={{ display: "block" }}>
+    <div data-testid="text-file-viewer" className="flex h-full flex-col">
+      <div className="min-h-0 flex-1 overflow-auto bg-[var(--color-code-bg)]">
+        {/* Content wrapper - min-h-full so gutter extends when content is short */}
+        <div
+          className="relative min-h-full text-[11px]"
+          style={{ fontFamily: "var(--font-monospace)" }}
+        >
+          {/* Gutter background + border that extends full height of content */}
+          <div
+            className="pointer-events-none absolute inset-y-0 left-0 border-r border-[var(--color-border-light)] bg-black/20"
+            style={{ width: gutterWidth }}
+          />
+          {/* Lines */}
           {unifiedLines
             ? unifiedLines.map((line, idx) =>
                 renderLine(line.content, line.oldLineNumber, line.newLineNumber, line.type, idx)
@@ -242,24 +257,26 @@ export const TextFileViewer: React.FC<TextFileViewerProps> = (props) => {
 
       {/* Status line */}
       <div className="border-border-light text-muted-foreground flex shrink-0 items-center gap-3 border-t px-2 py-1 text-xs">
-        <span>{formatSize(props.size)}</span>
-        <span>{lineCount.toLocaleString()} lines</span>
+        <span className="min-w-0 truncate">{props.filePath}</span>
+        <span className="shrink-0">{formatSize(props.size)}</span>
+        <span className="shrink-0">{lineCount.toLocaleString()} lines</span>
         {(addedCount > 0 || removedCount > 0) && (
-          <span>
+          <span className="shrink-0">
             <span className="text-green-600 dark:text-green-500">+{addedCount}</span>
             <span className="text-muted-foreground">/</span>
             <span className="text-red-600 dark:text-red-500">-{removedCount}</span>
           </span>
         )}
-        <span className="ml-auto">{languageDisplayName}</span>
+        <span className="ml-auto shrink-0">{languageDisplayName}</span>
         {props.onRefresh && (
           <button
             type="button"
             className="text-muted hover:bg-accent/50 hover:text-foreground rounded p-0.5"
             onClick={props.onRefresh}
             title="Refresh file"
+            disabled={props.isRefreshing}
           >
-            <RefreshCw className="h-3.5 w-3.5" />
+            <RefreshCw className={`h-3.5 w-3.5 ${props.isRefreshing ? "animate-spin" : ""}`} />
           </button>
         )}
       </div>

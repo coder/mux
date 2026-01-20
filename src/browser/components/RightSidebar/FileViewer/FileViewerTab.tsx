@@ -18,6 +18,12 @@ import {
   EXIT_CODE_TOO_LARGE,
   type FileContentsResult,
 } from "@/browser/utils/fileExplorer";
+import {
+  getCachedFileContent,
+  setCachedFileContent,
+  removeCachedFileContent,
+  cacheToResult,
+} from "@/browser/utils/fileContentCache";
 
 interface FileViewerTabProps {
   workspaceId: string;
@@ -33,13 +39,24 @@ const DEBOUNCE_MS = 2000;
 
 export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
   const { api } = useAPI();
+
+  // Initialize from cache if available
+  const initialCached = React.useMemo(() => {
+    if (!props.relativePath) return null;
+    const cached = getCachedFileContent(props.workspaceId, props.relativePath);
+    if (!cached) return null;
+    return { data: cacheToResult(cached), diff: cached.diff ?? null };
+  }, [props.workspaceId, props.relativePath]);
+
   // Separate loading flag from loaded data - keeps content visible during refresh
-  const [isLoading, setIsLoading] = React.useState(true);
+  const [isLoading, setIsLoading] = React.useState(!initialCached);
+  // Track background refresh state (showing cached content while fetching fresh)
+  const [isRefreshing, setIsRefreshing] = React.useState(!!initialCached);
   const [error, setError] = React.useState<string | null>(null);
-  const [loaded, setLoaded] = React.useState<LoadedData | null>(null);
+  const [loaded, setLoaded] = React.useState<LoadedData | null>(initialCached);
   // Track which path the loaded data is for (to detect file switches)
   // Using ref to avoid effect dep issues - we only read this to decide loading state
-  const loadedPathRef = React.useRef<string | null>(null);
+  const loadedPathRef = React.useRef<string | null>(initialCached ? props.relativePath : null);
   // Refresh counter to trigger re-fetch
   const [refreshCounter, setRefreshCounter] = React.useState(0);
 
@@ -83,6 +100,9 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
     const isSameFile = loadedPathRef.current === props.relativePath;
     if (!isSameFile) {
       setIsLoading(true);
+    } else {
+      // Same file - this is a background refresh
+      setIsRefreshing(true);
     }
     setError(null);
 
@@ -106,6 +126,7 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
         if (!fileResult.success) {
           setError(fileResult.error);
           setIsLoading(false);
+          setIsRefreshing(false);
           return;
         }
 
@@ -119,14 +140,18 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
           });
           loadedPathRef.current = props.relativePath;
           setIsLoading(false);
+          setIsRefreshing(false);
           return;
         }
 
         // Check for bash command failure with no usable output
         if (!bashResult.success && !bashResult.output) {
           const errorMsg = bashResult.error ?? "Failed to read file";
+          // Remove from cache if file appears to be deleted/not found
+          removeCachedFileContent(props.workspaceId, props.relativePath);
           setError(errorMsg.length > 128 ? errorMsg.slice(0, 128) + "..." : errorMsg);
           setIsLoading(false);
+          setIsRefreshing(false);
           return;
         }
 
@@ -142,13 +167,18 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
           diff = diffResult.data.output;
         }
 
+        // Update cache with fresh data
+        setCachedFileContent(props.workspaceId, props.relativePath, data, diff);
+
         setLoaded({ data, diff });
         loadedPathRef.current = props.relativePath;
         setIsLoading(false);
+        setIsRefreshing(false);
       } catch (err) {
         if (cancelled) return;
         setError(err instanceof Error ? err.message : "Failed to load file");
         setIsLoading(false);
+        setIsRefreshing(false);
       }
     }
 
@@ -213,12 +243,20 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
         size={data.size}
         diff={diff}
         onRefresh={handleRefresh}
+        isRefreshing={isRefreshing}
       />
     );
   }
 
   if (data.type === "image") {
-    return <ImageFileViewer base64={data.base64} mimeType={data.mimeType} size={data.size} />;
+    return (
+      <ImageFileViewer
+        base64={data.base64}
+        mimeType={data.mimeType}
+        size={data.size}
+        filePath={props.relativePath}
+      />
+    );
   }
 
   // This shouldn't happen, but handle it gracefully

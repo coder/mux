@@ -11,6 +11,11 @@ import React from "react";
 import { useAPI } from "@/browser/contexts/API";
 import { workspaceStore } from "@/browser/stores/WorkspaceStore";
 import {
+  readPersistedState,
+  updatePersistedState,
+  usePersistedState,
+} from "@/browser/hooks/usePersistedState";
+import {
   ChevronDown,
   ChevronRight,
   ChevronsDownUp,
@@ -53,18 +58,43 @@ interface ExplorerState {
 const DEBOUNCE_MS = 2000;
 const INDENT_PX = 12;
 
+// Cache key builders
+const entriesCacheKey = (workspaceId: string) => `explorer:entries:${workspaceId}`;
+const expandedCacheKey = (workspaceId: string) => `explorer:expanded:${workspaceId}`;
+
 export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
   const { api } = useAPI();
 
-  const [state, setState] = React.useState<ExplorerState>({
-    entries: new Map(),
-    expanded: new Set(),
-    loading: new Set(), // starts empty, set when fetch begins
-    error: null,
-    gitStatus: { ignored: new Set(), modified: new Set(), untracked: new Set() },
-    ignoredDirs: new Set(),
-    checkedDirPaths: new Set(),
+  // Persist expanded folders across tab switches
+  const [expandedPaths, setExpandedPaths] = usePersistedState<string[]>(
+    expandedCacheKey(props.workspaceId),
+    [],
+    { listener: true }
+  );
+  const expandedSet = React.useMemo(() => new Set(expandedPaths), [expandedPaths]);
+
+  // Initialize entries from cache
+  const [state, setState] = React.useState<ExplorerState>(() => {
+    const cached = readPersistedState<Record<string, FileTreeNode[]>>(
+      entriesCacheKey(props.workspaceId),
+      {}
+    );
+    return {
+      entries: new Map(Object.entries(cached)),
+      expanded: new Set(), // managed by usePersistedState above
+      loading: new Set(), // starts empty, set when fetch begins
+      error: null,
+      gitStatus: { ignored: new Set(), modified: new Set(), untracked: new Set() },
+      ignoredDirs: new Set(),
+      checkedDirPaths: new Set(),
+    };
   });
+
+  // Persist entries when they change
+  React.useEffect(() => {
+    const obj = Object.fromEntries(state.entries);
+    updatePersistedState(entriesCacheKey(props.workspaceId), obj, {});
+  }, [state.entries, props.workspaceId]);
 
   // Track if we've done initial load
   const initialLoadRef = React.useRef(false);
@@ -109,15 +139,14 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
 
         // Check for ORPC-level failure
         if (!lsResult.success) {
+          // Remove from expanded set (dir may have been deleted)
+          setExpandedPaths((prev) => prev.filter((p) => p !== key));
           setState((prev) => {
-            const newExpanded = new Set(prev.expanded);
-            newExpanded.delete(key);
             const newEntries = new Map(prev.entries);
             newEntries.delete(key);
             return {
               ...prev,
               entries: newEntries,
-              expanded: newExpanded,
               loading: new Set([...prev.loading].filter((k) => k !== key)),
               error: suppressErrors ? prev.error : lsResult.error,
             };
@@ -128,17 +157,15 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
         // Check for bash command failure (non-zero exit)
         if (!lsResult.data.success) {
           const errorMessage = lsResult.data.error || "Failed to list directory";
+          // On failure, remove from expanded set (dir may have been deleted)
+          setExpandedPaths((prev) => prev.filter((p) => p !== key));
           setState((prev) => {
-            // On failure, remove from expanded set (dir may have been deleted)
-            const newExpanded = new Set(prev.expanded);
-            newExpanded.delete(key);
             // Remove stale entries
             const newEntries = new Map(prev.entries);
             newEntries.delete(key);
             return {
               ...prev,
               entries: newEntries,
-              expanded: newExpanded,
               loading: new Set([...prev.loading].filter((k) => k !== key)),
               // Only set error for root or if not suppressing
               error: suppressErrors ? prev.error : errorMessage,
@@ -238,16 +265,14 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
 
         return nodes;
       } catch (err) {
+        // On error, remove from expanded set
+        setExpandedPaths((prev) => prev.filter((p) => p !== key));
         setState((prev) => {
-          // On error, remove from expanded set
-          const newExpanded = new Set(prev.expanded);
-          newExpanded.delete(key);
           const newEntries = new Map(prev.entries);
           newEntries.delete(key);
           return {
             ...prev,
             entries: newEntries,
-            expanded: newExpanded,
             loading: new Set([...prev.loading].filter((k) => k !== key)),
             error: suppressErrors ? prev.error : err instanceof Error ? err.message : String(err),
           };
@@ -255,17 +280,22 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
         return null;
       }
     },
-    [api, props.workspaceId]
+    [api, props.workspaceId, setExpandedPaths]
   );
 
   // Initial load - retry when api becomes available
+  // Also fetch expanded directories from cache
   React.useEffect(() => {
     if (!api) return;
     if (!initialLoadRef.current) {
       initialLoadRef.current = true;
       void fetchDirectory("");
+      // Fetch expanded directories from persisted state (background refresh)
+      for (const p of expandedSet) {
+        void fetchDirectory(p, true); // suppress errors - folder may have been deleted
+      }
     }
-  }, [api, fetchDirectory]);
+  }, [api, fetchDirectory, expandedSet]);
 
   // Subscribe to file-modifying tool events and debounce refresh
   React.useEffect(() => {
@@ -277,7 +307,7 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
         // Refresh root and all expanded directories
         // Suppress errors for non-root paths (dir may have been deleted)
         void fetchDirectory("");
-        for (const p of state.expanded) {
+        for (const p of expandedSet) {
           void fetchDirectory(p, true);
         }
       }, DEBOUNCE_MS);
@@ -287,7 +317,7 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
       unsubscribe();
       if (timeoutId) clearTimeout(timeoutId);
     };
-  }, [props.workspaceId, state.expanded, fetchDirectory]);
+  }, [props.workspaceId, expandedSet, fetchDirectory]);
 
   // Toggle expand/collapse
   const toggleExpand = (node: FileTreeNode) => {
@@ -295,43 +325,32 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
 
     const key = node.path;
 
-    setState((prev) => {
-      const newExpanded = new Set(prev.expanded);
-
-      if (newExpanded.has(key)) {
-        newExpanded.delete(key);
-        return { ...prev, expanded: newExpanded };
-      }
-
-      newExpanded.add(key);
-
+    if (expandedSet.has(key)) {
+      setExpandedPaths((prev) => prev.filter((p) => p !== key));
+    } else {
+      setExpandedPaths((prev) => [...prev, key]);
       // Always fetch when expanding to ensure fresh data
       void fetchDirectory(key);
-
-      return { ...prev, expanded: newExpanded };
-    });
+    }
   };
 
   // Refresh all expanded paths
   const handleRefresh = () => {
-    const pathsToRefresh = ["", ...state.expanded];
+    const pathsToRefresh = ["", ...expandedSet];
     void Promise.all(pathsToRefresh.map((p) => fetchDirectory(p)));
   };
 
   // Collapse all
   const handleCollapseAll = () => {
-    setState((prev) => ({
-      ...prev,
-      expanded: new Set(),
-    }));
+    setExpandedPaths([]);
   };
 
-  const hasExpandedDirs = state.expanded.size > 0;
+  const hasExpandedDirs = expandedSet.size > 0;
 
   // Render a tree node recursively
   const renderNode = (node: FileTreeNode, depth: number): React.ReactNode => {
     const key = node.path;
-    const isExpanded = state.expanded.has(key);
+    const isExpanded = expandedSet.has(key);
     const isLoading = state.loading.has(key);
     const children = state.entries.get(key) ?? [];
     // Check both node.ignored flag and ignoredDirs cache
