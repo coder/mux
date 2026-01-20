@@ -14,6 +14,7 @@ import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { Button } from "@/browser/components/ui/button";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { useTutorial } from "@/browser/contexts/TutorialContext";
+import type { TerminalSessionCreateOptions } from "@/browser/utils/terminal";
 import { useOpenTerminal } from "@/browser/hooks/useOpenTerminal";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
@@ -35,7 +36,7 @@ interface WorkspaceHeaderProps {
   leftSidebarCollapsed: boolean;
   onToggleLeftSidebarCollapsed: () => void;
   /** Callback to open integrated terminal in sidebar (optional, falls back to popout) */
-  onOpenTerminal?: () => void;
+  onOpenTerminal?: (options?: TerminalSessionCreateOptions) => void;
 }
 
 export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({

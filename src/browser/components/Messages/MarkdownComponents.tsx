@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import React, { useState, useEffect } from "react";
+import { Play } from "lucide-react";
 import { Mermaid } from "./Mermaid";
+import { useOptionalMessageListContext } from "./MessageListContext";
 import { highlightCode } from "@/browser/utils/highlighting/highlightWorkerClient";
 import { extractShikiLines } from "@/browser/utils/highlighting/shiki-shared";
 import { useTheme } from "@/browser/contexts/ThemeContext";
@@ -29,6 +31,65 @@ interface SummaryProps {
 interface AnchorProps {
   href?: string;
   children?: ReactNode;
+}
+
+const RUNNABLE_SHELL_LANGUAGES = new Set([
+  "bash",
+  "sh",
+  "shell",
+  "zsh",
+  "fish",
+  "powershell",
+  "pwsh",
+  "cmd",
+  "batch",
+]);
+
+function normalizeSuggestedShellCommand(code: string): string {
+  const lines = code.split("\n");
+
+  // Trim leading/trailing blank lines (but preserve blank lines in the middle).
+  while (lines.length > 0 && lines[0].trim() === "") {
+    lines.shift();
+  }
+  while (lines.length > 0 && lines[lines.length - 1].trim() === "") {
+    lines.pop();
+  }
+
+  let sawShellPrompt = false;
+
+  return lines
+    .map((line, idx) => {
+      // Remove leading prompt characters (copy/paste friendly).
+      // Examples:
+      //   $ npm install
+      //   $ cat <<EOF
+      //   > line 1
+      //   > EOF
+
+      // Common shell prompt marker.
+      if (/^\s*\$\s+/.test(line)) {
+        sawShellPrompt = true;
+        return line.replace(/^\s*\$\s+/, "");
+      }
+
+      // Avoid stripping leading `>` on the *first* line since it can be a valid
+      // redirection operator (e.g. `> output.txt` truncates/creates a file).
+      //
+      // But if the snippet contains a `$ ` prompt marker, then `> ` on subsequent
+      // lines is usually a continuation prompt (PS2) and should be stripped.
+      if (sawShellPrompt && idx > 0) {
+        return line.replace(/^\s*>\s+/, "");
+      }
+
+      return line;
+    })
+    .join("\n")
+    .trim();
+}
+
+function isRunnableShellLanguage(language: string): boolean {
+  return RUNNABLE_SHELL_LANGUAGES.has(language.toLowerCase());
 }
 
 interface CodeBlockProps {
@@ -80,11 +141,19 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, language }) => {
     };
   }, [code, language, themeMode]);
 
+  const messageListContext = useOptionalMessageListContext();
+  const openTerminal = messageListContext?.openTerminal;
+  const runnableCommand = isRunnableShellLanguage(language)
+    ? normalizeSuggestedShellCommand(code)
+    : "";
+  const showRunButton = Boolean(openTerminal) && runnableCommand.length > 0;
   const lines = highlightedLines ?? plainLines;
   const isSingleLine = lines.length === 1;
 
   return (
-    <div className={`code-block-wrapper${isSingleLine ? " code-block-single-line" : ""}`}>
+    <div
+      className={`code-block-wrapper${isSingleLine ? " code-block-single-line" : ""}${showRunButton ? " code-block-runnable" : ""}`}
+    >
       <div className="code-block-container">
         {lines.map((content, idx) => (
           <React.Fragment key={idx}>
@@ -107,6 +176,16 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, language }) => {
           </React.Fragment>
         ))}
       </div>
+      {showRunButton ? (
+        <button
+          type="button"
+          className="copy-button code-run-button"
+          aria-label="Run command"
+          onClick={() => openTerminal?.({ initialCommand: runnableCommand })}
+        >
+          <Play className="copy-icon" />
+        </button>
+      ) : null}
       <CopyButton text={code} className="code-copy-button" />
     </div>
   );

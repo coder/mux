@@ -1611,6 +1611,11 @@ span.search-highlight {
   line-height: 1.6;
 }
 
+/* Extra right padding when we show multiple code block action buttons (Run + Copy) */
+.code-block-runnable .code-block-container {
+  padding-right: 80px;
+}
+
 .line-number {
   background: var(--color-line-number-bg);
   padding: 0 8px 0 6px;
@@ -1673,11 +1678,30 @@ span.search-highlight {
   transition: opacity 0.2s;
 }
 
+
+.code-run-button {
+  position: absolute;
+  bottom: 8px;
+  right: 44px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.code-block-wrapper:hover .code-run-button {
+  opacity: 1;
+}
 .code-block-wrapper:hover .code-copy-button {
   opacity: 1;
 }
 
 /* Single-line code block: inline copy button at top-right */
+
+.code-block-single-line .code-run-button {
+  top: 50%;
+  bottom: auto;
+  transform: translateY(-50%);
+  padding: 2px 4px;
+}
 .code-block-single-line .code-copy-button {
   top: 50%;
   bottom: auto;
@@ -1685,6 +1709,11 @@ span.search-highlight {
   padding: 2px 4px;
 }
 
+
+.code-block-single-line .code-run-button .copy-icon {
+  width: 12px;
+  height: 12px;
+}
 .code-block-single-line .code-copy-button .copy-icon {
   width: 12px;
   height: 12px;

@@ -1,8 +1,11 @@
+import type { TerminalSessionCreateOptions } from "@/browser/utils/terminal";
 import React, { createContext, useContext } from "react";
 
 interface MessageListContextValue {
   workspaceId: string;
   latestMessageId: string | null;
+  /** Open an integrated terminal tab for this workspace (optionally running a command) */
+  openTerminal?: (options?: TerminalSessionCreateOptions) => void;
 }
 
 const MessageListContext = createContext<MessageListContextValue | null>(null);
