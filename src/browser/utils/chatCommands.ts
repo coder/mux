@@ -960,10 +960,7 @@ export async function handlePlanOpenCommand(
 
   setInput("");
 
-  const planPromise = api.workspace.getPlanContent({ workspaceId });
-  const workspaceInfoPromise = api.workspace.getInfo({ workspaceId });
-
-  const [planResult, workspaceInfo] = await Promise.all([planPromise, workspaceInfoPromise]);
+  const planResult = await api.workspace.getPlanContent({ workspaceId });
   if (!planResult.success) {
     setToast({
       id: Date.now().toString(),
@@ -972,6 +969,8 @@ export async function handlePlanOpenCommand(
     });
     return { clearInput: true, toastShown: true };
   }
+
+  const workspaceInfo = await api.workspace.getInfo({ workspaceId });
 
   const openResult = await openInEditor({
     api,
