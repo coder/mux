@@ -47,6 +47,67 @@ describe("MarkdownComponents command code blocks", () => {
     expect(openTerminal).toHaveBeenCalledWith({ initialCommand: "npm install" });
   });
 
+  test("strips PowerShell prompts", () => {
+    const openTerminal = mock(() => undefined);
+
+    const element = markdownComponents.code({
+      inline: false,
+      className: "language-powershell",
+      children: "PS C:\\Users\\mike> npm install mux\n",
+    });
+
+    const { getByRole } = render(
+      <ThemeProvider forcedTheme="dark">
+        <MessageListProvider
+          value={{
+            workspaceId: "ws-1",
+            latestMessageId: null,
+            openTerminal,
+          }}
+        >
+          {element}
+        </MessageListProvider>
+      </ThemeProvider>
+    );
+
+    const runButton = getByRole("button", { name: "Run command" });
+    fireEvent.click(runButton);
+
+    expect(openTerminal).toHaveBeenCalledWith({
+      initialCommand: "npm install mux",
+    });
+  });
+
+  test("strips cmd.exe prompts", () => {
+    const openTerminal = mock(() => undefined);
+
+    const element = markdownComponents.code({
+      inline: false,
+      className: "language-cmd",
+      children: "C:\\Users\\mike> dir\n",
+    });
+
+    const { getByRole } = render(
+      <ThemeProvider forcedTheme="dark">
+        <MessageListProvider
+          value={{
+            workspaceId: "ws-1",
+            latestMessageId: null,
+            openTerminal,
+          }}
+        >
+          {element}
+        </MessageListProvider>
+      </ThemeProvider>
+    );
+
+    const runButton = getByRole("button", { name: "Run command" });
+    fireEvent.click(runButton);
+
+    expect(openTerminal).toHaveBeenCalledWith({
+      initialCommand: "dir",
+    });
+  });
   test("strips multiline continuation prompts after a $ shell prompt", () => {
     const openTerminal = mock(() => undefined);
 

@@ -56,7 +56,7 @@ function normalizeSuggestedShellCommand(code: string): string {
     lines.pop();
   }
 
-  let sawShellPrompt = false;
+  let promptKind: "unix" | "powershell" | "cmd" | null = null;
 
   return lines
     .map((line, idx) => {
@@ -66,20 +66,39 @@ function normalizeSuggestedShellCommand(code: string): string {
       //   $ cat <<EOF
       //   > line 1
       //   > EOF
+      //   PS C:\Users\mike> npm install
+      //   C:\Users\mike> npm install
 
-      // Common shell prompt marker.
+      // Common Unix shell prompt marker.
       if (/^\s*\$\s+/.test(line)) {
-        sawShellPrompt = true;
+        promptKind = "unix";
         return line.replace(/^\s*\$\s+/, "");
+      }
+
+      // PowerShell prompt marker.
+      if (/^\s*PS(?:\s+[^>]+)?>\s*/.test(line)) {
+        promptKind = "powershell";
+        return line.replace(/^\s*PS(?:\s+[^>]+)?>\s*/, "");
+      }
+
+      // cmd.exe prompt marker.
+      if (/^\s*[A-Za-z]:\\[^>]*>\s*/.test(line)) {
+        promptKind = "cmd";
+        return line.replace(/^\s*[A-Za-z]:\\[^>]*>\s*/, "");
       }
 
       // Avoid stripping leading `>` on the *first* line since it can be a valid
       // redirection operator (e.g. `> output.txt` truncates/creates a file).
       //
-      // But if the snippet contains a `$ ` prompt marker, then `> ` on subsequent
+      // But if the snippet starts with a `$ ` prompt marker, then `> ` on subsequent
       // lines is usually a continuation prompt (PS2) and should be stripped.
-      if (sawShellPrompt && idx > 0) {
+      if (promptKind === "unix" && idx > 0) {
         return line.replace(/^\s*>\s+/, "");
+      }
+
+      // PowerShell uses `>>` for continuation lines.
+      if (promptKind === "powershell" && idx > 0) {
+        return line.replace(/^\s*>>\s+/, "");
       }
 
       return line;
