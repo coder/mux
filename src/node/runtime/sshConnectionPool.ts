@@ -21,19 +21,25 @@ import { spawn } from "child_process";
 import { log } from "@/node/services/log";
 
 /**
- * SSH Runtime Configuration (defined here to avoid circular deps with SSHRuntime)
+ * SSH connection configuration (host/port/identity only).
  */
-export interface SSHRuntimeConfig {
+export interface SSHConnectionConfig {
   /** SSH host (can be hostname, user@host, or SSH config alias) */
   host: string;
-  /** Working directory on remote host */
-  srcBaseDir: string;
-  /** Directory on remote for background process output (default: /tmp/mux-bashes) */
-  bgOutputDir?: string;
   /** Optional: Path to SSH private key (if not using ~/.ssh/config or ssh-agent) */
   identityFile?: string;
   /** Optional: SSH port (default: 22) */
   port?: number;
+}
+
+/**
+ * SSH Runtime Configuration (defined here to avoid circular deps with SSHRuntime)
+ */
+export interface SSHRuntimeConfig extends SSHConnectionConfig {
+  /** Working directory on remote host */
+  srcBaseDir: string;
+  /** Directory on remote for background process output (default: /tmp/mux-bashes) */
+  bgOutputDir?: string;
 }
 
 /**
@@ -153,13 +159,13 @@ export class SSHConnectionPool {
    *
    * Callers can opt into fail-fast behavior by passing `{ maxWaitMs: 0 }`.
    */
-  async acquireConnection(config: SSHRuntimeConfig, timeoutMs?: number): Promise<void>;
+  async acquireConnection(config: SSHConnectionConfig, timeoutMs?: number): Promise<void>;
   async acquireConnection(
-    config: SSHRuntimeConfig,
+    config: SSHConnectionConfig,
     options?: AcquireConnectionOptions
   ): Promise<void>;
   async acquireConnection(
-    config: SSHRuntimeConfig,
+    config: SSHConnectionConfig,
     timeoutMsOrOptions: number | AcquireConnectionOptions = DEFAULT_PROBE_TIMEOUT_MS
   ): Promise<void> {
     const options: AcquireConnectionOptions =
@@ -261,7 +267,7 @@ export class SSHConnectionPool {
   /**
    * Get current health status for a connection
    */
-  getConnectionHealth(config: SSHRuntimeConfig): ConnectionHealth | undefined {
+  getConnectionHealth(config: SSHConnectionConfig): ConnectionHealth | undefined {
     const key = makeConnectionKey(config);
     return this.health.get(key);
   }
@@ -269,14 +275,14 @@ export class SSHConnectionPool {
   /**
    * Get deterministic controlPath for SSH config.
    */
-  getControlPath(config: SSHRuntimeConfig): string {
+  getControlPath(config: SSHConnectionConfig): string {
     return getControlPath(config);
   }
 
   /**
    * Reset backoff for a connection (e.g., after user intervention)
    */
-  resetBackoff(config: SSHRuntimeConfig): void {
+  resetBackoff(config: SSHConnectionConfig): void {
     const key = makeConnectionKey(config);
     const health = this.health.get(key);
     if (health) {
@@ -291,7 +297,7 @@ export class SSHConnectionPool {
    * Mark connection as healthy.
    * Call after successful SSH operations to maintain health state.
    */
-  markHealthy(config: SSHRuntimeConfig): void {
+  markHealthy(config: SSHConnectionConfig): void {
     const key = makeConnectionKey(config);
     this.markHealthyByKey(key);
   }
@@ -301,7 +307,7 @@ export class SSHConnectionPool {
    * Call when SSH operations fail due to connection issues (not command failures).
    * This triggers backoff to prevent thundering herd on a failing host.
    */
-  reportFailure(config: SSHRuntimeConfig, error: string): void {
+  reportFailure(config: SSHConnectionConfig, error: string): void {
     const key = makeConnectionKey(config);
     this.markFailedByKey(key, error);
   }
@@ -343,7 +349,7 @@ export class SSHConnectionPool {
    * Probe connection health by running a simple command
    */
   private async probeConnection(
-    config: SSHRuntimeConfig,
+    config: SSHConnectionConfig,
     timeoutMs: number,
     key: string
   ): Promise<void> {
@@ -437,7 +443,7 @@ export const sshConnectionPool = new SSHConnectionPool();
  * multi-user systems (different users connecting to same remote would
  * otherwise generate same socket path, causing permission errors).
  */
-export function getControlPath(config: SSHRuntimeConfig): string {
+export function getControlPath(config: SSHConnectionConfig): string {
   const key = makeConnectionKey(config);
   const hash = hashKey(key);
   return path.join(os.tmpdir(), `mux-ssh-${hash}`);
@@ -448,7 +454,7 @@ export function getControlPath(config: SSHRuntimeConfig): string {
  * Identical configs produce identical keys.
  * Includes local username to prevent cross-user socket collisions.
  */
-function makeConnectionKey(config: SSHRuntimeConfig): string {
+function makeConnectionKey(config: SSHConnectionConfig): string {
   // Note: srcBaseDir is intentionally excluded - connection identity is determined
   // by user + host + port + key. This allows health tracking and multiplexing
   // to be shared across workspaces on the same host.

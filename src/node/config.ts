@@ -126,6 +126,7 @@ export class Config {
           agentAiDefaults?: unknown;
           subagentAiDefaults?: unknown;
           modeAiDefaults?: unknown;
+          useSSH2Transport?: unknown;
         };
 
         // Config is stored as array of [path, config] pairs
@@ -182,6 +183,7 @@ export class Config {
             subagentAiDefaults: legacySubagentAiDefaults,
             modeAiDefaults: legacyModeAiDefaults,
             featureFlagOverrides: parsed.featureFlagOverrides,
+            useSSH2Transport: parseOptionalBoolean(parsed.useSSH2Transport),
           };
         }
       }
@@ -220,6 +222,7 @@ export class Config {
         agentAiDefaults?: ProjectsConfig["agentAiDefaults"];
         subagentAiDefaults?: ProjectsConfig["subagentAiDefaults"];
         modeAiDefaults?: ProjectsConfig["modeAiDefaults"];
+        useSSH2Transport?: boolean;
       } = {
         projects: Array.from(config.projects.entries()),
         taskSettings: config.taskSettings ?? DEFAULT_TASK_SETTINGS,
@@ -296,6 +299,10 @@ export class Config {
         if (config.subagentAiDefaults && Object.keys(config.subagentAiDefaults).length > 0) {
           data.subagentAiDefaults = config.subagentAiDefaults;
         }
+      }
+
+      if (config.useSSH2Transport !== undefined) {
+        data.useSSH2Transport = config.useSSH2Transport;
       }
 
       await writeFileAtomic(this.configFile, JSON.stringify(data, null, 2), "utf-8");

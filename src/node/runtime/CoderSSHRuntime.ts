@@ -21,6 +21,7 @@ import type {
   RuntimeStatusEvent,
 } from "./Runtime";
 import { SSHRuntime, type SSHRuntimeConfig } from "./SSHRuntime";
+import type { SSHTransport } from "./transports";
 import type { CoderWorkspaceConfig, RuntimeConfig } from "@/common/types/runtime";
 import { isSSHRuntime } from "@/common/types/runtime";
 import type { CoderService } from "@/node/services/coderService";
@@ -57,6 +58,10 @@ function toCoderCompatibleName(name: string): string {
     .replace(/-{2,}/g, "-"); // Collapse multiple hyphens
 }
 
+const CODER_INACTIVITY_THRESHOLD_MS = 5 * 60 * 1000;
+const CODER_ENSURE_READY_TIMEOUT_MS = 120_000;
+const CODER_STATUS_POLL_INTERVAL_MS = 2_000;
+
 /**
  * SSH runtime that handles Coder workspace provisioning.
  *
@@ -76,8 +81,6 @@ export class CoderSSHRuntime extends SSHRuntime {
    */
   private lastActivityAtMs = 0;
 
-  private static readonly INACTIVITY_THRESHOLD_MS = 5 * 60 * 1000;
-
   /**
    * Flags for WorkspaceService to customize create flow:
    * - deferredHost: skip srcBaseDir resolution (Coder host doesn't exist yet)
@@ -88,23 +91,23 @@ export class CoderSSHRuntime extends SSHRuntime {
     configLevelCollisionDetection: true,
   };
 
-  constructor(config: CoderSSHRuntimeConfig, coderService: CoderService) {
-    super({
+  constructor(config: CoderSSHRuntimeConfig, transport: SSHTransport, coderService: CoderService) {
+    if (!config || !coderService || !transport) {
+      throw new Error("CoderSSHRuntime requires config, transport, and coderService");
+    }
+
+    const baseConfig: SSHRuntimeConfig = {
       host: config.host,
       srcBaseDir: config.srcBaseDir,
       bgOutputDir: config.bgOutputDir,
       identityFile: config.identityFile,
       port: config.port,
-    });
+    };
+
+    super(baseConfig, transport);
     this.coderConfig = config.coder;
     this.coderService = coderService;
   }
-
-  /** Overall timeout for ensureReady operations (start + polling) */
-  private static readonly ENSURE_READY_TIMEOUT_MS = 120_000;
-
-  /** Polling interval when waiting for workspace to stop/start */
-  private static readonly STATUS_POLL_INTERVAL_MS = 2_000;
 
   /** In-flight ensureReady promise to avoid duplicate start/wait sequences */
   private ensureReadyPromise: Promise<EnsureReadyResult> | null = null;
@@ -136,7 +139,7 @@ export class CoderSSHRuntime extends SSHRuntime {
     // Fast path: recently active, skip expensive status check
     if (
       this.lastActivityAtMs !== 0 &&
-      now - this.lastActivityAtMs < CoderSSHRuntime.INACTIVITY_THRESHOLD_MS
+      now - this.lastActivityAtMs < CODER_INACTIVITY_THRESHOLD_MS
     ) {
       return { ready: true };
     }
@@ -177,9 +180,8 @@ export class CoderSSHRuntime extends SSHRuntime {
     };
 
     // Helper: check if we've exceeded overall timeout
-    const isTimedOut = () => Date.now() - startTime > CoderSSHRuntime.ENSURE_READY_TIMEOUT_MS;
-    const remainingMs = () =>
-      Math.max(0, CoderSSHRuntime.ENSURE_READY_TIMEOUT_MS - (Date.now() - startTime));
+    const isTimedOut = () => Date.now() - startTime > CODER_ENSURE_READY_TIMEOUT_MS;
+    const remainingMs = () => Math.max(0, CODER_ENSURE_READY_TIMEOUT_MS - (Date.now() - startTime));
 
     // Step 1: Check current status for short-circuits
     emitStatus("checking");
@@ -241,7 +243,7 @@ export class CoderSSHRuntime extends SSHRuntime {
           return { ready: false, error: "Aborted", errorType: "runtime_start_failed" };
         }
 
-        await this.sleep(CoderSSHRuntime.STATUS_POLL_INTERVAL_MS, signal);
+        await this.sleep(CODER_STATUS_POLL_INTERVAL_MS, signal);
         statusResult = await this.coderService.getWorkspaceStatus(workspaceName, {
           timeoutMs: Math.min(remainingMs(), 10_000),
           signal,
@@ -287,7 +289,9 @@ export class CoderSSHRuntime extends SSHRuntime {
         clearInterval(checkInterval);
       }
     }, 1000);
-    controller.signal.addEventListener("abort", () => clearInterval(checkInterval), { once: true });
+    controller.signal.addEventListener("abort", () => clearInterval(checkInterval), {
+      once: true,
+    });
     if (isTimedOut() || signal?.aborted) controller.abort();
 
     try {
@@ -638,7 +642,7 @@ export class CoderSSHRuntime extends SSHRuntime {
           if (abortSignal?.aborted) {
             throw new Error("Aborted while waiting for Coder workspace to stop");
           }
-          await this.sleep(CoderSSHRuntime.STATUS_POLL_INTERVAL_MS, abortSignal);
+          await this.sleep(CODER_STATUS_POLL_INTERVAL_MS, abortSignal);
           status = await this.coderService.getWorkspaceStatus(workspaceName, {
             signal: abortSignal,
           });

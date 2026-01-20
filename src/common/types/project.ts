@@ -67,4 +67,6 @@ export interface ProjectsConfig {
   subagentAiDefaults?: SubagentAiDefaults;
   /** @deprecated Legacy per-mode (plan/exec/compact) default model + thinking overrides. */
   modeAiDefaults?: ModeAiDefaults;
+  /** Use built-in SSH2 library instead of system OpenSSH for remote connections (non-Windows only) */
+  useSSH2Transport?: boolean;
 }

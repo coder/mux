@@ -236,7 +236,7 @@ const extensionBuild = {
   entryPoints: ["src/extension.ts"],
   bundle: true,
   outdir: "out",
-  external: ["vscode"],
+  external: ["vscode", "ssh2", "cpu-features"],
   platform: "node",
   target: "node20",
   format: "cjs",

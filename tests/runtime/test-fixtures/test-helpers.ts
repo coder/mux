@@ -10,6 +10,7 @@ import type { Runtime } from "@/node/runtime/Runtime";
 import { WorktreeRuntime } from "@/node/runtime/WorktreeRuntime";
 import { DockerRuntime } from "@/node/runtime/DockerRuntime";
 import { SSHRuntime } from "@/node/runtime/SSHRuntime";
+import { createSSHTransport } from "@/node/runtime/transports";
 import type { SSHServerConfig } from "./ssh-fixture";
 
 /**
@@ -43,12 +44,13 @@ export function createTestRuntime(
       if (!sshConfig) {
         throw new Error("SSH config required for SSH runtime");
       }
-      return new SSHRuntime({
-        host: `testuser@localhost`,
+      const config = {
+        host: "testuser@localhost",
         srcBaseDir: sshConfig.workdir,
         identityFile: sshConfig.privateKeyPath,
         port: sshConfig.port,
-      });
+      };
+      return new SSHRuntime(config, createSSHTransport(config, false));
     }
     case "docker": {
       if (!dockerConfig) {
