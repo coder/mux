@@ -248,7 +248,7 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
             {/* Draggable header bar - matches WorkspaceHeader for consistency */}
             <div
               className={cn(
-                "safe-area-top-bleed bg-sidebar border-border-light flex shrink-0 items-center border-b px-[15px] [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:py-2",
+                "safe-area-top-bleed bg-sidebar border-border-light flex shrink-0 items-center border-b px-[15px] [@media(max-width:768px)]:px-2 [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:py-2",
                 isDesktopMode() ? "h-10 titlebar-drag" : "h-8"
               )}
             >

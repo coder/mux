@@ -1032,6 +1032,11 @@ body,
     display: inline-flex !important;
   }
 
+
+  /* Give top bars a little extra breathing room below the notch/status bar. */
+  .safe-area-top-bleed {
+    --safe-area-top-bleed-extra: 0.5rem;
+  }
   /* Show mobile overlay only on touch devices */
   .mobile-overlay {
     display: block !important;
@@ -1114,8 +1119,14 @@ body,
 /* Utility: let top bars bleed their background into the iOS safe-area without
    double-padding content (since #root already has safe-area padding). */
 .safe-area-top-bleed {
-  margin-top: calc(-1 * env(safe-area-inset-top, 0px));
-  padding-top: env(safe-area-inset-top, 0px);
+  /* Extra top padding (in addition to the safe-area) for touch-sized headers.
+     Defaults to 0 so desktop headers keep their normal height. */
+  --safe-area-top-bleed-extra: 0px;
+
+  /* Pull the header up into #root's safe-area padding so its background can "bleed"
+     behind the notch/status bar, while keeping interactive content below it. */
+  margin-top: calc(-1 * env(safe-area-inset-top, 0px)) !important;
+  padding-top: calc(env(safe-area-inset-top, 0px) + var(--safe-area-top-bleed-extra)) !important;
 }
 
 

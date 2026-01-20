@@ -738,7 +738,7 @@ function AppInner() {
               })()
             ) : (
               <div className="bg-dark flex flex-1 flex-col overflow-hidden">
-                <div className="safe-area-top-bleed bg-sidebar border-border-light flex h-8 shrink-0 items-center border-b px-[15px] [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:py-2">
+                <div className="safe-area-top-bleed bg-sidebar border-border-light flex h-8 shrink-0 items-center border-b px-[15px] [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:px-2 [@media(max-width:768px)]:py-2">
                   {sidebarCollapsed && (
                     <Button
                       variant="ghost"
