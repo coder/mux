@@ -243,6 +243,41 @@ jobs:
         if: matrix.os == 'macos'
         run: make test-e2e PLAYWRIGHT_ARGS="tests/e2e/scenarios/windowLifecycle.spec.ts"
 
+  test-windows:
+    name: Test / Windows
+    needs: [changes]
+    if: ${{ (needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true') && (github.event_name != 'push' || github.actor != 'github-merge-queue[bot]') }}
+    timeout-minutes: 15
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-mux
+      - name: Run unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun test src
+      - name: Run Windows integration smoke tests
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "$BACKEND" != "true" ]]; then
+            echo "No backend changes - skipping Windows integration smoke tests"
+            exit 0
+          fi
+
+          TEST_INTEGRATION=1 bun x jest --silent \
+            tests/ipc/backgroundBashDirect.test.ts \
+            tests/ipc/executeBash.test.ts \
+            tests/ipc/terminal.test.ts \
+            tests/ipc/projectCreate.test.ts \
+            tests/ipc/planCommands.test.ts
+        env:
+          BACKEND: ${{ needs.changes.outputs.backend }}
+
   smoke-server:
     name: Smoke / Server
     needs: [changes]
@@ -454,6 +489,7 @@ jobs:
       - test-unit
       - test-integration
       - test-storybook
+      - test-windows
       - test-e2e
       - smoke-server
       - smoke-docker
