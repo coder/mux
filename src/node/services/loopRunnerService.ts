@@ -395,8 +395,8 @@ export class LoopRunnerService extends EventEmitter {
         return;
       }
 
-      const configPathHint = `.mux/${info.name}.harness.jsonc`;
-      const progressPathHint = `.mux/${info.name}.harness.progress.md`;
+      const configPathHint = `.mux/harness/${info.name}.harness.jsonc`;
+      const progressPathHint = `.mux/harness/${info.name}.harness.progress.md`;
 
       const modelString =
         info.aiSettingsByMode?.exec?.model ?? info.aiSettings?.model ?? defaultModel;
