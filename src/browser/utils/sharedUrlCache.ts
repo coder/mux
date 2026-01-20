@@ -48,7 +48,40 @@ async function hashContentAsync(content: string): Promise<string> {
  * We maintain a small in-memory cache of recent hashes to avoid async in hot paths.
  */
 const hashCache = new Map<string, string>();
+const hashPromiseCache = new Map<string, Promise<string>>();
 const MAX_HASH_CACHE = 100;
+
+function getSha256HashPromise(content: string): Promise<string> {
+  const cached = hashCache.get(content);
+  if (cached) {
+    return Promise.resolve(cached);
+  }
+
+  const inFlight = hashPromiseCache.get(content);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const promise = hashContentAsync(content)
+    .then((sha256Hash) => {
+      if (hashCache.size >= MAX_HASH_CACHE) {
+        // Evict oldest entry
+        const firstKey = hashCache.keys().next().value;
+        if (firstKey) hashCache.delete(firstKey);
+      }
+
+      hashCache.set(content, sha256Hash);
+      hashPromiseCache.delete(content);
+      return sha256Hash;
+    })
+    .catch((error) => {
+      hashPromiseCache.delete(content);
+      throw error;
+    });
+
+  hashPromiseCache.set(content, promise);
+  return promise;
+}
 
 function hashContent(content: string): string {
   // Check memory cache first
@@ -64,15 +97,9 @@ function hashContent(content: string): string {
   }
   const fallbackHash = (hash >>> 0).toString(16).padStart(8, "0");
 
-  // Kick off async hash computation to populate cache for next time
-  void hashContentAsync(content).then((sha256Hash) => {
-    if (hashCache.size >= MAX_HASH_CACHE) {
-      // Evict oldest entry
-      const firstKey = hashCache.keys().next().value;
-      if (firstKey) hashCache.delete(firstKey);
-    }
-    hashCache.set(content, sha256Hash);
-  });
+  // Kick off async hash computation to populate cache for next time.
+  // Cache in-flight promises to avoid duplicate SHA-256 digests for the same content.
+  void getSha256HashPromise(content).catch(() => undefined);
 
   return fallbackHash;
 }
@@ -88,10 +115,7 @@ function entryKey(hash: string): string {
  * by waiting for the async SHA-256 computation to complete.
  */
 export async function warmHashCache(content: string): Promise<void> {
-  // Trigger the fallback hash (which kicks off async SHA-256)
-  hashContent(content);
-  // Wait for async hash to complete and populate cache
-  await hashContentAsync(content);
+  await getSha256HashPromise(content);
 }
 
 /**

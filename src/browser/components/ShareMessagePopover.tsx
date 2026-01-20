@@ -526,15 +526,20 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
       setError(null);
 
       try {
+        const credsPromise =
+          newSigningEnabled && signingCapabilities?.publicKey && api
+            ? api.signing.getSignCredentials({})
+            : null;
+
         // Delete the old share
         await deleteFromMuxMd(shareData.id, shareData.mutateKey);
         removeShareData(content);
 
         // Get sign credentials if signing is now enabled
         let sign: SignOptions | undefined;
-        if (newSigningEnabled && signingCapabilities?.publicKey && api) {
+        if (credsPromise) {
           try {
-            const creds = await api.signing.getSignCredentials({});
+            const creds = await credsPromise;
             const privateKeyBytes = Uint8Array.from(atob(creds.privateKeyBase64), (c) =>
               c.charCodeAt(0)
             );
