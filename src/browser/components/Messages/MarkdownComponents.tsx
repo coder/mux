@@ -119,14 +119,21 @@ function isRunnableShellLanguage(language: string): boolean {
 interface CodeBlockProps {
   code: string;
   language: string;
+  /**
+   * Language id passed to Shiki. Allows us to keep a non-runnable “meta” language
+   * (e.g. shell-session) while still getting reasonable highlighting.
+   */
+  highlightLanguage?: string;
 }
 
 /**
  * CodeBlock component with async Shiki highlighting
  * Displays code with line numbers in a CSS grid
  */
-const CodeBlock: React.FC<CodeBlockProps> = ({ code, language }) => {
+const CodeBlock: React.FC<CodeBlockProps> = ({ code, language, highlightLanguage }) => {
   const [highlightedLines, setHighlightedLines] = useState<string[] | null>(null);
+
+  const shikiLanguage = highlightLanguage ?? language;
   const { theme: themeMode } = useTheme();
 
   // Split code into lines, removing trailing empty line
@@ -143,7 +150,7 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, language }) => {
 
     async function highlight() {
       try {
-        const html = await highlightCode(code, language, theme);
+        const html = await highlightCode(code, shikiLanguage, theme);
 
         if (!cancelled) {
           const lines = extractShikiLines(html);
@@ -154,7 +161,7 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, language }) => {
           setHighlightedLines(filteredLines.length > 0 ? filteredLines : null);
         }
       } catch (error) {
-        console.warn(`Failed to highlight code block (${language}):`, error);
+        console.warn(`Failed to highlight code block (${shikiLanguage}):`, error);
         if (!cancelled) setHighlightedLines(null);
       }
     }
@@ -163,7 +170,7 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, language }) => {
     return () => {
       cancelled = true;
     };
-  }, [code, language, themeMode]);
+  }, [code, shikiLanguage, themeMode]);
 
   const messageListContext = useOptionalMessageListContext();
   const openTerminal = messageListContext?.openTerminal;
@@ -243,7 +250,7 @@ export const markdownComponents = {
 
   // Custom code block renderer with async Shiki highlighting
   code: ({ inline, className, children, node, ...props }: CodeProps) => {
-    const match = /language-(\w+)/.exec(className ?? "");
+    const match = /language-([^\s]+)/.exec(className ?? "");
     const language = match ? match[1] : "";
 
     // Extract text content
@@ -259,7 +266,10 @@ export const markdownComponents = {
 
     // Code blocks with language - use async Shiki highlighting
     if (!isInline && language) {
-      return <CodeBlock code={childString} language={language} />;
+      const highlightLanguage = language === "shell-session" ? "shell" : language;
+      return (
+        <CodeBlock code={childString} language={language} highlightLanguage={highlightLanguage} />
+      );
     }
 
     // Code blocks without language (global CSS provides styling)

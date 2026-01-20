@@ -170,6 +170,32 @@ describe("MarkdownComponents command code blocks", () => {
     });
   });
 
+  test("does not show Run button for shell-session transcripts", () => {
+    const openTerminal = mock(() => undefined);
+
+    const element = markdownComponents.code({
+      inline: false,
+      className: "language-shell-session",
+      children: "$ echo hello\nhello\n",
+    });
+
+    const { queryByRole } = render(
+      <ThemeProvider forcedTheme="dark">
+        <MessageListProvider
+          value={{
+            workspaceId: "ws-1",
+            latestMessageId: null,
+            openTerminal,
+          }}
+        >
+          {element}
+        </MessageListProvider>
+      </ThemeProvider>
+    );
+
+    expect(queryByRole("button", { name: "Run command" })).toBeNull();
+  });
+
   test("does not show Run button for non-shell languages", () => {
     const openTerminal = mock(() => undefined);
 
