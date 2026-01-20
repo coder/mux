@@ -205,7 +205,7 @@ export const Mermaid: React.FC<{ chart: string }> = ({ chart }) => {
             fontStyle: "italic",
           }}
         >
-          Rendering diagram...
+          Rendering diagram…
         </div>
       );
     } else {
@@ -245,6 +245,8 @@ export const Mermaid: React.FC<{ chart: string }> = ({ chart }) => {
           }}
         >
           <button
+            type="button"
+            aria-label="Decrease diagram height"
             onClick={handleDecreaseHeight}
             disabled={atMinHeight}
             style={getButtonStyle(atMinHeight)}
@@ -253,6 +255,8 @@ export const Mermaid: React.FC<{ chart: string }> = ({ chart }) => {
             −
           </button>
           <button
+            type="button"
+            aria-label="Increase diagram height"
             onClick={handleIncreaseHeight}
             disabled={atMaxHeight}
             style={getButtonStyle(atMaxHeight)}
@@ -261,6 +265,8 @@ export const Mermaid: React.FC<{ chart: string }> = ({ chart }) => {
             +
           </button>
           <button
+            type="button"
+            aria-label="Expand diagram"
             onClick={() => setIsModalOpen(true)}
             style={getButtonStyle()}
             title="Expand diagram"

@@ -19,7 +19,7 @@ function truncateScript(script: string, maxLength = 60): string {
   if (firstLine.length <= maxLength) {
     return firstLine;
   }
-  return firstLine.slice(0, maxLength - 3) + "...";
+  return firstLine.slice(0, maxLength - 1) + "…";
 }
 
 interface BackgroundProcessesBannerProps {

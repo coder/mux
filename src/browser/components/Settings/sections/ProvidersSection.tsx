@@ -411,7 +411,7 @@ export function ProvidersSection() {
     muxGatewayLoginStatus === "error"
       ? "Try again"
       : muxGatewayLoginInProgress
-        ? "Waiting for login..."
+        ? "Waiting for login…"
         : muxGatewayIsLoggedIn
           ? "Re-login to Mux Gateway"
           : "Login to Mux Gateway";

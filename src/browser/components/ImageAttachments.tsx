@@ -27,10 +27,13 @@ export const ImageAttachments: React.FC<ImageAttachmentsProps> = ({ images, onRe
           <img
             src={image.url}
             alt="Attached image"
+            width={80}
+            height={80}
             className="pointer-events-none col-start-1 row-start-1 h-full w-full object-cover"
           />
           {handleRemove && (
             <button
+              type="button"
               onClick={() => handleRemove(image.id)}
               title="Remove image"
               className="col-start-1 row-start-1 m-0.5 flex h-5 w-5 cursor-pointer items-center justify-center self-start justify-self-end rounded-full border-0 bg-black/70 p-0 text-sm leading-none text-white hover:bg-black/90"

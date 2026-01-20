@@ -268,7 +268,7 @@ const ReviewItem: React.FC<ReviewItemProps> = ({
                   onKeyDown={handleKeyDown}
                   className="bg-dark border-border text-secondary w-full resize-none rounded border p-2 text-xs focus:border-[var(--color-review-accent)] focus:outline-none"
                   rows={2}
-                  placeholder="Your comment..."
+                  placeholder="Your comment…"
                 />
                 <div className="flex items-center justify-end gap-1">
                   <span className="text-muted mr-2 text-[10px]">

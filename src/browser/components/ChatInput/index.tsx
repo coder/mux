@@ -1241,7 +1241,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         return;
       }
 
-      e.preventDefault(); // Prevent default paste behavior for images
+      // Don't block the default paste behavior (e.g., text). We can still extract images
+      // and add them as attachments in parallel.
 
       processImageFiles(imageFiles)
         .then((attachments) => {
@@ -1891,7 +1892,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             }
             pushToast({
               type: "success",
-              message: "Context threshold reached - auto-compacting...",
+              message: "Context threshold reached - auto-compacting…",
             });
             props.onMessageSent?.();
           }

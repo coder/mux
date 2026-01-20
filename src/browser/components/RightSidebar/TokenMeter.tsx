@@ -36,8 +36,8 @@ const TokenMeterComponent: React.FC<TokenMeterProps> = ({
         <div
           key={i}
           className={cn(
-            "transition-all duration-300 ease-in-out",
-            orientation === "horizontal" ? "h-full" : "w-full"
+            "duration-300 ease-in-out",
+            orientation === "horizontal" ? "h-full transition-[width]" : "w-full transition-[flex]"
           )}
           style={{
             background: seg.color,

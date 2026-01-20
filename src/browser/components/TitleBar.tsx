@@ -154,7 +154,7 @@ export function TitleBar() {
     if (!window.api) {
       lines.push("Desktop updates are available in the Electron app only.");
     } else if (isCheckingOnHover || updateStatus.type === "checking") {
-      lines.push("Checking for updates...");
+      lines.push("Checking for updates…");
     } else {
       switch (updateStatus.type) {
         case "available":

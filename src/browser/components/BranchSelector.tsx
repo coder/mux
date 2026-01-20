@@ -346,10 +346,11 @@ export function BranchSelector({ workspaceId, workspaceName, className }: Branch
             <input
               ref={inputRef}
               type="text"
+              aria-label="Search branches"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search branches..."
-              className="text-foreground placeholder:text-muted w-full bg-transparent font-mono text-[11px] outline-none"
+              placeholder="Search branches…"
+              className="text-foreground placeholder:text-muted focus-visible:ring-accent w-full bg-transparent font-mono text-[11px] outline-none focus-visible:ring-1 focus-visible:outline-none"
             />
           </div>
 

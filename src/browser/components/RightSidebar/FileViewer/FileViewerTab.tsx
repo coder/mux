@@ -149,7 +149,7 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
           const errorMsg = bashResult.error ?? "Failed to read file";
           // Remove from cache if file appears to be deleted/not found
           removeCachedFileContent(props.workspaceId, props.relativePath);
-          setError(errorMsg.length > 128 ? errorMsg.slice(0, 128) + "..." : errorMsg);
+          setError(errorMsg.length > 128 ? errorMsg.slice(0, 127) + "…" : errorMsg);
           setIsLoading(false);
           setIsRefreshing(false);
           return;

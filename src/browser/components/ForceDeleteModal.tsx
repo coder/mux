@@ -83,7 +83,7 @@ export const ForceDeleteModal: React.FC<ForceDeleteModalProps> = ({
             Cancel
           </Button>
           <Button variant="destructive" onClick={handleForceDelete} disabled={isDeleting}>
-            {isDeleting ? "Deleting..." : "Force Delete"}
+            {isDeleting ? "Deleting…" : "Force Delete"}
           </Button>
         </DialogFooter>
       </DialogContent>

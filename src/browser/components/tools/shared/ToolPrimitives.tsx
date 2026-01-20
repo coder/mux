@@ -17,7 +17,7 @@ interface ToolContainerProps extends React.HTMLAttributes<HTMLDivElement> {
 export const ToolContainer: React.FC<ToolContainerProps> = ({ expanded, className, ...props }) => (
   <div
     className={cn(
-      "my-2 rounded font-mono text-[11px] transition-all duration-200",
+      "my-2 rounded font-mono text-[11px] transition-[padding] duration-200",
       "[container-type:inline-size]",
       expanded ? "py-2 px-3" : "py-1 px-3",
       className
@@ -157,7 +157,7 @@ export const HeaderButton: React.FC<HeaderButtonProps> = ({ active, className, .
   <button
     className={cn(
       "border border-white/20 text-foreground px-2 py-0.5 rounded-sm cursor-pointer text-[10px]",
-      "transition-all duration-200 whitespace-nowrap hover:bg-white/10 hover:border-white/30",
+      "transition-colors duration-200 whitespace-nowrap hover:bg-white/10 hover:border-white/30",
       active && "bg-white/10",
       className
     )}

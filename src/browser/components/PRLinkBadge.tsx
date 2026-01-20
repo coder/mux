@@ -103,7 +103,7 @@ function StatusIcon({ prLink }: { prLink: GitHubPRLinkWithStatus }) {
  * Format PR tooltip content
  */
 function getTooltipContent(prLink: GitHubPRLinkWithStatus): string {
-  if (prLink.loading) return "Loading PR status...";
+  if (prLink.loading) return "Loading PR status…";
   if (prLink.error) return `Error: ${prLink.error}`;
   if (!prLink.status) return `PR #${prLink.number}`;
 

@@ -81,7 +81,7 @@ const SortableTab: React.FC<{
             {...attributes}
             {...listeners}
             className={cn(
-              "flex min-w-0 max-w-[240px] items-baseline gap-1.5 whitespace-nowrap rounded-md px-3 py-1 text-xs font-medium transition-all duration-150",
+              "flex min-w-0 max-w-[240px] items-baseline gap-1.5 whitespace-nowrap rounded-md px-3 py-1 text-xs font-medium transition-colors duration-150",
               "cursor-grab touch-none active:cursor-grabbing",
               item.selected
                 ? "bg-hover text-foreground"

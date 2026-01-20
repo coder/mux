@@ -114,7 +114,7 @@ const StreamErrorMessageWithRetry: React.FC<StreamErrorMessageWithRetryProps> = 
   let compactRetryLabel = "Compact & retry";
   if (showCompactRetry) {
     if (compactAndRetry.isRetryingWithCompaction) {
-      compactRetryLabel = "Starting...";
+      compactRetryLabel = "Starting…";
     } else if (!compactAndRetry.compactionSuggestion || !compactAndRetry.hasTriggerUserMessage) {
       compactRetryLabel = "Insert /compact";
     } else if (compactAndRetry.hasCompactionRequest) {

@@ -2,7 +2,7 @@
  * Tests for RefreshButton tooltip content logic.
  *
  * The tooltip should show:
- * - "Refreshing..." when animation is active (spinning or stopping)
+ * - "Refreshing…" when animation is active (spinning or stopping)
  * - "Refresh diff (keybind)" + "Last: X ago via Y" when idle and lastRefreshInfo exists
  * - "Refresh diff (keybind)" when idle and lastRefreshInfo is null
  */
@@ -34,12 +34,12 @@ function getTooltipContent(
 }
 
 describe("RefreshButton tooltip content", () => {
-  test("shows 'Refreshing...' when spinning", () => {
+  test("shows 'Refreshing…' when spinning", () => {
     const result = getTooltipContent("spinning", null);
     expect(result.type).toBe("refreshing");
   });
 
-  test("shows 'Refreshing...' when stopping", () => {
+  test("shows 'Refreshing…' when stopping", () => {
     const result = getTooltipContent("stopping", null);
     expect(result.type).toBe("refreshing");
   });

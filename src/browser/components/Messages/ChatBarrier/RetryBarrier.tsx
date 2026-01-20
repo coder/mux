@@ -153,7 +153,7 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
     );
     statusText =
       countdown === 0 ? (
-        <>Retrying... (attempt {attempt + 1})</>
+        <>Retrying… (attempt {attempt + 1})</>
       ) : (
         <>
           Retrying in <span className="text-warning font-mono font-semibold">{countdown}s</span>{" "}
@@ -163,7 +163,8 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
 
     actionButton = (
       <button
-        className="border-warning font-primary text-warning hover:bg-warning-overlay cursor-pointer rounded border bg-transparent px-4 py-2 text-xs font-semibold whitespace-nowrap transition-all duration-200 hover:-translate-y-px active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50"
+        type="button"
+        className="border-warning font-primary text-warning hover:bg-warning-overlay cursor-pointer rounded border bg-transparent px-4 py-2 text-xs font-semibold whitespace-nowrap transition-colors transition-transform duration-200 hover:-translate-y-px active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50"
         onClick={handleStopAutoRetry}
       >
         Stop ({stopKeybind})
@@ -172,7 +173,8 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
   } else {
     actionButton = (
       <button
-        className="bg-warning font-primary text-background cursor-pointer rounded border-none px-4 py-2 text-xs font-semibold whitespace-nowrap transition-all duration-200 hover:-translate-y-px hover:brightness-120 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50"
+        type="button"
+        className="bg-warning font-primary text-background cursor-pointer rounded border-none px-4 py-2 text-xs font-semibold whitespace-nowrap transition-[filter] transition-colors transition-transform duration-200 hover:-translate-y-px hover:brightness-120 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50"
         onClick={handleManualRetry}
       >
         Retry

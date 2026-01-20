@@ -230,13 +230,20 @@ export const HunkViewer = React.memo<HunkViewerProps>(
       <div
         ref={hunkRef}
         className={cn(
-          "bg-dark border rounded mb-3 overflow-hidden cursor-pointer transition-all duration-200",
-          "focus:outline-none focus-visible:outline-none",
+          "bg-dark border rounded mb-3 overflow-hidden cursor-pointer transition-colors transition-shadow duration-200",
+          "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent",
           isRead ? "border-read" : "border-border-light",
           isSelected && "border-review-accent shadow-[0_0_0_1px_var(--color-review-accent)]"
         )}
         onClick={onClick}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            e.currentTarget.click();
+          }
+        }}
         role="button"
+        aria-expanded={isExpanded}
         tabIndex={0}
         data-hunk-id={hunkId}
       >
@@ -313,7 +320,7 @@ export const HunkViewer = React.memo<HunkViewerProps>(
             )}
             {upLoading && (
               <div className="text-muted flex h-[18px] items-center justify-center text-[10px]">
-                <span>Loading...</span>
+                <span>Loading…</span>
               </div>
             )}
 
@@ -407,7 +414,7 @@ export const HunkViewer = React.memo<HunkViewerProps>(
             )}
             {downLoading && (
               <div className="text-muted flex h-[18px] items-center justify-center text-[10px]">
-                <span>Loading...</span>
+                <span>Loading…</span>
               </div>
             )}
             {/* EOF indicator - show when at EOF with expanded content */}

@@ -247,7 +247,7 @@ export const ProjectCreateForm: React.FC<ProjectCreateFormProps> = ({
           </Button>
         )}
         <Button onClick={() => void handleSelect()} disabled={isCreating || canCreateFolder}>
-          {isCreating ? "Adding..." : submitLabel}
+          {isCreating ? "Adding…" : submitLabel}
         </Button>
       </DialogFooter>
 

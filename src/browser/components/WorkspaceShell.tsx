@@ -73,7 +73,7 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
   const backgroundBashError = useBackgroundBashError();
 
   if (!workspaceState || workspaceState.loading) {
-    return <WorkspacePlaceholder title="Loading workspace..." className={props.className} />;
+    return <WorkspacePlaceholder title="Loading workspace…" className={props.className} />;
   }
 
   if (!props.projectName || !props.workspaceName) {
