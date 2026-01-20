@@ -1,6 +1,11 @@
 import { shouldRunIntegrationTests, createTestEnvironment, cleanupTestEnvironment } from "./setup";
-import { createTempGitRepo, cleanupTempGitRepo, createWorkspace } from "./helpers";
-import { resolveOrpcClient } from "./helpers";
+import {
+  createTempGitRepo,
+  cleanupTempGitRepo,
+  createWorkspace,
+  waitForInitComplete,
+  resolveOrpcClient,
+} from "./helpers";
 import type { WorkspaceMetadata } from "../../src/common/types/workspace";
 
 type WorkspaceCreationResult = Awaited<ReturnType<typeof createWorkspace>>;
@@ -272,6 +277,9 @@ describeIntegration("executeBash", () => {
         const createResult = await createWorkspace(env, tempGitRepo, "test-git-env");
         const workspaceId = expectWorkspaceCreationSuccess(createResult).id;
         const client = resolveOrpcClient(env);
+
+        // Wait for init to complete (prevents Windows filesystem timing issues)
+        await waitForInitComplete(env, workspaceId);
 
         // Verify GIT_TERMINAL_PROMPT is set to 0
         const gitEnvResult = await client.workspace.executeBash({
