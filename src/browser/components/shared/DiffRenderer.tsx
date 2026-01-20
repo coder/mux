@@ -24,7 +24,12 @@ import {
   highlightSearchMatches,
   type SearchHighlightConfig,
 } from "@/browser/utils/highlighting/highlightSearchTerms";
-import { parseReviewLineRange, type Review, type ReviewNoteData } from "@/common/types/review";
+import {
+  parseReviewLineRange,
+  type ParsedReviewLineRange,
+  type Review,
+  type ReviewNoteData,
+} from "@/common/types/review";
 
 // Shared type for diff line types
 export type DiffLineType = "add" | "remove" | "context" | "header";
@@ -115,6 +120,34 @@ const getIndicatorChar = (type: DiffLineType): string => {
   }
 };
 
+const REVIEW_RANGE_TINT = "hsl(from var(--color-review-accent) h s l / 0.08)";
+
+const applyReviewRangeOverlay = (base: string, isActive: boolean): string => {
+  if (!isActive) return base;
+  return `linear-gradient(${REVIEW_RANGE_TINT}, ${REVIEW_RANGE_TINT}), ${base}`;
+};
+
+const doesLineMatchReviewRange = (
+  line: { oldLineNum: number | null; newLineNum: number | null },
+  range: ParsedReviewLineRange
+): boolean => {
+  const matchesOld = Boolean(
+    range.old &&
+    line.oldLineNum !== null &&
+    line.oldLineNum >= range.old.start &&
+    line.oldLineNum <= range.old.end
+  );
+
+  const matchesNew = Boolean(
+    range.new &&
+    line.newLineNum !== null &&
+    line.newLineNum >= range.new.start &&
+    line.newLineNum <= range.new.end
+  );
+
+  return matchesOld || matchesNew;
+};
+
 const getIndicatorColor = (type: DiffLineType): string => {
   switch (type) {
     case "add":
@@ -172,6 +205,7 @@ interface DiffLineGutterProps {
   showLineNumbers: boolean;
   lineNumberMode: LineNumberMode;
   lineNumberWidths: LineNumberWidths;
+  background?: string;
 }
 
 const DiffLineGutter: React.FC<DiffLineGutterProps> = ({
@@ -181,13 +215,15 @@ const DiffLineGutter: React.FC<DiffLineGutterProps> = ({
   showLineNumbers,
   lineNumberMode,
   lineNumberWidths,
+  background,
 }) => {
   const { showOld, showNew } = getLineNumberModeFlags(lineNumberMode);
+  const resolvedBackground = background ?? getDiffLineGutterBackground(type);
 
   return (
     <span
       className="flex shrink-0 items-center gap-0.5 px-1 tabular-nums select-none"
-      style={{ background: getDiffLineGutterBackground(type) }}
+      style={{ background: resolvedBackground }}
     >
       {showLineNumbers && (
         <>
@@ -995,10 +1031,12 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
       [lineData, showLineNumbers, lineNumberMode]
     );
 
-    const inlineReviewsByAnchor = React.useMemo(() => {
-      if (!inlineReviews?.length) return new Map<number, Review[]>();
+    const parsedInlineReviews = React.useMemo<
+      Array<{ review: Review; range: ParsedReviewLineRange }>
+    >(() => {
+      if (!inlineReviews?.length) return [];
 
-      const anchored = new Map<number, Review[]>();
+      const parsed: Array<{ review: Review; range: ParsedReviewLineRange }> = [];
 
       for (const review of inlineReviews) {
         if (review.data?.filePath !== filePath) continue;
@@ -1006,24 +1044,34 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
         const parsedRange = parseReviewLineRange(review.data?.lineRange ?? "");
         if (!parsedRange) continue;
 
+        parsed.push({ review, range: parsedRange });
+      }
+
+      return parsed;
+    }, [inlineReviews, filePath]);
+
+    const { inlineReviewsByAnchor, reviewRangeByLineIndex } = React.useMemo<{
+      inlineReviewsByAnchor: Map<number, Review[]>;
+      reviewRangeByLineIndex: boolean[];
+    }>(() => {
+      if (!parsedInlineReviews.length) {
+        return {
+          inlineReviewsByAnchor: new Map<number, Review[]>(),
+          reviewRangeByLineIndex: new Array<boolean>(lineData.length).fill(false),
+        };
+      }
+
+      const anchored = new Map<number, Review[]>();
+      const rangeMatches = new Array<boolean>(lineData.length).fill(false);
+
+      for (const { review, range } of parsedInlineReviews) {
         let anchorIndex: number | null = null;
 
         for (let i = 0; i < lineData.length; i++) {
           const line = lineData[i];
 
-          const matchesOld =
-            parsedRange.old &&
-            line.oldLineNum !== null &&
-            line.oldLineNum >= parsedRange.old.start &&
-            line.oldLineNum <= parsedRange.old.end;
-
-          const matchesNew =
-            parsedRange.new &&
-            line.newLineNum !== null &&
-            line.newLineNum >= parsedRange.new.start &&
-            line.newLineNum <= parsedRange.new.end;
-
-          if (matchesOld || matchesNew) {
+          if (doesLineMatchReviewRange(line, range)) {
+            rangeMatches[i] = true;
             anchorIndex = i;
           }
         }
@@ -1038,8 +1086,11 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
         }
       }
 
-      return anchored;
-    }, [filePath, inlineReviews, lineData]);
+      return {
+        inlineReviewsByAnchor: anchored,
+        reviewRangeByLineIndex: rangeMatches,
+      };
+    }, [lineData, parsedInlineReviews]);
     const startDragSelection = React.useCallback(
       (lineIndex: number, shiftKey: boolean) => {
         if (!onReviewNote) {
@@ -1123,7 +1174,13 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
       >
         {highlightedLineData.map((lineInfo, displayIndex) => {
           const isSelected = isLineSelected(displayIndex);
-          const codeBg = getDiffLineBackground(lineInfo.type);
+          const isInReviewRange = reviewRangeByLineIndex[displayIndex] ?? false;
+          const baseCodeBg = getDiffLineBackground(lineInfo.type);
+          const codeBg = applyReviewRangeOverlay(baseCodeBg, isInReviewRange);
+          const gutterBg = applyReviewRangeOverlay(
+            getDiffLineGutterBackground(lineInfo.type),
+            isInReviewRange
+          );
           const anchoredReviews = inlineReviewsByAnchor.get(displayIndex);
 
           // Each line renders as 3 CSS Grid cells: gutter | indicator | code
@@ -1144,6 +1201,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
                   showLineNumbers={showLineNumbers}
                   lineNumberMode={lineNumberMode}
                   lineNumberWidths={lineNumberWidths}
+                  background={gutterBg}
                 />
                 <DiffIndicator
                   type={lineInfo.type}
