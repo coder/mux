@@ -206,6 +206,48 @@ export class LoopRunnerService extends EventEmitter {
     this.emit("change", workspaceId);
   }
 
+  /**
+   * Update checklist item status without clobbering concurrent harness edits.
+   *
+   * The loop runner may hold an in-memory snapshot of the harness config for the
+   * duration of an iteration. Users (or harness-init) can edit the harness file
+   * concurrently; when we update a status (todo→doing, doing→done), we must merge
+   * onto the latest on-disk config to avoid overwriting those edits.
+   */
+  private async updateChecklistItemStatus(
+    workspaceId: string,
+    itemId: string,
+    status: HarnessChecklistItem["status"]
+  ): Promise<void> {
+    assert(typeof itemId === "string" && itemId.trim().length > 0, "itemId must be non-empty");
+
+    try {
+      const latest = await this.workspaceHarnessService.getHarnessForWorkspace(workspaceId);
+      const existing = latest.config.checklist.find((item) => item.id === itemId) ?? null;
+      if (!existing) {
+        return;
+      }
+
+      if (existing.status === status) {
+        return;
+      }
+
+      await this.workspaceHarnessService.setHarnessForWorkspace(workspaceId, {
+        ...latest.config,
+        checklist: latest.config.checklist.map((item) =>
+          item.id === itemId ? { ...item, status } : item
+        ),
+      });
+    } catch (error) {
+      log.debug("[HARNESS] Failed to update checklist item status", {
+        workspaceId,
+        itemId,
+        status,
+        error,
+      });
+    }
+  }
+
   private async loadStateFromDisk(workspaceId: string): Promise<HarnessLoopState> {
     const filePath = this.getStatePath(workspaceId);
 
@@ -442,12 +484,7 @@ export class LoopRunnerService extends EventEmitter {
 
       // If this is a checklist item, mark it doing before we start.
       if (nextItem?.status === "todo") {
-        await this.workspaceHarnessService.setHarnessForWorkspace(workspaceId, {
-          ...config,
-          checklist: config.checklist.map((item) =>
-            item.id === nextItem.id ? { ...item, status: "doing" as const } : item
-          ),
-        });
+        await this.updateChecklistItemStatus(workspaceId, nextItem.id, "doing");
       }
 
       const sendResult = await this.workspaceService.sendMessage(workspaceId, prompt, {
@@ -500,12 +537,7 @@ export class LoopRunnerService extends EventEmitter {
 
         // If this was a checklist item, mark it done.
         if (nextItem) {
-          await this.workspaceHarnessService.setHarnessForWorkspace(workspaceId, {
-            ...config,
-            checklist: config.checklist.map((item) =>
-              item.id === nextItem.id ? { ...item, status: "done" as const } : item
-            ),
-          });
+          await this.updateChecklistItemStatus(workspaceId, nextItem.id, "done");
         }
       } else {
         const failures = nextState.consecutiveFailures + 1;
