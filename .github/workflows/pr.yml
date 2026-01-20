@@ -254,6 +254,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-mux
+        with:
+          skip-build-caches: true
       - name: Generate version.ts
         shell: bash
         run: ./scripts/generate-version.sh

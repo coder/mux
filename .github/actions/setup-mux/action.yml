@@ -1,5 +1,10 @@
 name: "Setup Mux"
 description: "Setup Bun and install dependencies with caching"
+inputs:
+  skip-build-caches:
+    description: "Skip Electron and electron-builder caches (for test-only jobs)"
+    required: false
+    default: "false"
 runs:
   using: "composite"
   steps:
@@ -56,8 +61,10 @@ runs:
         bun install --frozen-lockfile
 
     # Cache Electron binaries and electron-builder resources (NSIS, etc.)
-    # These are downloaded during electron-builder and can be 200MB+ total
+    # These are downloaded during electron-builder and can be 200MB+ total.
+    # Skip for test-only jobs to save ~30s on Windows (260MB + 11MB cache restore).
     - name: Cache Electron
+      if: ${{ inputs.skip-build-caches != 'true' }}
       uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
         path: |
@@ -69,6 +76,7 @@ runs:
           ${{ runner.os }}-${{ runner.arch }}-electron-
 
     - name: Cache electron-builder
+      if: ${{ inputs.skip-build-caches != 'true' }}
       uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
         path: |
