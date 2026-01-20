@@ -1737,11 +1737,9 @@ export const router = (authToken?: string) => {
           .output(schemas.workspace.harness.set.output)
           .handler(async ({ context, input }) => {
             try {
-              const loopState = await context.loopRunnerService.getState(input.workspaceId);
               const normalized = await context.workspaceHarnessService.setHarnessForWorkspace(
                 input.workspaceId,
-                input.config,
-                { loopState }
+                input.config
               );
               return { success: true, data: normalized };
             } catch (error) {
@@ -1805,8 +1803,8 @@ export const router = (authToken?: string) => {
                 ]);
 
               const workspaceName = workspaceInfo?.name ?? input.workspaceId;
-              const configPathHint = `.mux/harness/${workspaceName}.harness.jsonc`;
-              const progressPathHint = `.mux/harness/${workspaceName}.harness.progress.md`;
+              const configPathHint = `.mux/harness/${workspaceName}.jsonc`;
+              const progressPathHint = `.mux/harness/${workspaceName}.progress.md`;
 
               const lines: string[] = [];
               lines.push("# Harness bearings");
@@ -2034,11 +2032,9 @@ ${planResult.content}`,
 
               const derived = createWorkspaceHarnessConfigFromPlanDraft(draft);
 
-              const loopState = await context.loopRunnerService.getState(input.workspaceId);
               await context.workspaceHarnessService.setHarnessForWorkspace(
                 input.workspaceId,
-                derived.config,
-                { loopState }
+                derived.config
               );
 
               const startResult = await context.loopRunnerService.start(input.workspaceId);
