@@ -13,18 +13,19 @@ description: Agent instructions for AI assistants working on the Mux codebase
 
   ```md
   ---
+
   _Generated with `mux` • Model: `<modelString>` • Thinking: `<thinkingLevel>` • Cost: `$<costs>`_
+
   <!-- mux-attribution: model=<modelString> thinking=<thinkingLevel> costs=<costs> -->
   ```
 
   Always check `$MUX_MODEL_STRING`, `$MUX_THINKING_LEVEL`, and `$MUX_COSTS_USD` via bash before creating or updating PRs—include them in the footer if set.
 
-
 ## External Submissions
 
 - **Do not submit updates to the Terminal-Bench leaderboard repo directly.** Only provide the user with commands they can run themselves.
-## PR + Release Workflow
 
+## PR + Release Workflow
 
 - Reuse existing PRs; never close or recreate without instruction. Force-push updates.
 - After every push run `./scripts/wait_pr_checks.sh <pr_number>` to ensure CI passes.
@@ -38,6 +39,7 @@ gh pr comment <pr_number> --body-file - <<'EOF'
 <message>
 EOF
 ```
+
 - If Codex left review comments and you addressed them, push your fixes, resolve the PR comment, and then comment `@codex review` to re-request review. After that, re-run `./scripts/wait_pr_checks.sh <pr_number>` and `./scripts/check_codex_comments.sh <pr_number>`.
 - Generally run `wait_pr_checks` after submitting a PR to ensure CI passes.
 - Status decoding: `mergeable=MERGEABLE` clean; `CONFLICTING` needs resolution. `mergeStateStatus=CLEAN` ready, `BLOCKED` waiting for CI, `BEHIND` rebase, `DIRTY` conflicts.
@@ -143,6 +145,11 @@ Avoid mock-heavy tests that verify implementation details rather than behavior. 
 
 ## Styling
 
+- Never use emoji characters as UI icons or status indicators; emoji rendering varies across platforms and fonts.
+- Prefer SVG icons (usually from `lucide-react`) or shared icon components under `src/browser/components/icons/`.
+- For tool call headers, use `ToolIcon` from `src/browser/components/tools/shared/ToolPrimitives.tsx`.
+- If a tool/agent provides an emoji string (e.g., `status_set` or `displayStatus`), render via `EmojiIcon` (`src/browser/components/icons/EmojiIcon.tsx`) instead of rendering the emoji.
+- If a new emoji appears in tool output, extend `EmojiIcon` to map it to an SVG icon.
 - Colors defined in `src/browser/styles/globals.css` (`:root @theme` block). Reference via CSS variables (e.g., `var(--color-plan-mode)`), never hardcode hex values.
 
 ## TypeScript Discipline
