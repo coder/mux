@@ -8,6 +8,8 @@ import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import {
   setupSimpleChatStory,
   expandRightSidebar,
+  setReviews,
+  createReview,
   type SimpleChatSetupOptions,
 } from "./storyHelpers";
 import { createUserMessage, createAssistantMessage } from "./mockFactory";
@@ -421,6 +423,18 @@ export const TextFileWithDiff: AppStory = {
           getRightSidebarLayoutKey(workspaceId),
           JSON.stringify(createFileTabLayout(filePath))
         );
+
+        const baseTime = 1700000000000;
+        setReviews(workspaceId, [
+          createReview(
+            "review-range-1",
+            filePath,
+            "+1-4",
+            "Double-check the updated imports.",
+            "pending",
+            baseTime
+          ),
+        ]);
         localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "600");
 
         const fileContents = new Map<string, FileContent>([
