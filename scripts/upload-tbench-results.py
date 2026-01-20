@@ -42,14 +42,64 @@ def load_json(path: Path) -> dict | None:
         return None
 
 
-def extract_model_from_config(config: dict) -> str | None:
-    """Extract model_name from config.json."""
-    return config.get("agent", {}).get("model_name")
 
 
 def extract_thinking_from_config(config: dict) -> str | None:
     """Extract thinking_level from config.json."""
     return config.get("agent", {}).get("thinking_level")
+
+
+def extract_model_from_config(config: dict) -> str | None:
+    """Extract model_name from config.json."""
+    return config.get("agent", {}).get("model_name")
+
+
+
+
+def extract_trial_score(trial_result: dict) -> float | None:
+    """Extract score from trial result, supporting multiple Harbor formats."""
+    score = trial_result.get("score")
+    if isinstance(score, (int, float)):
+        return float(score)
+
+    verifier_result = trial_result.get("verifier_result") or {}
+    rewards = verifier_result.get("rewards") or {}
+    reward_score = rewards.get("reward")
+    if isinstance(reward_score, (int, float)):
+        return float(reward_score)
+
+    return None
+
+
+def extract_trial_passed(trial_result: dict, score: float | None) -> bool | None:
+    """Extract pass/fail from trial result, falling back to score heuristics."""
+    passed = trial_result.get("passed")
+    if isinstance(passed, bool):
+        return passed
+
+    verifier_result = trial_result.get("verifier_result") or {}
+    verifier_passed = verifier_result.get("passed")
+    if isinstance(verifier_passed, bool):
+        return verifier_passed
+
+    if score is not None:
+        return score > 0
+
+    return None
+
+
+def extract_token_counts(trial_result: dict) -> tuple[int | None, int | None]:
+    """Extract token usage from trial result, supporting Harbor agent_result."""
+    n_input_tokens = trial_result.get("n_input_tokens")
+    n_output_tokens = trial_result.get("n_output_tokens")
+
+    agent_result = trial_result.get("agent_result") or {}
+    if n_input_tokens is None:
+        n_input_tokens = agent_result.get("n_input_tokens")
+    if n_output_tokens is None:
+        n_output_tokens = agent_result.get("n_output_tokens")
+
+    return n_input_tokens, n_output_tokens
 
 
 def build_rows(job_folder: Path) -> list[dict]:
@@ -101,7 +151,9 @@ def build_rows(job_folder: Path) -> list[dict]:
     dataset_name = datasets[0].get("name") if datasets else None
     dataset_version = datasets[0].get("version") if datasets else None
     dataset = f"{dataset_name}@{dataset_version}" if dataset_name and dataset_version else None
-    
+    if dataset is None:
+        dataset = job_config.get("dataset")
+
     experiments = os.environ.get("MUX_EXPERIMENTS")
 
     # Raw JSON for future-proofing
@@ -128,9 +180,9 @@ def build_rows(job_folder: Path) -> list[dict]:
 
         task_id = trial_folder.name
 
-        # Per-trial fields
-        passed = trial_result.get("passed")
-        score = trial_result.get("score")
+        # Per-trial fields (Harbor stores score under verifier_result.rewards.reward)
+        score = extract_trial_score(trial_result)
+        passed = extract_trial_passed(trial_result, score)
 
         # Track resolved/unresolved
         if passed is True:
@@ -139,8 +191,7 @@ def build_rows(job_folder: Path) -> list[dict]:
             n_unresolved += 1
 
         # Token usage from context (if available in result)
-        n_input_tokens = trial_result.get("n_input_tokens")
-        n_output_tokens = trial_result.get("n_output_tokens")
+        n_input_tokens, n_output_tokens = extract_token_counts(trial_result)
 
         row = {
             "run_id": run_id,
