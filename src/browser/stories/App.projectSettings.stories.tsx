@@ -15,7 +15,7 @@ import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { createWorkspace, groupWorkspacesByProject } from "./mockFactory";
 import { selectWorkspace } from "./storyHelpers";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
-import { within, userEvent, expect } from "@storybook/test";
+import { within, userEvent, expect, waitFor } from "@storybook/test";
 import { getMCPTestResultsKey } from "@/common/constants/storage";
 
 export default {
@@ -156,9 +156,11 @@ async function openProjectSettings(canvasElement: HTMLElement): Promise<void> {
   const settingsButton = await canvas.findByTestId("settings-button", {}, { timeout: 10000 });
   await userEvent.click(settingsButton);
 
-  await body.findByRole("dialog", {}, { timeout: 10000 });
+  const dialog = await body.findByRole("dialog", {}, { timeout: 10000 });
 
-  const projectsButton = await body.findByRole("button", { name: /Projects/i });
+  const projectsButton = await within(dialog).findByRole("button", { name: /Projects/i });
+  await waitFor(() => expect(projectsButton).not.toHaveStyle("pointer-events: none"));
+  await expect(projectsButton).toBeEnabled();
   await userEvent.click(projectsButton);
 
   // Scroll to MCP Servers section (past Idle Compaction)

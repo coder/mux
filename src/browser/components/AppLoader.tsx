@@ -13,7 +13,8 @@ import { RouterProvider } from "../contexts/RouterContext";
 import { TelemetryEnabledProvider } from "../contexts/TelemetryEnabledContext";
 import { TerminalRouterProvider } from "../terminal/TerminalRouterContext";
 
-const App = React.lazy(() => import("../App"));
+const appImport = import("../App");
+const App = React.lazy(() => appImport);
 
 interface AppLoaderProps {
   /** Optional pre-created ORPC api?. If provided, skips internal connection setup. */
