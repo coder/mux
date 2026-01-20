@@ -7,6 +7,7 @@ export type {
   SSHTransport,
   SSHTransportConfig,
   SpawnOptions,
+  PtyHandle,
   PtySessionParams,
 } from "./SSHTransport";
 export { OpenSSHTransport, SSH2Transport };

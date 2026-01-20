@@ -37,8 +37,7 @@ import { getProjectName, execBuffered } from "@/node/utils/runtime/helpers";
 import { getErrorMessage } from "@/common/utils/errors";
 import { type SSHRuntimeConfig } from "./sshConnectionPool";
 import { syncProjectViaGitBundle } from "./gitBundleSync";
-import type { PtyHandle } from "./ptyHandle";
-import type { PtySessionParams, SSHTransport } from "./transports";
+import type { PtyHandle, PtySessionParams, SSHTransport } from "./transports";
 import { streamToString, shescape } from "./streamUtils";
 
 function logSSHBackoffWait(initLogger: InitLogger, waitMs: number): void {
@@ -214,9 +213,9 @@ export class SSHRuntime extends RemoteRuntime {
    * Handle exit codes for SSH connection pool health tracking.
    */
   protected override onExitCode(exitCode: number, _options: ExecOptions, stderr: string): void {
-    // SSH exit code 255 indicates connection failure - report to pool for backoff
-    // This prevents thundering herd when a previously healthy host goes down
-    if (exitCode === 255) {
+    // Connection-level failures should inform transport backoff. The meaning of
+    // specific exit codes (like 255) is transport-dependent.
+    if (this.transport.isConnectionFailure(exitCode, stderr)) {
       this.transport.reportFailure(truncateSSHError(stderr));
     } else {
       this.transport.markHealthy();

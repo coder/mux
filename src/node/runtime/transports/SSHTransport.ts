@@ -1,8 +1,15 @@
 import type { SpawnResult } from "../RemoteRuntime";
-import type { PtyHandle } from "../ptyHandle";
 import type { SSHConnectionConfig } from "../sshConnectionPool";
 
 export type SSHTransportConfig = SSHConnectionConfig;
+
+export interface PtyHandle {
+  write(data: string): void;
+  resize(cols: number, rows: number): void;
+  kill(): void;
+  onData(handler: (data: string) => void): { dispose: () => void };
+  onExit(handler: (event: { exitCode: number; signal?: number }) => void): { dispose: () => void };
+}
 
 export interface SpawnOptions {
   forcePTY?: boolean;
@@ -19,6 +26,9 @@ export interface PtySessionParams {
 export interface SSHTransport {
   /** Spawn a command on the remote host, returning a ChildProcess-compatible object. */
   spawnRemoteProcess(command: string, options: SpawnOptions): Promise<SpawnResult>;
+
+  /** Determine if an exit code represents a connection-level failure for this transport. */
+  isConnectionFailure(exitCode: number, stderr: string): boolean;
 
   /** Mark connection as healthy (after successful command). */
   markHealthy(): void;

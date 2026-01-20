@@ -247,16 +247,18 @@ function isAuthFailure(error: unknown): boolean {
     message.includes("Authentication failure")
   );
 }
-async function resolvePrivateKey(identityFiles: string[]): Promise<Buffer | undefined> {
+async function resolvePrivateKeys(identityFiles: string[]): Promise<Buffer[]> {
+  const keys: Buffer[] = [];
+
   for (const file of identityFiles) {
     try {
-      return await fs.readFile(file);
+      keys.push(await fs.readFile(file));
     } catch {
       // Try next identity file.
     }
   }
 
-  return undefined;
+  return keys;
 }
 
 export class SSH2ConnectionPool {
@@ -452,96 +454,123 @@ export class SSH2ConnectionPool {
           ...resolvedConfig,
           identityFiles,
         };
-        const proxy = resolvedConfigWithIdentities.proxyCommand
-          ? spawnProxyCommand(resolvedConfigWithIdentities.proxyCommand, proxyTokens)
-          : undefined;
 
-        const privateKey = await resolvePrivateKey(resolvedConfigWithIdentities.identityFiles);
-        const client = new Client();
-        const entry: SSH2ConnectionEntry = {
-          client,
-          resolvedConfig: resolvedConfigWithIdentities,
-          proxyProcess: proxy?.process,
-          lastActivityAt: Date.now(),
-        };
+        const readableKeys = await resolvePrivateKeys(resolvedConfigWithIdentities.identityFiles);
+        const keysToTry: Array<Buffer | undefined> =
+          readableKeys.length > 0 ? readableKeys : [undefined];
 
-        const cleanupProxy = () => {
-          if (proxy?.process?.exitCode === null) {
-            proxy.process.kill();
-          }
-        };
+        const connectWithKey = async (
+          privateKey: Buffer | undefined,
+          reportAuthFailure: boolean
+        ): Promise<SSH2ConnectionEntry> => {
+          const proxy = resolvedConfigWithIdentities.proxyCommand
+            ? spawnProxyCommand(resolvedConfigWithIdentities.proxyCommand, proxyTokens)
+            : undefined;
 
-        const onClose = () => {
-          if (entry.idleTimer) {
-            clearTimeout(entry.idleTimer);
-          }
-          cleanupProxy();
-          this.connections.delete(key);
-        };
-
-        client.on("close", onClose);
-        client.on("end", onClose);
-        client.on("error", (err) => {
-          if (entry.idleTimer) {
-            clearTimeout(entry.idleTimer);
-          }
-          this.reportFailure(config, getErrorMessage(err));
-          this.connections.delete(key);
-          cleanupProxy();
-        });
-
-        await new Promise<void>((resolve, reject) => {
-          const onReady = () => {
-            cleanup();
-            resolve();
+          const client = new Client();
+          const entry: SSH2ConnectionEntry = {
+            client,
+            resolvedConfig: resolvedConfigWithIdentities,
+            proxyProcess: proxy?.process,
+            lastActivityAt: Date.now(),
           };
 
-          const onError = (err: Error) => {
-            cleanup();
-            reject(err);
+          const cleanupProxy = () => {
+            if (proxy?.process?.exitCode === null) {
+              proxy.process.kill();
+            }
           };
 
-          const onAbort = () => {
-            cleanup();
-            client.end();
+          const onClose = () => {
+            if (entry.idleTimer) {
+              clearTimeout(entry.idleTimer);
+            }
             cleanupProxy();
-            reject(new Error("Operation aborted"));
+            this.connections.delete(key);
           };
 
-          const cleanup = () => {
-            client.off("ready", onReady);
-            client.off("error", onError);
-            abortSignal?.removeEventListener("abort", onAbort);
-          };
-
-          client.on("ready", onReady);
-          client.on("error", onError);
-          abortSignal?.addEventListener("abort", onAbort, { once: true });
-
-          client.connect({
-            host: resolvedConfig.hostName,
-            port: resolvedConfig.port,
-            username,
-            agent: agentOverride,
-            privateKey,
-            sock: proxy?.sock,
-            readyTimeout: timeoutMs,
-            keepaliveInterval: 5000,
-            keepaliveCountMax: 2,
+          client.on("close", onClose);
+          client.on("end", onClose);
+          client.on("error", (err) => {
+            if (entry.idleTimer) {
+              clearTimeout(entry.idleTimer);
+            }
+            if (!isAuthFailure(err) || reportAuthFailure) {
+              this.reportFailure(config, getErrorMessage(err));
+            }
+            this.connections.delete(key);
+            cleanupProxy();
           });
-        });
 
-        if (abortSignal?.aborted) {
-          client.end();
-          throw new Error("Operation aborted");
+          await new Promise<void>((resolve, reject) => {
+            const onReady = () => {
+              cleanup();
+              resolve();
+            };
+
+            const onError = (err: Error) => {
+              cleanup();
+              reject(err);
+            };
+
+            const onAbort = () => {
+              cleanup();
+              client.end();
+              cleanupProxy();
+              reject(new Error("Operation aborted"));
+            };
+
+            const cleanup = () => {
+              client.off("ready", onReady);
+              client.off("error", onError);
+              abortSignal?.removeEventListener("abort", onAbort);
+            };
+
+            client.on("ready", onReady);
+            client.on("error", onError);
+            abortSignal?.addEventListener("abort", onAbort, { once: true });
+
+            const connectOptions = {
+              host: resolvedConfig.hostName,
+              port: resolvedConfig.port,
+              username,
+              agent: agentOverride,
+              sock: proxy?.sock,
+              readyTimeout: timeoutMs,
+              keepaliveInterval: 5000,
+              keepaliveCountMax: 2,
+              ...(privateKey ? { privateKey } : {}),
+            };
+
+            client.connect(connectOptions);
+          });
+
+          if (abortSignal?.aborted) {
+            client.end();
+            throw new Error("Operation aborted");
+          }
+
+          this.markHealthy(config);
+          this.connections.set(key, entry);
+          entry.idleTimer = setTimeout(() => {
+            this.closeIdleConnection(key, entry);
+          }, IDLE_TIMEOUT_MS);
+          return entry;
+        };
+
+        for (const [index, privateKey] of keysToTry.entries()) {
+          const isLastKey = index === keysToTry.length - 1;
+
+          try {
+            return await connectWithKey(privateKey, isLastKey);
+          } catch (error) {
+            if (!isAuthFailure(error) || isLastKey) {
+              throw error;
+            }
+          }
         }
 
-        this.markHealthy(config);
-        this.connections.set(key, entry);
-        entry.idleTimer = setTimeout(() => {
-          this.closeIdleConnection(key, entry);
-        }, IDLE_TIMEOUT_MS);
-        return entry;
+        throw new Error("SSH2 authentication failed");
       };
 
       const shouldTryAgentOnly = agent && baseIdentityFiles.length === 0;

@@ -5,11 +5,11 @@ import { spawnPtyProcess } from "../ptySpawn";
 import { expandTildeForSSH } from "../tildeExpansion";
 import { getControlPath, sshConnectionPool, type SSHConnectionConfig } from "../sshConnectionPool";
 import type { SpawnResult } from "../RemoteRuntime";
-import type { PtyHandle } from "../ptyHandle";
 import type {
   SSHTransport,
   SSHTransportConfig,
   SpawnOptions,
+  PtyHandle,
   PtySessionParams,
 } from "./SSHTransport";
 
@@ -20,6 +20,10 @@ export class OpenSSHTransport implements SSHTransport {
   constructor(config: SSHConnectionConfig) {
     this.config = config;
     this.controlPath = getControlPath(config);
+  }
+
+  isConnectionFailure(exitCode: number, _stderr: string): boolean {
+    return exitCode === 255;
   }
 
   getConfig(): SSHTransportConfig {

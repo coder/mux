@@ -14,15 +14,18 @@ import type {
   TerminalCreateParams,
   TerminalResizeParams,
 } from "@/common/types/terminal";
-import type { PtyHandle } from "@/node/runtime/ptyHandle";
+import type { PtyHandle } from "@/node/runtime/transports";
 import { spawnPtyProcess } from "@/node/runtime/ptySpawn";
-import { shellQuotePath } from "@/node/runtime/shellQuote";
 import { SSHRuntime } from "@/node/runtime/SSHRuntime";
 import { LocalBaseRuntime } from "@/node/runtime/LocalBaseRuntime";
 import { DockerRuntime } from "@/node/runtime/DockerRuntime";
 import { access } from "fs/promises";
 import { constants } from "fs";
 import { resolveLocalPtyShell } from "@/node/utils/main/resolveLocalPtyShell";
+
+function shellQuotePath(value: string): string {
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
 
 interface SessionData {
   pty: PtyHandle;

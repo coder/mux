@@ -7,11 +7,11 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { expandTildeForSSH } from "../tildeExpansion";
 import { ssh2ConnectionPool } from "../SSH2ConnectionPool";
 import type { SpawnResult } from "../RemoteRuntime";
-import type { PtyHandle } from "../ptyHandle";
 import type {
   SSHTransport,
   SSHTransportConfig,
   SpawnOptions,
+  PtyHandle,
   PtySessionParams,
 } from "./SSHTransport";
 
@@ -121,6 +121,10 @@ class SSH2Pty implements PtyHandle {
 
 export class SSH2Transport implements SSHTransport {
   constructor(private readonly config: SSHTransportConfig) {}
+
+  isConnectionFailure(_exitCode: number, _stderr: string): boolean {
+    return false;
+  }
 
   getConfig(): SSHTransportConfig {
     return this.config;
