@@ -186,11 +186,11 @@ export const SingleLineCodeBlocks: AppStory = {
     // Verify the single-line class is applied for compact styling
     await expect(codeWrappers[0].classList.contains("code-block-single-line")).toBe(true);
 
-    // Force copy buttons visible for screenshot (normally shown on hover)
+    // Force code block action buttons visible for screenshot (normally shown on hover)
     for (const wrapper of codeWrappers) {
-      const copyButton = wrapper.querySelector<HTMLElement>(".code-copy-button");
-      if (copyButton) {
-        copyButton.style.opacity = "1";
+      const buttons = wrapper.querySelectorAll<HTMLElement>(".code-copy-button, .code-run-button");
+      for (const button of buttons) {
+        button.style.opacity = "1";
       }
     }
   },
