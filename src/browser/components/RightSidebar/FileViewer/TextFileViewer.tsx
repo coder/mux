@@ -217,7 +217,7 @@ export const TextFileViewer: React.FC<TextFileViewerProps> = (props) => {
     filePath: props.filePath,
     fontSize: "11px",
     maxHeight: "none",
-    className: "rounded-none border-0 bg-background [&>div]:overflow-x-visible",
+    className: "rounded-none border-0 [&>div]:overflow-x-visible",
   };
 
   const shouldUseSelectable = Boolean(props.onReviewNote) || inlineReviews.length > 0;
