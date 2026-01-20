@@ -11,7 +11,7 @@ import {
   WEB_FETCH_MAX_HTML_BYTES,
 } from "@/common/constants/toolLimits";
 import { execBuffered } from "@/node/utils/runtime/helpers";
-import { isMuxMdUrl, parseMuxMdUrl, downloadFromMuxMd, MUX_MD_BASE_URL } from "@/common/lib/muxMd";
+import { parseMuxMdUrl, downloadFromMuxMd, MUX_MD_BASE_URL, MUX_MD_HOST } from "@/common/lib/muxMd";
 
 const USER_AGENT = "Mux/1.0 (https://github.com/coder/mux; web-fetch tool)";
 
@@ -73,6 +73,14 @@ function tryExtractContent(
   }
 }
 
+function isMuxMdHost(url: string): boolean {
+  try {
+    return new URL(url).host === MUX_MD_HOST;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Web fetch tool factory for AI assistant
  * Creates a tool that fetches web pages and extracts readable content as markdown
@@ -86,13 +94,10 @@ export const createWebFetchTool: ToolFactory = (config: ToolConfiguration) => {
     execute: async ({ url }, { abortSignal }): Promise<WebFetchToolResult> => {
       try {
         // Handle mux.md share links with client-side decryption
-        if (isMuxMdUrl(url)) {
-          const parsed = parseMuxMdUrl(url);
-          if (!parsed) {
-            return { success: false, error: "Invalid mux.md URL format" };
-          }
+        const muxMdParsed = parseMuxMdUrl(url);
+        if (muxMdParsed) {
           try {
-            const result = await downloadFromMuxMd(parsed.id, parsed.key, abortSignal);
+            const result = await downloadFromMuxMd(muxMdParsed.id, muxMdParsed.key, abortSignal);
             let content = result.content;
             if (content.length > WEB_FETCH_MAX_OUTPUT_BYTES) {
               content = content.slice(0, WEB_FETCH_MAX_OUTPUT_BYTES) + "\n\n[Content truncated]";
@@ -101,7 +106,7 @@ export const createWebFetchTool: ToolFactory = (config: ToolConfiguration) => {
               success: true,
               title: result.fileInfo?.name ?? "Shared Message",
               content,
-              url: `${MUX_MD_BASE_URL}/${parsed.id}#${parsed.key}`,
+              url: `${MUX_MD_BASE_URL}/${muxMdParsed.id}#${muxMdParsed.key}`,
               length: content.length,
             };
           } catch (err) {
@@ -110,6 +115,10 @@ export const createWebFetchTool: ToolFactory = (config: ToolConfiguration) => {
               error: err instanceof Error ? err.message : "Failed to download from mux.md",
             };
           }
+        }
+
+        if (isMuxMdHost(url)) {
+          return { success: false, error: "Invalid mux.md URL format" };
         }
 
         // Build curl command with safe defaults

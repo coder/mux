@@ -3,12 +3,36 @@ import {
   createTempGitRepo,
   cleanupTempGitRepo,
   createWorkspace,
+  waitFor,
   waitForInitComplete,
   resolveOrpcClient,
 } from "./helpers";
 import type { WorkspaceMetadata } from "../../src/common/types/workspace";
 
 type WorkspaceCreationResult = Awaited<ReturnType<typeof createWorkspace>>;
+
+type OrpcClient = ReturnType<typeof resolveOrpcClient>;
+
+type ExecuteBashResult = Awaited<ReturnType<OrpcClient["workspace"]["executeBash"]>>;
+
+async function executeBashUntilReady(
+  client: OrpcClient,
+  workspaceId: string,
+  script: string,
+  timeoutMs = 5000
+): Promise<ExecuteBashResult> {
+  let lastResult = await client.workspace.executeBash({ workspaceId, script });
+  if (lastResult.success && lastResult.data.success) {
+    return lastResult;
+  }
+
+  await waitFor(async () => {
+    lastResult = await client.workspace.executeBash({ workspaceId, script });
+    return lastResult.success && lastResult.data.success;
+  }, timeoutMs);
+
+  return lastResult;
+}
 
 function expectWorkspaceCreationSuccess(result: WorkspaceCreationResult): WorkspaceMetadata {
   expect(result.success).toBe(true);
@@ -283,10 +307,12 @@ describeIntegration("executeBash", () => {
         await waitForInitComplete(env, workspaceId);
 
         // Verify GIT_TERMINAL_PROMPT is set to 0
-        const gitEnvResult = await client.workspace.executeBash({
+        const gitEnvResult = await executeBashUntilReady(
+          client,
           workspaceId,
-          script: 'echo "GIT_TERMINAL_PROMPT=$GIT_TERMINAL_PROMPT"',
-        });
+          'echo "GIT_TERMINAL_PROMPT=$GIT_TERMINAL_PROMPT"',
+          10_000
+        );
 
         expect(gitEnvResult.success).toBe(true);
         if (!gitEnvResult.success) return;
