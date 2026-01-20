@@ -140,6 +140,7 @@ function buildUnifiedView(content: string, diffText: string): UnifiedLine[] | nu
 
 export const TextFileViewer: React.FC<TextFileViewerProps> = (props) => {
   const { theme: themeMode } = useTheme();
+  const isLightTheme = themeMode === "light" || themeMode.endsWith("-light");
   const language = getLanguageFromPath(props.filePath);
   const languageDisplayName = getLanguageDisplayName(language);
 
@@ -162,7 +163,7 @@ export const TextFileViewer: React.FC<TextFileViewerProps> = (props) => {
       ? unifiedLines.map((l) => l.content)
       : fileLines.filter((l, i, arr) => i < arr.length - 1 || l !== "");
 
-    const theme = themeMode === "light" || themeMode.endsWith("-light") ? "light" : "dark";
+    const theme = isLightTheme ? "light" : "dark";
 
     let cancelled = false;
 
@@ -183,7 +184,7 @@ export const TextFileViewer: React.FC<TextFileViewerProps> = (props) => {
     return () => {
       cancelled = true;
     };
-  }, [unifiedLines, fileLines, language, themeMode]);
+  }, [unifiedLines, fileLines, language, isLightTheme]);
 
   const addedCount = unifiedLines?.filter((l) => l.type === "added").length ?? 0;
   const removedCount = unifiedLines?.filter((l) => l.type === "removed").length ?? 0;
@@ -241,7 +242,7 @@ export const TextFileViewer: React.FC<TextFileViewerProps> = (props) => {
         >
           {/* Gutter background + border that extends full height of content */}
           <div
-            className="pointer-events-none absolute inset-y-0 left-0 border-r border-[var(--color-border-light)] bg-black/20"
+            className={`pointer-events-none absolute inset-y-0 left-0 border-r border-[var(--color-border-light)] ${isLightTheme ? "bg-black/5" : "bg-black/20"}`}
             style={{ width: gutterWidth }}
           />
           {/* Lines */}

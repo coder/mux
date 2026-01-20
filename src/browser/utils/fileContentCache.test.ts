@@ -181,7 +181,7 @@ describe("fileContentCache", () => {
       expect(getCachedFileContent("ws1", "file4.txt")).not.toBeNull();
     });
 
-    test("accessing an entry moves it to end of LRU queue", () => {
+    test("re-writing an entry moves it to end of LRU queue", () => {
       CACHE_CONFIG.MAX_ENTRIES = 3;
 
       // Add 3 entries
@@ -190,11 +190,11 @@ describe("fileContentCache", () => {
         setCachedFileContent("ws1", `file${i}.txt`, data, null);
       }
 
-      // Re-add file1 to move it to end (most recent)
-      const data1: FileContentsResult = { type: "text", content: "file1 updated", size: 13 };
+      // Re-write file1 (simulates background refresh) to move it to end
+      const data1: FileContentsResult = { type: "text", content: "file1", size: 5 };
       setCachedFileContent("ws1", "file1.txt", data1, null);
 
-      // Add file4 - should evict file2 (now oldest)
+      // Add file4 - should evict file2 (now oldest since file1 was refreshed)
       const data4: FileContentsResult = { type: "text", content: "file4", size: 5 };
       setCachedFileContent("ws1", "file4.txt", data4, null);
 
