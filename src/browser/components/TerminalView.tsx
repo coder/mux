@@ -31,6 +31,144 @@ function normalizeTerminalFontConfig(value: unknown): TerminalFontConfig {
   return { fontFamily, fontSize };
 }
 
+const GENERIC_FONT_FAMILIES: ReadonlySet<string> = new Set([
+  "serif",
+  "sans-serif",
+  "monospace",
+  "cursive",
+  "fantasy",
+  "system-ui",
+  "ui-serif",
+  "ui-sans-serif",
+  "ui-monospace",
+  "ui-rounded",
+  "emoji",
+  "math",
+  "fangsong",
+]);
+
+function stripOuterQuotes(value: string): string {
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+
+  return trimmed;
+}
+
+function splitFontFamilyList(value: string): string[] {
+  return value
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function isGenericFontFamily(value: string): boolean {
+  return GENERIC_FONT_FAMILIES.has(value.trim().toLowerCase());
+}
+
+function quoteCssFontFamily(value: string): string {
+  const trimmed = stripOuterQuotes(value);
+  if (!trimmed) {
+    return trimmed;
+  }
+
+  if (isGenericFontFamily(trimmed)) {
+    return trimmed;
+  }
+
+  // Quote names containing whitespace or punctuation that would confuse CSS parsing.
+  //
+  // If the name itself contains quotes, strip them. A font-family name containing literal
+  // quotes is almost certainly user input error and would produce invalid CSS.
+  if (/[^a-zA-Z0-9_-]/.test(trimmed)) {
+    const sanitized = trimmed.replace(/"/g, "");
+    return `"${sanitized}"`;
+  }
+
+  return trimmed;
+}
+
+function formatCssFontFamilyList(value: string): string {
+  const parts = splitFontFamilyList(value);
+  if (parts.length === 0) {
+    return value.trim();
+  }
+
+  return parts.map(quoteCssFontFamily).join(", ");
+}
+
+function getPrimaryFontFamily(value: string): string | undefined {
+  const primary = splitFontFamilyList(value).at(0);
+  if (!primary) {
+    return undefined;
+  }
+
+  const stripped = stripOuterQuotes(primary);
+  return stripped || undefined;
+}
+
+async function canLoadFontFamily(primary: string, fontSize: number): Promise<boolean> {
+  if (typeof document === "undefined") {
+    return true;
+  }
+
+  // Some environments (or test runners) may not expose the CSS Font Loading API.
+  if (!document.fonts?.load || !document.fonts?.check) {
+    return true;
+  }
+
+  const family = primary.trim();
+  if (!family) {
+    return false;
+  }
+
+  if (isGenericFontFamily(family)) {
+    return true;
+  }
+
+  const spec = `${fontSize}px ${quoteCssFontFamily(family)}`;
+  if (document.fonts.check(spec)) {
+    return true;
+  }
+
+  try {
+    await document.fonts.load(spec);
+  } catch {
+    // Ignore font load errors; we'll fall back to browser font matching.
+  }
+
+  return document.fonts.check(spec);
+}
+
+async function resolveTerminalFontFamily(fontFamily: string, fontSize: number): Promise<string> {
+  const formatted = formatCssFontFamilyList(fontFamily);
+  const primary = getPrimaryFontFamily(fontFamily);
+  if (!primary) {
+    return formatted;
+  }
+
+  const primaryOk = await canLoadFontFamily(primary, fontSize);
+  if (primaryOk) {
+    return formatted;
+  }
+
+  if (primary.endsWith("Nerd Font") && !primary.endsWith("Nerd Font Mono")) {
+    const monoCandidate = `${primary} Mono`;
+    const monoOk = await canLoadFontFamily(monoCandidate, fontSize);
+    if (monoOk) {
+      const remaining = splitFontFamilyList(fontFamily).slice(1).join(", ");
+      const withMono = remaining ? `${monoCandidate}, ${remaining}` : monoCandidate;
+      return formatCssFontFamilyList(withMono);
+    }
+  }
+
+  return formatted;
+}
+
 interface TerminalViewProps {
   workspaceId: string;
   /** Session ID to connect to (required - must be created before mounting) */
@@ -300,11 +438,20 @@ export function TerminalView({
         // Resolve CSS variables for xterm.js (canvas rendering doesn't support CSS vars)
         const styles = getComputedStyle(document.documentElement);
         const terminalBg = styles.getPropertyValue("--color-terminal-bg").trim() || "#1e1e1e";
+
+        const resolvedFontFamily = await resolveTerminalFontFamily(
+          terminalFontConfig.fontFamily,
+          terminalFontConfig.fontSize
+        );
+
+        if (cancelled) {
+          return;
+        }
         const terminalFg = styles.getPropertyValue("--color-terminal-fg").trim() || "#d4d4d4";
 
         terminal = new Terminal({
           fontSize: terminalFontConfig.fontSize,
-          fontFamily: terminalFontConfig.fontFamily,
+          fontFamily: resolvedFontFamily,
           // Start with no blinking - we enable it on focus
           cursorBlink: false,
           theme: {
@@ -465,23 +612,32 @@ export function TerminalView({
       return;
     }
 
-    term.options.fontFamily = terminalFontConfig.fontFamily;
-    term.options.fontSize = terminalFontConfig.fontSize;
-
-    // Avoid resizing the PTY when hidden (container may be 0x0).
-    if (!visible) {
-      return;
-    }
-
     let cancelled = false;
 
-    const updateSize = async () => {
-      // xterm measures character sizes asynchronously after font changes.
+    const applyFont = async () => {
+      const resolvedFontFamily = await resolveTerminalFontFamily(
+        terminalFontConfig.fontFamily,
+        terminalFontConfig.fontSize
+      );
+
+      if (cancelled || term !== termRef.current) {
+        return;
+      }
+
+      term.options.fontFamily = resolvedFontFamily;
+      term.options.fontSize = terminalFontConfig.fontSize;
+
+      // Avoid resizing the PTY when hidden (container may be 0x0).
+      if (!visible) {
+        return;
+      }
+
+      // ghostty-web measures character sizes asynchronously after font changes.
       await new Promise<void>((resolve) =>
         requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
       );
 
-      if (cancelled) {
+      if (cancelled || term !== termRef.current) {
         return;
       }
 
@@ -493,17 +649,17 @@ export function TerminalView({
       try {
         await router.resize(sessionId, proposed.cols, proposed.rows);
 
-        if (cancelled) {
+        if (cancelled || term !== termRef.current) {
           return;
         }
 
-        termRef.current?.resize(proposed.cols, proposed.rows);
+        term.resize(proposed.cols, proposed.rows);
       } catch (err) {
         console.error("[TerminalView] Error resizing after terminal font change:", err);
       }
     };
 
-    void updateSize();
+    void applyFont();
 
     return () => {
       cancelled = true;
