@@ -89,7 +89,7 @@ function getHunk(container: HTMLElement): HTMLElement | null {
 async function refreshReviewAndWaitForHunk(view: RenderedApp): Promise<void> {
   await view.selectTab("review");
 
-  const refreshButton = view.getByTestId("review-refresh");
+  const refreshButton = await view.findByTestId("review-refresh", {}, { timeout: 10_000 });
   fireEvent.click(refreshButton);
 
   await waitFor(

@@ -112,7 +112,19 @@ export function TerminalView({
   }, [autoFocus]);
 
   useEffect(() => {
-    if (!autoFocus || !visible || !terminalReady || autoFocusConsumedRef.current) {
+    if (!autoFocus || !visible || autoFocusConsumedRef.current) {
+      return;
+    }
+
+    const container = containerRef.current;
+    if (!container) {
+      return;
+    }
+
+    // While the terminal runtime is still loading, focus the container so keyboard input
+    // lands in the right place immediately. We'll focus the actual terminal once ready.
+    if (!terminalReady) {
+      container.focus();
       return;
     }
 
@@ -620,6 +632,7 @@ export function TerminalView({
       <div
         ref={containerRef}
         className="terminal-container"
+        tabIndex={-1}
         {...{ [TERMINAL_CONTAINER_ATTR]: true }}
         style={{
           flex: 1,
