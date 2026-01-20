@@ -74,6 +74,8 @@ interface ReviewPanelProps {
   isCreating?: boolean;
   /** Callback to report stats changes (for tab badge) */
   onStatsChange?: (stats: ReviewPanelStats) => void;
+  /** Callback to open a file in a new tab */
+  onOpenFile?: (relativePath: string) => void;
 }
 
 interface ReviewSearchState {
@@ -242,6 +244,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   focusTrigger,
   isCreating = false,
   onStatsChange,
+  onOpenFile,
 }) => {
   const originFetchRef = useRef<OriginFetchState | null>(null);
   const { api } = useAPI();
@@ -1337,6 +1340,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
                       diffBase={filters.diffBase}
                       includeUncommitted={filters.includeUncommitted}
                       reviewActions={reviewActions}
+                      onOpenFile={onOpenFile}
                     />
                   );
                 })

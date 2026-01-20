@@ -566,6 +566,7 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
               focusTrigger={props.focusTrigger}
               isCreating={props.isCreating}
               onStatsChange={props.onReviewStatsChange}
+              onOpenFile={props.onOpenFile}
             />
           </div>
         )}
