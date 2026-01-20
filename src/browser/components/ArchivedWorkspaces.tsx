@@ -532,7 +532,7 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
           <button
             type="button"
             onClick={handleToggleExpanded}
-            className="text-muted hover:text-foreground rounded p-1 transition-colors hover:bg-white/10"
+            className="text-muted hover:text-foreground focus-visible:ring-accent rounded p-1 transition-colors hover:bg-white/10 focus-visible:ring-1 focus-visible:outline-none"
             aria-label={isExpanded ? "Collapse archived workspaces" : "Expand archived workspaces"}
             aria-expanded={isExpanded}
             aria-controls={archivedRegionId}
@@ -576,7 +576,7 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
                     <TooltipTrigger asChild>
                       <button
                         onClick={() => void handleBulkRestore()}
-                        className="text-muted hover:text-foreground rounded p-1 transition-colors hover:bg-white/10"
+                        className="text-muted hover:text-foreground focus-visible:ring-accent rounded p-1 transition-colors hover:bg-white/10 focus-visible:ring-1 focus-visible:outline-none"
                         aria-label="Restore selected"
                       >
                         <ArchiveRestoreIcon className="h-4 w-4" />
