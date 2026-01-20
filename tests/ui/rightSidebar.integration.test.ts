@@ -27,7 +27,8 @@ import {
   RIGHT_SIDEBAR_COLLAPSED_KEY,
   getRightSidebarLayoutKey,
 } from "@/common/constants/storage";
-// RightSidebarLayoutState used for initial setup via localStorage - acceptable for test fixtures
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+// RightSidebarLayoutState used for initial setup via persisted-state helpers - acceptable for test fixtures
 import type { RightSidebarLayoutState } from "@/browser/utils/rightSidebarLayout";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
@@ -44,10 +45,8 @@ describeIntegration("RightSidebar (UI)", () => {
   beforeEach(() => {
     // Clear persisted state before each test
     // Note: layout is per-workspace now, so cleared inside tests with workspace context
-    if (typeof localStorage !== "undefined") {
-      localStorage.removeItem(RIGHT_SIDEBAR_TAB_KEY);
-      localStorage.removeItem(RIGHT_SIDEBAR_COLLAPSED_KEY);
-    }
+    updatePersistedState(RIGHT_SIDEBAR_TAB_KEY, null);
+    updatePersistedState(RIGHT_SIDEBAR_COLLAPSED_KEY, null);
   });
 
   test("tab switching updates active tab and persists selection", async () => {
@@ -55,8 +54,8 @@ describeIntegration("RightSidebar (UI)", () => {
       const cleanupDom = installDom();
 
       // Clear any persisted state
-      localStorage.removeItem(RIGHT_SIDEBAR_TAB_KEY);
-      localStorage.removeItem(getRightSidebarLayoutKey(workspaceId));
+      updatePersistedState(RIGHT_SIDEBAR_TAB_KEY, null);
+      updatePersistedState(getRightSidebarLayoutKey(workspaceId), null);
 
       const view = renderApp({
         apiClient: env.orpc,
@@ -159,8 +158,8 @@ describeIntegration("RightSidebar (UI)", () => {
       await env.orpc.features.setStatsTabOverride({ override: "on" });
 
       // Clear any persisted state
-      localStorage.removeItem(RIGHT_SIDEBAR_TAB_KEY);
-      localStorage.removeItem(getRightSidebarLayoutKey(workspaceId));
+      updatePersistedState(RIGHT_SIDEBAR_TAB_KEY, null);
+      updatePersistedState(getRightSidebarLayoutKey(workspaceId), null);
 
       const view = renderApp({
         apiClient: env.orpc,
@@ -212,7 +211,7 @@ describeIntegration("RightSidebar (UI)", () => {
       const cleanupDom = installDom();
 
       // Start expanded
-      localStorage.setItem(RIGHT_SIDEBAR_COLLAPSED_KEY, JSON.stringify(false));
+      updatePersistedState(RIGHT_SIDEBAR_COLLAPSED_KEY, false);
 
       const view = renderApp({
         apiClient: env.orpc,
@@ -296,7 +295,7 @@ describeIntegration("RightSidebar (UI)", () => {
           activeTab: "review",
         },
       };
-      localStorage.setItem(getRightSidebarLayoutKey(workspaceId), JSON.stringify(initialLayout));
+      updatePersistedState(getRightSidebarLayoutKey(workspaceId), initialLayout);
 
       const view = renderApp({
         apiClient: env.orpc,
@@ -473,7 +472,7 @@ describeIntegration("RightSidebar (UI)", () => {
       const cleanupDom = installDom();
 
       // Clear any persisted width state
-      localStorage.removeItem("right-sidebar:width");
+      updatePersistedState("right-sidebar:width", null);
 
       const view = renderApp({
         apiClient: env.orpc,
@@ -605,7 +604,7 @@ describeIntegration("RightSidebar (UI)", () => {
       const cleanupDom = installDom();
 
       // Clear any persisted state
-      localStorage.removeItem("right-sidebar:width");
+      updatePersistedState("right-sidebar:width", null);
 
       const view = renderApp({
         apiClient: env.orpc,
@@ -741,7 +740,7 @@ describeIntegration("RightSidebar (UI)", () => {
         },
         focusedTabsetId: "tabset-top",
       };
-      localStorage.setItem(getRightSidebarLayoutKey(workspaceId), JSON.stringify(splitLayout));
+      updatePersistedState(getRightSidebarLayoutKey(workspaceId), splitLayout);
 
       const view = renderApp({
         apiClient: env.orpc,
@@ -799,8 +798,8 @@ describeIntegration("RightSidebar (UI)", () => {
       const cleanupDom = installDom();
 
       // Clear any persisted state
-      localStorage.removeItem(RIGHT_SIDEBAR_TAB_KEY);
-      localStorage.removeItem(getRightSidebarLayoutKey(workspaceId));
+      updatePersistedState(RIGHT_SIDEBAR_TAB_KEY, null);
+      updatePersistedState(getRightSidebarLayoutKey(workspaceId), null);
 
       const view = renderApp({
         apiClient: env.orpc,
