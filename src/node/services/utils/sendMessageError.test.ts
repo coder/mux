@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildStreamErrorEventData,
+  createStreamErrorMessage,
   createUnknownSendMessageError,
   formatSendMessageError,
 } from "./sendMessageError";
@@ -17,6 +18,19 @@ describe("buildStreamErrorEventData", () => {
     expect(result.messageId).toMatch(/^assistant-/);
   });
 });
+describe("createStreamErrorMessage", () => {
+  test("defaults errorType to unknown", () => {
+    const result = createStreamErrorMessage({
+      messageId: "assistant-test",
+      error: "something went wrong",
+    });
+
+    expect(result.type).toBe("stream-error");
+    expect(result.errorType).toBe("unknown");
+    expect(result.messageId).toBe("assistant-test");
+  });
+});
+
 describe("formatSendMessageError", () => {
   test("formats api_key_not_found with authentication errorType", () => {
     const result = formatSendMessageError({

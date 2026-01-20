@@ -14,17 +14,14 @@ import type { InitStateManager } from "@/node/services/initStateManager";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
-import type {
-  WorkspaceChatMessage,
-  StreamErrorMessage,
-  SendMessageOptions,
-  ImagePart,
-} from "@/common/orpc/types";
+import type { WorkspaceChatMessage, SendMessageOptions, ImagePart } from "@/common/orpc/types";
 import type { SendMessageError } from "@/common/types/errors";
 import { SkillNameSchema } from "@/common/orpc/schemas";
 import {
   buildStreamErrorEventData,
+  createStreamErrorMessage,
   createUnknownSendMessageError,
+  type StreamErrorPayload,
 } from "@/node/services/utils/sendMessageError";
 import {
   createUserMessageId,
@@ -819,10 +816,7 @@ export class AgentSession {
         streamResult.error.type !== "runtime_start_failed"
       ) {
         const streamError = buildStreamErrorEventData(streamResult.error);
-        await this.handleStreamError({
-          workspaceId: this.workspaceId,
-          ...streamError,
-        });
+        await this.handleStreamError(streamError);
       }
     }
 
@@ -988,14 +982,14 @@ export class AgentSession {
     return true;
   }
 
-  private async handleStreamError(data: {
-    workspaceId: string;
-    messageId: string;
-    error: string;
-    errorType?: string;
-  }): Promise<void> {
+  private async handleStreamError(data: StreamErrorPayload): Promise<void> {
     const hadCompactionRequest = this.activeCompactionRequest !== undefined;
-    if (await this.maybeRetryCompactionOnContextExceeded(data)) {
+    if (
+      await this.maybeRetryCompactionOnContextExceeded({
+        messageId: data.messageId,
+        errorType: data.errorType,
+      })
+    ) {
       return;
     }
 
@@ -1005,13 +999,7 @@ export class AgentSession {
       this.clearQueue();
     }
 
-    const streamError: StreamErrorMessage = {
-      type: "stream-error",
-      messageId: data.messageId,
-      error: data.error,
-      errorType: (data.errorType ?? "unknown") as StreamErrorMessage["errorType"],
-    };
-    this.emitChatEvent(streamError);
+    this.emitChatEvent(createStreamErrorMessage(data));
   }
 
   private attachAiListeners(): void {
@@ -1093,13 +1081,12 @@ export class AgentSession {
       ) {
         return;
       }
-      const data = raw as {
-        workspaceId: string;
-        messageId: string;
-        error: string;
-        errorType?: string;
-      };
-      void this.handleStreamError(data);
+      const data = raw as StreamErrorPayload & { workspaceId: string };
+      void this.handleStreamError({
+        messageId: data.messageId,
+        error: data.error,
+        errorType: data.errorType,
+      });
     };
 
     this.aiListeners.push({ event: "error", handler: errorHandler });

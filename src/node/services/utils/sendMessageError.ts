@@ -1,5 +1,6 @@
 import assert from "@/common/utils/assert";
 import type { SendMessageError, StreamErrorType } from "@/common/types/errors";
+import type { StreamErrorMessage } from "@/common/orpc/types";
 import { createAssistantMessageId } from "./messageIds";
 
 /**
@@ -66,11 +67,25 @@ export const formatSendMessageError = (
 };
 
 /**
+ * Stream-error payload helpers.
+ */
+export interface StreamErrorPayload {
+  messageId: string;
+  error: string;
+  errorType?: StreamErrorType;
+}
+
+export const createStreamErrorMessage = (payload: StreamErrorPayload): StreamErrorMessage => ({
+  type: "stream-error",
+  messageId: payload.messageId,
+  error: payload.error,
+  errorType: payload.errorType ?? "unknown",
+});
+
+/**
  * Build a stream-error payload for pre-stream failures so the UI can surface them immediately.
  */
-export const buildStreamErrorEventData = (
-  error: SendMessageError
-): { messageId: string; error: string; errorType: StreamErrorType } => {
+export const buildStreamErrorEventData = (error: SendMessageError): StreamErrorPayload => {
   const { message, errorType } = formatSendMessageError(error);
   const messageId = createAssistantMessageId();
   return { messageId, error: message, errorType };
