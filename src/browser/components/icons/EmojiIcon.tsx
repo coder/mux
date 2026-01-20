@@ -45,6 +45,7 @@ const EMOJI_TO_ICON: Record<string, LucideIcon> = {
   "❌": X,
   "🚀": Rocket,
   "⏳": Hourglass,
+  "⌛": Hourglass,
   "🔗": Link,
   "🔄": RefreshCw,
   "🧪": Beaker,
@@ -78,8 +79,7 @@ const EMOJI_TO_ICON: Record<string, LucideIcon> = {
 };
 
 const SPINNING_EMOJI = new Set([
-  // In tool output and agent status, these represent "working"/"refreshing".
-  "⏳",
+  // In tool output and agent status, these represent "refreshing".
   "🔄",
 ]);
 

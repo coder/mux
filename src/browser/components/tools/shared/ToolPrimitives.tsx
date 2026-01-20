@@ -191,7 +191,7 @@ interface ToolIconProps {
   /**
    * Optional control for whether the emoji icon should spin.
    *
-   * This is useful when the emoji represents "working" (⏳/🔄), but the tool call itself
+   * This is useful when the emoji maps to a spinner (e.g. 🔄), but the tool call itself
    * is already completed.
    */
   emojiSpin?: boolean;

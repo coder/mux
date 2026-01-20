@@ -25,11 +25,7 @@ export const StatusSetToolCall: React.FC<StatusSetToolCallProps> = ({
   return (
     <ToolContainer expanded={false}>
       <ToolHeader>
-        <ToolIcon
-          toolName="status_set"
-          emoji={args.emoji}
-          emojiSpin={status === "pending" || status === "executing"}
-        />
+        <ToolIcon toolName="status_set" emoji={args.emoji} />
         <span className="text-muted-foreground italic">{args.message}</span>
         {errorMessage && <span className="text-error-foreground">({errorMessage})</span>}
         <StatusIndicator status={status}>{statusDisplay}</StatusIndicator>
