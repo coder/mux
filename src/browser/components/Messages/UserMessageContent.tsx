@@ -34,6 +34,8 @@ const imageContainerStyles = {
   queued: "mt-2 flex flex-wrap gap-2",
 } as const;
 
+const markdownClassName = "user-message-markdown";
+
 const imageStyles = {
   sent: "max-h-[300px] max-w-72 rounded-xl border border-[var(--color-attachment-border)] object-cover",
   queued: "border-border-light max-h-[300px] max-w-80 rounded border",
@@ -64,11 +66,21 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = ({
             <ReviewBlockFromData key={idx} data={review} />
           ))}
           {textContent && (
-            <MarkdownRenderer content={textContent} style={markdownStyles[variant]} />
+            <MarkdownRenderer
+              content={textContent}
+              className={markdownClassName}
+              style={markdownStyles[variant]}
+            />
           )}
         </div>
       ) : (
-        content && <MarkdownRenderer content={content} style={markdownStyles[variant]} />
+        content && (
+          <MarkdownRenderer
+            content={content}
+            className={markdownClassName}
+            style={markdownStyles[variant]}
+          />
+        )
       )}
       {imageParts && imageParts.length > 0 && (
         <div className={imageContainerStyles[variant]}>

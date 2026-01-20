@@ -1430,6 +1430,15 @@ code {
   list-style-type: decimal;
 }
 
+
+.markdown-content.user-message-markdown ul,
+.markdown-content.user-message-markdown ol {
+  margin: 0;
+}
+
+.markdown-content.user-message-markdown li {
+  padding-bottom: 0;
+}
 .markdown-content li {
   margin: 0;
   padding: 0 0 4px 0;

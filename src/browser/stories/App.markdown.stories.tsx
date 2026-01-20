@@ -350,6 +350,10 @@ const reallyLongVariableName = someFunction(argumentOne, argumentTwo, argumentTh
 
 This is a very long paragraph without any breaks that should demonstrate text wrapping behavior in the chat message container. The text should wrap at the container boundary and not cause horizontal overflow that creates a scrollbar on the entire chat area. If you see a horizontal scrollbar, the CSS is broken.`;
 
+const USER_LIST_CONTENT = `1. something
+2. something
+3. something`;
+
 const USER_CODE_BLOCKS = `Here's the error:
 
 \`\`\`
@@ -375,6 +379,50 @@ const reallyLongVariableName = someFunction(argumentOne, argumentTwo, argumentTh
 \`\`\`
 
 Any ideas?`;
+
+/** User message list spacing - regression test for extra list padding */
+export const UserMessageListSpacing: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-user-list",
+          messages: [
+            createUserMessage("msg-1", USER_LIST_CONTENT, {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 10000,
+            }),
+            createAssistantMessage("msg-2", "Noted.", {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP,
+            }),
+          ],
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await waitForChatMessagesLoaded(canvasElement);
+
+    const orderedList = await waitFor(
+      () => {
+        const list = canvasElement.querySelector(".user-message-markdown ol");
+        if (!list) throw new Error("User list not found");
+        return list as HTMLOListElement;
+      },
+      { timeout: 5000 }
+    );
+
+    const listStyle = window.getComputedStyle(orderedList);
+    await expect(listStyle.marginTop).toBe("0px");
+    await expect(listStyle.marginBottom).toBe("0px");
+
+    const firstItem = orderedList.querySelector("li");
+    if (!firstItem) throw new Error("List item not found");
+    const itemStyle = window.getComputedStyle(firstItem);
+    await expect(itemStyle.paddingBottom).toBe("0px");
+  },
+};
 
 /** User message with code blocks - tests scrolling for long lines */
 export const UserMessageCodeBlock: AppStory = {
