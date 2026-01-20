@@ -168,9 +168,10 @@ export const MCPHeadersEditor: React.FC<{
 
               <button
                 type="button"
+                aria-label="Remove header"
                 onClick={() => removeRow(row.id)}
                 disabled={props.disabled}
-                className="text-danger-light border-danger-light hover:bg-danger-light/10 cursor-pointer rounded border bg-transparent px-2.5 py-1.5 text-[13px] transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
+                className="text-danger-light border-danger-light hover:bg-danger-light/10 cursor-pointer rounded border bg-transparent px-2.5 py-1.5 text-[13px] transition-colors duration-200 disabled:cursor-not-allowed disabled:opacity-50"
                 title="Remove header"
               >
                 ×
@@ -200,7 +201,7 @@ export const MCPHeadersEditor: React.FC<{
         type="button"
         onClick={addRow}
         disabled={props.disabled}
-        className="text-muted border-border-medium hover:bg-hover hover:border-border-darker hover:text-foreground w-full cursor-pointer rounded border border-dashed bg-transparent px-3 py-2 text-[13px] transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
+        className="text-muted border-border-medium hover:bg-hover hover:border-border-darker hover:text-foreground w-full cursor-pointer rounded border border-dashed bg-transparent px-3 py-2 text-[13px] transition-colors duration-200 disabled:cursor-not-allowed disabled:opacity-50"
       >
         + Add header
       </button>

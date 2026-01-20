@@ -102,14 +102,18 @@ export const ToolResultImages: React.FC<ToolResultImagesProps> = ({ result }) =>
         {safeImages.map((dataUrl, index) => (
           <button
             key={index}
+            type="button"
+            aria-label={`View tool result image ${index + 1}`}
             onClick={() => setSelectedImage(dataUrl)}
-            className="border-border-light bg-dark block cursor-pointer overflow-hidden rounded border p-0 transition-opacity hover:opacity-80"
+            className="border-border-light bg-dark block h-48 w-48 cursor-pointer overflow-hidden rounded border p-0 transition-opacity hover:opacity-80"
             title="Click to view full size"
           >
             <img
               src={dataUrl}
               alt={`Tool result image ${index + 1}`}
-              className="max-h-48 max-w-full object-contain"
+              width={192}
+              height={192}
+              className="h-full w-full object-contain"
             />
           </button>
         ))}

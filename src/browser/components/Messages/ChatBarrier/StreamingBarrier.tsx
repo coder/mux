@@ -92,17 +92,17 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({ workspaceId,
       case "starting":
         // Show a runtime-specific message if the workspace is still booting (e.g., Coder/devcontainers).
         if (runtimeStatus?.phase === "starting" || runtimeStatus?.phase === "waiting") {
-          return runtimeStatus.detail ?? "Starting workspace...";
+          return runtimeStatus.detail ?? "Starting workspace…";
         }
-        return modelName ? `${modelName} starting...` : "starting...";
+        return modelName ? `${modelName} starting…` : "starting…";
       case "interrupting":
-        return "interrupting...";
+        return "interrupting…";
       case "awaiting-input":
-        return "Awaiting your input...";
+        return "Awaiting your input…";
       case "compacting":
-        return modelName ? `${modelName} compacting...` : "compacting...";
+        return modelName ? `${modelName} compacting…` : "compacting…";
       case "streaming":
-        return modelName ? `${modelName} streaming...` : "streaming...";
+        return modelName ? `${modelName} streaming…` : "streaming…";
     }
   })();
 

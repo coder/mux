@@ -61,15 +61,15 @@ describe("Mermaid error handling", () => {
   });
 
   it("should show different messages during streaming vs not streaming", () => {
-    // During streaming: "Rendering diagram..."
+    // During streaming: "Rendering diagram…"
     // Not streaming: "Mermaid Error: {message}"
 
     const errorStates = {
-      streaming: "Rendering diagram...",
+      streaming: "Rendering diagram…",
       notStreaming: "Mermaid Error:",
     };
 
-    expect(errorStates.streaming).toBe("Rendering diagram...");
+    expect(errorStates.streaming).toBe("Rendering diagram…");
     expect(errorStates.notStreaming).toContain("Error");
   });
 

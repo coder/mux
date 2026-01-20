@@ -146,11 +146,12 @@ function SearchableModelSelect(props: {
           <input
             ref={inputRef}
             type="text"
+            aria-label="Search models"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Search models..."
-            className="text-foreground placeholder:text-muted w-full bg-transparent text-xs outline-none"
+            placeholder="Search models…"
+            className="text-foreground placeholder:text-muted focus-visible:ring-accent w-full bg-transparent text-xs outline-none focus-visible:ring-1 focus-visible:outline-none"
           />
         </div>
 

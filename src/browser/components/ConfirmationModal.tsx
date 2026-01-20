@@ -78,7 +78,7 @@ export const ConfirmationModal: React.FC<ConfirmationModalProps> = (props) => {
             onClick={() => void handleConfirm()}
             disabled={isConfirming}
           >
-            {isConfirming ? "Processing..." : (props.confirmLabel ?? "Confirm")}
+            {isConfirming ? "Processing…" : (props.confirmLabel ?? "Confirm")}
           </Button>
         </DialogFooter>
       </DialogContent>

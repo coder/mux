@@ -272,6 +272,7 @@ export const TextFileViewer: React.FC<TextFileViewerProps> = (props) => {
         {props.onRefresh && (
           <button
             type="button"
+            aria-label="Refresh file"
             className="text-muted hover:bg-accent/50 hover:text-foreground rounded p-0.5"
             onClick={props.onRefresh}
             title="Refresh file"

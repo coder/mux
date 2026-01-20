@@ -30,12 +30,13 @@ export const SidebarCollapseButton: React.FC<SidebarCollapseButtonProps> = ({
     <Tooltip>
       <TooltipTrigger asChild>
         <button
+          type="button"
           onClick={onToggle}
           aria-label={label}
           className={
             collapsed
-              ? "text-muted hover:bg-hover hover:text-foreground flex w-full flex-1 cursor-pointer items-center justify-center bg-transparent p-0 text-xs transition-all duration-200"
-              : "text-muted border-dark hover:bg-hover hover:text-foreground mt-auto flex h-6 w-full cursor-pointer items-center justify-center border-t border-none bg-transparent p-0 text-xs transition-all duration-200"
+              ? "text-muted hover:bg-hover hover:text-foreground flex w-full flex-1 cursor-pointer items-center justify-center bg-transparent p-0 text-xs transition-colors duration-200"
+              : "text-muted border-dark hover:bg-hover hover:text-foreground mt-auto flex h-6 w-full cursor-pointer items-center justify-center border-t border-none bg-transparent p-0 text-xs transition-colors duration-200"
           }
         >
           {chevron}

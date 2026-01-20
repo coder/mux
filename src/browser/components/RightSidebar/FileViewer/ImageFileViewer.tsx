@@ -120,6 +120,7 @@ export const ImageFileViewer: React.FC<ImageFileViewerProps> = (props) => {
         <div className="flex shrink-0 items-center gap-1">
           <button
             type="button"
+            aria-label="Zoom out"
             className="text-muted hover:bg-accent/50 hover:text-foreground rounded p-1"
             onClick={handleZoomOut}
             title="Zoom out"
@@ -127,9 +128,10 @@ export const ImageFileViewer: React.FC<ImageFileViewerProps> = (props) => {
             <ZoomOut className="h-3.5 w-3.5" />
           </button>
           <select
+            aria-label="Zoom level"
             value={Math.round(zoom * 100)}
             onChange={(e) => setZoom(Number(e.target.value) / 100)}
-            className="text-muted-foreground hover:text-foreground bg-background cursor-pointer rounded px-1 py-0.5 text-center text-xs outline-none"
+            className="text-muted-foreground hover:text-foreground bg-background focus-visible:ring-accent cursor-pointer rounded px-1 py-0.5 text-center text-xs outline-none focus-visible:ring-1 focus-visible:outline-none"
             title="Select zoom level"
           >
             {/* Current zoom if not a preset */}
@@ -144,6 +146,7 @@ export const ImageFileViewer: React.FC<ImageFileViewerProps> = (props) => {
           </select>
           <button
             type="button"
+            aria-label="Zoom in"
             className="text-muted hover:bg-accent/50 hover:text-foreground rounded p-1"
             onClick={handleZoomIn}
             title="Zoom in"
@@ -152,6 +155,7 @@ export const ImageFileViewer: React.FC<ImageFileViewerProps> = (props) => {
           </button>
           <button
             type="button"
+            aria-label="Reset zoom"
             className={cn(
               "text-muted hover:bg-accent/50 hover:text-foreground rounded p-1",
               zoom === 1 && "opacity-50"
@@ -175,6 +179,8 @@ export const ImageFileViewer: React.FC<ImageFileViewerProps> = (props) => {
         <img
           src={dataUrl}
           alt="File preview"
+          width={imageDimensions?.width}
+          height={imageDimensions?.height}
           onLoad={handleImageLoad}
           style={{
             ...getCheckerboardStyle(zoom),

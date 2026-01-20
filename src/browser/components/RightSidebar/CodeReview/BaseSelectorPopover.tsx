@@ -103,12 +103,13 @@ export function BaseSelectorPopover({
           <input
             ref={inputRef}
             type="text"
+            aria-label="Diff base"
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             onKeyDown={handleInputKeyDown}
             onBlur={handleInputBlur}
-            placeholder="Enter base..."
-            className="text-foreground placeholder:text-muted w-full bg-transparent font-mono text-[11px] outline-none"
+            placeholder="Enter base…"
+            className="text-foreground placeholder:text-muted focus-visible:ring-accent w-full bg-transparent font-mono text-[11px] outline-none focus-visible:ring-1 focus-visible:outline-none"
           />
         </div>
 

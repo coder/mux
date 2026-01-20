@@ -35,6 +35,7 @@ export const AddSectionButton: React.FC<AddSectionButtonProps> = ({ onCreateSect
         <input
           ref={inputRef}
           type="text"
+          aria-label="Section name"
           value={name}
           onChange={(e) => setName(e.target.value)}
           onBlur={handleSubmit}
@@ -45,9 +46,9 @@ export const AddSectionButton: React.FC<AddSectionButtonProps> = ({ onCreateSect
               setIsCreating(false);
             }
           }}
-          placeholder="Section name..."
+          placeholder="Section name…"
           data-testid="add-section-input"
-          className="bg-background/50 text-foreground min-w-0 flex-1 rounded border border-white/20 px-1.5 py-0.5 text-[11px] outline-none"
+          className="bg-background/50 text-foreground focus-visible:ring-accent min-w-0 flex-1 rounded border border-white/20 px-1.5 py-0.5 text-[11px] outline-none focus-visible:ring-1 focus-visible:outline-none"
         />
       </div>
     );
@@ -57,6 +58,7 @@ export const AddSectionButton: React.FC<AddSectionButtonProps> = ({ onCreateSect
     <Tooltip>
       <TooltipTrigger asChild>
         <button
+          type="button"
           onClick={() => setIsCreating(true)}
           data-testid="add-section-button"
           className="text-muted/60 hover:text-muted flex w-full cursor-pointer items-center justify-center gap-1 border-none bg-transparent px-2 py-0.5 text-[11px] transition-colors"

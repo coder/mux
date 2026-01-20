@@ -99,6 +99,7 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
         <input
           ref={inputRef}
           type="text"
+          aria-label="Section name"
           value={editValue}
           onChange={(e) => setEditValue(e.target.value)}
           onBlur={handleSubmitRename}
@@ -110,7 +111,7 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
             }
           }}
           data-testid="section-rename-input"
-          className="bg-background/50 text-foreground min-w-0 flex-1 rounded border border-white/20 px-1.5 py-0.5 text-xs font-medium outline-none"
+          className="bg-background/50 text-foreground focus:border-accent focus-visible:ring-accent min-w-0 flex-1 rounded border border-white/20 px-1.5 py-0.5 text-xs font-medium outline-none focus-visible:ring-1 focus-visible:outline-none"
         />
       ) : (
         <button
@@ -172,6 +173,7 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
               <div className="mt-2 flex items-center gap-1.5">
                 <input
                   type="text"
+                  aria-label="Section color hex"
                   value={hexInputValue}
                   onChange={(e) => {
                     const value = e.target.value;
@@ -181,7 +183,7 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
                       onChangeColor(value);
                     }
                   }}
-                  className="bg-background/50 text-foreground w-full rounded border border-white/20 px-1.5 py-0.5 text-xs outline-none"
+                  className="bg-background/50 text-foreground focus:border-accent focus-visible:ring-accent w-full rounded border border-white/20 px-1.5 py-0.5 text-xs outline-none focus-visible:ring-1 focus-visible:outline-none"
                 />
               </div>
             </div>

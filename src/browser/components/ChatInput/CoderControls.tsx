@@ -394,7 +394,7 @@ export function CoderControls(props: CoderControlsProps) {
                       placeholder={
                         existingWorkspaces.length === 0
                           ? "No workspaces found"
-                          : "Select workspace..."
+                          : "Select workspace…"
                       }
                     />
                   </SelectTrigger>

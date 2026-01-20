@@ -59,7 +59,7 @@ export const StartHereModal: React.FC<StartHereModalProps> = ({ isOpen, onClose,
             Cancel
           </Button>
           <Button onClick={() => void handleConfirm()} disabled={isExecuting}>
-            {isExecuting ? "Starting..." : "OK"}
+            {isExecuting ? "Starting…" : "OK"}
           </Button>
         </DialogFooter>
       </DialogContent>

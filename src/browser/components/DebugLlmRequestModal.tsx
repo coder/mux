@@ -95,7 +95,7 @@ export const DebugLlmRequestModal: React.FC<DebugLlmRequestModalProps> = ({
                 onClick={() => void fetchSnapshot()}
                 disabled={!api || loading}
               >
-                {loading ? "Loading..." : "Refresh"}
+                {loading ? "Loading…" : "Refresh"}
               </Button>
               <Button
                 variant="secondary"

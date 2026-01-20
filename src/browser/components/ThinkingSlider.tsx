@@ -89,7 +89,7 @@ export const ThinkingSliderComponent: React.FC<ThinkingControlProps> = ({ modelS
         <TooltipTrigger asChild>
           <div className="flex items-center gap-2">
             <span
-              className="min-w-11 uppercase transition-all duration-200 select-none"
+              className="min-w-11 uppercase transition-[color,text-shadow] duration-200 select-none"
               style={textStyle}
               aria-live="polite"
               aria-label={`Thinking level fixed to ${fixedLevel}`}
@@ -174,7 +174,7 @@ export const ThinkingSliderComponent: React.FC<ThinkingControlProps> = ({ modelS
             aria-label={`Thinking level: ${effectiveThinkingLevel}. Click to cycle.`}
           >
             <span
-              className="min-w-11 uppercase transition-all duration-200 select-none"
+              className="min-w-11 uppercase transition-[color,text-shadow] duration-200 select-none"
               style={textStyle}
               aria-live="polite"
             >

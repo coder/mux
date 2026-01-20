@@ -266,7 +266,7 @@ export const InlineReviewNote: React.FC<InlineReviewNoteProps> = ({
                   onKeyDown={handleKeyDown}
                   className="text-primary w-full resize-none rounded border border-[var(--color-review-accent)]/40 bg-[var(--color-review-accent)]/10 px-1.5 py-1 text-[11px] focus:border-[var(--color-review-accent)]/60 focus:outline-none"
                   rows={2}
-                  placeholder="Your comment..."
+                  placeholder="Your comment…"
                 />
                 <div className="flex items-center justify-end gap-1">
                   <span className="text-muted text-[9px]">

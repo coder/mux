@@ -433,7 +433,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
             }}
             style={activeStyle}
             className={cn(
-              "flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-[11px] font-medium transition-all duration-150",
+              "flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-[11px] font-medium transition-colors duration-150",
               activeClassName
             )}
           >

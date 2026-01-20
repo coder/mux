@@ -184,17 +184,21 @@ const SecretsModal: React.FC<SecretsModalProps> = ({
                   />
                   <button
                     type="button"
+                    aria-label={
+                      visibleSecrets.has(index) ? "Hide secret value" : "Show secret value"
+                    }
                     onClick={() => toggleVisibility(index)}
                     disabled={isLoading}
-                    className="text-muted hover:text-foreground flex cursor-pointer items-center justify-center self-center rounded-sm border-none bg-transparent px-1 py-0.5 text-base transition-all duration-200"
+                    className="text-muted hover:text-foreground flex cursor-pointer items-center justify-center self-center rounded-sm border-none bg-transparent px-1 py-0.5 text-base transition-colors duration-200"
                   >
                     <ToggleVisibilityIcon visible={visibleSecrets.has(index)} />
                   </button>
                   <button
                     type="button"
+                    aria-label="Remove secret"
                     onClick={() => removeSecret(index)}
                     disabled={isLoading}
-                    className="text-danger-light border-danger-light hover:bg-danger-light/10 cursor-pointer rounded border bg-transparent px-2.5 py-1.5 text-[13px] transition-all duration-200"
+                    className="text-danger-light border-danger-light hover:bg-danger-light/10 cursor-pointer rounded border bg-transparent px-2.5 py-1.5 text-[13px] transition-colors duration-200"
                   >
                     ×
                   </button>
@@ -207,7 +211,7 @@ const SecretsModal: React.FC<SecretsModalProps> = ({
         <button
           onClick={addSecret}
           disabled={isLoading}
-          className="text-muted border-border-medium hover:bg-hover hover:border-border-darker hover:text-foreground mb-4 w-full cursor-pointer rounded border border-dashed bg-transparent px-3 py-2 text-[13px] transition-all duration-200"
+          className="text-muted border-border-medium hover:bg-hover hover:border-border-darker hover:text-foreground mb-4 w-full cursor-pointer rounded border border-dashed bg-transparent px-3 py-2 text-[13px] transition-colors duration-200"
         >
           + Add Secret
         </button>
@@ -217,7 +221,7 @@ const SecretsModal: React.FC<SecretsModalProps> = ({
             Cancel
           </Button>
           <Button type="button" onClick={() => void handleSave()} disabled={isLoading}>
-            {isLoading ? "Saving..." : "Save"}
+            {isLoading ? "Saving…" : "Save"}
           </Button>
         </DialogFooter>
       </DialogContent>

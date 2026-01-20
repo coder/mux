@@ -168,7 +168,7 @@ function SectionPicker(props: SectionPickerProps) {
             selectedSection ? "text-foreground" : "text-muted"
           )}
         >
-          <SelectValue placeholder="Select..." />
+          <SelectValue placeholder="Select…" />
         </SelectTrigger>
         <SelectContent>
           {sections.map((section) => (
@@ -203,7 +203,7 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
                 disabled={Boolean(props.disabled) || isModeDisabled}
                 aria-pressed={isActive}
                 className={cn(
-                  "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-all duration-150",
+                  "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors duration-150",
                   "cursor-pointer",
                   isActive ? option.activeClass : option.idleClass,
                   (Boolean(props.disabled) || isModeDisabled) && "cursor-not-allowed opacity-50"
@@ -348,7 +348,7 @@ export function CreationControls(props: CreationControlsProps) {
                 value={nameState.name}
                 onChange={handleNameChange}
                 onFocus={handleInputFocus}
-                placeholder={nameState.isGenerating ? "Generating..." : "workspace-name"}
+                placeholder={nameState.isGenerating ? "Generating…" : "workspace-name"}
                 disabled={props.disabled}
                 className={cn(
                   "col-start-1 row-start-1 min-w-0 bg-transparent border-border-medium focus:border-accent h-7 w-full rounded-md border border-transparent text-lg font-semibold focus:border focus:bg-bg-dark focus:outline-none disabled:opacity-50",

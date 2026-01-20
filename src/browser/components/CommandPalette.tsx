@@ -394,11 +394,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
           })),
         },
       ];
-      emptyText = isLoadingOptions
-        ? "Loading options..."
-        : options.length
-          ? undefined
-          : "No options";
+      emptyText = isLoadingOptions ? "Loading options…" : options.length ? undefined : "No options";
     } else {
       const typed = query.trim();
       const fallbackHint = currentField.placeholder ?? "Type value and press Enter";
@@ -452,7 +448,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
         }}
       >
         <Command.Input
-          className="w-full border-b border-[var(--color-command-input-border)] bg-[var(--color-command-input)] px-3.5 py-3 text-sm text-[var(--color-command-foreground)] outline-none placeholder:text-[var(--color-command-subdued)]"
+          className="focus-visible:ring-accent w-full border-b border-[var(--color-command-input-border)] bg-[var(--color-command-input)] px-3.5 py-3 text-sm text-[var(--color-command-foreground)] outline-none placeholder:text-[var(--color-command-subdued)] focus-visible:ring-1 focus-visible:outline-none"
           value={query}
           onValueChange={handleQueryChange}
           placeholder={

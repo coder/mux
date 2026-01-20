@@ -167,7 +167,7 @@ const BulkProgressModal: React.FC<{
         <div className="bg-separator h-2 overflow-hidden rounded-full">
           <div
             className={cn(
-              "h-full transition-all duration-300",
+              "h-full transition-[width] duration-300",
               operation.type === "restore" ? "bg-green-500" : "bg-red-500"
             )}
             style={{ width: `${percentage}%` }}
@@ -632,7 +632,7 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
                     <Search className="text-muted pointer-events-none absolute top-1/2 left-2 h-4 w-4 -translate-y-1/2" />
                     <input
                       type="text"
-                      placeholder="Search archived workspaces or branches..."
+                      placeholder="Search archived workspaces or branches…"
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                       className="bg-bg-dark placeholder:text-muted text-foreground focus:border-border-light w-full rounded border border-transparent py-1.5 pr-3 pl-8 text-sm focus:outline-none"

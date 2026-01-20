@@ -495,7 +495,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                 <button
                   onClick={onAddProject}
                   aria-label="Add project"
-                  className="text-secondary hover:bg-hover hover:border-border-light flex h-6 cursor-pointer items-center gap-1 rounded border border-transparent bg-transparent px-1.5 text-xs transition-all duration-200"
+                  className="text-secondary hover:bg-hover hover:border-border-light flex h-6 cursor-pointer items-center gap-1 rounded border border-transparent bg-transparent px-1.5 text-xs transition-colors duration-200"
                 >
                   <span className="text-base leading-none">+</span>
                   <span>New Project</span>
@@ -553,7 +553,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             }}
                             aria-label={`${isExpanded ? "Collapse" : "Expand"} project ${projectName}`}
                             data-project-path={projectPath}
-                            className="text-secondary hover:bg-hover hover:border-border-light mr-2 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent p-0 transition-all duration-200"
+                            className="text-secondary hover:bg-hover hover:border-border-light mr-2 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent p-0 transition-colors duration-200"
                           >
                             <ChevronRight
                               size={12}
@@ -588,7 +588,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 }}
                                 aria-label={`Manage secrets for ${projectName}`}
                                 data-project-path={projectPath}
-                                className="text-muted-dark mr-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent text-sm opacity-0 transition-all duration-200 hover:bg-yellow-500/10 hover:text-yellow-500"
+                                className="text-muted-dark mr-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent text-sm opacity-0 transition-colors transition-opacity duration-200 hover:bg-yellow-500/10 hover:text-yellow-500"
                               >
                                 <KeyRound size={12} />
                               </button>
@@ -616,7 +616,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 }}
                                 aria-label={`Remove project ${projectName}`}
                                 data-project-path={projectPath}
-                                className="text-muted-dark hover:text-danger-light hover:bg-danger-light/10 mr-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent text-base opacity-0 transition-all duration-200"
+                                className="text-muted-dark hover:text-danger-light hover:bg-danger-light/10 mr-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent text-base opacity-0 transition-colors transition-opacity duration-200"
                               >
                                 ×
                               </button>
@@ -630,7 +630,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             }}
                             aria-label={`New chat in ${projectName}`}
                             data-project-path={projectPath}
-                            className="text-secondary hover:bg-hover hover:border-border-light flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent text-sm leading-none transition-all duration-200"
+                            className="text-secondary hover:bg-hover hover:border-border-light flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent text-sm leading-none transition-colors duration-200"
                           >
                             +
                           </button>
@@ -712,7 +712,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                             : `Expand workspaces older than ${thresholdLabel}`
                                         }
                                         aria-expanded={isTierExpanded}
-                                        className="text-muted border-hover hover:text-label [&:hover_.arrow]:text-label flex w-full cursor-pointer items-center justify-between border-t border-none bg-transparent px-3 py-2 pl-[22px] text-xs font-medium transition-all duration-150 hover:bg-white/[0.03]"
+                                        className="text-muted border-hover hover:text-label [&:hover_.arrow]:text-label flex w-full cursor-pointer items-center justify-between border-t border-none bg-transparent px-3 py-2 pl-[22px] text-xs font-medium transition-colors duration-150 hover:bg-white/[0.03]"
                                       >
                                         <div className="flex items-center gap-1.5">
                                           <span>Older than {thresholdLabel}</span>

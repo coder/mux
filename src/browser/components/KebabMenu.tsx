@@ -76,10 +76,12 @@ export const KebabMenu: React.FC<KebabMenuProps> = ({ items, className }) => {
         <Tooltip>
           <TooltipTrigger asChild>
             <button
+              type="button"
+              aria-label="More actions"
               ref={buttonRef}
               onClick={handleToggle}
               className={cn(
-                "border border-white/20 text-foreground text-[10px] py-0.5 px-2 rounded-[3px] cursor-pointer transition-all duration-200 font-primary flex items-center justify-center whitespace-nowrap",
+                "border border-white/20 text-foreground text-[10px] py-0.5 px-2 rounded-[3px] cursor-pointer transition-colors duration-200 font-primary flex items-center justify-center whitespace-nowrap",
                 isOpen ? "bg-white/10" : "bg-none",
                 "hover:bg-white/10 hover:border-white/30",
                 "disabled:opacity-50 disabled:cursor-not-allowed",
@@ -109,7 +111,7 @@ export const KebabMenu: React.FC<KebabMenuProps> = ({ items, className }) => {
                 onClick={() => handleItemClick(item)}
                 title={item.tooltip}
                 className={cn(
-                  "w-full border-none border-b border-modal-bg text-xs py-2 px-3 text-left transition-all duration-150 font-primary flex items-center gap-2",
+                  "w-full border-none border-b border-modal-bg text-xs py-2 px-3 text-left transition-colors duration-150 font-primary flex items-center gap-2",
                   "last:border-b-0",
                   item.disabled
                     ? "bg-dark text-muted-light cursor-not-allowed opacity-50 hover:bg-dark hover:text-muted-light"

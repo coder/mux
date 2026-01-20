@@ -714,7 +714,7 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
                 type="text"
                 readOnly
                 value={shareData.url}
-                className="text-foreground min-w-0 flex-1 bg-transparent font-mono text-[10px] outline-none"
+                className="text-foreground focus-visible:ring-accent min-w-0 flex-1 bg-transparent font-mono text-[10px] outline-none focus-visible:ring-1 focus-visible:outline-none"
                 data-testid="share-url"
                 onFocus={(e) => e.target.select()}
               />

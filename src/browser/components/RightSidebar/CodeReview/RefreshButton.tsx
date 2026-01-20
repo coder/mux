@@ -121,7 +121,7 @@ export const RefreshButton: React.FC<RefreshButtonProps> = (props) => {
         {disabled ? (
           "Finish editing review note to refresh"
         ) : animationState !== "idle" ? (
-          "Refreshing..."
+          "Refreshing…"
         ) : (
           <span>
             Refresh diff ({formatKeybind(KEYBINDS.REFRESH_REVIEW)})

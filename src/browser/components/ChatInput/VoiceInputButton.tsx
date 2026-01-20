@@ -42,7 +42,7 @@ export const VoiceInputButton: React.FC<VoiceInputButtonProps> = (props) => {
     : props.state === "recording"
       ? "Stop recording"
       : props.state === "transcribing"
-        ? "Transcribing..."
+        ? "Transcribing…"
         : "Voice input";
 
   const isRecording = props.state === "recording";

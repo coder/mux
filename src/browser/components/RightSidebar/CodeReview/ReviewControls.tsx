@@ -84,6 +84,8 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
         <BaseSelectorPopover value={filters.diffBase} onChange={handleBaseChange} />
         {showSetDefault && (
           <button
+            type="button"
+            aria-label="Set as default base"
             onClick={handleSetDefault}
             className="text-dim font-primary hover:text-muted cursor-pointer border-none bg-transparent p-0 text-[10px] whitespace-nowrap transition-colors duration-150"
             title="Set as default base"
@@ -125,7 +127,7 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
           aria-label="Sort hunks by"
           value={filters.sortOrder}
           onChange={handleSortChange}
-          className="text-muted-light hover:bg-hover hover:text-foreground cursor-pointer rounded-sm bg-transparent px-1 py-0.5 font-mono transition-colors focus:outline-none"
+          className="text-muted-light hover:bg-hover hover:text-foreground focus-visible:ring-accent cursor-pointer rounded-sm bg-transparent px-1 py-0.5 font-mono transition-colors focus-visible:ring-1 focus-visible:outline-none"
         >
           {SORT_OPTIONS.map((opt) => (
             <option key={opt.value} value={opt.value}>

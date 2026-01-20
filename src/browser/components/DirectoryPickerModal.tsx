@@ -226,7 +226,7 @@ export const DirectoryPickerModal: React.FC<DirectoryPickerModalProps> = ({
               setCanCreateFolder(false);
             }}
             onKeyDown={handlePathInputKeyDown}
-            placeholder="Enter path..."
+            placeholder="Enter path…"
             className="bg-modal-bg border-border-medium h-9 font-mono text-sm"
           />
         </div>

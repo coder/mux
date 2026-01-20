@@ -154,21 +154,22 @@ export const UntrackedStatus: React.FC<UntrackedStatusProps> = ({
             ))}
             {hiddenCount > 0 && (
               <div className="text-muted py-0.5 text-[11px] italic">
-                and {hiddenCount} more {hiddenCount === 1 ? "file" : "files"}...
+                and {hiddenCount} more {hiddenCount === 1 ? "file" : "files"}…
               </div>
             )}
           </div>
           <button
+            type="button"
             onClick={() => void handleTrackAll()}
             disabled={isTracking}
             className={cn(
-              "w-full py-1.5 px-2 bg-info-yellow/20 text-info-yellow border border-info-yellow/30 rounded text-[11px] cursor-pointer transition-all duration-200 font-medium",
+              "w-full py-1.5 px-2 bg-info-yellow/20 text-info-yellow border border-info-yellow/30 rounded text-[11px] cursor-pointer transition-colors duration-200 font-medium",
               "hover:bg-info-yellow/30 hover:border-info-yellow/50",
               "active:bg-info-yellow/40",
               "disabled:opacity-50 disabled:cursor-not-allowed"
             )}
           >
-            {isTracking ? "Tracking..." : "Track All Files"}
+            {isTracking ? "Tracking…" : "Track All Files"}
           </button>
         </div>
       )}

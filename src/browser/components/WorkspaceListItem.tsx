@@ -145,7 +145,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
       <div
         ref={drag}
         className={cn(
-          "py-1.5 pr-2 border-l-[3px] border-transparent transition-all duration-150 text-[13px] relative flex gap-2",
+          "py-1.5 pr-2 border-l-[3px] border-transparent transition-colors duration-150 text-[13px] relative flex gap-2 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent",
           isDragging && "opacity-50",
           isDisabled
             ? "cursor-default opacity-70"
@@ -273,7 +273,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
               {isArchiving ? (
                 <div className="text-muted flex min-w-0 items-center gap-1.5 text-xs">
                   <ArchiveIcon className="h-3 w-3 shrink-0" />
-                  <span className="min-w-0 truncate">Archiving...</span>
+                  <span className="min-w-0 truncate">Archiving…</span>
                 </div>
               ) : (
                 <WorkspaceStatusIndicator workspaceId={workspaceId} />

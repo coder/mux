@@ -80,7 +80,7 @@ export const TipsCarousel: React.FC<TipsCarouselProps> = ({ fixedTipIndex }) => 
       role="status"
       aria-live="polite"
       aria-atomic="true"
-      className="text-text font-primary [&:hover_.tip-label]:text-text [&:hover_.tip-content]:text-text mt-[3px] flex cursor-default items-center gap-1.5 rounded px-2 py-1 text-[11px] leading-5 transition-all duration-300 hover:bg-[linear-gradient(135deg,color-mix(in_srgb,var(--color-plan-mode),transparent_85%)_0%,color-mix(in_srgb,var(--color-exec-mode),transparent_85%)_50%,color-mix(in_srgb,var(--color-thinking-mode),transparent_85%)_100%)] [&:hover_.command]:text-white [&:hover_.keybind]:text-white"
+      className="text-text font-primary [&:hover_.tip-label]:text-text [&:hover_.tip-content]:text-text mt-[3px] flex cursor-default items-center gap-1.5 rounded px-2 py-1 text-[11px] leading-5 transition-colors duration-300 hover:bg-[linear-gradient(135deg,color-mix(in_srgb,var(--color-plan-mode),transparent_85%)_0%,color-mix(in_srgb,var(--color-exec-mode),transparent_85%)_50%,color-mix(in_srgb,var(--color-thinking-mode),transparent_85%)_100%)] [&:hover_.command]:text-white [&:hover_.keybind]:text-white"
     >
       <span className="tip-label font-medium text-[color-mix(in_srgb,var(--color-text-secondary),transparent_20%)] transition-colors duration-300">
         Tip:

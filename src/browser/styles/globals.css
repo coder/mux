@@ -1,9 +1,8 @@
 @import "tailwindcss";
 
-/* Disable the default browser focus outline (the blue ring).
-   Components can still use intentional focus styles like border-color changes. */
-*:focus,
-*:focus-visible {
+/* Keep pointer interactions free of focus rings while preserving
+   keyboard focus indicators via :focus-visible. */
+*:focus:not(:focus-visible) {
   outline: none;
 }
 
