@@ -9,7 +9,8 @@ import type {
 import { LocalRuntime } from "./LocalRuntime";
 import { WorktreeRuntime } from "./WorktreeRuntime";
 import { SSHRuntime } from "./SSHRuntime";
-import { CoderSSHRuntime } from "./CoderSSHRuntime";
+import { SSH2Runtime } from "./SSH2Runtime";
+import { CoderSSHRuntime, CoderSSH2Runtime } from "./CoderSSHRuntime";
 import { DockerRuntime, getContainerName } from "./DockerRuntime";
 import type { RuntimeConfig, RuntimeMode } from "@/common/types/runtime";
 import { hasSrcBaseDir } from "@/common/types/runtime";
@@ -51,6 +52,7 @@ export async function runFullInit(
  * Fire-and-forget init with standardized error handling.
  * Use this for background init after workspace creation (workspaceService, taskService).
  */
+
 export function runBackgroundInit(
   runtime: Runtime,
   params: WorkspaceInitParams,
@@ -67,6 +69,16 @@ export function runBackgroundInit(
       params.initLogger.logComplete(-1);
     }
   })();
+}
+
+const DEFAULT_SSH2_RUNTIME_ALL_PLATFORMS = true;
+
+function shouldUseSSH2Runtime(): boolean {
+  if (!DEFAULT_SSH2_RUNTIME_ALL_PLATFORMS) {
+    return process.platform === "win32";
+  }
+
+  return true;
 }
 
 /**
@@ -97,7 +109,7 @@ export interface CreateRuntimeOptions {
   workspaceName?: string;
   /**
    * Coder service - required for SSH runtimes with Coder configuration.
-   * When provided and config has coder field, returns CoderSSHRuntime instead of SSHRuntime.
+   * When provided and config has coder field, returns a Coder SSH runtime (SSH/SSH2).
    */
   coderService?: CoderService;
 }
@@ -149,17 +161,21 @@ export function createRuntime(config: RuntimeConfig, options?: CreateRuntimeOpti
         port: config.port,
       };
 
-      // Use CoderSSHRuntime for SSH+Coder when coderService is available (explicit or global)
+      const useSSH2 = shouldUseSSH2Runtime();
+
+      // Use a Coder SSH runtime for SSH+Coder when coderService is available (explicit or global)
       const coderService = options?.coderService ?? globalCoderService;
 
       if (config.coder) {
         if (!coderService) {
           throw new Error("Coder runtime requested but CoderService is not initialized");
         }
-        return new CoderSSHRuntime({ ...sshConfig, coder: config.coder }, coderService);
+        return useSSH2
+          ? new CoderSSH2Runtime({ ...sshConfig, coder: config.coder }, coderService)
+          : new CoderSSHRuntime({ ...sshConfig, coder: config.coder }, coderService);
       }
 
-      return new SSHRuntime(sshConfig);
+      return useSSH2 ? new SSH2Runtime(sshConfig) : new SSHRuntime(sshConfig);
     }
 
     case "docker": {

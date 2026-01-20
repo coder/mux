@@ -121,7 +121,7 @@ export class SSHRuntime extends RemoteRuntime {
 
   // ===== RemoteRuntime abstract method implementations =====
 
-  protected readonly commandPrefix = "SSH";
+  protected readonly commandPrefix: string = "SSH";
 
   protected getBasePath(): string {
     return this.config.srcBaseDir;
@@ -357,7 +357,7 @@ export class SSHRuntime extends RemoteRuntime {
    * - No external dependencies (git is always available)
    * - Simpler implementation
    */
-  private async syncProjectToRemote(
+  protected async syncProjectToRemote(
     projectPath: string,
     workspacePath: string,
     initLogger: InitLogger,
