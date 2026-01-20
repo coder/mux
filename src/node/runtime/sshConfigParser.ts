@@ -28,6 +28,13 @@ export interface ResolvedSSHConfig {
 function getHomeDir(): string {
   return process.env.USERPROFILE ?? os.homedir();
 }
+function getDefaultUsername(): string {
+  try {
+    return os.userInfo().username;
+  } catch {
+    return process.env.USER ?? process.env.USERNAME ?? "";
+  }
+}
 
 function expandHomePath(value: string, homeDir: string): string {
   if (value === "~") {
@@ -274,7 +281,9 @@ export async function resolveSSHConfig(host: string): Promise<ResolvedSSHConfig>
   const userFromConfig = toStringValue(getConfigValue(computed, "User"));
 
   if (config) {
-    applyNegatedExecMatch(config, hostName, userOverride ?? userFromConfig, computed);
+    // Default to local username for %r expansion if no User is specified
+    const matchExecUser = userOverride ?? userFromConfig ?? getDefaultUsername();
+    applyNegatedExecMatch(config, hostName, matchExecUser, computed);
   }
 
   const portValue = toStringValue(getConfigValue(computed, "Port"));
