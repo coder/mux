@@ -2395,7 +2395,7 @@ export class WorkspaceService extends EventEmitter {
         return Err(readyResult.error ?? "Runtime not ready");
       }
 
-      const workspacePath = runtime.getWorkspacePath(metadata.projectPath, metadata.name);
+      const workspacePath = workspace.workspacePath;
 
       // Create bash tool
       const bashTool = createBashTool({
