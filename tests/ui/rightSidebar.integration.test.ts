@@ -151,6 +151,62 @@ describeIntegration("RightSidebar (UI)", () => {
     });
   }, 60_000);
 
+  test("stats tab enabled does not steal default focus", async () => {
+    await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
+      const cleanupDom = installDom();
+
+      const previousStatsTabState = await env.orpc.features.getStatsTabState();
+      await env.orpc.features.setStatsTabOverride({ override: "on" });
+
+      // Clear any persisted state
+      localStorage.removeItem(RIGHT_SIDEBAR_TAB_KEY);
+      localStorage.removeItem(getRightSidebarLayoutKey(workspaceId));
+
+      const view = renderApp({
+        apiClient: env.orpc,
+        metadata,
+      });
+
+      try {
+        await setupWorkspaceView(view, metadata, workspaceId);
+
+        // Find the right sidebar
+        const sidebar = await waitFor(
+          () => {
+            const el = view.container.querySelector(
+              '[role="complementary"][aria-label="Workspace insights"]'
+            );
+            if (!el) throw new Error("RightSidebar not found");
+            return el as HTMLElement;
+          },
+          { timeout: 10_000 }
+        );
+
+        // Wait for Stats tab injection and confirm it doesn't steal focus.
+        await waitFor(() => {
+          const costsTab = sidebar.querySelector(
+            '[role="tab"][aria-controls*="costs"]'
+          ) as HTMLElement | null;
+          if (!costsTab) throw new Error("Costs tab not found");
+
+          const statsTab = sidebar.querySelector(
+            '[role="tab"][aria-controls*="stats"]'
+          ) as HTMLElement | null;
+          if (!statsTab) throw new Error("Stats tab not found");
+
+          expect(costsTab.getAttribute("aria-selected")).toBe("true");
+          expect(statsTab.getAttribute("aria-selected")).toBe("false");
+        });
+      } finally {
+        try {
+          await env.orpc.features.setStatsTabOverride({ override: previousStatsTabState.override });
+        } finally {
+          await cleanupView(view, cleanupDom);
+        }
+      }
+    });
+  }, 60_000);
+
   test("sidebar collapse and expand via button", async () => {
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
       const cleanupDom = installDom();

@@ -664,8 +664,8 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       const hasStats = collectAllTabs(prev.root).includes("stats");
 
       if (statsTabEnabled && !hasStats) {
-        // Add stats tab to the focused tabset
-        return addTabToFocusedTabset(prev, "stats");
+        // Add stats tab to the focused tabset without stealing focus.
+        return addTabToFocusedTabset(prev, "stats", false);
       }
 
       if (!statsTabEnabled && hasStats) {
