@@ -50,7 +50,7 @@ export function createTestRuntime(
         identityFile: sshConfig.privateKeyPath,
         port: sshConfig.port,
       };
-      return new SSHRuntime(config, createSSHTransport(config, true));
+      return new SSHRuntime(config, createSSHTransport(config, false));
     }
     case "docker": {
       if (!dockerConfig) {

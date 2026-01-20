@@ -1438,7 +1438,7 @@ describeIntegration("Runtime integration tests", () => {
           existingWorkspace: false,
         },
       };
-      const transport = createSSHTransport(config, true);
+      const transport = createSSHTransport(config, false);
       return new CoderSSHRuntime(config, transport, mockCoderService);
     };
 
@@ -1538,7 +1538,7 @@ describeIntegration("Runtime integration tests", () => {
               existingWorkspace: false, // Source was mux-created
             },
           };
-          const transport = createSSHTransport(config, true);
+          const transport = createSSHTransport(config, false);
           const runtime = new CoderSSHRuntime(config, transport, mockCoderService);
 
           const projectName = `coder-fork-postcreate-${Date.now()}-${Math.random().toString(36).substring(7)}`;
