@@ -1,6 +1,22 @@
 import { describe, expect, test } from "bun:test";
-import { formatSendMessageError, createUnknownSendMessageError } from "./sendMessageError";
+import {
+  buildStreamErrorEventData,
+  createUnknownSendMessageError,
+  formatSendMessageError,
+} from "./sendMessageError";
 
+describe("buildStreamErrorEventData", () => {
+  test("builds a stream-error payload with a synthetic messageId", () => {
+    const result = buildStreamErrorEventData({
+      type: "api_key_not_found",
+      provider: "openai",
+    });
+
+    expect(result.errorType).toBe("authentication");
+    expect(result.error).toContain("openai");
+    expect(result.messageId).toMatch(/^assistant-/);
+  });
+});
 describe("formatSendMessageError", () => {
   test("formats api_key_not_found with authentication errorType", () => {
     const result = formatSendMessageError({

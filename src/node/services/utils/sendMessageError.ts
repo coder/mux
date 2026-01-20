@@ -63,3 +63,14 @@ export const formatSendMessageError = (
       };
   }
 };
+
+/**
+ * Build a stream-error payload for pre-stream failures so the UI can surface them immediately.
+ */
+export const buildStreamErrorEventData = (
+  error: SendMessageError
+): { messageId: string; error: string; errorType: StreamErrorType } => {
+  const { message, errorType } = formatSendMessageError(error);
+  const messageId = `assistant-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+  return { messageId, error: message, errorType };
+};

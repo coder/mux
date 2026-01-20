@@ -22,7 +22,10 @@ import type {
 } from "@/common/orpc/types";
 import type { SendMessageError } from "@/common/types/errors";
 import { SkillNameSchema } from "@/common/orpc/schemas";
-import { createUnknownSendMessageError } from "@/node/services/utils/sendMessageError";
+import {
+  buildStreamErrorEventData,
+  createUnknownSendMessageError,
+} from "@/node/services/utils/sendMessageError";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
@@ -812,6 +815,19 @@ export class AgentSession {
 
     if (!streamResult.success) {
       this.activeCompactionRequest = undefined;
+
+      // If stream startup failed before any stream events were emitted (e.g., missing API key),
+      // emit a synthetic stream-error so the UI can surface the failure immediately.
+      if (
+        streamResult.error.type !== "runtime_not_ready" &&
+        streamResult.error.type !== "runtime_start_failed"
+      ) {
+        const streamError = buildStreamErrorEventData(streamResult.error);
+        await this.handleStreamError({
+          workspaceId: this.workspaceId,
+          ...streamError,
+        });
+      }
     }
 
     return streamResult;
