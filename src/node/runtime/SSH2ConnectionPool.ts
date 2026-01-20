@@ -42,6 +42,12 @@ const BACKOFF_SCHEDULE = [1, 2, 4, 7, 10];
 const DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_WAIT_MS = 2 * 60 * 1000;
 
+/**
+ * Close idle connections after 60 seconds (matches ControlPersist=60).
+ * This prevents accumulating stale connections to many Coder workspaces.
+ */
+const IDLE_TIMEOUT_MS = 60 * 1000;
+
 export interface AcquireConnectionOptions {
   /** Timeout for the connection attempt. */
   timeoutMs?: number;
@@ -74,6 +80,8 @@ interface SSH2ConnectionEntry {
   client: Client;
   resolvedConfig: ResolvedSSHConfig;
   proxyProcess?: ChildProcess;
+  lastActivityAt: number;
+  idleTimer?: ReturnType<typeof setTimeout>;
 }
 
 function withJitter(seconds: number): number {
@@ -247,6 +255,7 @@ export class SSH2ConnectionPool {
 
       const existing = this.connections.get(key);
       if (existing) {
+        this.touchConnection(existing, key);
         this.markHealthy(config);
         return existing;
       }
@@ -335,6 +344,50 @@ export class SSH2ConnectionPool {
     });
   }
 
+  /**
+   * Update last activity time and reset idle timer.
+   * Called on each acquireConnection() to keep active connections alive.
+   */
+  private touchConnection(entry: SSH2ConnectionEntry, key: string): void {
+    entry.lastActivityAt = Date.now();
+
+    // Clear existing idle timer
+    if (entry.idleTimer) {
+      clearTimeout(entry.idleTimer);
+    }
+
+    // Set new idle timer
+    entry.idleTimer = setTimeout(() => {
+      this.closeIdleConnection(key, entry);
+    }, IDLE_TIMEOUT_MS);
+  }
+
+  /**
+   * Close a connection that has been idle for too long.
+   */
+  private closeIdleConnection(key: string, entry: SSH2ConnectionEntry): void {
+    // Verify this is still the active connection for this key
+    if (this.connections.get(key) !== entry) {
+      return;
+    }
+
+    this.connections.delete(key);
+
+    try {
+      entry.client.end();
+    } catch {
+      // Ignore errors closing the connection
+    }
+
+    if (entry.proxyProcess?.exitCode === null) {
+      try {
+        entry.proxyProcess.kill();
+      } catch {
+        // Ignore errors killing proxy
+      }
+    }
+  }
+
   private async connect(
     config: SSHRuntimeConfig,
     timeoutMs: number,
@@ -365,7 +418,12 @@ export class SSH2ConnectionPool {
       const privateKey = await resolvePrivateKey(resolvedConfig.identityFiles);
 
       const client = new Client();
-      const entry: SSH2ConnectionEntry = { client, resolvedConfig, proxyProcess: proxy?.process };
+      const entry: SSH2ConnectionEntry = {
+        client,
+        resolvedConfig,
+        proxyProcess: proxy?.process,
+        lastActivityAt: Date.now(),
+      };
 
       const cleanupProxy = () => {
         if (proxy?.process?.exitCode === null) {
@@ -374,6 +432,9 @@ export class SSH2ConnectionPool {
       };
 
       const onClose = () => {
+        if (entry.idleTimer) {
+          clearTimeout(entry.idleTimer);
+        }
         cleanupProxy();
         this.connections.delete(key);
       };
@@ -381,6 +442,9 @@ export class SSH2ConnectionPool {
       client.on("close", onClose);
       client.on("end", onClose);
       client.on("error", (err) => {
+        if (entry.idleTimer) {
+          clearTimeout(entry.idleTimer);
+        }
         this.reportFailure(config, getErrorMessage(err));
         this.connections.delete(key);
         cleanupProxy();
@@ -436,6 +500,11 @@ export class SSH2ConnectionPool {
 
       this.markHealthy(config);
       this.connections.set(key, entry);
+
+      // Start idle timer for new connection
+      entry.idleTimer = setTimeout(() => {
+        this.closeIdleConnection(key, entry);
+      }, IDLE_TIMEOUT_MS);
 
       return entry;
     } catch (error) {
