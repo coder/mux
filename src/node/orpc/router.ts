@@ -24,6 +24,7 @@ import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
 
 import { createRuntime, checkRuntimeAvailability } from "@/node/runtime/runtimeFactory";
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
+import { getPlanFilePath } from "@/common/utils/planStorage";
 import { readPlanFile } from "@/node/utils/runtime/helpers";
 import { createMuxMessage } from "@/common/types/message";
 import { secretsToRecord } from "@/common/types/secrets";
@@ -1805,6 +1806,18 @@ export const router = (authToken?: string) => {
               const workspaceName = workspaceInfo?.name ?? input.workspaceId;
               const configPathHint = `.mux/harness/${workspaceName}.jsonc`;
               const progressPathHint = `.mux/harness/${workspaceName}.progress.md`;
+              const planPathHint = (() => {
+                if (!workspaceInfo) {
+                  return null;
+                }
+
+                const runtime = createRuntime(workspaceInfo.runtimeConfig, {
+                  projectPath: workspaceInfo.projectPath,
+                });
+                const muxHome = runtime.getMuxHome();
+
+                return getPlanFilePath(workspaceName, workspaceInfo.projectName, muxHome);
+              })();
 
               const lines: string[] = [];
               lines.push("# Harness bearings");
@@ -1827,6 +1840,9 @@ export const router = (authToken?: string) => {
               lines.push("Harness files:");
               lines.push(`- ${progressPathHint}`);
               lines.push(`- ${configPathHint}`);
+              if (planPathHint) {
+                lines.push(`- Plan: ${planPathHint}`);
+              }
               lines.push("");
               lines.push("Checklist:");
               if (harness.config.checklist.length === 0) {
