@@ -84,6 +84,10 @@ function quoteCssFontFamily(value: string): string {
     return trimmed;
   }
 
+  // Quote names containing whitespace or punctuation that would confuse CSS parsing.
+  //
+  // If the name itself contains quotes, strip them. A font-family name containing literal
+  // quotes is almost certainly user input error and would produce invalid CSS.
   if (/[^a-zA-Z0-9_-]/.test(trimmed)) {
     const sanitized = trimmed.replace(/"/g, "");
     return `"${sanitized}"`;
@@ -92,8 +96,24 @@ function quoteCssFontFamily(value: string): string {
   return trimmed;
 }
 
+function splitFontFamilyList(value: string): string[] {
+  return value
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function formatCssFontFamilyList(value: string): string {
+  const parts = splitFontFamilyList(value);
+  if (parts.length === 0) {
+    return value.trim();
+  }
+
+  return parts.map(quoteCssFontFamily).join(", ");
+}
+
 function getPrimaryFontFamily(value: string): string | undefined {
-  const first = value.split(",").at(0);
+  const first = splitFontFamilyList(value).at(0);
   if (!first) {
     return undefined;
   }
@@ -125,20 +145,43 @@ function getTerminalFontAvailabilityWarning(config: TerminalFontConfig): string 
     return undefined;
   }
 
-  const spec = `${config.fontSize}px ${quoteCssFontFamily(normalizedPrimary)}`;
-  if (document.fonts.check(spec)) {
+  const wantsNerdFontIcons = config.fontFamily.toLowerCase().includes("nerd font");
+
+  const primarySpec = `${config.fontSize}px ${quoteCssFontFamily(normalizedPrimary)}`;
+  const primaryAvailable = document.fonts.check(primarySpec);
+  if (!primaryAvailable) {
+    if (normalizedPrimary.endsWith("Nerd Font") && !normalizedPrimary.endsWith("Nerd Font Mono")) {
+      const monoCandidate = `${normalizedPrimary} Mono`;
+      const monoSpec = `${config.fontSize}px ${quoteCssFontFamily(monoCandidate)}`;
+      if (document.fonts.check(monoSpec)) {
+        return `Font "${normalizedPrimary}" not found. Try "${monoCandidate}".`;
+      }
+    }
+
+    return `Font "${normalizedPrimary}" not found in this browser.`;
+  }
+
+  if (!wantsNerdFontIcons) {
     return undefined;
   }
 
-  if (normalizedPrimary.endsWith("Nerd Font") && !normalizedPrimary.endsWith("Nerd Font Mono")) {
-    const monoCandidate = `${normalizedPrimary} Mono`;
-    const monoSpec = `${config.fontSize}px ${quoteCssFontFamily(monoCandidate)}`;
-    if (document.fonts.check(monoSpec)) {
-      return `Font "${normalizedPrimary}" not found. Try "${monoCandidate}".`;
-    }
+  // Nerd Font glyph checks: many TUIs now use Nerd Fonts v3 glyphs in the supplemental PUA.
+  const nerdIconV2 = String.fromCodePoint(0xf15b);
+  const nerdIconV3 = String.fromCodePoint(0xf024b);
+  const formattedList = formatCssFontFamilyList(config.fontFamily);
+  const stackSpec = `${config.fontSize}px ${formattedList}`;
+
+  const hasV2Icon = document.fonts.check(stackSpec, nerdIconV2);
+  if (!hasV2Icon) {
+    return `Font "${normalizedPrimary}" is available, but Nerd Font icons weren't detected.`;
   }
 
-  return `Font "${normalizedPrimary}" not found in this browser.`;
+  const hasV3Icon = document.fonts.check(stackSpec, nerdIconV3);
+  if (!hasV3Icon) {
+    return `Nerd Font icons detected, but Nerd Fonts v3 icons are missing (e.g. ${nerdIconV3}). Update your Nerd Font to a v3+ release.`;
+  }
+
+  return undefined;
 }
 function normalizeTerminalFontConfig(value: unknown): TerminalFontConfig {
   if (!value || typeof value !== "object") {
@@ -180,6 +223,8 @@ export function GeneralSection() {
   );
   const terminalFontConfig = normalizeTerminalFontConfig(rawTerminalFontConfig);
   const terminalFontWarning = getTerminalFontAvailabilityWarning(terminalFontConfig);
+  const terminalFontPreviewFamily = formatCssFontFamilyList(terminalFontConfig.fontFamily);
+  const terminalFontPreviewText = `${String.fromCodePoint(0xf024b)} ${String.fromCodePoint(0xf15b)}`;
 
   const [rawEditorConfig, setEditorConfig] = usePersistedState<EditorConfig>(
     EDITOR_CONFIG_KEY,
@@ -261,6 +306,12 @@ export function GeneralSection() {
               <div className="text-muted text-xs">
                 To render Nerd Font icons in TUIs, set this to a Nerd Font (e.g. JetBrainsMono Nerd
                 Font)
+              </div>
+              <div className="text-muted text-xs">
+                Preview:{" "}
+                <span className="text-foreground" style={{ fontFamily: terminalFontPreviewFamily }}>
+                  {terminalFontPreviewText}
+                </span>
               </div>
             </div>
             <Input
