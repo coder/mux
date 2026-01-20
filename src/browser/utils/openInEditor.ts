@@ -44,7 +44,12 @@ export async function openInEditor(args: {
   workspaceId: string;
   targetPath: string;
   runtimeConfig?: RuntimeConfig;
-  /** When true, indicates targetPath is a file (used for SSH/Docker which only support opening folders) */
+  /**
+   * When true, indicates targetPath is a file.
+   *
+   * Some deep link formats (e.g. VS Code's Docker attached-container URI) can only
+   * open folders/workspaces, so we fall back to opening the parent directory.
+   */
   isFile?: boolean;
 }): Promise<OpenInEditorResult> {
   const editorConfig = readPersistedState<EditorConfig>(EDITOR_CONFIG_KEY, DEFAULT_EDITOR_CONFIG);
@@ -119,10 +124,8 @@ export async function openInEditor(args: {
     }
     // else: localhost access to local workspace → no SSH needed
 
-    // VS Code/Cursor SSH deep links only support opening folders, not individual files.
-    // Zed SSH deep links can open files directly.
-    const needsParentDir = args.isFile && isSSH && editorConfig.editor !== "zed";
-    const targetPath = needsParentDir ? getParentDirectory(args.targetPath) : args.targetPath;
+    // SSH deep links can open files directly (VS Code/Cursor/Zed).
+    const targetPath = args.targetPath;
 
     const deepLink = getEditorDeepLink({
       editor: editorConfig.editor as DeepLinkEditor,
