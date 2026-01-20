@@ -204,7 +204,7 @@ export const ToolIcon: React.FC<ToolIconProps> = ({ toolName, emoji, className }
       <TooltipTrigger asChild>
         <span
           className={cn(
-            "inline-flex shrink-0 items-center justify-center text-secondary [&_svg]:size-3.5",
+            "inline-flex shrink-0 items-center justify-center text-secondary [&_svg]:size-3",
             className
           )}
         >
