@@ -1,4 +1,5 @@
 import React from "react";
+import { cn } from "@/common/lib/utils";
 import type { LucideIcon } from "lucide-react";
 import {
   AlertTriangle,
@@ -76,6 +77,12 @@ const EMOJI_TO_ICON: Record<string, LucideIcon> = {
   "💡": Lightbulb,
 };
 
+const SPINNING_EMOJI = new Set([
+  // In tool output and agent status, these represent "working"/"refreshing".
+  "⏳",
+  "🔄",
+]);
+
 export function getIconForEmoji(emoji: string): LucideIcon | undefined {
   const normalized = normalizeEmoji(emoji);
   return EMOJI_TO_ICON[normalized];
@@ -84,7 +91,9 @@ export function getIconForEmoji(emoji: string): LucideIcon | undefined {
 export function EmojiIcon(props: { emoji: string | null | undefined; className?: string }) {
   if (!props.emoji) return null;
 
-  const Icon = getIconForEmoji(props.emoji) ?? Sparkles;
+  const normalizedEmoji = normalizeEmoji(props.emoji);
+  const Icon = EMOJI_TO_ICON[normalizedEmoji] ?? Sparkles;
+  const shouldSpin = SPINNING_EMOJI.has(normalizedEmoji);
 
-  return <Icon aria-hidden="true" className={props.className} />;
+  return <Icon aria-hidden="true" className={cn(props.className, shouldSpin && "animate-spin")} />;
 }
