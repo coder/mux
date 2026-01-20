@@ -5,6 +5,7 @@ import type {
   LegacyProposePlanToolArgs,
   LegacyProposePlanToolResult,
 } from "@/common/types/tools";
+import type { HarnessLoopState } from "@/common/types/harness";
 import {
   ToolContainer,
   ToolHeader,
@@ -136,6 +137,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   const isStartingLoopRef = useRef(false);
   const [isImplementing, setIsImplementing] = useState(false);
   const [implementReplacesChatHistory, setImplementReplacesChatHistory] = useState(false);
+  const [loopState, setLoopState] = useState<HarnessLoopState | null>(null);
   const isImplementingRef = useRef(false);
   const isMountedRef = useRef(true);
   const { api } = useAPI();
@@ -224,6 +226,31 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     return () => window.removeEventListener("focus", handleFocus);
     // status in deps ensures refetch when tool completes (captures final file state)
   }, [api, workspaceId, isLatest, isEphemeralPreview, cacheKey, status]);
+
+  // Keep loop state live for the latest plan.
+  useEffect(() => {
+    if (isEphemeralPreview || !isLatest || !workspaceId || !api) return;
+
+    const abortController = new AbortController();
+    const { signal } = abortController;
+
+    (async () => {
+      try {
+        const iterator = await api.workspace.loop.subscribe({ workspaceId }, { signal });
+
+        for await (const nextLoopState of iterator) {
+          if (signal.aborted) break;
+          setLoopState(nextLoopState);
+        }
+      } catch (err) {
+        if (!signal.aborted) {
+          console.error("Failed to subscribe to loop state:", err);
+        }
+      }
+    })();
+
+    return () => abortController.abort();
+  }, [api, workspaceId, isLatest, isEphemeralPreview]);
 
   // Determine plan content and title based on result type
   // For ephemeral previews, use direct content/path props
@@ -435,6 +462,18 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     }
   };
 
+  const showPlanPlaceholder =
+    !errorMessage && !showRaw && planContent.trim().length === 0 && status !== "completed";
+  const planPlaceholderText =
+    status === "executing" ? "Generating plan preview…" : "Preparing plan…";
+
+  const showInlineLoopState =
+    !isEphemeralPreview &&
+    !!api &&
+    !!workspaceId &&
+    isLatest &&
+    status === "completed" &&
+    !errorMessage;
   const statusDisplay = getStatusDisplay(status);
 
   // Build action buttons array (similar to AssistantMessage)
@@ -499,7 +538,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
                 label: "Start Ralph loop",
                 onClick: handleStartRalphLoop,
                 disabled: !api || isStartingLoop,
-                icon: <RefreshCw />,
+                icon: <RefreshCw className={cn(isStartingLoop && "animate-spin")} />,
                 tooltip: "Generate a harness from the plan (if needed) and start the loop",
               }}
             />
@@ -560,18 +599,53 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
             </Button>
           </div>
         </div>
+      ) : showPlanPlaceholder ? (
+        <div className="border-border-light text-muted rounded-sm border border-dashed p-3 font-mono text-xs">
+          {planPlaceholderText}
+        </div>
       ) : (
         <div className="plan-content">
           <MarkdownRenderer content={planContent} />
         </div>
       )}
 
-      {/* Completion guidance: only for completed tool calls without errors, not ephemeral previews */}
+      {/* Loop status + completion guidance */}
+
+      {showInlineLoopState && (
+        <div className="border-border-light mt-3 rounded border p-3">
+          <div className="text-secondary text-xs">Loop status</div>
+          <div className="mt-1 text-sm">
+            {loopState ? `${loopState.status} • iteration ${loopState.iteration}` : "Loading…"}
+          </div>
+          {loopState?.currentItemTitle && (
+            <div className="text-secondary mt-1 text-xs">
+              Current: <span className="text-light">{loopState.currentItemTitle}</span>
+            </div>
+          )}
+          {loopState && loopState.consecutiveFailures > 0 && (
+            <div className="text-error mt-1 text-xs">
+              Consecutive failures: {loopState.consecutiveFailures}
+            </div>
+          )}
+          {loopState?.stoppedReason && (
+            <div className="text-secondary mt-1 text-xs">Stopped: {loopState.stoppedReason}</div>
+          )}
+          {loopState?.lastError && (
+            <div className="text-error mt-2 text-xs">{loopState.lastError}</div>
+          )}
+        </div>
+      )}
       {!isEphemeralPreview && status === "completed" && !errorMessage && (
         <div className="plan-divider text-muted mt-3 border-t pt-3 text-[11px] leading-normal italic">
           Respond with revisions or switch to the Exec agent (
           <span className="font-primary not-italic">{formatKeybind(KEYBINDS.CYCLE_AGENT)}</span> to
           cycle) and ask to implement.
+        </div>
+      )}
+
+      {isStartingLoop && (
+        <div className="text-muted mt-3 text-[11px] leading-normal italic">
+          Starting Ralph loop… (generating harness if needed)
         </div>
       )}
 

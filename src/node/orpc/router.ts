@@ -10,6 +10,7 @@ import { formatSendMessageError } from "@/node/services/utils/sendMessageError";
 import {
   HarnessFromPlanDraftSchema,
   createWorkspaceHarnessConfigFromPlanDraft,
+  extractJsonObjectFromMarkdown,
 } from "@/node/services/workspaceHarnessFromPlan";
 import type {
   UpdateStatus,
@@ -1939,11 +1940,86 @@ export const router = (authToken?: string) => {
                 };
               }
 
-              const generation = await generateObject({
-                model: modelResult.data,
-                schema: HarnessFromPlanDraftSchema,
-                mode: "json",
-                prompt: `Generate a Ralph harness (checklist + optional gates) from this plan.
+              const buildHarnessFromPlanTaskPrompt = (options?: { errorHint?: string }): string => {
+                const errorHint =
+                  typeof options?.errorHint === "string" && options.errorHint.trim().length > 0
+                    ? `\n\nPrevious attempt error:\n${options.errorHint.trim().slice(0, 2000)}\n\nFix the output and try again.`
+                    : "";
+
+                return `Generate a Ralph harness draft (checklist + optional gates) from this plan.
+
+Rules:
+- Checklist items should be small, mergeable steps (max 20).
+- Gates should be safe, single commands that run checks (prefer make targets like "make static-check").
+- Do not use shell chaining, pipes, redirects, quotes, or destructive commands.
+
+Output:
+- Return ONLY a single JSON object in a fenced code block (language: json).
+${errorHint}
+
+Plan:
+
+${planResult.content}`;
+              };
+
+              const runHarnessFromPlanTask = async (options?: { errorHint?: string }) => {
+                try {
+                  const taskResult = await context.taskService.create({
+                    parentWorkspaceId: input.workspaceId,
+                    kind: "agent",
+                    agentId: "harness-from-plan",
+                    prompt: buildHarnessFromPlanTaskPrompt(options),
+                    title: "Generate harness from plan",
+                    modelString,
+                  });
+
+                  if (!taskResult.success) {
+                    return { success: false as const, error: taskResult.error };
+                  }
+
+                  const report = await context.taskService.waitForAgentReport(
+                    taskResult.data.taskId,
+                    {
+                      requestingWorkspaceId: input.workspaceId,
+                    }
+                  );
+
+                  const extracted = extractJsonObjectFromMarkdown(report.reportMarkdown);
+                  if (!extracted.success) {
+                    return { success: false as const, error: extracted.error };
+                  }
+
+                  const parsedDraft = HarnessFromPlanDraftSchema.safeParse(extracted.data);
+                  if (!parsedDraft.success) {
+                    return { success: false as const, error: parsedDraft.error.message };
+                  }
+
+                  return { success: true as const, data: parsedDraft.data };
+                } catch (error) {
+                  const message = error instanceof Error ? error.message : String(error);
+                  return { success: false as const, error: message };
+                }
+              };
+
+              const firstAttempt = await runHarnessFromPlanTask();
+              const secondAttempt = firstAttempt.success
+                ? null
+                : await runHarnessFromPlanTask({ errorHint: firstAttempt.error });
+
+              const draftFromTask = firstAttempt.success
+                ? firstAttempt.data
+                : secondAttempt?.success
+                  ? secondAttempt.data
+                  : null;
+
+              const draft =
+                draftFromTask ??
+                (
+                  await generateObject({
+                    model: modelResult.data,
+                    schema: HarnessFromPlanDraftSchema,
+                    mode: "json",
+                    prompt: `Generate a Ralph harness (checklist + optional gates) from this plan.
 
 Rules:
 - Checklist items should be small, mergeable steps (max 20).
@@ -1953,9 +2029,10 @@ Rules:
 Plan:
 
 ${planResult.content}`,
-              });
+                  })
+                ).object;
 
-              const derived = createWorkspaceHarnessConfigFromPlanDraft(generation.object);
+              const derived = createWorkspaceHarnessConfigFromPlanDraft(draft);
 
               const loopState = await context.loopRunnerService.getState(input.workspaceId);
               await context.workspaceHarnessService.setHarnessForWorkspace(
