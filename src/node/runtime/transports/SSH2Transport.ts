@@ -189,10 +189,6 @@ export class SSH2Transport implements SSHTransport {
         }
       });
 
-      channel.on("error", (err: Error) => {
-        ssh2ConnectionPool.reportFailure(this.config, getErrorMessage(err));
-      });
-
       const process = new SSH2ChildProcess(channel) as unknown as ChildProcess;
       return { process };
     } catch (error) {
