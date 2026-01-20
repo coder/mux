@@ -44,11 +44,13 @@ export function WorktreeIcon({ size = 10, className }: IconProps) {
       className={className}
     >
       {/* Simplified git branch: vertical line with branch off */}
-      <circle cx="8" cy="3" r="2" />
-      <circle cx="8" cy="13" r="2" />
-      <line x1="8" y1="5" x2="8" y2="11" />
-      <circle cx="12" cy="7" r="2" />
-      <path d="M10 7 L8 9" />
+      <g transform="translate(-1 0)">
+        <circle cx="7" cy="3" r="2" />
+        <circle cx="7" cy="13" r="2" />
+        <line x1="7" y1="5" x2="7" y2="11" />
+        <circle cx="13" cy="7" r="2" />
+        <path d="M11 7 L7 9" />
+      </g>
     </svg>
   );
 }
