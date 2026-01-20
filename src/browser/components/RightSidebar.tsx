@@ -545,7 +545,11 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
               hidden={!isActive}
             >
               {isActive && filePath && (
-                <FileViewerTab workspaceId={props.workspaceId} relativePath={filePath} />
+                <FileViewerTab
+                  workspaceId={props.workspaceId}
+                  relativePath={filePath}
+                  onReviewNote={props.onReviewNote}
+                />
               )}
             </div>
           );
