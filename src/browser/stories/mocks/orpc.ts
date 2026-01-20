@@ -8,6 +8,7 @@ import type {
   AgentDefinitionDescriptor,
   AgentDefinitionPackage,
 } from "@/common/types/agentDefinition";
+import type { AgentSkillDescriptor, AgentSkillPackage } from "@/common/types/agentSkill";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { ProjectConfig } from "@/node/config";
 import {
@@ -81,6 +82,8 @@ export interface MockORPCClientOptions {
   modeAiDefaults?: ModeAiDefaults;
   /** Initial unified AI defaults for agents (plan/exec/compact + subagents) */
   agentAiDefaults?: AgentAiDefaults;
+  /** Agent skills to expose via agentSkills.list */
+  agentSkills?: AgentSkillDescriptor[];
   /** Agent definitions to expose via agents.list */
   agentDefinitions?: AgentDefinitionDescriptor[];
   /** Initial per-subagent AI defaults for config.getConfig (e.g., Settings → Tasks section) */
@@ -192,6 +195,23 @@ interface MockMcpOverrides {
   toolAllowlist?: Record<string, string[]>;
 }
 
+const DEFAULT_AGENT_SKILLS: AgentSkillDescriptor[] = [
+  {
+    name: "mux-docs",
+    description: "Search the Mux documentation snapshot.",
+    scope: "built-in",
+  },
+  {
+    name: "react-effects",
+    description: "Guidelines for when to use (and avoid) useEffect in React components.",
+    scope: "built-in",
+  },
+  {
+    name: "dev-server-sandbox",
+    description: "Run multiple isolated mux dev-server instances.",
+    scope: "built-in",
+  },
+];
 type MockMcpTestResult = { success: true; tools: string[] } | { success: false; error: string };
 
 /**
@@ -233,6 +253,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     modeAiDefaults: initialModeAiDefaults,
     subagentAiDefaults: initialSubagentAiDefaults,
     agentAiDefaults: initialAgentAiDefaults,
+    agentSkills: initialAgentSkills,
     agentDefinitions: initialAgentDefinitions,
     listBranches: customListBranches,
     gitInit: customGitInit,
@@ -301,6 +322,9 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         base: "exec",
       },
     ] satisfies AgentDefinitionDescriptor[]);
+
+  const agentSkills: AgentSkillDescriptor[] = initialAgentSkills ?? DEFAULT_AGENT_SKILLS;
+  const agentSkillsByName = new Map(agentSkills.map((skill) => [skill.name, skill]));
 
   let taskSettings = normalizeTaskSettings(initialTaskSettings ?? DEFAULT_TASK_SETTINGS);
 
@@ -464,6 +488,24 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         } satisfies AgentDefinitionPackage;
 
         return Promise.resolve(agentPackage);
+      },
+    },
+    agentSkills: {
+      list: () => Promise.resolve(agentSkills),
+      get: (input: { skillName: string }) => {
+        const descriptor = agentSkillsByName.get(input.skillName);
+        if (!descriptor) {
+          throw new Error(`Agent skill not found: ${input.skillName}`);
+        }
+
+        const pkg = {
+          scope: descriptor.scope,
+          directoryName: descriptor.name,
+          frontmatter: { name: descriptor.name, description: descriptor.description },
+          body: "",
+        } satisfies AgentSkillPackage;
+
+        return Promise.resolve(pkg);
       },
     },
     providers: {
