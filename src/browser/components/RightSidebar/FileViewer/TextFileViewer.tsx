@@ -42,6 +42,7 @@ interface FileDiffLine {
   content: string;
 }
 
+const MAX_HIGHLIGHT_CHUNK_BYTES = 30_000;
 const DIFF_PREFIXES: Record<FileLineType, string> = {
   add: "+",
   remove: "-",
@@ -126,6 +127,44 @@ function buildUnifiedDiffLines(fileLines: string[], diffText: string): FileDiffL
   }
 }
 
+function buildChunkedDiffContent(
+  diffLines: FileDiffLine[],
+  oldStart: number,
+  newStart: number
+): string {
+  const result: string[] = [];
+  let oldLine = oldStart;
+  let newLine = newStart;
+  let chunkSize = 0;
+  let chunkLineCount = 0;
+
+  for (const line of diffLines) {
+    const lineSize = line.content.length;
+    const nextSize = chunkLineCount === 0 ? lineSize : chunkSize + lineSize + 1;
+
+    if (chunkLineCount > 0 && nextSize > MAX_HIGHLIGHT_CHUNK_BYTES) {
+      result.push(`@@ -${oldLine} +${newLine} @@`);
+      chunkSize = 0;
+      chunkLineCount = 0;
+    }
+
+    result.push(`${DIFF_PREFIXES[line.type]}${line.content}`);
+    chunkSize = chunkLineCount === 0 ? lineSize : chunkSize + lineSize + 1;
+    chunkLineCount += 1;
+
+    if (line.type === "add") {
+      newLine += 1;
+    } else if (line.type === "remove") {
+      oldLine += 1;
+    } else {
+      oldLine += 1;
+      newLine += 1;
+    }
+  }
+
+  return result.join("\n");
+}
+
 export const TextFileViewer: React.FC<TextFileViewerProps> = (props) => {
   const language = getLanguageFromPath(props.filePath);
   const languageDisplayName = getLanguageDisplayName(language);
@@ -135,9 +174,7 @@ export const TextFileViewer: React.FC<TextFileViewerProps> = (props) => {
   const unifiedLines = props.diff ? buildUnifiedDiffLines(fileLines, props.diff) : null;
   const diffLines: FileDiffLine[] =
     unifiedLines ?? fileLines.map((content) => ({ type: "context", content }));
-  const diffContent = diffLines
-    .map((line) => `${DIFF_PREFIXES[line.type]}${line.content}`)
-    .join("\n");
+  const diffContent = buildChunkedDiffContent(diffLines, 1, 1);
   const addedCount = unifiedLines ? diffLines.filter((line) => line.type === "add").length : 0;
   const removedCount = unifiedLines ? diffLines.filter((line) => line.type === "remove").length : 0;
   const diffRendererProps = {
