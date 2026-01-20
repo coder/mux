@@ -2,18 +2,8 @@ import React from "react";
 import { TokenMeter } from "./TokenMeter";
 import { HorizontalThresholdSlider, type AutoCompactionConfig } from "./ThresholdSlider";
 import { formatTokens, type TokenMeterData } from "@/common/utils/tokens/tokenMeterUtils";
-
-const OutputReserveIndicator: React.FC<{ threshold: number }> = (props) => {
-  const threshold = props.threshold;
-  if (threshold <= 0 || threshold >= 100) return null;
-
-  return (
-    <div
-      className="border-dashed-warning pointer-events-none absolute top-0 z-40 h-full w-0 border-l"
-      style={{ left: `${threshold}%` }}
-    />
-  );
-};
+import { OutputReserveIndicator } from "./OutputReserveIndicator";
+import { getOutputReserveInfo } from "./contextUsageUtils";
 
 interface ContextUsageBarProps {
   data: TokenMeterData;
@@ -36,25 +26,17 @@ const ContextUsageBarComponent: React.FC<ContextUsageBarProps> = ({
   const showWarning = !data.maxTokens;
   const showThresholdSlider = autoCompaction && data.maxTokens;
 
-  const outputReserveThreshold = (() => {
-    if (!data.maxTokens || !data.maxOutputTokens) return null;
-    if (data.maxOutputTokens <= 0 || data.maxOutputTokens >= data.maxTokens) return null;
-    const raw = ((data.maxTokens - data.maxOutputTokens) / data.maxTokens) * 100;
-    return Math.max(0, Math.min(100, raw));
-  })();
-
-  const outputReserveTokens =
-    data.maxTokens && data.maxOutputTokens ? data.maxTokens - data.maxOutputTokens : null;
+  const outputReserveInfo = getOutputReserveInfo(data);
 
   const showOutputReserveIndicator = Boolean(
-    showThresholdSlider && outputReserveThreshold !== null
+    showThresholdSlider && outputReserveInfo.threshold !== null
   );
   const showOutputReserveWarning = Boolean(
     showThresholdSlider &&
     autoCompaction &&
     autoCompaction.threshold < 100 &&
-    outputReserveThreshold !== null &&
-    autoCompaction.threshold > outputReserveThreshold
+    outputReserveInfo.threshold !== null &&
+    autoCompaction.threshold > outputReserveInfo.threshold
   );
 
   if (data.totalTokens === 0) return null;
@@ -76,25 +58,26 @@ const ContextUsageBarComponent: React.FC<ContextUsageBarProps> = ({
 
       <div className="relative w-full overflow-hidden py-2">
         <TokenMeter segments={data.segments} orientation="horizontal" />
-        {showOutputReserveIndicator && outputReserveThreshold !== null && (
-          <OutputReserveIndicator threshold={outputReserveThreshold} />
+        {showOutputReserveIndicator && outputReserveInfo.threshold !== null && (
+          <OutputReserveIndicator threshold={outputReserveInfo.threshold} />
         )}
         {showThresholdSlider && <HorizontalThresholdSlider config={autoCompaction} />}
       </div>
 
       {showOutputReserveIndicator &&
-        outputReserveThreshold !== null &&
-        outputReserveTokens !== null && (
+        outputReserveInfo.threshold !== null &&
+        outputReserveInfo.tokens !== null && (
           <div className="text-muted mt-1 text-[11px]">
-            Output reserve starts at {outputReserveThreshold.toFixed(1)}% (
-            {formatTokens(outputReserveTokens)} prompt max)
+            Output reserve starts at {outputReserveInfo.threshold.toFixed(1)}% (
+            {formatTokens(outputReserveInfo.tokens)} prompt max)
           </div>
         )}
 
-      {showOutputReserveWarning && outputReserveThreshold !== null && (
+      {showOutputReserveWarning && outputReserveInfo.threshold !== null && (
         <div className="text-warning mt-1 text-[11px]">
-          Auto-compact threshold is above the output reserve ({outputReserveThreshold.toFixed(1)}%).
-          Requests may hit context_exceeded before auto-compact runs.
+          Auto-compact threshold is above the output reserve (
+          {outputReserveInfo.threshold.toFixed(1)}%). Requests may hit context_exceeded before
+          auto-compact runs.
         </div>
       )}
 
