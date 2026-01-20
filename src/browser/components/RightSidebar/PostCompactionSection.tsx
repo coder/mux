@@ -153,12 +153,29 @@ export const PostCompactionSection: React.FC<PostCompactionSectionProps> = (prop
                         e.stopPropagation();
                         // Toggle all files: if any included, exclude all; otherwise include all
                         const shouldExclude = includedFilesCount > 0;
+                        const itemIdsToToggle = formattedFiles
+                          .filter((file) => shouldExclude !== file.isExcluded)
+                          .map((file) => file.itemId);
+
                         void (async () => {
-                          for (const file of formattedFiles) {
-                            if (shouldExclude !== file.isExcluded) {
-                              await props.onToggleExclusion(file.itemId);
+                          const queue = [...itemIdsToToggle];
+
+                          const worker = async () => {
+                            while (queue.length) {
+                              const itemId = queue.shift();
+                              if (!itemId) {
+                                return;
+                              }
+
+                              await props.onToggleExclusion(itemId);
                             }
-                          }
+                          };
+
+                          await Promise.all(
+                            Array.from({ length: Math.min(3, itemIdsToToggle.length) }, () =>
+                              worker()
+                            )
+                          );
                         })();
                       }}
                       className="text-subtle hover:text-foreground p-0.5 transition-colors"
