@@ -108,6 +108,37 @@ describe("MarkdownComponents command code blocks", () => {
       initialCommand: "dir",
     });
   });
+
+  test("strips cmd.exe continuation prompts", () => {
+    const openTerminal = mock(() => undefined);
+
+    const element = markdownComponents.code({
+      inline: false,
+      className: "language-cmd",
+      children: "C:\\> echo foo ^\n> bar\n",
+    });
+
+    const { getByRole } = render(
+      <ThemeProvider forcedTheme="dark">
+        <MessageListProvider
+          value={{
+            workspaceId: "ws-1",
+            latestMessageId: null,
+            openTerminal,
+          }}
+        >
+          {element}
+        </MessageListProvider>
+      </ThemeProvider>
+    );
+
+    const runButton = getByRole("button", { name: "Run command" });
+    fireEvent.click(runButton);
+
+    expect(openTerminal).toHaveBeenCalledWith({
+      initialCommand: "echo foo ^\nbar",
+    });
+  });
   test("strips multiline continuation prompts after a $ shell prompt", () => {
     const openTerminal = mock(() => undefined);
 
