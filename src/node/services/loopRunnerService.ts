@@ -12,6 +12,7 @@ import type {
 import { HarnessLoopStateSchema } from "@/common/orpc/schemas";
 import { createMuxMessage } from "@/common/types/message";
 import { defaultModel } from "@/common/utils/ai/models";
+import { getPlanFilePath } from "@/common/utils/planStorage";
 import type { WorkspaceService } from "@/node/services/workspaceService";
 import type { AIService } from "@/node/services/aiService";
 import type { Config } from "@/node/config";
@@ -20,6 +21,7 @@ import { MutexMap } from "@/node/utils/concurrency/mutexMap";
 import type { WorkspaceHarnessService } from "@/node/services/workspaceHarnessService";
 import type { GateRunnerService } from "@/node/services/gateRunnerService";
 import type { GitCheckpointService } from "@/node/services/gitCheckpointService";
+import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { execBuffered } from "@/node/utils/runtime/helpers";
 
 const LOOP_STATE_FILENAME = "harness-loop.json";
@@ -92,6 +94,7 @@ function renderLoopSummaryMarkdown(params: {
   currentItemTitle: string | null;
   configPathHint: string;
   progressPathHint: string;
+  planPathHint: string;
   checklist: HarnessChecklistItem[];
   lastGateRun: HarnessGateRunResult | null;
   lastCommitSha: string | null;
@@ -124,6 +127,7 @@ function renderLoopSummaryMarkdown(params: {
   lines.push("Harness files:");
   lines.push(`- ${params.progressPathHint}`);
   lines.push(`- ${params.configPathHint}`);
+  lines.push(`- Plan: ${params.planPathHint}`);
   lines.push("");
 
   lines.push("Checklist:");
@@ -527,12 +531,16 @@ export class LoopRunnerService extends EventEmitter {
       await this.persistState(workspaceId, nextState);
 
       if (contextReset === "replace_history") {
+        const runtime = createRuntime(info.runtimeConfig, { projectPath: info.projectPath });
+        const planPathHint = getPlanFilePath(info.name, info.projectName, runtime.getMuxHome());
+
         const summary = renderLoopSummaryMarkdown({
           workspaceId,
           iteration: nextState.iteration,
           currentItemTitle: nextState.currentItemTitle,
           configPathHint,
           progressPathHint,
+          planPathHint,
           checklist: config.checklist,
           lastGateRun: nextState.lastGateRun,
           lastCommitSha: nextState.lastCheckpoint?.commitSha ?? null,
