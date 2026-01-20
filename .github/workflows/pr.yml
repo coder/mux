@@ -257,6 +257,9 @@ jobs:
       - name: Generate version.ts
         shell: bash
         run: ./scripts/generate-version.sh
+      - name: Generate built-in skills content
+        shell: bash
+        run: ./scripts/generate-builtin-skills.sh
       - name: Run unit tests
         shell: bash
         run: |
