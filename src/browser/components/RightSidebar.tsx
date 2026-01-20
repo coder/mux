@@ -19,6 +19,7 @@ import { CostsTab } from "./RightSidebar/CostsTab";
 import { ErrorBoundary } from "./ErrorBoundary";
 
 import { sumUsageHistory, type ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
+import { isStorybook } from "@/browser/utils/storybook";
 import { matchesKeybind, KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 import { SidebarCollapseButton } from "./ui/SidebarCollapseButton";
 import { cn } from "@/common/lib/utils";
@@ -89,24 +90,50 @@ import { SortableContext, rectSortingStrategy } from "@dnd-kit/sortable";
 
 // Tab panels are lazily loaded so the default bundle doesn't include optional UIs
 // like Code Review, Stats, Terminal, File Viewer, and Explorer.
-const ReviewPanel = React.lazy(() =>
-  import("./RightSidebar/CodeReview/ReviewPanel").then((m) => ({ default: m.ReviewPanel }))
+//
+// In Storybook/Chromatic, proactively start loading these chunks so snapshots stabilize
+// (React.lazy suspends while the chunk loads).
+const reviewPanelImport = isStorybook()
+  ? import("./RightSidebar/CodeReview/ReviewPanel").then((m) => ({ default: m.ReviewPanel }))
+  : null;
+const ReviewPanel = React.lazy(
+  () =>
+    reviewPanelImport ??
+    import("./RightSidebar/CodeReview/ReviewPanel").then((m) => ({ default: m.ReviewPanel }))
 );
 
-const StatsTab = React.lazy(() =>
-  import("./RightSidebar/StatsTab").then((m) => ({ default: m.StatsTab }))
+const statsTabImport = isStorybook()
+  ? import("./RightSidebar/StatsTab").then((m) => ({ default: m.StatsTab }))
+  : null;
+const StatsTab = React.lazy(
+  () => statsTabImport ?? import("./RightSidebar/StatsTab").then((m) => ({ default: m.StatsTab }))
 );
 
-const TerminalTab = React.lazy(() =>
-  import("./RightSidebar/TerminalTab").then((m) => ({ default: m.TerminalTab }))
+const terminalTabImport = isStorybook()
+  ? import("./RightSidebar/TerminalTab").then((m) => ({ default: m.TerminalTab }))
+  : null;
+const TerminalTab = React.lazy(
+  () =>
+    terminalTabImport ??
+    import("./RightSidebar/TerminalTab").then((m) => ({ default: m.TerminalTab }))
 );
 
-const ExplorerTab = React.lazy(() =>
-  import("./RightSidebar/ExplorerTab").then((m) => ({ default: m.ExplorerTab }))
+const explorerTabImport = isStorybook()
+  ? import("./RightSidebar/ExplorerTab").then((m) => ({ default: m.ExplorerTab }))
+  : null;
+const ExplorerTab = React.lazy(
+  () =>
+    explorerTabImport ??
+    import("./RightSidebar/ExplorerTab").then((m) => ({ default: m.ExplorerTab }))
 );
 
-const FileViewerTab = React.lazy(() =>
-  import("./RightSidebar/FileViewer/FileViewerTab").then((m) => ({ default: m.FileViewerTab }))
+const fileViewerTabImport = isStorybook()
+  ? import("./RightSidebar/FileViewer/FileViewerTab").then((m) => ({ default: m.FileViewerTab }))
+  : null;
+const FileViewerTab = React.lazy(
+  () =>
+    fileViewerTabImport ??
+    import("./RightSidebar/FileViewer/FileViewerTab").then((m) => ({ default: m.FileViewerTab }))
 );
 
 // Re-export for consumers

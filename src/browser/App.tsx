@@ -62,26 +62,55 @@ import { FeatureFlagsProvider } from "./contexts/FeatureFlagsContext";
 import { ExperimentsProvider } from "./contexts/ExperimentsContext";
 import { getWorkspaceSidebarKey } from "./utils/workspace";
 import { WindowsToolchainBanner } from "./components/WindowsToolchainBanner";
+import { isStorybook } from "@/browser/utils/storybook";
 import { RosettaBanner } from "./components/RosettaBanner";
 
 // Large, rarely-used screens/modals are lazily loaded to keep the initial renderer
 // bundle small. These chunks are only requested when the UI is actually opened.
-const AIView = React.lazy(() => import("./components/AIView").then((m) => ({ default: m.AIView })));
-
-const ProjectPage = React.lazy(() =>
-  import("./components/ProjectPage").then((m) => ({ default: m.ProjectPage }))
+//
+// In Storybook/Chromatic, proactively start loading these chunks so snapshots stabilize
+// (React.lazy suspends while the chunk loads).
+const aiViewImport = isStorybook()
+  ? import("./components/AIView").then((m) => ({ default: m.AIView }))
+  : null;
+const AIView = React.lazy(
+  () => aiViewImport ?? import("./components/AIView").then((m) => ({ default: m.AIView }))
 );
 
-const CommandPalette = React.lazy(() =>
-  import("./components/CommandPalette").then((m) => ({ default: m.CommandPalette }))
+const projectPageImport = isStorybook()
+  ? import("./components/ProjectPage").then((m) => ({ default: m.ProjectPage }))
+  : null;
+const ProjectPage = React.lazy(
+  () =>
+    projectPageImport ??
+    import("./components/ProjectPage").then((m) => ({ default: m.ProjectPage }))
 );
 
-const ProjectCreateModal = React.lazy(() =>
-  import("./components/ProjectCreateModal").then((m) => ({ default: m.ProjectCreateModal }))
+const commandPaletteImport = isStorybook()
+  ? import("./components/CommandPalette").then((m) => ({ default: m.CommandPalette }))
+  : null;
+const CommandPalette = React.lazy(
+  () =>
+    commandPaletteImport ??
+    import("./components/CommandPalette").then((m) => ({ default: m.CommandPalette }))
 );
 
-const SettingsModal = React.lazy(() =>
-  import("./components/Settings/SettingsModal").then((m) => ({ default: m.SettingsModal }))
+const projectCreateModalImport = isStorybook()
+  ? import("./components/ProjectCreateModal").then((m) => ({ default: m.ProjectCreateModal }))
+  : null;
+const ProjectCreateModal = React.lazy(
+  () =>
+    projectCreateModalImport ??
+    import("./components/ProjectCreateModal").then((m) => ({ default: m.ProjectCreateModal }))
+);
+
+const settingsModalImport = isStorybook()
+  ? import("./components/Settings/SettingsModal").then((m) => ({ default: m.SettingsModal }))
+  : null;
+const SettingsModal = React.lazy(
+  () =>
+    settingsModalImport ??
+    import("./components/Settings/SettingsModal").then((m) => ({ default: m.SettingsModal }))
 );
 
 function AppInner() {

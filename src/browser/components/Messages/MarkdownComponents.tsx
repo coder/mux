@@ -5,13 +5,21 @@ import { Mermaid } from "./Mermaid";
 import { useOptionalMessageListContext } from "./MessageListContext";
 import { extractShikiLines } from "@/browser/utils/highlighting/shiki-shared";
 import { useTheme } from "@/browser/contexts/ThemeContext";
+import { isStorybook } from "@/browser/utils/storybook";
 import { CopyButton } from "@/browser/components/ui/CopyButton";
 
 interface HighlightWorkerClientModule {
   highlightCode: (code: string, language: string, theme: "dark" | "light") => Promise<string>;
 }
 
-let highlightWorkerClientPromise: Promise<HighlightWorkerClientModule> | null = null;
+const highlightWorkerClientImport = isStorybook()
+  ? import("@/browser/utils/highlighting/highlightWorkerClient").then((m) => ({
+      highlightCode: m.highlightCode,
+    }))
+  : null;
+
+let highlightWorkerClientPromise: Promise<HighlightWorkerClientModule> | null =
+  highlightWorkerClientImport;
 
 function getHighlightWorkerClient(): Promise<HighlightWorkerClientModule> {
   if (!highlightWorkerClientPromise) {

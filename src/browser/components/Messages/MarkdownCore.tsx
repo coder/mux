@@ -6,6 +6,7 @@ import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import { harden } from "rehype-harden";
 import { normalizeMarkdown } from "./MarkdownStyles";
+import { isStorybook } from "@/browser/utils/storybook";
 import { markdownComponents } from "./MarkdownComponents";
 
 interface MarkdownCoreProps {
@@ -90,8 +91,14 @@ const REHYPE_PLUGINS_BASE: Pluggable[] = [
   ],
 ];
 
-const LazyMarkdownCoreMath = React.lazy(() =>
-  import("./MarkdownCoreMath").then((m) => ({ default: m.MarkdownCoreMath }))
+const markdownCoreMathImport = isStorybook()
+  ? import("./MarkdownCoreMath").then((m) => ({ default: m.MarkdownCoreMath }))
+  : null;
+
+const LazyMarkdownCoreMath = React.lazy(
+  () =>
+    markdownCoreMathImport ??
+    import("./MarkdownCoreMath").then((m) => ({ default: m.MarkdownCoreMath }))
 );
 
 function hasMathSyntax(content: string): boolean {
