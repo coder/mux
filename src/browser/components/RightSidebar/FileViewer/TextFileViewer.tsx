@@ -11,10 +11,22 @@ import {
   SelectableDiffRenderer,
   type DiffLineType,
 } from "@/browser/components/shared/DiffRenderer";
+import type { ReviewActionCallbacks } from "@/browser/components/shared/InlineReviewNote";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui/tooltip";
+import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { useReviews } from "@/browser/hooks/useReviews";
+import {
+  highlightSearchInText,
+  type SearchHighlightConfig,
+} from "@/browser/utils/highlighting/highlightSearchTerms";
+import { formatKeybind, KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
+import { getFileViewerSearchStateKey } from "@/common/constants/storage";
+import { cn } from "@/common/lib/utils";
 import { getLanguageFromPath, getLanguageDisplayName } from "@/common/utils/git/languageDetector";
 import type { ReviewNoteData } from "@/common/types/review";
 
 interface TextFileViewerProps {
+  workspaceId: string;
   content: string;
   filePath: string;
   size: number;
@@ -27,6 +39,15 @@ interface TextFileViewerProps {
   /** Callback when user submits a review note */
   onReviewNote?: (data: ReviewNoteData) => void;
 }
+
+interface FileViewerSearchState {
+  input: string;
+  useRegex: boolean;
+  matchCase: boolean;
+}
+
+const MAX_HIGHLIGHT_CHUNK_BYTES = 30_000;
+const SEARCH_DEBOUNCE_MS = 150;
 
 // Format file size for display
 const formatSize = (bytes: number): string => {
@@ -42,7 +63,6 @@ interface FileDiffLine {
   content: string;
 }
 
-const MAX_HIGHLIGHT_CHUNK_BYTES = 30_000;
 const DIFF_PREFIXES: Record<FileLineType, string> = {
   add: "+",
   remove: "-",
@@ -166,6 +186,76 @@ function buildChunkedDiffContent(
 }
 
 export const TextFileViewer: React.FC<TextFileViewerProps> = (props) => {
+  const searchInputRef = React.useRef<HTMLInputElement>(null);
+  const [searchState, setSearchState] = usePersistedState<FileViewerSearchState>(
+    getFileViewerSearchStateKey(props.workspaceId),
+    { input: "", useRegex: false, matchCase: false }
+  );
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = React.useState("");
+
+  React.useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchTerm(searchState.input);
+    }, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [searchState.input]);
+
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (matchesKeybind(e, KEYBINDS.FOCUS_REVIEW_SEARCH)) {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  const searchConfig = React.useMemo<SearchHighlightConfig | undefined>(
+    () =>
+      debouncedSearchTerm
+        ? {
+            searchTerm: debouncedSearchTerm,
+            useRegex: searchState.useRegex,
+            matchCase: searchState.matchCase,
+          }
+        : undefined,
+    [debouncedSearchTerm, searchState.useRegex, searchState.matchCase]
+  );
+
+  const highlightedFilePath = React.useMemo(
+    () => (searchConfig ? highlightSearchInText(props.filePath, searchConfig) : props.filePath),
+    [props.filePath, searchConfig]
+  );
+
+  const {
+    reviews,
+    updateReviewNote,
+    checkReview,
+    uncheckReview,
+    attachReview,
+    detachReview,
+    removeReview,
+  } = useReviews(props.workspaceId);
+
+  const inlineReviews = React.useMemo(
+    () => reviews.filter((review) => review.data?.filePath === props.filePath),
+    [reviews, props.filePath]
+  );
+
+  const reviewActions: ReviewActionCallbacks = React.useMemo(
+    () => ({
+      onEditComment: updateReviewNote,
+      onComplete: checkReview,
+      onUncheck: uncheckReview,
+      onAttach: attachReview,
+      onDetach: detachReview,
+      onDelete: removeReview,
+    }),
+    [updateReviewNote, checkReview, uncheckReview, attachReview, detachReview, removeReview]
+  );
+
   const language = getLanguageFromPath(props.filePath);
   const languageDisplayName = getLanguageDisplayName(language);
 
@@ -189,39 +279,97 @@ export const TextFileViewer: React.FC<TextFileViewerProps> = (props) => {
     className: "rounded-none border-0 [&>div]:overflow-x-visible",
   };
 
+  const shouldUseSelectable =
+    Boolean(props.onReviewNote) || Boolean(searchConfig) || inlineReviews.length > 0;
+
   return (
     <div data-testid="text-file-viewer" className="bg-background flex h-full flex-col">
+      <div className="border-border-light flex flex-col border-b">
+        <div className="text-muted-foreground flex items-center gap-3 px-2 py-1 text-[11px]">
+          <span
+            className="min-w-0 truncate"
+            dangerouslySetInnerHTML={{ __html: highlightedFilePath }}
+          />
+          <span className="shrink-0">{formatSize(props.size)}</span>
+          <span className="shrink-0">{lineCount.toLocaleString()} lines</span>
+          {(addedCount > 0 || removedCount > 0) && (
+            <span className="shrink-0">
+              <span className="text-success-light">+{addedCount}</span>
+              <span className="text-muted-foreground">/</span>
+              <span className="text-warning-light">−{removedCount}</span>
+            </span>
+          )}
+          <span className="ml-auto shrink-0">{languageDisplayName}</span>
+          {props.onRefresh && (
+            <button
+              type="button"
+              className="text-muted hover:bg-accent/50 hover:text-foreground rounded p-0.5"
+              onClick={props.onRefresh}
+              title="Refresh file"
+              disabled={props.isRefreshing}
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${props.isRefreshing ? "animate-spin" : ""}`} />
+            </button>
+          )}
+        </div>
+        <div className="border-border-light flex items-center gap-1.5 border-t px-2 py-1">
+          <input
+            ref={searchInputRef}
+            type="text"
+            placeholder={`Search... (${formatKeybind(KEYBINDS.FOCUS_REVIEW_SEARCH)})`}
+            value={searchState.input}
+            onChange={(e) => setSearchState({ ...searchState, input: e.target.value })}
+            className="bg-dark text-foreground border-border-medium placeholder:text-dim hover:border-accent focus:border-accent min-w-0 flex-1 rounded border px-1.5 py-0.5 font-mono text-[11px] transition-[border-color] duration-150 focus:outline-none"
+          />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                className={cn(
+                  "font-monospace cursor-pointer border-none bg-transparent p-0 text-[11px] font-semibold transition-colors duration-150",
+                  searchState.useRegex ? "text-accent-light" : "text-muted hover:text-foreground"
+                )}
+                onClick={() => setSearchState({ ...searchState, useRegex: !searchState.useRegex })}
+              >
+                .*
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              {searchState.useRegex ? "Using regex search" : "Using substring search"}
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                className={cn(
+                  "font-monospace cursor-pointer border-none bg-transparent p-0 text-[11px] font-semibold transition-colors duration-150",
+                  searchState.matchCase ? "text-accent-light" : "text-muted hover:text-foreground"
+                )}
+                onClick={() =>
+                  setSearchState({ ...searchState, matchCase: !searchState.matchCase })
+                }
+              >
+                Aa
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              {searchState.matchCase
+                ? "Match case (case-sensitive)"
+                : "Ignore case (case-insensitive)"}
+            </TooltipContent>
+          </Tooltip>
+        </div>
+      </div>
       <div className="min-h-0 flex-1 overflow-auto">
-        {props.onReviewNote ? (
-          <SelectableDiffRenderer {...diffRendererProps} onReviewNote={props.onReviewNote} />
+        {shouldUseSelectable ? (
+          <SelectableDiffRenderer
+            {...diffRendererProps}
+            onReviewNote={props.onReviewNote}
+            inlineReviews={inlineReviews}
+            reviewActions={reviewActions}
+            searchConfig={searchConfig}
+          />
         ) : (
           <DiffRenderer {...diffRendererProps} />
-        )}
-      </div>
-
-      {/* Status line */}
-      <div className="border-border-light text-muted-foreground flex shrink-0 items-center gap-3 border-t px-2 py-1 text-[11px]">
-        <span className="min-w-0 truncate">{props.filePath}</span>
-        <span className="shrink-0">{formatSize(props.size)}</span>
-        <span className="shrink-0">{lineCount.toLocaleString()} lines</span>
-        {(addedCount > 0 || removedCount > 0) && (
-          <span className="shrink-0">
-            <span className="text-success-light">+{addedCount}</span>
-            <span className="text-muted-foreground">/</span>
-            <span className="text-warning-light">−{removedCount}</span>
-          </span>
-        )}
-        <span className="ml-auto shrink-0">{languageDisplayName}</span>
-        {props.onRefresh && (
-          <button
-            type="button"
-            className="text-muted hover:bg-accent/50 hover:text-foreground rounded p-0.5"
-            onClick={props.onRefresh}
-            title="Refresh file"
-            disabled={props.isRefreshing}
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${props.isRefreshing ? "animate-spin" : ""}`} />
-          </button>
         )}
       </div>
     </div>

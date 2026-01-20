@@ -240,6 +240,7 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
   if (data.type === "text") {
     return (
       <TextFileViewer
+        workspaceId={props.workspaceId}
         content={data.content}
         filePath={props.relativePath}
         size={data.size}

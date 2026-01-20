@@ -396,6 +396,15 @@ export function getReviewSearchStateKey(workspaceId: string): string {
 }
 
 /**
+ * Get the localStorage key for File Viewer search state per workspace
+ * Stores: { input: string, useRegex: boolean, matchCase: boolean }
+ * Format: "fileViewerSearchState:{workspaceId}"
+ */
+export function getFileViewerSearchStateKey(workspaceId: string): string {
+  return `fileViewerSearchState:${workspaceId}`;
+}
+
+/**
  * Get the localStorage key for reviews per workspace
  * Stores: ReviewsState (reviews created from diff viewer - pending, attached, or checked)
  * Format: "reviews:{workspaceId}"
@@ -440,6 +449,7 @@ const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string>
   getReviewReadMoreKey,
   getFileTreeExpandStateKey,
   getReviewSearchStateKey,
+  getFileViewerSearchStateKey,
   getReviewsKey,
   getAutoCompactionEnabledKey,
   getStatusStateKey,
