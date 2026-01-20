@@ -15,7 +15,7 @@
  * Extends RemoteRuntime for shared exec/file operations.
  */
 
-import { spawn } from "child_process";
+import { spawn, type ChildProcess } from "child_process";
 import * as path from "path";
 import type {
   ExecOptions,
@@ -27,18 +27,18 @@ import type {
   WorkspaceForkResult,
   InitLogger,
 } from "./Runtime";
-import { RuntimeError as RuntimeErrorClass } from "./Runtime";
 import { RemoteRuntime, type SpawnResult } from "./RemoteRuntime";
 import { log } from "@/node/services/log";
 import { checkInitHookExists, getMuxEnv, runInitHookOnRuntime } from "./initHook";
 import { expandTildeForSSH as expandHookPath } from "./tildeExpansion";
-import { streamProcessToLogger } from "./streamProcess";
+
 import { expandTildeForSSH, cdCommandForSSH } from "./tildeExpansion";
 import { getProjectName, execBuffered } from "@/node/utils/runtime/helpers";
 import { getErrorMessage } from "@/common/utils/errors";
-import { getControlPath, sshConnectionPool, type SSHRuntimeConfig } from "./sshConnectionPool";
-import { getBashPath } from "@/node/utils/main/bashPath";
+import { type SSHRuntimeConfig } from "./sshConnectionPool";
 import { syncProjectViaGitBundle } from "./gitBundleSync";
+import type { PtyHandle } from "./ptyHandle";
+import type { PtySessionParams, SSHTransport } from "./transports";
 import { streamToString, shescape } from "./streamUtils";
 
 function logSSHBackoffWait(initLogger: InitLogger, waitMs: number): void {
@@ -46,6 +46,81 @@ function logSSHBackoffWait(initLogger: InitLogger, waitMs: number): void {
   initLogger.logStep(`SSH unavailable; retrying in ${secs}s...`);
 }
 
+async function pipeReadableToWebWritable(
+  readable: NodeJS.ReadableStream | null | undefined,
+  writable: WritableStream<Uint8Array>,
+  abortSignal?: AbortSignal
+): Promise<void> {
+  if (!readable) {
+    throw new Error("Missing git bundle output stream");
+  }
+
+  const writer = writable.getWriter();
+  try {
+    for await (const chunk of readable) {
+      if (abortSignal?.aborted) {
+        throw new Error("Bundle creation aborted");
+      }
+      const data =
+        typeof chunk === "string"
+          ? Buffer.from(chunk)
+          : chunk instanceof Uint8Array
+            ? chunk
+            : Buffer.from(chunk);
+      await writer.write(data);
+    }
+    await writer.close();
+  } catch (error) {
+    try {
+      await writer.abort(error);
+    } catch {
+      writer.releaseLock();
+    }
+    throw error;
+  }
+}
+
+function createAbortController(
+  timeoutMs: number | undefined,
+  abortSignal?: AbortSignal
+): { signal: AbortSignal; dispose: () => void; didTimeout: () => boolean } {
+  const controller = new AbortController();
+  let timedOut = false;
+
+  const onAbort = () => controller.abort();
+  if (abortSignal) {
+    if (abortSignal.aborted) {
+      controller.abort();
+    } else {
+      abortSignal.addEventListener("abort", onAbort, { once: true });
+    }
+  }
+
+  const timeoutHandle =
+    timeoutMs === undefined
+      ? undefined
+      : setTimeout(() => {
+          timedOut = true;
+          controller.abort();
+        }, timeoutMs);
+
+  return {
+    signal: controller.signal,
+    didTimeout: () => timedOut,
+    dispose: () => {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
+      abortSignal?.removeEventListener("abort", onAbort);
+    },
+  };
+}
+async function waitForProcessExit(proc: ChildProcess): Promise<number> {
+  return new Promise((resolve, reject) => {
+    proc.on("close", (code) => resolve(code ?? 0));
+    proc.on("error", (err) => reject(err));
+  });
+}
 /** Truncate SSH stderr for error logging (keep first line, max 200 chars) */
 function truncateSSHError(stderr: string): string {
   const trimmed = stderr.trim();
@@ -67,19 +142,16 @@ export type { SSHRuntimeConfig } from "./sshConnectionPool";
  */
 export class SSHRuntime extends RemoteRuntime {
   private readonly config: SSHRuntimeConfig;
-  private readonly controlPath: string;
+  private readonly transport: SSHTransport;
   /** Cached resolved bgOutputDir (tilde expanded to absolute path) */
   private resolvedBgOutputDir: string | null = null;
 
-  constructor(config: SSHRuntimeConfig) {
+  constructor(config: SSHRuntimeConfig, transport: SSHTransport) {
     super();
     // Note: srcBaseDir may contain tildes - they will be resolved via resolvePath() before use
     // The WORKSPACE_CREATE IPC handler resolves paths before storing in config
     this.config = config;
-    // Get deterministic controlPath from connection pool
-    // Multiple SSHRuntime instances with same config share the same controlPath,
-    // enabling ControlMaster to multiplex SSH connections across operations
-    this.controlPath = getControlPath(config);
+    this.transport = transport;
   }
 
   /**
@@ -112,9 +184,12 @@ export class SSHRuntime extends RemoteRuntime {
     return this.resolvedBgOutputDir;
   }
 
-  /**
-   * Get SSH configuration (for PTY terminal spawning)
-   */
+  /** Create a PTY session using the underlying transport. */
+  public createPtySession(params: PtySessionParams): Promise<PtyHandle> {
+    return this.transport.createPtySession(params);
+  }
+
+  /** Get SSH configuration (for PTY terminal spawning). */
   public getConfig(): SSHRuntimeConfig {
     return this.config;
   }
@@ -142,9 +217,9 @@ export class SSHRuntime extends RemoteRuntime {
     // SSH exit code 255 indicates connection failure - report to pool for backoff
     // This prevents thundering herd when a previously healthy host goes down
     if (exitCode === 255) {
-      sshConnectionPool.reportFailure(this.config, truncateSSHError(stderr));
+      this.transport.reportFailure(truncateSSHError(stderr));
     } else {
-      sshConnectionPool.markHealthy(this.config);
+      this.transport.markHealthy();
     }
   }
 
@@ -152,40 +227,11 @@ export class SSHRuntime extends RemoteRuntime {
     fullCommand: string,
     options: ExecOptions
   ): Promise<SpawnResult> {
-    // Acquire connection from pool BEFORE spawning (enforces backoff)
-    await sshConnectionPool.acquireConnection(this.config, {
+    return this.transport.spawnRemoteProcess(fullCommand, {
+      forcePTY: options.forcePTY,
+      timeout: options.timeout,
       abortSignal: options.abortSignal,
     });
-
-    // Build SSH args from shared base config
-    // -T: Disable pseudo-terminal allocation (default)
-    // -t: Force pseudo-terminal allocation (for interactive shells)
-    const sshArgs: string[] = [options.forcePTY ? "-t" : "-T", ...this.buildSSHArgs()];
-
-    // Set comprehensive timeout options to ensure SSH respects the timeout
-    // ConnectTimeout: Maximum time to wait for connection establishment (DNS, TCP handshake, SSH auth)
-    // Cap at 15 seconds - users wanting long timeouts for builds shouldn't wait that long for connection
-    // ServerAliveInterval: Send keepalive every 5 seconds to detect dead connections
-    // ServerAliveCountMax: Consider connection dead after 2 missed keepalives (10 seconds total)
-    const connectTimeout =
-      options.timeout !== undefined ? Math.min(Math.ceil(options.timeout), 15) : 15;
-    sshArgs.push("-o", `ConnectTimeout=${connectTimeout}`);
-    // Set aggressive keepalives to detect dead connections
-    sshArgs.push("-o", "ServerAliveInterval=5");
-    sshArgs.push("-o", "ServerAliveCountMax=2");
-
-    sshArgs.push(this.config.host, fullCommand);
-
-    // Debug: log the SSH host (fullCommand may contain secrets via env exports)
-    log.debug(`SSH exec on ${this.config.host}`);
-    // Spawn ssh command
-    const process = spawn("ssh", sshArgs, {
-      stdio: ["pipe", "pipe", "pipe"],
-      // Prevent console window from appearing on Windows
-      windowsHide: true,
-    });
-
-    return { process };
   }
 
   /**
@@ -197,117 +243,6 @@ export class SSHRuntime extends RemoteRuntime {
     // If path doesn't exist, use 600 as default
     // Then write atomically using mv (all-or-nothing for readers)
     return `RESOLVED=$(readlink -f ${quotedPath} 2>/dev/null || echo ${quotedPath}) && PERMS=$(stat -c '%a' "$RESOLVED" 2>/dev/null || echo 600) && mkdir -p $(dirname "$RESOLVED") && cat > ${quotedTempPath} && chmod "$PERMS" ${quotedTempPath} && mv ${quotedTempPath} "$RESOLVED"`;
-  }
-
-  // ===== SSH-specific helper methods =====
-
-  /**
-   * Build base SSH args shared by all SSH operations.
-   * Includes: port, identity file, LogLevel, ControlMaster options.
-   */
-  private buildSSHArgs(): string[] {
-    const args: string[] = [];
-
-    // Add port if specified
-    if (this.config.port) {
-      args.push("-p", this.config.port.toString());
-    }
-
-    // Add identity file if specified
-    if (this.config.identityFile) {
-      args.push("-i", this.config.identityFile);
-      // Disable strict host key checking for test environments
-      args.push("-o", "StrictHostKeyChecking=no");
-      args.push("-o", "UserKnownHostsFile=/dev/null");
-    }
-
-    // Suppress SSH warnings (e.g., ControlMaster messages) that would pollute command output
-    // These go to stderr and get merged with stdout in bash tool results
-    // Use FATAL (not ERROR) because mux_client_request_session messages are at ERROR level
-    args.push("-o", "LogLevel=FATAL");
-
-    // Add ControlMaster options for connection multiplexing
-    // This ensures all SSH operations reuse the master connection
-    args.push("-o", "ControlMaster=auto");
-    args.push("-o", `ControlPath=${this.controlPath}`);
-    args.push("-o", "ControlPersist=60");
-
-    return args;
-  }
-
-  /**
-   * Execute a simple SSH command and return stdout
-   * @param command - The command to execute on the remote host
-   * @param timeoutMs - Timeout in milliseconds (required to prevent network hangs)
-   * @private
-   */
-  private async execSSHCommand(command: string, timeoutMs: number): Promise<string> {
-    // Ensure connection is healthy before executing
-    await sshConnectionPool.acquireConnection(this.config, timeoutMs);
-
-    const sshArgs = this.buildSSHArgs();
-    sshArgs.push(this.config.host, command);
-
-    return new Promise((resolve, reject) => {
-      const proc = spawn("ssh", sshArgs, {
-        // Prevent console window from appearing on Windows
-        windowsHide: true,
-      });
-      let stdout = "";
-      let stderr = "";
-      let timedOut = false;
-
-      // Set timeout to prevent hanging on network issues
-      const timer = setTimeout(() => {
-        timedOut = true;
-        proc.kill();
-        reject(
-          new RuntimeErrorClass(`SSH command timed out after ${timeoutMs}ms: ${command}`, "network")
-        );
-      }, timeoutMs);
-
-      proc.stdout?.on("data", (data: Buffer) => {
-        stdout += data.toString();
-      });
-
-      proc.stderr?.on("data", (data: Buffer) => {
-        stderr += data.toString();
-      });
-
-      proc.on("close", (code) => {
-        clearTimeout(timer);
-        if (timedOut) return; // Already rejected
-
-        if (code !== 0) {
-          // SSH exit code 255 indicates connection failure - report to pool for backoff
-          if (code === 255) {
-            sshConnectionPool.reportFailure(this.config, "SSH connection failed (exit code 255)");
-          }
-          reject(new RuntimeErrorClass(`SSH command failed: ${stderr.trim()}`, "network"));
-          return;
-        }
-
-        // Connection worked - mark healthy to clear any backoff state
-        sshConnectionPool.markHealthy(this.config);
-        const output = stdout.trim();
-        resolve(output);
-      });
-
-      proc.on("error", (err) => {
-        clearTimeout(timer);
-        if (timedOut) return; // Already rejected
-
-        // Spawn errors are connection-level failures
-        sshConnectionPool.reportFailure(this.config, `SSH spawn error: ${getErrorMessage(err)}`);
-        reject(
-          new RuntimeErrorClass(
-            `Cannot execute SSH command: ${getErrorMessage(err)}`,
-            "network",
-            err instanceof Error ? err : undefined
-          )
-        );
-      });
-    });
   }
 
   // ===== Runtime interface implementations =====
@@ -331,8 +266,26 @@ export class SSHRuntime extends RemoteRuntime {
 
     const command = `bash -lc ${shescape.quote(script)}`;
 
-    // Use 10 second timeout for path resolution to allow for slower SSH connections
-    return this.execSSHCommand(command, 10000);
+    const abortController = createAbortController(10_000);
+    try {
+      const result = await execBuffered(this, command, {
+        cwd: "/tmp",
+        abortSignal: abortController.signal,
+      });
+
+      if (abortController.didTimeout()) {
+        throw new Error(`SSH command timed out after 10000ms: ${command}`);
+      }
+
+      if (result.exitCode !== 0) {
+        const message = result.stderr || result.stdout || "Unknown error";
+        throw new Error(`Failed to resolve SSH path: ${message}`);
+      }
+
+      return result.stdout.trim();
+    } finally {
+      abortController.dispose();
+    }
   }
 
   getWorkspacePath(projectPath: string, workspaceName: string): string {
@@ -363,7 +316,6 @@ export class SSHRuntime extends RemoteRuntime {
     initLogger: InitLogger,
     abortSignal?: AbortSignal
   ): Promise<void> {
-    // Use timestamp-based bundle path to avoid conflicts (simpler than $$)
     const timestamp = Date.now();
     const remoteBundlePath = `~/.mux-bundle-${timestamp}.bundle`;
 
@@ -379,68 +331,72 @@ export class SSHRuntime extends RemoteRuntime {
       abortSignal,
       cloneStep: "Cloning repository on remote...",
       createRemoteBundle: async ({ remoteBundlePath, initLogger, abortSignal }) => {
-        // Ensure the SSH host is reachable before doing expensive local work.
-        await sshConnectionPool.acquireConnection(this.config, {
+        await this.transport.acquireConnection({
           abortSignal,
           onWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
         });
 
-        await new Promise<void>((resolve, reject) => {
-          if (abortSignal?.aborted) {
-            reject(new Error("Bundle creation aborted"));
-            return;
+        if (abortSignal?.aborted) {
+          throw new Error("Bundle creation aborted");
+        }
+
+        const gitProc = spawn("git", ["-C", projectPath, "bundle", "create", "-", "--all"], {
+          stdio: ["ignore", "pipe", "pipe"],
+          windowsHide: true,
+        });
+
+        // Handle stderr manually - do NOT use streamProcessToLogger here.
+        // It attaches a stdout listener that drains data before pipeReadableToWebWritable
+        // can consume it, corrupting the bundle.
+        let stderr = "";
+        gitProc.stderr?.on("data", (data: Buffer) => {
+          const chunk = data.toString();
+          stderr += chunk;
+          for (const line of chunk.split("\n").filter(Boolean)) {
+            initLogger.logStderr(line);
+          }
+        });
+
+        const remoteAbortController = createAbortController(300_000, abortSignal);
+        const remoteStream = await this.exec(`cat > ${this.quoteForRemote(remoteBundlePath)}`, {
+          cwd: "~",
+          abortSignal: remoteAbortController.signal,
+        });
+
+        try {
+          try {
+            await pipeReadableToWebWritable(gitProc.stdout, remoteStream.stdin, abortSignal);
+          } catch (error) {
+            gitProc.kill();
+            throw error;
           }
 
-          // Build SSH args with timeout options to detect connection failures quickly.
-          // Without these, SSH can hang indefinitely, causing git to receive SIGPIPE and report
-          // the cryptic "pack-objects died" error.
-          const sshArgs = [
-            "-T",
-            ...this.buildSSHArgs(),
-            "-o",
-            "ConnectTimeout=15",
-            "-o",
-            "ServerAliveInterval=5",
-            "-o",
-            "ServerAliveCountMax=2",
-            this.config.host,
-          ];
-          const command = `cd ${shescape.quote(projectPath)} && git bundle create - --all | ssh ${sshArgs.join(" ")} "cat > ${remoteBundlePath}"`;
+          const [gitExitCode, remoteExitCode] = await Promise.all([
+            waitForProcessExit(gitProc),
+            remoteStream.exitCode,
+          ]);
 
-          log.debug(`Creating bundle: ${command}`);
-          const bashPath = getBashPath();
-          const proc = spawn(bashPath, ["-c", command], {
-            // Prevent console window from appearing on Windows
-            windowsHide: true,
-          });
+          if (remoteAbortController.didTimeout()) {
+            throw new Error(
+              `SSH command timed out after 300000ms: cat > ${this.quoteForRemote(remoteBundlePath)}`
+            );
+          }
 
-          const cleanup = streamProcessToLogger(proc, initLogger, {
-            logStdout: false,
-            logStderr: true,
-            abortSignal,
-          });
+          if (abortSignal?.aborted) {
+            throw new Error("Bundle creation aborted");
+          }
 
-          let stderr = "";
-          proc.stderr.on("data", (data: Buffer) => {
-            stderr += data.toString();
-          });
+          if (gitExitCode !== 0) {
+            throw new Error(`Failed to create bundle: ${stderr}`);
+          }
 
-          proc.on("close", (code) => {
-            cleanup();
-            if (abortSignal?.aborted) {
-              reject(new Error("Bundle creation aborted"));
-            } else if (code === 0) {
-              resolve();
-            } else {
-              reject(new Error(`Failed to create bundle: ${stderr}`));
-            }
-          });
-
-          proc.on("error", (err) => {
-            cleanup();
-            reject(err);
-          });
-        });
+          if (remoteExitCode !== 0) {
+            const remoteStderr = await streamToString(remoteStream.stderr);
+            throw new Error(`Failed to upload bundle: ${remoteStderr}`);
+          }
+        } finally {
+          remoteAbortController.dispose();
+        }
       },
     });
   }

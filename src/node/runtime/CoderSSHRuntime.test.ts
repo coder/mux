@@ -9,6 +9,7 @@ import type { RuntimeStatusEvent } from "./Runtime";
 
 import { CoderSSHRuntime, type CoderSSHRuntimeConfig } from "./CoderSSHRuntime";
 import { SSHRuntime } from "./SSHRuntime";
+import { createSSHTransport } from "./transports";
 
 /**
  * Create a minimal mock CoderService for testing.
@@ -67,7 +68,8 @@ function createRuntime(
       template,
     },
   };
-  return new CoderSSHRuntime(config, coderService);
+  const transport = createSSHTransport(config, false);
+  return new CoderSSHRuntime(config, transport, coderService);
 }
 
 /**

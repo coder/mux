@@ -28,6 +28,7 @@ import { createTestRuntime, TestWorkspace, type RuntimeType } from "./test-fixtu
 import { execBuffered, readFileString, writeFileString } from "@/node/utils/runtime/helpers";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { RuntimeError } from "@/node/runtime/Runtime";
+import { createSSHTransport } from "@/node/runtime/transports";
 import { runFullInit } from "@/node/runtime/runtimeFactory";
 
 // Skip all tests if TEST_INTEGRATION is not set
@@ -1426,20 +1427,19 @@ describeIntegration("Runtime integration tests", () => {
           Promise.resolve({ kind: "running" as const, status: "running" as const }),
       } as unknown as InstanceType<typeof CoderService>;
 
-      return new CoderSSHRuntime(
-        {
-          host: `testuser@localhost`,
-          srcBaseDir,
-          identityFile: sshConfig!.privateKeyPath,
-          port: sshConfig!.port,
-          coder: {
-            workspaceName: "test-coder-ws",
-            template: "test-template",
-            existingWorkspace: false,
-          },
+      const config = {
+        host: "testuser@localhost",
+        srcBaseDir,
+        identityFile: sshConfig!.privateKeyPath,
+        port: sshConfig!.port,
+        coder: {
+          workspaceName: "test-coder-ws",
+          template: "test-template",
+          existingWorkspace: false,
         },
-        mockCoderService
-      );
+      };
+      const transport = createSSHTransport(config, true);
+      return new CoderSSHRuntime(config, transport, mockCoderService);
     };
 
     describe("forkWorkspace", () => {
@@ -1527,20 +1527,19 @@ describeIntegration("Runtime integration tests", () => {
             },
           } as unknown as InstanceType<typeof CoderService>;
 
-          const runtime = new CoderSSHRuntime(
-            {
-              host: `testuser@localhost`,
-              srcBaseDir,
-              identityFile: sshConfig!.privateKeyPath,
-              port: sshConfig!.port,
-              coder: {
-                workspaceName: "test-coder-ws",
-                template: "test-template",
-                existingWorkspace: false, // Source was mux-created
-              },
+          const config = {
+            host: "testuser@localhost",
+            srcBaseDir,
+            identityFile: sshConfig!.privateKeyPath,
+            port: sshConfig!.port,
+            coder: {
+              workspaceName: "test-coder-ws",
+              template: "test-template",
+              existingWorkspace: false, // Source was mux-created
             },
-            mockCoderService
-          );
+          };
+          const transport = createSSHTransport(config, true);
+          const runtime = new CoderSSHRuntime(config, transport, mockCoderService);
 
           const projectName = `coder-fork-postcreate-${Date.now()}-${Math.random().toString(36).substring(7)}`;
           const projectPath = `/some/path/${projectName}`;
