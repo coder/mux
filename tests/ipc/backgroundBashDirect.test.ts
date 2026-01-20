@@ -16,6 +16,7 @@
  */
 
 import * as fs from "fs/promises";
+import * as os from "os";
 import * as path from "path";
 import { createTestEnvironment, cleanupTestEnvironment, type TestEnvironment } from "./setup";
 import { createTempGitRepo, cleanupTempGitRepo, generateBranchName } from "./helpers";
@@ -87,7 +88,7 @@ describe("Background Bash Direct Integration", () => {
       runtime,
       secrets: {},
       muxEnv: {},
-      runtimeTempDir: "/tmp",
+      runtimeTempDir: os.tmpdir(),
       backgroundProcessManager: manager,
       workspaceId,
     };
@@ -402,7 +403,7 @@ describe("Foreground to Background Migration", () => {
       runtime,
       secrets: {},
       muxEnv: {},
-      runtimeTempDir: "/tmp",
+      runtimeTempDir: os.tmpdir(),
       backgroundProcessManager: manager,
       workspaceId,
     };
@@ -492,7 +493,7 @@ describe("Foreground to Background Migration", () => {
       runtime,
       secrets: {},
       muxEnv: {},
-      runtimeTempDir: "/tmp",
+      runtimeTempDir: os.tmpdir(),
       backgroundProcessManager: manager,
       workspaceId,
     };
@@ -554,7 +555,7 @@ describe("Foreground to Background Migration", () => {
       runtime,
       secrets: {},
       muxEnv: {},
-      runtimeTempDir: "/tmp",
+      runtimeTempDir: os.tmpdir(),
       backgroundProcessManager: manager,
       workspaceId,
     };
@@ -603,7 +604,7 @@ describe("Foreground to Background Migration", () => {
       runtime,
       secrets: {},
       muxEnv: {},
-      runtimeTempDir: "/tmp",
+      runtimeTempDir: os.tmpdir(),
       backgroundProcessManager: manager,
       workspaceId,
     };

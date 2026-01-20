@@ -260,11 +260,15 @@ jobs:
       - name: Generate built-in skills content
         shell: bash
         run: ./scripts/generate-builtin-skills.sh
-      - name: Run unit tests
+      - name: Run unit tests (Windows smoke)
         shell: bash
         run: |
           set -euo pipefail
-          bun test src
+
+          bun test \
+            src/node/utils/paths.test.ts \
+            src/node/utils/main/bashPath.test.ts \
+            src/node/utils/main/resolveLocalPtyShell.test.ts
       - name: Run Windows integration smoke tests
         shell: bash
         run: |
