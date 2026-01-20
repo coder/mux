@@ -376,34 +376,41 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
       errors: [],
     });
 
-    for (let i = 0; i < idsToRestore.length; i++) {
-      const id = idsToRestore[i];
-      const ws = workspaces.find((w) => w.id === id);
-      setBulkOperation((prev) => (prev ? { ...prev, current: ws?.title ?? ws?.name ?? id } : prev));
+    const queue = [...idsToRestore];
+    let completed = 0;
+    const errors: string[] = [];
 
-      try {
-        const result = await unarchiveWorkspace(id);
-        if (!result.success) {
-          setBulkOperation((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  errors: [
-                    ...prev.errors,
-                    `Failed to restore ${ws?.name ?? id}${result.error ? `: ${result.error}` : ""}`,
-                  ],
-                }
-              : prev
-          );
+    const worker = async () => {
+      while (queue.length) {
+        const id = queue.shift();
+        if (!id) {
+          return;
         }
-      } catch {
+
+        const ws = workspaces.find((w) => w.id === id);
         setBulkOperation((prev) =>
-          prev ? { ...prev, errors: [...prev.errors, `Failed to restore ${ws?.name ?? id}`] } : prev
+          prev ? { ...prev, current: ws?.title ?? ws?.name ?? id } : prev
+        );
+
+        try {
+          const result = await unarchiveWorkspace(id);
+          if (!result.success) {
+            errors.push(
+              `Failed to restore ${ws?.name ?? id}${result.error ? `: ${result.error}` : ""}`
+            );
+          }
+        } catch {
+          errors.push(`Failed to restore ${ws?.name ?? id}`);
+        }
+
+        completed++;
+        setBulkOperation((prev) =>
+          prev ? { ...prev, completed, current: null, errors: [...errors] } : prev
         );
       }
+    };
 
-      setBulkOperation((prev) => (prev ? { ...prev, completed: i + 1 } : prev));
-    }
+    await Promise.all(Array.from({ length: Math.min(3, idsToRestore.length) }, () => worker()));
 
     setSelectedIds(new Set());
     onWorkspacesChanged?.();
@@ -421,34 +428,41 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
       errors: [],
     });
 
-    for (let i = 0; i < idsToDelete.length; i++) {
-      const id = idsToDelete[i];
-      const ws = workspaces.find((w) => w.id === id);
-      setBulkOperation((prev) => (prev ? { ...prev, current: ws?.title ?? ws?.name ?? id } : prev));
+    const queue = [...idsToDelete];
+    let completed = 0;
+    const errors: string[] = [];
 
-      try {
-        const result = await removeWorkspace(id, { force: true });
-        if (!result.success) {
-          setBulkOperation((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  errors: [
-                    ...prev.errors,
-                    `Failed to delete ${ws?.name ?? id}${result.error ? `: ${result.error}` : ""}`,
-                  ],
-                }
-              : prev
-          );
+    const worker = async () => {
+      while (queue.length) {
+        const id = queue.shift();
+        if (!id) {
+          return;
         }
-      } catch {
+
+        const ws = workspaces.find((w) => w.id === id);
         setBulkOperation((prev) =>
-          prev ? { ...prev, errors: [...prev.errors, `Failed to delete ${ws?.name ?? id}`] } : prev
+          prev ? { ...prev, current: ws?.title ?? ws?.name ?? id } : prev
+        );
+
+        try {
+          const result = await removeWorkspace(id, { force: true });
+          if (!result.success) {
+            errors.push(
+              `Failed to delete ${ws?.name ?? id}${result.error ? `: ${result.error}` : ""}`
+            );
+          }
+        } catch {
+          errors.push(`Failed to delete ${ws?.name ?? id}`);
+        }
+
+        completed++;
+        setBulkOperation((prev) =>
+          prev ? { ...prev, completed, current: null, errors: [...errors] } : prev
         );
       }
+    };
 
-      setBulkOperation((prev) => (prev ? { ...prev, completed: i + 1 } : prev));
-    }
+    await Promise.all(Array.from({ length: Math.min(3, idsToDelete.length) }, () => worker()));
 
     setSelectedIds(new Set());
     onWorkspacesChanged?.();

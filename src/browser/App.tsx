@@ -1,12 +1,10 @@
 import { Menu } from "lucide-react";
-import { useEffect, useCallback, useRef } from "react";
+import React, { useCallback, useEffect, useRef } from "react";
 import "./styles/globals.css";
 import { useWorkspaceContext, toWorkspaceSelection } from "./contexts/WorkspaceContext";
 import { useProjectContext } from "./contexts/ProjectContext";
 import type { WorkspaceSelection } from "./components/ProjectSidebar";
 import { LeftSidebar } from "./components/LeftSidebar";
-import { ProjectCreateModal } from "./components/ProjectCreateModal";
-import { AIView } from "./components/AIView";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import {
   usePersistedState,
@@ -30,7 +28,6 @@ import { CommandRegistryProvider, useCommandRegistry } from "./contexts/CommandR
 import { useOpenTerminal } from "./hooks/useOpenTerminal";
 import type { CommandAction } from "./contexts/CommandRegistryContext";
 import { useTheme, type ThemeMode } from "./contexts/ThemeContext";
-import { CommandPalette } from "./components/CommandPalette";
 import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sources";
 
 import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
@@ -54,10 +51,8 @@ import { useStartWorkspaceCreation, getFirstProjectPath } from "./hooks/useStart
 import { useAPI } from "@/browser/contexts/API";
 import { AuthTokenModal } from "@/browser/components/AuthTokenModal";
 import { Button } from "./components/ui/button";
-import { ProjectPage } from "@/browser/components/ProjectPage";
 
 import { SettingsProvider, useSettings } from "./contexts/SettingsContext";
-import { SettingsModal } from "./components/Settings/SettingsModal";
 import { SplashScreenProvider } from "./components/splashScreens/SplashScreenProvider";
 import { TutorialProvider } from "./contexts/TutorialContext";
 import { TooltipProvider } from "./components/ui/tooltip";
@@ -68,6 +63,26 @@ import { ExperimentsProvider } from "./contexts/ExperimentsContext";
 import { getWorkspaceSidebarKey } from "./utils/workspace";
 import { WindowsToolchainBanner } from "./components/WindowsToolchainBanner";
 import { RosettaBanner } from "./components/RosettaBanner";
+
+// Large, rarely-used screens/modals are lazily loaded to keep the initial renderer
+// bundle small. These chunks are only requested when the UI is actually opened.
+const AIView = React.lazy(() => import("./components/AIView").then((m) => ({ default: m.AIView })));
+
+const ProjectPage = React.lazy(() =>
+  import("./components/ProjectPage").then((m) => ({ default: m.ProjectPage }))
+);
+
+const CommandPalette = React.lazy(() =>
+  import("./components/CommandPalette").then((m) => ({ default: m.CommandPalette }))
+);
+
+const ProjectCreateModal = React.lazy(() =>
+  import("./components/ProjectCreateModal").then((m) => ({ default: m.ProjectCreateModal }))
+);
+
+const SettingsModal = React.lazy(() =>
+  import("./components/Settings/SettingsModal").then((m) => ({ default: m.SettingsModal }))
+);
 
 function AppInner() {
   // Get workspace state from context
@@ -763,18 +778,20 @@ function AppInner() {
                   <ErrorBoundary
                     workspaceInfo={`${selectedWorkspace.projectName}/${workspaceName}`}
                   >
-                    <AIView
-                      workspaceId={selectedWorkspace.workspaceId}
-                      projectPath={selectedWorkspace.projectPath}
-                      projectName={selectedWorkspace.projectName}
-                      leftSidebarCollapsed={sidebarCollapsed}
-                      onToggleLeftSidebarCollapsed={handleToggleSidebar}
-                      workspaceName={workspaceName}
-                      namedWorkspacePath={workspacePath}
-                      runtimeConfig={currentMetadata.runtimeConfig}
-                      incompatibleRuntime={currentMetadata.incompatibleRuntime}
-                      status={currentMetadata.status}
-                    />
+                    <React.Suspense fallback={null}>
+                      <AIView
+                        workspaceId={selectedWorkspace.workspaceId}
+                        projectPath={selectedWorkspace.projectPath}
+                        projectName={selectedWorkspace.projectName}
+                        leftSidebarCollapsed={sidebarCollapsed}
+                        onToggleLeftSidebarCollapsed={handleToggleSidebar}
+                        workspaceName={workspaceName}
+                        namedWorkspacePath={workspacePath}
+                        runtimeConfig={currentMetadata.runtimeConfig}
+                        incompatibleRuntime={currentMetadata.incompatibleRuntime}
+                        status={currentMetadata.status}
+                      />
+                    </React.Suspense>
                   </ErrorBoundary>
                 );
               })()
@@ -784,44 +801,46 @@ function AppInner() {
                 const projectName =
                   projectPath.split("/").pop() ?? projectPath.split("\\").pop() ?? "Project";
                 return (
-                  <ProjectPage
-                    projectPath={projectPath}
-                    projectName={projectName}
-                    leftSidebarCollapsed={sidebarCollapsed}
-                    onToggleLeftSidebarCollapsed={handleToggleSidebar}
-                    pendingSectionId={pendingNewWorkspaceSectionId}
-                    onProviderConfig={handleProviderConfig}
-                    onWorkspaceCreated={(metadata) => {
-                      // IMPORTANT: Add workspace to store FIRST (synchronous) to ensure
-                      // the store knows about it before React processes the state updates.
-                      // This prevents race conditions where the UI tries to access the
-                      // workspace before the store has created its aggregator.
-                      workspaceStore.addWorkspace(metadata);
+                  <React.Suspense fallback={null}>
+                    <ProjectPage
+                      projectPath={projectPath}
+                      projectName={projectName}
+                      leftSidebarCollapsed={sidebarCollapsed}
+                      onToggleLeftSidebarCollapsed={handleToggleSidebar}
+                      pendingSectionId={pendingNewWorkspaceSectionId}
+                      onProviderConfig={handleProviderConfig}
+                      onWorkspaceCreated={(metadata) => {
+                        // IMPORTANT: Add workspace to store FIRST (synchronous) to ensure
+                        // the store knows about it before React processes the state updates.
+                        // This prevents race conditions where the UI tries to access the
+                        // workspace before the store has created its aggregator.
+                        workspaceStore.addWorkspace(metadata);
 
-                      // Add to workspace metadata map (triggers React state update)
-                      setWorkspaceMetadata((prev) => new Map(prev).set(metadata.id, metadata));
+                        // Add to workspace metadata map (triggers React state update)
+                        setWorkspaceMetadata((prev) => new Map(prev).set(metadata.id, metadata));
 
-                      // Only switch to new workspace if user hasn't selected another one
-                      // during the creation process (selectedWorkspace was null when creation started)
-                      setSelectedWorkspace((current) => {
-                        if (current !== null) {
-                          // User has already selected another workspace - don't override
-                          return current;
-                        }
-                        return toWorkspaceSelection(metadata);
-                      });
+                        // Only switch to new workspace if user hasn't selected another one
+                        // during the creation process (selectedWorkspace was null when creation started)
+                        setSelectedWorkspace((current) => {
+                          if (current !== null) {
+                            // User has already selected another workspace - don't override
+                            return current;
+                          }
+                          return toWorkspaceSelection(metadata);
+                        });
 
-                      // Track telemetry
-                      telemetry.workspaceCreated(
-                        metadata.id,
-                        getRuntimeTypeForTelemetry(metadata.runtimeConfig)
-                      );
+                        // Track telemetry
+                        telemetry.workspaceCreated(
+                          metadata.id,
+                          getRuntimeTypeForTelemetry(metadata.runtimeConfig)
+                        );
 
-                      // Note: No need to call clearPendingWorkspaceCreation() here.
-                      // Navigating to the workspace URL automatically clears the pending
-                      // state since pendingNewWorkspaceProject is derived from the URL.
-                    }}
-                  />
+                        // Note: No need to call clearPendingWorkspaceCreation() here.
+                        // Navigating to the workspace URL automatically clears the pending
+                        // state since pendingNewWorkspaceProject is derived from the URL.
+                      }}
+                    />
+                  </React.Suspense>
                 );
               })()
             ) : (
@@ -856,22 +875,34 @@ function AppInner() {
             )}
           </div>
         </div>
-        <CommandPalette
-          getSlashContext={() => ({
-            providerNames: [],
-            workspaceId: selectedWorkspace?.workspaceId,
-          })}
-        />
-        <ProjectCreateModal
-          isOpen={isProjectCreateModalOpen}
-          onClose={closeProjectCreateModal}
-          onSuccess={(normalizedPath, projectConfig) => {
-            addProject(normalizedPath, projectConfig);
-            updatePersistedState(getAgentsInitNudgeKey(normalizedPath), true);
-            beginWorkspaceCreation(normalizedPath);
-          }}
-        />
-        <SettingsModal />
+        {isCommandPaletteOpen && (
+          <React.Suspense fallback={null}>
+            <CommandPalette
+              getSlashContext={() => ({
+                providerNames: [],
+                workspaceId: selectedWorkspace?.workspaceId,
+              })}
+            />
+          </React.Suspense>
+        )}
+        {isProjectCreateModalOpen && (
+          <React.Suspense fallback={null}>
+            <ProjectCreateModal
+              isOpen={isProjectCreateModalOpen}
+              onClose={closeProjectCreateModal}
+              onSuccess={(normalizedPath, projectConfig) => {
+                addProject(normalizedPath, projectConfig);
+                updatePersistedState(getAgentsInitNudgeKey(normalizedPath), true);
+                beginWorkspaceCreation(normalizedPath);
+              }}
+            />
+          </React.Suspense>
+        )}
+        {isSettingsOpen && (
+          <React.Suspense fallback={null}>
+            <SettingsModal />
+          </React.Suspense>
+        )}
       </div>
     </>
   );

@@ -2,28 +2,27 @@ import React, { useMemo } from "react";
 import { Streamdown } from "streamdown";
 import type { Pluggable } from "unified";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import { harden } from "rehype-harden";
+import "katex/dist/katex.min.css";
 import { normalizeMarkdown } from "./MarkdownStyles";
 import { markdownComponents } from "./MarkdownComponents";
 
-interface MarkdownCoreProps {
+interface MarkdownCoreMathProps {
   content: string;
   children?: React.ReactNode; // For cursor or other additions
-  /**
-   * Enable incomplete markdown parsing for streaming content.
-   * When true, the remend library will attempt to "repair" unclosed markdown
-   * syntax (e.g., adding closing ** for bold). This is useful during streaming
-   * but can cause bugs with content like $__variable (adds trailing __).
-   * Default: false for completed content, true during streaming.
-   */
   parseIncompleteMarkdown?: boolean;
 }
 
 // Plugin arrays are defined at module scope to maintain stable references.
 // Streamdown treats new array references as changes requiring full re-parse.
-const REMARK_PLUGINS_BASE: Pluggable[] = [[remarkGfm, {}]];
+const REMARK_PLUGINS: Pluggable[] = [
+  [remarkGfm, {}],
+  [remarkMath, { singleDollarTextMath: false }],
+];
 
 // Schema for rehype-sanitize that allows safe HTML elements.
 // Extends the default schema to support KaTeX math and collapsible sections.
@@ -71,7 +70,7 @@ const sanitizeSchema = {
   },
 };
 
-const REHYPE_PLUGINS_BASE: Pluggable[] = [
+const REHYPE_PLUGINS: Pluggable[] = [
   rehypeRaw, // Parse HTML elements first
   [rehypeSanitize, sanitizeSchema], // Sanitize HTML to prevent XSS (strips dangerous elements/attributes)
   [
@@ -88,34 +87,19 @@ const REHYPE_PLUGINS_BASE: Pluggable[] = [
       allowDataImages: true,
     },
   ],
+  [rehypeKatex, { errorColor: "var(--color-muted-foreground)" }], // Render math
 ];
 
-const LazyMarkdownCoreMath = React.lazy(() =>
-  import("./MarkdownCoreMath").then((m) => ({ default: m.MarkdownCoreMath }))
-);
-
-function hasMathSyntax(content: string): boolean {
-  // Prefer low-false-positive matches (single-$ math is disabled in remark-math config).
-  return /\$\$|\\\(|\\\[|\\begin\{/.test(content);
-}
-
-/**
- * Core markdown rendering component that handles all markdown processing.
- * This is the single source of truth for markdown configuration.
- *
- * Memoized to prevent expensive re-parsing when content hasn't changed.
- */
-export const MarkdownCore = React.memo<MarkdownCoreProps>(
+export const MarkdownCoreMath = React.memo<MarkdownCoreMathProps>(
   ({ content, children, parseIncompleteMarkdown = false }) => {
     const normalizedContent = useMemo(() => normalizeMarkdown(content), [content]);
-    const shouldRenderMath = useMemo(() => hasMathSyntax(content), [content]);
 
-    const base = (
+    return (
       <>
         <Streamdown
           components={markdownComponents}
-          remarkPlugins={REMARK_PLUGINS_BASE}
-          rehypePlugins={REHYPE_PLUGINS_BASE}
+          remarkPlugins={REMARK_PLUGINS}
+          rehypePlugins={REHYPE_PLUGINS}
           parseIncompleteMarkdown={parseIncompleteMarkdown}
           // Use "static" mode for completed content to bypass useTransition() deferral.
           // After ORPC migration, async event boundaries let React deprioritize transitions indefinitely.
@@ -128,19 +112,7 @@ export const MarkdownCore = React.memo<MarkdownCoreProps>(
         {children}
       </>
     );
-
-    if (!shouldRenderMath) {
-      return base;
-    }
-
-    return (
-      <React.Suspense fallback={base}>
-        <LazyMarkdownCoreMath content={content} parseIncompleteMarkdown={parseIncompleteMarkdown}>
-          {children}
-        </LazyMarkdownCoreMath>
-      </React.Suspense>
-    );
   }
 );
 
-MarkdownCore.displayName = "MarkdownCore";
+MarkdownCoreMath.displayName = "MarkdownCoreMath";

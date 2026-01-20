@@ -1,5 +1,4 @@
-import { useState, useEffect } from "react";
-import App from "../App";
+import React, { useEffect, useState } from "react";
 import { AuthTokenModal } from "./AuthTokenModal";
 import { ThemeProvider } from "../contexts/ThemeContext";
 import { LoadingScreen } from "./LoadingScreen";
@@ -13,6 +12,8 @@ import { WorkspaceProvider, useWorkspaceContext } from "../contexts/WorkspaceCon
 import { RouterProvider } from "../contexts/RouterContext";
 import { TelemetryEnabledProvider } from "../contexts/TelemetryEnabledContext";
 import { TerminalRouterProvider } from "../terminal/TerminalRouterContext";
+
+const App = React.lazy(() => import("../App"));
 
 interface AppLoaderProps {
   /** Optional pre-created ORPC api?. If provided, skips internal connection setup. */
@@ -110,7 +111,9 @@ function AppLoaderInner() {
   return (
     <TelemetryEnabledProvider>
       <TerminalRouterProvider>
-        <App />
+        <React.Suspense fallback={<LoadingScreen />}>
+          <App />
+        </React.Suspense>
       </TerminalRouterProvider>
     </TelemetryEnabledProvider>
   );

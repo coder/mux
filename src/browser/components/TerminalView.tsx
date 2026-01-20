@@ -1,8 +1,35 @@
 import { useRef, useEffect, useState, useCallback } from "react";
-import { init, Terminal, FitAddon } from "ghostty-web";
+import type {
+  FitAddon as FitAddonInstance,
+  ITerminalOptions,
+  Terminal as TerminalInstance,
+} from "ghostty-web";
 import { useAPI } from "@/browser/contexts/API";
 import { useTerminalRouter } from "@/browser/terminal/TerminalRouterContext";
 import { TERMINAL_CONTAINER_ATTR } from "@/browser/utils/ui/keybinds";
+
+interface GhosttyWebModule {
+  init: () => Promise<void>;
+  Terminal: new (options?: ITerminalOptions) => TerminalInstance;
+  FitAddon: new () => FitAddonInstance;
+}
+
+let ghosttyWebPromise: Promise<GhosttyWebModule> | null = null;
+
+async function getGhosttyWeb(): Promise<GhosttyWebModule> {
+  ghosttyWebPromise ??= import("ghostty-web").then((m) => ({
+    init: m.init,
+    Terminal: m.Terminal,
+    FitAddon: m.FitAddon,
+  }));
+
+  // TS doesn't narrow after `??=`, so keep an explicit guard.
+  if (ghosttyWebPromise === null) {
+    throw new Error("Failed to load ghostty-web");
+  }
+
+  return ghosttyWebPromise;
+}
 
 interface TerminalViewProps {
   workspaceId: string;
@@ -39,9 +66,9 @@ export function TerminalView({
   autoFocus = true,
 }: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const termRef = useRef<Terminal | null>(null);
+  const termRef = useRef<TerminalInstance | null>(null);
   const autoFocusRef = useRef(autoFocus);
-  const fitAddonRef = useRef<FitAddon | null>(null);
+  const fitAddonRef = useRef<FitAddonInstance | null>(null);
   const [terminalError, setTerminalError] = useState<string | null>(null);
   const [terminalReady, setTerminalReady] = useState(false);
   // Track whether we've received the initial screen state from backend
@@ -245,7 +272,7 @@ export function TerminalView({
     let cancelled = false;
     initInProgressRef.current = true;
 
-    let terminal: Terminal | null = null;
+    let terminal: TerminalInstance | null = null;
     let disposeOnData: { dispose: () => void } | null = null;
     let disposeOnTitleChange: { dispose: () => void } | null = null;
 
@@ -253,6 +280,11 @@ export function TerminalView({
 
     const initTerminal = async () => {
       try {
+        const { init, Terminal, FitAddon } = await getGhosttyWeb();
+        if (cancelled) {
+          return;
+        }
+
         // Initialize ghostty-web WASM module (idempotent, safe to call multiple times)
         await init();
 

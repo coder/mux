@@ -1,14 +1,10 @@
 import type { CSSProperties, ReactNode } from "react";
 import React, { useContext, useEffect, useId, useRef, useState } from "react";
-import mermaid from "mermaid";
 import { StreamingContext } from "./StreamingContext";
+import type { Mermaid as MermaidApi, MermaidConfig } from "mermaid";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 
-const MIN_HEIGHT = 300;
-const MAX_HEIGHT = 1200;
-
-// Initialize mermaid
-mermaid.initialize({
+const MERMAID_CONFIG: MermaidConfig = {
   startOnLoad: false,
   theme: "dark",
   layout: "elk",
@@ -26,7 +22,26 @@ mermaid.initialize({
     curve: "linear",
     defaultRenderer: "elk",
   },
-});
+};
+
+let mermaidPromise: Promise<MermaidApi> | null = null;
+let mermaidInitialized = false;
+
+async function getMermaid(): Promise<MermaidApi> {
+  // Mermaid is heavy; load it only when a diagram actually needs rendering.
+  mermaidPromise ??= import("mermaid").then((m) => m.default);
+
+  const mermaid = await mermaidPromise;
+  if (!mermaidInitialized) {
+    mermaid.initialize(MERMAID_CONFIG);
+    mermaidInitialized = true;
+  }
+
+  return mermaid;
+}
+
+const MIN_HEIGHT = 300;
+const MAX_HEIGHT = 1200;
 
 // Common button styles
 const getButtonStyle = (disabled = false): CSSProperties => ({
@@ -152,10 +167,7 @@ export const Mermaid: React.FC<{ chart: string }> = ({ chart }) => {
 
     const renderDiagram = async () => {
       try {
-        // Parse first to validate syntax without rendering
-        await mermaid.parse(debouncedChart);
-
-        // If parse succeeds, render the diagram
+        const mermaid = await getMermaid();
         const { svg: renderedSvg } = await mermaid.render(id, debouncedChart);
         if (cancelled) return;
 

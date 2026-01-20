@@ -85,11 +85,7 @@ export async function forkWorkspace(options: ForkOptions): Promise<ForkResult> {
   // Copy UI state to the new workspace
   copyWorkspaceStorage(options.sourceWorkspaceId, result.metadata.id);
 
-  // Get workspace info for switching
-  const workspaceInfo = await client.workspace.getInfo({ workspaceId: result.metadata.id });
-  if (!workspaceInfo) {
-    return { success: false, error: "Failed to get workspace info after fork" };
-  }
+  const workspaceInfo = result.metadata;
 
   // Dispatch event to switch workspace
   dispatchWorkspaceSwitch(workspaceInfo);
@@ -553,11 +549,7 @@ export async function createNewWorkspace(
     return { success: false, error: result.error ?? "Failed to create workspace" };
   }
 
-  // Get workspace info for switching
-  const workspaceInfo = await options.client.workspace.getInfo({ workspaceId: result.metadata.id });
-  if (!workspaceInfo) {
-    return { success: false, error: "Failed to get workspace info after creation" };
-  }
+  const workspaceInfo = result.metadata;
 
   // Dispatch event to switch workspace
   dispatchWorkspaceSwitch(workspaceInfo);
@@ -968,8 +960,10 @@ export async function handlePlanOpenCommand(
 
   setInput("");
 
-  // First get the plan path
-  const planResult = await api.workspace.getPlanContent({ workspaceId });
+  const planPromise = api.workspace.getPlanContent({ workspaceId });
+  const workspaceInfoPromise = api.workspace.getInfo({ workspaceId });
+
+  const [planResult, workspaceInfo] = await Promise.all([planPromise, workspaceInfoPromise]);
   if (!planResult.success) {
     setToast({
       id: Date.now().toString(),
@@ -979,7 +973,6 @@ export async function handlePlanOpenCommand(
     return { clearInput: true, toastShown: true };
   }
 
-  const workspaceInfo = await api.workspace.getInfo({ workspaceId });
   const openResult = await openInEditor({
     api,
     workspaceId,

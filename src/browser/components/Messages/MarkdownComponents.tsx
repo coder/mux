@@ -3,10 +3,26 @@ import React, { useState, useEffect } from "react";
 import { Play } from "lucide-react";
 import { Mermaid } from "./Mermaid";
 import { useOptionalMessageListContext } from "./MessageListContext";
-import { highlightCode } from "@/browser/utils/highlighting/highlightWorkerClient";
 import { extractShikiLines } from "@/browser/utils/highlighting/shiki-shared";
 import { useTheme } from "@/browser/contexts/ThemeContext";
 import { CopyButton } from "@/browser/components/ui/CopyButton";
+
+interface HighlightWorkerClientModule {
+  highlightCode: (code: string, language: string, theme: "dark" | "light") => Promise<string>;
+}
+
+let highlightWorkerClientPromise: Promise<HighlightWorkerClientModule> | null = null;
+
+function getHighlightWorkerClient(): Promise<HighlightWorkerClientModule> {
+  if (!highlightWorkerClientPromise) {
+    highlightWorkerClientPromise =
+      import("@/browser/utils/highlighting/highlightWorkerClient").then((m) => ({
+        highlightCode: m.highlightCode,
+      }));
+  }
+
+  return highlightWorkerClientPromise;
+}
 
 interface CodeProps {
   node?: unknown;
@@ -150,6 +166,9 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ code, language, highlightLanguage
 
     async function highlight() {
       try {
+        const { highlightCode } = await getHighlightWorkerClient();
+        if (cancelled) return;
+
         const html = await highlightCode(code, shikiLanguage, theme);
 
         if (!cancelled) {

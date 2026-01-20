@@ -134,6 +134,24 @@ export default defineConfig(({ mode }) => {
           sourcemapExcludeSources: false,
           manualChunks(id) {
             const normalizedId = id.split(path.sep).join("/");
+
+            // Keep known heavy optional deps in stable, isolated chunks so they don't
+            // accidentally co-locate in the main bundle.
+            if (normalizedId.includes("node_modules/ghostty-web/")) {
+              return "vendor-ghostty";
+            }
+            if (normalizedId.includes("node_modules/mermaid/")) {
+              return "vendor-mermaid";
+            }
+            if (
+              normalizedId.includes("node_modules/katex/") ||
+              normalizedId.includes("node_modules/rehype-katex/")
+            ) {
+              return "vendor-katex";
+            }
+            if (normalizedId.includes("node_modules/@dnd-kit/")) {
+              return "vendor-dnd-kit";
+            }
             if (normalizedId.includes("node_modules/ai-tokenizer/encoding/")) {
               const chunkName = path.basename(id, path.extname(id));
               return `tokenizer-encoding-${chunkName}`;

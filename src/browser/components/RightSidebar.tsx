@@ -16,16 +16,13 @@ import { useFeatureFlags } from "@/browser/contexts/FeatureFlagsContext";
 import { useAPI } from "@/browser/contexts/API";
 import { CostsTab } from "./RightSidebar/CostsTab";
 
-import { ReviewPanel } from "./RightSidebar/CodeReview/ReviewPanel";
 import { ErrorBoundary } from "./ErrorBoundary";
-import { StatsTab } from "./RightSidebar/StatsTab";
 
 import { sumUsageHistory, type ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import { matchesKeybind, KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 import { SidebarCollapseButton } from "./ui/SidebarCollapseButton";
 import { cn } from "@/common/lib/utils";
 import type { ReviewNoteData } from "@/common/types/review";
-import { TerminalTab } from "./RightSidebar/TerminalTab";
 import {
   RIGHT_SIDEBAR_TABS,
   isTabType,
@@ -78,8 +75,6 @@ import {
   getTabContentClassName,
   type ReviewStats,
 } from "./RightSidebar/tabs";
-import { FileViewerTab } from "./RightSidebar/FileViewer";
-import { ExplorerTab } from "./RightSidebar/ExplorerTab";
 import {
   DndContext,
   DragOverlay,
@@ -91,6 +86,28 @@ import {
   type DragEndEvent,
 } from "@dnd-kit/core";
 import { SortableContext, rectSortingStrategy } from "@dnd-kit/sortable";
+
+// Tab panels are lazily loaded so the default bundle doesn't include optional UIs
+// like Code Review, Stats, Terminal, File Viewer, and Explorer.
+const ReviewPanel = React.lazy(() =>
+  import("./RightSidebar/CodeReview/ReviewPanel").then((m) => ({ default: m.ReviewPanel }))
+);
+
+const StatsTab = React.lazy(() =>
+  import("./RightSidebar/StatsTab").then((m) => ({ default: m.StatsTab }))
+);
+
+const TerminalTab = React.lazy(() =>
+  import("./RightSidebar/TerminalTab").then((m) => ({ default: m.TerminalTab }))
+);
+
+const ExplorerTab = React.lazy(() =>
+  import("./RightSidebar/ExplorerTab").then((m) => ({ default: m.ExplorerTab }))
+);
+
+const FileViewerTab = React.lazy(() =>
+  import("./RightSidebar/FileViewer/FileViewerTab").then((m) => ({ default: m.FileViewerTab }))
+);
 
 // Re-export for consumers
 export type { ReviewStats };
@@ -488,27 +505,26 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
               className="h-full"
               hidden={!isActive}
             >
-              <TerminalTab
-                workspaceId={props.workspaceId}
-                tabType={terminalTab}
-                visible={isActive}
-                onTitleChange={(title) => props.onTerminalTitleChange(terminalTab, title)}
-                autoFocus={shouldAutoFocus}
-                onAutoFocusConsumed={shouldAutoFocus ? props.onAutoFocusConsumed : undefined}
-              />
+              <React.Suspense fallback={null}>
+                <TerminalTab
+                  workspaceId={props.workspaceId}
+                  tabType={terminalTab}
+                  visible={isActive}
+                  onTitleChange={(title) => props.onTerminalTitleChange(terminalTab, title)}
+                  autoFocus={shouldAutoFocus}
+                  onAutoFocusConsumed={shouldAutoFocus ? props.onAutoFocusConsumed : undefined}
+                />
+              </React.Suspense>
             </div>
           );
         })}
 
-        {props.node.tabs.includes("stats") && props.statsTabEnabled && (
-          <div
-            role="tabpanel"
-            id={statsPanelId}
-            aria-labelledby={statsTabId}
-            hidden={props.node.activeTab !== "stats"}
-          >
+        {props.node.activeTab === "stats" && props.statsTabEnabled && (
+          <div role="tabpanel" id={statsPanelId} aria-labelledby={statsTabId}>
             <ErrorBoundary workspaceInfo="Stats tab">
-              <StatsTab workspaceId={props.workspaceId} />
+              <React.Suspense fallback={null}>
+                <StatsTab workspaceId={props.workspaceId} />
+              </React.Suspense>
             </ErrorBoundary>
           </div>
         )}
@@ -520,11 +536,13 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
             aria-labelledby={explorerTabId}
             className="h-full"
           >
-            <ExplorerTab
-              workspaceId={props.workspaceId}
-              workspacePath={props.workspacePath}
-              onOpenFile={props.onOpenFile}
-            />
+            <React.Suspense fallback={null}>
+              <ExplorerTab
+                workspaceId={props.workspaceId}
+                workspacePath={props.workspacePath}
+                onOpenFile={props.onOpenFile}
+              />
+            </React.Suspense>
           </div>
         )}
 
@@ -545,7 +563,9 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
               hidden={!isActive}
             >
               {isActive && filePath && (
-                <FileViewerTab workspaceId={props.workspaceId} relativePath={filePath} />
+                <React.Suspense fallback={null}>
+                  <FileViewerTab workspaceId={props.workspaceId} relativePath={filePath} />
+                </React.Suspense>
               )}
             </div>
           );
@@ -553,16 +573,18 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
 
         {props.node.activeTab === "review" && (
           <div role="tabpanel" id={reviewPanelId} aria-labelledby={reviewTabId} className="h-full">
-            <ReviewPanel
-              key={`${props.workspaceId}:${props.node.id}`}
-              workspaceId={props.workspaceId}
-              workspacePath={props.workspacePath}
-              projectPath={props.projectPath}
-              onReviewNote={props.onReviewNote}
-              focusTrigger={props.focusTrigger}
-              isCreating={props.isCreating}
-              onStatsChange={props.onReviewStatsChange}
-            />
+            <React.Suspense fallback={null}>
+              <ReviewPanel
+                key={`${props.workspaceId}:${props.node.id}`}
+                workspaceId={props.workspaceId}
+                workspacePath={props.workspacePath}
+                projectPath={props.projectPath}
+                onReviewNote={props.onReviewNote}
+                focusTrigger={props.focusTrigger}
+                isCreating={props.isCreating}
+                onStatsChange={props.onReviewStatsChange}
+              />
+            </React.Suspense>
           </div>
         )}
       </div>

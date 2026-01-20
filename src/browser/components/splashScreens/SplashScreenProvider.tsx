@@ -73,7 +73,11 @@ export function SplashScreenProvider({ children }: { children: ReactNode }) {
   return (
     <SplashScreenActiveContext.Provider value={isSplashScreenActive}>
       {children}
-      {loaded && currentSplash && <currentSplash.component onDismiss={() => void dismiss()} />}
+      {loaded && currentSplash && (
+        <React.Suspense fallback={null}>
+          <currentSplash.component onDismiss={() => void dismiss()} />
+        </React.Suspense>
+      )}
     </SplashScreenActiveContext.Provider>
   );
 }

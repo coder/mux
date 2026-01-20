@@ -4,7 +4,10 @@ import { ChevronRight, Pencil, Trash2, Palette } from "lucide-react";
 import type { SectionConfig } from "@/common/types/project";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { resolveSectionColor, SECTION_COLOR_PALETTE } from "@/common/constants/ui";
-import { HexColorPicker } from "react-colorful";
+
+const LazyHexColorPicker = React.lazy(() =>
+  import("react-colorful").then((m) => ({ default: m.HexColorPicker }))
+);
 
 interface SectionHeaderProps {
   section: SectionConfig;
@@ -163,10 +166,12 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
               </div>
               {/* Full color picker */}
               <div className="section-color-picker">
-                <HexColorPicker
-                  color={sectionColor}
-                  onChange={(newColor) => onChangeColor(newColor)}
-                />
+                <React.Suspense fallback={<div style={{ width: 200, height: 150 }} />}>
+                  <LazyHexColorPicker
+                    color={sectionColor}
+                    onChange={(newColor) => onChangeColor(newColor)}
+                  />
+                </React.Suspense>
               </div>
               {/* Hex input */}
               <div className="mt-2 flex items-center gap-1.5">

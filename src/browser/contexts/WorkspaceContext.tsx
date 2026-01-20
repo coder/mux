@@ -350,8 +350,8 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       }
       // After loading metadata (which may trigger migration), reload projects
       // to ensure frontend has the updated config with workspace IDs
-      await refreshProjects();
       setLoading(false);
+      void refreshProjects();
     })();
   }, [loadWorkspaceMetadata, refreshProjects]);
 
@@ -561,7 +561,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       });
       if (result.success) {
         // Backend has already updated the config - reload projects to get updated state
-        await refreshProjects();
+        void refreshProjects();
 
         // Update metadata immediately to avoid race condition with validation effect
         ensureCreatedAt(result.metadata);
@@ -606,7 +606,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           deleteWorkspaceStorage(workspaceId);
 
           // Backend has already updated the config - reload projects to get updated state
-          await refreshProjects();
+          void refreshProjects();
 
           // Workspace metadata subscription handles the removal automatically.
           // No need to refetch all metadata - this avoids expensive post-compaction

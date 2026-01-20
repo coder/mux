@@ -1,9 +1,13 @@
-import { OnboardingWizardSplash } from "./OnboardingWizardSplash";
+import React from "react";
+
+const OnboardingWizardSplash = React.lazy(() =>
+  import("./OnboardingWizardSplash").then((m) => ({ default: m.OnboardingWizardSplash }))
+);
 
 export interface SplashConfig {
   id: string;
   priority: number;
-  component: React.FC<{ onDismiss: () => void }>;
+  component: React.LazyExoticComponent<React.ComponentType<{ onDismiss: () => void }>>;
 }
 
 // Add new splash screens here
