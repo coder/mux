@@ -22,14 +22,12 @@ let highlightWorkerClientPromise: Promise<HighlightWorkerClientModule> | null =
   highlightWorkerClientImport;
 
 function getHighlightWorkerClient(): Promise<HighlightWorkerClientModule> {
-  if (!highlightWorkerClientPromise) {
-    highlightWorkerClientPromise =
-      import("@/browser/utils/highlighting/highlightWorkerClient").then((m) => ({
-        highlightCode: m.highlightCode,
-      }));
-  }
+  const promise = (highlightWorkerClientPromise ??=
+    import("@/browser/utils/highlighting/highlightWorkerClient").then((m) => ({
+      highlightCode: m.highlightCode,
+    })));
 
-  return highlightWorkerClientPromise;
+  return promise;
 }
 
 interface CodeProps {
