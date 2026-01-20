@@ -148,7 +148,7 @@ const AutoCompactSettings: React.FC<{
             </div>
           )}
         {showOutputReserveWarning && outputReserveInfo.threshold !== null && (
-          <div className="text-warning mt-1 text-[10px]">
+          <div className="warning-text mt-1 text-[10px]">
             Auto-compact threshold is above the output reserve (
             {outputReserveInfo.threshold.toFixed(1)}%). Requests may hit context_exceeded before
             auto-compact runs.

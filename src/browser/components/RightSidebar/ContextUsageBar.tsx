@@ -74,7 +74,7 @@ const ContextUsageBarComponent: React.FC<ContextUsageBarProps> = ({
         )}
 
       {showOutputReserveWarning && outputReserveInfo.threshold !== null && (
-        <div className="text-warning mt-1 text-[11px]">
+        <div className="warning-text mt-1 text-[11px]">
           Auto-compact threshold is above the output reserve (
           {outputReserveInfo.threshold.toFixed(1)}%). Requests may hit context_exceeded before
           auto-compact runs.

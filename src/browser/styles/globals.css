@@ -257,6 +257,7 @@
 
     --color-warning: hsl(45 100% 51%); /* #ffc107 - warning yellow */
     --color-warning-light: hsl(0 91% 71%); /* #f87171 - lighter warning/error */
+    --color-warning-text: var(--color-warning);
 
     /* Code syntax highlighting */
     --color-code-type: hsl(197 71% 73%); /* #9cdcfe - type annotations */
@@ -508,6 +509,7 @@
 
   --color-warning: hsl(45 100% 50%);
   --color-warning-light: hsl(38 100% 70%);
+  --color-warning-text: var(--color-review-warning);
 
   --color-code-type: hsl(200 84% 28%);
   --color-code-keyword: hsl(210 88% 24%);
@@ -1194,6 +1196,10 @@ body,
 @utility border-dashed-warning {
   border-style: dashed;
   border-color: var(--border-warning-dashed);
+}
+
+@utility warning-text {
+  color: var(--color-warning-text);
 }
 
 @utility task-surface {
