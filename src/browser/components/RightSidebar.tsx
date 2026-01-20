@@ -299,6 +299,7 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
 
     // Show keybind for tabs 1-9 based on their position in the layout
     const isTerminal = isTerminalTab(tab);
+    const isFile = isFileTab(tab);
     const tabPosition = props.tabPositions.get(tab);
     const keybinds = [
       KEYBINDS.SIDEBAR_TAB_1,
@@ -311,10 +312,24 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
       KEYBINDS.SIDEBAR_TAB_8,
       KEYBINDS.SIDEBAR_TAB_9,
     ];
-    const tooltip =
+    const keybindStr =
       tabPosition !== undefined && tabPosition < keybinds.length
         ? formatKeybind(keybinds[tabPosition])
         : undefined;
+
+    // For file tabs, show path + keybind; for others just keybind
+    let tooltip: React.ReactNode;
+    if (isFile) {
+      const filePath = getFilePath(tab);
+      tooltip = (
+        <div className="flex flex-col">
+          <span>{filePath}</span>
+          {keybindStr && <span className="text-muted-foreground">{keybindStr}</span>}
+        </div>
+      );
+    } else {
+      tooltip = keybindStr;
+    }
 
     // Build label using tab-specific label components
     let label: React.ReactNode;
