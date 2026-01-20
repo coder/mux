@@ -24,6 +24,7 @@ import type { TaskSettings } from "@/common/types/tasks";
 import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
 
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
+import { createTaskReportMessageId } from "@/node/services/utils/messageIds";
 import { defaultModel, normalizeGatewayModel } from "@/common/utils/ai/models";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { AgentIdSchema } from "@/common/orpc/schemas";
@@ -2163,7 +2164,7 @@ export class TaskService {
       "</mux_subagent_report>",
     ].join("\n");
 
-    const messageId = `task-report-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+    const messageId = createTaskReportMessageId();
     const reportMessage = createMuxMessage(messageId, "user", xml, {
       timestamp: Date.now(),
       synthetic: true,

@@ -2,7 +2,7 @@ import assert from "@/common/utils/assert";
 import { EventEmitter } from "events";
 import * as path from "path";
 import { createHash } from "crypto";
-import { stat, readFile } from "fs/promises";
+import { readFile } from "fs/promises";
 import { PlatformPaths } from "@/common/utils/paths";
 import { log } from "@/node/services/log";
 import type { Config } from "@/node/config";
@@ -26,6 +26,16 @@ import {
   buildStreamErrorEventData,
   createUnknownSendMessageError,
 } from "@/node/services/utils/sendMessageError";
+import {
+  createUserMessageId,
+  createFileSnapshotMessageId,
+  createAgentSkillSnapshotMessageId,
+} from "@/node/services/utils/messageIds";
+import {
+  FileChangeTracker,
+  type FileState,
+  type EditedFileAttachment,
+} from "@/node/services/utils/fileChangeTracker";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
@@ -43,7 +53,7 @@ import type { StreamEndEvent } from "@/common/types/stream";
 import { CompactionHandler } from "./compactionHandler";
 import type { TelemetryService } from "./telemetryService";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
-import { computeDiff } from "@/node/utils/diff";
+
 import { AttachmentService } from "./attachmentService";
 import type { TodoItem } from "@/common/types/tools";
 import type { PostCompactionAttachment, PostCompactionExclusions } from "@/common/types/attachment";
@@ -57,19 +67,8 @@ import { materializeFileAtMentions } from "@/node/services/fileAtMentions";
  * Tracked file state for detecting external edits.
  * Uses timestamp-based polling with diff injection.
  */
-export interface FileState {
-  content: string;
-  timestamp: number; // mtime in ms
-}
-
-/**
- * Attachment for files that were edited externally between messages.
- */
-export interface EditedFileAttachment {
-  type: "edited_text_file";
-  filename: string;
-  snippet: string; // diff of changes
-}
+// Re-export types from FileChangeTracker for backward compatibility
+export type { FileState, EditedFileAttachment } from "@/node/services/utils/fileChangeTracker";
 
 // Type guard for compaction request metadata
 interface CompactionRequestMetadata {
@@ -133,11 +132,8 @@ export class AgentSession {
   private readonly messageQueue = new MessageQueue();
   private readonly compactionHandler: CompactionHandler;
 
-  /**
-   * Tracked file state for detecting external edits.
-   * Key: absolute file path, Value: last known content and mtime.
-   */
-  private readonly readFileState = new Map<string, FileState>();
+  /** Tracks file state for detecting external edits. */
+  private readonly fileChangeTracker = new FileChangeTracker();
 
   /**
    * Track turns since last post-compaction attachment injection.
@@ -499,7 +495,7 @@ export class AgentSession {
       }
     }
 
-    const messageId = `user-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+    const messageId = createUserMessageId();
     const additionalParts =
       preservedEditImageParts && preservedEditImageParts.length > 0
         ? preservedEditImageParts
@@ -776,7 +772,7 @@ export class AgentSession {
     );
 
     // Check for external file edits (timestamp-based polling)
-    const changedFileAttachments = await this.getChangedFileAttachments();
+    const changedFileAttachments = await this.fileChangeTracker.getChangedAttachments();
 
     // Check if post-compaction attachments should be injected (gated by experiment)
     const postCompactionAttachments = options?.experiments?.postCompactionContext
@@ -790,7 +786,7 @@ export class AgentSession {
       : undefined;
 
     // Bind recordFileState to this session for the propose_plan tool
-    const recordFileState = this.recordFileState.bind(this);
+    const recordFileState = this.fileChangeTracker.record.bind(this.fileChangeTracker);
 
     const streamResult = await this.aiService.streamMessage(
       historyResult.data,
@@ -1228,28 +1224,22 @@ export class AgentSession {
    * Called by tools (e.g., propose_plan) after reading/writing files.
    */
   recordFileState(filePath: string, state: FileState): void {
-    this.readFileState.set(filePath, state);
+    this.fileChangeTracker.record(filePath, state);
   }
 
-  /**
-   * Get the count of tracked files for UI display.
-   */
+  /** Get the count of tracked files for UI display. */
   getTrackedFilesCount(): number {
-    return this.readFileState.size;
+    return this.fileChangeTracker.count;
   }
 
-  /**
-   * Get the paths of tracked files for UI display.
-   */
+  /** Get the paths of tracked files for UI display. */
   getTrackedFilePaths(): string[] {
-    return Array.from(this.readFileState.keys());
+    return this.fileChangeTracker.paths;
   }
 
-  /**
-   * Clear all tracked file state (e.g., on /clear).
-   */
+  /** Clear all tracked file state (e.g., on /clear). */
   clearFileState(): void {
-    this.readFileState.clear();
+    this.fileChangeTracker.clear();
   }
 
   /**
@@ -1268,7 +1258,7 @@ export class AgentSession {
       this.compactionOccurred = true;
       this.turnsSinceLastAttachment = 0;
       // Clear file state cache since history context is gone
-      this.readFileState.clear();
+      this.fileChangeTracker.clear();
 
       // Load exclusions and persistent TODO state (local workspace session data)
       const excludedItems = await this.loadExcludedItems();
@@ -1443,7 +1433,7 @@ export class AgentSession {
     const tokens = materialized.map((m) => m.token);
     const blocks = materialized.map((m) => m.block).join("\n\n");
 
-    const snapshotId = `file-snapshot-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    const snapshotId = createFileSnapshotMessageId();
     const snapshotMessage = createMuxMessage(snapshotId, "user", blocks, {
       timestamp: Date.now(),
       synthetic: true,
@@ -1522,9 +1512,7 @@ export class AgentSession {
       }
     }
 
-    const snapshotId = `agent-skill-snapshot-${Date.now()}-${Math.random()
-      .toString(36)
-      .substring(2, 9)}`;
+    const snapshotId = createAgentSkillSnapshotMessageId();
     const snapshotMessage = createMuxMessage(snapshotId, "user", snapshotText, {
       timestamp: Date.now(),
       synthetic: true,
@@ -1604,39 +1592,9 @@ export class AgentSession {
     }
   }
 
-  /**
-   * Check tracked files for external modifications.
-   * Returns attachments for files that changed since last recorded state.
-   * Uses timestamp-based polling with diff injection.
-   */
+  /** Delegate to FileChangeTracker for external file change detection. */
   async getChangedFileAttachments(): Promise<EditedFileAttachment[]> {
-    const checks = Array.from(this.readFileState.entries()).map(
-      async ([filePath, state]): Promise<EditedFileAttachment | null> => {
-        try {
-          const currentMtime = (await stat(filePath)).mtimeMs;
-          if (currentMtime <= state.timestamp) return null; // No change
-
-          const currentContent = await readFile(filePath, "utf-8");
-          const diff = computeDiff(state.content, currentContent);
-          if (!diff) return null; // Content identical despite mtime change
-
-          // Update stored state
-          this.readFileState.set(filePath, { content: currentContent, timestamp: currentMtime });
-
-          return {
-            type: "edited_text_file",
-            filename: filePath,
-            snippet: diff,
-          };
-        } catch {
-          // File deleted or inaccessible, skip
-          return null;
-        }
-      }
-    );
-
-    const results = await Promise.all(checks);
-    return results.filter((r): r is EditedFileAttachment => r !== null);
+    return this.fileChangeTracker.getChangedAttachments();
   }
 
   /**

@@ -9,6 +9,7 @@ import { Ok, Err } from "@/common/types/result";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
+import { createCompactionSummaryMessageId } from "@/node/services/utils/messageIds";
 import type { TelemetryService } from "@/node/services/telemetryService";
 import { roundToBase2 } from "@/common/telemetry/utils";
 import { log } from "@/node/services/log";
@@ -281,7 +282,7 @@ export class CompactionHandler {
     // or corrupted, pre-compaction costs are lost - this is acceptable since manual
     // file deletion is out of scope for data recovery.
     const summaryMessage = createMuxMessage(
-      `summary-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+      createCompactionSummaryMessageId(),
       "assistant",
       summary,
       {

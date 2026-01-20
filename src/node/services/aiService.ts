@@ -48,6 +48,7 @@ import type { PostCompactionAttachment } from "@/common/types/attachment";
 import { applyCacheControl } from "@/common/utils/ai/cacheStrategy";
 import type { HistoryService } from "./historyService";
 import type { PartialService } from "./partialService";
+import { createAssistantMessageId } from "./utils/messageIds";
 import type { SessionUsageService } from "./sessionUsageService";
 import { sumUsageHistory, getTotalCost } from "@/common/utils/tokens/usageAggregator";
 import { buildSystemMessage, readToolInstructions } from "./systemMessage";
@@ -1192,7 +1193,7 @@ export class AIService extends EventEmitter {
       });
       if (!readyResult.ready) {
         // Generate message ID for the error event (frontend needs this for synthetic message)
-        const errorMessageId = `assistant-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+        const errorMessageId = createAssistantMessageId();
         const runtimeType = metadata.runtimeConfig?.type ?? "local";
         const runtimeLabel = runtimeType === "docker" ? "Container" : "Runtime";
         const errorMessage = readyResult.error || `${runtimeLabel} unavailable.`;
@@ -1713,7 +1714,7 @@ export class AIService extends EventEmitter {
       if (combinedAbortSignal.aborted) {
         return Ok(undefined);
       }
-      const assistantMessageId = `assistant-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+      const assistantMessageId = createAssistantMessageId();
       const assistantMessage = createMuxMessage(assistantMessageId, "assistant", "", {
         timestamp: Date.now(),
         model: modelString,

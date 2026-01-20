@@ -3,6 +3,7 @@ import * as path from "path";
 import assert from "@/common/utils/assert";
 import type { MuxMessage } from "@/common/types/message";
 import { createMuxMessage } from "@/common/types/message";
+import { createFileAtMentionMessageId } from "@/node/services/utils/messageIds";
 import { extractAtMentions } from "@/common/utils/atMentions";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { SSHRuntime } from "@/node/runtime/SSHRuntime";
@@ -589,7 +590,7 @@ export async function injectFileAtMentions(
     const blocks = blocksByTargetIndex.get(i);
     if (blocks && blocks.length > 0) {
       result.push(
-        createMuxMessage(`file-at-mentions-${createdAt}-${i}`, "user", blocks.join("\n\n"), {
+        createMuxMessage(createFileAtMentionMessageId(createdAt, i), "user", blocks.join("\n\n"), {
           timestamp: createdAt,
           synthetic: true,
         })
