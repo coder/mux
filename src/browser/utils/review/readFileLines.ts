@@ -45,11 +45,13 @@ export async function readFileLines(
 
 /**
  * Determine which git ref to use for reading file context.
+ *
+ * Note: branch diffs use merge-base under the hood, so return a shell expression
+ * that resolves to the merge-base commit when needed.
  */
-export function getOldFileRef(diffBase: string, includeUncommitted: boolean): string {
+export function getOldFileRef(diffBase: string, _includeUncommitted: boolean): string {
   if (diffBase === "--staged" || diffBase === "HEAD") return "HEAD";
-  if (includeUncommitted) return diffBase;
-  return diffBase;
+  return `$(git merge-base ${diffBase} HEAD 2>/dev/null || echo ${diffBase})`;
 }
 
 /**

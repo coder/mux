@@ -72,7 +72,7 @@ export function useReadMore(options: UseReadMoreOptions): UseReadMoreResult {
   const [atBOF, setAtBOF] = useState(() => hunk.oldStart <= 1);
   const [atEOF, setAtEOF] = useState(false);
 
-  // Git ref to read from
+  // Git ref expression to read from (merge-base for branch diffs)
   const gitRef = useMemo(
     () => getOldFileRef(diffBase, includeUncommitted),
     [diffBase, includeUncommitted]
