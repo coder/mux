@@ -23,7 +23,7 @@ const IDLE_CHECK_INTERVAL_MS = 60 * 1000; // Check every minute
  * Wrap MCP tools to transform their results to AI SDK format.
  * This ensures image content is properly converted to media type.
  */
-function wrapMCPTools(tools: Record<string, Tool>): Record<string, Tool> {
+function wrapMCPTools(tools: Record<string, Tool>, onActivity?: () => void): Record<string, Tool> {
   const wrapped: Record<string, Tool> = {};
   for (const [name, tool] of Object.entries(tools)) {
     // Only wrap tools that have an execute function
@@ -31,10 +31,15 @@ function wrapMCPTools(tools: Record<string, Tool>): Record<string, Tool> {
       wrapped[name] = tool;
       continue;
     }
+
     const originalExecute = tool.execute;
     wrapped[name] = {
       ...tool,
       execute: async (args: Parameters<typeof originalExecute>[0], options) => {
+        // Mark the MCP server set as active *before* execution, so failed tool
+        // calls (including closed-client races) still count as activity.
+        onActivity?.();
+
         const result: unknown = await originalExecute(args, options);
         return transformMCPResult(result as MCPCallToolResult);
       },
@@ -249,6 +254,8 @@ interface MCPServerInstance {
   resolvedTransport: ResolvedTransport;
   autoFallbackUsed: boolean;
   tools: Record<string, Tool>;
+  /** True once the underlying MCP client/transport has been closed. */
+  isClosed: boolean;
   close: () => Promise<void>;
 }
 
@@ -275,6 +282,11 @@ interface WorkspaceServers {
   instances: Map<string, MCPServerInstance>;
   stats: MCPWorkspaceStats;
   lastActivity: number;
+  /**
+   * If true, the workspace's MCP servers should be restarted once the workspace
+   * is no longer leased (i.e., no stream is actively using MCP tools).
+   */
+  pendingRestart?: boolean;
 }
 
 export interface MCPServerManagerOptions {
@@ -286,6 +298,7 @@ export interface MCPServerManagerOptions {
 
 export class MCPServerManager {
   private readonly workspaceServers = new Map<string, WorkspaceServers>();
+  private readonly workspaceLeases = new Map<string, number>();
   private readonly idleCheckInterval: ReturnType<typeof setInterval>;
   private inlineServers: Record<string, string> = {};
   private ignoreConfigFile = false;
@@ -310,10 +323,71 @@ export class MCPServerManager {
     clearInterval(this.idleCheckInterval);
   }
 
+  private getLeaseCount(workspaceId: string): number {
+    return this.workspaceLeases.get(workspaceId) ?? 0;
+  }
+
+  /**
+   * Mark a workspace's MCP servers as actively in-use.
+   *
+   * This prevents idle cleanup from shutting down MCP clients while a stream is
+   * still running (which can otherwise surface as "Attempted to send a request
+   * from a closed client").
+   */
+  acquireLease(workspaceId: string): void {
+    const current = this.workspaceLeases.get(workspaceId) ?? 0;
+    this.workspaceLeases.set(workspaceId, current + 1);
+    this.markActivity(workspaceId);
+  }
+
+  /**
+   * Release a previously-acquired lease.
+   */
+  releaseLease(workspaceId: string): void {
+    const current = this.workspaceLeases.get(workspaceId) ?? 0;
+    if (current <= 0) {
+      log.debug("[MCP] releaseLease called without an active lease", { workspaceId });
+      return;
+    }
+
+    if (current === 1) {
+      this.workspaceLeases.delete(workspaceId);
+
+      const entry = this.workspaceServers.get(workspaceId);
+      if (entry?.pendingRestart) {
+        log.info("[MCP] Applying deferred restart", {
+          workspaceId,
+        });
+
+        // Note: do not await; stream cleanup should not block on shutting down
+        // child processes or network transports.
+        void this.stopServers(workspaceId);
+      }
+
+      return;
+    }
+
+    this.workspaceLeases.set(workspaceId, current - 1);
+  }
+
+  private markActivity(workspaceId: string): void {
+    const entry = this.workspaceServers.get(workspaceId);
+    if (!entry) {
+      return;
+    }
+    entry.lastActivity = Date.now();
+  }
+
   private cleanupIdleServers(): void {
     const now = Date.now();
     for (const [workspaceId, entry] of this.workspaceServers) {
       if (entry.instances.size === 0) continue;
+
+      // Never tear down a workspace's MCP servers while a stream is running.
+      if (this.getLeaseCount(workspaceId) > 0) {
+        continue;
+      }
+
       const idleMs = now - entry.lastActivity;
       if (idleMs >= IDLE_TIMEOUT_MS) {
         log.info("[MCP] Stopping idle servers", {
@@ -497,7 +571,12 @@ export class MCPServerManager {
     const signature = JSON.stringify(signatureEntries);
 
     const existing = this.workspaceServers.get(workspaceId);
-    if (existing?.configSignature === signature) {
+    const leaseCount = this.getLeaseCount(workspaceId);
+
+    const hasClosedInstance =
+      existing && [...existing.instances.values()].some((instance) => instance.isClosed);
+
+    if (existing?.configSignature === signature && !hasClosedInstance) {
       existing.lastActivity = Date.now();
       log.debug("[MCP] Using cached servers", {
         workspaceId,
@@ -510,12 +589,32 @@ export class MCPServerManager {
       };
     }
 
-    // Config changed or not started yet -> restart
+    // If a stream is actively running, avoid closing MCP clients out from under it.
+    // Defer restarts to the end of the stream via releaseLease().
+    if (existing && leaseCount > 0) {
+      existing.lastActivity = Date.now();
+      existing.pendingRestart = true;
+
+      log.info("[MCP] Deferring MCP server restart until stream completes", {
+        workspaceId,
+      });
+
+      return {
+        tools: this.collectTools(existing.instances, fullServerInfo, overrides),
+        stats: existing.stats,
+      };
+    }
+
+    // Config changed, instance closed, or not started yet -> restart
     if (enabledEntries.length > 0) {
       log.info("[MCP] Starting servers", {
         workspaceId,
         servers: enabledEntries.map(([name]) => name),
       });
+    }
+
+    if (existing && hasClosedInstance) {
+      log.info("[MCP] Restarting servers due to closed client", { workspaceId });
     }
 
     await this.stopServers(workspaceId);
@@ -524,7 +623,8 @@ export class MCPServerManager {
       enabledServers,
       runtime,
       workspacePath,
-      projectSecrets
+      projectSecrets,
+      () => this.markActivity(workspaceId)
     );
 
     const resolvedTransports = new Set<ResolvedTransport>();
@@ -575,6 +675,10 @@ export class MCPServerManager {
     const entry = this.workspaceServers.get(workspaceId);
     if (!entry) return;
 
+    // Remove from cache immediately so callers can't re-use tools backed by a
+    // client that is in the middle of closing.
+    this.workspaceServers.delete(workspaceId);
+
     for (const instance of entry.instances.values()) {
       try {
         await instance.close();
@@ -582,8 +686,6 @@ export class MCPServerManager {
         log.warn("Failed to stop MCP server", { error, name: instance.name });
       }
     }
-
-    this.workspaceServers.delete(workspaceId);
   }
 
   /**
@@ -691,7 +793,8 @@ export class MCPServerManager {
     servers: MCPServerMap,
     runtime: Runtime,
     workspacePath: string,
-    projectSecrets: Record<string, string> | undefined
+    projectSecrets: Record<string, string> | undefined,
+    onActivity: () => void
   ): Promise<Map<string, MCPServerInstance>> {
     const result = new Map<string, MCPServerInstance>();
     const entries = Object.entries(servers);
@@ -703,7 +806,8 @@ export class MCPServerManager {
           info,
           runtime,
           workspacePath,
-          projectSecrets
+          projectSecrets,
+          onActivity
         );
         if (instance) {
           result.set(name, instance);
@@ -722,7 +826,8 @@ export class MCPServerManager {
     info: MCPServerInfo,
     runtime: Runtime,
     workspacePath: string,
-    projectSecrets: Record<string, string> | undefined
+    projectSecrets: Record<string, string> | undefined,
+    onActivity: () => void
   ): Promise<MCPServerInstance | null> {
     if (info.transport === "stdio") {
       log.debug("[MCP] Spawning stdio server", { name });
@@ -732,6 +837,21 @@ export class MCPServerManager {
       });
 
       const transport = new MCPStdioTransport(execStream);
+
+      const instanceRef: { current: MCPServerInstance | null } = { current: null };
+      let transportClosed = false;
+      const markClosed = () => {
+        if (transportClosed) {
+          return;
+        }
+        transportClosed = true;
+        if (instanceRef.current) {
+          instanceRef.current.isClosed = true;
+        }
+      };
+
+      transport.onclose = markClosed;
+
       transport.onerror = (error) => {
         log.error("[MCP] Transport error", { name, error });
       };
@@ -739,7 +859,7 @@ export class MCPServerManager {
       await transport.start();
       const client = await experimental_createMCPClient({ transport });
       const rawTools = await client.tools();
-      const tools = wrapMCPTools(rawTools as unknown as Record<string, Tool>);
+      const tools = wrapMCPTools(rawTools as unknown as Record<string, Tool>, onActivity);
 
       log.info("[MCP] Server ready", {
         name,
@@ -747,26 +867,32 @@ export class MCPServerManager {
         toolCount: Object.keys(tools).length,
       });
 
-      const close = async () => {
-        try {
-          await client.close();
-        } catch (error) {
-          log.debug("[MCP] Error closing client", { name, error });
-        }
-        try {
-          await transport.close();
-        } catch (error) {
-          log.debug("[MCP] Error closing transport", { name, error });
-        }
-      };
-
-      return {
+      const instance: MCPServerInstance = {
         name,
         resolvedTransport: "stdio",
         autoFallbackUsed: false,
         tools,
-        close,
+        isClosed: transportClosed,
+        close: async () => {
+          // Mark closed first to prevent any new tool calls from being treated as
+          // valid by higher-level caching logic.
+          markClosed();
+
+          try {
+            await client.close();
+          } catch (error) {
+            log.debug("[MCP] Error closing client", { name, error });
+          }
+          try {
+            await transport.close();
+          } catch (error) {
+            log.debug("[MCP] Error closing transport", { name, error });
+          }
+        },
       };
+
+      instanceRef.current = instance;
+      return instance;
     }
 
     const { headers } = resolveHeaders(info.headers, projectSecrets);
@@ -815,8 +941,10 @@ export class MCPServerManager {
       }
     }
 
+    let clientClosed = false;
+
     const rawTools = await client.tools();
-    const tools = wrapMCPTools(rawTools as unknown as Record<string, Tool>);
+    const tools = wrapMCPTools(rawTools as unknown as Record<string, Tool>, onActivity);
 
     log.info("[MCP] Server ready", {
       name,
@@ -825,20 +953,28 @@ export class MCPServerManager {
       autoFallbackUsed,
     });
 
-    const close = async () => {
-      try {
-        await client.close();
-      } catch (error) {
-        log.debug("[MCP] Error closing client", { name, error });
-      }
-    };
-
-    return {
+    const instance: MCPServerInstance = {
       name,
       resolvedTransport,
       autoFallbackUsed,
       tools,
-      close,
+      isClosed: clientClosed,
+      close: async () => {
+        // Mark closed first to prevent any new tool calls from being treated as
+        // valid by higher-level caching logic.
+        if (!clientClosed) {
+          clientClosed = true;
+          instance.isClosed = true;
+        }
+
+        try {
+          await client.close();
+        } catch (error) {
+          log.debug("[MCP] Error closing client", { name, error });
+        }
+      },
     };
+
+    return instance;
   }
 }

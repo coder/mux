@@ -457,6 +457,7 @@ export class AIService extends EventEmitter {
   }
   setMCPServerManager(manager: MCPServerManager): void {
     this.mcpServerManager = manager;
+    this.streamManager.setMCPServerManager(manager);
   }
 
   setTaskService(taskService: TaskService): void {

@@ -40,6 +40,7 @@ import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
 import { stripInternalToolResultFields } from "@/common/utils/tools/internalToolResultFields";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import { StreamingTokenTracker } from "@/node/utils/main/StreamingTokenTracker";
+import type { MCPServerManager } from "@/node/services/mcpServerManager";
 import type { Runtime } from "@/node/runtime/Runtime";
 import {
   createCachedSystemMessage,
@@ -194,6 +195,7 @@ export class StreamManager extends EventEmitter {
   private readonly PARTIAL_WRITE_THROTTLE_MS = 500;
   private readonly historyService: HistoryService;
   private readonly partialService: PartialService;
+  private mcpServerManager?: MCPServerManager;
   private readonly sessionUsageService?: SessionUsageService;
   // Token tracker for live streaming statistics
   private tokenTracker = new StreamingTokenTracker();
@@ -210,6 +212,10 @@ export class StreamManager extends EventEmitter {
     this.historyService = historyService;
     this.partialService = partialService;
     this.sessionUsageService = sessionUsageService;
+  }
+
+  setMCPServerManager(manager: MCPServerManager | undefined): void {
+    this.mcpServerManager = manager;
   }
 
   /**
@@ -1144,6 +1150,8 @@ export class StreamManager extends EventEmitter {
     streamInfo: WorkspaceStreamInfo,
     historySequence: number
   ): Promise<void> {
+    this.mcpServerManager?.acquireLease(workspaceId as string);
+
     try {
       // Update state to streaming
       streamInfo.state = StreamState.STREAMING;
@@ -1558,6 +1566,8 @@ export class StreamManager extends EventEmitter {
     } catch (error) {
       await this.handleStreamFailure(workspaceId, streamInfo, error);
     } finally {
+      this.mcpServerManager?.releaseLease(workspaceId as string);
+
       // Guaranteed cleanup in all code paths
       // Clear any pending timers to prevent keeping process alive
       if (streamInfo.partialWriteTimer) {
