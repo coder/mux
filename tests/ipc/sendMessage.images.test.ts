@@ -15,6 +15,7 @@ import {
   withSharedWorkspace,
   configureTestRetries,
 } from "./sendMessageTestHelpers";
+import { HistoryService } from "@/node/services/historyService";
 import { KNOWN_MODELS } from "../../src/common/constants/knownModels";
 
 // Skip all tests if TEST_INTEGRATION is not set
@@ -177,15 +178,29 @@ describeIntegration("sendMessage image handling tests", () => {
           expect(result2.success).toBe(true);
           await collector.waitForEvent("stream-end", 30000);
 
-          // Verify the response references the image
-          const deltas = collector.getDeltas();
-          const fullResponse = deltas
-            .map((d) => ("delta" in d ? (d as { delta?: string }).delta || "" : ""))
-            .join("")
-            .toLowerCase();
+          // The model's semantic interpretation of a tiny 4x4 PNG can be flaky, so this test
+          // focuses on verifying that Mux *persists* image parts and does not lose them across
+          // messages in the same workspace.
+          const historyService = new HistoryService(env.config);
+          const historyResult = await historyService.getHistory(workspaceId);
+          expect(historyResult.success).toBe(true);
+          if (!historyResult.success) return;
 
-          // Should reference the red color from the previous image
-          expect(fullResponse).toMatch(/red|color|image/i);
+          const imageMsg = historyResult.data.find(
+            (msg) =>
+              msg.role === "user" &&
+              msg.parts.some(
+                (part) =>
+                  part.type === "text" && (part as { text?: string }).text === "Remember this image"
+              )
+          );
+          expect(imageMsg).toBeTruthy();
+          if (!imageMsg) return;
+
+          const imagePart = imageMsg.parts.find(
+            (part) => part.type === "file" && (part as { url?: string }).url === RED_PIXEL.url
+          );
+          expect(imagePart).toBeTruthy();
         });
       },
       60000
