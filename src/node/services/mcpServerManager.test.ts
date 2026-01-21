@@ -356,4 +356,73 @@ describe("MCPServerManager", () => {
     expect(closeA1).toHaveBeenCalledTimes(1);
     expect(closeB1).toHaveBeenCalledTimes(0);
   });
+
+  test("getToolsForWorkspace does not return tools from newly-disabled servers while leased", async () => {
+    const workspaceId = "ws-disable-while-leased";
+    const projectPath = "/tmp/project";
+    const workspacePath = "/tmp/workspace";
+
+    configService.listServers = mock(() =>
+      Promise.resolve({
+        serverA: { transport: "stdio", command: "cmd-a", disabled: false },
+        serverB: { transport: "stdio", command: "cmd-b", disabled: false },
+      })
+    );
+
+    const dummyToolA = { execute: mock(() => Promise.resolve({ ok: true })) } as unknown as Tool;
+    const dummyToolB = { execute: mock(() => Promise.resolve({ ok: true })) } as unknown as Tool;
+
+    const startServersMock = mock(() =>
+      Promise.resolve(
+        new Map([
+          [
+            "serverA",
+            {
+              name: "serverA",
+              resolvedTransport: "stdio",
+              autoFallbackUsed: false,
+              tools: { tool: dummyToolA },
+              isClosed: false,
+              close: mock(() => Promise.resolve(undefined)),
+            },
+          ],
+          [
+            "serverB",
+            {
+              name: "serverB",
+              resolvedTransport: "stdio",
+              autoFallbackUsed: false,
+              tools: { tool: dummyToolB },
+              isClosed: false,
+              close: mock(() => Promise.resolve(undefined)),
+            },
+          ],
+        ])
+      )
+    );
+
+    access.startServers = startServersMock;
+
+    await manager.getToolsForWorkspace({
+      workspaceId,
+      projectPath,
+      runtime: {} as unknown as Runtime,
+      workspacePath,
+    });
+
+    manager.acquireLease(workspaceId);
+
+    const toolsResult = await manager.getToolsForWorkspace({
+      workspaceId,
+      projectPath,
+      runtime: {} as unknown as Runtime,
+      workspacePath,
+      overrides: {
+        disabledServers: ["serverB"],
+      },
+    });
+
+    expect(Object.keys(toolsResult.tools)).toContain("serverA_tool");
+    expect(Object.keys(toolsResult.tools)).not.toContain("serverB_tool");
+  });
 });
