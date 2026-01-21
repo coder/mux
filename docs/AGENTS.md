@@ -9,48 +9,11 @@ description: Agent instructions for AI assistants working on the Mux codebase
 
 - `mux`: Electron + React desktop app for parallel agent workflows; UX must be fast, responsive, predictable.
 - Minor breaking changes are expected, but critical flows must allow upgrade↔downgrade without friction; skip migrations when breakage is tightly scoped.
-- Public work (issues/PRs/commits) must use 🤖 in the title and include this footer in the body:
-
-  ```md
-  ---
-
-  _Generated with `mux` • Model: `<modelString>` • Thinking: `<thinkingLevel>` • Cost: `$<costs>`_
-
-  <!-- mux-attribution: model=<modelString> thinking=<thinkingLevel> costs=<costs> -->
-  ```
-
-  Always check `$MUX_MODEL_STRING`, `$MUX_THINKING_LEVEL`, and `$MUX_COSTS_USD` via bash before creating or updating PRs—include them in the footer if set.
+- For PRs, commits, and public issues, consult the `pull-requests` skill for attribution footer requirements and workflow conventions.
 
 ## External Submissions
 
 - **Do not submit updates to the Terminal-Bench leaderboard repo directly.** Only provide the user with commands they can run themselves.
-
-## PR + Release Workflow
-
-- Reuse existing PRs; never close or recreate without instruction. Force-push updates.
-- If a PR is already open for your change, keep it up to date with the latest commits; don't leave it stale.
-- After every push run `./scripts/wait_pr_checks.sh <pr_number>` to ensure CI passes.
-
-- When posting multi-line comments with `gh` (e.g., `@codex review`), **do not** rely on `\n` escapes inside quoted `--body` strings (they will be sent as literal text). Prefer `--body-file -` with a heredoc to preserve real newlines:
-
-```bash
-gh pr comment <pr_number> --body-file - <<'EOF'
-@codex review
-
-<message>
-EOF
-```
-
-- If Codex left review comments and you addressed them, push your fixes, resolve the PR comment, and then comment `@codex review` to re-request review. After that, re-run `./scripts/wait_pr_checks.sh <pr_number>` and `./scripts/check_codex_comments.sh <pr_number>`.
-- Generally run `wait_pr_checks` after submitting a PR to ensure CI passes.
-- Status decoding: `mergeable=MERGEABLE` clean; `CONFLICTING` needs resolution. `mergeStateStatus=CLEAN` ready, `BLOCKED` waiting for CI, `BEHIND` rebase, `DIRTY` conflicts.
-- If behind: `git fetch origin && git rebase origin/main && git push --force-with-lease`.
-- Never enable auto-merge or merge at all unless the user explicitly says "merge it".
-- Do not enable auto-squash or auto-merge on Pull Requests unless explicit permission is given.
-- PR bodies should also capture the **why** behind a change (motivation, context, or user impact).
-- PR descriptions: include only information a busy reviewer cannot infer; focus on implementation nuances or validation steps.
-- Title prefixes: `perf|refactor|fix|feat|ci|tests|bench`, e.g., `🤖 fix: handle workspace rename edge cases`.
-- Use `tests:` for test-only changes (test helpers, flaky test fixes, storybook). Use `ci:` for CI config changes.
 
 ## Repo Reference
 
