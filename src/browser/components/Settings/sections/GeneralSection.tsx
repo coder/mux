@@ -329,7 +329,10 @@ export function GeneralSection() {
         const serverFonts = result.fonts;
         const browserFonts = filterFontFamiliesForBrowser(serverFonts, terminalFontConfig.fontSize);
 
-        setDiscoveredNerdFonts(browserFonts);
+        // Always display the server fonts list so the user can try the names manually.
+        // In browser mode, the device running the browser must have the font installed
+        // for it to render in the terminal.
+        setDiscoveredNerdFonts(serverFonts);
 
         if (result.error) {
           setNerdFontDiscoveryError(result.error);
@@ -337,13 +340,15 @@ export function GeneralSection() {
         }
 
         if (serverFonts.length === 0) {
+          setDiscoveredNerdFonts([]);
           setNerdFontDiscoveryError("No Nerd Fonts were detected on the server.");
           return;
         }
 
         if (browserFonts.length === 0) {
           setNerdFontDiscoveryError(
-            `Found ${serverFonts.length} Nerd Font families on the mux server, but none are available in this browser.`
+            `Found ${serverFonts.length} Nerd Font families on the mux server, but none appear to be available in this browser. ` +
+              "In browser mode you must install the font on this device."
           );
         }
       })
