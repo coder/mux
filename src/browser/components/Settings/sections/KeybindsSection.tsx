@@ -46,6 +46,8 @@ const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
   TOGGLE_HUNK_COLLAPSE: "Toggle hunk collapse",
   OPEN_SETTINGS: "Open settings",
   TOGGLE_VOICE_INPUT: "Toggle voice input",
+  NAVIGATE_BACK: "Navigate back",
+  NAVIGATE_FORWARD: "Navigate forward",
 };
 
 /** Groups for organizing keybinds in the UI */
@@ -82,7 +84,14 @@ const KEYBIND_GROUPS: Array<{ label: string; keys: Array<keyof typeof KEYBINDS> 
   },
   {
     label: "Navigation",
-    keys: ["NEW_WORKSPACE", "NEXT_WORKSPACE", "PREV_WORKSPACE", "JUMP_TO_BOTTOM"],
+    keys: [
+      "NEW_WORKSPACE",
+      "NEXT_WORKSPACE",
+      "PREV_WORKSPACE",
+      "NAVIGATE_BACK",
+      "NAVIGATE_FORWARD",
+      "JUMP_TO_BOTTOM",
+    ],
   },
   {
     label: "Sidebar Tabs",

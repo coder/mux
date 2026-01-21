@@ -1,5 +1,6 @@
 import { Menu } from "lucide-react";
 import { useEffect, useCallback, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import "./styles/globals.css";
 import { useWorkspaceContext, toWorkspaceSelection } from "./contexts/WorkspaceContext";
 import { useProjectContext } from "./contexts/ProjectContext";
@@ -116,6 +117,9 @@ function AppInner() {
   const creationProjectPath = !selectedWorkspace
     ? (pendingNewWorkspaceProject ?? defaultProjectPath)
     : null;
+
+  // History navigation (back/forward)
+  const navigate = useNavigate();
 
   const startWorkspaceCreation = useStartWorkspaceCreation({
     projects,
@@ -537,6 +541,12 @@ function AppInner() {
       } else if (matchesKeybind(e, KEYBINDS.OPEN_SETTINGS)) {
         e.preventDefault();
         openSettings();
+      } else if (matchesKeybind(e, KEYBINDS.NAVIGATE_BACK)) {
+        e.preventDefault();
+        void navigate(-1);
+      } else if (matchesKeybind(e, KEYBINDS.NAVIGATE_FORWARD)) {
+        e.preventDefault();
+        void navigate(1);
       }
     };
 
@@ -550,7 +560,21 @@ function AppInner() {
     openCommandPalette,
     creationProjectPath,
     openSettings,
+    navigate,
   ]);
+  // Mouse back/forward buttons (buttons 3 and 4)
+  const handleMouseNavigation = useCallback(
+    (e: React.MouseEvent) => {
+      if (e.button === 3) {
+        e.preventDefault();
+        void navigate(-1);
+      } else if (e.button === 4) {
+        e.preventDefault();
+        void navigate(1);
+      }
+    },
+    [navigate]
+  );
 
   // Layout slot hotkeys (Ctrl/Cmd+Alt+1..9 by default)
   useEffect(() => {
@@ -727,7 +751,10 @@ function AppInner() {
 
   return (
     <>
-      <div className="bg-bg-dark mobile-layout flex h-screen overflow-hidden">
+      <div
+        className="bg-bg-dark mobile-layout flex h-screen overflow-hidden"
+        onMouseUp={handleMouseNavigation}
+      >
         <LeftSidebar
           lastReadTimestamps={lastReadTimestamps}
           onToggleUnread={onToggleUnread}

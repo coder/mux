@@ -323,6 +323,16 @@ export const KEYBINDS = {
   // macOS: Cmd+D, Win/Linux: Ctrl+D
   // "D" for Dictate - intuitive and available
   TOGGLE_VOICE_INPUT: { key: "d", ctrl: true },
+
+  /** Navigate back in history */
+  // macOS: Cmd+[, Win/Linux: Ctrl+[
+  // Standard browser/editor back navigation
+  NAVIGATE_BACK: { key: "[", ctrl: true },
+
+  /** Navigate forward in history */
+  // macOS: Cmd+], Win/Linux: Ctrl+]
+  // Standard browser/editor forward navigation
+  NAVIGATE_FORWARD: { key: "]", ctrl: true },
 } as const;
 
 /**

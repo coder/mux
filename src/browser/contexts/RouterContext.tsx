@@ -123,8 +123,10 @@ function RouterContextInner(props: { children: ReactNode }) {
   }, [location.pathname, location.search]);
   const pendingSectionId = location.pathname === "/project" ? searchParams.get("section") : null;
 
+  // Navigation functions use push (not replace) to build history for back/forward navigation.
+  // See App.tsx handleMouseNavigation and KEYBINDS.NAVIGATE_BACK/FORWARD.
   const navigateToWorkspace = useCallback((id: string) => {
-    void navigateRef.current(`/workspace/${encodeURIComponent(id)}`, { replace: true });
+    void navigateRef.current(`/workspace/${encodeURIComponent(id)}`);
   }, []);
 
   const navigateToProject = useCallback((path: string, sectionId?: string) => {
@@ -132,11 +134,11 @@ function RouterContextInner(props: { children: ReactNode }) {
     const url = sectionId
       ? `/project?project=${encodeURIComponent(projectId)}&section=${encodeURIComponent(sectionId)}`
       : `/project?project=${encodeURIComponent(projectId)}`;
-    void navigateRef.current(url, { replace: true, state: { projectPath: path } });
+    void navigateRef.current(url, { state: { projectPath: path } });
   }, []);
 
   const navigateToHome = useCallback(() => {
-    void navigateRef.current("/", { replace: true });
+    void navigateRef.current("/");
   }, []);
 
   const value = useMemo<RouterContext>(
