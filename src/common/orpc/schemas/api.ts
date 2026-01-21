@@ -6,7 +6,7 @@ import { SendMessageErrorSchema } from "./errors";
 import { BranchListResultSchema, ImagePartSchema, MuxMessageSchema } from "./message";
 import { ProjectConfigSchema, SectionConfigSchema } from "./project";
 import { ResultSchema } from "./result";
-import { RuntimeConfigSchema, RuntimeModeSchema } from "./runtime";
+import { RuntimeConfigSchema, RuntimeAvailabilitySchema } from "./runtime";
 import { SecretSchema } from "./secrets";
 import { SendMessageOptionsSchema, UpdateStatusSchema, WorkspaceChatMessageSchema } from "./stream";
 import { LayoutPresetsConfigSchema } from "./uiLayouts";
@@ -208,13 +208,7 @@ export const projects = {
   },
   runtimeAvailability: {
     input: z.object({ projectPath: z.string() }),
-    output: z.record(
-      RuntimeModeSchema,
-      z.union([
-        z.object({ available: z.literal(true) }),
-        z.object({ available: z.literal(false), reason: z.string() }),
-      ])
-    ),
+    output: RuntimeAvailabilitySchema,
   },
   listBranches: {
     input: z.object({ projectPath: z.string() }),

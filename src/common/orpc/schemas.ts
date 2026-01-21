@@ -5,7 +5,13 @@
 export { ResultSchema } from "./schemas/result";
 
 // Runtime schemas
-export { RuntimeConfigSchema, RuntimeModeSchema } from "./schemas/runtime";
+export {
+  RuntimeConfigSchema,
+  RuntimeModeSchema,
+  RuntimeAvailabilitySchema,
+  RuntimeAvailabilityStatusSchema,
+  DevcontainerConfigInfoSchema,
+} from "./schemas/runtime";
 
 // Project schemas
 export { ProjectConfigSchema, SectionConfigSchema, WorkspaceConfigSchema } from "./schemas/project";

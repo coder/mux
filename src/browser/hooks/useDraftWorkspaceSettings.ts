@@ -133,6 +133,12 @@ export function useDraftWorkspaceSettings(
   );
   const lastDockerImage = readRuntimeConfig(RUNTIME_MODE.DOCKER, "image", "");
   const lastShareCredentials = readRuntimeConfig(RUNTIME_MODE.DOCKER, "shareCredentials", false);
+  const lastDevcontainerConfigPath = readRuntimeConfig(RUNTIME_MODE.DEVCONTAINER, "configPath", "");
+  const lastDevcontainerShareCredentials = readRuntimeConfig(
+    RUNTIME_MODE.DEVCONTAINER,
+    "shareCredentials",
+    false
+  );
 
   const setLastRuntimeConfig = useCallback(
     (mode: RuntimeMode, field: string, value: string | boolean | object | null) => {
@@ -166,7 +172,21 @@ export function useDraftWorkspaceSettings(
     ) {
       setLastRuntimeConfig(RUNTIME_MODE.DOCKER, "image", parsedDefault.image);
     }
-  }, [projectPath, parsedDefault, lastSshHost, lastDockerImage, setLastRuntimeConfig]);
+    if (
+      parsedDefault?.mode === RUNTIME_MODE.DEVCONTAINER &&
+      !lastDevcontainerConfigPath.trim() &&
+      parsedDefault.configPath.trim()
+    ) {
+      setLastRuntimeConfig(RUNTIME_MODE.DEVCONTAINER, "configPath", parsedDefault.configPath);
+    }
+  }, [
+    projectPath,
+    parsedDefault,
+    lastSshHost,
+    lastDockerImage,
+    lastDevcontainerConfigPath,
+    setLastRuntimeConfig,
+  ]);
 
   const defaultSshHost =
     parsedDefault?.mode === RUNTIME_MODE.SSH ? parsedDefault.host : lastSshHost;
@@ -174,15 +194,22 @@ export function useDraftWorkspaceSettings(
   const defaultDockerImage =
     parsedDefault?.mode === RUNTIME_MODE.DOCKER ? parsedDefault.image : lastDockerImage;
 
+  const defaultDevcontainerConfigPath =
+    parsedDefault?.mode === RUNTIME_MODE.DEVCONTAINER && parsedDefault.configPath.trim()
+      ? parsedDefault.configPath
+      : lastDevcontainerConfigPath;
+
   // Build ParsedRuntime from mode + stored host/image/shareCredentials/coder
   // Defined as a function so it can be used in both useState init and useEffect
   const buildRuntimeForMode = (
     mode: RuntimeMode,
     sshHost: string,
     dockerImage: string,
-    shareCredentials: boolean,
+    dockerShareCredentials: boolean,
     coderEnabled: boolean,
-    coderConfig: CoderWorkspaceConfig | null
+    coderConfig: CoderWorkspaceConfig | null,
+    devcontainerConfigPath: string,
+    devcontainerShareCredentials: boolean
   ): ParsedRuntime => {
     switch (mode) {
       case RUNTIME_MODE.LOCAL:
@@ -200,7 +227,13 @@ export function useDraftWorkspaceSettings(
         };
       }
       case RUNTIME_MODE.DOCKER:
-        return { mode: "docker", image: dockerImage, shareCredentials };
+        return { mode: "docker", image: dockerImage, shareCredentials: dockerShareCredentials };
+      case RUNTIME_MODE.DEVCONTAINER:
+        return {
+          mode: "devcontainer",
+          configPath: devcontainerConfigPath,
+          shareCredentials: devcontainerShareCredentials,
+        };
       case RUNTIME_MODE.WORKTREE:
       default:
         return { mode: "worktree" };
@@ -216,7 +249,9 @@ export function useDraftWorkspaceSettings(
       defaultDockerImage,
       lastShareCredentials,
       lastCoderEnabled,
-      lastCoderConfig
+      lastCoderConfig,
+      defaultDevcontainerConfigPath,
+      lastDevcontainerShareCredentials
     )
   );
 
@@ -237,7 +272,9 @@ export function useDraftWorkspaceSettings(
           defaultDockerImage,
           lastShareCredentials,
           lastCoderEnabled,
-          lastCoderConfig
+          lastCoderConfig,
+          defaultDevcontainerConfigPath,
+          lastDevcontainerShareCredentials
         )
       );
     }
@@ -252,9 +289,11 @@ export function useDraftWorkspaceSettings(
     lastShareCredentials,
     lastCoderEnabled,
     lastCoderConfig,
+    defaultDevcontainerConfigPath,
+    lastDevcontainerShareCredentials,
   ]);
 
-  // When the user switches into SSH/Docker mode, seed the field with the remembered host/image/coder.
+  // When the user switches into SSH/Docker/Devcontainer mode, seed the field with the remembered config.
   // This avoids clearing the last values when the UI switches modes with an empty field.
   const prevSelectedRuntimeModeRef = useRef<RuntimeMode | null>(null);
   useEffect(() => {
@@ -273,6 +312,21 @@ export function useDraftWorkspaceSettings(
         }
       }
 
+      if (selectedRuntime.mode === RUNTIME_MODE.DEVCONTAINER) {
+        const needsConfigRestore =
+          !selectedRuntime.configPath.trim() && lastDevcontainerConfigPath.trim();
+        const needsCredentialsRestore =
+          selectedRuntime.shareCredentials === undefined && lastDevcontainerShareCredentials;
+        if (needsConfigRestore || needsCredentialsRestore) {
+          setSelectedRuntimeState({
+            mode: RUNTIME_MODE.DEVCONTAINER,
+            configPath: needsConfigRestore
+              ? lastDevcontainerConfigPath
+              : selectedRuntime.configPath,
+            shareCredentials: lastDevcontainerShareCredentials,
+          });
+        }
+      }
       if (selectedRuntime.mode === RUNTIME_MODE.DOCKER) {
         const needsImageRestore = !selectedRuntime.image.trim() && lastDockerImage.trim();
         const needsCredentialsRestore =
@@ -295,6 +349,8 @@ export function useDraftWorkspaceSettings(
     lastShareCredentials,
     lastCoderEnabled,
     lastCoderConfig,
+    lastDevcontainerConfigPath,
+    lastDevcontainerShareCredentials,
   ]);
 
   // Initialize trunk branch from backend recommendation or first branch
@@ -328,6 +384,17 @@ export function useDraftWorkspaceSettings(
       if (runtime.shareCredentials !== undefined) {
         setLastRuntimeConfig(RUNTIME_MODE.DOCKER, "shareCredentials", runtime.shareCredentials);
       }
+    } else if (runtime.mode === RUNTIME_MODE.DEVCONTAINER) {
+      if (runtime.configPath.trim()) {
+        setLastRuntimeConfig(RUNTIME_MODE.DEVCONTAINER, "configPath", runtime.configPath);
+      }
+      if (runtime.shareCredentials !== undefined) {
+        setLastRuntimeConfig(
+          RUNTIME_MODE.DEVCONTAINER,
+          "shareCredentials",
+          runtime.shareCredentials
+        );
+      }
     }
   };
 
@@ -339,7 +406,9 @@ export function useDraftWorkspaceSettings(
       lastDockerImage,
       lastShareCredentials,
       lastCoderEnabled,
-      lastCoderConfig
+      lastCoderConfig,
+      defaultDevcontainerConfigPath,
+      lastDevcontainerShareCredentials
     );
     const newRuntimeString = buildRuntimeString(newRuntime);
     setDefaultRuntimeString(newRuntimeString);

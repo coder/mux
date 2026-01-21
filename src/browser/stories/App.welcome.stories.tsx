@@ -115,6 +115,7 @@ export const NonGitRepository: AppStory = {
             worktree: { available: false, reason: "Requires git repository" },
             ssh: { available: false, reason: "Requires git repository" },
             docker: { available: false, reason: "Requires git repository" },
+            devcontainer: { available: false, reason: "Requires git repository" },
           },
         });
       }}
@@ -150,6 +151,7 @@ export const NonGitRepositorySuccess: AppStory = {
             worktree: { available: false, reason: "Requires git repository" },
             ssh: { available: false, reason: "Requires git repository" },
             docker: { available: false, reason: "Requires git repository" },
+            devcontainer: { available: false, reason: "Requires git repository" },
           },
           // Simulate git init success
           gitInit: () => Promise.resolve({ success: true as const }),
@@ -199,6 +201,7 @@ export const NonGitRepositoryInProgress: AppStory = {
             worktree: { available: false, reason: "Requires git repository" },
             ssh: { available: false, reason: "Requires git repository" },
             docker: { available: false, reason: "Requires git repository" },
+            devcontainer: { available: false, reason: "Requires git repository" },
           },
           // Never resolve - keeps in loading state
           // eslint-disable-next-line @typescript-eslint/no-empty-function
@@ -249,6 +252,7 @@ export const NonGitRepositoryError: AppStory = {
             worktree: { available: false, reason: "Requires git repository" },
             ssh: { available: false, reason: "Requires git repository" },
             docker: { available: false, reason: "Requires git repository" },
+            devcontainer: { available: false, reason: "Requires git repository" },
           },
           // Return error
           gitInit: () =>
@@ -302,6 +306,7 @@ export const DockerUnavailable: AppStory = {
             worktree: { available: true },
             ssh: { available: true },
             docker: { available: false, reason: "Docker daemon not running" },
+            devcontainer: { available: false, reason: "Docker daemon not running" },
           },
         });
       }}

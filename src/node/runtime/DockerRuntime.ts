@@ -15,7 +15,6 @@ import { spawn, exec } from "child_process";
 import { createHash } from "crypto";
 import * as path from "path";
 import * as fs from "fs/promises";
-import { existsSync } from "fs";
 import * as os from "os";
 import type {
   ExecOptions,
@@ -34,6 +33,12 @@ import { checkInitHookExists, getMuxEnv, runInitHookOnRuntime } from "./initHook
 import { getProjectName } from "@/node/utils/runtime/helpers";
 import { getErrorMessage } from "@/common/utils/errors";
 import { syncProjectViaGitBundle } from "./gitBundleSync";
+import {
+  getHostGitconfigPath,
+  hasHostGitconfig,
+  resolveGhToken,
+  resolveSshAgentForwarding,
+} from "./credentialForwarding";
 import { streamToString, shescape } from "./streamUtils";
 
 /** Hardcoded source directory inside container */
@@ -148,18 +153,16 @@ function buildCredentialArgs(): string[] {
   const args: string[] = [];
 
   // SSH agent forwarding (no ~/.ssh mount - causes passphrase/permission issues)
-  if (process.platform === "darwin") {
-    // macOS Docker Desktop uses a magic socket path
-    args.push("-v", "/run/host-services/ssh-auth.sock:/ssh-agent:ro");
-    args.push("-e", "SSH_AUTH_SOCK=/ssh-agent");
-  } else if (process.env.SSH_AUTH_SOCK && existsSync(process.env.SSH_AUTH_SOCK)) {
-    args.push("-v", `${process.env.SSH_AUTH_SOCK}:/ssh-agent:ro`);
-    args.push("-e", "SSH_AUTH_SOCK=/ssh-agent");
+  const sshForwarding = resolveSshAgentForwarding("/ssh-agent");
+  if (sshForwarding) {
+    args.push("-v", `${sshForwarding.hostSocketPath}:${sshForwarding.targetSocketPath}:ro`);
+    args.push("-e", `SSH_AUTH_SOCK=${sshForwarding.targetSocketPath}`);
   }
 
   // GitHub CLI auth via token
-  if (process.env.GH_TOKEN) {
-    args.push("-e", `GH_TOKEN=${process.env.GH_TOKEN}`);
+  const ghToken = resolveGhToken();
+  if (ghToken) {
+    args.push("-e", `GH_TOKEN=${ghToken}`);
   }
 
   return args;
@@ -604,14 +607,16 @@ export class DockerRuntime extends RemoteRuntime {
     if (!this.config.shareCredentials) return;
 
     // Copy host gitconfig into container (not mounted, so gh can modify it)
-    const gitconfig = path.join(os.homedir(), ".gitconfig");
-    if (existsSync(gitconfig)) {
-      await runDockerCommand(`docker cp ${gitconfig} ${containerName}:/root/.gitconfig`, 10000);
+    if (hasHostGitconfig()) {
+      await runDockerCommand(
+        `docker cp ${getHostGitconfigPath()} ${containerName}:/root/.gitconfig`,
+        10000
+      );
     }
 
     // Configure gh CLI as git credential helper if GH_TOKEN is available
     // GH_TOKEN can come from project secrets (env) or host environment (buildCredentialArgs)
-    const ghToken = env?.GH_TOKEN ?? process.env.GH_TOKEN;
+    const ghToken = resolveGhToken(env);
     if (ghToken) {
       await runDockerCommand(
         `docker exec -e GH_TOKEN=${shescape.quote(ghToken)} ${containerName} sh -c 'command -v gh >/dev/null && gh auth setup-git || true'`,

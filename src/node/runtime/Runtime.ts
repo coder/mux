@@ -1,4 +1,4 @@
-import type { RuntimeConfig } from "@/common/types/runtime";
+import type { RuntimeConfig, RuntimeAvailabilityStatus } from "@/common/types/runtime";
 import type { RuntimeStatusEvent as StreamRuntimeStatusEvent } from "@/common/types/stream";
 import type { Result } from "@/common/types/result";
 
@@ -594,8 +594,9 @@ export interface Runtime {
 
 /**
  * Result of checking if a runtime type is available for a project.
+ * Re-exported for backward compatibility with existing imports.
  */
-export type RuntimeAvailability = { available: true } | { available: false; reason: string };
+export type RuntimeAvailability = RuntimeAvailabilityStatus;
 
 /**
  * Error thrown by runtime implementations

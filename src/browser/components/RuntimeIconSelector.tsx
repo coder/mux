@@ -1,8 +1,8 @@
 import React from "react";
 import { cn } from "@/common/lib/utils";
 import { RUNTIME_MODE, type RuntimeMode } from "@/common/types/runtime";
-import { SSHIcon, WorktreeIcon, LocalIcon, DockerIcon } from "./icons/RuntimeIcons";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
+import { RUNTIME_UI } from "@/browser/utils/runtimeUi";
 
 interface RuntimeIconSelectorProps {
   value: RuntimeMode;
@@ -17,51 +17,6 @@ interface RuntimeIconSelectorProps {
   className?: string;
 }
 
-// Runtime-specific color schemes matching RuntimeBadge
-// Colors use CSS variables (--color-runtime-*) so they adapt to theme (e.g., solarized)
-// Selected (active) uses the "working" styling, unselected uses "idle"
-const RUNTIME_STYLES = {
-  ssh: {
-    idle: "bg-transparent text-muted border-[var(--color-runtime-ssh)]/30 hover:border-[var(--color-runtime-ssh)]/50",
-    active:
-      "bg-[var(--color-runtime-ssh)]/20 text-[var(--color-runtime-ssh-text)] border-[var(--color-runtime-ssh)]/60",
-  },
-  worktree: {
-    idle: "bg-transparent text-muted border-[var(--color-runtime-worktree)]/30 hover:border-[var(--color-runtime-worktree)]/50",
-    active:
-      "bg-[var(--color-runtime-worktree)]/20 text-[var(--color-runtime-worktree-text)] border-[var(--color-runtime-worktree)]/60",
-  },
-  local: {
-    idle: "bg-transparent text-muted border-[var(--color-runtime-local)]/30 hover:border-[var(--color-runtime-local)]/50",
-    active:
-      "bg-[var(--color-runtime-local)]/30 text-foreground border-[var(--color-runtime-local)]/60",
-  },
-  docker: {
-    idle: "bg-transparent text-muted border-[var(--color-runtime-docker)]/30 hover:border-[var(--color-runtime-docker)]/50",
-    active:
-      "bg-[var(--color-runtime-docker)]/20 text-[var(--color-runtime-docker-text)] border-[var(--color-runtime-docker)]/60",
-  },
-} as const;
-
-const RUNTIME_INFO: Record<RuntimeMode, { label: string; description: string }> = {
-  local: {
-    label: "Local",
-    description: "Work directly in project directory (no isolation)",
-  },
-  worktree: {
-    label: "Worktree",
-    description: "Git worktree in ~/.mux/src (isolated)",
-  },
-  ssh: {
-    label: "SSH",
-    description: "Remote clone on SSH host",
-  },
-  docker: {
-    label: "Docker",
-    description: "Isolated container per workspace",
-  },
-};
-
 interface RuntimeIconButtonProps {
   mode: RuntimeMode;
   isSelected: boolean;
@@ -74,18 +29,9 @@ interface RuntimeIconButtonProps {
 }
 
 function RuntimeIconButton(props: RuntimeIconButtonProps) {
-  const info = RUNTIME_INFO[props.mode];
-  const styles = RUNTIME_STYLES[props.mode];
-  const stateStyle = props.isSelected ? styles.active : styles.idle;
-
-  const Icon =
-    props.mode === RUNTIME_MODE.SSH
-      ? SSHIcon
-      : props.mode === RUNTIME_MODE.WORKTREE
-        ? WorktreeIcon
-        : props.mode === RUNTIME_MODE.DOCKER
-          ? DockerIcon
-          : LocalIcon;
+  const info = RUNTIME_UI[props.mode];
+  const stateStyle = props.isSelected ? info.iconButton.activeClass : info.iconButton.idleClass;
+  const Icon = info.Icon;
 
   return (
     <Tooltip>
@@ -143,6 +89,7 @@ export function RuntimeIconSelector(props: RuntimeIconSelectorProps) {
     RUNTIME_MODE.WORKTREE,
     RUNTIME_MODE.SSH,
     RUNTIME_MODE.DOCKER,
+    RUNTIME_MODE.DEVCONTAINER,
   ];
   const disabledModes = props.disabledModes ?? [];
 

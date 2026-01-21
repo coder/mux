@@ -53,6 +53,8 @@ export function getRuntimeTypeForTelemetry(
       return "ssh";
     case "docker":
       return "docker";
+    case "devcontainer":
+      return "devcontainer";
     case "worktree":
       return "worktree";
     case "local":

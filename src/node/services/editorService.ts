@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "child_process";
 import * as fsPromises from "fs/promises";
 import type { Config } from "@/node/config";
-import { isDockerRuntime, isSSHRuntime } from "@/common/types/runtime";
+import { isDockerRuntime, isSSHRuntime, isDevcontainerRuntime } from "@/common/types/runtime";
 import { log } from "@/node/services/log";
 
 /**
@@ -107,6 +107,9 @@ export class EditorService {
         };
       }
 
+      if (isDevcontainerRuntime(workspace.runtimeConfig)) {
+        return { success: false, error: "Custom editors do not support Dev Containers" };
+      }
       if (isDockerRuntime(workspace.runtimeConfig)) {
         return { success: false, error: "Custom editors do not support Docker containers" };
       }

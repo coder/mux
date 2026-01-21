@@ -138,8 +138,14 @@ function computeHasInterruptedStream(
     return false;
   }
 
+  // Don't show retry barrier for runtime_not_ready - requires workspace recreation.
+  // StreamErrorMessage already shows a distinct "Runtime Unavailable" UI for this case.
+  if (lastMessage.type === "stream-error" && lastMessage.errorType === "runtime_not_ready") {
+    return false;
+  }
+
   return (
-    lastMessage.type === "stream-error" || // Stream errored out (show UI for ALL error types)
+    lastMessage.type === "stream-error" ||
     lastMessage.type === "user" || // No response received yet (app restart during slow model)
     (lastMessage.type === "assistant" && lastMessage.isPartial === true) ||
     (lastMessage.type === "tool" && lastMessage.isPartial === true) ||

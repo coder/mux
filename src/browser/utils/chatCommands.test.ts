@@ -126,6 +126,23 @@ describe("parseRuntimeString", () => {
     });
   });
 
+  test("parses devcontainer runtime with config path", () => {
+    const result = parseRuntimeString(
+      "devcontainer .devcontainer/devcontainer.json",
+      workspaceName
+    );
+    expect(result).toEqual({
+      type: "devcontainer",
+      configPath: ".devcontainer/devcontainer.json",
+    });
+  });
+
+  test("throws error for devcontainer without config path", () => {
+    expect(() => parseRuntimeString("devcontainer", workspaceName)).toThrow(
+      "Dev container runtime requires a config path"
+    );
+  });
+
   test("parses docker with registry image", () => {
     const result = parseRuntimeString("docker ghcr.io/myorg/dev:latest", workspaceName);
     expect(result).toEqual({
@@ -145,10 +162,10 @@ describe("parseRuntimeString", () => {
 
   test("throws error for unknown runtime type", () => {
     expect(() => parseRuntimeString("remote", workspaceName)).toThrow(
-      "Unknown runtime type: 'remote'. Use 'ssh <host>', 'docker <image>', 'worktree', or 'local'"
+      "Unknown runtime type: 'remote'. Use 'ssh <host>', 'docker <image>', 'devcontainer <config>', 'worktree', or 'local'"
     );
     expect(() => parseRuntimeString("kubernetes", workspaceName)).toThrow(
-      "Unknown runtime type: 'kubernetes'. Use 'ssh <host>', 'docker <image>', 'worktree', or 'local'"
+      "Unknown runtime type: 'kubernetes'. Use 'ssh <host>', 'docker <image>', 'devcontainer <config>', 'worktree', or 'local'"
     );
   });
 });

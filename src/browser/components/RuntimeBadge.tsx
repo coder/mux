@@ -7,11 +7,12 @@ import {
   isWorktreeRuntime,
   isLocalProjectRuntime,
   isDockerRuntime,
+  isDevcontainerRuntime,
 } from "@/common/types/runtime";
 import { extractSshHostname } from "@/browser/utils/ui/runtimeBadge";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
-import { SSHIcon, WorktreeIcon, LocalIcon, DockerIcon, CoderIcon } from "./icons/RuntimeIcons";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
+import { RUNTIME_BADGE_UI } from "@/browser/utils/runtimeUi";
 
 interface RuntimeBadgeProps {
   runtimeConfig?: RuntimeConfig;
@@ -25,39 +26,6 @@ interface RuntimeBadgeProps {
   /** Tooltip position: "top" (default) or "bottom" */
   tooltipSide?: "top" | "bottom";
 }
-
-// Runtime-specific color schemes - each type has consistent colors in idle/working states
-// Colors use CSS variables (--color-runtime-*) so they adapt to theme (e.g., solarized)
-// Idle: subtle with visible colored border for discrimination
-// Working: brighter colors with pulse animation
-const RUNTIME_STYLES = {
-  ssh: {
-    idle: "bg-transparent text-muted border-[var(--color-runtime-ssh)]/50",
-    working:
-      "bg-[var(--color-runtime-ssh)]/20 text-[var(--color-runtime-ssh-text)] border-[var(--color-runtime-ssh)]/60 animate-pulse",
-  },
-  coder: {
-    // Coder uses SSH styling since it's an SSH-based runtime
-    idle: "bg-transparent text-muted border-[var(--color-runtime-ssh)]/50",
-    working:
-      "bg-[var(--color-runtime-ssh)]/20 text-[var(--color-runtime-ssh-text)] border-[var(--color-runtime-ssh)]/60 animate-pulse",
-  },
-  worktree: {
-    idle: "bg-transparent text-muted border-[var(--color-runtime-worktree)]/50",
-    working:
-      "bg-[var(--color-runtime-worktree)]/20 text-[var(--color-runtime-worktree-text)] border-[var(--color-runtime-worktree)]/60 animate-pulse",
-  },
-  local: {
-    idle: "bg-transparent text-muted border-[var(--color-runtime-local)]/50",
-    working:
-      "bg-[var(--color-runtime-local)]/30 text-[var(--color-runtime-local)] border-[var(--color-runtime-local)]/60 animate-pulse",
-  },
-  docker: {
-    idle: "bg-transparent text-muted border-[var(--color-runtime-docker)]/50",
-    working:
-      "bg-[var(--color-runtime-docker)]/20 text-[var(--color-runtime-docker-text)] border-[var(--color-runtime-docker)]/60 animate-pulse",
-  },
-} as const;
 
 /**
  * Badge to display runtime type information.
@@ -99,15 +67,7 @@ function TooltipRow({
   );
 }
 
-type RuntimeType = keyof typeof RUNTIME_STYLES;
-
-const RUNTIME_ICONS: Record<RuntimeType, React.ComponentType> = {
-  ssh: SSHIcon,
-  coder: CoderIcon,
-  worktree: WorktreeIcon,
-  local: LocalIcon,
-  docker: DockerIcon,
-};
+type RuntimeType = keyof typeof RUNTIME_BADGE_UI;
 
 function getRuntimeInfo(
   runtimeConfig?: RuntimeConfig
@@ -133,6 +93,14 @@ function getRuntimeInfo(
   if (isDockerRuntime(runtimeConfig)) {
     return { type: "docker", label: `Docker: ${runtimeConfig.image}` };
   }
+  if (isDevcontainerRuntime(runtimeConfig)) {
+    return {
+      type: "devcontainer",
+      label: runtimeConfig.configPath
+        ? `Dev container: ${runtimeConfig.configPath}`
+        : "Dev container",
+    };
+  }
   return null;
 }
 
@@ -147,8 +115,9 @@ export function RuntimeBadge({
   const info = getRuntimeInfo(runtimeConfig);
   if (!info) return null;
 
-  const styles = isWorking ? RUNTIME_STYLES[info.type].working : RUNTIME_STYLES[info.type].idle;
-  const Icon = RUNTIME_ICONS[info.type];
+  const badgeUi = RUNTIME_BADGE_UI[info.type];
+  const styles = isWorking ? badgeUi.badge.workingClass : badgeUi.badge.idleClass;
+  const Icon = badgeUi.Icon;
 
   return (
     <Tooltip>

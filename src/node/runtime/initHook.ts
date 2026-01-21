@@ -6,6 +6,7 @@ import {
   isWorktreeRuntime,
   isSSHRuntime,
   isDockerRuntime,
+  isDevcontainerRuntime,
   type RuntimeConfig,
   type RuntimeMode,
 } from "@/common/types/runtime";
@@ -89,6 +90,7 @@ export function getRuntimeType(config: RuntimeConfig | undefined): RuntimeMode {
   if (!config) return "worktree"; // Default to worktree for undefined config
   if (isSSHRuntime(config)) return "ssh";
   if (isDockerRuntime(config)) return "docker";
+  if (isDevcontainerRuntime(config)) return "devcontainer";
   if (isWorktreeRuntime(config)) return "worktree";
   return "local";
 }

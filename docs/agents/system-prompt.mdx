@@ -92,12 +92,24 @@ function buildEnvironmentContext(workspacePath: string, runtimeType: RuntimeMode
       lines = gitCommonLines;
       break;
 
+    case RUNTIME_MODE.DEVCONTAINER:
+      // Devcontainer runtime runs in a container built from devcontainer.json
+      description = `You are in a git worktree at ${workspacePath} inside a Dev Container`;
+      lines = [
+        ...gitCommonLines,
+        "- Do not modify or visit other worktrees (especially the main project) without explicit user intent",
+      ];
+      break;
+
     default:
       assertNever(runtimeType, `Unknown runtime type: ${String(runtimeType)}`);
   }
 
   // Remote runtimes: clarify that MUX_PROJECT_PATH is the user's local path
-  const isRemote = runtimeType === RUNTIME_MODE.SSH || runtimeType === RUNTIME_MODE.DOCKER;
+  const isRemote =
+    runtimeType === RUNTIME_MODE.SSH ||
+    runtimeType === RUNTIME_MODE.DOCKER ||
+    runtimeType === RUNTIME_MODE.DEVCONTAINER;
   if (isRemote) {
     lines = [
       ...lines,

@@ -117,3 +117,26 @@ export function DockerIcon({ size = 10, className }: IconProps) {
     </svg>
   );
 }
+
+/** Dev container icon for devcontainer runtime */
+export function DevcontainerIcon({ size = 10, className }: IconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-label="Dev container runtime"
+      className={className}
+    >
+      {/* Container frame with code brackets */}
+      <rect x="2" y="3" width="12" height="10" rx="1" />
+      <path d="M6 6 L4.5 8 L6 10" />
+      <path d="M10 6 L11.5 8 L10 10" />
+    </svg>
+  );
+}

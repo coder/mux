@@ -10,7 +10,7 @@ import type {
 } from "@/common/types/terminal";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import type { RuntimeConfig } from "@/common/types/runtime";
-import { isSSHRuntime, isDockerRuntime } from "@/common/types/runtime";
+import { isSSHRuntime, isDockerRuntime, isDevcontainerRuntime } from "@/common/types/runtime";
 import { log } from "@/node/services/log";
 import { isCommandAvailable, findAvailableCommand } from "@/node/utils/commandDiscovery";
 import { Terminal } from "@xterm/headless";
@@ -302,6 +302,13 @@ export class TerminalService {
           type: "local",
           workspacePath: process.cwd(), // cwd doesn't matter, we're running docker exec
           command: `docker exec -it ${containerName} /bin/sh -c "cd ${workspace.namedWorkspacePath} && exec /bin/sh"`,
+        });
+      } else if (isDevcontainerRuntime(runtimeConfig)) {
+        const configArg = runtimeConfig.configPath ? ` --config ${runtimeConfig.configPath}` : "";
+        await this.openNativeTerminal({
+          type: "local",
+          workspacePath: workspace.namedWorkspacePath,
+          command: `devcontainer exec --workspace-folder ${workspace.namedWorkspacePath}${configArg} -- /bin/sh`,
         });
       } else {
         // Local workspace - spawn terminal with cwd set

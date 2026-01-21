@@ -1,23 +1,21 @@
 import * as fs from "fs/promises";
 import * as path from "path";
-import type {
-  Runtime,
-  RuntimeAvailability,
-  WorkspaceInitParams,
-  WorkspaceInitResult,
-} from "./Runtime";
+import type { Runtime, WorkspaceInitParams, WorkspaceInitResult } from "./Runtime";
 import { LocalRuntime } from "./LocalRuntime";
 import { WorktreeRuntime } from "./WorktreeRuntime";
 import { SSHRuntime } from "./SSHRuntime";
 import { CoderSSHRuntime } from "./CoderSSHRuntime";
 import { createSSHTransport } from "./transports";
 import { DockerRuntime, getContainerName } from "./DockerRuntime";
-import type { RuntimeConfig, RuntimeMode } from "@/common/types/runtime";
+import { DevcontainerRuntime } from "./DevcontainerRuntime";
+import type { RuntimeConfig, RuntimeMode, RuntimeAvailabilityStatus } from "@/common/types/runtime";
 import { hasSrcBaseDir } from "@/common/types/runtime";
 import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility";
 import { execAsync } from "@/node/utils/disposableExec";
 import type { CoderService } from "@/node/services/coderService";
 import { Config } from "@/node/config";
+import { checkDevcontainerCliVersion } from "./devcontainerCli";
+import { buildDevcontainerConfigInfo, scanDevcontainerConfigs } from "./devcontainerConfigs";
 
 // Re-export for backward compatibility with existing imports
 export { isIncompatibleRuntimeConfig };
@@ -191,6 +189,24 @@ export function createRuntime(config: RuntimeConfig, options?: CreateRuntimeOpti
       });
     }
 
+    case "devcontainer": {
+      // Devcontainer uses worktrees on host + container exec
+      // srcBaseDir defaults to ~/.mux/src (same as worktree runtime)
+      const srcBaseDir = "~/.mux/src";
+      const runtime = new DevcontainerRuntime({
+        srcBaseDir,
+        configPath: config.configPath,
+        shareCredentials: config.shareCredentials,
+      });
+      // Set workspace path for existing workspaces
+      if (options?.projectPath && options?.workspaceName) {
+        runtime.setCurrentWorkspacePath(
+          runtime.getWorkspacePath(options.projectPath, options.workspaceName)
+        );
+      }
+      return runtime;
+    }
+
     default: {
       const unknownConfig = config as { type?: string };
       throw new Error(`Unknown runtime type: ${unknownConfig.type ?? "undefined"}`);
@@ -239,19 +255,46 @@ async function isDockerAvailable(): Promise<boolean> {
   }
 }
 
+type RuntimeAvailabilityMap = Record<RuntimeMode, RuntimeAvailabilityStatus>;
+
 /**
  * Check availability of all runtime types for a given project.
  * Returns a record of runtime mode to availability status.
  */
 export async function checkRuntimeAvailability(
   projectPath: string
-): Promise<Record<RuntimeMode, RuntimeAvailability>> {
-  const [isGit, dockerAvailable] = await Promise.all([
+): Promise<RuntimeAvailabilityMap> {
+  const [isGit, dockerAvailable, devcontainerCliInfo, devcontainerConfigs] = await Promise.all([
     isGitRepository(projectPath),
     isDockerAvailable(),
+    checkDevcontainerCliVersion(),
+    scanDevcontainerConfigs(projectPath),
   ]);
 
+  const devcontainerConfigInfo = buildDevcontainerConfigInfo(devcontainerConfigs);
+
   const gitRequiredReason = "Requires git repository";
+
+  // Determine devcontainer availability
+  let devcontainerAvailability: RuntimeAvailabilityStatus;
+  if (!isGit) {
+    devcontainerAvailability = { available: false, reason: gitRequiredReason };
+  } else if (!devcontainerCliInfo) {
+    devcontainerAvailability = {
+      available: false,
+      reason: "Dev Container CLI not installed. Run: npm install -g @devcontainers/cli",
+    };
+  } else if (!dockerAvailable) {
+    devcontainerAvailability = { available: false, reason: "Docker daemon not running" };
+  } else if (devcontainerConfigInfo.length === 0) {
+    devcontainerAvailability = { available: false, reason: "No devcontainer.json found" };
+  } else {
+    devcontainerAvailability = {
+      available: true,
+      configs: devcontainerConfigInfo,
+      cliVersion: devcontainerCliInfo.version,
+    };
+  }
 
   return {
     local: { available: true },
@@ -262,5 +305,6 @@ export async function checkRuntimeAvailability(
       : !dockerAvailable
         ? { available: false, reason: "Docker daemon not running" }
         : { available: true },
+    devcontainer: devcontainerAvailability,
   };
 }

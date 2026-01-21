@@ -1,7 +1,12 @@
 import { useState, useEffect, useCallback } from "react";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import type { RuntimeConfig, RuntimeMode, ParsedRuntime } from "@/common/types/runtime";
-import { buildRuntimeConfig } from "@/common/types/runtime";
+import type {
+  RuntimeConfig,
+  RuntimeMode,
+  ParsedRuntime,
+  RuntimeAvailabilityStatus,
+} from "@/common/types/runtime";
+import { buildRuntimeConfig, RUNTIME_MODE, getDevcontainerConfigs } from "@/common/types/runtime";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { useDraftWorkspaceSettings } from "@/browser/hooks/useDraftWorkspaceSettings";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
@@ -112,10 +117,31 @@ interface UseCreationWorkspaceReturn {
 }
 
 /** Runtime availability status for each mode */
-export type RuntimeAvailabilityMap = Record<
-  RuntimeMode,
-  { available: true } | { available: false; reason: string }
->;
+export type RuntimeAvailabilityMap = Record<RuntimeMode, RuntimeAvailabilityStatus>;
+
+function resolveDevcontainerConfigPath(
+  selectedRuntime: ParsedRuntime,
+  availability: RuntimeAvailabilityMap | null
+): string | null {
+  if (selectedRuntime.mode !== RUNTIME_MODE.DEVCONTAINER) {
+    return null;
+  }
+
+  const selectedPath = selectedRuntime.configPath.trim();
+  const configs = availability?.devcontainer
+    ? getDevcontainerConfigs(availability.devcontainer)
+    : [];
+
+  if (configs.length === 0) {
+    return selectedPath;
+  }
+
+  if (selectedPath.length > 0 && configs.some((config) => config.path === selectedPath)) {
+    return selectedPath;
+  }
+
+  return configs[0].path;
+}
 
 /**
  * Hook for managing workspace creation state and logic
@@ -223,7 +249,33 @@ export function useCreationWorkspace({
       if (!messageText.trim() || isSending || !api) return false;
 
       // Build runtime config early (used later for workspace creation)
-      const runtimeConfig: RuntimeConfig | undefined = buildRuntimeConfig(settings.selectedRuntime);
+      let runtimeSelection = settings.selectedRuntime;
+
+      if (runtimeSelection.mode === RUNTIME_MODE.DEVCONTAINER) {
+        const resolvedPath = (
+          resolveDevcontainerConfigPath(runtimeSelection, runtimeAvailability) ?? ""
+        ).trim();
+
+        if (!resolvedPath) {
+          setToast({
+            id: Date.now().toString(),
+            type: "error",
+            message: "Select a devcontainer configuration before creating the workspace.",
+          });
+          return false;
+        }
+
+        // Update selection with resolved config if different (persist the resolved value)
+        if (resolvedPath !== runtimeSelection.configPath) {
+          runtimeSelection = {
+            ...runtimeSelection,
+            configPath: resolvedPath,
+          };
+          setSelectedRuntime(runtimeSelection);
+        }
+      }
+
+      const runtimeConfig: RuntimeConfig | undefined = buildRuntimeConfig(runtimeSelection);
 
       setIsSending(true);
       setToast(null);
@@ -350,6 +402,8 @@ export function useCreationWorkspace({
       projectScopeId,
       onWorkspaceCreated,
       settings.selectedRuntime,
+      runtimeAvailability,
+      setSelectedRuntime,
       settings.mode,
       settings.model,
       settings.thinkingLevel,

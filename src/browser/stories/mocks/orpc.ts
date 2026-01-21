@@ -148,6 +148,9 @@ export interface MockORPCClientOptions {
     worktree: { available: true } | { available: false; reason: string };
     ssh: { available: true } | { available: false; reason: string };
     docker: { available: true } | { available: false; reason: string };
+    devcontainer:
+      | { available: true; configs: Array<{ path: string; label: string }>; cliVersion?: string }
+      | { available: false; reason: string };
   };
   /** Custom gitInit implementation (for testing git init flow) */
   gitInit?: (input: {
@@ -523,6 +526,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
             worktree: { available: true },
             ssh: { available: true },
             docker: { available: true },
+            devcontainer: { available: false, reason: "No devcontainer.json found" },
           }
         ),
       gitInit: (input: { projectPath: string }) => {

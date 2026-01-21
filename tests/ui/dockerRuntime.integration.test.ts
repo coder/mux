@@ -140,6 +140,7 @@ describeIntegration("Docker runtime selection (UI)", () => {
         worktree: { available: false, reason: "Requires git repository" },
         ssh: { available: false, reason: "Requires git repository" },
         docker: { available: false, reason: "Requires git repository" },
+        devcontainer: { available: false, reason: "Requires git repository" },
       },
     });
 

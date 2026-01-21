@@ -451,6 +451,7 @@ async function handleForkCommand(
  * - "docker <image>" -> Docker container runtime
  * - "worktree" -> Worktree runtime (git worktrees)
  * - "local" -> Local runtime (project-dir, no isolation)
+ * - "devcontainer <configPath>" -> Dev container runtime
  * - undefined -> Worktree runtime (default)
  */
 export function parseRuntimeString(
@@ -470,8 +471,13 @@ export function parseRuntimeString(
     if (trimmed === RUNTIME_MODE.DOCKER || trimmed.startsWith("docker ")) {
       throw new Error("Docker runtime requires image (e.g., 'docker ubuntu:22.04')");
     }
+    if (trimmed === RUNTIME_MODE.DEVCONTAINER || trimmed.startsWith("devcontainer")) {
+      throw new Error(
+        "Dev container runtime requires a config path (e.g., 'devcontainer .devcontainer/devcontainer.json')"
+      );
+    }
     throw new Error(
-      `Unknown runtime type: '${runtime ?? ""}'. Use 'ssh <host>', 'docker <image>', 'worktree', or 'local'`
+      `Unknown runtime type: '${runtime ?? ""}'. Use 'ssh <host>', 'docker <image>', 'devcontainer <config>', 'worktree', or 'local'`
     );
   }
 
@@ -490,6 +496,18 @@ export function parseRuntimeString(
         srcBaseDir: "~/mux", // Default remote base directory (tilde resolved by backend)
       };
 
+    case RUNTIME_MODE.DEVCONTAINER: {
+      const configPath = parsed.configPath.trim();
+      if (!configPath) {
+        throw new Error(
+          "Dev container runtime requires a config path (e.g., 'devcontainer .devcontainer/devcontainer.json')"
+        );
+      }
+      return {
+        type: RUNTIME_MODE.DEVCONTAINER,
+        configPath,
+      };
+    }
     case RUNTIME_MODE.DOCKER:
       return {
         type: RUNTIME_MODE.DOCKER,

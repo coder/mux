@@ -19,18 +19,20 @@ export const RUNTIME_MODE = {
   WORKTREE: "worktree" as const,
   SSH: "ssh" as const,
   DOCKER: "docker" as const,
+  DEVCONTAINER: "devcontainer" as const,
 } as const;
 
 /**
  * Runtime modes that require a git repository.
  *
- * Worktree/SSH/Docker all depend on git operations (worktrees, clones, bundles).
+ * Worktree/SSH/Docker/Devcontainer all depend on git operations (worktrees, clones, bundles).
  * Local runtime can operate directly in a directory without git.
  */
 export const RUNTIME_MODES_REQUIRING_GIT: RuntimeMode[] = [
   RUNTIME_MODE.WORKTREE,
   RUNTIME_MODE.SSH,
   RUNTIME_MODE.DOCKER,
+  RUNTIME_MODE.DEVCONTAINER,
 ];
 
 /** Runtime string prefix for SSH mode (e.g., "ssh hostname") */
@@ -38,6 +40,9 @@ export const SSH_RUNTIME_PREFIX = "ssh ";
 
 /** Runtime string prefix for Docker mode (e.g., "docker ubuntu:22.04") */
 export const DOCKER_RUNTIME_PREFIX = "docker ";
+
+/** Runtime string prefix for Devcontainer mode (e.g., "devcontainer .devcontainer/devcontainer.json") */
+export const DEVCONTAINER_RUNTIME_PREFIX = "devcontainer ";
 
 /** Placeholder host for Coder SSH runtimes (where host is derived from Coder config) */
 export const CODER_RUNTIME_PLACEHOLDER = "coder://";
@@ -52,7 +57,8 @@ export type ParsedRuntime =
   | { mode: "local" }
   | { mode: "worktree" }
   | { mode: "ssh"; host: string; coder?: CoderWorkspaceConfig }
-  | { mode: "docker"; image: string; shareCredentials?: boolean };
+  | { mode: "docker"; image: string; shareCredentials?: boolean }
+  | { mode: "devcontainer"; configPath: string; shareCredentials?: boolean };
 
 /**
  * Parse runtime string from localStorage or UI input into structured result.
@@ -105,12 +111,23 @@ export function parseRuntimeModeAndHost(runtime: string | null | undefined): Par
     return null;
   }
 
-  // Try to parse as a plain mode (local/worktree)
+  // Check for "devcontainer <configPath>" format (config path is optional)
+  if (lowerTrimmed.startsWith(DEVCONTAINER_RUNTIME_PREFIX)) {
+    const configPath = trimmed.substring(DEVCONTAINER_RUNTIME_PREFIX.length).trim();
+    return { mode: RUNTIME_MODE.DEVCONTAINER, configPath };
+  }
+
+  if (lowerTrimmed === RUNTIME_MODE.DEVCONTAINER) {
+    return { mode: RUNTIME_MODE.DEVCONTAINER, configPath: "" };
+  }
+
+  // Try to parse as a plain mode (local/worktree/devcontainer)
   const modeResult = RuntimeModeSchema.safeParse(lowerTrimmed);
   if (modeResult.success) {
     const mode = modeResult.data;
     if (mode === "local") return { mode: "local" };
     if (mode === "worktree") return { mode: "worktree" };
+    if (mode === "devcontainer") return { mode: "devcontainer", configPath: "" };
     // ssh/docker without args handled above
   }
 
@@ -130,6 +147,12 @@ export function buildRuntimeString(parsed: ParsedRuntime): string | undefined {
       return `${DOCKER_RUNTIME_PREFIX}${parsed.image}`;
     case RUNTIME_MODE.LOCAL:
       return "local";
+    case RUNTIME_MODE.DEVCONTAINER: {
+      const configPath = parsed.configPath.trim();
+      return configPath.length > 0
+        ? `${DEVCONTAINER_RUNTIME_PREFIX}${configPath}`
+        : RUNTIME_MODE.DEVCONTAINER;
+    }
     case RUNTIME_MODE.WORKTREE:
       // Worktree is default, no string needed
       return undefined;
@@ -158,6 +181,12 @@ export function buildRuntimeConfig(parsed: ParsedRuntime): RuntimeConfig | undef
       };
     case RUNTIME_MODE.LOCAL:
       return { type: RUNTIME_MODE.LOCAL };
+    case RUNTIME_MODE.DEVCONTAINER:
+      return {
+        type: RUNTIME_MODE.DEVCONTAINER,
+        configPath: parsed.configPath.trim(),
+        shareCredentials: parsed.shareCredentials,
+      };
     case RUNTIME_MODE.WORKTREE:
       // Worktree uses system default config
       return undefined;
@@ -180,6 +209,15 @@ export function isDockerRuntime(
   config: RuntimeConfig | undefined
 ): config is Extract<RuntimeConfig, { type: "docker" }> {
   return config?.type === "docker";
+}
+
+/**
+ * Type guard to check if a runtime config is Devcontainer
+ */
+export function isDevcontainerRuntime(
+  config: RuntimeConfig | undefined
+): config is Extract<RuntimeConfig, { type: "devcontainer" }> {
+  return config?.type === "devcontainer";
 }
 
 /**
@@ -228,4 +266,42 @@ export function getSrcBaseDir(config: RuntimeConfig | undefined): string | undef
   if (!config) return undefined;
   if (hasSrcBaseDir(config)) return config.srcBaseDir;
   return undefined;
+}
+
+/** Devcontainer config info for availability selection */
+export interface DevcontainerConfigInfo {
+  path: string;
+  label: string;
+}
+
+/**
+ * Runtime availability status - discriminated union that can carry mode-specific data.
+ * Most runtimes use the simple available/unavailable shape; devcontainer carries extra
+ * config info when available.
+ */
+export type RuntimeAvailabilityStatus =
+  | { available: true }
+  | { available: true; configs: DevcontainerConfigInfo[]; cliVersion?: string }
+  | { available: false; reason: string };
+
+/**
+ * Helper to extract devcontainer configs from availability status.
+ * Returns empty array if not a devcontainer availability or not available.
+ */
+export function getDevcontainerConfigs(
+  status: RuntimeAvailabilityStatus
+): DevcontainerConfigInfo[] {
+  if (status.available && "configs" in status) {
+    return status.configs;
+  }
+  return [];
+}
+
+/**
+ * Helper to check if availability has devcontainer configs.
+ */
+export function hasDevcontainerConfigs(
+  status: RuntimeAvailabilityStatus
+): status is { available: true; configs: DevcontainerConfigInfo[]; cliVersion?: string } {
+  return status.available && "configs" in status;
 }

@@ -91,6 +91,8 @@
     --color-runtime-local: hsl(0 0% 60%); /* matches --color-muted-foreground */
     --color-runtime-docker: #2496ed; /* Docker blue */
     --color-runtime-docker-text: #54b3f4;
+    --color-runtime-devcontainer: #10b981; /* emerald-500 */
+    --color-runtime-devcontainer-text: #34d399; /* emerald-400 */
 
     /* File explorer */
     --color-folder-icon: #dcb67a; /* gold/yellow folder color */
@@ -372,6 +374,8 @@
   --color-runtime-local: hsl(210 14% 48%); /* matches --color-muted-foreground */
   --color-runtime-docker: #2496ed; /* Docker blue */
   --color-runtime-docker-text: #0d7cc4;
+  --color-runtime-devcontainer: #10b981; /* emerald-500 */
+  --color-runtime-devcontainer-text: #059669; /* emerald-600 */
 
   /* File explorer */
   --color-folder-icon: #c9a227; /* darker gold for light theme */

@@ -199,6 +199,7 @@ const setupWindow = ({
           worktree: { available: true },
           ssh: { available: true },
           docker: { available: true },
+          devcontainer: { available: false, reason: "No devcontainer.json found" },
         }),
     },
     workspace: {
