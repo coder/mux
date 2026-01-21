@@ -59,6 +59,47 @@ describe("DevcontainerRuntime.resolvePath", () => {
   });
 });
 
+describe("DevcontainerRuntime.resolveContainerCwd", () => {
+  // Access the private method for testing
+  function resolveContainerCwd(
+    runtime: DevcontainerRuntime,
+    optionsCwd: string | undefined,
+    workspaceFolder: string
+  ): string {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return
+    return (runtime as any).resolveContainerCwd(optionsCwd, workspaceFolder);
+  }
+
+  it("uses POSIX absolute path as cwd", () => {
+    const runtime = createRuntime({ remoteWorkspaceFolder: "/workspaces/project" });
+    expect(resolveContainerCwd(runtime, "/tmp/test", "/host/workspace")).toBe("/tmp/test");
+  });
+
+  it("rejects Windows drive letter paths and falls back to workspace", () => {
+    const runtime = createRuntime({ remoteWorkspaceFolder: "/workspaces/project" });
+    expect(resolveContainerCwd(runtime, "C:\\Users\\dev", "/host/workspace")).toBe(
+      "/workspaces/project"
+    );
+  });
+
+  it("rejects paths with backslashes and falls back to workspace", () => {
+    const runtime = createRuntime({ remoteWorkspaceFolder: "/workspaces/project" });
+    expect(resolveContainerCwd(runtime, "some\\path", "/host/workspace")).toBe(
+      "/workspaces/project"
+    );
+  });
+
+  it("falls back to workspaceFolder when remoteWorkspaceFolder not set", () => {
+    const runtime = createRuntime({});
+    expect(resolveContainerCwd(runtime, "C:\\", "/host/workspace")).toBe("/host/workspace");
+  });
+
+  it("falls back when cwd is undefined", () => {
+    const runtime = createRuntime({ remoteWorkspaceFolder: "/workspaces/project" });
+    expect(resolveContainerCwd(runtime, undefined, "/host/workspace")).toBe("/workspaces/project");
+  });
+});
+
 describe("DevcontainerRuntime.mapHostPathToContainer", () => {
   // Access the private method for testing
   function mapHostPathToContainer(runtime: DevcontainerRuntime, hostPath: string): string | null {

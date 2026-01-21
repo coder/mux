@@ -344,6 +344,29 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
       : path.posix.join(this.remoteWorkspaceFolder, suffix);
   }
 
+  /**
+   * Resolve cwd for container exec, filtering out unmappable host paths.
+   * Only uses options.cwd if it looks like a valid container path (POSIX absolute, no Windows drive letters).
+   */
+  private resolveContainerCwd(optionsCwd: string | undefined, workspaceFolder: string): string {
+    if (optionsCwd && this.looksLikeContainerPath(optionsCwd)) {
+      return optionsCwd;
+    }
+    return this.remoteWorkspaceFolder ?? workspaceFolder;
+  }
+
+  /**
+   * Check if a path looks like a valid container path (POSIX absolute, no Windows artifacts).
+   */
+  private looksLikeContainerPath(p: string): boolean {
+    // Reject Windows drive letters (e.g., C:\, D:/)
+    if (/^[A-Za-z]:/.test(p)) return false;
+    // Reject backslashes (Windows path separators)
+    if (p.includes("\\")) return false;
+    // Must be absolute POSIX path
+    return p.startsWith("/");
+  }
+
   constructor(options: DevcontainerRuntimeOptions) {
     super();
     this.srcBaseDir = options.srcBaseDir;
@@ -462,8 +485,9 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
     }
 
     // Build the full command with cd
+    // Map host workspace path to container path; fall back to container workspace if unmappable
     const mappedCwd = options.cwd ? this.mapHostPathToContainer(options.cwd) : null;
-    const cwd = mappedCwd ?? options.cwd ?? this.remoteWorkspaceFolder ?? workspaceFolder;
+    const cwd = mappedCwd ?? this.resolveContainerCwd(options.cwd, workspaceFolder);
     const fullCommand = `cd ${JSON.stringify(cwd)} && ${command}`;
     args.push("--", "bash", "-c", fullCommand);
 
