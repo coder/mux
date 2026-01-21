@@ -152,6 +152,10 @@ export function useResumeManager() {
    * @param isManual - If true, bypass eligibility checks (user explicitly clicked retry)
    */
   const attemptResume = async (workspaceId: string, isManual = false) => {
+    if (isManual) {
+      store.clearLastAbortReason(workspaceId);
+    }
+
     // Skip eligibility checks for manual retries (user explicitly wants to retry)
     if (!isManual && !isEligibleForResume(workspaceId)) return;
 

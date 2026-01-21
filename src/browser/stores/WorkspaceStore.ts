@@ -1007,6 +1007,18 @@ export class WorkspaceStore {
   }
 
   /**
+   * Clear stored abort reason so manual retries can re-enable auto-retry.
+   */
+  clearLastAbortReason(workspaceId: string): void {
+    const aggregator = this.aggregators.get(workspaceId);
+    if (!aggregator) {
+      return;
+    }
+    aggregator.clearLastAbortReason();
+    this.states.bump(workspaceId);
+  }
+
+  /**
    * Mark the current active stream as "interrupting" (transient state).
    * Call this before invoking interruptStream so the UI shows "interrupting..."
    * immediately, avoiding a visual flash when the backend confirmation arrives.

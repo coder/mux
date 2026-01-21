@@ -720,6 +720,9 @@ export class StreamingMessageAggregator {
     return this.messages.size > 0;
   }
 
+  clearLastAbortReason(): void {
+    this.lastAbortReason = null;
+  }
   getLastAbortReason(): StreamAbortReasonSnapshot | null {
     return this.lastAbortReason;
   }
