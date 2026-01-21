@@ -256,4 +256,104 @@ describe("MCPServerManager", () => {
     expect(startServersMock).toHaveBeenCalledTimes(2);
     expect(close1).toHaveBeenCalledTimes(1);
   });
+
+  test("getToolsForWorkspace does not close healthy instances when restarting closed ones while leased", async () => {
+    const workspaceId = "ws-closed-partial";
+    const projectPath = "/tmp/project";
+    const workspacePath = "/tmp/workspace";
+
+    configService.listServers = mock(() =>
+      Promise.resolve({
+        serverA: { transport: "stdio", command: "cmd-a", disabled: false },
+        serverB: { transport: "stdio", command: "cmd-b", disabled: false },
+      })
+    );
+
+    const closeA1 = mock(() => Promise.resolve(undefined));
+    const closeA2 = mock(() => Promise.resolve(undefined));
+    const closeB1 = mock(() => Promise.resolve(undefined));
+
+    let startCount = 0;
+    const startServersMock = mock(() => {
+      startCount += 1;
+
+      if (startCount === 1) {
+        return Promise.resolve(
+          new Map([
+            [
+              "serverA",
+              {
+                name: "serverA",
+                resolvedTransport: "stdio",
+                autoFallbackUsed: false,
+                tools: {},
+                isClosed: false,
+                close: closeA1,
+              },
+            ],
+            [
+              "serverB",
+              {
+                name: "serverB",
+                resolvedTransport: "stdio",
+                autoFallbackUsed: false,
+                tools: {},
+                isClosed: false,
+                close: closeB1,
+              },
+            ],
+          ])
+        );
+      }
+
+      return Promise.resolve(
+        new Map([
+          [
+            "serverA",
+            {
+              name: "serverA",
+              resolvedTransport: "stdio",
+              autoFallbackUsed: false,
+              tools: {},
+              isClosed: false,
+              close: closeA2,
+            },
+          ],
+        ])
+      );
+    });
+
+    access.startServers = startServersMock;
+
+    await manager.getToolsForWorkspace({
+      workspaceId,
+      projectPath,
+      runtime: {} as unknown as Runtime,
+      workspacePath,
+    });
+
+    // Simulate an active stream lease.
+    manager.acquireLease(workspaceId);
+
+    const cached = access.workspaceServers.get(workspaceId) as {
+      instances: Map<string, { isClosed: boolean }>;
+    };
+
+    const instanceA = cached.instances.get("serverA");
+    expect(instanceA).toBeTruthy();
+    if (instanceA) {
+      instanceA.isClosed = true;
+    }
+
+    await manager.getToolsForWorkspace({
+      workspaceId,
+      projectPath,
+      runtime: {} as unknown as Runtime,
+      workspacePath,
+    });
+
+    // Restart should only close the dead instance.
+    expect(closeA1).toHaveBeenCalledTimes(1);
+    expect(closeB1).toHaveBeenCalledTimes(0);
+  });
 });

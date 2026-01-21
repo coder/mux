@@ -576,8 +576,59 @@ export class MCPServerManager {
     //
     // Note: AIService may fetch tools before StreamManager interrupts an existing stream,
     // so closing servers here can hand out tool objects backed by a client that's about to close.
-    if (existing && leaseCount > 0 && !hasClosedInstance) {
+    if (existing && leaseCount > 0) {
       existing.lastActivity = Date.now();
+
+      if (hasClosedInstance) {
+        // One or more server instances died while another stream was still active.
+        //
+        // Critical: do NOT stop all servers here, or we'd close healthy clients that the
+        // in-flight stream may still be using.
+        const closedServerNames = [...existing.instances.values()]
+          .filter((instance) => instance.isClosed)
+          .map((instance) => instance.name);
+
+        log.info("[MCP] Restarting closed server instances while stream is active", {
+          workspaceId,
+          closedServerNames,
+        });
+
+        const serversToRestart: MCPServerMap = {};
+        for (const serverName of closedServerNames) {
+          const info = enabledServers[serverName];
+          if (info) {
+            serversToRestart[serverName] = info;
+          }
+        }
+
+        // Remove closed instances first so we don't hand out tools backed by a dead client.
+        for (const serverName of closedServerNames) {
+          const instance = existing.instances.get(serverName);
+          if (!instance) {
+            continue;
+          }
+
+          existing.instances.delete(serverName);
+
+          try {
+            await instance.close();
+          } catch (error) {
+            log.debug("[MCP] Error closing dead instance", { workspaceId, serverName, error });
+          }
+        }
+
+        const restartedInstances = await this.startServers(
+          serversToRestart,
+          runtime,
+          workspacePath,
+          projectSecrets,
+          () => this.markActivity(workspaceId)
+        );
+
+        for (const [serverName, instance] of restartedInstances) {
+          existing.instances.set(serverName, instance);
+        }
+      }
 
       log.info("[MCP] Deferring MCP server restart while stream is active", {
         workspaceId,
