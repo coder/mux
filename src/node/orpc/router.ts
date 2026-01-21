@@ -153,6 +153,12 @@ export const router = (authToken?: string) => {
             serverSshHost: input.sshHost ?? undefined,
           }));
         }),
+      listInstalledFonts: t
+        .input(schemas.server.listInstalledFonts.input)
+        .output(schemas.server.listInstalledFonts.output)
+        .handler(async ({ context, input }) => {
+          return context.serverService.listInstalledFonts({ filter: input.filter });
+        }),
       getApiServerStatus: t
         .input(schemas.server.getApiServerStatus.input)
         .output(schemas.server.getApiServerStatus.output)
