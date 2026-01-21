@@ -65,6 +65,7 @@ function expectWorkspaceCreationSuccess(result: WorkspaceCreationResult): Worksp
   return result.metadata;
 }
 
+const GIT_FETCH_TIMEOUT_SECS = process.platform === "win32" ? 15 : 5;
 const TEST_TIMEOUT_MS = process.platform === "win32" ? 60_000 : 15_000;
 // Skip all tests if TEST_INTEGRATION is not set
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
@@ -353,7 +354,7 @@ describeIntegration("executeBash", () => {
           workspaceId,
           script:
             "git fetch https://invalid-remote-that-does-not-exist-12345.com/repo.git 2>&1 || true",
-          options: { timeout_secs: 5 },
+          options: { timeout_secs: GIT_FETCH_TIMEOUT_SECS },
         });
 
         expect(invalidFetchResult.success).toBe(true);
@@ -365,7 +366,7 @@ describeIntegration("executeBash", () => {
         const githubFetchResult = await client.workspace.executeBash({
           workspaceId,
           script: "git fetch https://github.com/openai/private-test-repo-nonexistent 2>&1 || true",
-          options: { timeout_secs: 5 },
+          options: { timeout_secs: GIT_FETCH_TIMEOUT_SECS },
         });
 
         // Should complete quickly (not hang waiting for credentials)
