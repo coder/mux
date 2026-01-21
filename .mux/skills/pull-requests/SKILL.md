@@ -21,6 +21,9 @@ Always check `$MUX_MODEL_STRING`, `$MUX_THINKING_LEVEL`, and `$MUX_COSTS_USD` vi
 
 ## Lifecycle Rules
 
+- Before submitting a PR, ensure the current branch is well-named to represent the work and the branch base is as expected.
+    - PRs are always squash-merged into main
+    - Often, users will begin work off the working state of another, merged PR. In such cases you may need to rebase the work onto main before submitting a new PR.
 - Reuse existing PRs; never close or recreate without instruction.
 - Force push minor PR updates, otherwise use a new commit to capture the timeline of the change.
 - If a PR is already open for your change, keep it up to date with the latest commits; don't leave it stale.
