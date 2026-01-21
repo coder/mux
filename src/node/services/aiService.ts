@@ -79,7 +79,6 @@ import type { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
 import type { ToolBridge } from "@/node/services/ptc/toolBridge";
 import { MockAiStreamPlayer } from "./mock/mockAiStreamPlayer";
 import { EnvHttpProxyAgent, type Dispatcher } from "undici";
-import { getPlanFilePath } from "@/common/utils/planStorage";
 import { getPlanFileHint, getPlanModeInstruction } from "@/common/utils/ui/modeUtils";
 import type { AgentMode } from "@/common/types/mode";
 import { MUX_APP_ATTRIBUTION_TITLE, MUX_APP_ATTRIBUTION_URL } from "@/constants/appAttribution";
@@ -1328,8 +1327,6 @@ export class AIService extends EventEmitter {
       // Construct plan mode instruction if in plan mode
       // This is done backend-side because we have access to the plan file path
       let effectiveAdditionalInstructions = additionalSystemInstructions;
-      const muxHome = runtime.getMuxHome();
-      const planFilePath = getPlanFilePath(metadata.name, metadata.projectName, muxHome);
 
       // Read plan file (handles legacy migration transparently)
       const planResult = await readPlanFile(
@@ -1338,6 +1335,10 @@ export class AIService extends EventEmitter {
         metadata.projectName,
         workspaceId
       );
+
+      // Always use the canonical resolved plan path for both prompt context and tool enforcement.
+      // This prevents mismatches when models convert `~/.mux/...` into an OS-home absolute path.
+      const planFilePath = planResult.path;
 
       if (effectiveMode === "plan") {
         const planModeInstruction = getPlanModeInstruction(planFilePath, planResult.exists);
