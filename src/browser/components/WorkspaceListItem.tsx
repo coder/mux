@@ -109,8 +109,8 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
     }
   };
 
-  const { canInterrupt, awaitingUserQuestion } = useWorkspaceSidebarState(workspaceId);
-  const isWorking = canInterrupt && !awaitingUserQuestion;
+  const { canInterrupt, awaitingUserQuestion, isStarting } = useWorkspaceSidebarState(workspaceId);
+  const isWorking = (canInterrupt || isStarting) && !awaitingUserQuestion;
   const safeDepth = typeof depth === "number" && Number.isFinite(depth) ? Math.max(0, depth) : 0;
   const paddingLeft = 9 + Math.min(32, safeDepth) * 12;
 

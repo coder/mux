@@ -153,6 +153,7 @@ export interface SessionTimingStats {
  */
 export interface WorkspaceSidebarState {
   canInterrupt: boolean;
+  isStarting: boolean;
   awaitingUserQuestion: boolean;
   currentModel: string | null;
   recencyTimestamp: number | null;
@@ -901,6 +902,7 @@ export class WorkspaceStore {
    */
   getWorkspaceSidebarState(workspaceId: string): WorkspaceSidebarState {
     const fullState = this.getWorkspaceState(workspaceId);
+    const isStarting = fullState.pendingStreamStartTime !== null && !fullState.canInterrupt;
 
     const cached = this.sidebarStateCache.get(workspaceId);
     if (cached && this.sidebarStateSourceState.get(workspaceId) === fullState) {
@@ -913,6 +915,7 @@ export class WorkspaceStore {
     // use useWorkspaceStatsSnapshot() which has its own subscription.
     if (
       cached?.canInterrupt === fullState.canInterrupt &&
+      cached.isStarting === isStarting &&
       cached.awaitingUserQuestion === fullState.awaitingUserQuestion &&
       cached.currentModel === fullState.currentModel &&
       cached.recencyTimestamp === fullState.recencyTimestamp &&
@@ -927,6 +930,7 @@ export class WorkspaceStore {
     // Create and cache new state
     const newState: WorkspaceSidebarState = {
       canInterrupt: fullState.canInterrupt,
+      isStarting,
       awaitingUserQuestion: fullState.awaitingUserQuestion,
       currentModel: fullState.currentModel,
       recencyTimestamp: fullState.recencyTimestamp,

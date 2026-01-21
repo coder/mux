@@ -11,10 +11,16 @@ export const WorkspaceStatusDot = memo<{
   size?: number;
 }>(
   ({ workspaceId, lastReadTimestamp, onClick, size = 8 }) => {
-    const { canInterrupt, awaitingUserQuestion, currentModel, agentStatus, recencyTimestamp } =
-      useWorkspaceSidebarState(workspaceId);
+    const {
+      canInterrupt,
+      isStarting,
+      awaitingUserQuestion,
+      currentModel,
+      agentStatus,
+      recencyTimestamp,
+    } = useWorkspaceSidebarState(workspaceId);
 
-    const streaming = canInterrupt && !awaitingUserQuestion;
+    const isWorking = (canInterrupt || isStarting) && !awaitingUserQuestion;
 
     // Compute unread status if lastReadTimestamp provided (sidebar only)
     const unread = useMemo(() => {
@@ -26,18 +32,18 @@ export const WorkspaceStatusDot = memo<{
     const title = useMemo(
       () =>
         getStatusTooltip({
-          isStreaming: streaming,
+          isStreaming: isWorking,
           isAwaitingInput: awaitingUserQuestion,
           streamingModel: currentModel,
           agentStatus,
           isUnread: unread,
           recencyTimestamp,
         }),
-      [streaming, awaitingUserQuestion, currentModel, agentStatus, unread, recencyTimestamp]
+      [isWorking, awaitingUserQuestion, currentModel, agentStatus, unread, recencyTimestamp]
     );
 
-    const bgColor = canInterrupt ? "bg-blue-400" : unread ? "bg-gray-300" : "bg-muted-dark";
-    const cursor = onClick && !streaming ? "cursor-pointer" : "cursor-default";
+    const bgColor = isWorking ? "bg-blue-400" : unread ? "bg-gray-300" : "bg-muted-dark";
+    const cursor = onClick && !isWorking ? "cursor-pointer" : "cursor-default";
 
     return (
       <Tooltip>
@@ -48,8 +54,8 @@ export const WorkspaceStatusDot = memo<{
               "rounded-full shrink-0 transition-colors duration-200",
               bgColor,
               cursor,
-              onClick && !streaming && "hover:opacity-70",
-              streaming && "animate-pulse"
+              onClick && !isWorking && "hover:opacity-70",
+              isWorking && "animate-pulse"
             )}
             onClick={(e) => {
               e.stopPropagation();

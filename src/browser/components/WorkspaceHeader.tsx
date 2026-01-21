@@ -53,7 +53,8 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   const openTerminalPopout = useOpenTerminal();
   const openInEditor = useOpenInEditor();
   const gitStatus = useGitStatus(workspaceId);
-  const { canInterrupt } = useWorkspaceSidebarState(workspaceId);
+  const { canInterrupt, isStarting, awaitingUserQuestion } = useWorkspaceSidebarState(workspaceId);
+  const isWorking = (canInterrupt || isStarting) && !awaitingUserQuestion;
   const { startSequence: startTutorial } = useTutorial();
   const [editorError, setEditorError] = useState<string | null>(null);
   const [debugLlmRequestOpen, setDebugLlmRequestOpen] = useState(false);
@@ -138,7 +139,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
         )}
         <RuntimeBadge
           runtimeConfig={runtimeConfig}
-          isWorking={canInterrupt}
+          isWorking={isWorking}
           workspacePath={namedWorkspacePath}
           workspaceName={workspaceName}
           tooltipSide="bottom"
@@ -151,7 +152,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
             workspaceId={workspaceId}
             projectPath={projectPath}
             tooltipPosition="bottom"
-            isWorking={canInterrupt}
+            isWorking={isWorking}
           />
         </div>
       </div>
