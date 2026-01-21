@@ -376,8 +376,12 @@ export class LoopRunnerService extends EventEmitter {
     this.controllers.set(workspaceId, abortController);
 
     void this.runLoop(workspaceId, abortController.signal)
-      .catch((error: unknown) => {
+      .catch(async (error: unknown) => {
         log.error("[HARNESS] Loop runner crashed", { workspaceId, error });
+
+        // Defensive: if the runner crashes, make sure we don't strand the state as "running".
+        const message = error instanceof Error ? error.message : String(error);
+        await this.pause(workspaceId, `Loop runner crashed: ${message}`);
       })
       .finally(() => {
         const current = this.controllers.get(workspaceId);
@@ -415,7 +419,15 @@ export class LoopRunnerService extends EventEmitter {
         return;
       }
 
-      const harness = await this.workspaceHarnessService.getHarnessForWorkspace(workspaceId);
+      let harness: Awaited<ReturnType<WorkspaceHarnessService["getHarnessForWorkspace"]>>;
+      try {
+        harness = await this.workspaceHarnessService.getHarnessForWorkspace(workspaceId);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await this.pause(workspaceId, `Failed to load harness config: ${message}`);
+        return;
+      }
+
       const config = harness.config;
       const loop = config.loop;
 
